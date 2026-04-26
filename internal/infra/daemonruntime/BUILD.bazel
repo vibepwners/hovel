@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "daemonruntime",
+    srcs = ["runtime.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/adapters/storage/filesystem",
+        "//internal/domain/daemon",
+        "//internal/domain/workspace",
+    ],
+)
+
+go_test(
+    name = "daemonruntime_test",
+    srcs = ["runtime_test.go"],
+    embed = [":daemonruntime"],
+    deps = [
+        "//internal/adapters/storage/filesystem",
+        "//internal/domain/daemon",
+    ],
+)

@@ -1,0 +1,31 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "filesystem",
+    srcs = [
+        "daemon_store.go",
+        "lock.go",
+        "workspace_store.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/app/services",
+        "//internal/domain/daemon",
+        "//internal/domain/workspace",
+    ],
+)
+
+go_test(
+    name = "filesystem_test",
+    srcs = [
+        "daemon_store_test.go",
+        "lock_test.go",
+        "workspace_store_test.go",
+    ],
+    embed = [":filesystem"],
+    deps = [
+        "//internal/domain/daemon",
+        "//internal/domain/workspace",
+    ],
+)

@@ -1,0 +1,30 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "services",
+    srcs = [
+        "daemon.go",
+        "workspace.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/app/services",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/domain/daemon",
+        "//internal/domain/event",
+        "//internal/domain/workspace",
+    ],
+)
+
+go_test(
+    name = "services_test",
+    srcs = [
+        "daemon_test.go",
+        "workspace_test.go",
+    ],
+    embed = [":services"],
+    deps = [
+        "//internal/domain/daemon",
+        "//internal/domain/event",
+        "//internal/domain/workspace",
+    ],
+)

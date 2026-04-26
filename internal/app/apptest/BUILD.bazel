@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "apptest",
+    srcs = ["harness.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/app/apptest",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/app/services",
+        "//internal/domain/daemon",
+        "//internal/domain/event",
+        "//internal/domain/workspace",
+    ],
+)
+
+go_test(
+    name = "apptest_test",
+    srcs = ["harness_test.go"],
+    embed = [":apptest"],
+    deps = [
+        "//internal/domain/daemon",
+    ],
+)

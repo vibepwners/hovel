@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "hoveld_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/cmd/hoveld",
+    visibility = ["//visibility:private"],
+    deps = ["//internal/infra/daemonruntime"],
+)
+
+go_binary(
+    name = "hoveld",
+    embed = [":hoveld_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "hoveld_test",
+    srcs = ["main_test.go"],
+    embed = [":hoveld_lib"],
+    deps = [
+        "//internal/adapters/storage/filesystem",
+        "//internal/domain/daemon",
+    ],
+)

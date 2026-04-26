@@ -1,0 +1,6 @@
+common --announce_rc
+
+build --color=yes
+build --curses=yes
+
+test --test_output=errors

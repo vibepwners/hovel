@@ -1,0 +1,104 @@
+package filesystem
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+
+	"github.com/Vibe-Pwners/hovel/internal/app/services"
+	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+)
+
+const workspaceConfigFile = "workspace.json"
+
+type WorkspaceStore struct{}
+
+func NewWorkspaceStore() WorkspaceStore {
+	return WorkspaceStore{}
+}
+
+func (s WorkspaceStore) InitWorkspace(ctx context.Context, ws workspace.Workspace) (services.WorkspaceRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return services.WorkspaceRecord{}, err
+	}
+
+	configPath := filepath.Join(ws.Path, workspaceConfigFile)
+	existing, err := readWorkspace(configPath)
+	if err == nil {
+		if err := ensureWorkspaceLayout(ws.Path); err != nil {
+			return services.WorkspaceRecord{}, err
+		}
+		return services.WorkspaceRecord{Workspace: existing, Created: false}, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return services.WorkspaceRecord{}, err
+	}
+
+	if err := ensureWorkspaceLayout(ws.Path); err != nil {
+		return services.WorkspaceRecord{}, err
+	}
+	if err := writeWorkspace(configPath, ws); err != nil {
+		return services.WorkspaceRecord{}, err
+	}
+	return services.WorkspaceRecord{Workspace: ws, Created: true}, nil
+}
+
+func ensureWorkspaceLayout(path string) error {
+	for _, rel := range []string{
+		"",
+		"artifacts",
+		"logs",
+		"modules",
+		"runs",
+		"services",
+	} {
+		if err := os.MkdirAll(filepath.Join(path, rel), 0o755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type workspaceFile struct {
+	Version int    `json:"version"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+}
+
+func readWorkspace(path string) (workspace.Workspace, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return workspace.Workspace{}, err
+	}
+	var file workspaceFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return workspace.Workspace{}, err
+	}
+	id, err := workspace.NewID(file.ID)
+	if err != nil {
+		return workspace.Workspace{}, err
+	}
+	name, err := workspace.NewName(file.Name)
+	if err != nil {
+		return workspace.Workspace{}, err
+	}
+	return workspace.New(id, name, file.Path)
+}
+
+func writeWorkspace(path string, ws workspace.Workspace) error {
+	file := workspaceFile{
+		Version: 1,
+		ID:      ws.ID.String(),
+		Name:    ws.Name.String(),
+		Path:    ws.Path,
+	}
+	data, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o644)
+}

@@ -1,0 +1,25 @@
+load("@rules_python//python:defs.bzl", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "descriptor_schemas",
+    srcs = [
+        "hovel.module.schema.json",
+        "hovel.service.schema.json",
+    ],
+)
+
+py_test(
+    name = "schema_smoke_test",
+    srcs = ["schema_smoke_test.py"],
+    args = [
+        "$(location hovel.module.schema.json)",
+        "$(location hovel.service.schema.json)",
+    ],
+    data = [
+        "hovel.module.schema.json",
+        "hovel.service.schema.json",
+    ],
+    python_version = "PY3",
+)

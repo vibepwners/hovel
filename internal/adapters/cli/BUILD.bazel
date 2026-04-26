@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cli",
+    srcs = ["cli.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/cli",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/adapters/storage/filesystem",
+        "//internal/app/services",
+        "//internal/domain/daemon",
+        "//internal/domain/event",
+    ],
+)
+
+go_test(
+    name = "cli_test",
+    srcs = ["cli_test.go"],
+    embed = [":cli"],
+    deps = [
+        "//internal/adapters/storage/filesystem",
+        "//internal/domain/daemon",
+    ],
+)

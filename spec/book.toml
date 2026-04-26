@@ -1,0 +1,10 @@
+[book]
+title = "Hovel Specification"
+authors = ["Hovel maintainers"]
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+smart-punctuation = true

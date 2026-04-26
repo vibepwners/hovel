@@ -1,0 +1,11 @@
+pre-commit:
+  parallel: false
+  commands:
+    gofmt:
+      run: bash tools/lint/check_gofmt.sh
+    gazelle:
+      run: bazel run //:gazelle -- -mode=diff
+    build:
+      run: bazel build //...
+    test:
+      run: bazel test //...

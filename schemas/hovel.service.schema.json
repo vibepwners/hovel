@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hovel.dev/schemas/hovel.service.schema.json",
+  "title": "Hovel Service Descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "const": "hovel.dev/v1alpha1"
+    },
+    "kind": {
+      "const": "Service"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["runtime", "serviceType", "lifecycle"],
+      "properties": {
+        "runtime": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["type", "entrypoint"],
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "packaging": {
+              "type": "string"
+            },
+            "entrypoint": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "serviceType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provides": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "lifecycle": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}
