@@ -14,7 +14,7 @@ The implementation approach is domain-driven design with test-driven development
 Milestone 1 should deliver:
 
 1. `cmd/hovel`.
-2. `cmd/hoveld`.
+2. Mono-binary daemon role through `hovel daemon`.
 3. `internal/domain/...`.
 4. `internal/app/services/...`.
 5. `internal/adapters/cli/...`.
@@ -98,12 +98,12 @@ Write adapter tests with temporary directories:
 
 Then implement `WorkspaceService` and filesystem-backed storage ports.
 
-### 4. CLI `hovel init`
+### 4. CLI `control init`
 
 Write CLI golden tests first:
 
-1. `hovel init --workspace <tmp>` prints stable human-readable output.
-2. `hovel init --workspace <tmp> --json` emits structured JSON.
+1. `hovel command control init --workspace <tmp>` prints stable human-readable output.
+2. `hovel command control init --workspace <tmp> --json` emits structured JSON.
 3. Invalid workspace paths return a non-zero exit and a stable error.
 
 Then implement the minimal CLI adapter. The CLI should call application services only.
@@ -171,7 +171,7 @@ Write daemon contract tests first:
 
 1. Start `hoveld` against a temporary workspace.
 2. Wait until it reports healthy.
-3. `hovel daemon status --workspace <tmp>` reports the same daemon identity.
+3. `hovel command control daemon status --workspace <tmp>` reports the same daemon identity.
 4. Duplicate daemon startup for the same workspace is rejected.
 
 Then implement the minimal daemon lifecycle and local transport. The transport can be narrow in Milestone 1, but production `hovel` commands should exercise the daemon boundary when they claim daemon behavior.
@@ -209,8 +209,8 @@ bazel run //:gazelle -- -mode=diff
 The repository should also expose these user-visible flows:
 
 ```bash
-bazel run //cmd/hovel -- init --workspace /tmp/hovel-lab
-bazel run //cmd/hovel -- daemon status --workspace /tmp/hovel-lab
+bazel run //cmd/hovel -- command control init --workspace /tmp/hovel-lab
+bazel run //cmd/hovel -- command control daemon status --workspace /tmp/hovel-lab
 ```
 
 The daemon status may be minimal, but the tests must enforce the domain/application/adapter boundaries and the daemon contract.

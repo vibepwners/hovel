@@ -6,9 +6,13 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime",
     visibility = ["//visibility:public"],
     deps = [
+        "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
+        "//internal/app/services",
         "//internal/domain/daemon",
+        "//internal/domain/event",
         "//internal/domain/workspace",
+        "//internal/modules/mockexploit",
     ],
 )
 
@@ -17,6 +21,7 @@ go_test(
     srcs = ["runtime_test.go"],
     embed = [":daemonruntime"],
     deps = [
+        "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
         "//internal/domain/daemon",
     ],

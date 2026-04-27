@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
 func TestHarnessConstructsServicesWithoutDaemon(t *testing.T) {
@@ -27,5 +28,13 @@ func TestHarnessConstructsServicesWithoutDaemon(t *testing.T) {
 	}
 	if status.State != daemon.StateNotRunning {
 		t.Fatalf("state = %q, want %q", status.State, daemon.StateNotRunning)
+	}
+
+	runResult, err := harness.Runs.ExecuteMockExploit(context.Background(), harness.MockExploit("mock-exploit", "mock://target"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runResult.State != run.StateSucceeded {
+		t.Fatalf("run state = %q, want %q", runResult.State, run.StateSucceeded)
 	}
 }

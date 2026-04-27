@@ -12,8 +12,9 @@ Require:
 4. Module protocol contract tests.
 5. Service protocol contract tests.
 6. Supervisor tests.
-7. Golden tests for CLI output.
-8. TUI model/update tests.
+7. Golden tests for `command` output.
+8. CLI prompt model, completion, and render tests.
+9. TUI model/update tests.
 
 ## Python SDK Tests
 
@@ -36,10 +37,16 @@ First-slice integration tests:
 4. Module returns result.
 5. Host captures stdout, stderr, and logging as structured events.
 6. Host records malformed protocol output as a failed module run.
-7. CLI displays result.
+7. `command` mode displays throw results.
 8. `hovel` starts or attaches to `hoveld`.
-9. CLI command execution crosses the daemon boundary.
-10. Run plan, approval record, events, artifacts, and final run state are persisted.
+9. `command` execution crosses the daemon boundary.
+10. Throw plan, approval record, events, artifacts, and final run state are persisted.
+11. A command registered in the central registry is available through both `command` mode and `cli` mode.
+12. Arguments, switches, options, defaults, help, and validation are identical in `command` mode and `cli` mode.
+13. If `cli` or `tui` starts a managed daemon, it stops that daemon on exit.
+14. If `cli` or `tui` attaches to an existing daemon, it leaves that daemon running on exit.
+15. A `cli` session can select a chain, add targets, and issue `throw` using session state.
+16. `command` mode can issue `throw` with explicit `--chain` and `--target` options without session state.
 
 Follow-on integration tests:
 
@@ -48,7 +55,7 @@ Follow-on integration tests:
 3. Service handshakes.
 4. Service health check passes.
 5. Service provides payload or listener resource.
-6. MCP can inspect and plan the same run as CLI through shared policy checks.
+6. MCP can inspect and plan the same throw as `command` and `cli` through shared policy checks.
 7. MCP can execute only through the shared approval path.
 8. TUI consumes event stream.
 
@@ -74,15 +81,15 @@ Strict branch coverage gates for core packages.
 ### Milestone 1: Skeleton
 
 1. Create Go repo skeleton.
-2. Add `hovel` CLI root.
-3. Add `hoveld` engine skeleton or embedded daemon mode.
+2. Add `hovel` mono-binary root.
+3. Add `hovel daemon` engine skeleton.
 4. Add domain packages.
 5. Add event model.
 6. Add module descriptor schema.
 7. Add service descriptor schema.
-8. Add local workspace initialization.
+8. Add local workspace initialization under `control init`.
 9. Add in-process application service test harness.
-10. Add daemon status and workspace locking contract.
+10. Add daemon status under `control daemon status` and workspace locking contract.
 
 ### Milestone 2: Module Runtime
 
@@ -90,7 +97,7 @@ Strict branch coverage gates for core packages.
 2. Implement Python SDK handshake.
 3. Implement Python logging handler.
 4. Run a toy Python module from Go.
-5. Stream logs into CLI.
+5. Stream logs into `command` and `cli`.
 6. Persist module execution events.
 7. Treat malformed frames and unexpected stdout bytes as module failures.
 
@@ -101,7 +108,7 @@ Strict branch coverage gates for core packages.
 3. Implement run state persistence.
 4. Implement artifact provider.
 5. Hash-track artifacts and payload-like bytes.
-6. Inspect runs and artifacts from CLI.
+6. Inspect runs and artifacts from `command` and `cli`.
 
 ### Milestone 4: Providers
 
@@ -153,7 +160,7 @@ Strict branch coverage gates for core packages.
 
 ## Hard Rules
 
-1. CLI first, TUI second.
+1. `command` and `cli` first, TUI second.
 2. `hoveld` is mandatory and owns runs, services, modules, events, providers, artifacts, and sessions.
 3. TUI calls application services only.
 4. MCP calls application services only.

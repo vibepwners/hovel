@@ -1,0 +1,26 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "daemonmanager",
+    srcs = ["manager.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/adapters/storage/filesystem",
+        "//internal/app/services",
+        "//internal/domain/daemon",
+        "//internal/domain/workspace",
+        "//internal/infra/daemonruntime",
+    ],
+)
+
+go_test(
+    name = "daemonmanager_test",
+    srcs = ["manager_test.go"],
+    embed = [":daemonmanager"],
+    deps = [
+        "//internal/adapters/storage/filesystem",
+        "//internal/domain/daemon",
+        "//internal/infra/daemonruntime",
+    ],
+)

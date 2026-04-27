@@ -2,229 +2,365 @@ package cli
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
+	"strconv"
 	"strings"
-	"time"
-	"unicode"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	"github.com/Vibe-Pwners/hovel/internal/app/commands"
+	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
+	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
+	prompt "github.com/c-bata/go-prompt"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	app := NewApp()
-	return app.Run(ctx, args, stdout, stderr)
+	return NewApp().Run(ctx, args, stdout, stderr)
 }
 
 type App struct {
-	workspaces services.WorkspaceService
-	daemons    services.DaemonService
+	commands    commandmode.App
+	manager     daemonmanager.Manager
+	theme       Theme
+	session     *operatorsession.Session
+	moduleCount int
 }
 
 func NewApp() App {
-	store := filesystem.NewWorkspaceStore()
+	session := operatorsession.New()
 	return App{
-		workspaces: services.NewWorkspaceService(
-			store,
-			discardEvents{},
-			randomIDs{},
-			systemClock{},
-		),
-		daemons: services.NewDaemonService(store),
+		commands:    commandmode.NewAppWithSession(session),
+		manager:     daemonmanager.New(),
+		theme:       DefaultTheme(),
+		session:     session,
+		moduleCount: builtInModuleCount,
 	}
+}
+
+func NewAppWithDependencies(commands commandmode.App, manager daemonmanager.Manager, theme Theme) App {
+	return App{commands: commands, manager: manager, theme: theme, moduleCount: builtInModuleCount}
 }
 
 func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: hovel <command>")
-		return 2
-	}
-	switch args[0] {
-	case "init":
-		return a.runInit(ctx, args[1:], stdout, stderr)
-	case "daemon":
-		return a.runDaemon(ctx, args[1:], stdout, stderr)
-	default:
-		fmt.Fprintf(stderr, "unknown command %q\n", args[0])
-		return 2
-	}
-}
-
-func (a App) runInit(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("init", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspacePath := flags.String("workspace", "", "workspace path")
-	name := flags.String("name", "", "workspace name")
-	jsonOutput := flags.Bool("json", false, "emit JSON")
-	if err := flags.Parse(args); err != nil {
-		return 2
-	}
-	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected argument %q\n", flags.Arg(0))
-		return 2
+	workspacePath, ok, code := parseArgs(args, stdout, stderr)
+	if !ok {
+		return code
 	}
 
-	path := *workspacePath
-	if path == "" {
-		path = ".hovel"
-	}
-	workspaceName := *name
-	if workspaceName == "" {
-		workspaceName = defaultWorkspaceName(path)
-	}
-
-	result, err := a.workspaces.InitWorkspace(ctx, services.InitWorkspaceRequest{
-		Name: workspaceName,
-		Path: path,
-	})
+	session, err := a.EnsureDaemon(ctx, workspacePath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	defer session.Close()
 
-	if *jsonOutput {
-		payload := struct {
-			Created   bool `json:"created"`
-			Workspace struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
-				Path string `json:"path"`
-			} `json:"workspace"`
-		}{Created: result.Created}
-		payload.Workspace.ID = result.Workspace.ID.String()
-		payload.Workspace.Name = result.Workspace.Name.String()
-		payload.Workspace.Path = result.Workspace.Path
-		if err := json.NewEncoder(stdout).Encode(payload); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		return 0
-	}
-
-	if result.Created {
-		fmt.Fprintf(stdout, "Initialized workspace %s at %s\n", result.Workspace.Name, result.Workspace.Path)
-	} else {
-		fmt.Fprintf(stdout, "Workspace %s already initialized at %s\n", result.Workspace.Name, result.Workspace.Path)
-	}
+	fmt.Fprintln(stdout, a.Welcome(session))
+	a.Prompt(ctx, stdout, stderr).Run()
 	return 0
 }
 
-func (a App) runDaemon(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: hovel daemon <command>")
-		return 2
-	}
-	switch args[0] {
-	case "status":
-		return a.runDaemonStatus(ctx, args[1:], stdout, stderr)
-	default:
-		fmt.Fprintf(stderr, "unknown daemon command %q\n", args[0])
-		return 2
-	}
+func (a App) EnsureDaemon(ctx context.Context, workspacePath string) (*daemonmanager.Session, error) {
+	return a.manager.Ensure(ctx, workspacePath)
 }
 
-func (a App) runDaemonStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("daemon status", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	workspacePath := flags.String("workspace", "", "workspace path")
-	jsonOutput := flags.Bool("json", false, "emit JSON")
-	if err := flags.Parse(args); err != nil {
-		return 2
-	}
-	if flags.NArg() != 0 {
-		fmt.Fprintf(stderr, "unexpected argument %q\n", flags.Arg(0))
-		return 2
-	}
-
-	status, err := a.daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: *workspacePath})
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if *jsonOutput {
-		if err := json.NewEncoder(stdout).Encode(daemonStatusPayload(status)); err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
+func (a App) Prompt(ctx context.Context, stdout, stderr io.Writer) *prompt.Prompt {
+	executor := func(line string) {
+		if isExit(line) {
+			return
 		}
+		a.ExecuteLine(ctx, line, stdout, stderr)
+	}
+	return prompt.New(
+		executor,
+		a.Completer,
+		prompt.OptionTitle("hovel cli"),
+		prompt.OptionPrefix(a.PromptPrefix()),
+		prompt.OptionLivePrefix(func() (string, bool) {
+			return a.PromptPrefix(), true
+		}),
+		prompt.OptionPrefixTextColor(prompt.Fuchsia),
+		prompt.OptionInputTextColor(prompt.Turquoise),
+		prompt.OptionSuggestionTextColor(prompt.White),
+		prompt.OptionSuggestionBGColor(prompt.Black),
+		prompt.OptionSelectedSuggestionTextColor(prompt.Black),
+		prompt.OptionSelectedSuggestionBGColor(prompt.Fuchsia),
+		prompt.OptionDescriptionTextColor(prompt.LightGray),
+		prompt.OptionDescriptionBGColor(prompt.Black),
+		prompt.OptionSelectedDescriptionTextColor(prompt.Black),
+		prompt.OptionSelectedDescriptionBGColor(prompt.Turquoise),
+		prompt.OptionScrollbarThumbColor(prompt.Turquoise),
+		prompt.OptionScrollbarBGColor(prompt.Black),
+		prompt.OptionMaxSuggestion(10),
+		prompt.OptionSetExitCheckerOnInput(func(in string, _ bool) bool {
+			return isExit(in)
+		}),
+	)
+}
+
+func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
 		return 0
 	}
-	if status.State == daemon.StateNotRunning {
-		fmt.Fprintf(stdout, "Daemon not running for workspace %s\n", status.WorkspacePath)
+	if isExit(trimmed) {
 		return 0
 	}
-	fmt.Fprintf(stdout, "Daemon running for workspace %s pid=%d health=%s\n", status.WorkspacePath, status.Identity.PID, status.Identity.Health)
-	return 0
+	return a.commands.ExecuteLine(ctx, trimmed, stdout, stderr)
 }
 
-func daemonStatusPayload(status daemon.Status) struct {
-	State         string `json:"state"`
-	WorkspacePath string `json:"workspacePath"`
-	PID           int    `json:"pid,omitempty"`
-	SocketPath    string `json:"socketPath,omitempty"`
-	Health        string `json:"health,omitempty"`
-} {
-	payload := struct {
-		State         string `json:"state"`
-		WorkspacePath string `json:"workspacePath"`
-		PID           int    `json:"pid,omitempty"`
-		SocketPath    string `json:"socketPath,omitempty"`
-		Health        string `json:"health,omitempty"`
-	}{
-		State:         string(status.State),
-		WorkspacePath: status.WorkspacePath,
+func (a App) PromptPrefix() string {
+	if a.session == nil {
+		return a.theme.PromptPrefix("")
 	}
-	if status.State == daemon.StateRunning {
-		payload.PID = status.Identity.PID
-		payload.SocketPath = status.Identity.SocketPath
-		payload.Health = string(status.Identity.Health)
-	}
-	return payload
+	return a.theme.PromptPrefix(a.session.Snapshot().ActiveChain)
 }
 
-func defaultWorkspaceName(path string) string {
-	base := filepath.Base(filepath.Clean(path))
-	base = strings.TrimLeft(base, ".")
-	var b strings.Builder
-	for _, r := range base {
-		switch {
-		case unicode.IsLetter(r), unicode.IsDigit(r), r == '-', r == '_', r == '.':
-			b.WriteRune(r)
-		case unicode.IsSpace(r):
-			b.WriteRune('-')
+func (a App) Completer(document prompt.Document) []prompt.Suggest {
+	return a.Suggestions(document.TextBeforeCursor())
+}
+
+func (a App) Suggestions(line string) []prompt.Suggest {
+	line = strings.TrimLeft(line, " \t")
+	fields := strings.Fields(line)
+	endsWithSpace := strings.HasSuffix(line, " ") || strings.HasSuffix(line, "\t")
+	registry := a.commands.Registry()
+
+	if len(fields) == 0 {
+		return suggestionsFromDefinitions(registry.FirstSegments(), "")
+	}
+
+	if !endsWithSpace && len(fields) == 1 {
+		return suggestionsFromDefinitions(registry.FirstSegments(), fields[0])
+	}
+
+	path := fields
+	if !endsWithSpace {
+		path = fields[:len(fields)-1]
+	}
+	if children := registry.Children(path...); len(children) > 0 {
+		prefix := ""
+		if !endsWithSpace {
+			prefix = fields[len(fields)-1]
+		}
+		return suggestionsFromDefinitions(children, prefix)
+	}
+
+	definition, commandWordCount, ok := matchDefinition(registry, fields)
+	if !ok {
+		return nil
+	}
+	optionPrefix := ""
+	if !endsWithSpace {
+		last := fields[len(fields)-1]
+		if strings.HasPrefix(last, "-") {
+			optionPrefix = last
 		}
 	}
-	if b.Len() == 0 {
-		return "default"
+	if len(fields) >= commandWordCount {
+		return optionSuggestions(definition, optionPrefix)
 	}
-	return b.String()
-}
-
-type discardEvents struct{}
-
-func (discardEvents) Append(context.Context, event.Event) error {
 	return nil
 }
 
-type randomIDs struct{}
-
-func (randomIDs) NewID() string {
-	var bytes [16]byte
-	if _, err := rand.Read(bytes[:]); err != nil {
-		return fmt.Sprintf("id-%d", time.Now().UnixNano())
+func (a App) Welcome(session *daemonmanager.Session) string {
+	status := session.Status()
+	mode := "remote"
+	if session.Owned() {
+		mode = "managed"
 	}
-	return "id-" + hex.EncodeToString(bytes[:])
+	return a.theme.Welcome(WelcomeInfo{
+		ModuleCount:   a.moduleCount,
+		DaemonAddress: status.Identity.SocketPath,
+		DaemonMode:    mode,
+		Health:        string(status.Identity.Health),
+	})
 }
 
-type systemClock struct{}
+type Theme struct {
+	accent lipgloss.Style
+	cyan   lipgloss.Style
+	muted  lipgloss.Style
+	label  lipgloss.Style
+	panel  lipgloss.Style
+}
 
-func (systemClock) Now() time.Time {
-	return time.Now().UTC()
+func DefaultTheme() Theme {
+	return Theme{
+		accent: lipgloss.NewStyle().Foreground(lipgloss.Color("#ff2bd6")).Bold(true),
+		cyan:   lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
+		muted:  lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af")),
+		label:  lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")),
+		panel: lipgloss.NewStyle().
+			Border(thickRoundedBorder()).
+			BorderForeground(lipgloss.Color("#ff2bd6")).
+			Padding(0, 1),
+	}
+}
+
+func (t Theme) PromptPrefix(chain string) string {
+	chain = strings.TrimSpace(chain)
+	if chain == "" {
+		return "h0v3l> "
+	}
+	return "h0v3l ( " + chain + " )> "
+}
+
+type WelcomeInfo struct {
+	ModuleCount   int
+	DaemonAddress string
+	DaemonMode    string
+	Health        string
+}
+
+func (t Theme) Welcome(info WelcomeInfo) string {
+	details := []string{
+		t.accent.Render(hovelWordmark),
+		"",
+		t.detail("modules", strconv.Itoa(info.ModuleCount)),
+		t.detail("hoveld", info.DaemonAddress),
+		t.detail("mode", info.DaemonMode),
+		t.detail("health", info.Health),
+	}
+	return t.panel.Render(joinColumns(splitStyledLines([]string{t.cyan.Render(hovelASCII)}), splitStyledLines(details), 4))
+}
+
+func (t Theme) detail(label, value string) string {
+	return t.label.Render(label+":") + " " + t.muted.Render(value)
+}
+
+func suggestionsFromDefinitions(definitions []commands.Definition, prefix string) []prompt.Suggest {
+	var suggestions []prompt.Suggest
+	for _, definition := range definitions {
+		text := definition.Path[len(definition.Path)-1]
+		if prefix != "" && !strings.HasPrefix(text, prefix) {
+			continue
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: text, Description: definition.Summary})
+	}
+	return suggestions
+}
+
+func optionSuggestions(definition commands.Definition, prefix string) []prompt.Suggest {
+	var suggestions []prompt.Suggest
+	for _, option := range definition.Options {
+		names := []string{"--" + option.Name}
+		if option.Short != "" {
+			names = append(names, "-"+option.Short)
+		}
+		for _, name := range names {
+			if prefix != "" && !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			suggestions = append(suggestions, prompt.Suggest{Text: name, Description: option.Help})
+		}
+	}
+	return suggestions
+}
+
+func matchDefinition(registry commands.Registry, fields []string) (commands.Definition, int, bool) {
+	for i := len(fields); i > 0; i-- {
+		definition, ok := registry.Find(fields[:i]...)
+		if ok {
+			return definition, i, true
+		}
+	}
+	return commands.Definition{}, 0, false
+}
+
+func parseArgs(args []string, stdout, stderr io.Writer) (string, bool, int) {
+	switch len(args) {
+	case 0:
+		return "", true, 0
+	case 1:
+		if args[0] == "-h" || args[0] == "--help" {
+			fmt.Fprint(stdout, "Usage: hovel cli [--workspace <path>]\n\nLaunch the interactive Hovel prompt shell.\n")
+			return "", false, 0
+		}
+	case 2:
+		if args[0] == "--workspace" || args[0] == "-w" {
+			return args[1], true, 0
+		}
+	}
+	fmt.Fprintln(stderr, "hovel cli starts the interactive shell; use hovel command for one-shot invocations")
+	return "", false, 2
+}
+
+func isExit(line string) bool {
+	line = strings.TrimSpace(strings.ToLower(line))
+	return line == "exit" || line == "quit"
+}
+
+const builtInModuleCount = 1
+
+const hovelASCII = `          ~~~
+        ~~   ~
+           )
+          (
+        .-"""-.
+     .-'       '-.
+   .'   .-"""-.   '.
+  /    /       \    \
+ /____/_________\____\
+ |   _           _   |
+ |  (o)         (o)  |
+ |        ___        |
+ |       /   \       |
+ |______|_____|______|
+     ~~         ~~`
+
+const hovelWordmark = `░▒▓█▓▒░░▒▓█▓▒░░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓████████▓▒░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░
+░▒▓████████▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒▒▓█▓▒░░▒▓██████▓▒░ ░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▓█▓▒░ ░▒▓█▓▒░      ░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▓█▓▒░ ░▒▓█▓▒░      ░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░░▒▓██████▓▒░   ░▒▓██▓▒░  ░▒▓████████▓▒░▒▓████████▓▒░`
+
+func splitStyledLines(values []string) []string {
+	var lines []string
+	for _, value := range values {
+		lines = append(lines, strings.Split(value, "\n")...)
+	}
+	return lines
+}
+
+func thickRoundedBorder() lipgloss.Border {
+	return lipgloss.Border{
+		Top:         "━",
+		Bottom:      "━",
+		Left:        "┃",
+		Right:       "┃",
+		TopLeft:     "╭",
+		TopRight:    "╮",
+		BottomLeft:  "╰",
+		BottomRight: "╯",
+	}
+}
+
+func joinColumns(left, right []string, gap int) string {
+	width := 0
+	for _, line := range left {
+		if lipgloss.Width(line) > width {
+			width = lipgloss.Width(line)
+		}
+	}
+	var out []string
+	rows := len(left)
+	if len(right) > rows {
+		rows = len(right)
+	}
+	spacer := strings.Repeat(" ", gap)
+	for i := 0; i < rows; i++ {
+		leftLine := ""
+		if i < len(left) {
+			leftLine = left[i]
+		}
+		rightLine := ""
+		if i < len(right) {
+			rightLine = right[i]
+		}
+		out = append(out, leftLine+strings.Repeat(" ", width-lipgloss.Width(leftLine))+spacer+rightLine)
+	}
+	return strings.Join(out, "\n")
 }

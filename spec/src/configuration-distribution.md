@@ -89,12 +89,12 @@ hoveld-darwin-arm64
 hoveld-windows-amd64.exe
 ```
 
-The `hovel` binary may include daemon functionality directly or ship as a paired `hovel`/`hoveld` binary set.
+The `hovel` binary is the production mono-binary. It includes `command`, `cli`, `daemon`, and `tui` roles. A separate `hoveld` binary may exist only as a development shim if it materially improves local testing; it is not the product contract.
 
 Hovel may also publish a PyPI wrapper for Python-centric users:
 
 ```bash
-uvx hovel run ssh-memory --target 10.41.32.2 --payload sshplant
+uvx hovel command throw --chain ssh-memory --target 10.41.32.2
 ```
 
 The PyPI package may download or include the Go binary, similar to other compiled tools distributed through Python package indexes.
@@ -108,13 +108,14 @@ Module and service sources:
 5. Native binaries.
 6. Future registry.
 
-## Theming
+## Terminal Libraries And Theming
 
-The TUI should support built-in themes without making theme work part of the critical MVP path.
+The interactive `cli` shell should use go-prompt for prompt input, history, suggestions, and completions. The `cli` shell and TUI should share a small theme system without making theme work part of the critical MVP path. Lip Gloss is the styling engine for terminal presentation, with shared tokens for colors, borders, severity, focus, muted text, success, warning, danger, and active run state.
 
 Initial theme names:
 
 ```text
+31337
 acid
 bloodmoon
 ghost
@@ -124,4 +125,4 @@ midnight
 amberterm
 ```
 
-The visual target is a readable operator console with high contrast, tight navigation, and clear live status. Animation should clarify state changes, not compete with the work.
+The visual target is a readable 1337 operator console with high contrast, tight navigation, and clear live status. The look should feel distinctive, but output must remain usable in low-color terminals, over SSH, in logs, and with `--no-color`. Animation should clarify state changes, not compete with the work.

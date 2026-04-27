@@ -4,6 +4,10 @@ Chains are declarative workflows with typed steps. They should be inspectable be
 
 The first chain runner should be intentionally small. It should support sequential steps, literal inputs, `${inputs.*}` references, `${steps.<id>.output}` references, per-step events, cancellation, and artifact creation. It should not initially support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.
 
+Operator-facing chain records are CRUD resources. A chain can be created, selected with `chain use`, renamed, inspected, listed, deleted, and then thrown against the targets it owns. The active chain determines the prompt context, the default targets for `throw`, and the log topic that the client is subscribed to.
+
+Targets are owned by chains in the operator workflow. A target added while `alpha` is active belongs to `alpha`; switching to `beta` exposes `beta`'s target set instead. Chain logs follow the same boundary: `chain logs` renders the active chain's topic only, and multi-client front ends attached to the same chain observe the same topic.
+
 ## Chain Definition
 
 Example:

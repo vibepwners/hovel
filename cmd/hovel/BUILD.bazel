@@ -5,7 +5,7 @@ go_library(
     srcs = ["main.go"],
     importpath = "github.com/Vibe-Pwners/hovel/cmd/hovel",
     visibility = ["//visibility:private"],
-    deps = ["//internal/adapters/cli"],
+    deps = ["//internal/adapters/rootcli"],
 )
 
 go_binary(

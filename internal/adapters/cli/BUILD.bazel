@@ -6,10 +6,12 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/cli",
     visibility = ["//visibility:public"],
     deps = [
-        "//internal/adapters/storage/filesystem",
-        "//internal/app/services",
-        "//internal/domain/daemon",
-        "//internal/domain/event",
+        "//internal/adapters/commandmode",
+        "//internal/app/commands",
+        "//internal/app/operatorsession",
+        "//internal/infra/daemonmanager",
+        "@com_github_c_bata_go_prompt//:go-prompt",
+        "@com_github_charmbracelet_lipgloss//:lipgloss",
     ],
 )
 
@@ -20,5 +22,6 @@ go_test(
     deps = [
         "//internal/adapters/storage/filesystem",
         "//internal/domain/daemon",
+        "//internal/infra/daemonruntime",
     ],
 )

@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "terminallog",
+    srcs = ["renderer.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/terminallog",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/app/operatorlog",
+        "@com_github_charmbracelet_lipgloss//:lipgloss",
+    ],
+)
+
+go_test(
+    name = "terminallog_test",
+    srcs = ["renderer_test.go"],
+    embed = [":terminallog"],
+    deps = ["//internal/app/operatorlog"],
+)

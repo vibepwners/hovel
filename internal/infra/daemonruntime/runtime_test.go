@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 )
@@ -81,6 +82,59 @@ func TestServeRejectsDuplicateWorkspace(t *testing.T) {
 	}
 }
 
+func TestServeRunsMockExploitOverRPC(t *testing.T) {
+	workspacePath := t.TempDir()
+	socketPath := workspacePath + "/hoveld.sock"
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, 1)
+	go func() {
+		errs <- Serve(ctx, Args{
+			WorkspacePath: workspacePath,
+			SocketPath:    socketPath,
+			PID:           123,
+			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+			Clock:         fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+		})
+	}()
+	defer func() {
+		cancel()
+		<-errs
+	}()
+
+	waitFor(t, func() bool {
+		client, err := daemonrpc.Dial(socketPath)
+		if err != nil {
+			return false
+		}
+		client.Close()
+		return true
+	})
+
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	result, err := client.RunMockExploit(context.Background(), daemonrpc.RunMockExploitRequest{
+		ModuleID: "mock-exploit",
+		Target:   "mock://target",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RunID != "run-1" {
+		t.Fatalf("run id = %q, want run-1", result.RunID)
+	}
+	if result.State != "succeeded" {
+		t.Fatalf("state = %q, want succeeded", result.State)
+	}
+	if len(result.Findings) != 1 {
+		t.Fatalf("finding count = %d, want 1", len(result.Findings))
+	}
+}
+
 func TestServeReturnsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -94,6 +148,25 @@ func TestServeReturnsContextCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
 	}
+}
+
+type sequenceIDs struct {
+	values []string
+	next   int
+}
+
+func (s *sequenceIDs) NewID() string {
+	value := s.values[s.next]
+	s.next++
+	return value
+}
+
+type fixedClock struct {
+	now time.Time
+}
+
+func (c fixedClock) Now() time.Time {
+	return c.now
 }
 
 func waitFor(t *testing.T, condition func() bool) {

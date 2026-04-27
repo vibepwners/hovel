@@ -199,7 +199,11 @@ failed
 
 ## Chain
 
-A chain is an ordered graph of phases and steps.
+A chain is an operator-owned workflow record and an ordered graph of phases and steps. Chains are CRUD resources: operators can create, select, rename, inspect, list, and delete them through shared application services.
+
+Chains own targets for the current workflow. Adding or clearing targets through an operator front end mutates the active chain's target set, not a global target scratchpad.
+
+Chains also own their logging topic. The canonical topic shape is `chain/<chain>/logs`. A front end only renders logs for the chain it has activated or attached to, while daemon-side storage and event streams keep those logs available for other clients attached to the same chain.
 
 Typical phases:
 

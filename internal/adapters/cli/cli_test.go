@@ -10,27 +10,54 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 )
 
-func TestInitHumanOutput(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	code := Run(context.Background(), []string{"init", "--workspace", t.TempDir()}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
+	app := NewApp()
+
+	root := app.Suggestions("ch")
+	if len(root) != 1 || root[0].Text != "chain" {
+		t.Fatalf("root suggestions = %#v, want chain", root)
 	}
-	if !strings.Contains(stdout.String(), "Initialized workspace") {
-		t.Fatalf("stdout = %q", stdout.String())
+
+	controlChildren := app.Suggestions("control ")
+	if len(controlChildren) != 2 || controlChildren[0].Text != "daemon" || controlChildren[1].Text != "init" {
+		t.Fatalf("control suggestions = %#v, want daemon and init", controlChildren)
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("stderr = %q", stderr.String())
+
+	chainChildren := app.Suggestions("chain ")
+	var chainNames []string
+	for _, suggestion := range chainChildren {
+		chainNames = append(chainNames, suggestion.Text)
+	}
+	for _, want := range []string{"create", "delete", "inspect", "list", "logs", "rename", "use"} {
+		if !contains(chainNames, want) {
+			t.Fatalf("chain suggestions = %#v, missing %s", chainNames, want)
+		}
 	}
 }
 
-func TestInitJSONOutput(t *testing.T) {
+func TestOptionSuggestionsComeFromCommandRegistry(t *testing.T) {
+	app := NewApp()
+
+	suggestions := app.Suggestions("throw --")
+	var names []string
+	for _, suggestion := range suggestions {
+		names = append(names, suggestion.Text)
+	}
+	for _, want := range []string{"--workspace", "--chain", "--target", "--json"} {
+		if !contains(names, want) {
+			t.Fatalf("suggestions = %#v, missing %s", names, want)
+		}
+	}
+}
+
+func TestExecuteLineUsesCommandMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	workspacePath := t.TempDir()
 
-	code := Run(context.Background(), []string{"init", "--workspace", workspacePath, "--json"}, &stdout, &stderr)
+	code := NewApp().ExecuteLine(context.Background(), "control init --workspace "+workspacePath+" --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -38,8 +65,6 @@ func TestInitJSONOutput(t *testing.T) {
 	var payload struct {
 		Created   bool `json:"created"`
 		Workspace struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
 			Path string `json:"path"`
 		} `json:"workspace"`
 	}
@@ -49,115 +74,169 @@ func TestInitJSONOutput(t *testing.T) {
 	if !payload.Created {
 		t.Fatal("created = false, want true")
 	}
-	if payload.Workspace.ID == "" {
-		t.Fatal("workspace ID is empty")
-	}
 	if payload.Workspace.Path != workspacePath {
 		t.Fatalf("workspace path = %q, want %q", payload.Workspace.Path, workspacePath)
 	}
 }
 
-func TestInitIsIdempotent(t *testing.T) {
-	workspacePath := t.TempDir()
+func TestPromptPrefixTracksActiveChain(t *testing.T) {
+	app := NewApp()
 	var stdout, stderr bytes.Buffer
 
-	if code := Run(context.Background(), []string{"init", "--workspace", workspacePath}, &stdout, &stderr); code != 0 {
-		t.Fatalf("first exit code = %d, stderr = %s", code, stderr.String())
+	if got := app.PromptPrefix(); got != "h0v3l> " {
+		t.Fatalf("prompt prefix = %q, want default", got)
+	}
+	if code := app.ExecuteLine(context.Background(), "chain use mock-exploit", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if got := app.PromptPrefix(); got != "h0v3l ( mock-exploit )> " {
+		t.Fatalf("prompt prefix = %q, want active chain", got)
+	}
+}
+
+func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
+	workspacePath := t.TempDir()
+	socketPath := workspacePath + "/hoveld.sock"
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, 1)
+	go func() {
+		errs <- daemonruntime.Serve(ctx, daemonruntime.Args{
+			WorkspacePath: workspacePath,
+			SocketPath:    socketPath,
+		})
+	}()
+	defer func() {
+		cancel()
+		<-errs
+	}()
+
+	waitFor(t, func() bool {
+		status, err := filesystem.NewWorkspaceStore().DaemonStatus(context.Background(), workspacePath)
+		return err == nil && status.State == daemon.StateRunning
+	})
+
+	app := NewApp()
+	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(context.Background(), "chain use mock-exploit", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if code := app.ExecuteLine(context.Background(), "targets add mock://target", &stdout, &stderr); code != 0 {
+		t.Fatalf("targets exit code = %d, stderr = %s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
 
-	if code := Run(context.Background(), []string{"init", "--workspace", workspacePath}, &stdout, &stderr); code != 0 {
-		t.Fatalf("second exit code = %d, stderr = %s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "already initialized") {
-		t.Fatalf("stdout = %q", stdout.String())
-	}
-}
-
-func TestDaemonStatusNotRunning(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	workspacePath := t.TempDir()
-
-	code := Run(context.Background(), []string{"daemon", "status", "--workspace", workspacePath}, &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "not running") {
-		t.Fatalf("stdout = %q", stdout.String())
-	}
-}
-
-func TestDaemonStatusJSON(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	workspacePath := t.TempDir()
-
-	code := Run(context.Background(), []string{"daemon", "status", "--workspace", workspacePath, "--json"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}
 
 	var payload struct {
-		State         string `json:"state"`
-		WorkspacePath string `json:"workspacePath"`
+		Chain   string `json:"chain"`
+		Targets []string
+		Results []struct {
+			Target string `json:"target"`
+			State  string `json:"state"`
+		} `json:"results"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
 		t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
 	}
-	if payload.State != "not_running" {
-		t.Fatalf("state = %q, want not_running", payload.State)
+	if payload.Chain != "mock-exploit" {
+		t.Fatalf("chain = %q, want mock-exploit", payload.Chain)
 	}
-	if payload.WorkspacePath != workspacePath {
-		t.Fatalf("workspace path = %q, want %q", payload.WorkspacePath, workspacePath)
+	if len(payload.Targets) != 1 || payload.Targets[0] != "mock://target" {
+		t.Fatalf("targets = %#v", payload.Targets)
+	}
+	if len(payload.Results) != 1 || payload.Results[0].State != "succeeded" {
+		t.Fatalf("results = %#v", payload.Results)
 	}
 }
 
-func TestDaemonStatusJSONRunning(t *testing.T) {
+func TestRunRejectsOneShotCommandArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+
+	code := Run(context.Background(), []string{"throw", "--chain", "mock-exploit"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "hovel command") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
+	app := NewApp()
 	workspacePath := t.TempDir()
-	socketPath := workspacePath + "/hoveld.sock"
-	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
-		WorkspacePath: workspacePath,
-		PID:           12345,
-		SocketPath:    socketPath,
-		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-		Health:        daemon.HealthHealthy,
-	})
+	session, err := app.EnsureDaemon(context.Background(), workspacePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := filesystem.NewWorkspaceStore().WriteDaemonStatus(context.Background(), identity); err != nil {
+	defer session.Close()
+
+	welcome := app.Welcome(session)
+	for _, want := range []string{
+		`.-"""-.`,
+		"╭",
+		"╰",
+		"━",
+		"┃",
+		"▓██████▓",
+		"modules:",
+		"1",
+		"hoveld:",
+		"hoveld.sock",
+		"mode:",
+		"managed",
+		"health:",
+		"healthy",
+	} {
+		if !strings.Contains(welcome, want) {
+			t.Fatalf("welcome missing %q:\n%s", want, welcome)
+		}
+	}
+	if lines := strings.Split(welcome, "\n"); len(lines) < 14 {
+		t.Fatalf("welcome line count = %d, want ascii art block:\n%s", len(lines), welcome)
+	}
+}
+
+func TestEnsureDaemonStartsManagedDaemonForCLI(t *testing.T) {
+	workspacePath := t.TempDir()
+	session, err := NewApp().EnsureDaemon(context.Background(), workspacePath)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer session.Close()
 
-	code := Run(context.Background(), []string{"daemon", "status", "--workspace", workspacePath, "--json"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	if !session.Owned() {
+		t.Fatal("session owned = false, want true")
 	}
+	status, err := filesystem.NewWorkspaceStore().DaemonStatus(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != daemon.StateRunning {
+		t.Fatalf("daemon state = %s, want running", status.State)
+	}
+}
 
-	var payload struct {
-		State         string `json:"state"`
-		WorkspacePath string `json:"workspacePath"`
-		PID           int    `json:"pid"`
-		SocketPath    string `json:"socketPath"`
-		Health        string `json:"health"`
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
+	return false
+}
+
+func waitFor(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	if payload.State != "running" {
-		t.Fatalf("state = %q, want running", payload.State)
-	}
-	if payload.WorkspacePath != workspacePath {
-		t.Fatalf("workspace path = %q, want %q", payload.WorkspacePath, workspacePath)
-	}
-	if payload.PID != 12345 {
-		t.Fatalf("pid = %d, want 12345", payload.PID)
-	}
-	if payload.SocketPath != socketPath {
-		t.Fatalf("socket path = %q, want %q", payload.SocketPath, socketPath)
-	}
-	if payload.Health != "healthy" {
-		t.Fatalf("health = %q, want healthy", payload.Health)
-	}
+	t.Fatal("condition was not met before deadline")
 }

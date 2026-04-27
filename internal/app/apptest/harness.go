@@ -9,11 +9,13 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+	"github.com/Vibe-Pwners/hovel/internal/modules/mockexploit"
 )
 
 type Harness struct {
 	Workspaces services.WorkspaceService
 	Daemons    services.DaemonService
+	Runs       services.RunService
 	Events     *EventRecorder
 }
 
@@ -25,6 +27,7 @@ func NewHarness() Harness {
 	return Harness{
 		Workspaces: services.NewWorkspaceService(store, events, ids, clock),
 		Daemons:    services.NewDaemonService(store),
+		Runs:       services.NewRunService(mockexploit.Runner{}, events, ids, clock),
 		Events:     events,
 	}
 }
@@ -35,6 +38,10 @@ func (Harness) InitWorkspace(name, path string) services.InitWorkspaceRequest {
 
 func (Harness) DaemonStatus(path string) services.DaemonStatusRequest {
 	return services.DaemonStatusRequest{WorkspacePath: path}
+}
+
+func (Harness) MockExploit(moduleID, target string) services.ExecuteMockExploitRequest {
+	return services.ExecuteMockExploitRequest{ModuleID: moduleID, Target: target}
 }
 
 type memoryStore struct {

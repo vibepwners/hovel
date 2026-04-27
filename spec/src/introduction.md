@@ -12,7 +12,7 @@ The main product goal is straightforward:
 
 > Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every run.
 
-The central runtime is a local engine, `hoveld`, which owns runs, module processes, managed services, provider state, events, artifacts, and workspace storage. CLI, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.
+The central runtime is a local engine, `hoveld`, which owns runs, module processes, managed services, provider state, events, artifacts, and workspace storage. `command` mode, interactive `cli` mode, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.
 
 ## Core Decisions
 
@@ -31,15 +31,11 @@ The central runtime is a local engine, `hoveld`, which owns runs, module process
 Hovel exposes one engine through multiple front ends:
 
 ```text
-                 +--------------+
-                 |     CLI      |
-                 +------+-------+
-                        |
-                 +------v-------+
-                 |      TUI     |
-                 +------+-------+
-                        |
-+--------------+ +------v-------+ +--------------+
+ +--------------+ +--------------+ +--------------+
+ |   command    | |     cli      | |     TUI      |
+ +------+-------+ +------+-------+ +------+-------+
+        |                |                |
++-------v------+ +-------v------+ +-------v------+
 |     MCP      |>|   hoveld     |<| REST/OpenAPI |
 +--------------+ | Application  | +--------------+
                  |   Services   |
@@ -62,7 +58,7 @@ Hovel exposes one engine through multiple front ends:
  +--------------+ +-------------+ +--------------+
 ```
 
-All front ends must call the same application services. The TUI must not contain business logic. The MCP adapter must not bypass validation. The CLI must not implement its own chain runner. The REST API must not become a second framework.
+All front ends must call the same application services. The TUI must not contain business logic. The MCP adapter must not bypass validation. `command` and `cli` modes must not implement their own chain runners. The REST API must not become a second framework.
 
 ## MVP Boundaries
 
@@ -84,10 +80,10 @@ The first MVP slice should prove the narrowest useful loop:
 4. Launch one Python module through the SDK path.
 5. Complete handshake, execution, logging, and shutdown.
 6. Emit structured events through the shared event stream.
-7. Persist the run plan, approval record, artifacts, and replayable run record.
-8. Inspect the run from the CLI.
+7. Persist the throw plan, approval record, artifacts, and replayable run record.
+8. Inspect the throw from the CLI.
 
-The alpha can then add managed services, provider-backed payload resolution, simple chains, MCP execution parity, and the TUI. Those features should attach to the proven loop rather than expanding the platform surface before the core path works.
+The alpha can then add managed services, provider-backed payload resolution, richer chains, MCP execution parity, and the TUI. Those features should attach to the proven loop rather than expanding the platform surface before the core path works.
 
 ## Alpha Deferrals
 

@@ -1,0 +1,32 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "commands",
+    srcs = [
+        "catalog.go",
+        "registry.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/app/commands",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/app/operatorlog",
+        "//internal/app/operatorsession",
+        "//internal/app/services",
+        "//internal/domain/daemon",
+    ],
+)
+
+go_test(
+    name = "commands_test",
+    srcs = [
+        "catalog_test.go",
+        "registry_test.go",
+    ],
+    embed = [":commands"],
+    deps = [
+        "//internal/app/operatorsession",
+        "//internal/app/services",
+        "//internal/domain/daemon",
+        "//internal/domain/workspace",
+    ],
+)

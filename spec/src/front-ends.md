@@ -2,9 +2,110 @@
 
 Front ends are adapters over application services. They must share validation, planning, execution, event streaming, safety policy, and audit behavior.
 
-## CLI
+Hovel should have multiple first-class operator front ends: MCP for agentic and tooling workflows, `command` mode for normal shell invocations, `cli` mode for an interactive prompt shell, and `tui` mode for a full-screen terminal interface. These surfaces may feel different, but they must attach to the same daemon and use the same application services.
 
-The CLI is the first interface and should exist before the TUI becomes complex. Invoking `hovel` must start or attach to `hoveld` before executing commands.
+The production entrypoint is the `hovel` mono-binary. Top-level subcommands select the front-end or daemon role:
+
+```text
+hovel command ...
+hovel cli ...
+hovel daemon ...
+hovel tui ...
+```
+
+## Terminology
+
+These terms are normative:
+
+1. `command` mode is the normal shell command line. It runs one command, prints output, and exits.
+2. `cli` mode is an interactive prompt shell. It takes over the terminal like a REPL, but it is not a full-screen TUI.
+3. `tui` mode is the full-screen terminal UI.
+4. `daemon` mode runs or inspects the engine role directly.
+
+The old phrase "CLI command mode" should be avoided. Use `command` for non-interactive shell invocations and `cli` for the interactive prompt shell.
+
+## Command Mode
+
+`command` mode is for scripts, automation, CI, quick inspection, and normal shell usage. It should include every operation that makes sense outside the interactive `cli` or full-screen `tui` environments.
+
+Command mode rules:
+
+1. Invoked as `hovel command ...`.
+2. Runs one command and exits.
+3. Uses shared command definitions from the central command registry.
+4. Uses the same argument, switch, option, help, validation, completion metadata, and handlers as `cli` mode.
+5. Uses `--json` for structured automation.
+6. Uses `--no-color` for simple terminals and logs.
+7. Requires an already-running daemon for daemon-backed operator commands.
+8. Provides daemon-management commands such as status and explicit daemon startup where appropriate.
+9. Does not silently spawn a managed daemon for ordinary commands. Automatic managed-daemon startup is reserved for `cli` and `tui`.
+
+Recommended command tree:
+
+```text
+hovel
+  command
+    control
+      init
+      daemon
+        status
+        stop
+    chain
+      create <chain>
+      use <chain-or-module>
+      rename <chain> <name>
+      list
+      inspect
+      delete <chain>
+      logs
+      plan
+    targets
+      add <target>
+      clear
+      list
+      inspect
+      import
+    throw
+    modules
+      list
+      inspect <module>
+      scaffold
+      validate <path>
+    services
+      list
+      inspect <service>
+      start <service>
+      stop <service>
+      logs <service>
+      scaffold
+      validate <path>
+    providers
+      list
+      inspect <provider>
+    payloads
+      list
+      inspect <payload>
+      build <payload>
+    listeners
+      list
+      inspect <listener>
+      stop <listener>
+    sessions
+      list
+      attach <session>
+      close <session>
+    runs
+      list
+      inspect <run>
+      logs <run>
+      artifacts <run>
+```
+
+## CLI Mode
+
+`cli` mode is the first rich operator interface and should exist before the full TUI becomes complex. It starts an interactive prompt shell with command history, completions, contextual help, and styled output. It should use `go-prompt` for the prompt and completion loop and Lip Gloss for prompt, table, panel, status, and result styling.
+
+CLI mode should be inspired by what operators like about Metasploit: fast discovery, a stable prompt, contextual commands, readable module options, jobs, sessions, and a workflow that lets an operator stay inside the tool while moving from discovery to planning to execution. It should not clone Metasploit command names or behavior wholesale; Hovel should have its own vocabulary around chains, targets, providers, payloads, listeners, sessions, approvals, throws, events, and artifacts.
 
 Requirements:
 
@@ -15,63 +116,84 @@ Requirements:
 5. `--workspace` selection.
 6. Shell completion.
 7. Module and service inspection.
-8. Run planning and execution.
+8. Chain selection, target setup, and throw execution.
 9. Service lifecycle control.
 10. Artifact, listener, and session listing.
+11. Command history, contextual help, and a status-aware prompt.
+12. Lip Gloss styling for tables, transcript logs, findings, throw status, and prompt output.
+13. A shared theme package with the TUI.
+14. go-prompt completion generated from the central command registry.
+15. Managed daemon lifecycle: attach to an existing daemon if one is running; otherwise start a background daemon owned by the `cli` session and shut it down on exit.
 
-Recommended command tree:
+Recommended top-level shape:
 
 ```text
 hovel
-  init
-  daemon
-    start
-    stop
-    status
-  tui
-  run <chain-or-module>
-  plan <chain-or-module>
-  modules
-    list
-    inspect <module>
-    scaffold
-    validate <path>
-  services
-    list
-    inspect <service>
-    start <service>
-    stop <service>
-    logs <service>
-    scaffold
-    validate <path>
-  providers
-    list
-    inspect <provider>
-  payloads
-    list
-    inspect <payload>
-    build <payload>
-  listeners
-    list
-    inspect <listener>
-    stop <listener>
-  sessions
-    list
-    attach <session>
-    close <session>
-  targets
-    add
-    list
-    inspect
-    import
-  runs
-    list
-    inspect <run>
-    logs <run>
-    artifacts <run>
-  serve
-  mcp
+  cli
 ```
+
+The root-level legacy command aliases may exist during early development, but the durable contract is `hovel command`, `hovel cli`, `hovel daemon`, and `hovel tui`.
+
+Recommended prompt shape:
+
+```text
+h0v3l> control init --workspace .hovel
+h0v3l> chain use mock-exploit
+h0v3l ( mock-exploit )> targets add mock://target-1
+h0v3l ( mock-exploit )> targets add mock://target-2
+h0v3l ( mock-exploit )> throw
+h0v3l ( mock-exploit )> chain logs
+```
+
+Initial interactive commands:
+
+```text
+help
+control init
+control daemon status
+chain create
+chain use
+chain rename
+chain list
+chain inspect
+chain delete
+chain logs
+targets add
+targets clear
+throw
+search
+info
+options
+unset
+plan
+approve
+cancel
+events
+artifacts
+jobs
+sessions
+listeners
+services
+back
+exit
+```
+
+The prompt should show workspace and active chain context, but never become a hidden state machine. When a chain is activated with `chain use <chain>`, the prompt includes the selected chain as `h0v3l ( <chain> )>`. Every interactive action should have an equivalent `command` mode invocation or application service call.
+
+The canonical interactive execution loop is:
+
+1. Create, list, inspect, rename, or delete chains with the `chain` command group.
+2. Select or define a chain with `chain use <chain-or-module>`.
+3. Add one or more targets owned by the active chain with `targets add <target>`.
+4. Execute the active chain against its owned targets with `throw`.
+
+Targets belong to chains. `targets add` and `targets clear` operate on the active chain only, and `throw` without explicit options uses the active chain and that chain's target set.
+
+Chains own their log topic. A chain topic is addressable as `chain/<chain>/logs`, and `chain logs` shows only the logs for the active chain. In multi-client sessions, a `cli`, `tui`, or MCP client attached to a chain subscribes to that chain topic; clients attached to the same chain see the same logs, while clients attached to other chains do not see them by default.
+
+Operational setup commands such as workspace initialization and daemon inspection must be grouped under `control` in the registry exposed to `cli` and `command`. The old top-level `run` command should not be the durable operator contract; `throw` is the execution verb for the selected chain and target set.
+
+The visual goal is "1337 af" but maintainable: high contrast, sharp prompt styling, clear context, readable tables, severe/status colors, and deterministic render tests. Styling should be centralized in the shared terminal theme package rather than scattered across command handlers.
 
 ## TUI
 
@@ -80,11 +202,14 @@ The TUI is the visual identity of the project, but it should remain a client ove
 Requirements:
 
 1. Attaches to `hoveld`.
-2. Consumes the same event stream as CLI, API, and MCP.
+2. Consumes the same event stream as `command`, `cli`, API, and MCP.
 3. Works over SSH.
 4. Degrades gracefully on limited terminals.
 5. Supports multiple clients attached to the same engine.
 6. Uses Bubble Tea, Bubbles, and Lip Gloss.
+7. Shares theme tokens with `cli` mode.
+8. Presents the same plans, approvals, runs, sessions, listeners, artifacts, and events as `cli`, `command`, and MCP.
+9. Managed daemon lifecycle: attach to an existing daemon if one is running; otherwise start a background daemon owned by the `tui` session and shut it down on exit.
 
 Initial screens:
 
@@ -119,11 +244,46 @@ Live run view should include:
 10. Error panel.
 11. Progress indicators.
 
+Visual direction:
+
+1. High-contrast operator console, not a generic dashboard.
+2. Dense but legible layouts.
+3. Lip Gloss borders, tables, tabs, status bars, and severity styling.
+4. Built-in themes with a 31337 aesthetic, while preserving accessibility and `--no-color` or low-color fallbacks.
+5. Keyboard-first navigation with clear focus states.
+6. Motion only where it clarifies live state.
+
+## Shared Command Registry
+
+Hovel must have a central command registry that is the single source of truth for operator commands.
+
+Registering a command once should make it available to both:
+
+1. `command` mode as a normal shell invocation.
+2. `cli` mode as an interactive command with prompt completion and contextual help.
+
+The registry owns:
+
+1. Command path and aliases.
+2. Short and long help text.
+3. Positional arguments.
+4. Flags, switches, and options.
+5. Required and optional values.
+6. Value parsers and validation.
+7. Completion providers.
+8. Output modes, including human output and JSON.
+9. Handler binding to application services or daemon RPC calls.
+10. Safety and approval metadata.
+
+Command handlers must not parse argv directly. They receive a validated command invocation built from registry metadata. Command mode should adapt registry metadata into argparse parsers. CLI mode should adapt the same metadata into go-prompt suggestions, contextual help, and validated invocations.
+
+Golden tests should verify that a command registered in the central registry appears in both command mode help and CLI mode completion/help. Contract tests should verify that arguments, switches, default values, required fields, and validation errors are identical across both modes.
+
 ## REST/OpenAPI
 
 The REST API should be generated from Go types where possible.
 
-REST should not block the first useful CLI and event-stream loop. It may ship in the first alpha if needed for MCP or external automation, but it must remain an adapter over application services.
+REST should not block the first useful command/CLI and event-stream loop. It may ship in the first alpha if needed for MCP or external automation, but it must remain an adapter over application services.
 
 Primary uses:
 
@@ -156,7 +316,9 @@ Event streaming may use Server-Sent Events or WebSockets.
 
 MCP is another front end over the same application services.
 
-MCP has eventual operator parity: anything a human can do through CLI/TUI/API should be representable through MCP, subject to the same policy checks, confirmations, planning output, and audit trail. The implementation should ship inspection and planning tools before execution tools unless the shared approval and audit path is already complete.
+MCP has eventual operator parity: anything a human can do through `command`, `cli`, TUI, or API should be representable through MCP, subject to the same policy checks, confirmations, planning output, and audit trail. The implementation should ship inspection and planning tools before execution tools unless the shared approval and audit path is already complete.
+
+MCP should be treated as a peer front end, not as a privileged back door. It may expose workflows optimized for agents, but those workflows must produce the same plans, policy decisions, approvals, events, and artifacts that a CLI or TUI operator would see.
 
 Initial inspection and planning tools:
 

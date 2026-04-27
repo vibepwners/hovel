@@ -1,0 +1,30 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "commandmode",
+    srcs = ["commandmode.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/commandmode",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/adapters/daemonrpc",
+        "//internal/adapters/storage/filesystem",
+        "//internal/adapters/terminallog",
+        "//internal/app/commands",
+        "//internal/app/services",
+        "//internal/domain/event",
+        "@com_github_akamensky_argparse//:argparse",
+    ],
+)
+
+go_test(
+    name = "commandmode_test",
+    srcs = ["commandmode_test.go"],
+    embed = [":commandmode"],
+    deps = [
+        "//internal/adapters/storage/filesystem",
+        "//internal/app/commands",
+        "//internal/app/operatorlog",
+        "//internal/domain/daemon",
+        "//internal/infra/daemonruntime",
+    ],
+)
