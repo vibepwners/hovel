@@ -1,0 +1,75 @@
+version: '3'
+
+tasks:
+  default:
+    desc: List available tasks.
+    cmds:
+      - task --list
+
+  build:
+    aliases: [b]
+    desc: Build every Bazel target.
+    cmds:
+      - bazel build //...
+
+  test:
+    aliases: [t]
+    desc: Run every Bazel test.
+    cmds:
+      - bazel test //...
+
+  lint:
+    aliases: [l]
+    desc: Run all lint checks.
+    cmds:
+      - task: gofmt:check
+      - task: gazelle:check
+
+  check:
+    aliases: [ci]
+    desc: Run lint, build, and test.
+    cmds:
+      - task: lint
+      - task: build
+      - task: test
+
+  precommit:
+    aliases: [pre-commit]
+    desc: Run the checks enforced by Lefthook pre-commit.
+    cmds:
+      - task: check
+
+  gofmt:
+    desc: Format Go files in place.
+    cmds:
+      - bash tools/lint/gofmt_all.sh
+
+  "gofmt:check":
+    desc: Check Go formatting.
+    cmds:
+      - bash tools/lint/check_gofmt.sh
+
+  gazelle:
+    desc: Update Go BUILD metadata with Gazelle.
+    cmds:
+      - bazel run //:gazelle
+
+  "gazelle:check":
+    desc: Check Go BUILD metadata is up to date.
+    cmds:
+      - bazel run //:gazelle -- -mode=diff
+
+  docs:
+    desc: Build the mdBook spec.
+    cmds:
+      - bazel build //spec:book
+
+  "hooks:install":
+    desc: Install Git hooks through Lefthook.
+    cmds:
+      - lefthook install
+
+  "hooks:run":
+    desc: Run Lefthook pre-commit checks.
+    cmds:
+      - lefthook run pre-commit
