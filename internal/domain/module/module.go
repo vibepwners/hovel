@@ -31,9 +31,6 @@ func NewModuleName(value string) (ModuleName, error) {
 	if value == "" || strings.TrimSpace(value) == "" {
 		return "", errors.New("module name is required")
 	}
-	if len(value) == 0 {
-		return "", errors.New("module name is required")
-	}
 	// Must not start with a hyphen
 	if value[0] == '-' {
 		return "", errors.New("module name must not start with a hyphen")

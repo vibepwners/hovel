@@ -107,6 +107,26 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 			}`,
 			wantErr: "spec.moduleType is required",
 		},
+		{
+			name: "missing runtime",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Module",
+				"metadata": {"name": "ssh-survey", "version": "0.1.0"},
+				"spec": {"moduleType": "survey"}
+			}`,
+			wantErr: "spec.runtime.type is required",
+		},
+		{
+			name: "missing runtime entrypoint",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Module",
+				"metadata": {"name": "ssh-survey", "version": "0.1.0"},
+				"spec": {"runtime": {"type": "python-rpc"}, "moduleType": "survey"}
+			}`,
+			wantErr: "spec.runtime.entrypoint is required",
+		},
 	}
 
 	for _, tc := range cases {
@@ -255,6 +275,26 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "payload_provider"}
 			}`,
 			wantErr: "spec.lifecycle is required",
+		},
+		{
+			name: "missing runtime",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Service",
+				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
+				"spec": {"serviceType": "payload_provider", "lifecycle": {}}
+			}`,
+			wantErr: "spec.runtime is required",
+		},
+		{
+			name: "missing runtime entrypoint",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Service",
+				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
+				"spec": {"runtime": {"type": "python-service-rpc"}, "serviceType": "payload_provider", "lifecycle": {}}
+			}`,
+			wantErr: "spec.runtime.entrypoint is required",
 		},
 	}
 

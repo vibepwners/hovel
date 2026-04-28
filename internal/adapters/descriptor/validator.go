@@ -21,8 +21,14 @@ type rawMetadata struct {
 	Version string `json:"version"`
 }
 
+type rawRuntime struct {
+	Type       string `json:"type"`
+	Entrypoint string `json:"entrypoint"`
+}
+
 type rawModuleSpec struct {
-	ModuleType string `json:"moduleType"`
+	Runtime    rawRuntime `json:"runtime"`
+	ModuleType string     `json:"moduleType"`
 }
 
 const expectedAPIVersion = "hovel.dev/v1alpha1"
@@ -58,6 +64,12 @@ func ValidateModuleDescriptor(data []byte) (module.Descriptor, error) {
 		}
 	}
 
+	if spec.Runtime.Type == "" {
+		return module.Descriptor{}, errors.New("spec.runtime.type is required")
+	}
+	if spec.Runtime.Entrypoint == "" {
+		return module.Descriptor{}, errors.New("spec.runtime.entrypoint is required")
+	}
 	if spec.ModuleType == "" {
 		return module.Descriptor{}, errors.New("spec.moduleType is required")
 	}
@@ -116,6 +128,21 @@ func ValidateServiceDescriptor(data []byte) (service.Descriptor, error) {
 		if err := json.Unmarshal(raw.Spec, &specMap); err != nil {
 			return service.Descriptor{}, err
 		}
+	}
+
+	runtimeRaw, hasRuntime := specMap["runtime"]
+	if !hasRuntime {
+		return service.Descriptor{}, errors.New("spec.runtime is required")
+	}
+	var runtime rawRuntime
+	if err := json.Unmarshal(runtimeRaw, &runtime); err != nil {
+		return service.Descriptor{}, err
+	}
+	if runtime.Type == "" {
+		return service.Descriptor{}, errors.New("spec.runtime.type is required")
+	}
+	if runtime.Entrypoint == "" {
+		return service.Descriptor{}, errors.New("spec.runtime.entrypoint is required")
 	}
 
 	serviceTypeRaw, hasServiceType := specMap["serviceType"]
