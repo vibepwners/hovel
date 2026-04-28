@@ -219,6 +219,52 @@ func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
 	}
 }
 
+func TestInitHumanOutput(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	workspacePath := t.TempDir()
+
+	code := Run(context.Background(), []string{"control", "init", "--workspace", workspacePath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	output := stdout.String()
+	if !strings.Contains(output, workspacePath) {
+		t.Fatalf("stdout missing workspace path %q:\n%s", workspacePath, output)
+	}
+	if strings.HasPrefix(strings.TrimSpace(output), "{") {
+		t.Fatalf("stdout looks like JSON (unexpected): %s", output)
+	}
+	for _, want := range []string{"Initialized", workspacePath} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, output)
+		}
+	}
+}
+
+func TestInitInvalidWorkspacePath(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{"control", "init", "--workspace", "."}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if stderr.Len() == 0 {
+		t.Fatal("stderr is empty, want error message")
+	}
+}
+
+func TestInitInvalidWorkspaceName(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	workspacePath := t.TempDir()
+
+	code := Run(context.Background(), []string{"control", "init", "--workspace", workspacePath, "--name", "invalid name"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if stderr.Len() == 0 {
+		t.Fatal("stderr is empty, want non-empty error message")
+	}
+}
+
 func TestHumanOutputRendersOperatorLogWhenPresent(t *testing.T) {
 	registry := commands.MustRegistry(commands.Definition{
 		Path:    []string{"log-demo"},
