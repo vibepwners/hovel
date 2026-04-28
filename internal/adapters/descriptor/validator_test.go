@@ -137,6 +137,26 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 			}`,
 			wantErr: "spec.runtime.entrypoint is required",
 		},
+		{
+			name: "invalid metadata name",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Module",
+				"metadata": {"name": "Invalid Name", "version": "0.1.0"},
+				"spec": {"runtime": {"type": "python-rpc", "entrypoint": "main"}, "moduleType": "survey"}
+			}`,
+			wantErr: "module name",
+		},
+		{
+			name: "malformed spec object",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Module",
+				"metadata": {"name": "ssh-survey", "version": "0.1.0"},
+				"spec": "not-an-object"
+			}`,
+			wantErr: "",
+		},
 	}
 
 	for _, tc := range cases {
@@ -315,6 +335,46 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"spec": {"runtime": {"type": "python-service-rpc"}, "serviceType": "payload_provider", "lifecycle": {}}
 			}`,
 			wantErr: "spec.runtime.entrypoint is required",
+		},
+		{
+			name: "invalid metadata name",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Service",
+				"metadata": {"name": "Invalid Name", "version": "0.1.0"},
+				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
+			}`,
+			wantErr: "service name",
+		},
+		{
+			name: "malformed spec object",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Service",
+				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
+				"spec": "not-an-object"
+			}`,
+			wantErr: "",
+		},
+		{
+			name: "malformed runtime value",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Service",
+				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
+				"spec": {"runtime": "not-an-object", "serviceType": "payload_provider", "lifecycle": {}}
+			}`,
+			wantErr: "",
+		},
+		{
+			name: "empty serviceType string",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Service",
+				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
+				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "", "lifecycle": {}}
+			}`,
+			wantErr: "spec.serviceType is required",
 		},
 	}
 

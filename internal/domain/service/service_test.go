@@ -3,11 +3,12 @@ package service
 import "testing"
 
 func TestNewIDRejectsEmpty(t *testing.T) {
-	invalid := []string{"", " ", "   "}
-	for _, value := range invalid {
-		if _, err := NewID(value); err == nil {
-			t.Fatalf("NewID(%q) returned nil error, want error", value)
-		}
+	for _, value := range []string{"", " ", "   "} {
+		t.Run(value, func(t *testing.T) {
+			if _, err := NewID(value); err == nil {
+				t.Fatalf("NewID(%q) returned nil error, want error", value)
+			}
+		})
 	}
 
 	id, err := NewID("svc-001")
@@ -30,40 +31,45 @@ func TestNewNameValidation(t *testing.T) {
 		"abc-def-ghi",
 	}
 	for _, value := range valid {
-		name, err := NewName(value)
-		if err != nil {
-			t.Fatalf("NewName(%q) returned error: %v", value, err)
-		}
-		if name.String() != value {
-			t.Fatalf("NewName(%q).String() = %q, want %q", value, name.String(), value)
-		}
+		t.Run("valid/"+value, func(t *testing.T) {
+			name, err := NewName(value)
+			if err != nil {
+				t.Fatalf("NewName(%q) returned error: %v", value, err)
+			}
+			if name.String() != value {
+				t.Fatalf("NewName(%q).String() = %q, want %q", value, name.String(), value)
+			}
+		})
 	}
 
 	invalid := []string{
 		"",
 		" ",
-		"Hello",            // uppercase not allowed
-		"UPPERCASE",        // uppercase not allowed
-		"-leading",         // leading hyphen not allowed
-		"has space",        // spaces not allowed
-		"has_under",        // underscores not allowed
-		"has.dot",          // dots not allowed
-		"has/slash",        // slashes not allowed
-		"trailinghyphen-",  // trailing hyphen not allowed
+		"Hello",
+		"UPPERCASE",
+		"-leading",
+		"has space",
+		"has_under",
+		"has.dot",
+		"has/slash",
+		"trailinghyphen-",
 	}
 	for _, value := range invalid {
-		if _, err := NewName(value); err == nil {
-			t.Fatalf("NewName(%q) returned nil error, want error", value)
-		}
+		t.Run("invalid/"+value, func(t *testing.T) {
+			if _, err := NewName(value); err == nil {
+				t.Fatalf("NewName(%q) returned nil error, want error", value)
+			}
+		})
 	}
 }
 
 func TestNewVersionRejectsEmpty(t *testing.T) {
-	invalid := []string{"", " ", "   "}
-	for _, value := range invalid {
-		if _, err := NewVersion(value); err == nil {
-			t.Fatalf("NewVersion(%q) returned nil error, want error", value)
-		}
+	for _, value := range []string{"", " ", "   "} {
+		t.Run(value, func(t *testing.T) {
+			if _, err := NewVersion(value); err == nil {
+				t.Fatalf("NewVersion(%q) returned nil error, want error", value)
+			}
+		})
 	}
 
 	version, err := NewVersion("1.0.0")
@@ -87,13 +93,15 @@ func TestNewTypeValidation(t *testing.T) {
 		"generic",
 	}
 	for _, value := range valid {
-		typ, err := NewType(value)
-		if err != nil {
-			t.Fatalf("NewType(%q) returned error: %v", value, err)
-		}
-		if typ.String() != value {
-			t.Fatalf("NewType(%q).String() = %q, want %q", value, typ.String(), value)
-		}
+		t.Run("valid/"+value, func(t *testing.T) {
+			typ, err := NewType(value)
+			if err != nil {
+				t.Fatalf("NewType(%q) returned error: %v", value, err)
+			}
+			if typ.String() != value {
+				t.Fatalf("NewType(%q).String() = %q, want %q", value, typ.String(), value)
+			}
+		})
 	}
 
 	invalid := []string{
@@ -105,9 +113,11 @@ func TestNewTypeValidation(t *testing.T) {
 		"module",
 	}
 	for _, value := range invalid {
-		if _, err := NewType(value); err == nil {
-			t.Fatalf("NewType(%q) returned nil error, want error", value)
-		}
+		t.Run("invalid/"+value, func(t *testing.T) {
+			if _, err := NewType(value); err == nil {
+				t.Fatalf("NewType(%q) returned nil error, want error", value)
+			}
+		})
 	}
 }
 
@@ -117,7 +127,6 @@ func TestNewDescriptorRequiresAllFields(t *testing.T) {
 	validVersion, _ := NewVersion("0.1.0")
 	validType, _ := NewType("payload_provider")
 
-	// all valid fields should succeed
 	desc, err := New(validID, validName, validVersion, validType)
 	if err != nil {
 		t.Fatalf("New with valid fields returned error: %v", err)
@@ -135,7 +144,6 @@ func TestNewDescriptorRequiresAllFields(t *testing.T) {
 		t.Fatalf("desc.Type = %q, want %q", desc.Type, validType)
 	}
 
-	// zero-value fields should fail
 	if _, err := New(ID(""), validName, validVersion, validType); err == nil {
 		t.Fatal("New with empty ID returned nil error, want error")
 	}

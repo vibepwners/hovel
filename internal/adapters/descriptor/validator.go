@@ -89,7 +89,7 @@ func ValidateModuleDescriptor(data []byte) (module.Descriptor, error) {
 		return module.Descriptor{}, err
 	}
 
-	id, err := module.NewID(raw.Metadata.Name + "@" + raw.Metadata.Version)
+	id, err := module.NewID(name.String() + "@" + version.String())
 	if err != nil {
 		return module.Descriptor{}, err
 	}
@@ -177,7 +177,7 @@ func ValidateServiceDescriptor(data []byte) (service.Descriptor, error) {
 		return service.Descriptor{}, err
 	}
 
-	id, err := service.NewID(raw.Metadata.Name + "@" + raw.Metadata.Version)
+	id, err := service.NewID(name.String() + "@" + version.String())
 	if err != nil {
 		return service.Descriptor{}, err
 	}
