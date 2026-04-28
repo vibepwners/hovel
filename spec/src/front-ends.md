@@ -54,6 +54,15 @@ hovel
       create <chain>
       use <chain-or-module>
       rename <chain> <name>
+      add <module-id>
+      remove <step-id>
+      move <step-id>
+      validate
+      config
+        set <key> <value>
+        unset <key>
+        list
+        interactive
       list
       inspect
       delete <chain>
@@ -62,6 +71,10 @@ hovel
     targets
       add <target>
       clear
+      config
+        set <target> <key> <value>
+        unset <target> <key>
+        list <target>
       list
       inspect
       import
@@ -138,11 +151,11 @@ Recommended prompt shape:
 
 ```text
 h0v3l> control init --workspace .hovel
-h0v3l> chain use mock-exploit
-h0v3l ( mock-exploit )> targets add mock://target-1
-h0v3l ( mock-exploit )> targets add mock://target-2
-h0v3l ( mock-exploit )> throw
-h0v3l ( mock-exploit )> chain logs
+h0v3l> chain create mock-exploit
+h0v3l (mock-exploit) > targets add mock://target-1
+h0v3l (mock-exploit) > targets add mock://target-2
+h0v3l (mock-exploit) > throw
+h0v3l (mock-exploit) > logs
 ```
 
 Initial interactive commands:
@@ -155,11 +168,18 @@ chain create
 chain use
 chain rename
 chain list
-chain inspect
 chain delete
-chain logs
+add
+validate
+config set
+config list
+config interactive
+inspect
+logs
 targets add
 targets clear
+targets config set
+targets config list
 throw
 search
 info
@@ -178,14 +198,20 @@ back
 exit
 ```
 
-The prompt should show workspace and active chain context, but never become a hidden state machine. When a chain is activated with `chain use <chain>`, the prompt includes the selected chain as `h0v3l ( <chain> )>`. Every interactive action should have an equivalent `command` mode invocation or application service call.
+The prompt should show workspace and active chain context, but should only enter modal flows when the mode is visible in the prompt. When a chain is activated with `chain use <chain>` or created with `chain create <chain>`, the prompt includes the selected chain as `h0v3l (<chain>) >`; the chain segment should render in cyan. `chain config interactive` remains inside the active go-prompt session, changes the prompt into config-selection or config-value mode, and switches completions to current menu choices or type-aware values for the key being configured. Every interactive action should have an equivalent `command` mode invocation or application service call.
+
+CLI mode has two discovery contexts:
+
+1. Normal context, with no active chain: root completions focus on setup and navigation, including `control`, `modules`, and chain lifecycle commands such as `chain create`, `chain use`, `chain list`, `chain rename`, and `chain delete`. Active-chain commands such as `chain add`, `chain config`, `chain validate`, `chain inspect`, and `chain logs` are hidden from completion until a chain is active.
+2. Chain context, with an active chain: active-chain operations are promoted to root commands. `add <module>`, `config ...`, `validate`, `inspect`, `logs`, and `rename <name>` are CLI aliases over the canonical `chain ...` command handlers. The canonical `chain ...` forms remain valid for command mode and for operators who prefer them.
 
 The canonical interactive execution loop is:
 
-1. Create, list, inspect, rename, or delete chains with the `chain` command group.
-2. Select or define a chain with `chain use <chain-or-module>`.
+1. Create and immediately enter a chain with `chain create <chain>`, or enter an existing chain with `chain use <chain>`.
+2. Add chain steps with `add <module>`.
 3. Add one or more targets owned by the active chain with `targets add <target>`.
-4. Execute the active chain against its owned targets with `throw`.
+4. Configure and validate the chain with `config ...` and `validate`.
+5. Execute the active chain against its owned targets with `throw`.
 
 Targets belong to chains. `targets add` and `targets clear` operate on the active chain only, and `throw` without explicit options uses the active chain and that chain's target set.
 

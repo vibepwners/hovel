@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
@@ -24,13 +25,24 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"control", "daemon", "status"},
 		{"chain", "create"},
 		{"chain", "delete"},
+		{"chain", "add"},
+		{"chain", "config", "list"},
+		{"chain", "config", "set"},
+		{"chain", "config", "unset"},
 		{"chain", "inspect"},
 		{"chain", "list"},
 		{"chain", "logs"},
 		{"chain", "rename"},
+		{"chain", "validate"},
+		{"modules", "inspect"},
+		{"modules", "list"},
+		{"modules", "search"},
 		{"chain", "use"},
 		{"targets", "add"},
 		{"targets", "clear"},
+		{"targets", "config", "list"},
+		{"targets", "config", "set"},
+		{"targets", "config", "unset"},
 		{"throw"},
 	} {
 		if _, ok := registry.Find(path...); !ok {
@@ -186,6 +198,9 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if session.Snapshot().ActiveChain != "alpha" {
+		t.Fatalf("active chain = %q, want alpha after create", session.Snapshot().ActiveChain)
+	}
 	if _, err := useDefinition.Execute(context.Background(), Invocation{
 		Positionals: map[string]string{"chain": "alpha"},
 	}); err != nil {
@@ -220,8 +235,8 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"  alpha targets=1 topic=chain/alpha/logs",
-		"* beta targets=1 topic=chain/beta/logs",
+		"  alpha steps=0 targets=1 topic=chain/alpha/logs",
+		"* beta steps=0 targets=1 topic=chain/beta/logs",
 	} {
 		if !strings.Contains(listResult.Human, want) {
 			t.Fatalf("chain list missing %q:\n%s", want, listResult.Human)
@@ -232,7 +247,7 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(inspectResult.Human, "Chain beta targets=1 topic=chain/beta/logs") {
+	if !strings.Contains(inspectResult.Human, "Chain beta steps=0 targets=1 config=0 topic=chain/beta/logs") {
 		t.Fatalf("inspect result = %q", inspectResult.Human)
 	}
 
@@ -259,6 +274,175 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	}
 	if session.Snapshot().ActiveChain != "" {
 		t.Fatal("deleting active chain should clear active chain")
+	}
+}
+
+func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+	})
+	listDefinition, _ := registry.Find("modules", "list")
+	inspectDefinition, _ := registry.Find("modules", "inspect")
+	searchDefinition, _ := registry.Find("modules", "search")
+
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"type": "payload_provider"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listResult.Human, "mock-payload-provider payload_provider") {
+		t.Fatalf("module list = %q", listResult.Human)
+	}
+
+	inspectResult, err := inspectDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "mock-simple-exploit"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"mock-simple-exploit exploit", "operator.confirmed_lab bool required", "target.port port required"} {
+		if !strings.Contains(inspectResult.Human, want) {
+			t.Fatalf("inspect missing %q:\n%s", want, inspectResult.Human)
+		}
+	}
+
+	searchResult, err := searchDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"query": "kitchen"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(searchResult.Human, "mock-config-kitchen-sink") {
+		t.Fatalf("search result = %q", searchResult.Human)
+	}
+}
+
+func TestChainAddConfigAndValidateHandlers(t *testing.T) {
+	session := operatorsession.New()
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Session:    session,
+	})
+	useDefinition, _ := registry.Find("chain", "use")
+	addDefinition, _ := registry.Find("chain", "add")
+	chainConfigSetDefinition, _ := registry.Find("chain", "config", "set")
+	chainConfigListDefinition, _ := registry.Find("chain", "config", "list")
+	targetDefinition, _ := registry.Find("targets", "add")
+	targetConfigSetDefinition, _ := registry.Find("targets", "config", "set")
+	targetConfigListDefinition, _ := registry.Find("targets", "config", "list")
+	validateDefinition, _ := registry.Find("chain", "validate")
+
+	if _, err := useDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"chain": "alpha"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := addDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "mock-simple-exploit"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	invalidResult, err := validateDefinition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(invalidResult.Human, "Chain alpha invalid") || !strings.Contains(invalidResult.Human, "missing chain config operator.confirmed_lab") {
+		t.Fatalf("invalid validation = %q", invalidResult.Human)
+	}
+
+	if _, err := chainConfigSetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"key": "operator.confirmed_lab", "value": "true"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "mock://target"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetConfigSetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "mock://target", "key": "target.host", "value": "router-01"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetConfigSetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "mock://target", "key": "target.port", "value": "22"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	chainConfigResult, err := chainConfigListDefinition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(chainConfigResult.Human, "operator.confirmed_lab=true") {
+		t.Fatalf("chain config = %q", chainConfigResult.Human)
+	}
+	targetConfigResult, err := targetConfigListDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "mock://target"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(targetConfigResult.Human, "target.port=22") {
+		t.Fatalf("target config = %q", targetConfigResult.Human)
+	}
+
+	validResult, err := validateDefinition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validResult.Human != "Chain alpha valid" {
+		t.Fatalf("valid result = %q", validResult.Human)
+	}
+	payload, ok := validResult.JSON.(ValidationPayload)
+	if !ok || !payload.Valid {
+		t.Fatalf("validation payload = %#v", validResult.JSON)
+	}
+}
+
+func TestSecretConfigListRedactsValues(t *testing.T) {
+	session := operatorsession.New()
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Session:    session,
+	})
+	useDefinition, _ := registry.Find("chain", "use")
+	addDefinition, _ := registry.Find("chain", "add")
+	targetDefinition, _ := registry.Find("targets", "add")
+	targetConfigSetDefinition, _ := registry.Find("targets", "config", "set")
+	targetConfigListDefinition, _ := registry.Find("targets", "config", "list")
+
+	if _, err := useDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"chain": "alpha"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := addDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"module": "mock-auth-survey"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"target": "mock://target"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetConfigSetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "mock://target", "key": "auth.password", "value": "hunter2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := targetConfigListDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "mock://target"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.Human, "hunter2") || !strings.Contains(result.Human, "auth.password=<secret:set>") {
+		t.Fatalf("target config was not redacted: %q", result.Human)
 	}
 }
 
@@ -331,9 +515,18 @@ func TestThrowHandlerStoresLogsOnPayloadChain(t *testing.T) {
 	if err := session.UseChain("alpha"); err != nil {
 		t.Fatal(err)
 	}
-	if logs := session.ActiveLogs(); len(logs) == 0 || logs[0].Message != "chain staged" {
+	if logs := session.ActiveLogs(); !hasLogMessage(logs, "chain staged") {
 		t.Fatalf("alpha logs = %#v", logs)
 	}
+}
+
+func hasLogMessage(logs []operatorlog.Entry, message string) bool {
+	for _, entry := range logs {
+		if entry.Message == message {
+			return true
+		}
+	}
+	return false
 }
 
 func hasOption(definition Definition, name string) bool {

@@ -2,12 +2,17 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "cli",
-    srcs = ["cli.go"],
+    srcs = [
+        "cli.go",
+        "interactive_config.go",
+        "prompt_writer.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/cli",
     visibility = ["//visibility:public"],
     deps = [
         "//internal/adapters/commandmode",
         "//internal/app/commands",
+        "//internal/app/modulecatalog",
         "//internal/app/operatorsession",
         "//internal/infra/daemonmanager",
         "@com_github_c_bata_go_prompt//:go-prompt",
@@ -23,5 +28,6 @@ go_test(
         "//internal/adapters/storage/filesystem",
         "//internal/domain/daemon",
         "//internal/infra/daemonruntime",
+        "@com_github_c_bata_go_prompt//:go-prompt",
     ],
 )

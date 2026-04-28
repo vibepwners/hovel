@@ -78,24 +78,19 @@ Facts must be mergeable, source-attributed, and queryable.
 
 A module is a typed user-facing unit of bounded functionality.
 
-Module types:
+Initial module types:
 
 ```text
 survey
-transport
-access
-deliver
-payload
-post_action
-cleanup
-transform
-provider
-chain
-utility
-service_client
+exploit
+payload_provider
 ```
 
+The type set must remain expandable after the first mocked UI stage.
+
 A module may be backed by a process, a built-in Go implementation, a service call, or a composition of other modules.
+
+Every module may declare required and optional typed configuration keys. Configuration scopes are `chain` for global chain configuration and `target` for per-target configuration.
 
 ## Service
 

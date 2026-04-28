@@ -2,6 +2,7 @@ package operatorsession
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -10,18 +11,30 @@ import (
 )
 
 type Chain struct {
-	Name     string
-	Targets  []string
-	LogTopic string
-	Logs     []operatorlog.Entry
+	Name          string
+	Targets       []string
+	Steps         []Step
+	Config        map[string]string
+	TargetConfigs map[string]map[string]string
+	LogTopic      string
+	Logs          []operatorlog.Entry
+	nextStep      int
+}
+
+type Step struct {
+	ID       string
+	ModuleID string
 }
 
 type State struct {
-	ActiveChain string
-	Chain       string
-	Targets     []string
-	LogTopic    string
-	Chains      []Chain
+	ActiveChain   string
+	Chain         string
+	Targets       []string
+	Steps         []Step
+	Config        map[string]string
+	TargetConfigs map[string]map[string]string
+	LogTopic      string
+	Chains        []Chain
 }
 
 type Store struct {
@@ -125,6 +138,70 @@ func (s *Session) ClearTargets() {
 	s.chainStore().clearTargets(activeChain)
 }
 
+func (s *Session) AddModule(moduleID string) (Step, error) {
+	moduleID = strings.TrimSpace(moduleID)
+	if moduleID == "" {
+		return Step{}, errors.New("module is required")
+	}
+	activeChain := s.active()
+	if activeChain == "" {
+		return Step{}, errors.New("active chain is required")
+	}
+	return s.chainStore().addModule(activeChain, moduleID)
+}
+
+func (s *Session) SetChainConfig(key, value string) error {
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if key == "" || value == "" {
+		return errors.New("config key and value are required")
+	}
+	activeChain := s.active()
+	if activeChain == "" {
+		return errors.New("active chain is required")
+	}
+	return s.chainStore().setChainConfig(activeChain, key, value)
+}
+
+func (s *Session) UnsetChainConfig(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return errors.New("config key is required")
+	}
+	activeChain := s.active()
+	if activeChain == "" {
+		return errors.New("active chain is required")
+	}
+	return s.chainStore().unsetChainConfig(activeChain, key)
+}
+
+func (s *Session) SetTargetConfig(target, key, value string) error {
+	target = strings.TrimSpace(target)
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if target == "" || key == "" || value == "" {
+		return errors.New("target, config key, and value are required")
+	}
+	activeChain := s.active()
+	if activeChain == "" {
+		return errors.New("active chain is required")
+	}
+	return s.chainStore().setTargetConfig(activeChain, target, key, value)
+}
+
+func (s *Session) UnsetTargetConfig(target, key string) error {
+	target = strings.TrimSpace(target)
+	key = strings.TrimSpace(key)
+	if target == "" || key == "" {
+		return errors.New("target and config key are required")
+	}
+	activeChain := s.active()
+	if activeChain == "" {
+		return errors.New("active chain is required")
+	}
+	return s.chainStore().unsetTargetConfig(activeChain, target, key)
+}
+
 func (s *Session) AppendLog(entries ...operatorlog.Entry) error {
 	activeChain := s.active()
 	if activeChain == "" {
@@ -205,7 +282,13 @@ func (s *Store) addTarget(chainName, target string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	chain := s.ensureChain(chainName)
-	chain.Targets = append(chain.Targets, target)
+	if !hasString(chain.Targets, target) {
+		chain.TargetConfigs[target] = map[string]string{}
+		chain.Targets = append(chain.Targets, target)
+	}
+	chain.Logs = append(chain.Logs, operatorlog.Info("target", "target added",
+		operatorlog.Field{Name: "target", Value: target},
+	))
 	return nil
 }
 
@@ -214,6 +297,86 @@ func (s *Store) clearTargets(chainName string) {
 	defer s.mu.Unlock()
 	chain := s.ensureChain(chainName)
 	chain.Targets = nil
+	chain.TargetConfigs = map[string]map[string]string{}
+	chain.Logs = append(chain.Logs, operatorlog.Info("target", "targets cleared"))
+}
+
+func (s *Store) addModule(chainName, moduleID string) (Step, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chain := s.ensureChain(chainName)
+	chain.nextStep++
+	step := Step{
+		ID:       fmt.Sprintf("step-%d", chain.nextStep),
+		ModuleID: moduleID,
+	}
+	chain.Steps = append(chain.Steps, step)
+	chain.Logs = append(chain.Logs, operatorlog.Info("chain", "module added",
+		operatorlog.Field{Name: "step", Value: step.ID},
+		operatorlog.Field{Name: "module", Value: moduleID},
+	))
+	return step, nil
+}
+
+func (s *Store) setChainConfig(chainName, key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chain := s.ensureChain(chainName)
+	if chain.Config == nil {
+		chain.Config = map[string]string{}
+	}
+	chain.Config[key] = value
+	chain.Logs = append(chain.Logs, operatorlog.Info("config", "chain config set",
+		operatorlog.Field{Name: "key", Value: key},
+	))
+	return nil
+}
+
+func (s *Store) unsetChainConfig(chainName, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chain := s.ensureChain(chainName)
+	delete(chain.Config, key)
+	chain.Logs = append(chain.Logs, operatorlog.Info("config", "chain config unset",
+		operatorlog.Field{Name: "key", Value: key},
+	))
+	return nil
+}
+
+func (s *Store) setTargetConfig(chainName, target, key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chain := s.ensureChain(chainName)
+	if !hasString(chain.Targets, target) {
+		return errors.New("target does not exist")
+	}
+	if chain.TargetConfigs == nil {
+		chain.TargetConfigs = map[string]map[string]string{}
+	}
+	if chain.TargetConfigs[target] == nil {
+		chain.TargetConfigs[target] = map[string]string{}
+	}
+	chain.TargetConfigs[target][key] = value
+	chain.Logs = append(chain.Logs, operatorlog.Info("config", "target config set",
+		operatorlog.Field{Name: "target", Value: target},
+		operatorlog.Field{Name: "key", Value: key},
+	))
+	return nil
+}
+
+func (s *Store) unsetTargetConfig(chainName, target, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chain := s.ensureChain(chainName)
+	if !hasString(chain.Targets, target) {
+		return errors.New("target does not exist")
+	}
+	delete(chain.TargetConfigs[target], key)
+	chain.Logs = append(chain.Logs, operatorlog.Info("config", "target config unset",
+		operatorlog.Field{Name: "target", Value: target},
+		operatorlog.Field{Name: "key", Value: key},
+	))
+	return nil
 }
 
 func (s *Store) appendLog(chainName string, entries ...operatorlog.Entry) error {
@@ -234,6 +397,9 @@ func (s *Store) snapshot(activeChain string) State {
 	if activeChain != "" {
 		if chain, ok := s.chains[activeChain]; ok {
 			state.Targets = append([]string(nil), chain.Targets...)
+			state.Steps = cloneSteps(chain.Steps)
+			state.Config = cloneStringMap(chain.Config)
+			state.TargetConfigs = cloneTargetConfigs(chain.TargetConfigs)
 			state.LogTopic = chain.LogTopic
 		}
 	}
@@ -261,7 +427,12 @@ func (s *Store) ensureChain(name string) *Chain {
 	if chain, ok := s.chains[name]; ok {
 		return chain
 	}
-	chain := &Chain{Name: name, LogTopic: logTopic(name)}
+	chain := &Chain{
+		Name:          name,
+		Config:        map[string]string{},
+		TargetConfigs: map[string]map[string]string{},
+		LogTopic:      logTopic(name),
+	}
 	s.chains[name] = chain
 	return chain
 }
@@ -279,8 +450,31 @@ func (s *Store) snapshotChains() []Chain {
 
 func cloneChain(chain Chain) Chain {
 	chain.Targets = append([]string(nil), chain.Targets...)
+	chain.Steps = cloneSteps(chain.Steps)
+	chain.Config = cloneStringMap(chain.Config)
+	chain.TargetConfigs = cloneTargetConfigs(chain.TargetConfigs)
 	chain.Logs = cloneEntries(chain.Logs)
 	return chain
+}
+
+func cloneSteps(steps []Step) []Step {
+	return append([]Step(nil), steps...)
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneTargetConfigs(values map[string]map[string]string) map[string]map[string]string {
+	out := make(map[string]map[string]string, len(values))
+	for target, config := range values {
+		out[target] = cloneStringMap(config)
+	}
+	return out
 }
 
 func cloneEntries(entries []operatorlog.Entry) []operatorlog.Entry {
@@ -298,4 +492,13 @@ func normalizeName(name string) string {
 
 func logTopic(chain string) string {
 	return "chain/" + chain + "/logs"
+}
+
+func hasString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

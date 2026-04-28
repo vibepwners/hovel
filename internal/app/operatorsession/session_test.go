@@ -97,7 +97,7 @@ func TestSessionRenamesChainWithOwnedTargetsAndLogs(t *testing.T) {
 	if state.LogTopic != "chain/renamed/logs" {
 		t.Fatalf("log topic = %q, want chain/renamed/logs", state.LogTopic)
 	}
-	if logs := session.ActiveLogs(); len(logs) != 1 || logs[0].Message != "before rename" {
+	if logs := session.ActiveLogs(); !hasLogMessage(logs, "before rename") {
 		t.Fatalf("logs = %#v", logs)
 	}
 }
@@ -235,10 +235,59 @@ func TestSessionsShareChainStoreWithIndependentActiveChains(t *testing.T) {
 	if targets := alphaObserver.Snapshot().Targets; len(targets) != 1 || targets[0] != "mock://alpha" {
 		t.Fatalf("alpha observer targets = %#v", targets)
 	}
-	if logs := alphaObserver.ActiveLogs(); len(logs) != 1 || logs[0].Message != "shared alpha log" {
+	if logs := alphaObserver.ActiveLogs(); !hasLogMessage(logs, "shared alpha log") {
 		t.Fatalf("alpha observer logs = %#v", logs)
 	}
 	if logs := betaClient.ActiveLogs(); len(logs) != 1 || logs[0].Message != "hidden beta log" {
 		t.Fatalf("beta client logs = %#v", logs)
 	}
+}
+
+func TestSessionTracksModulesAndTypedConfigByChain(t *testing.T) {
+	session := New()
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	step, err := session.AddModule("mock-simple-exploit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if step.ID != "step-1" || step.ModuleID != "mock-simple-exploit" {
+		t.Fatalf("step = %#v", step)
+	}
+	if err := session.SetChainConfig("operator.confirmed_lab", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://target"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://target", "target.host", "router-01"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://target", "target.port", "22"); err != nil {
+		t.Fatal(err)
+	}
+
+	state := session.Snapshot()
+	if len(state.Steps) != 1 || state.Steps[0].ID != "step-1" {
+		t.Fatalf("steps = %#v", state.Steps)
+	}
+	if state.Config["operator.confirmed_lab"] != "true" {
+		t.Fatalf("chain config = %#v", state.Config)
+	}
+	if state.TargetConfigs["mock://target"]["target.port"] != "22" {
+		t.Fatalf("target config = %#v", state.TargetConfigs)
+	}
+	if logs := session.ActiveLogs(); !hasLogMessage(logs, "module added") || !hasLogMessage(logs, "target config set") {
+		t.Fatalf("logs = %#v", logs)
+	}
+}
+
+func hasLogMessage(logs []operatorlog.Entry, message string) bool {
+	for _, entry := range logs {
+		if entry.Message == message {
+			return true
+		}
+	}
+	return false
 }

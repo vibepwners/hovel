@@ -12,6 +12,12 @@ tasks:
     cmds:
       - bazel build //...
 
+  cli:
+    desc: Start the interactive Hovel CLI.
+    interactive: true
+    cmds:
+      - bazel run //cmd/hovel -- cli
+
   test:
     aliases: [t]
     desc: Run every Bazel test.
