@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "module",
+    srcs = ["module.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/domain/module",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "module_test",
+    srcs = ["module_test.go"],
+    embed = [":module"],
+)
