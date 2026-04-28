@@ -74,22 +74,22 @@ func ValidateModuleDescriptor(data []byte) (module.Descriptor, error) {
 		return module.Descriptor{}, errors.New("spec.moduleType is required")
 	}
 
-	name, err := module.NewModuleName(raw.Metadata.Name)
+	name, err := module.NewName(raw.Metadata.Name)
 	if err != nil {
 		return module.Descriptor{}, err
 	}
 
-	version, err := module.NewModuleVersion(raw.Metadata.Version)
+	version, err := module.NewVersion(raw.Metadata.Version)
 	if err != nil {
 		return module.Descriptor{}, err
 	}
 
-	modType, err := module.NewModuleType(spec.ModuleType)
+	modType, err := module.NewType(spec.ModuleType)
 	if err != nil {
 		return module.Descriptor{}, err
 	}
 
-	id, err := module.NewModuleID(raw.Metadata.Name + "@" + raw.Metadata.Version)
+	id, err := module.NewID(raw.Metadata.Name + "@" + raw.Metadata.Version)
 	if err != nil {
 		return module.Descriptor{}, err
 	}
@@ -162,22 +162,22 @@ func ValidateServiceDescriptor(data []byte) (service.Descriptor, error) {
 		return service.Descriptor{}, errors.New("spec.lifecycle is required")
 	}
 
-	name, err := service.NewServiceName(raw.Metadata.Name)
+	name, err := service.NewName(raw.Metadata.Name)
 	if err != nil {
 		return service.Descriptor{}, err
 	}
 
-	version, err := service.NewServiceVersion(raw.Metadata.Version)
+	version, err := service.NewVersion(raw.Metadata.Version)
 	if err != nil {
 		return service.Descriptor{}, err
 	}
 
-	svcType, err := service.NewServiceType(serviceTypeStr)
+	svcType, err := service.NewType(serviceTypeStr)
 	if err != nil {
 		return service.Descriptor{}, err
 	}
 
-	id, err := service.NewServiceID(raw.Metadata.Name + "@" + raw.Metadata.Version)
+	id, err := service.NewID(raw.Metadata.Name + "@" + raw.Metadata.Version)
 	if err != nil {
 		return service.Descriptor{}, err
 	}

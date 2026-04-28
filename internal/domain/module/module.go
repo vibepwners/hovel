@@ -5,74 +5,71 @@ import (
 	"strings"
 )
 
-// ModuleID is a non-empty string value object identifying a module instance.
-type ModuleID string
+// ID is a non-empty string value object identifying a module instance.
+type ID string
 
-// NewModuleID creates a ModuleID, rejecting empty or whitespace-only values.
-func NewModuleID(value string) (ModuleID, error) {
+// NewID creates an ID, rejecting empty or whitespace-only values.
+func NewID(value string) (ID, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", errors.New("module id is required")
 	}
-	return ModuleID(value), nil
+	return ID(value), nil
 }
 
-func (id ModuleID) String() string {
+func (id ID) String() string {
 	return string(id)
 }
 
-// ModuleName is a validated name that must match [a-z0-9][a-z0-9-]* with no trailing hyphen.
-type ModuleName string
+// Name is a validated module name matching [a-z0-9][a-z0-9-]* with no trailing hyphen.
+type Name string
 
-// NewModuleName creates a ModuleName.
+// NewName creates a Name.
 // Valid names start with a lowercase letter or digit, contain only lowercase
 // letters, digits, and hyphens, and must not start or end with a hyphen.
-func NewModuleName(value string) (ModuleName, error) {
+func NewName(value string) (Name, error) {
 	if value == "" || strings.TrimSpace(value) == "" {
 		return "", errors.New("module name is required")
 	}
-	// Must not start with a hyphen
 	if value[0] == '-' {
 		return "", errors.New("module name must not start with a hyphen")
 	}
-	// Must not end with a hyphen
 	if value[len(value)-1] == '-' {
 		return "", errors.New("module name must not end with a hyphen")
 	}
-	// All characters must be lowercase letters, digits, or hyphens
 	for _, r := range value {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
 			continue
 		}
 		return "", errors.New("module name must contain only lowercase letters, digits, and hyphens")
 	}
-	return ModuleName(value), nil
+	return Name(value), nil
 }
 
-func (name ModuleName) String() string {
+func (name Name) String() string {
 	return string(name)
 }
 
-// ModuleVersion is a non-empty, trimmed version string.
-type ModuleVersion string
+// Version is a non-empty, trimmed version string.
+type Version string
 
-// NewModuleVersion creates a ModuleVersion, rejecting empty or whitespace-only values.
-func NewModuleVersion(value string) (ModuleVersion, error) {
+// NewVersion creates a Version, rejecting empty or whitespace-only values.
+func NewVersion(value string) (Version, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", errors.New("module version is required")
 	}
-	return ModuleVersion(value), nil
+	return Version(value), nil
 }
 
-func (v ModuleVersion) String() string {
+func (v Version) String() string {
 	return string(v)
 }
 
-// ModuleType is one of the recognized module type values from the domain model.
-type ModuleType string
+// Type is one of the recognized module type values from the domain model.
+type Type string
 
-var validModuleTypes = map[string]struct{}{
+var validTypes = map[string]struct{}{
 	"survey":         {},
 	"transport":      {},
 	"access":         {},
@@ -87,31 +84,31 @@ var validModuleTypes = map[string]struct{}{
 	"service_client": {},
 }
 
-// NewModuleType creates a ModuleType, rejecting unknown or empty values.
-func NewModuleType(value string) (ModuleType, error) {
+// NewType creates a Type, rejecting unknown or empty values.
+func NewType(value string) (Type, error) {
 	if value == "" {
 		return "", errors.New("module type is required")
 	}
-	if _, ok := validModuleTypes[value]; !ok {
+	if _, ok := validTypes[value]; !ok {
 		return "", errors.New("module type is not valid: " + value)
 	}
-	return ModuleType(value), nil
+	return Type(value), nil
 }
 
-func (t ModuleType) String() string {
+func (t Type) String() string {
 	return string(t)
 }
 
 // Descriptor holds the validated identity fields for a module.
 type Descriptor struct {
-	ID      ModuleID
-	Name    ModuleName
-	Version ModuleVersion
-	Type    ModuleType
+	ID      ID
+	Name    Name
+	Version Version
+	Type    Type
 }
 
 // New creates a Descriptor, requiring all fields to be non-zero validated values.
-func New(id ModuleID, name ModuleName, version ModuleVersion, typ ModuleType) (Descriptor, error) {
+func New(id ID, name Name, version Version, typ Type) (Descriptor, error) {
 	if id == "" {
 		return Descriptor{}, errors.New("module id is required")
 	}

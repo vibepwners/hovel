@@ -27,17 +27,17 @@ func TestValidateModuleDescriptorAcceptsValidMinimal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-	if got.Name != module.ModuleName("ssh-survey") {
+	if got.Name != module.Name("ssh-survey") {
 		t.Errorf("Name = %q, want %q", got.Name, "ssh-survey")
 	}
-	if got.Version != module.ModuleVersion("0.1.0") {
+	if got.Version != module.Version("0.1.0") {
 		t.Errorf("Version = %q, want %q", got.Version, "0.1.0")
 	}
-	if got.Type != module.ModuleType("survey") {
+	if got.Type != module.Type("survey") {
 		t.Errorf("Type = %q, want %q", got.Type, "survey")
 	}
 	wantID := "ssh-survey@0.1.0"
-	if got.ID != module.ModuleID(wantID) {
+	if got.ID != module.ID(wantID) {
 		t.Errorf("ID = %q, want %q", got.ID, wantID)
 	}
 }
@@ -118,6 +118,16 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 			wantErr: "spec.runtime.type is required",
 		},
 		{
+			name: "missing runtime type",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Module",
+				"metadata": {"name": "ssh-survey", "version": "0.1.0"},
+				"spec": {"runtime": {"entrypoint": "main"}, "moduleType": "survey"}
+			}`,
+			wantErr: "spec.runtime.type is required",
+		},
+		{
 			name: "missing runtime entrypoint",
 			json: `{
 				"apiVersion": "hovel.dev/v1alpha1",
@@ -186,17 +196,17 @@ func TestValidateServiceDescriptorAcceptsValidMinimal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
-	if got.Name != service.ServiceName("picblob-provider") {
+	if got.Name != service.Name("picblob-provider") {
 		t.Errorf("Name = %q, want %q", got.Name, "picblob-provider")
 	}
-	if got.Version != service.ServiceVersion("0.1.0") {
+	if got.Version != service.Version("0.1.0") {
 		t.Errorf("Version = %q, want %q", got.Version, "0.1.0")
 	}
-	if got.Type != service.ServiceType("payload_provider") {
+	if got.Type != service.Type("payload_provider") {
 		t.Errorf("Type = %q, want %q", got.Type, "payload_provider")
 	}
 	wantID := "picblob-provider@0.1.0"
-	if got.ID != service.ServiceID(wantID) {
+	if got.ID != service.ID(wantID) {
 		t.Errorf("ID = %q, want %q", got.ID, wantID)
 	}
 }
@@ -285,6 +295,16 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"spec": {"serviceType": "payload_provider", "lifecycle": {}}
 			}`,
 			wantErr: "spec.runtime is required",
+		},
+		{
+			name: "missing runtime type",
+			json: `{
+				"apiVersion": "hovel.dev/v1alpha1",
+				"kind": "Service",
+				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
+				"spec": {"runtime": {"entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
+			}`,
+			wantErr: "spec.runtime.type is required",
 		},
 		{
 			name: "missing runtime entrypoint",
