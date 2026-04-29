@@ -1,7 +1,7 @@
 package modulecatalog
 
 import (
-	"strings"
+	"reflect"
 	"testing"
 )
 
@@ -76,13 +76,73 @@ func TestCatalogValidationFindsMissingAndInvalidConfig(t *testing.T) {
 	if result.Valid {
 		t.Fatal("validation valid = true, want false")
 	}
-	for _, want := range []string{
-		"invalid chain config operator.confirmed_lab",
-		"missing target config target.port",
-	} {
-		if !hasIssue(result, want) {
-			t.Fatalf("issues missing %q: %#v", want, result.Issues)
-		}
+	want := []Issue{
+		{
+			Scope:    ScopeChain,
+			StepID:   "step-1",
+			ModuleID: "mock-simple-exploit",
+			Key:      "operator.confirmed_lab",
+			Message:  "invalid chain config operator.confirmed_lab: strconv.ParseBool: parsing \"definitely\": invalid syntax",
+		},
+		{
+			Scope:    ScopeTarget,
+			StepID:   "step-1",
+			ModuleID: "mock-simple-exploit",
+			Target:   "mock://target",
+			Key:      "target.port",
+			Message:  "missing target config target.port",
+		},
+	}
+	if !reflect.DeepEqual(result.Issues, want) {
+		t.Fatalf("issues = %#v, want %#v", result.Issues, want)
+	}
+}
+
+func TestCatalogValidationKeepsIssuesTiedToTheirStepTargetAndModule(t *testing.T) {
+	catalog := BuiltIns()
+	result := catalog.Validate(ConfigView{
+		Steps: []StepRef{
+			{ID: "survey-1", ModuleID: "mock-target-survey"},
+			{ID: "exploit-1", ModuleID: "mock-simple-exploit"},
+		},
+		Targets: []string{"mock://router-01", "mock://router-02"},
+		ChainConfig: map[string]string{
+			"operator.confirmed_lab": "true",
+		},
+		TargetConfigs: map[string]map[string]string{
+			"mock://router-01": {
+				"target.host": "router-01",
+				"target.port": "22",
+			},
+			"mock://router-02": {
+				"target.host": "router-02",
+			},
+		},
+	})
+
+	if result.Valid {
+		t.Fatal("validation valid = true, want false")
+	}
+	want := []Issue{
+		{
+			Scope:    ScopeTarget,
+			StepID:   "exploit-1",
+			ModuleID: "mock-simple-exploit",
+			Target:   "mock://router-02",
+			Key:      "target.port",
+			Message:  "missing target config target.port",
+		},
+		{
+			Scope:    ScopeTarget,
+			StepID:   "survey-1",
+			ModuleID: "mock-target-survey",
+			Target:   "mock://router-02",
+			Key:      "target.port",
+			Message:  "missing target config target.port",
+		},
+	}
+	if !reflect.DeepEqual(result.Issues, want) {
+		t.Fatalf("issues = %#v, want %#v", result.Issues, want)
 	}
 }
 
@@ -114,13 +174,4 @@ func TestDisplayValueRedactsSecrets(t *testing.T) {
 	if got := DisplayValue(Requirement{Type: ValueString}, "visible"); got != "visible" {
 		t.Fatalf("string display = %q", got)
 	}
-}
-
-func hasIssue(validation Validation, want string) bool {
-	for _, issue := range validation.Issues {
-		if strings.Contains(issue.Message, want) {
-			return true
-		}
-	}
-	return false
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -297,7 +298,7 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 }
 
 func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	socketPath := workspacePath + "/hoveld.sock"
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
@@ -362,14 +363,14 @@ func TestRunRejectsOneShotCommandArguments(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "hovel command") {
+	if !strings.Contains(stderr.String(), "hovel <command>") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
 func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 	app := NewApp()
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	session, err := app.EnsureDaemon(context.Background(), workspacePath)
 	if err != nil {
 		t.Fatal(err)
@@ -403,7 +404,7 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 }
 
 func TestEnsureDaemonStartsManagedDaemonForCLI(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	session, err := NewApp().EnsureDaemon(context.Background(), workspacePath)
 	if err != nil {
 		t.Fatal(err)
@@ -420,6 +421,20 @@ func TestEnsureDaemonStartsManagedDaemonForCLI(t *testing.T) {
 	if status.State != daemon.StateRunning {
 		t.Fatalf("daemon state = %s, want running", status.State)
 	}
+}
+
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	base := "/private/tmp"
+	if _, err := os.Stat(base); err != nil {
+		base = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "hovel-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 func contains(values []string, want string) bool {

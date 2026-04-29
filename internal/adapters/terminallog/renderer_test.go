@@ -9,6 +9,7 @@ import (
 
 func TestRendererFormatsOperatorLog(t *testing.T) {
 	rendered := NewRenderer().Render(operatorlog.New("HOVEL//RUN", "mock-exploit -> mock://target", []operatorlog.Entry{
+		operatorlog.Stage("1/2 prepare"),
 		operatorlog.Info("run", "module staged", operatorlog.Field{Name: "run", Value: "run-1"}),
 		operatorlog.Finding("finding", "mock exploit path verified", operatorlog.Field{Name: "severity", Value: "info"}),
 		operatorlog.Artifact("artifact", "mock-exploit-transcript.txt", operatorlog.Field{Name: "kind", Value: "text/plain"}),
@@ -19,6 +20,7 @@ func TestRendererFormatsOperatorLog(t *testing.T) {
 		"HOVEL//RUN",
 		"mock-exploit -> mock://target",
 		"[*] run",
+		"[>] stage",
 		"[#] finding",
 		"[$] artifact",
 		"[+] run",
@@ -30,6 +32,23 @@ func TestRendererFormatsOperatorLog(t *testing.T) {
 	}
 	if strings.Contains(rendered, "╭") || strings.Contains(rendered, "╰") {
 		t.Fatalf("rendered log should not include a box border:\n%s", rendered)
+	}
+}
+
+func TestRendererWrapsContinuationLinesAtMessageIndent(t *testing.T) {
+	rendered := NewRendererWithWidth(44).Render(operatorlog.New("HOVEL//RUN", "", []operatorlog.Entry{
+		operatorlog.Info("log", "this is a really long message that should wrap inline to the message indentation"),
+	}))
+
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("rendered log did not wrap:\n%s", rendered)
+	}
+	if !strings.HasPrefix(lines[1], "[*] log       this is a really long") {
+		t.Fatalf("first log line has wrong prefix:\n%s", rendered)
+	}
+	if !strings.HasPrefix(lines[2], "              that should wrap") {
+		t.Fatalf("wrapped line did not align with message column:\n%s", rendered)
 	}
 }
 

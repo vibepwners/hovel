@@ -25,7 +25,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "command":
 		return commandmode.Run(ctx, args[1:], stdout, stderr)
-	case "cli":
+	case "cli", "shell":
 		return cli.Run(ctx, args[1:], stdout, stderr)
 	case "daemon":
 		return runDaemon(ctx, args[1:], stdout, stderr)
@@ -36,8 +36,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(stderr, "hovel tui is not implemented yet")
 		return 1
+	case "init":
+		return commandmode.Run(ctx, append([]string{"control", "init"}, args[1:]...), stdout, stderr)
+	case "status":
+		return commandmode.Run(ctx, append([]string{"control", "daemon", "status"}, args[1:]...), stdout, stderr)
+	case "chain", "control", "modules", "targets", "throw":
+		return commandmode.Run(ctx, args, stdout, stderr)
 	default:
-		fmt.Fprint(stderr, newRootParser().Usage(fmt.Sprintf("unknown role %q", args[0])))
+		fmt.Fprint(stderr, newRootParser().Usage(fmt.Sprintf("unknown command or role %q", args[0])))
 		return 2
 	}
 }
@@ -86,9 +92,16 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 }
 
 func newRootParser() *argparse.Parser {
-	parser := argparse.NewParser("hovel", "Hovel mono-binary. Select a role, then a command.")
-	parser.NewCommand("command", "Run one command from the shell.")
-	parser.NewCommand("cli", "Launch the interactive prompt shell.")
+	parser := argparse.NewParser("hovel", "Hovel operator console.")
+	parser.NewCommand("chain", "Build and manage operator chains.")
+	parser.NewCommand("modules", "Browse, search, and inspect modules.")
+	parser.NewCommand("targets", "Add and configure chain targets.")
+	parser.NewCommand("throw", "Execute the selected chain against targets.")
+	parser.NewCommand("init", "Initialize a workspace.")
+	parser.NewCommand("status", "Inspect workspace and daemon status.")
+	parser.NewCommand("shell", "Launch the interactive prompt shell.")
+	parser.NewCommand("command", "Run one command from the shell. Compatibility alias for direct commands.")
+	parser.NewCommand("cli", "Launch the interactive prompt shell. Alias for shell.")
 	daemon := parser.NewCommand("daemon", "Run or inspect the daemon role.")
 	daemon.NewCommand("serve", "Run the daemon role.")
 	daemon.NewCommand("status", "Inspect daemon status.")

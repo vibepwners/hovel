@@ -713,7 +713,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (string, bool, int) {
 			return args[1], true, 0
 		}
 	}
-	fmt.Fprintln(stderr, "hovel cli starts the interactive shell; use hovel command for one-shot invocations")
+	fmt.Fprintln(stderr, "hovel cli starts the interactive shell; use hovel <command> for one-shot invocations")
 	return "", false, 2
 }
 

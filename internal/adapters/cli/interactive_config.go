@@ -58,11 +58,13 @@ func (w *interactiveConfigWizard) PromptMode() string {
 func (w *interactiveConfigWizard) Start(stdout, stderr io.Writer) int {
 	if w.session == nil {
 		fmt.Fprintln(stderr, "active chain is required")
+		fmt.Fprintln(stderr, "\nStart with:\n  chain create <name>\n  chain use <name>")
 		return 1
 	}
 	state := w.session.Snapshot()
 	if state.ActiveChain == "" {
 		fmt.Fprintln(stderr, "active chain is required")
+		fmt.Fprintln(stderr, "\nStart with:\n  chain create <name>\n  chain use <name>")
 		return 1
 	}
 

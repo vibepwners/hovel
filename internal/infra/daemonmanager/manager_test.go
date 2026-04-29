@@ -2,6 +2,7 @@ package daemonmanager
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 )
 
 func TestEnsureStartsAndStopsOwnedDaemon(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	manager := New()
 
 	session, err := manager.Ensure(context.Background(), workspacePath)
@@ -36,7 +37,7 @@ func TestEnsureStartsAndStopsOwnedDaemon(t *testing.T) {
 }
 
 func TestEnsureAttachesToExistingDaemonAndLeavesItRunning(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
@@ -74,6 +75,20 @@ func TestEnsureAttachesToExistingDaemonAndLeavesItRunning(t *testing.T) {
 	if status.State != daemon.StateRunning {
 		t.Fatalf("state after close = %s, want running", status.State)
 	}
+}
+
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	base := "/private/tmp"
+	if _, err := os.Stat(base); err != nil {
+		base = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "hovel-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 func waitFor(t *testing.T, condition func() bool) {

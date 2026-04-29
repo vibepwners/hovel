@@ -2,10 +2,12 @@ package commands
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
@@ -135,7 +137,8 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs := fakeRunClientFactory{}
+	recorder := &fakeRunRecorder{}
+	runs := fakeRunClientFactory{recorder: recorder}
 	registry := HovelRegistry(Runtime{
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{status: daemon.Running(identity)},
@@ -156,15 +159,38 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 	if !strings.Contains(result.Human, "Throw completed chain mock-exploit") {
 		t.Fatalf("human result = %q", result.Human)
 	}
+	if recorder.socketPath != "/tmp/hovel.sock" {
+		t.Fatalf("socket path = %q, want /tmp/hovel.sock", recorder.socketPath)
+	}
+	if len(recorder.requests) != 1 {
+		t.Fatalf("run requests = %#v, want one request", recorder.requests)
+	}
+	if recorder.requests[0] != (RunMockExploitRequest{ModuleID: "mock-exploit", Target: "mock://target"}) {
+		t.Fatalf("run request = %#v", recorder.requests[0])
+	}
 	payload, ok := result.JSON.(ThrowPayload)
 	if !ok {
 		t.Fatalf("json payload type = %T, want ThrowPayload", result.JSON)
 	}
-	if payload.Chain != "mock-exploit" {
-		t.Fatalf("chain = %q", payload.Chain)
+	wantPayload := ThrowPayload{
+		Chain:   "mock-exploit",
+		Targets: []string{"mock://target"},
+		Results: []RunPayload{{
+			RunID:    "run-1",
+			ModuleID: "mock-exploit",
+			Target:   "mock://target",
+			State:    "succeeded",
+			Summary:  "mock exploit completed",
+			Findings: []Finding{{Title: "finding", Severity: "info", Detail: "detail"}},
+			Artifacts: []Artifact{{
+				Name: "artifact",
+				Kind: "text",
+				Data: "data",
+			}},
+		}},
 	}
-	if len(payload.Results) != 1 || payload.Results[0].Target != "mock://target" {
-		t.Fatalf("results = %#v", payload.Results)
+	if !equalThrowPayload(payload, wantPayload) {
+		t.Fatalf("payload = %#v, want %#v", payload, wantPayload)
 	}
 	if result.Log.Empty() {
 		t.Fatal("throw log is empty")
@@ -172,8 +198,51 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 	if result.Log.Title != "HOVEL//THROW" {
 		t.Fatalf("log title = %q, want HOVEL//THROW", result.Log.Title)
 	}
-	if len(result.Log.Entries()) < 4 {
-		t.Fatalf("log entry count = %d, want at least 4", len(result.Log.Entries()))
+	entries := result.Log.Entries()
+	wantEntries := []operatorlog.Entry{
+		operatorlog.Stage("1/5 prepare chain",
+			operatorlog.Field{Name: "chain", Value: "mock-exploit"},
+			operatorlog.Field{Name: "targets", Value: "1"},
+		),
+		operatorlog.Info("chain", "chain staged",
+			operatorlog.Field{Name: "chain", Value: "mock-exploit"},
+			operatorlog.Field{Name: "targets", Value: "1"},
+		),
+		operatorlog.Stage("2/5 engage target",
+			operatorlog.Field{Name: "target", Value: "1/1"},
+			operatorlog.Field{Name: "address", Value: "mock://target"},
+		),
+		operatorlog.Info("throw", "target engaged",
+			operatorlog.Field{Name: "run", Value: "run-1"},
+			operatorlog.Field{Name: "target", Value: "mock://target"},
+		),
+		operatorlog.Stage("3/5 execute module",
+			operatorlog.Field{Name: "target", Value: "1/1"},
+			operatorlog.Field{Name: "module", Value: "mock-exploit"},
+		),
+		operatorlog.Info("module", "mock exploit completed"),
+		operatorlog.Stage("4/5 record result",
+			operatorlog.Field{Name: "target", Value: "1/1"},
+			operatorlog.Field{Name: "run", Value: "run-1"},
+		),
+		operatorlog.Finding("finding", "finding",
+			operatorlog.Field{Name: "severity", Value: "info"},
+			operatorlog.Field{Name: "detail", Value: "detail"},
+		),
+		operatorlog.Artifact("artifact", "artifact",
+			operatorlog.Field{Name: "kind", Value: "text"},
+		),
+		operatorlog.Stage("5/5 complete throw",
+			operatorlog.Field{Name: "chain", Value: "mock-exploit"},
+			operatorlog.Field{Name: "targets", Value: "1"},
+		),
+		operatorlog.Success("throw", "completed",
+			operatorlog.Field{Name: "chain", Value: "mock-exploit"},
+			operatorlog.Field{Name: "targets", Value: "1"},
+		),
+	}
+	if !equalEntries(entries, wantEntries) {
+		t.Fatalf("log entries = %#v, want %#v", entries, wantEntries)
 	}
 }
 
@@ -293,7 +362,7 @@ func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(listResult.Human, "mock-payload-provider payload_provider") {
+	if !strings.Contains(listResult.Human, "mock-payload-provider") || !strings.Contains(listResult.Human, "payload_provider") {
 		t.Fatalf("module list = %q", listResult.Human)
 	}
 
@@ -303,7 +372,7 @@ func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"mock-simple-exploit exploit", "operator.confirmed_lab bool required", "target.port port required"} {
+	for _, want := range []string{"mock-simple-exploit exploit", "version", "runtime", "operator.confirmed_lab", "bool", "target.port", "port", "Next: chain add mock-simple-exploit"} {
 		if !strings.Contains(inspectResult.Human, want) {
 			t.Fatalf("inspect missing %q:\n%s", want, inspectResult.Human)
 		}
@@ -317,6 +386,22 @@ func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 	}
 	if !strings.Contains(searchResult.Human, "mock-config-kitchen-sink") {
 		t.Fatalf("search result = %q", searchResult.Human)
+	}
+}
+
+func TestSessionCommandsRejectOneShotMode(t *testing.T) {
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+	})
+	definition, _ := registry.Find("targets", "add")
+
+	_, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "mock://target"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "hovel shell") {
+		t.Fatalf("error = %v, want shell guidance", err)
 	}
 }
 
@@ -354,6 +439,26 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 	if !strings.Contains(invalidResult.Human, "Chain alpha invalid") || !strings.Contains(invalidResult.Human, "missing chain config operator.confirmed_lab") {
 		t.Fatalf("invalid validation = %q", invalidResult.Human)
 	}
+	invalidPayload, ok := invalidResult.JSON.(ValidationPayload)
+	if !ok {
+		t.Fatalf("validation payload type = %T, want ValidationPayload", invalidResult.JSON)
+	}
+	wantIssues := []modulecatalog.Issue{
+		{
+			Scope:    modulecatalog.ScopeChain,
+			StepID:   "step-1",
+			ModuleID: "mock-simple-exploit",
+			Key:      "operator.confirmed_lab",
+			Message:  "missing chain config operator.confirmed_lab",
+		},
+		{
+			Scope:   modulecatalog.ScopeTarget,
+			Message: "chain has no targets",
+		},
+	}
+	if invalidPayload.Valid || !reflect.DeepEqual(invalidPayload.Issues, wantIssues) {
+		t.Fatalf("validation payload = %#v, want issues %#v", invalidPayload, wantIssues)
+	}
 
 	if _, err := chainConfigSetDefinition.Execute(context.Background(), Invocation{
 		Positionals: map[string]string{"key": "operator.confirmed_lab", "value": "true"},
@@ -380,7 +485,7 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(chainConfigResult.Human, "operator.confirmed_lab=true") {
+	if !strings.Contains(chainConfigResult.Human, "Chain config") || !strings.Contains(chainConfigResult.Human, "operator.confirmed_lab") || !strings.Contains(chainConfigResult.Human, "true") {
 		t.Fatalf("chain config = %q", chainConfigResult.Human)
 	}
 	targetConfigResult, err := targetConfigListDefinition.Execute(context.Background(), Invocation{
@@ -389,7 +494,7 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(targetConfigResult.Human, "target.port=22") {
+	if !strings.Contains(targetConfigResult.Human, "Target config mock://target") || !strings.Contains(targetConfigResult.Human, "target.port") || !strings.Contains(targetConfigResult.Human, "22") {
 		t.Fatalf("target config = %q", targetConfigResult.Human)
 	}
 
@@ -441,7 +546,7 @@ func TestSecretConfigListRedactsValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(result.Human, "hunter2") || !strings.Contains(result.Human, "auth.password=<secret:set>") {
+	if strings.Contains(result.Human, "hunter2") || !strings.Contains(result.Human, "auth.password") || !strings.Contains(result.Human, "<secret:set>") {
 		t.Fatalf("target config was not redacted: %q", result.Human)
 	}
 }
@@ -529,6 +634,14 @@ func hasLogMessage(logs []operatorlog.Entry, message string) bool {
 	return false
 }
 
+func equalThrowPayload(got, want ThrowPayload) bool {
+	return reflect.DeepEqual(got, want)
+}
+
+func equalEntries(got, want []operatorlog.Entry) bool {
+	return reflect.DeepEqual(got, want)
+}
+
 func hasOption(definition Definition, name string) bool {
 	for _, option := range definition.Options {
 		if option.Name == name {
@@ -558,23 +671,38 @@ func (s fakeDaemonService) Status(context.Context, services.DaemonStatusRequest)
 	return s.status, nil
 }
 
-type fakeRunClientFactory struct{}
-
-func (fakeRunClientFactory) DialRunClient(string) (RunClient, error) {
-	return fakeRunClient{}, nil
+type fakeRunRecorder struct {
+	socketPath string
+	requests   []RunMockExploitRequest
 }
 
-type fakeRunClient struct{}
+type fakeRunClientFactory struct {
+	recorder *fakeRunRecorder
+}
+
+func (f fakeRunClientFactory) DialRunClient(socketPath string) (RunClient, error) {
+	if f.recorder != nil {
+		f.recorder.socketPath = socketPath
+	}
+	return fakeRunClient{recorder: f.recorder}, nil
+}
+
+type fakeRunClient struct {
+	recorder *fakeRunRecorder
+}
 
 func (fakeRunClient) Close() error {
 	return nil
 }
 
-func (fakeRunClient) RunMockExploit(context.Context, RunMockExploitRequest) (RunMockExploitResponse, error) {
+func (c fakeRunClient) RunMockExploit(_ context.Context, req RunMockExploitRequest) (RunMockExploitResponse, error) {
+	if c.recorder != nil {
+		c.recorder.requests = append(c.recorder.requests, req)
+	}
 	return RunMockExploitResponse{
 		RunID:    "run-1",
-		ModuleID: "mock-exploit",
-		Target:   "mock://target",
+		ModuleID: req.ModuleID,
+		Target:   req.Target,
 		State:    "succeeded",
 		Summary:  "mock exploit completed",
 		Findings: []Finding{{Title: "finding", Severity: "info", Detail: "detail"}},

@@ -3,6 +3,7 @@ package daemonruntime
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestServeWritesStatusAndClearsOnCancel(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	store := filesystem.NewWorkspaceStore()
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
@@ -46,7 +47,7 @@ func TestServeWritesStatusAndClearsOnCancel(t *testing.T) {
 }
 
 func TestServeRejectsDuplicateWorkspace(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
@@ -83,7 +84,7 @@ func TestServeRejectsDuplicateWorkspace(t *testing.T) {
 }
 
 func TestServeRunsMockExploitOverRPC(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	socketPath := workspacePath + "/hoveld.sock"
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
@@ -133,6 +134,20 @@ func TestServeRunsMockExploitOverRPC(t *testing.T) {
 	if len(result.Findings) != 1 {
 		t.Fatalf("finding count = %d, want 1", len(result.Findings))
 	}
+}
+
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	base := "/private/tmp"
+	if _, err := os.Stat(base); err != nil {
+		base = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "hovel-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 func TestServeReturnsContextCancellation(t *testing.T) {

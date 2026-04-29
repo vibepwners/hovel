@@ -8,25 +8,41 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	defaultWidth = 88
+	sourceWidth  = 9
+)
+
 type Renderer struct {
 	title    lipgloss.Style
 	subtitle lipgloss.Style
 	info     lipgloss.Style
+	stage    lipgloss.Style
 	success  lipgloss.Style
 	finding  lipgloss.Style
 	artifact lipgloss.Style
 	field    lipgloss.Style
+	width    int
 }
 
 func NewRenderer() Renderer {
+	return NewRendererWithWidth(defaultWidth)
+}
+
+func NewRendererWithWidth(width int) Renderer {
+	if width <= 0 {
+		width = defaultWidth
+	}
 	return Renderer{
 		title:    lipgloss.NewStyle().Foreground(lipgloss.Color("#ff2bd6")).Bold(true),
 		subtitle: lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af")),
 		info:     lipgloss.NewStyle().Foreground(lipgloss.Color("#d1d5db")),
+		stage:    lipgloss.NewStyle().Foreground(lipgloss.Color("#facc15")).Bold(true),
 		success:  lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
 		finding:  lipgloss.NewStyle().Foreground(lipgloss.Color("#ff2bd6")).Bold(true),
 		artifact: lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
 		field:    lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af")),
+		width:    width,
 	}
 }
 
@@ -49,20 +65,56 @@ func (r Renderer) Render(log operatorlog.Log) string {
 
 func (r Renderer) renderEntry(entry operatorlog.Entry) string {
 	marker, markerStyle := r.marker(entry.Level)
-	line := fmt.Sprintf("%s %-9s %s", markerStyle.Render(marker), entry.Source, entry.Message)
-	if len(entry.Fields) == 0 {
-		return line
+	prefix := fmt.Sprintf("%s %-*s ", markerStyle.Render(marker), sourceWidth, entry.Source)
+	message := entry.Message
+	if len(entry.Fields) > 0 {
+		fields := make([]string, 0, len(entry.Fields))
+		for _, field := range entry.Fields {
+			fields = append(fields, field.Name+"="+field.Value)
+		}
+		if message != "" {
+			message += " "
+		}
+		message += r.field.Render(strings.Join(fields, " "))
 	}
 
-	fields := make([]string, 0, len(entry.Fields))
-	for _, field := range entry.Fields {
-		fields = append(fields, field.Name+"="+field.Value)
+	return wrapLine(prefix, message, r.width)
+}
+
+func wrapLine(prefix, message string, width int) string {
+	if message == "" {
+		return strings.TrimRight(prefix, " ")
 	}
-	return line + " " + r.field.Render(strings.Join(fields, " "))
+
+	indent := strings.Repeat(" ", lipgloss.Width(prefix))
+	var lines []string
+	current := prefix
+	currentWidth := lipgloss.Width(prefix)
+	for _, word := range strings.Fields(message) {
+		wordWidth := lipgloss.Width(word)
+		if currentWidth > lipgloss.Width(prefix) && currentWidth+1+wordWidth > width {
+			lines = append(lines, current)
+			current = indent + word
+			currentWidth = lipgloss.Width(indent) + wordWidth
+			continue
+		}
+		if currentWidth == lipgloss.Width(prefix) {
+			current += word
+			currentWidth += wordWidth
+			continue
+		}
+		current += " " + word
+		currentWidth += 1 + wordWidth
+	}
+	lines = append(lines, current)
+
+	return strings.Join(lines, "\n")
 }
 
 func (r Renderer) marker(level operatorlog.Level) (string, lipgloss.Style) {
 	switch level {
+	case operatorlog.LevelStage:
+		return "[>]", r.stage
 	case operatorlog.LevelSuccess:
 		return "[+]", r.success
 	case operatorlog.LevelFinding:

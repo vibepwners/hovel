@@ -25,6 +25,7 @@ go_test(
     ],
     embed = [":commands"],
     deps = [
+        "//internal/app/modulecatalog",
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",

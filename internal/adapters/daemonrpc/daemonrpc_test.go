@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/rpc"
 	"net/rpc/jsonrpc"
+	"os"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 )
 
 func TestClientRunsMockExploitThroughJSONRPC(t *testing.T) {
-	socketPath := t.TempDir() + "/hoveld.sock"
+	socketPath := shortTempDir(t) + "/hoveld.sock"
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +69,20 @@ func TestClientRunsMockExploitThroughJSONRPC(t *testing.T) {
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifact count = %d, want 1", len(result.Artifacts))
 	}
+}
+
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	base := "/private/tmp"
+	if _, err := os.Stat(base); err != nil {
+		base = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "hovel-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 type discardEvents struct{}

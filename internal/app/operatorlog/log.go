@@ -4,6 +4,7 @@ type Level string
 
 const (
 	LevelInfo     Level = "info"
+	LevelStage    Level = "stage"
 	LevelSuccess  Level = "success"
 	LevelFinding  Level = "finding"
 	LevelArtifact Level = "artifact"
@@ -23,6 +24,10 @@ type Entry struct {
 
 func Info(source, message string, fields ...Field) Entry {
 	return entry(LevelInfo, source, message, fields...)
+}
+
+func Stage(message string, fields ...Field) Entry {
+	return entry(LevelStage, "stage", message, fields...)
 }
 
 func Success(source, message string, fields ...Field) Entry {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,36 @@ func TestCommandRoleDelegatesToCommandAdapter(t *testing.T) {
 	}
 }
 
+func TestDirectCommandDelegatesToCommandAdapter(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := Run(context.Background(), []string{"modules", "list"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "mock-simple-exploit") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestInitAliasDelegatesToControlInit(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := Run(context.Background(), []string{"init", "--workspace", t.TempDir(), "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var payload struct {
+		Created bool `json:"created"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
+	}
+	if !payload.Created {
+		t.Fatal("created = false, want true")
+	}
+}
+
 func TestCLIRoleRejectsOneShotCommandArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -38,7 +69,7 @@ func TestCLIRoleRejectsOneShotCommandArguments(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "hovel command") {
+	if !strings.Contains(stderr.String(), "hovel <command>") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
@@ -51,7 +82,7 @@ func TestRootHelpShowsRoleMenu(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"hovel", "command", "cli", "daemon", "tui"} {
+	for _, want := range []string{"hovel", "chain", "modules", "throw", "shell", "command", "cli", "daemon", "tui"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}
@@ -86,7 +117,7 @@ func TestTUIRoleIsExplicitlyUnimplemented(t *testing.T) {
 }
 
 func TestMonoBinaryDaemonAndCommandRunMockExploitFlow(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	daemonCodes := make(chan int, 1)
 	var daemonStdout, daemonStderr bytes.Buffer
@@ -152,6 +183,20 @@ func TestMonoBinaryDaemonAndCommandRunMockExploitFlow(t *testing.T) {
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifact count = %d, want 1", len(result.Artifacts))
 	}
+}
+
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	base := "/private/tmp"
+	if _, err := os.Stat(base); err != nil {
+		base = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "hovel-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 func waitFor(t *testing.T, condition func() bool) {

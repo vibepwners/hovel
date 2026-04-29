@@ -397,7 +397,7 @@ func chainCreateHandler(runtime Runtime) Handler {
 		}
 		chain := invocation.Positional("chain")
 		if runtime.Session == nil {
-			return Result{Human: fmt.Sprintf("Chain created: %s", chain)}, nil
+			return Result{}, operatorSessionRequiredError("chain create")
 		}
 		if err := runtime.Session.CreateChain(chain); err != nil {
 			return Result{}, err
@@ -415,10 +415,11 @@ func chainUseHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		chain := invocation.Positional("chain")
-		if runtime.Session != nil {
-			if err := runtime.Session.UseChain(chain); err != nil {
-				return Result{}, err
-			}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("chain use")
+		}
+		if err := runtime.Session.UseChain(chain); err != nil {
+			return Result{}, err
 		}
 		return Result{Human: fmt.Sprintf("Chain selected: %s", chain)}, nil
 	}
@@ -431,10 +432,11 @@ func chainRenameHandler(runtime Runtime) Handler {
 		}
 		chain := invocation.Positional("chain")
 		name := invocation.Positional("name")
-		if runtime.Session != nil {
-			if err := runtime.Session.RenameChain(chain, name); err != nil {
-				return Result{}, err
-			}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("chain rename")
+		}
+		if err := runtime.Session.RenameChain(chain, name); err != nil {
+			return Result{}, err
 		}
 		return Result{Human: fmt.Sprintf("Chain renamed: %s -> %s", chain, name)}, nil
 	}
@@ -451,11 +453,11 @@ func chainAddHandler(runtime Runtime) Handler {
 			return Result{}, fmt.Errorf("module %s does not exist", moduleID)
 		}
 		if runtime.Session == nil {
-			return Result{Human: fmt.Sprintf("Module added: %s", module.ID)}, nil
+			return Result{}, operatorSessionRequiredError("chain add")
 		}
 		step, err := runtime.Session.AddModule(module.ID)
 		if err != nil {
-			return Result{}, err
+			return Result{}, withActiveChainHelp(err)
 		}
 		return Result{Human: fmt.Sprintf("Module added: %s as %s", module.ID, step.ID)}, nil
 	}
@@ -506,12 +508,12 @@ func chainConfigSetHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, fmt.Errorf("active chain is required")
+			return Result{}, activeChainRequiredError()
 		}
 		key := invocation.Positional("key")
 		value := invocation.Positional("value")
 		if err := runtime.Session.SetChainConfig(key, value); err != nil {
-			return Result{}, err
+			return Result{}, withActiveChainHelp(err)
 		}
 		return Result{Human: fmt.Sprintf("Chain config set: %s", key)}, nil
 	}
@@ -523,11 +525,11 @@ func chainConfigUnsetHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, fmt.Errorf("active chain is required")
+			return Result{}, activeChainRequiredError()
 		}
 		key := invocation.Positional("key")
 		if err := runtime.Session.UnsetChainConfig(key); err != nil {
-			return Result{}, err
+			return Result{}, withActiveChainHelp(err)
 		}
 		return Result{Human: fmt.Sprintf("Chain config unset: %s", key)}, nil
 	}
@@ -543,10 +545,10 @@ func chainConfigListHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if len(state.Config) == 0 {
-			return Result{Human: "No chain config"}, nil
+			return Result{Human: "No chain config set\n\nNext: config interactive"}, nil
 		}
 		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeChain)
-		return Result{Human: configLines(state.Config, requirements)}, nil
+		return Result{Human: "Chain config\n" + configLines(state.Config, requirements)}, nil
 	}
 }
 
@@ -556,7 +558,7 @@ func chainListHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{Human: "No chains"}, nil
+			return Result{}, operatorSessionRequiredError("chain list")
 		}
 		state := runtime.Session.Snapshot()
 		if len(state.Chains) == 0 {
@@ -580,13 +582,13 @@ func chainInspectHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, fmt.Errorf("active chain is required")
+			return Result{}, activeChainRequiredError()
 		}
 		state := runtime.Session.Snapshot()
 		if state.ActiveChain == "" {
-			return Result{}, fmt.Errorf("active chain is required")
+			return Result{}, activeChainRequiredError()
 		}
-		return Result{Human: fmt.Sprintf("Chain %s steps=%d targets=%d config=%d topic=%s", state.ActiveChain, len(state.Steps), len(state.Targets), len(state.Config), state.LogTopic)}, nil
+		return Result{Human: chainInspect(state)}, nil
 	}
 }
 
@@ -596,10 +598,11 @@ func chainDeleteHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		chain := invocation.Positional("chain")
-		if runtime.Session != nil {
-			if err := runtime.Session.DeleteChain(chain); err != nil {
-				return Result{}, err
-			}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("chain delete")
+		}
+		if err := runtime.Session.DeleteChain(chain); err != nil {
+			return Result{}, err
 		}
 		return Result{Human: fmt.Sprintf("Chain deleted: %s", chain)}, nil
 	}
@@ -611,11 +614,11 @@ func chainLogsHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, fmt.Errorf("active chain is required")
+			return Result{}, activeChainRequiredError()
 		}
 		state := runtime.Session.Snapshot()
 		if state.ActiveChain == "" {
-			return Result{}, fmt.Errorf("active chain is required")
+			return Result{}, activeChainRequiredError()
 		}
 		logs := runtime.Session.ActiveLogs()
 		if len(logs) == 0 {
@@ -631,10 +634,11 @@ func targetsAddHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		target := invocation.Positional("target")
-		if runtime.Session != nil {
-			if err := runtime.Session.AddTarget(target); err != nil {
-				return Result{}, err
-			}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("targets add")
+		}
+		if err := runtime.Session.AddTarget(target); err != nil {
+			return Result{}, withActiveChainHelp(err)
 		}
 		return Result{Human: fmt.Sprintf("Target added: %s", target)}, nil
 	}
@@ -645,9 +649,10 @@ func targetsClearHandler(runtime Runtime) Handler {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		if runtime.Session != nil {
-			runtime.Session.ClearTargets()
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("targets clear")
 		}
+		runtime.Session.ClearTargets()
 		return Result{Human: "Targets cleared"}, nil
 	}
 }
@@ -658,13 +663,13 @@ func targetsConfigSetHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, fmt.Errorf("active chain is required")
+			return Result{}, activeChainRequiredError()
 		}
 		target := invocation.Positional("target")
 		key := invocation.Positional("key")
 		value := invocation.Positional("value")
 		if err := runtime.Session.SetTargetConfig(target, key, value); err != nil {
-			return Result{}, err
+			return Result{}, withActiveChainHelp(err)
 		}
 		return Result{Human: fmt.Sprintf("Target config set: %s %s", target, key)}, nil
 	}
@@ -676,12 +681,12 @@ func targetsConfigUnsetHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, fmt.Errorf("active chain is required")
+			return Result{}, activeChainRequiredError()
 		}
 		target := invocation.Positional("target")
 		key := invocation.Positional("key")
 		if err := runtime.Session.UnsetTargetConfig(target, key); err != nil {
-			return Result{}, err
+			return Result{}, withActiveChainHelp(err)
 		}
 		return Result{Human: fmt.Sprintf("Target config unset: %s %s", target, key)}, nil
 	}
@@ -699,10 +704,10 @@ func targetsConfigListHandler(runtime Runtime) Handler {
 		target := invocation.Positional("target")
 		config, ok := state.TargetConfigs[target]
 		if !ok || len(config) == 0 {
-			return Result{Human: fmt.Sprintf("No target config for %s", target)}, nil
+			return Result{Human: fmt.Sprintf("No target config for %s\n\nNext: targets config set %s <key> <value>", target, target)}, nil
 		}
 		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeTarget)
-		return Result{Human: configLines(config, requirements)}, nil
+		return Result{Human: fmt.Sprintf("Target config %s\n%s", target, configLines(config, requirements))}, nil
 	}
 }
 
@@ -843,13 +848,28 @@ func targetsForChain(state operatorsession.State, chain string) []string {
 
 func activeState(runtime Runtime) (operatorsession.State, error) {
 	if runtime.Session == nil {
-		return operatorsession.State{}, fmt.Errorf("active chain is required")
+		return operatorsession.State{}, activeChainRequiredError()
 	}
 	state := runtime.Session.Snapshot()
 	if state.ActiveChain == "" {
-		return operatorsession.State{}, fmt.Errorf("active chain is required")
+		return operatorsession.State{}, activeChainRequiredError()
 	}
 	return state, nil
+}
+
+func activeChainRequiredError() error {
+	return fmt.Errorf("active chain is required\n\nStart with:\n  chain create <name>\n  chain use <name>")
+}
+
+func operatorSessionRequiredError(command string) error {
+	return fmt.Errorf("%s needs an operator session\n\nUse the interactive shell:\n  hovel shell\n\nOr keep using one-shot commands that do not depend on selected chain state, such as:\n  hovel modules list\n  hovel throw --chain <chain> --target <target>", command)
+}
+
+func withActiveChainHelp(err error) error {
+	if err != nil && strings.Contains(err.Error(), "active chain is required") {
+		return activeChainRequiredError()
+	}
+	return err
 }
 
 func moduleDB(runtime Runtime) ModuleDatabase {
@@ -901,15 +921,23 @@ func configLines(config map[string]string, requirements map[string]modulecatalog
 	lines := make([]string, 0, len(keys))
 	for _, key := range keys {
 		requirement := requirements[key]
-		lines = append(lines, key+"="+modulecatalog.DisplayValue(requirement, config[key]))
+		value := modulecatalog.DisplayValue(requirement, config[key])
+		typeName := string(requirement.Type)
+		if typeName == "" {
+			typeName = "string"
+		}
+		lines = append(lines, fmt.Sprintf("  %-28s %-18s %s", key, typeName, value))
 	}
 	return strings.Join(lines, "\n")
 }
 
 func moduleLines(modules []modulecatalog.Module) string {
-	lines := make([]string, 0, len(modules))
+	lines := []string{
+		"ID                         TYPE              SUMMARY",
+		"--                         ----              -------",
+	}
 	for _, module := range modules {
-		lines = append(lines, fmt.Sprintf("%s %s %s", module.ID, module.Type, module.Summary))
+		lines = append(lines, fmt.Sprintf("%-26s %-17s %s", module.ID, module.Type, module.Summary))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -917,20 +945,35 @@ func moduleLines(modules []modulecatalog.Module) string {
 func moduleInspect(module modulecatalog.Module) string {
 	lines := []string{
 		fmt.Sprintf("%s %s", module.ID, module.Type),
+		"",
 		module.Summary,
 	}
+	if module.Description != "" {
+		lines = append(lines, module.Description)
+	}
+	lines = append(lines,
+		"",
+		fmt.Sprintf("version      %s", module.Version),
+		fmt.Sprintf("runtime      %s", module.RuntimeKind),
+		fmt.Sprintf("author       %s", module.Author),
+		fmt.Sprintf("enabled      %t", module.Enabled),
+	)
+	if len(module.Tags) > 0 {
+		lines = append(lines, "tags         "+strings.Join(module.Tags, ", "))
+	}
 	if len(module.ChainConfig) > 0 {
-		lines = append(lines, "chain config:")
+		lines = append(lines, "", "chain config")
 		for _, requirement := range module.ChainConfig {
 			lines = append(lines, requirementLine(requirement))
 		}
 	}
 	if len(module.TargetConfig) > 0 {
-		lines = append(lines, "target config:")
+		lines = append(lines, "", "target config")
 		for _, requirement := range module.TargetConfig {
 			lines = append(lines, requirementLine(requirement))
 		}
 	}
+	lines = append(lines, "", "Next: chain add "+module.ID)
 	return strings.Join(lines, "\n")
 }
 
@@ -939,11 +982,43 @@ func requirementLine(requirement modulecatalog.Requirement) string {
 	if requirement.Required {
 		required = "required"
 	}
-	line := fmt.Sprintf("- %s %s %s", requirement.Key, requirement.Type, required)
+	typeName := string(requirement.Type)
+	if typeName == "" {
+		typeName = "string"
+	}
+	line := fmt.Sprintf("  %-28s %-18s %s", requirement.Key, typeName, required)
 	if len(requirement.Allowed) > 0 {
-		line += " [" + strings.Join(requirement.Allowed, ",") + "]"
+		line += " [" + strings.Join(requirement.Allowed, ", ") + "]"
+	}
+	if requirement.Description != "" {
+		line += "  " + requirement.Description
 	}
 	return line
+}
+
+func chainInspect(state operatorsession.State) string {
+	lines := []string{
+		fmt.Sprintf("Chain %s steps=%d targets=%d config=%d topic=%s", state.ActiveChain, len(state.Steps), len(state.Targets), len(state.Config), state.LogTopic),
+		"",
+		"steps",
+	}
+	if len(state.Steps) == 0 {
+		lines = append(lines, "  none")
+	} else {
+		for _, step := range state.Steps {
+			lines = append(lines, fmt.Sprintf("  %-10s %s", step.ID, step.ModuleID))
+		}
+	}
+	lines = append(lines, "", "targets")
+	if len(state.Targets) == 0 {
+		lines = append(lines, "  none")
+	} else {
+		for _, target := range state.Targets {
+			lines = append(lines, "  "+target)
+		}
+	}
+	lines = append(lines, "", "Next: add <module>, targets add <target>, config interactive, validate, throw")
+	return strings.Join(lines, "\n")
 }
 
 func cloneStringMap(values map[string]string) map[string]string {
@@ -989,19 +1064,36 @@ func runPayload(result RunMockExploitResponse) RunPayload {
 
 func throwLog(payload ThrowPayload) operatorlog.Log {
 	entries := []operatorlog.Entry{
+		operatorlog.Stage("1/5 prepare chain",
+			operatorlog.Field{Name: "chain", Value: payload.Chain},
+			operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
+		),
 		operatorlog.Info("chain", "chain staged",
 			operatorlog.Field{Name: "chain", Value: payload.Chain},
 			operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
 		),
 	}
-	for _, result := range payload.Results {
+	for index, result := range payload.Results {
+		targetStep := fmt.Sprintf("%d/%d", index+1, len(payload.Results))
+		entries = append(entries, operatorlog.Stage("2/5 engage target",
+			operatorlog.Field{Name: "target", Value: targetStep},
+			operatorlog.Field{Name: "address", Value: result.Target},
+		))
 		entries = append(entries, operatorlog.Info("throw", "target engaged",
 			operatorlog.Field{Name: "run", Value: result.RunID},
 			operatorlog.Field{Name: "target", Value: result.Target},
 		))
+		entries = append(entries, operatorlog.Stage("3/5 execute module",
+			operatorlog.Field{Name: "target", Value: targetStep},
+			operatorlog.Field{Name: "module", Value: result.ModuleID},
+		))
 		if result.Summary != "" {
 			entries = append(entries, operatorlog.Info("module", result.Summary))
 		}
+		entries = append(entries, operatorlog.Stage("4/5 record result",
+			operatorlog.Field{Name: "target", Value: targetStep},
+			operatorlog.Field{Name: "run", Value: result.RunID},
+		))
 		for _, finding := range result.Findings {
 			entries = append(entries, operatorlog.Finding("finding", finding.Title,
 				operatorlog.Field{Name: "severity", Value: finding.Severity},
@@ -1014,6 +1106,10 @@ func throwLog(payload ThrowPayload) operatorlog.Log {
 			))
 		}
 	}
+	entries = append(entries, operatorlog.Stage("5/5 complete throw",
+		operatorlog.Field{Name: "chain", Value: payload.Chain},
+		operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
+	))
 	entries = append(entries, operatorlog.Success("throw", "completed",
 		operatorlog.Field{Name: "chain", Value: payload.Chain},
 		operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},

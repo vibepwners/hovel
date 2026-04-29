@@ -271,13 +271,17 @@ func groupSummary(path []string, fallback string) string {
 	}
 	switch path[len(path)-1] {
 	case "control":
-		return "Operational control commands."
+		return "Initialize workspaces and inspect daemon state."
 	case "daemon":
 		return "Daemon control and inspection commands."
 	case "chain":
-		return "Chain selection and planning commands."
+		return "Build and manage operator chains."
+	case "config":
+		return "Set, list, and fix configuration."
+	case "modules":
+		return "Browse, search, and inspect modules."
 	case "targets":
-		return "Target setup commands."
+		return "Add and configure chain targets."
 	default:
 		return fallback
 	}

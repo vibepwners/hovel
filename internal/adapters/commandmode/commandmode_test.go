@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -143,7 +144,7 @@ func TestDaemonStatusJSONRunning(t *testing.T) {
 
 func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	socketPath := workspacePath + "/hoveld.sock"
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
@@ -243,6 +244,20 @@ func TestHumanOutputRendersOperatorLogWhenPresent(t *testing.T) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}
 	}
+}
+
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	base := "/private/tmp"
+	if _, err := os.Stat(base); err != nil {
+		base = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "hovel-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
 }
 
 type sequenceIDs struct {
