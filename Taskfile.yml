@@ -18,6 +18,13 @@ tasks:
     cmds:
       - bazel run //cmd/hovel -- cli
 
+  daemon:
+    desc: Start hoveld with the default Unix domain socket.
+    interactive: true
+    cmds:
+      - bazel build //cmd/hovel
+      - ./bazel-bin/cmd/hovel/hovel_/hovel daemon serve
+
   test:
     aliases: [t]
     desc: Run every Bazel test.
