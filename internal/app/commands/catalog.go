@@ -32,6 +32,10 @@ type RunClient interface {
 	RunMockExploit(context.Context, RunMockExploitRequest) (RunMockExploitResponse, error)
 }
 
+type ThrowPlanRecorder interface {
+	RecordThrowPlan(context.Context, ThrowPlanRecord) error
+}
+
 type OperatorSession interface {
 	CreateChain(string) error
 	UseChain(string) error
@@ -54,6 +58,7 @@ type Runtime struct {
 	Workspaces WorkspaceInitializer
 	Daemons    DaemonStatusProvider
 	Runs       RunClientFactory
+	Plans      ThrowPlanRecorder
 	Session    OperatorSession
 	Modules    ModuleDatabase
 }
@@ -121,9 +126,38 @@ type RunPayload struct {
 }
 
 type ThrowPayload struct {
-	Chain   string       `json:"chain"`
-	Targets []string     `json:"targets"`
-	Results []RunPayload `json:"results"`
+	Plan    ThrowPlanPayload `json:"plan"`
+	Chain   string           `json:"chain"`
+	Targets []string         `json:"targets"`
+	Results []RunPayload     `json:"results"`
+}
+
+type ThrowPlanPayload struct {
+	ID         string   `json:"id"`
+	ApprovalID string   `json:"approvalId"`
+	Chain      string   `json:"chain"`
+	Targets    []string `json:"targets"`
+	Decision   string   `json:"decision"`
+}
+
+type ThrowPlanRecord struct {
+	ID         string   `json:"id"`
+	ApprovalID string   `json:"approvalId"`
+	Workspace  string   `json:"workspace"`
+	Chain      string   `json:"chain"`
+	Targets    []string `json:"targets"`
+	Decision   string   `json:"decision"`
+	Intent     string   `json:"intent"`
+}
+
+func (r ThrowPlanRecord) Payload() ThrowPlanPayload {
+	return ThrowPlanPayload{
+		ID:         r.ID,
+		ApprovalID: r.ApprovalID,
+		Chain:      r.Chain,
+		Targets:    append([]string(nil), r.Targets...),
+		Decision:   r.Decision,
+	}
 }
 
 type ValidationPayload struct {
@@ -132,7 +166,7 @@ type ValidationPayload struct {
 }
 
 func HovelRegistry(runtime Runtime) Registry {
-	return MustRegistry(
+	return MustRegistry(withCommonOptions(
 		Definition{
 			Path:    []string{"control", "init"},
 			Summary: "Initialize a local Hovel workspace.",
@@ -314,7 +348,7 @@ func HovelRegistry(runtime Runtime) Registry {
 			},
 			Handler: throwHandler(runtime),
 		},
-	)
+	)...)
 }
 
 func stringOption(name, short, help string) Option {
@@ -323,6 +357,33 @@ func stringOption(name, short, help string) Option {
 
 func boolOption(name, short, help string) Option {
 	return Option{Name: name, Short: short, Help: help, Kind: OptionBool}
+}
+
+func withCommonOptions(definitions ...Definition) []Definition {
+	common := []Option{
+		boolOption("no-color", "", "Disable styled terminal output"),
+		boolOption("verbose", "v", "Emit verbose output"),
+		boolOption("debug", "", "Emit debug output"),
+	}
+	out := make([]Definition, 0, len(definitions))
+	for _, definition := range definitions {
+		for _, option := range common {
+			if !definitionHasOption(definition, option.Name) {
+				definition.Options = append(definition.Options, option)
+			}
+		}
+		out = append(out, definition)
+	}
+	return out
+}
+
+func definitionHasOption(definition Definition, name string) bool {
+	for _, option := range definition.Options {
+		if option.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func initHandler(runtime Runtime) Handler {
@@ -779,6 +840,13 @@ func throwHandler(runtime Runtime) Handler {
 			return Result{}, fmt.Errorf("daemon is not running for workspace %s", status.WorkspacePath)
 		}
 
+		plan := newThrowPlan(status.WorkspacePath, chain, targets)
+		if runtime.Plans != nil {
+			if err := runtime.Plans.RecordThrowPlan(ctx, plan); err != nil {
+				return Result{}, err
+			}
+		}
+
 		client, err := runtime.Runs.DialRunClient(status.Identity.SocketPath)
 		if err != nil {
 			return Result{}, err
@@ -786,6 +854,7 @@ func throwHandler(runtime Runtime) Handler {
 		defer client.Close()
 
 		var payload ThrowPayload
+		payload.Plan = plan.Payload()
 		payload.Chain = chain
 		payload.Targets = append([]string(nil), targets...)
 		for _, target := range targets {
@@ -808,6 +877,41 @@ func throwHandler(runtime Runtime) Handler {
 			Log:   log,
 		}, nil
 	}
+}
+
+func newThrowPlan(workspacePath, chain string, targets []string) ThrowPlanRecord {
+	id := "plan-" + stablePlanComponent(chain, targets)
+	return ThrowPlanRecord{
+		ID:         id,
+		ApprovalID: "approval-" + stablePlanComponent(chain, targets),
+		Workspace:  workspacePath,
+		Chain:      chain,
+		Targets:    append([]string(nil), targets...),
+		Decision:   "operator-reviewed",
+		Intent:     fmt.Sprintf("throw chain %s against %d target(s)", chain, len(targets)),
+	}
+}
+
+func stablePlanComponent(chain string, targets []string) string {
+	var b strings.Builder
+	b.WriteString(chain)
+	for _, target := range targets {
+		b.WriteString("-")
+		b.WriteString(target)
+	}
+	out := strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			return r
+		default:
+			return '-'
+		}
+	}, b.String())
+	out = strings.Trim(out, "-")
+	if out == "" {
+		return "throw"
+	}
+	return out
 }
 
 func throwInputs(runtime Runtime, invocation Invocation) (string, []string, error) {
@@ -1064,6 +1168,11 @@ func runPayload(result RunMockExploitResponse) RunPayload {
 
 func throwLog(payload ThrowPayload) operatorlog.Log {
 	entries := []operatorlog.Entry{
+		operatorlog.Stage("0/5 review plan",
+			operatorlog.Field{Name: "plan", Value: payload.Plan.ID},
+			operatorlog.Field{Name: "approval", Value: payload.Plan.ApprovalID},
+			operatorlog.Field{Name: "decision", Value: payload.Plan.Decision},
+		),
 		operatorlog.Stage("1/5 prepare chain",
 			operatorlog.Field{Name: "chain", Value: payload.Chain},
 			operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},

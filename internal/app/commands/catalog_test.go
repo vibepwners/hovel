@@ -69,10 +69,27 @@ func TestThrowDefinitionRequiresDaemonAndCentralOptions(t *testing.T) {
 	if len(definition.Positionals) != 0 {
 		t.Fatalf("positionals = %#v, want none", definition.Positionals)
 	}
-	for _, name := range []string{"workspace", "chain", "target", "json"} {
+	for _, name := range []string{"workspace", "chain", "target", "json", "no-color", "verbose", "debug"} {
 		if !hasOption(definition, name) {
 			t.Fatalf("throw definition missing %q option", name)
 		}
+	}
+}
+
+func TestRegistryHasRootUsesDefinitions(t *testing.T) {
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+	})
+
+	for _, root := range []string{"chain", "control", "modules", "targets", "throw"} {
+		if !registry.HasRoot(root) {
+			t.Fatalf("HasRoot(%q) = false, want true", root)
+		}
+	}
+	if registry.HasRoot("shell") {
+		t.Fatal(`HasRoot("shell") = true, want false`)
 	}
 }
 
@@ -139,10 +156,12 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 	}
 	recorder := &fakeRunRecorder{}
 	runs := fakeRunClientFactory{recorder: recorder}
+	plans := &fakePlanRecorder{}
 	registry := HovelRegistry(Runtime{
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{status: daemon.Running(identity)},
 		Runs:       runs,
+		Plans:      plans,
 	})
 	definition, _ := registry.Find("throw")
 
@@ -168,11 +187,24 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 	if recorder.requests[0] != (RunMockExploitRequest{ModuleID: "mock-exploit", Target: "mock://target"}) {
 		t.Fatalf("run request = %#v", recorder.requests[0])
 	}
+	wantPlan := ThrowPlanRecord{
+		ID:         "plan-mock-exploit-mock---target",
+		ApprovalID: "approval-mock-exploit-mock---target",
+		Workspace:  ".hovel",
+		Chain:      "mock-exploit",
+		Targets:    []string{"mock://target"},
+		Decision:   "operator-reviewed",
+		Intent:     "throw chain mock-exploit against 1 target(s)",
+	}
+	if !reflect.DeepEqual(plans.records, []ThrowPlanRecord{wantPlan}) {
+		t.Fatalf("plans = %#v, want %#v", plans.records, []ThrowPlanRecord{wantPlan})
+	}
 	payload, ok := result.JSON.(ThrowPayload)
 	if !ok {
 		t.Fatalf("json payload type = %T, want ThrowPayload", result.JSON)
 	}
 	wantPayload := ThrowPayload{
+		Plan:    wantPlan.Payload(),
 		Chain:   "mock-exploit",
 		Targets: []string{"mock://target"},
 		Results: []RunPayload{{
@@ -200,6 +232,11 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 	}
 	entries := result.Log.Entries()
 	wantEntries := []operatorlog.Entry{
+		operatorlog.Stage("0/5 review plan",
+			operatorlog.Field{Name: "plan", Value: "plan-mock-exploit-mock---target"},
+			operatorlog.Field{Name: "approval", Value: "approval-mock-exploit-mock---target"},
+			operatorlog.Field{Name: "decision", Value: "operator-reviewed"},
+		),
 		operatorlog.Stage("1/5 prepare chain",
 			operatorlog.Field{Name: "chain", Value: "mock-exploit"},
 			operatorlog.Field{Name: "targets", Value: "1"},
@@ -674,6 +711,15 @@ func (s fakeDaemonService) Status(context.Context, services.DaemonStatusRequest)
 type fakeRunRecorder struct {
 	socketPath string
 	requests   []RunMockExploitRequest
+}
+
+type fakePlanRecorder struct {
+	records []ThrowPlanRecord
+}
+
+func (r *fakePlanRecorder) RecordThrowPlan(_ context.Context, plan ThrowPlanRecord) error {
+	r.records = append(r.records, plan)
+	return nil
 }
 
 type fakeRunClientFactory struct {

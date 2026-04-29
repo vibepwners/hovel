@@ -40,9 +40,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return commandmode.Run(ctx, append([]string{"control", "init"}, args[1:]...), stdout, stderr)
 	case "status":
 		return commandmode.Run(ctx, append([]string{"control", "daemon", "status"}, args[1:]...), stdout, stderr)
-	case "chain", "control", "modules", "targets", "throw":
-		return commandmode.Run(ctx, args, stdout, stderr)
 	default:
+		if commandmode.NewApp().Registry().HasRoot(args[0]) {
+			return commandmode.Run(ctx, args, stdout, stderr)
+		}
 		fmt.Fprint(stderr, newRootParser().Usage(fmt.Sprintf("unknown command or role %q", args[0])))
 		return 2
 	}

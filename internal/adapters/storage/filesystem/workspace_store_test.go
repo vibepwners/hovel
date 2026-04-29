@@ -2,10 +2,13 @@ package filesystem
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 )
 
@@ -56,6 +59,35 @@ func TestInitWorkspaceIsIdempotent(t *testing.T) {
 	}
 	if second.Workspace.ID != first.Workspace.ID {
 		t.Fatalf("workspace ID = %q, want %q", second.Workspace.ID, first.Workspace.ID)
+	}
+}
+
+func TestRecordThrowPlanPersistsAuditablePlan(t *testing.T) {
+	store := NewWorkspaceStore()
+	workspacePath := filepath.Join(t.TempDir(), ".hovel")
+	plan := commands.ThrowPlanRecord{
+		ID:         "plan-mock",
+		ApprovalID: "approval-mock",
+		Workspace:  workspacePath,
+		Chain:      "mock-exploit",
+		Targets:    []string{"mock://target"},
+		Decision:   "operator-reviewed",
+		Intent:     "throw chain mock-exploit against 1 target(s)",
+	}
+
+	if err := store.RecordThrowPlan(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(workspacePath, "runs", "plan-mock.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got commands.ThrowPlanRecord
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, plan) {
+		t.Fatalf("plan = %#v, want %#v", got, plan)
 	}
 }
 

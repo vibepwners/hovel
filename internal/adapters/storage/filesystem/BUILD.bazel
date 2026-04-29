@@ -10,6 +10,7 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem",
     visibility = ["//visibility:public"],
     deps = [
+        "//internal/app/commands",
         "//internal/app/services",
         "//internal/domain/daemon",
         "//internal/domain/workspace",
@@ -25,6 +26,7 @@ go_test(
     ],
     embed = [":filesystem"],
     deps = [
+        "//internal/app/commands",
         "//internal/domain/daemon",
         "//internal/domain/workspace",
     ],

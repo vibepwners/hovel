@@ -46,6 +46,17 @@ func NewRendererWithWidth(width int) Renderer {
 	}
 }
 
+func NewPlainRenderer() Renderer {
+	return NewPlainRendererWithWidth(defaultWidth)
+}
+
+func NewPlainRendererWithWidth(width int) Renderer {
+	if width <= 0 {
+		width = defaultWidth
+	}
+	return Renderer{width: width}
+}
+
 func (r Renderer) Render(log operatorlog.Log) string {
 	if log.Empty() {
 		return ""

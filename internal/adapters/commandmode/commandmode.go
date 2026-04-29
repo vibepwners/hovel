@@ -55,6 +55,7 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 		),
 		Daemons: services.NewDaemonService(store),
 		Runs:    daemonRunClients{},
+		Plans:   store,
 		Session: session,
 	}
 }
@@ -122,7 +123,11 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		return 0
 	}
 	if !result.Log.Empty() {
-		fmt.Fprintln(stdout, a.logs.Render(result.Log))
+		renderer := a.logs
+		if parsed.Flag("no-color") {
+			renderer = terminallog.NewPlainRenderer()
+		}
+		fmt.Fprintln(stdout, renderer.Render(result.Log))
 		return 0
 	}
 	if result.Human != "" {

@@ -97,6 +97,12 @@ Hovel may also publish a PyPI wrapper for Python-centric users:
 uvx hovel command throw --chain ssh-memory --target 10.41.32.2
 ```
 
+The wrapper may also support the direct alias form when it is available from the embedded binary:
+
+```bash
+uvx hovel throw --chain ssh-memory --target 10.41.32.2
+```
+
 The PyPI package may download or include the Go binary, similar to other compiled tools distributed through Python package indexes.
 
 Module and service sources:

@@ -13,6 +13,8 @@ hovel daemon ...
 hovel tui ...
 ```
 
+For operator ergonomics, the mono-binary also exposes registry-backed direct command aliases such as `hovel chain ...`, `hovel modules ...`, `hovel targets ...`, and `hovel throw ...`. These aliases are part of the shell-facing product surface, but they must be generated from or dispatched through the same central command registry as `hovel command ...`.
+
 ## Terminology
 
 These terms are normative:
@@ -30,7 +32,7 @@ The old phrase "CLI command mode" should be avoided. Use `command` for non-inter
 
 Command mode rules:
 
-1. Invoked as `hovel command ...`.
+1. Invoked as `hovel command ...` or an equivalent registry-backed direct alias such as `hovel throw ...`.
 2. Runs one command and exits.
 3. Uses shared command definitions from the central command registry.
 4. Uses the same argument, switch, option, help, validation, completion metadata, and handlers as `cli` mode.
@@ -145,7 +147,7 @@ hovel
   cli
 ```
 
-The root-level legacy command aliases may exist during early development, but the durable contract is `hovel command`, `hovel cli`, `hovel daemon`, and `hovel tui`.
+Direct command aliases are durable only when they remain registry-backed and behaviorally equivalent to the corresponding `hovel command ...` path. Root role commands such as `hovel cli`, `hovel daemon`, and `hovel tui` remain explicit role selectors.
 
 Recommended prompt shape:
 

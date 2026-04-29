@@ -135,6 +135,19 @@ func (r Registry) Find(path ...string) (Definition, bool) {
 	return definition, ok
 }
 
+func (r Registry) HasRoot(segment string) bool {
+	segment = strings.TrimSpace(segment)
+	if segment == "" {
+		return false
+	}
+	for _, definition := range r.definitions {
+		if len(definition.Path) > 0 && definition.Path[0] == segment {
+			return true
+		}
+	}
+	return false
+}
+
 func (r Registry) Children(prefix ...string) []Definition {
 	seen := map[string]Definition{}
 	for _, definition := range r.definitions {
