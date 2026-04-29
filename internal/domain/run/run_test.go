@@ -57,3 +57,21 @@ func TestSucceededResultCapturesMockExploitOutcome(t *testing.T) {
 		t.Fatalf("artifact count = %d, want 1", len(result.Artifacts))
 	}
 }
+
+func TestFailedResultCapturesFailureState(t *testing.T) {
+	request, err := NewRequest(RequestArgs{
+		ID:       "run-1",
+		ModuleID: "mock-exploit",
+		Target:   "mock://target",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Failed(request, ResultArgs{Summary: "mock failure"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != StateFailed {
+		t.Fatalf("state = %q, want %q", result.State, StateFailed)
+	}
+}

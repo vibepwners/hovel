@@ -12,6 +12,7 @@ go_library(
         "//internal/app/commands",
         "//internal/app/services",
         "//internal/domain/event",
+        "//internal/modules/pythonrpc",
         "@com_github_akamensky_argparse//:argparse",
     ],
 )
@@ -19,6 +20,10 @@ go_library(
 go_test(
     name = "commandmode_test",
     srcs = ["commandmode_test.go"],
+    data = [
+        "//examples/python:sources",
+        "//sdk/python:sources",
+    ],
     embed = [":commandmode"],
     deps = [
         "//internal/adapters/storage/filesystem",

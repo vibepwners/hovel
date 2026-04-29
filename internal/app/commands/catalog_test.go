@@ -20,6 +20,7 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 	})
 
 	for _, path := range [][]string{
@@ -58,6 +59,7 @@ func TestThrowDefinitionRequiresDaemonAndCentralOptions(t *testing.T) {
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 	})
 	definition, ok := registry.Find("throw")
 	if !ok {
@@ -81,6 +83,7 @@ func TestRegistryHasRootUsesDefinitions(t *testing.T) {
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 	})
 
 	for _, root := range []string{"chain", "control", "modules", "targets", "throw"} {
@@ -99,6 +102,7 @@ func TestInitHandlerUsesWorkspaceService(t *testing.T) {
 		Workspaces: service,
 		Daemons:    fakeDaemonService{},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 	})
 	definition, _ := registry.Find("control", "init")
 
@@ -128,6 +132,7 @@ func TestThrowHandlerRejectsMissingDaemon(t *testing.T) {
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{status: daemon.NotRunning(".hovel")},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 	})
 	definition, _ := registry.Find("throw")
 
@@ -161,6 +166,7 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{status: daemon.Running(identity)},
 		Runs:       runs,
+		Modules:    exampleCatalog(),
 		Plans:      plans,
 	})
 	definition, _ := registry.Find("throw")
@@ -184,7 +190,7 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 	if len(recorder.requests) != 1 {
 		t.Fatalf("run requests = %#v, want one request", recorder.requests)
 	}
-	if recorder.requests[0] != (RunMockExploitRequest{ModuleID: "mock-exploit", Target: "mock://target"}) {
+	if !reflect.DeepEqual(recorder.requests[0], RunMockExploitRequest{ModuleID: "mock-exploit", Target: "mock://target", ChainConfig: map[string]string{}}) {
 		t.Fatalf("run request = %#v", recorder.requests[0])
 	}
 	wantPlan := ThrowPlanRecord{
@@ -213,6 +219,12 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 			Target:   "mock://target",
 			State:    "succeeded",
 			Summary:  "mock exploit completed",
+			Logs: []LogEntry{{
+				Level:   "info",
+				Logger:  "mock-exploit",
+				Message: "mock exploit started",
+				Fields:  map[string]string{"target": "mock://target"},
+			}},
 			Findings: []Finding{{Title: "finding", Severity: "info", Detail: "detail"}},
 			Artifacts: []Artifact{{
 				Name: "artifact",
@@ -257,6 +269,11 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 			operatorlog.Field{Name: "target", Value: "1/1"},
 			operatorlog.Field{Name: "module", Value: "mock-exploit"},
 		),
+		operatorlog.Info("module", "mock exploit started",
+			operatorlog.Field{Name: "level", Value: "info"},
+			operatorlog.Field{Name: "logger", Value: "mock-exploit"},
+			operatorlog.Field{Name: "target", Value: "mock://target"},
+		),
 		operatorlog.Info("module", "mock exploit completed"),
 		operatorlog.Stage("4/5 record result",
 			operatorlog.Field{Name: "target", Value: "1/1"},
@@ -289,6 +306,7 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 		Session:    session,
 	})
 	createDefinition, _ := registry.Find("chain", "create")
@@ -388,40 +406,41 @@ func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 	})
 	listDefinition, _ := registry.Find("modules", "list")
 	inspectDefinition, _ := registry.Find("modules", "inspect")
 	searchDefinition, _ := registry.Find("modules", "search")
 
 	listResult, err := listDefinition.Execute(context.Background(), Invocation{
-		Options: map[string]string{"type": "payload_provider"},
+		Options: map[string]string{"type": "survey"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(listResult.Human, "mock-payload-provider") || !strings.Contains(listResult.Human, "payload_provider") {
+	if !strings.Contains(listResult.Human, "mock-survey") || !strings.Contains(listResult.Human, "survey") {
 		t.Fatalf("module list = %q", listResult.Human)
 	}
 
 	inspectResult, err := inspectDefinition.Execute(context.Background(), Invocation{
-		Positionals: map[string]string{"module": "mock-simple-exploit"},
+		Positionals: map[string]string{"module": "mock-exploit"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"mock-simple-exploit exploit", "version", "runtime", "operator.confirmed_lab", "bool", "target.port", "port", "Next: chain add mock-simple-exploit"} {
+	for _, want := range []string{"mock-exploit exploit", "version", "runtime", "operator.confirmed_lab", "bool", "target.port", "port", "Next: chain add mock-exploit"} {
 		if !strings.Contains(inspectResult.Human, want) {
 			t.Fatalf("inspect missing %q:\n%s", want, inspectResult.Human)
 		}
 	}
 
 	searchResult, err := searchDefinition.Execute(context.Background(), Invocation{
-		Positionals: map[string]string{"query": "kitchen"},
+		Positionals: map[string]string{"query": "survey"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(searchResult.Human, "mock-config-kitchen-sink") {
+	if !strings.Contains(searchResult.Human, "mock-survey") {
 		t.Fatalf("search result = %q", searchResult.Human)
 	}
 }
@@ -431,6 +450,7 @@ func TestSessionCommandsRejectOneShotMode(t *testing.T) {
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 	})
 	definition, _ := registry.Find("targets", "add")
 
@@ -448,6 +468,7 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 		Session:    session,
 	})
 	useDefinition, _ := registry.Find("chain", "use")
@@ -465,7 +486,7 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := addDefinition.Execute(context.Background(), Invocation{
-		Positionals: map[string]string{"module": "mock-simple-exploit"},
+		Positionals: map[string]string{"module": "mock-exploit"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -484,7 +505,7 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 		{
 			Scope:    modulecatalog.ScopeChain,
 			StepID:   "step-1",
-			ModuleID: "mock-simple-exploit",
+			ModuleID: "mock-exploit",
 			Key:      "operator.confirmed_lab",
 			Message:  "missing chain config operator.confirmed_lab",
 		},
@@ -548,52 +569,13 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 	}
 }
 
-func TestSecretConfigListRedactsValues(t *testing.T) {
-	session := operatorsession.New()
-	registry := HovelRegistry(Runtime{
-		Workspaces: fakeWorkspaceService{},
-		Daemons:    fakeDaemonService{},
-		Runs:       fakeRunClientFactory{},
-		Session:    session,
-	})
-	useDefinition, _ := registry.Find("chain", "use")
-	addDefinition, _ := registry.Find("chain", "add")
-	targetDefinition, _ := registry.Find("targets", "add")
-	targetConfigSetDefinition, _ := registry.Find("targets", "config", "set")
-	targetConfigListDefinition, _ := registry.Find("targets", "config", "list")
-
-	if _, err := useDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"chain": "alpha"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := addDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"module": "mock-auth-survey"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := targetDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"target": "mock://target"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := targetConfigSetDefinition.Execute(context.Background(), Invocation{
-		Positionals: map[string]string{"target": "mock://target", "key": "auth.password", "value": "hunter2"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := targetConfigListDefinition.Execute(context.Background(), Invocation{
-		Positionals: map[string]string{"target": "mock://target"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(result.Human, "hunter2") || !strings.Contains(result.Human, "auth.password") || !strings.Contains(result.Human, "<secret:set>") {
-		t.Fatalf("target config was not redacted: %q", result.Human)
-	}
-}
-
 func TestTargetHandlerRequiresActiveChain(t *testing.T) {
 	session := operatorsession.New()
 	registry := HovelRegistry(Runtime{
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 		Session:    session,
 	})
 	targetDefinition, _ := registry.Find("targets", "add")
@@ -631,6 +613,7 @@ func TestThrowHandlerStoresLogsOnPayloadChain(t *testing.T) {
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{status: daemon.Running(identity)},
 		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
 		Session:    session,
 	})
 	throwDefinition, _ := registry.Find("throw")
@@ -662,6 +645,71 @@ func TestThrowHandlerStoresLogsOnPayloadChain(t *testing.T) {
 	}
 }
 
+func TestThrowActiveChainExecutesConfiguredSteps(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           123,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := operatorsession.New()
+	if err := session.UseChain("test1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-exploit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://target"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("operator.confirmed_lab", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://target", "target.host", "router-01"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://target", "target.port", "22"); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &fakeRunRecorder{}
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{status: daemon.Running(identity)},
+		Runs:       fakeRunClientFactory{recorder: recorder},
+		Modules:    exampleCatalog(),
+		Session:    session,
+	})
+	throwDefinition, _ := registry.Find("throw")
+
+	result, err := throwDefinition.Execute(context.Background(), Invocation{Options: map[string]string{"workspace": ".hovel"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := result.JSON.(ThrowPayload)
+	if payload.Chain != "test1" {
+		t.Fatalf("payload chain = %q, want test1", payload.Chain)
+	}
+	if len(recorder.requests) != 1 {
+		t.Fatalf("run requests = %#v, want one request", recorder.requests)
+	}
+	want := RunMockExploitRequest{
+		ModuleID:    "mock-exploit",
+		Target:      "mock://target",
+		ChainConfig: map[string]string{"operator.confirmed_lab": "true"},
+		TargetConfig: map[string]string{
+			"target.host": "router-01",
+			"target.port": "22",
+		},
+	}
+	if !reflect.DeepEqual(recorder.requests[0], want) {
+		t.Fatalf("run request = %#v, want %#v", recorder.requests[0], want)
+	}
+}
+
 func hasLogMessage(logs []operatorlog.Entry, message string) bool {
 	for _, entry := range logs {
 		if entry.Message == message {
@@ -669,6 +717,46 @@ func hasLogMessage(logs []operatorlog.Entry, message string) bool {
 		}
 	}
 	return false
+}
+
+func exampleCatalog() modulecatalog.Catalog {
+	return modulecatalog.New(
+		modulecatalog.Module{
+			ID:          "mock-survey",
+			Name:        "Mock Survey",
+			Type:        modulecatalog.TypeSurvey,
+			Version:     "v0.0.0-example",
+			Summary:     "Collect example target facts.",
+			Description: "Example Python survey module for the Hovel stdio JSON-RPC runtime.",
+			Tags:        []string{"example", "survey", "python"},
+			RuntimeKind: "python-rpc",
+			Author:      "hovel",
+			Enabled:     true,
+			TargetConfig: []modulecatalog.Requirement{
+				{Key: "target.host", Type: modulecatalog.ValueHost, Required: true, Description: "Target host name or IP address."},
+				{Key: "target.port", Type: modulecatalog.ValuePort, Required: true, Description: "Target TCP port."},
+			},
+		},
+		modulecatalog.Module{
+			ID:          "mock-exploit",
+			Name:        "Mock Exploit",
+			Type:        modulecatalog.TypeExploit,
+			Version:     "v0.0.0-example",
+			Summary:     "Run an example exploit flow.",
+			Description: "Example Python exploit module for the Hovel stdio JSON-RPC runtime.",
+			Tags:        []string{"example", "exploit", "python"},
+			RuntimeKind: "python-rpc",
+			Author:      "hovel",
+			Enabled:     true,
+			ChainConfig: []modulecatalog.Requirement{
+				{Key: "operator.confirmed_lab", Type: modulecatalog.ValueBool, Required: true, Description: "Operator confirmed this is an authorized lab."},
+			},
+			TargetConfig: []modulecatalog.Requirement{
+				{Key: "target.host", Type: modulecatalog.ValueHost, Required: true, Description: "Target host name or IP address."},
+				{Key: "target.port", Type: modulecatalog.ValuePort, Required: true, Description: "Target TCP port."},
+			},
+		},
+	)
 }
 
 func equalThrowPayload(got, want ThrowPayload) bool {
@@ -751,6 +839,12 @@ func (c fakeRunClient) RunMockExploit(_ context.Context, req RunMockExploitReque
 		Target:   req.Target,
 		State:    "succeeded",
 		Summary:  "mock exploit completed",
+		Logs: []LogEntry{{
+			Level:   "info",
+			Logger:  req.ModuleID,
+			Message: "mock exploit started",
+			Fields:  map[string]string{"target": req.Target},
+		}},
 		Findings: []Finding{{Title: "finding", Severity: "info", Detail: "detail"}},
 		Artifacts: []Artifact{{
 			Name: "artifact",

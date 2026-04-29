@@ -21,6 +21,7 @@ type Renderer struct {
 	success  lipgloss.Style
 	finding  lipgloss.Style
 	artifact lipgloss.Style
+	source   lipgloss.Style
 	field    lipgloss.Style
 	width    int
 }
@@ -41,8 +42,16 @@ func NewRendererWithWidth(width int) Renderer {
 		success:  lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
 		finding:  lipgloss.NewStyle().Foreground(lipgloss.Color("#ff2bd6")).Bold(true),
 		artifact: lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
-		field:    lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af")),
-		width:    width,
+		source: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#ffffff")).
+			Background(lipgloss.Color("#7c3aed")).
+			Bold(true).
+			Padding(0, 1).
+			Width(sourceWidth + 2),
+		field: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#c4b5fd")).
+			Italic(true),
+		width: width,
 	}
 }
 
@@ -63,11 +72,13 @@ func (r Renderer) Render(log operatorlog.Log) string {
 	}
 
 	var lines []string
-	header := r.title.Render(log.Title)
-	if log.Subtitle != "" {
-		header += " " + r.subtitle.Render(log.Subtitle)
+	if log.Title != "" || log.Subtitle != "" {
+		header := r.title.Render(log.Title)
+		if log.Subtitle != "" {
+			header += " " + r.subtitle.Render(log.Subtitle)
+		}
+		lines = append(lines, strings.TrimSpace(header))
 	}
-	lines = append(lines, header)
 	for _, entry := range log.Entries() {
 		lines = append(lines, r.renderEntry(entry))
 	}
@@ -76,7 +87,8 @@ func (r Renderer) Render(log operatorlog.Log) string {
 
 func (r Renderer) renderEntry(entry operatorlog.Entry) string {
 	marker, markerStyle := r.marker(entry.Level)
-	prefix := fmt.Sprintf("%s %-*s ", markerStyle.Render(marker), sourceWidth, entry.Source)
+	source := r.source.Render(fmt.Sprintf("%-*s", sourceWidth, entry.Source))
+	prefix := fmt.Sprintf("%s %s ", markerStyle.Render(marker), source)
 	message := entry.Message
 	if len(entry.Fields) > 0 {
 		fields := make([]string, 0, len(entry.Fields))

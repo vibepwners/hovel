@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -35,6 +36,21 @@ type State struct {
 	TargetConfigs map[string]map[string]string
 	LogTopic      string
 	Chains        []Chain
+}
+
+type PersistedState struct {
+	ActiveChain string           `json:"activeChain"`
+	Chains      []PersistedChain `json:"chains"`
+}
+
+type PersistedChain struct {
+	Name          string                       `json:"name"`
+	Targets       []string                     `json:"targets"`
+	Steps         []Step                       `json:"steps"`
+	Config        map[string]string            `json:"config"`
+	TargetConfigs map[string]map[string]string `json:"targetConfigs"`
+	LogTopic      string                       `json:"logTopic"`
+	Logs          []operatorlog.Entry          `json:"logs"`
 }
 
 type Store struct {
@@ -224,6 +240,22 @@ func (s *Session) Snapshot() State {
 
 func (s *Session) ActiveLogs() []operatorlog.Entry {
 	return s.chainStore().logs(s.active())
+}
+
+func (s *Session) Export() PersistedState {
+	return s.chainStore().export(s.active())
+}
+
+func (s *Session) Import(state PersistedState) {
+	s.chainStore().importState(state)
+	activeChain := normalizeName(state.ActiveChain)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if activeChain != "" && s.store.hasChain(activeChain) {
+		s.activeChain = activeChain
+		return
+	}
+	s.activeChain = ""
 }
 
 func (s *Session) active() string {
@@ -420,6 +452,73 @@ func (s *Store) logs(activeChain string) []operatorlog.Entry {
 	return cloneEntries(chain.Logs)
 }
 
+func (s *Store) export(activeChain string) PersistedState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	chains := make([]PersistedChain, 0, len(s.chains))
+	snapshots := make([]Chain, 0, len(s.chains))
+	for _, chain := range s.chains {
+		snapshots = append(snapshots, cloneChain(*chain))
+	}
+	sort.Slice(snapshots, func(i, j int) bool {
+		return snapshots[i].Name < snapshots[j].Name
+	})
+	for _, chain := range snapshots {
+		chains = append(chains, PersistedChain{
+			Name:          chain.Name,
+			Targets:       append([]string(nil), chain.Targets...),
+			Steps:         cloneSteps(chain.Steps),
+			Config:        cloneStringMap(chain.Config),
+			TargetConfigs: cloneTargetConfigs(chain.TargetConfigs),
+			LogTopic:      chain.LogTopic,
+			Logs:          cloneEntries(chain.Logs),
+		})
+	}
+	return PersistedState{
+		ActiveChain: activeChain,
+		Chains:      chains,
+	}
+}
+
+func (s *Store) importState(state PersistedState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chains = map[string]*Chain{}
+	for _, persisted := range state.Chains {
+		name := normalizeName(persisted.Name)
+		if name == "" {
+			continue
+		}
+		chain := &Chain{
+			Name:          name,
+			Targets:       append([]string(nil), persisted.Targets...),
+			Steps:         cloneSteps(persisted.Steps),
+			Config:        cloneStringMap(persisted.Config),
+			TargetConfigs: cloneTargetConfigs(persisted.TargetConfigs),
+			LogTopic:      persisted.LogTopic,
+			Logs:          cloneEntries(persisted.Logs),
+			nextStep:      nextStep(persisted.Steps),
+		}
+		if chain.Config == nil {
+			chain.Config = map[string]string{}
+		}
+		if chain.TargetConfigs == nil {
+			chain.TargetConfigs = map[string]map[string]string{}
+		}
+		if chain.LogTopic == "" {
+			chain.LogTopic = logTopic(name)
+		}
+		s.chains[name] = chain
+	}
+}
+
+func (s *Store) hasChain(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.chains[name]
+	return ok
+}
+
 func (s *Store) ensureChain(name string) *Chain {
 	if s.chains == nil {
 		s.chains = map[string]*Chain{}
@@ -501,4 +600,16 @@ func hasString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func nextStep(steps []Step) int {
+	next := len(steps)
+	for _, step := range steps {
+		if value, ok := strings.CutPrefix(step.ID, "step-"); ok {
+			if number, err := strconv.Atoi(value); err == nil && number > next {
+				next = number
+			}
+		}
+	}
+	return next
 }

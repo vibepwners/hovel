@@ -1,6 +1,7 @@
 package terminallog
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -16,17 +17,18 @@ func TestRendererFormatsOperatorLog(t *testing.T) {
 		operatorlog.Success("run", "completed", operatorlog.Field{Name: "state", Value: "succeeded"}),
 	}))
 
+	plain := stripANSI(rendered)
 	for _, want := range []string{
 		"HOVEL//RUN",
 		"mock-exploit -> mock://target",
-		"[*] run",
-		"[>] stage",
-		"[#] finding",
-		"[$] artifact",
-		"[+] run",
+		"[*]  run",
+		"[>]  stage",
+		"[#]  finding",
+		"[$]  artifact",
+		"[+]  run",
 		"severity=info",
 	} {
-		if !strings.Contains(rendered, want) {
+		if !strings.Contains(plain, want) {
 			t.Fatalf("rendered log missing %q:\n%s", want, rendered)
 		}
 	}
@@ -40,15 +42,28 @@ func TestRendererWrapsContinuationLinesAtMessageIndent(t *testing.T) {
 		operatorlog.Info("log", "this is a really long message that should wrap inline to the message indentation"),
 	}))
 
-	lines := strings.Split(rendered, "\n")
+	lines := strings.Split(stripANSI(rendered), "\n")
 	if len(lines) < 3 {
 		t.Fatalf("rendered log did not wrap:\n%s", rendered)
 	}
-	if !strings.HasPrefix(lines[1], "[*] log       this is a really long") {
+	if !strings.HasPrefix(lines[1], "[*]  log        this is a really long") {
 		t.Fatalf("first log line has wrong prefix:\n%s", rendered)
 	}
-	if !strings.HasPrefix(lines[2], "              that should wrap") {
+	if !strings.HasPrefix(lines[2], "                message that should wrap") {
 		t.Fatalf("wrapped line did not align with message column:\n%s", rendered)
+	}
+}
+
+func TestRendererCanRenderEntriesWithoutHeader(t *testing.T) {
+	rendered := NewRenderer().Render(operatorlog.New("", "", []operatorlog.Entry{
+		operatorlog.Info("chain", "module added"),
+	}))
+
+	if strings.Contains(rendered, "HOVEL//") {
+		t.Fatalf("rendered log should not include a synthetic header:\n%s", rendered)
+	}
+	if plain := stripANSI(rendered); !strings.Contains(plain, "[*]  chain") || !strings.Contains(plain, "module added") {
+		t.Fatalf("rendered log missing entry:\n%s", rendered)
 	}
 }
 
@@ -57,3 +72,9 @@ func TestRendererReturnsEmptyForEmptyLog(t *testing.T) {
 		t.Fatalf("empty render = %q", got)
 	}
 }
+
+func stripANSI(value string) string {
+	return ansiPattern.ReplaceAllString(value, "")
+}
+
+var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`)

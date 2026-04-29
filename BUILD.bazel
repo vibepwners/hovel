@@ -37,6 +37,8 @@ filegroup(
 test_suite(
     name = "test",
     tests = [
+        "//examples/python:mock_exploit_test",
+        "//examples/python:mock_survey_test",
         "//internal/adapters/cli:cli_test",
         "//internal/adapters/commandmode:commandmode_test",
         "//internal/adapters/daemonrpc:daemonrpc_test",
@@ -55,7 +57,9 @@ test_suite(
         "//internal/infra/daemonmanager:daemonmanager_test",
         "//internal/infra/daemonruntime:daemonruntime_test",
         "//internal/modules/mockexploit:mockexploit_test",
+        "//internal/modules/pythonrpc:pythonrpc_test",
         "//schemas:schema_smoke_test",
+        "//sdk/python:hovel_sdk_test",
         "//spec:book_smoke_test",
     ],
 )

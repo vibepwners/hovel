@@ -17,6 +17,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 	"github.com/akamensky/argparse"
 )
 
@@ -57,6 +58,7 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 		Runs:    daemonRunClients{},
 		Plans:   store,
 		Session: session,
+		Modules: pythonrpc.MustConfiguredCatalog(),
 	}
 }
 
@@ -308,8 +310,11 @@ func (c daemonRunClient) Close() error {
 
 func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMockExploitRequest) (commands.RunMockExploitResponse, error) {
 	result, err := c.client.RunMockExploit(ctx, daemonrpc.RunMockExploitRequest{
-		ModuleID: req.ModuleID,
-		Target:   req.Target,
+		ModuleID:     req.ModuleID,
+		Target:       req.Target,
+		Inputs:       req.Inputs,
+		ChainConfig:  req.ChainConfig,
+		TargetConfig: req.TargetConfig,
 	})
 	if err != nil {
 		return commands.RunMockExploitResponse{}, err
@@ -322,6 +327,7 @@ func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMoc
 		Summary:   result.Summary,
 		Findings:  findingsFromRPC(result.Findings),
 		Artifacts: artifactsFromRPC(result.Artifacts),
+		Logs:      logsFromRPC(result.Logs),
 	}, nil
 }
 
@@ -333,6 +339,30 @@ func findingsFromRPC(findings []daemonrpc.Finding) []commands.Finding {
 			Severity: finding.Severity,
 			Detail:   finding.Detail,
 		})
+	}
+	return out
+}
+
+func logsFromRPC(logs []daemonrpc.LogEntry) []commands.LogEntry {
+	out := make([]commands.LogEntry, 0, len(logs))
+	for _, log := range logs {
+		out = append(out, commands.LogEntry{
+			Level:   log.Level,
+			Message: log.Message,
+			Logger:  log.Logger,
+			Fields:  cloneStringMap(log.Fields),
+		})
+	}
+	return out
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
 	}
 	return out
 }

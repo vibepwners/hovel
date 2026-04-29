@@ -6,15 +6,20 @@ go_library(
         "cli.go",
         "interactive_config.go",
         "prompt_writer.go",
+        "session_persistence.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/cli",
     visibility = ["//visibility:public"],
     deps = [
         "//internal/adapters/commandmode",
+        "//internal/adapters/daemonrpc",
+        "//internal/adapters/terminallog",
         "//internal/app/commands",
         "//internal/app/modulecatalog",
+        "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/infra/daemonmanager",
+        "//internal/modules/pythonrpc",
         "@com_github_c_bata_go_prompt//:go-prompt",
         "@com_github_charmbracelet_lipgloss//:lipgloss",
     ],
@@ -22,7 +27,14 @@ go_library(
 
 go_test(
     name = "cli_test",
-    srcs = ["cli_test.go"],
+    srcs = [
+        "cli_test.go",
+        "prompt_writer_test.go",
+    ],
+    data = [
+        "//examples/python:sources",
+        "//sdk/python:sources",
+    ],
     embed = [":cli"],
     deps = [
         "//internal/adapters/storage/filesystem",

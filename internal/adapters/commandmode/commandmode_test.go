@@ -16,6 +16,11 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 )
 
+func TestMain(m *testing.M) {
+	os.Setenv("HOVEL_MODULE_CONFIG", "examples/python/hovel-modules.json")
+	os.Exit(m.Run())
+}
+
 func TestHelpShowsCommandMenu(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -154,7 +159,7 @@ func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
 			SocketPath:    socketPath,
 			PID:           12345,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2", "event-3"}},
 			Clock:         fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 		})
 	}()
@@ -239,7 +244,7 @@ func TestHumanOutputRendersOperatorLogWhenPresent(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, want := range []string{"HOVEL//RUN", "[*] run", "[+] run"} {
+	for _, want := range []string{"HOVEL//RUN", "[*]  run", "[+]  run"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}

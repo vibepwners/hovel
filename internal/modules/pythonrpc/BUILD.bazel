@@ -1,0 +1,28 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pythonrpc",
+    srcs = ["runner.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/app/modulecatalog",
+        "//internal/app/services",
+        "//internal/domain/event",
+        "//internal/domain/run",
+    ],
+)
+
+go_test(
+    name = "pythonrpc_test",
+    srcs = ["runner_test.go"],
+    data = [
+        "//examples/python:sources",
+        "//sdk/python:sources",
+    ],
+    embed = [":pythonrpc"],
+    deps = [
+        "//internal/domain/event",
+        "//internal/domain/run",
+    ],
+)

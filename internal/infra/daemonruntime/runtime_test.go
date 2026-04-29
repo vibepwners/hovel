@@ -13,6 +13,11 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 )
 
+func TestMain(m *testing.M) {
+	os.Setenv("HOVEL_MODULE_CONFIG", "examples/python/hovel-modules.json")
+	os.Exit(m.Run())
+}
+
 func TestServeWritesStatusAndClearsOnCancel(t *testing.T) {
 	workspacePath := shortTempDir(t)
 	store := filesystem.NewWorkspaceStore()
@@ -94,7 +99,7 @@ func TestServeRunsMockExploitOverRPC(t *testing.T) {
 			SocketPath:    socketPath,
 			PID:           123,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2", "event-3"}},
 			Clock:         fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 		})
 	}()

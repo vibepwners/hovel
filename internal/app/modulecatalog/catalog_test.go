@@ -9,14 +9,8 @@ func TestBuiltInsExposeMockModulesByType(t *testing.T) {
 	catalog := BuiltIns()
 
 	modules := catalog.List()
-	if len(modules) != 7 {
-		t.Fatalf("module count = %d, want 7", len(modules))
-	}
-	if _, ok := catalog.Find("mock-simple-exploit"); !ok {
-		t.Fatal("mock-simple-exploit not found")
-	}
-	if surveys := catalog.ByType(TypeSurvey); len(surveys) != 4 {
-		t.Fatalf("survey count = %d, want 4", len(surveys))
+	if len(modules) != 0 {
+		t.Fatalf("module count = %d, want 0", len(modules))
 	}
 }
 
@@ -61,9 +55,9 @@ func TestValidateValueCoversTypedConfig(t *testing.T) {
 }
 
 func TestCatalogValidationFindsMissingAndInvalidConfig(t *testing.T) {
-	catalog := BuiltIns()
+	catalog := exampleCatalog()
 	result := catalog.Validate(ConfigView{
-		Steps:   []StepRef{{ID: "step-1", ModuleID: "mock-simple-exploit"}},
+		Steps:   []StepRef{{ID: "step-1", ModuleID: "mock-exploit"}},
 		Targets: []string{"mock://target"},
 		ChainConfig: map[string]string{
 			"operator.confirmed_lab": "definitely",
@@ -80,14 +74,14 @@ func TestCatalogValidationFindsMissingAndInvalidConfig(t *testing.T) {
 		{
 			Scope:    ScopeChain,
 			StepID:   "step-1",
-			ModuleID: "mock-simple-exploit",
+			ModuleID: "mock-exploit",
 			Key:      "operator.confirmed_lab",
 			Message:  "invalid chain config operator.confirmed_lab: strconv.ParseBool: parsing \"definitely\": invalid syntax",
 		},
 		{
 			Scope:    ScopeTarget,
 			StepID:   "step-1",
-			ModuleID: "mock-simple-exploit",
+			ModuleID: "mock-exploit",
 			Target:   "mock://target",
 			Key:      "target.port",
 			Message:  "missing target config target.port",
@@ -99,11 +93,11 @@ func TestCatalogValidationFindsMissingAndInvalidConfig(t *testing.T) {
 }
 
 func TestCatalogValidationKeepsIssuesTiedToTheirStepTargetAndModule(t *testing.T) {
-	catalog := BuiltIns()
+	catalog := exampleCatalog()
 	result := catalog.Validate(ConfigView{
 		Steps: []StepRef{
-			{ID: "survey-1", ModuleID: "mock-target-survey"},
-			{ID: "exploit-1", ModuleID: "mock-simple-exploit"},
+			{ID: "survey-1", ModuleID: "mock-survey"},
+			{ID: "exploit-1", ModuleID: "mock-exploit"},
 		},
 		Targets: []string{"mock://router-01", "mock://router-02"},
 		ChainConfig: map[string]string{
@@ -127,7 +121,7 @@ func TestCatalogValidationKeepsIssuesTiedToTheirStepTargetAndModule(t *testing.T
 		{
 			Scope:    ScopeTarget,
 			StepID:   "exploit-1",
-			ModuleID: "mock-simple-exploit",
+			ModuleID: "mock-exploit",
 			Target:   "mock://router-02",
 			Key:      "target.port",
 			Message:  "missing target config target.port",
@@ -135,7 +129,7 @@ func TestCatalogValidationKeepsIssuesTiedToTheirStepTargetAndModule(t *testing.T
 		{
 			Scope:    ScopeTarget,
 			StepID:   "survey-1",
-			ModuleID: "mock-target-survey",
+			ModuleID: "mock-survey",
 			Target:   "mock://router-02",
 			Key:      "target.port",
 			Message:  "missing target config target.port",
@@ -147,9 +141,9 @@ func TestCatalogValidationKeepsIssuesTiedToTheirStepTargetAndModule(t *testing.T
 }
 
 func TestCatalogValidationAcceptsCompleteConfig(t *testing.T) {
-	catalog := BuiltIns()
+	catalog := exampleCatalog()
 	result := catalog.Validate(ConfigView{
-		Steps:   []StepRef{{ID: "step-1", ModuleID: "mock-simple-exploit"}},
+		Steps:   []StepRef{{ID: "step-1", ModuleID: "mock-exploit"}},
 		Targets: []string{"mock://target"},
 		ChainConfig: map[string]string{
 			"operator.confirmed_lab": "true",
@@ -165,6 +159,40 @@ func TestCatalogValidationAcceptsCompleteConfig(t *testing.T) {
 	if !result.Valid {
 		t.Fatalf("validation issues = %#v, want none", result.Issues)
 	}
+}
+
+func exampleCatalog() Catalog {
+	return New(
+		Module{
+			ID:          "mock-survey",
+			Name:        "Mock Survey",
+			Type:        TypeSurvey,
+			Version:     "v0.0.0-example",
+			Summary:     "Collect example target facts.",
+			RuntimeKind: "python-rpc",
+			Enabled:     true,
+			TargetConfig: []Requirement{
+				{Key: "target.host", Type: ValueHost, Required: true},
+				{Key: "target.port", Type: ValuePort, Required: true},
+			},
+		},
+		Module{
+			ID:          "mock-exploit",
+			Name:        "Mock Exploit",
+			Type:        TypeExploit,
+			Version:     "v0.0.0-example",
+			Summary:     "Run an example exploit flow.",
+			RuntimeKind: "python-rpc",
+			Enabled:     true,
+			ChainConfig: []Requirement{
+				{Key: "operator.confirmed_lab", Type: ValueBool, Required: true},
+			},
+			TargetConfig: []Requirement{
+				{Key: "target.host", Type: ValueHost, Required: true},
+				{Key: "target.port", Type: ValuePort, Required: true},
+			},
+		},
+	)
 }
 
 func TestDisplayValueRedactsSecrets(t *testing.T) {

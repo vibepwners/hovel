@@ -3,3 +3,8 @@ spec/book/
 .task/
 lefthook-local.yml
 bazel-*
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+sdk/python/.venv/
+__pycache__/

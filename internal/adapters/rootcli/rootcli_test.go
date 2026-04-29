@@ -13,6 +13,11 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 )
 
+func TestMain(m *testing.M) {
+	os.Setenv("HOVEL_MODULE_CONFIG", "examples/python/hovel-modules.json")
+	os.Exit(m.Run())
+}
+
 func TestCommandRoleDelegatesToCommandAdapter(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -39,7 +44,7 @@ func TestDirectCommandDelegatesToCommandAdapter(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "mock-simple-exploit") {
+	if !strings.Contains(stdout.String(), "mock-exploit") {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 }

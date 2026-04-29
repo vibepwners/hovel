@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -72,7 +73,13 @@ func New(id ID, name Name, path string) (Workspace, error) {
 func ResolvePath(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return DefaultPath
+		value = DefaultPath
+	}
+	if filepath.IsAbs(value) {
+		return filepath.Clean(value)
+	}
+	if workingDirectory := strings.TrimSpace(os.Getenv("BUILD_WORKING_DIRECTORY")); workingDirectory != "" {
+		return filepath.Clean(filepath.Join(workingDirectory, value))
 	}
 	return filepath.Clean(value)
 }

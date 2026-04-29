@@ -7,12 +7,17 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
+	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -25,15 +30,17 @@ type App struct {
 	commands    commandmode.App
 	manager     daemonmanager.Manager
 	theme       Theme
-	session     *operatorsession.Session
+	session     commands.OperatorSession
 	modules     modulecatalog.Catalog
 	wizard      *interactiveConfigWizard
 	moduleCount int
+	sessionFile string
+	surface     *promptSurface
 }
 
 func NewApp() App {
 	session := operatorsession.New()
-	modules := modulecatalog.BuiltIns()
+	modules := pythonrpc.MustConfiguredCatalog()
 	return App{
 		commands:    commandmode.NewAppWithSession(session),
 		manager:     daemonmanager.New(),
@@ -46,7 +53,7 @@ func NewApp() App {
 }
 
 func NewAppWithDependencies(commands commandmode.App, manager daemonmanager.Manager, theme Theme) App {
-	modules := modulecatalog.BuiltIns()
+	modules := pythonrpc.MustConfiguredCatalog()
 	return App{
 		commands:    commands,
 		manager:     manager,
@@ -70,13 +77,70 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 	defer session.Close()
 
+	daemonClient, err := daemonrpc.Dial(session.Status().Identity.SocketPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	defer daemonClient.Close()
+	a = a.withDaemonSession(ctx, daemonClient)
+	a.surface = newPromptSurface(prompt.NewStdoutWriter())
+
 	fmt.Fprintln(stdout, a.Welcome(session))
+	stopLogs := a.SubscribeLogs(ctx, daemonClient, a.surface, stdout)
+	defer stopLogs()
 	a.Prompt(ctx, stdout, stderr).Run()
 	return 0
 }
 
 func (a App) EnsureDaemon(ctx context.Context, workspacePath string) (*daemonmanager.Session, error) {
 	return a.manager.Ensure(ctx, workspacePath)
+}
+
+func (a App) withDaemonSession(ctx context.Context, client *daemonrpc.Client) App {
+	session := daemonrpc.NewSessionClient(ctx, client)
+	a.session = session
+	a.commands = commandmode.NewAppWithSession(session)
+	a.wizard = newInteractiveConfigWizard(session, a.modules)
+	return a
+}
+
+func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surface *promptSurface, fallback io.Writer) func() {
+	initial, err := client.PollLogs(ctx, 0)
+	if err != nil {
+		return func() {}
+	}
+	pollCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		cursor := initial.Last
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		renderer := terminallog.NewRenderer()
+		for {
+			select {
+			case <-pollCtx.Done():
+				return
+			case <-ticker.C:
+				result, err := client.PollLogs(pollCtx, cursor)
+				if err != nil {
+					continue
+				}
+				cursor = result.Last
+				for _, log := range result.Logs {
+					rendered := renderer.Render(operatorLog(log))
+					if rendered != "" {
+						if surface != nil {
+							surface.WriteAsyncLog(rendered, a.PromptPrefix())
+							continue
+						}
+						fmt.Fprintln(fallback)
+						fmt.Fprintln(fallback, rendered)
+					}
+				}
+			}
+		}
+	}()
+	return cancel
 }
 
 func (a App) Prompt(ctx context.Context, stdout, stderr io.Writer) *prompt.Prompt {
@@ -89,7 +153,7 @@ func (a App) Prompt(ctx context.Context, stdout, stderr io.Writer) *prompt.Promp
 	return prompt.New(
 		executor,
 		a.Completer,
-		prompt.OptionWriter(newStyledPromptWriter(prompt.NewStdoutWriter())),
+		prompt.OptionWriter(a.promptWriter()),
 		prompt.OptionTitle("hovel cli"),
 		prompt.OptionPrefix(a.PromptPrefix()),
 		prompt.OptionLivePrefix(func() (string, bool) {
@@ -114,13 +178,29 @@ func (a App) Prompt(ctx context.Context, stdout, stderr io.Writer) *prompt.Promp
 	)
 }
 
+func (a App) promptWriter() prompt.ConsoleWriter {
+	if a.surface != nil {
+		return a.surface
+	}
+	return newPromptSurface(prompt.NewStdoutWriter())
+}
+
 func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
+	if err := a.loadWorkspaceSession(ctx); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	trimmed := strings.TrimSpace(line)
 	if isExit(trimmed) {
 		return 0
 	}
 	if a.wizard != nil && a.wizard.Active() {
-		return a.wizard.HandleLine(trimmed, stdout, stderr)
+		code := a.wizard.HandleLine(trimmed, stdout, stderr)
+		if err := a.saveWorkspaceSession(ctx); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return code
 	}
 	if trimmed == "" {
 		return 0
@@ -129,9 +209,19 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 		trimmed = rewritten
 	}
 	if trimmed == "chain config interactive" {
-		return a.ConfigureInteractive(stdout, stderr)
+		code := a.ConfigureInteractive(stdout, stderr)
+		if err := a.saveWorkspaceSession(ctx); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return code
 	}
-	return a.commands.ExecuteLine(ctx, trimmed, stdout, stderr)
+	code := a.commands.ExecuteLine(ctx, trimmed, stdout, stderr)
+	if err := a.saveWorkspaceSession(ctx); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return code
 }
 
 func (a App) PromptPrefix() string {
@@ -145,6 +235,9 @@ func (a App) PromptPrefix() string {
 }
 
 func (a App) Completer(document prompt.Document) []prompt.Suggest {
+	if a.surface != nil {
+		a.surface.SetDocument(document)
+	}
 	return a.Suggestions(document.TextBeforeCursor())
 }
 
@@ -632,6 +725,29 @@ func (t Theme) Welcome(info WelcomeInfo) string {
 
 func (t Theme) detail(label, value string) string {
 	return t.label.Render(label+":") + " " + t.muted.Render(value)
+}
+
+func operatorLog(log daemonrpc.PublishedLog) operatorlog.Log {
+	entry := operatorlog.Entry{
+		Level:   operatorlog.Level(log.Entry.Level),
+		Source:  log.Entry.Source,
+		Message: log.Entry.Message,
+		Fields:  fieldsFromMap(log.Entry.Fields),
+	}
+	return operatorlog.New("", "", []operatorlog.Entry{entry})
+}
+
+func fieldsFromMap(values map[string]string) []operatorlog.Field {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	fields := make([]operatorlog.Field, 0, len(keys))
+	for _, key := range keys {
+		fields = append(fields, operatorlog.Field{Name: key, Value: values[key]})
+	}
+	return fields
 }
 
 func suggestionsFromDefinitions(definitions []commands.Definition, prefix string) []prompt.Suggest {

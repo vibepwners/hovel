@@ -243,16 +243,53 @@ func TestSessionsShareChainStoreWithIndependentActiveChains(t *testing.T) {
 	}
 }
 
+func TestSessionExportsAndImportsState(t *testing.T) {
+	session := New()
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-exploit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AppendLog(operatorlog.Info("alpha", "persisted log")); err != nil {
+		t.Fatal(err)
+	}
+
+	imported := New()
+	imported.Import(session.Export())
+
+	state := imported.Snapshot()
+	if state.ActiveChain != "alpha" {
+		t.Fatalf("active chain = %q, want alpha", state.ActiveChain)
+	}
+	if len(state.Steps) != 1 || state.Steps[0].ID != "step-1" {
+		t.Fatalf("steps = %#v", state.Steps)
+	}
+	if logs := imported.ActiveLogs(); !hasLogMessage(logs, "persisted log") {
+		t.Fatalf("logs = %#v", logs)
+	}
+	step, err := imported.AddModule("mock-survey")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if step.ID != "step-2" {
+		t.Fatalf("next step ID = %q, want step-2", step.ID)
+	}
+}
+
 func TestSessionTracksModulesAndTypedConfigByChain(t *testing.T) {
 	session := New()
 	if err := session.UseChain("alpha"); err != nil {
 		t.Fatal(err)
 	}
-	step, err := session.AddModule("mock-simple-exploit")
+	step, err := session.AddModule("mock-exploit")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if step.ID != "step-1" || step.ModuleID != "mock-simple-exploit" {
+	if step.ID != "step-1" || step.ModuleID != "mock-exploit" {
 		t.Fatalf("step = %#v", step)
 	}
 	if err := session.SetChainConfig("operator.confirmed_lab", "true"); err != nil {

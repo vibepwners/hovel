@@ -54,6 +54,10 @@ type OperatorSession interface {
 	Snapshot() operatorsession.State
 }
 
+type publishedFeedbackSession interface {
+	RemoteFeedback() bool
+}
+
 type Runtime struct {
 	Workspaces WorkspaceInitializer
 	Daemons    DaemonStatusProvider
@@ -72,8 +76,11 @@ type ModuleDatabase interface {
 }
 
 type RunMockExploitRequest struct {
-	ModuleID string
-	Target   string
+	ModuleID     string
+	Target       string
+	Inputs       map[string]string
+	ChainConfig  map[string]string
+	TargetConfig map[string]string
 }
 
 type Finding struct {
@@ -88,6 +95,13 @@ type Artifact struct {
 	Data string `json:"data"`
 }
 
+type LogEntry struct {
+	Level   string            `json:"level"`
+	Message string            `json:"message"`
+	Logger  string            `json:"logger"`
+	Fields  map[string]string `json:"fields,omitempty"`
+}
+
 type RunMockExploitResponse struct {
 	RunID     string
 	ModuleID  string
@@ -96,6 +110,7 @@ type RunMockExploitResponse struct {
 	Summary   string
 	Findings  []Finding
 	Artifacts []Artifact
+	Logs      []LogEntry
 }
 
 type InitPayload struct {
@@ -123,6 +138,7 @@ type RunPayload struct {
 	Summary   string     `json:"summary"`
 	Findings  []Finding  `json:"findings"`
 	Artifacts []Artifact `json:"artifacts"`
+	Logs      []LogEntry `json:"logs"`
 }
 
 type ThrowPayload struct {
@@ -466,6 +482,9 @@ func chainCreateHandler(runtime Runtime) Handler {
 		if err := runtime.Session.UseChain(chain); err != nil {
 			return Result{}, err
 		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
 		return Result{Human: fmt.Sprintf("Chain created and selected: %s", chain)}, nil
 	}
 }
@@ -481,6 +500,9 @@ func chainUseHandler(runtime Runtime) Handler {
 		}
 		if err := runtime.Session.UseChain(chain); err != nil {
 			return Result{}, err
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
 		}
 		return Result{Human: fmt.Sprintf("Chain selected: %s", chain)}, nil
 	}
@@ -498,6 +520,9 @@ func chainRenameHandler(runtime Runtime) Handler {
 		}
 		if err := runtime.Session.RenameChain(chain, name); err != nil {
 			return Result{}, err
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
 		}
 		return Result{Human: fmt.Sprintf("Chain renamed: %s -> %s", chain, name)}, nil
 	}
@@ -519,6 +544,9 @@ func chainAddHandler(runtime Runtime) Handler {
 		step, err := runtime.Session.AddModule(module.ID)
 		if err != nil {
 			return Result{}, withActiveChainHelp(err)
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
 		}
 		return Result{Human: fmt.Sprintf("Module added: %s as %s", module.ID, step.ID)}, nil
 	}
@@ -576,6 +604,9 @@ func chainConfigSetHandler(runtime Runtime) Handler {
 		if err := runtime.Session.SetChainConfig(key, value); err != nil {
 			return Result{}, withActiveChainHelp(err)
 		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
 		return Result{Human: fmt.Sprintf("Chain config set: %s", key)}, nil
 	}
 }
@@ -591,6 +622,9 @@ func chainConfigUnsetHandler(runtime Runtime) Handler {
 		key := invocation.Positional("key")
 		if err := runtime.Session.UnsetChainConfig(key); err != nil {
 			return Result{}, withActiveChainHelp(err)
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
 		}
 		return Result{Human: fmt.Sprintf("Chain config unset: %s", key)}, nil
 	}
@@ -665,6 +699,9 @@ func chainDeleteHandler(runtime Runtime) Handler {
 		if err := runtime.Session.DeleteChain(chain); err != nil {
 			return Result{}, err
 		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
 		return Result{Human: fmt.Sprintf("Chain deleted: %s", chain)}, nil
 	}
 }
@@ -701,6 +738,9 @@ func targetsAddHandler(runtime Runtime) Handler {
 		if err := runtime.Session.AddTarget(target); err != nil {
 			return Result{}, withActiveChainHelp(err)
 		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
 		return Result{Human: fmt.Sprintf("Target added: %s", target)}, nil
 	}
 }
@@ -714,6 +754,9 @@ func targetsClearHandler(runtime Runtime) Handler {
 			return Result{}, operatorSessionRequiredError("targets clear")
 		}
 		runtime.Session.ClearTargets()
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
 		return Result{Human: "Targets cleared"}, nil
 	}
 }
@@ -732,6 +775,9 @@ func targetsConfigSetHandler(runtime Runtime) Handler {
 		if err := runtime.Session.SetTargetConfig(target, key, value); err != nil {
 			return Result{}, withActiveChainHelp(err)
 		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
 		return Result{Human: fmt.Sprintf("Target config set: %s %s", target, key)}, nil
 	}
 }
@@ -748,6 +794,9 @@ func targetsConfigUnsetHandler(runtime Runtime) Handler {
 		key := invocation.Positional("key")
 		if err := runtime.Session.UnsetTargetConfig(target, key); err != nil {
 			return Result{}, withActiveChainHelp(err)
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
 		}
 		return Result{Human: fmt.Sprintf("Target config unset: %s %s", target, key)}, nil
 	}
@@ -826,7 +875,7 @@ func throwHandler(runtime Runtime) Handler {
 		if runtime.Runs == nil {
 			return Result{}, fmt.Errorf("run client factory is not configured")
 		}
-		chain, targets, err := throwInputs(runtime, invocation)
+		throw, err := throwInputs(runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -840,7 +889,7 @@ func throwHandler(runtime Runtime) Handler {
 			return Result{}, fmt.Errorf("daemon is not running for workspace %s", status.WorkspacePath)
 		}
 
-		plan := newThrowPlan(status.WorkspacePath, chain, targets)
+		plan := newThrowPlan(status.WorkspacePath, throw.Chain, throw.Targets)
 		if runtime.Plans != nil {
 			if err := runtime.Plans.RecordThrowPlan(ctx, plan); err != nil {
 				return Result{}, err
@@ -855,17 +904,21 @@ func throwHandler(runtime Runtime) Handler {
 
 		var payload ThrowPayload
 		payload.Plan = plan.Payload()
-		payload.Chain = chain
-		payload.Targets = append([]string(nil), targets...)
-		for _, target := range targets {
-			result, err := client.RunMockExploit(ctx, RunMockExploitRequest{
-				ModuleID: chain,
-				Target:   target,
-			})
-			if err != nil {
-				return Result{}, err
+		payload.Chain = throw.Chain
+		payload.Targets = append([]string(nil), throw.Targets...)
+		for _, target := range throw.Targets {
+			for _, moduleID := range throw.Modules {
+				result, err := client.RunMockExploit(ctx, RunMockExploitRequest{
+					ModuleID:     moduleID,
+					Target:       target,
+					ChainConfig:  throw.ChainConfig,
+					TargetConfig: throw.TargetConfigs[target],
+				})
+				if err != nil {
+					return Result{}, err
+				}
+				payload.Results = append(payload.Results, runPayload(result))
 			}
-			payload.Results = append(payload.Results, runPayload(result))
 		}
 		log := throwLog(payload)
 		if runtime.Session != nil {
@@ -914,28 +967,74 @@ func stablePlanComponent(chain string, targets []string) string {
 	return out
 }
 
-func throwInputs(runtime Runtime, invocation Invocation) (string, []string, error) {
+type throwExecution struct {
+	Chain         string
+	Targets       []string
+	Modules       []string
+	ChainConfig   map[string]string
+	TargetConfigs map[string]map[string]string
+}
+
+func throwInputs(runtime Runtime, invocation Invocation) (throwExecution, error) {
 	chain := invocation.Option("chain")
 	var targets []string
 	if target := invocation.Option("target"); target != "" {
 		targets = append(targets, target)
 	}
+	chainConfig := map[string]string{}
+	targetConfigs := map[string]map[string]string{}
+	var modules []string
 	if runtime.Session != nil {
 		state := runtime.Session.Snapshot()
 		if chain == "" {
 			chain = state.Chain
+		}
+		if selected, ok := selectedChainState(state, chain); ok {
+			for _, step := range selected.Steps {
+				modules = append(modules, step.ModuleID)
+			}
+			chainConfig = cloneStringMap(selected.Config)
+			targetConfigs = cloneTargetConfigs(selected.TargetConfigs)
 		}
 		if len(targets) == 0 {
 			targets = append(targets, targetsForChain(state, chain)...)
 		}
 	}
 	if strings.TrimSpace(chain) == "" {
-		return "", nil, fmt.Errorf("chain is required; set one with chain use <chain> or pass --chain")
+		return throwExecution{}, fmt.Errorf("chain is required; set one with chain use <chain> or pass --chain")
 	}
 	if len(targets) == 0 {
-		return "", nil, fmt.Errorf("target is required; add one with targets add <target> or pass --target")
+		return throwExecution{}, fmt.Errorf("target is required; add one with targets add <target> or pass --target")
 	}
-	return chain, targets, nil
+	if len(modules) == 0 {
+		modules = append(modules, chain)
+	}
+	return throwExecution{
+		Chain:         chain,
+		Targets:       targets,
+		Modules:       modules,
+		ChainConfig:   chainConfig,
+		TargetConfigs: targetConfigs,
+	}, nil
+}
+
+func selectedChainState(state operatorsession.State, chain string) (operatorsession.Chain, bool) {
+	if chain == "" || chain == state.ActiveChain {
+		return operatorsession.Chain{
+			Name:          state.Chain,
+			Targets:       append([]string(nil), state.Targets...),
+			Steps:         append([]operatorsession.Step(nil), state.Steps...),
+			Config:        cloneStringMap(state.Config),
+			TargetConfigs: cloneTargetConfigs(state.TargetConfigs),
+			LogTopic:      state.LogTopic,
+		}, true
+	}
+	for _, candidate := range state.Chains {
+		if candidate.Name == chain {
+			return candidate, true
+		}
+	}
+	return operatorsession.Chain{}, false
 }
 
 func targetsForChain(state operatorsession.State, chain string) []string {
@@ -959,6 +1058,11 @@ func activeState(runtime Runtime) (operatorsession.State, error) {
 		return operatorsession.State{}, activeChainRequiredError()
 	}
 	return state, nil
+}
+
+func feedbackPublished(session OperatorSession) bool {
+	publisher, ok := session.(publishedFeedbackSession)
+	return ok && publisher.RemoteFeedback()
 }
 
 func activeChainRequiredError() error {
@@ -1163,6 +1267,7 @@ func runPayload(result RunMockExploitResponse) RunPayload {
 		Summary:   result.Summary,
 		Findings:  result.Findings,
 		Artifacts: result.Artifacts,
+		Logs:      result.Logs,
 	}
 }
 
@@ -1196,6 +1301,9 @@ func throwLog(payload ThrowPayload) operatorlog.Log {
 			operatorlog.Field{Name: "target", Value: targetStep},
 			operatorlog.Field{Name: "module", Value: result.ModuleID},
 		))
+		for _, log := range result.Logs {
+			entries = append(entries, operatorlog.Info("module", log.Message, logFields(log)...))
+		}
 		if result.Summary != "" {
 			entries = append(entries, operatorlog.Info("module", result.Summary))
 		}
@@ -1229,6 +1337,25 @@ func throwLog(payload ThrowPayload) operatorlog.Log {
 		payload.Chain,
 		entries,
 	)
+}
+
+func logFields(log LogEntry) []operatorlog.Field {
+	fields := make([]operatorlog.Field, 0, len(log.Fields)+2)
+	if log.Level != "" {
+		fields = append(fields, operatorlog.Field{Name: "level", Value: log.Level})
+	}
+	if log.Logger != "" {
+		fields = append(fields, operatorlog.Field{Name: "logger", Value: log.Logger})
+	}
+	keys := make([]string, 0, len(log.Fields))
+	for key := range log.Fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		fields = append(fields, operatorlog.Field{Name: key, Value: log.Fields[key]})
+	}
+	return fields
 }
 
 func defaultWorkspaceName(path string) string {

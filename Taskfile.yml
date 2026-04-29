@@ -16,14 +16,14 @@ tasks:
     desc: Start the interactive Hovel CLI.
     interactive: true
     cmds:
-      - bazel run //cmd/hovel -- cli
+      - HOVEL_MODULE_CONFIG=examples/python/hovel-modules.json bazel run //cmd/hovel -- cli --workspace "$PWD/.hovel"
 
   daemon:
     desc: Start hoveld with the default Unix domain socket.
     interactive: true
     cmds:
       - bazel build //cmd/hovel
-      - ./bazel-bin/cmd/hovel/hovel_/hovel daemon serve
+      - HOVEL_MODULE_CONFIG=examples/python/hovel-modules.json ./bazel-bin/cmd/hovel/hovel_/hovel daemon serve --workspace "$PWD/.hovel"
 
   test:
     aliases: [t]
@@ -37,6 +37,7 @@ tasks:
     cmds:
       - task: gofmt:check
       - task: gazelle:check
+      - task: python:check
 
   check:
     aliases: [ci]
@@ -71,6 +72,11 @@ tasks:
     desc: Check Go BUILD metadata is up to date.
     cmds:
       - bazel run //:gazelle -- -mode=diff
+
+  "python:check":
+    desc: Run Python lint, type, and doc checks.
+    cmds:
+      - bash tools/lint/check_python.sh
 
   docs:
     desc: Build the mdBook spec.

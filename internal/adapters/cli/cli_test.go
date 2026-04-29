@@ -15,6 +15,11 @@ import (
 	prompt "github.com/c-bata/go-prompt"
 )
 
+func TestMain(m *testing.M) {
+	os.Setenv("HOVEL_MODULE_CONFIG", "examples/python/hovel-modules.json")
+	os.Exit(m.Run())
+}
+
 func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 	app := NewApp()
 
@@ -109,23 +114,23 @@ func TestChainAddSuggestsModulesMatchingInput(t *testing.T) {
 	for _, suggestion := range suggestions {
 		names = append(names, suggestion.Text)
 	}
-	for _, want := range []string{"mock-auth-survey", "mock-simple-exploit", "mock-target-survey"} {
+	for _, want := range []string{"mock-survey", "mock-exploit"} {
 		if !contains(names, want) {
 			t.Fatalf("module suggestions = %#v, missing %s", names, want)
 		}
 	}
 
-	suggestions = app.Suggestions("chain add auth")
-	if len(suggestions) != 1 || suggestions[0].Text != "mock-auth-survey" {
-		t.Fatalf("filtered module suggestions = %#v, want mock-auth-survey", suggestions)
+	suggestions = app.Suggestions("chain add surv")
+	if len(suggestions) != 1 || suggestions[0].Text != "mock-survey" {
+		t.Fatalf("filtered module suggestions = %#v, want mock-survey", suggestions)
 	}
-	if !strings.Contains(suggestions[0].Description, "survey") || !strings.Contains(suggestions[0].Description, "Validate mocked authentication inputs.") {
+	if !strings.Contains(suggestions[0].Description, "survey") || !strings.Contains(suggestions[0].Description, "Collect example target facts.") {
 		t.Fatalf("module suggestion description = %q", suggestions[0].Description)
 	}
 
-	suggestions = app.Suggestions("add auth")
-	if len(suggestions) != 1 || suggestions[0].Text != "mock-auth-survey" {
-		t.Fatalf("filtered alias suggestions = %#v, want mock-auth-survey", suggestions)
+	suggestions = app.Suggestions("add surv")
+	if len(suggestions) != 1 || suggestions[0].Text != "mock-survey" {
+		t.Fatalf("filtered alias suggestions = %#v, want mock-survey", suggestions)
 	}
 }
 
@@ -188,12 +193,12 @@ func TestChainCreateEntersContextAndRootAliasesOperateOnActiveChain(t *testing.T
 		}
 	}
 
-	if code := app.ExecuteLine(context.Background(), "add mock-simple-exploit", &stdout, &stderr); code != 0 {
+	if code := app.ExecuteLine(context.Background(), "add mock-exploit", &stdout, &stderr); code != 0 {
 		t.Fatalf("add alias exit code = %d, stderr = %s", code, stderr.String())
 	}
 	state := app.session.Snapshot()
-	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "mock-simple-exploit" {
-		t.Fatalf("steps = %#v, want mock-simple-exploit", state.Steps)
+	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "mock-exploit" {
+		t.Fatalf("steps = %#v, want mock-exploit", state.Steps)
 	}
 }
 
@@ -202,7 +207,7 @@ func TestInteractiveConfigWizardEditsCurrentThenFillsRemainingConfig(t *testing.
 	var stdout, stderr bytes.Buffer
 	for _, line := range []string{
 		"chain use lab",
-		"chain add mock-simple-exploit",
+		"chain add mock-exploit",
 		"targets add mock://router-01",
 		"chain config set operator.confirmed_lab true",
 	} {
@@ -259,7 +264,7 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 	var stdout, stderr bytes.Buffer
 	for _, line := range []string{
 		"chain use lab",
-		"chain add mock-simple-exploit",
+		"chain add mock-exploit",
 		"targets add mock://router-01",
 	} {
 		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
@@ -356,6 +361,119 @@ func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
 	}
 }
 
+func TestE2EExampleSurveyAuthChainUsesPythonModules(t *testing.T) {
+	workspacePath, cleanup := startE2EDaemon(t)
+	defer cleanup()
+
+	app := NewApp()
+	var stdout, stderr bytes.Buffer
+	executeLines(t, app, &stdout, &stderr,
+		"chain use survey-example",
+		"chain add mock-survey",
+		"targets add mock://router-01",
+		"targets config set mock://router-01 target.host router-01",
+		"targets config set mock://router-01 target.port 22",
+		"chain validate",
+	)
+	stdout.Reset()
+	stderr.Reset()
+
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	payload := decodeThrowJSON(t, stdout.Bytes())
+	if payload.Chain != "survey-example" {
+		t.Fatalf("chain = %q, want survey-example", payload.Chain)
+	}
+	if got, want := moduleIDs(payload.Results), []string{"mock-survey"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("module order = %#v, want %#v", got, want)
+	}
+	for _, result := range payload.Results {
+		if result.Target != "mock://router-01" || result.State != "succeeded" {
+			t.Fatalf("result = %#v", result)
+		}
+	}
+}
+
+func TestE2EExamplePayloadExploitChainUsesPythonModules(t *testing.T) {
+	workspacePath, cleanup := startE2EDaemon(t)
+	defer cleanup()
+
+	app := NewApp()
+	var stdout, stderr bytes.Buffer
+	executeLines(t, app, &stdout, &stderr,
+		"chain use survey-exploit",
+		"chain add mock-survey",
+		"chain add mock-exploit",
+		"targets add mock://router-01",
+		"chain config set operator.confirmed_lab true",
+		"targets config set mock://router-01 target.host router-01",
+		"targets config set mock://router-01 target.port 22",
+		"chain validate",
+	)
+	stdout.Reset()
+	stderr.Reset()
+
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	payload := decodeThrowJSON(t, stdout.Bytes())
+	if got, want := moduleIDs(payload.Results), []string{"mock-survey", "mock-exploit"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("module order = %#v, want %#v", got, want)
+	}
+	exploit := payload.Results[1]
+	if exploit.State != "succeeded" {
+		t.Fatalf("exploit state = %q, want succeeded", exploit.State)
+	}
+	if len(exploit.Findings) != 1 {
+		t.Fatalf("findings = %#v, want one finding", exploit.Findings)
+	}
+	if len(exploit.Artifacts) != 1 || exploit.Artifacts[0].Name != "mock-exploit-transcript.txt" {
+		t.Fatalf("artifacts = %#v, want mock transcript", exploit.Artifacts)
+	}
+	if !hasPayloadLog(exploit.Logs, "example exploit started") {
+		t.Fatalf("logs = %#v, want example exploit started", exploit.Logs)
+	}
+}
+
+func TestE2EExampleFailingChainReportsFailedModule(t *testing.T) {
+	workspacePath, cleanup := startE2EDaemon(t)
+	defer cleanup()
+
+	app := NewApp()
+	var stdout, stderr bytes.Buffer
+	executeLines(t, app, &stdout, &stderr,
+		"chain use failing-example",
+		"chain add mock-exploit",
+		"targets add mock://target",
+		"chain config set operator.confirmed_lab true",
+		"chain config set failure_mode execution",
+		"targets config set mock://target target.host target",
+		"targets config set mock://target target.port 443",
+		"chain validate",
+	)
+	stdout.Reset()
+	stderr.Reset()
+
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	payload := decodeThrowJSON(t, stdout.Bytes())
+	if len(payload.Results) != 1 {
+		t.Fatalf("results = %#v, want one result", payload.Results)
+	}
+	result := payload.Results[0]
+	if result.ModuleID != "mock-exploit" || result.State != "failed" {
+		t.Fatalf("result = %#v, want failed mock-exploit", result)
+	}
+	if !strings.Contains(result.Summary, "failed during execution") {
+		t.Fatalf("summary = %q", result.Summary)
+	}
+}
+
 func TestRunRejectsOneShotCommandArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -366,6 +484,118 @@ func TestRunRejectsOneShotCommandArguments(t *testing.T) {
 	if !strings.Contains(stderr.String(), "hovel <command>") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
+}
+
+func startE2EDaemon(t *testing.T) (string, func()) {
+	t.Helper()
+	workspacePath := shortTempDir(t)
+	socketPath := workspacePath + "/hoveld.sock"
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, 1)
+	go func() {
+		errs <- daemonruntime.Serve(ctx, daemonruntime.Args{
+			WorkspacePath: workspacePath,
+			SocketPath:    socketPath,
+		})
+	}()
+	waitFor(t, func() bool {
+		status, err := filesystem.NewWorkspaceStore().DaemonStatus(context.Background(), workspacePath)
+		return err == nil && status.State == daemon.StateRunning
+	})
+	return workspacePath, func() {
+		cancel()
+		<-errs
+	}
+}
+
+func executeLines(t *testing.T, app App, stdout, stderr *bytes.Buffer, lines ...string) {
+	t.Helper()
+	for _, line := range lines {
+		if code := app.ExecuteLine(context.Background(), line, stdout, stderr); code != 0 {
+			t.Fatalf("%q exit code = %d, stderr = %s, stdout = %s", line, code, stderr.String(), stdout.String())
+		}
+	}
+}
+
+type e2eThrowPayload struct {
+	Chain   string   `json:"chain"`
+	Targets []string `json:"targets"`
+	Results []struct {
+		RunID    string `json:"runId"`
+		ModuleID string `json:"moduleId"`
+		Target   string `json:"target"`
+		State    string `json:"state"`
+		Summary  string `json:"summary"`
+		Findings []struct {
+			Title    string `json:"title"`
+			Severity string `json:"severity"`
+			Detail   string `json:"detail"`
+		} `json:"findings"`
+		Artifacts []struct {
+			Name string `json:"name"`
+			Kind string `json:"kind"`
+			Data string `json:"data"`
+		} `json:"artifacts"`
+		Logs []struct {
+			Level   string            `json:"level"`
+			Message string            `json:"message"`
+			Logger  string            `json:"logger"`
+			Fields  map[string]string `json:"fields"`
+		} `json:"logs"`
+	} `json:"results"`
+}
+
+func decodeThrowJSON(t *testing.T, data []byte) e2eThrowPayload {
+	t.Helper()
+	var payload e2eThrowPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("invalid JSON %q: %v", string(data), err)
+	}
+	return payload
+}
+
+func moduleIDs(results []struct {
+	RunID    string `json:"runId"`
+	ModuleID string `json:"moduleId"`
+	Target   string `json:"target"`
+	State    string `json:"state"`
+	Summary  string `json:"summary"`
+	Findings []struct {
+		Title    string `json:"title"`
+		Severity string `json:"severity"`
+		Detail   string `json:"detail"`
+	} `json:"findings"`
+	Artifacts []struct {
+		Name string `json:"name"`
+		Kind string `json:"kind"`
+		Data string `json:"data"`
+	} `json:"artifacts"`
+	Logs []struct {
+		Level   string            `json:"level"`
+		Message string            `json:"message"`
+		Logger  string            `json:"logger"`
+		Fields  map[string]string `json:"fields"`
+	} `json:"logs"`
+}) []string {
+	ids := make([]string, 0, len(results))
+	for _, result := range results {
+		ids = append(ids, result.ModuleID)
+	}
+	return ids
+}
+
+func hasPayloadLog(logs []struct {
+	Level   string            `json:"level"`
+	Message string            `json:"message"`
+	Logger  string            `json:"logger"`
+	Fields  map[string]string `json:"fields"`
+}, message string) bool {
+	for _, log := range logs {
+		if log.Message == message {
+			return true
+		}
+	}
+	return false
 }
 
 func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
@@ -420,6 +650,65 @@ func TestEnsureDaemonStartsManagedDaemonForCLI(t *testing.T) {
 	}
 	if status.State != daemon.StateRunning {
 		t.Fatalf("daemon state = %s, want running", status.State)
+	}
+}
+
+func TestEnsureDaemonAttachesToWorkspaceDaemonForCLI(t *testing.T) {
+	workspacePath := shortTempDir(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, 1)
+	go func() {
+		errs <- daemonruntime.Serve(ctx, daemonruntime.Args{
+			WorkspacePath: workspacePath,
+			PID:           12345,
+			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		})
+	}()
+	defer func() {
+		cancel()
+		<-errs
+	}()
+
+	waitFor(t, func() bool {
+		status, err := filesystem.NewWorkspaceStore().DaemonStatus(context.Background(), workspacePath)
+		return err == nil && status.State == daemon.StateRunning
+	})
+
+	app := NewApp()
+	session, err := app.EnsureDaemon(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	if session.Owned() {
+		t.Fatal("session owned = true, want false")
+	}
+	welcome := app.Welcome(session)
+	for _, want := range []string{"mode:", "remote", "hoveld.sock"} {
+		if !strings.Contains(welcome, want) {
+			t.Fatalf("welcome missing %q:\n%s", want, welcome)
+		}
+	}
+}
+
+func TestWorkspaceSessionIsSharedAcrossCLIInstances(t *testing.T) {
+	workspacePath := shortTempDir(t)
+	first := NewApp().withWorkspaceSession(workspacePath)
+	second := NewApp().withWorkspaceSession(workspacePath)
+	var stdout, stderr bytes.Buffer
+
+	if code := first.ExecuteLine(context.Background(), "chain create test", &stdout, &stderr); code != 0 {
+		t.Fatalf("create exit code = %d, stderr = %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+
+	if code := second.ExecuteLine(context.Background(), "chain list", &stdout, &stderr); code != 0 {
+		t.Fatalf("list exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "test") {
+		t.Fatalf("chain list output = %q, want test", stdout.String())
 	}
 }
 

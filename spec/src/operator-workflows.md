@@ -48,7 +48,7 @@ status       validating
 [*] validate   checking chain configuration
 [+] validate   global config complete
 [!] validate   target router-01 missing ssh.username
-[*] chain      added module mock-target-survey as step step-1
+[*] chain      added module mock-survey as step step-1
 [*] target     added mock://router-01
 [*] throw      started
 [*] survey     router-01 os=linux arch=x86_64
@@ -209,43 +209,19 @@ Validation output must be human-first and scriptable with `--json`.
 
 The mocked stage should provide enough modules to exercise every UI path without executing real target behavior.
 
-Required mock modules:
+Required example modules:
 
-1. `mock-target-survey`
+1. `mock-survey`
    - Type: `survey`.
+   - Lives in its own Python project under `examples/python/mock_survey`.
    - Requires target config: `target.host: host`, `target.port: port`.
-   - Emits facts: `os.name`, `arch`, `reachable`.
-   - Tests per-target config, fact output, and chain logs.
-2. `mock-auth-survey`
-   - Type: `survey`.
-   - Requires target config: `auth.username: string`, `auth.password: secret`.
-   - Emits redacted logs.
-   - Tests secret config, redaction, and validation failures.
-3. `mock-payload-provider`
-   - Type: `payload_provider`.
-   - Requires chain config: `payload.kind: enum`, `payload.os: enum`.
-   - Requires target config: `target.arch: enum`.
-   - Emits payload reference metadata only.
-   - Tests chain config and per-target config interaction.
-4. `mock-simple-exploit`
+   - Emits facts and a module log.
+   - Tests per-target config, fact output, SDK schema declaration, and stdio JSON-RPC launch.
+2. `mock-exploit`
    - Type: `exploit`.
+   - Lives in its own Python project under `examples/python/mock_exploit`.
    - Requires chain config: `operator.confirmed_lab: bool`.
    - Requires target config: `target.host: host`, `target.port: port`.
-   - Consumes a payload reference if present.
-   - Emits mocked finding, artifact, and result.
-   - Tests throw transcript and final result rendering.
-5. `mock-config-kitchen-sink`
-   - Type: `survey`.
-   - Requires examples of every built-in config type.
-   - Does no real work.
-   - Tests validation, parsing, display, JSON output, and CLI setters.
-6. `mock-slow-step`
-   - Type: `survey`.
-   - Requires chain config: `delay: duration`.
-   - Emits progress logs over time.
-   - Tests live chain log fanout to multiple connected CLIs.
-7. `mock-failing-step`
-   - Type: `exploit`.
-   - Requires chain config: `failure_mode: enum`.
-   - Can fail validation, planning, or execution.
+   - Emits an example finding, artifact, result, and module log.
+   - Tests throw transcript, final result rendering, SDK schema declaration, and stdio JSON-RPC launch.
    - Tests error rendering and failed throw states.

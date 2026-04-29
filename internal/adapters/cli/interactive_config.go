@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	prompt "github.com/c-bata/go-prompt"
 )
 
@@ -21,7 +21,7 @@ const (
 )
 
 type interactiveConfigWizard struct {
-	session          *operatorsession.Session
+	session          commands.OperatorSession
 	modules          modulecatalog.Catalog
 	stage            interactiveConfigStage
 	chain            string
@@ -30,7 +30,7 @@ type interactiveConfigWizard struct {
 	announcedMissing bool
 }
 
-func newInteractiveConfigWizard(session *operatorsession.Session, modules modulecatalog.Catalog) *interactiveConfigWizard {
+func newInteractiveConfigWizard(session commands.OperatorSession, modules modulecatalog.Catalog) *interactiveConfigWizard {
 	return &interactiveConfigWizard{
 		session: session,
 		modules: modules,

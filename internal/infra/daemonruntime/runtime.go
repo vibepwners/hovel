@@ -14,11 +14,12 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
+	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
-	"github.com/Vibe-Pwners/hovel/internal/modules/mockexploit"
+	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 )
 
 type Args struct {
@@ -64,7 +65,11 @@ func Serve(ctx context.Context, args Args) error {
 	}
 	runner := args.ModuleRunner
 	if runner == nil {
-		runner = mockexploit.Runner{}
+		runner = pythonrpc.Runner{
+			Events: events,
+			IDs:    ids,
+			Clock:  clock,
+		}
 	}
 
 	lock, err := filesystem.AcquireWorkspaceLock(workspacePath, fmt.Sprintf("pid:%d", pid))
@@ -97,7 +102,9 @@ func Serve(ctx context.Context, args Args) error {
 
 	server := rpc.NewServer()
 	runs := services.NewRunService(runner, events, ids, clock)
-	if err := daemonrpc.Register(server, runs); err != nil {
+	session := operatorsession.New()
+	logs := daemonrpc.NewLogBroker()
+	if err := daemonrpc.Register(server, runs, daemonrpc.WithSession(session), daemonrpc.WithLogBroker(logs)); err != nil {
 		return err
 	}
 	acceptErrs := make(chan error, 1)
