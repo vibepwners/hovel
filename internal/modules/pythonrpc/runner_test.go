@@ -153,6 +153,7 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 		name    string
 		body    string
 		inspect bool
+		timeout time.Duration
 		want    string
 	}{
 		{
@@ -176,13 +177,18 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 			name:    "timeout",
 			body:    `import time; time.sleep(2)`,
 			inspect: true,
+			timeout: 50 * time.Millisecond,
 			want:    "context deadline exceeded",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			configPath := writePythonModuleFixture(t, tc.body)
-			runner := Runner{ConfigPath: configPath, Timeout: 50 * time.Millisecond}
+			timeout := tc.timeout
+			if timeout == 0 {
+				timeout = 2 * time.Second
+			}
+			runner := Runner{ConfigPath: configPath, Timeout: timeout}
 			var err error
 			if tc.inspect {
 				_, err = runner.Inspect(context.Background(), "broken")

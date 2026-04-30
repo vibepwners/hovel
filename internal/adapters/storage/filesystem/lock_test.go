@@ -1,6 +1,10 @@
 package filesystem
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestWorkspaceLockRejectsDuplicateOwner(t *testing.T) {
 	workspacePath := t.TempDir()
@@ -32,4 +36,18 @@ func TestWorkspaceLockReleaseAllowsReacquire(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Release()
+}
+
+func TestWorkspaceLockStaleLockFileIsConservativelyRejected(t *testing.T) {
+	tmpdir := t.TempDir()
+
+	// Simulate a crashed process that left its lock file behind.
+	if err := os.WriteFile(filepath.Join(tmpdir, "daemon.lock"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := AcquireWorkspaceLock(tmpdir, "new-owner")
+	if err == nil {
+		t.Fatal("expected error when stale lock file exists, got nil")
+	}
 }

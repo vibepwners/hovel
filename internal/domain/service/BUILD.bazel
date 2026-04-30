@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "service",
+    srcs = ["service.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/domain/service",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "service_test",
+    srcs = ["service_test.go"],
+    embed = [":service"],
+)

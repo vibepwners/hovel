@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -198,7 +199,7 @@ func commandParser(definition commands.Definition) *argparse.Parser {
 	return parser
 }
 
-func parseDefinition(definition commands.Definition, parser *argparse.Parser, args []string, stdout, stderr io.Writer) (commands.Invocation, bool, int) {
+func parseDefinition(definition commands.Definition, parser *argparse.Parser, args []string, _ io.Writer, stderr io.Writer) (commands.Invocation, bool, int) {
 	parser.ExitOnHelp(false)
 	positionals := make(map[string]*string, len(definition.Positionals))
 	options := make(map[string]*string)
@@ -248,7 +249,7 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, ar
 	return invocation, true, 0
 }
 
-func usage(definition commands.Definition, parser *argparse.Parser, msg interface{}) string {
+func usage(definition commands.Definition, parser *argparse.Parser, msg any) string {
 	out := parser.Usage(msg)
 	parserName := "hovel command " + definition.PathString()
 	generatedUsage := regexp.MustCompile(`\[_positionalArg_[\s\S]*?_\d+\s+"<value>"\]`)
@@ -277,12 +278,7 @@ func topLevelHelpRequested(args []string) bool {
 }
 
 func helpRequested(args []string) bool {
-	for _, arg := range args {
-		if isHelpArg(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(args, isHelpArg)
 }
 
 func isHelpArg(arg string) bool {
