@@ -354,7 +354,7 @@ func HovelRegistry(runtime Runtime) Registry {
 			Path:    []string{"modules", "inspect"},
 			Summary: "Inspect a module in the module database.",
 			Positionals: []Positional{
-				{Name: "module", Help: "Module ID", Required: true},
+				{Name: "module", Help: "Module reference", Required: true},
 			},
 			Handler: modulesInspectHandler(runtime),
 		},
@@ -372,7 +372,7 @@ func HovelRegistry(runtime Runtime) Registry {
 			RequiresDaemon: true,
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
-				stringOption("chain", "c", "Chain or module identifier"),
+				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
@@ -1045,7 +1045,11 @@ func throwInputs(runtime Runtime, invocation Invocation) (throwExecution, error)
 		if runtime.Session != nil {
 			return throwExecution{}, fmt.Errorf("chain %s has no modules; add one with chain add <module>", chain)
 		}
-		modules = append(modules, chain)
+		moduleRef := chain
+		if module, ok := moduleDB(runtime).Find(chain); ok {
+			moduleRef = module.ID
+		}
+		modules = append(modules, moduleRef)
 	}
 	return throwExecution{
 		Chain:         chain,

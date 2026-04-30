@@ -88,7 +88,7 @@ payload_provider
 
 The type set must remain expandable after the first mocked UI stage.
 
-A module may be backed by a process, a built-in Go implementation, a service call, or a composition of other modules.
+A module may be backed by a process, a built-in Go implementation, or a service call. A reusable composition of modules is a chain, not another module type.
 
 Every module may declare required and optional typed configuration keys. Configuration scopes are `chain` for global chain configuration and `target` for per-target configuration.
 
@@ -139,19 +139,13 @@ Payload generation is outside the Hovel core. Hovel resolves payload bytes throu
 
 A payload is tagged bytes returned by a provider.
 
-Payload types:
+Initial payload kinds:
 
 ```text
-elf
-pe
-pic
+shell
 shellcode
-script
-command
-archive
-opaque_blob
-implant
-loader
+library
+executable
 ```
 
 Payload metadata:
@@ -195,6 +189,8 @@ failed
 ## Chain
 
 A chain is an operator-owned workflow record and an ordered graph of phases and steps. Chains are CRUD resources: operators can create, select, rename, inspect, list, and delete them through shared application services.
+
+Chain definitions should be modular and loadable. They are collections of module references and chain-scoped configuration, not modules themselves.
 
 Chains own targets for the current workflow. Adding or clearing targets through an operator front end mutates the active chain's target set, not a global target scratchpad.
 

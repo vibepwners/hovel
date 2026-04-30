@@ -194,7 +194,7 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 		t.Fatal("throw start timestamp was not propagated to run request")
 	}
 	recorder.requests[0].ThrowStarted = ""
-	if !reflect.DeepEqual(recorder.requests[0], RunMockExploitRequest{ModuleID: "mock-exploit", Target: "mock://target", ChainConfig: map[string]string{}}) {
+	if !reflect.DeepEqual(recorder.requests[0], RunMockExploitRequest{ModuleID: "mock-exploit@v0.0.0-example", Target: "mock://target", ChainConfig: map[string]string{}}) {
 		t.Fatalf("run request = %#v", recorder.requests[0])
 	}
 	wantPlan := ThrowPlanRecord{
@@ -223,7 +223,7 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 		t.Fatalf("payload results = %#v, want one result", payload.Results)
 	}
 	run := payload.Results[0]
-	if run.RunID != "run-1" || run.ModuleID != "mock-exploit" || run.Target != "mock://target" || run.State != "succeeded" {
+	if run.RunID != "run-1" || run.ModuleID != "mock-exploit@v0.0.0-example" || run.Target != "mock://target" || run.State != "succeeded" {
 		t.Fatalf("payload run = %#v", run)
 	}
 	if len(run.Findings) != 1 || len(run.Artifacts) != 1 || len(run.Logs) != 1 {
@@ -371,7 +371,7 @@ func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"mock-exploit exploit", "version", "runtime", "operator.confirmed_lab", "bool", "target.port", "port", "Next: chain add mock-exploit"} {
+	for _, want := range []string{"mock-exploit@v0.0.0-example exploit", "version", "runtime", "operator.confirmed_lab", "bool", "target.port", "port", "Next: chain add mock-exploit@v0.0.0-example"} {
 		if !strings.Contains(inspectResult.Human, want) {
 			t.Fatalf("inspect missing %q:\n%s", want, inspectResult.Human)
 		}
@@ -448,7 +448,7 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 		{
 			Scope:    modulecatalog.ScopeChain,
 			StepID:   "step-1",
-			ModuleID: "mock-exploit",
+			ModuleID: "mock-exploit@v0.0.0-example",
 			Key:      "operator.confirmed_lab",
 			Message:  "missing chain config operator.confirmed_lab",
 		},
@@ -712,7 +712,7 @@ func exampleCatalog() modulecatalog.Catalog {
 			Summary:     "Collect example target facts.",
 			Description: "Example Python survey module for the Hovel stdio JSON-RPC runtime.",
 			Tags:        []string{"example", "survey", "python"},
-			RuntimeKind: "python-rpc",
+			RuntimeKind: "jsonrpc-stdio",
 			Author:      "hovel",
 			Enabled:     true,
 			TargetConfig: []modulecatalog.Requirement{
@@ -728,7 +728,7 @@ func exampleCatalog() modulecatalog.Catalog {
 			Summary:     "Run an example exploit flow.",
 			Description: "Example Python exploit module for the Hovel stdio JSON-RPC runtime.",
 			Tags:        []string{"example", "exploit", "python"},
-			RuntimeKind: "python-rpc",
+			RuntimeKind: "jsonrpc-stdio",
 			Author:      "hovel",
 			Enabled:     true,
 			ChainConfig: []modulecatalog.Requirement{

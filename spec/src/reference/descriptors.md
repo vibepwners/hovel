@@ -23,10 +23,10 @@ metadata:
     - payload
 spec:
   runtime:
-    type: python-rpc
+    type: jsonrpc-stdio
     packaging: source
     entrypoint: python -m hovel_ssh_memory
-  moduleType: chain
+  moduleType: exploit
   inputs:
     target:
       type: targetRef
@@ -66,6 +66,29 @@ spec:
     requiresCredentials: true
 ```
 
+## Chain Descriptor
+
+Chains are loadable collections of modules and chain-scoped configuration. A chain definition may reference a module as `name@version`; a bare `name` asks the catalog to resolve the latest available version.
+
+```yaml
+apiVersion: hovel.dev/v1alpha1
+kind: Chain
+metadata:
+  name: ssh-memory-flow
+  version: 0.1.0
+  description: Survey a target and run the SSH memory module.
+spec:
+  steps:
+    - id: survey
+      module: ssh-survey
+    - id: exploit
+      module: ssh-memory@0.1.0
+  config:
+    operator.confirmed_lab:
+      type: bool
+      required: true
+```
+
 ## Service Descriptor
 
 ```yaml
@@ -77,7 +100,7 @@ metadata:
   description: External provider adapter for PIC payload bytes.
 spec:
   runtime:
-    type: python-service-rpc
+    type: jsonrpc-stdio
     packaging: source
     entrypoint: python -m hovel_picblob_service
   serviceType: payload_provider
@@ -110,7 +133,7 @@ metadata:
   description: Go listening post for sshplant sessions.
 spec:
   runtime:
-    type: go-service-rpc
+    type: jsonrpc-stdio
     entrypoint: ./sshplant-lp
   serviceType: listener
   provides:
@@ -135,7 +158,7 @@ spec:
 
 ```yaml
 runId: run-uuid
-moduleId: ssh-memory
+moduleId: ssh-memory@0.1.0
 targets:
   - id: target-uuid
     address: 10.41.32.2
@@ -177,7 +200,7 @@ outputs:
 id: event-uuid
 runId: run-uuid
 targetId: target-uuid
-moduleId: ssh-survey
+moduleId: ssh-survey@0.1.0
 type: module.log
 level: info
 message: detected target architecture

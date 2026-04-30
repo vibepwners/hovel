@@ -118,23 +118,23 @@ func TestChainAddSuggestsModulesMatchingInput(t *testing.T) {
 	for _, suggestion := range suggestions {
 		names = append(names, suggestion.Text)
 	}
-	for _, want := range []string{"mock-survey", "mock-exploit"} {
+	for _, want := range []string{"mock-survey@v0.0.0-example", "mock-exploit@v0.0.0-example"} {
 		if !contains(names, want) {
 			t.Fatalf("module suggestions = %#v, missing %s", names, want)
 		}
 	}
 
 	suggestions = app.Suggestions("chain add surv")
-	if len(suggestions) != 1 || suggestions[0].Text != "mock-survey" {
-		t.Fatalf("filtered module suggestions = %#v, want mock-survey", suggestions)
+	if len(suggestions) != 1 || suggestions[0].Text != "mock-survey@v0.0.0-example" {
+		t.Fatalf("filtered module suggestions = %#v, want mock-survey@v0.0.0-example", suggestions)
 	}
 	if !strings.Contains(suggestions[0].Description, "survey") || !strings.Contains(suggestions[0].Description, "Collect example target facts.") {
 		t.Fatalf("module suggestion description = %q", suggestions[0].Description)
 	}
 
 	suggestions = app.Suggestions("add surv")
-	if len(suggestions) != 1 || suggestions[0].Text != "mock-survey" {
-		t.Fatalf("filtered alias suggestions = %#v, want mock-survey", suggestions)
+	if len(suggestions) != 1 || suggestions[0].Text != "mock-survey@v0.0.0-example" {
+		t.Fatalf("filtered alias suggestions = %#v, want mock-survey@v0.0.0-example", suggestions)
 	}
 }
 
@@ -201,8 +201,8 @@ func TestChainCreateEntersContextAndRootAliasesOperateOnActiveChain(t *testing.T
 		t.Fatalf("add alias exit code = %d, stderr = %s", code, stderr.String())
 	}
 	state := app.session.Snapshot()
-	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "mock-exploit" {
-		t.Fatalf("steps = %#v, want mock-exploit", state.Steps)
+	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "mock-exploit@v0.0.0-example" {
+		t.Fatalf("steps = %#v, want mock-exploit@v0.0.0-example", state.Steps)
 	}
 }
 
@@ -508,7 +508,7 @@ func TestE2EExampleSurveyAuthChainUsesPythonModules(t *testing.T) {
 	if payload.Chain != "survey-example" {
 		t.Fatalf("chain = %q, want survey-example", payload.Chain)
 	}
-	if got, want := moduleIDs(payload.Results), []string{"mock-survey"}; strings.Join(got, ",") != strings.Join(want, ",") {
+	if got, want := moduleIDs(payload.Results), []string{"mock-survey@v0.0.0-example"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("module order = %#v, want %#v", got, want)
 	}
 	for _, result := range payload.Results {
@@ -542,7 +542,7 @@ func TestE2EExamplePayloadExploitChainUsesPythonModules(t *testing.T) {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}
 	payload := decodeThrowJSON(t, stdout.Bytes())
-	if got, want := moduleIDs(payload.Results), []string{"mock-survey", "mock-exploit"}; strings.Join(got, ",") != strings.Join(want, ",") {
+	if got, want := moduleIDs(payload.Results), []string{"mock-survey@v0.0.0-example", "mock-exploit@v0.0.0-example"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("module order = %#v, want %#v", got, want)
 	}
 	exploit := payload.Results[1]
@@ -588,8 +588,8 @@ func TestE2EExampleFailingChainReportsFailedModule(t *testing.T) {
 		t.Fatalf("results = %#v, want one result", payload.Results)
 	}
 	result := payload.Results[0]
-	if result.ModuleID != "mock-exploit" || result.State != "failed" {
-		t.Fatalf("result = %#v, want failed mock-exploit", result)
+	if result.ModuleID != "mock-exploit@v0.0.0-example" || result.State != "failed" {
+		t.Fatalf("result = %#v, want failed mock-exploit@v0.0.0-example", result)
 	}
 	if !strings.Contains(result.Summary, "failed during execution") {
 		t.Fatalf("summary = %q", result.Summary)

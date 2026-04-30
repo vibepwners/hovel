@@ -18,7 +18,7 @@ func TestValidateModuleDescriptorAcceptsValidMinimal(t *testing.T) {
 		"kind": "Module",
 		"metadata": {"name": "ssh-survey", "version": "0.1.0"},
 		"spec": {
-			"runtime": {"type": "python-rpc", "entrypoint": "python -m hovel_ssh_survey"},
+			"runtime": {"type": "jsonrpc-stdio", "entrypoint": "python -m hovel_ssh_survey"},
 			"moduleType": "survey"
 		}
 	}`)
@@ -48,7 +48,7 @@ func TestValidateModuleDescriptorAcceptsRuntimeCatalogModuleTypes(t *testing.T) 
 		"kind": "Module",
 		"metadata": {"name": "mock-exploit", "version": "0.1.0"},
 		"spec": {
-			"runtime": {"type": "python-rpc", "entrypoint": "python -m hovel_example_exploit"},
+			"runtime": {"type": "jsonrpc-stdio", "entrypoint": "python -m hovel_example_exploit"},
 			"moduleType": "exploit"
 		}
 	}`)
@@ -73,7 +73,7 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 			json: `{
 				"kind": "Module",
 				"metadata": {"name": "ssh-survey", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-rpc", "entrypoint": "main"}, "moduleType": "survey"}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "moduleType": "survey"}
 			}`,
 			wantErr: "invalid apiVersion",
 		},
@@ -83,7 +83,7 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v2",
 				"kind": "Module",
 				"metadata": {"name": "ssh-survey", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-rpc", "entrypoint": "main"}, "moduleType": "survey"}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "moduleType": "survey"}
 			}`,
 			wantErr: "invalid apiVersion",
 		},
@@ -93,7 +93,7 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Service",
 				"metadata": {"name": "ssh-survey", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-rpc", "entrypoint": "main"}, "moduleType": "survey"}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "moduleType": "survey"}
 			}`,
 			wantErr: "invalid kind",
 		},
@@ -103,7 +103,7 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Module",
 				"metadata": {"version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-rpc", "entrypoint": "main"}, "moduleType": "survey"}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "moduleType": "survey"}
 			}`,
 			wantErr: "metadata.name is required",
 		},
@@ -113,7 +113,7 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Module",
 				"metadata": {"name": "ssh-survey"},
-				"spec": {"runtime": {"type": "python-rpc", "entrypoint": "main"}, "moduleType": "survey"}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "moduleType": "survey"}
 			}`,
 			wantErr: "metadata.version is required",
 		},
@@ -123,7 +123,7 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Module",
 				"metadata": {"name": "ssh-survey", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-rpc", "entrypoint": "main"}}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}}
 			}`,
 			wantErr: "spec.moduleType is required",
 		},
@@ -153,7 +153,7 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Module",
 				"metadata": {"name": "ssh-survey", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-rpc"}, "moduleType": "survey"}
+				"spec": {"runtime": {"type": "jsonrpc-stdio"}, "moduleType": "survey"}
 			}`,
 			wantErr: "spec.runtime.entrypoint is required",
 		},
@@ -163,7 +163,7 @@ func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Module",
 				"metadata": {"name": "Invalid Name", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-rpc", "entrypoint": "main"}, "moduleType": "survey"}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "moduleType": "survey"}
 			}`,
 			wantErr: "module name",
 		},
@@ -198,7 +198,7 @@ func TestValidateModuleDescriptorRejectsInvalidModuleType(t *testing.T) {
 		"kind": "Module",
 		"metadata": {"name": "ssh-survey", "version": "0.1.0"},
 		"spec": {
-			"runtime": {"type": "python-rpc", "entrypoint": "main"},
+			"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"},
 			"moduleType": "not-a-real-type"
 		}
 	}`)
@@ -206,6 +206,23 @@ func TestValidateModuleDescriptorRejectsInvalidModuleType(t *testing.T) {
 	_, err := ValidateModuleDescriptor(data)
 	if err == nil {
 		t.Fatal("expected error for invalid moduleType, got nil")
+	}
+}
+
+func TestValidateModuleDescriptorRejectsInvalidRuntimeType(t *testing.T) {
+	data := []byte(`{
+		"apiVersion": "hovel.dev/v1alpha1",
+		"kind": "Module",
+		"metadata": {"name": "ssh-survey", "version": "0.1.0"},
+		"spec": {
+			"runtime": {"type": "python", "entrypoint": "main"},
+			"moduleType": "survey"
+		}
+	}`)
+
+	_, err := ValidateModuleDescriptor(data)
+	if err == nil || !strings.Contains(err.Error(), "spec.runtime.type is not valid") {
+		t.Fatalf("error = %v, want invalid runtime type", err)
 	}
 }
 
@@ -226,7 +243,7 @@ func TestValidateServiceDescriptorAcceptsValidMinimal(t *testing.T) {
 		"kind": "Service",
 		"metadata": {"name": "picblob-provider", "version": "0.1.0"},
 		"spec": {
-			"runtime": {"type": "python-service-rpc", "entrypoint": "hovel_picblob:main"},
+			"runtime": {"type": "jsonrpc-stdio", "entrypoint": "hovel_picblob:main"},
 			"serviceType": "payload_provider",
 			"lifecycle": {}
 		}
@@ -262,7 +279,7 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 			json: `{
 				"kind": "Service",
 				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
 			}`,
 			wantErr: "invalid apiVersion",
 		},
@@ -272,7 +289,7 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v2",
 				"kind": "Service",
 				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
 			}`,
 			wantErr: "invalid apiVersion",
 		},
@@ -282,7 +299,7 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Module",
 				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
 			}`,
 			wantErr: "invalid kind",
 		},
@@ -292,7 +309,7 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Service",
 				"metadata": {"version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
 			}`,
 			wantErr: "metadata.name is required",
 		},
@@ -302,7 +319,7 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Service",
 				"metadata": {"name": "picblob-provider"},
-				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
 			}`,
 			wantErr: "metadata.version is required",
 		},
@@ -312,7 +329,7 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Service",
 				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "lifecycle": {}}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "lifecycle": {}}
 			}`,
 			wantErr: "spec.serviceType is required",
 		},
@@ -322,7 +339,7 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Service",
 				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "payload_provider"}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "serviceType": "payload_provider"}
 			}`,
 			wantErr: "spec.lifecycle is required",
 		},
@@ -352,7 +369,7 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Service",
 				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-service-rpc"}, "serviceType": "payload_provider", "lifecycle": {}}
+				"spec": {"runtime": {"type": "jsonrpc-stdio"}, "serviceType": "payload_provider", "lifecycle": {}}
 			}`,
 			wantErr: "spec.runtime.entrypoint is required",
 		},
@@ -362,7 +379,7 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Service",
 				"metadata": {"name": "Invalid Name", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "serviceType": "payload_provider", "lifecycle": {}}
 			}`,
 			wantErr: "service name",
 		},
@@ -392,7 +409,7 @@ func TestValidateServiceDescriptorRejectsMissingFields(t *testing.T) {
 				"apiVersion": "hovel.dev/v1alpha1",
 				"kind": "Service",
 				"metadata": {"name": "picblob-provider", "version": "0.1.0"},
-				"spec": {"runtime": {"type": "python-service-rpc", "entrypoint": "main"}, "serviceType": "", "lifecycle": {}}
+				"spec": {"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"}, "serviceType": "", "lifecycle": {}}
 			}`,
 			wantErr: "spec.serviceType is required",
 		},
@@ -417,7 +434,7 @@ func TestValidateServiceDescriptorRejectsInvalidServiceType(t *testing.T) {
 		"kind": "Service",
 		"metadata": {"name": "picblob-provider", "version": "0.1.0"},
 		"spec": {
-			"runtime": {"type": "python-service-rpc", "entrypoint": "main"},
+			"runtime": {"type": "jsonrpc-stdio", "entrypoint": "main"},
 			"serviceType": "not-a-real-type",
 			"lifecycle": {}
 		}
@@ -426,6 +443,24 @@ func TestValidateServiceDescriptorRejectsInvalidServiceType(t *testing.T) {
 	_, err := ValidateServiceDescriptor(data)
 	if err == nil {
 		t.Fatal("expected error for invalid serviceType, got nil")
+	}
+}
+
+func TestValidateServiceDescriptorRejectsInvalidRuntimeType(t *testing.T) {
+	data := []byte(`{
+		"apiVersion": "hovel.dev/v1alpha1",
+		"kind": "Service",
+		"metadata": {"name": "picblob-provider", "version": "0.1.0"},
+		"spec": {
+			"runtime": {"type": "python", "entrypoint": "main"},
+			"serviceType": "payload_provider",
+			"lifecycle": {}
+		}
+	}`)
+
+	_, err := ValidateServiceDescriptor(data)
+	if err == nil || !strings.Contains(err.Error(), "spec.runtime.type is not valid") {
+		t.Fatalf("error = %v, want invalid runtime type", err)
 	}
 }
 

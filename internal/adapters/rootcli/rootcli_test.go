@@ -174,8 +174,8 @@ func TestMonoBinaryDaemonAndCommandRunMockExploitFlow(t *testing.T) {
 	if result.RunID == "" {
 		t.Fatal("run id is empty")
 	}
-	if result.ModuleID != "mock-exploit" {
-		t.Fatalf("module id = %q, want mock-exploit", result.ModuleID)
+	if result.ModuleID != "mock-exploit@v0.0.0-example" {
+		t.Fatalf("module id = %q, want mock-exploit@v0.0.0-example", result.ModuleID)
 	}
 	if result.Target != "mock://target" {
 		t.Fatalf("target = %q, want mock://target", result.Target)

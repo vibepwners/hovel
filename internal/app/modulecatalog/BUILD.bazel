@@ -8,6 +8,7 @@ go_library(
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/app/modulecatalog",
     visibility = ["//:__subpackages__"],
+    deps = ["//internal/domain/module"],
 )
 
 go_test(

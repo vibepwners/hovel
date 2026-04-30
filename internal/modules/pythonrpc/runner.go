@@ -100,7 +100,11 @@ func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Mod
 	if err := process.wait(); err != nil {
 		return modulecatalog.Module{}, withStderr("module exited with error", err, process.stderr.String())
 	}
-	return moduleFromRPC(moduleID, info, schema), nil
+	module, err := moduleFromRPC(moduleID, info, schema)
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	return module, nil
 }
 
 func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error) {
@@ -243,8 +247,9 @@ func (r Runner) moduleEntry(moduleID string) (ModuleEntry, bool, error) {
 	if err != nil {
 		return ModuleEntry{}, false, err
 	}
+	moduleName := modulecatalog.ReferenceName(moduleID)
 	for _, entry := range entries {
-		if entry.ID == moduleID {
+		if entry.ID == moduleID || modulecatalog.ReferenceName(entry.ID) == moduleName {
 			return entry, true, nil
 		}
 	}
@@ -277,7 +282,10 @@ func (r Runner) moduleEntries() ([]ModuleEntry, error) {
 		if entry.ID == "" {
 			continue
 		}
-		if entry.Runtime != "" && entry.Runtime != "python-rpc" {
+		if entry.Runtime == "" {
+			entry.Runtime = modulecatalog.RuntimeJSONRPCStdio
+		}
+		if entry.Runtime != modulecatalog.RuntimeJSONRPCStdio {
 			continue
 		}
 		if entry.ProjectDir == "" || entry.Module == "" {
@@ -564,21 +572,44 @@ func logsFromRPC(request run.Request, logs []rpcLog) []run.LogEntry {
 	return out
 }
 
-func moduleFromRPC(moduleID string, info, schema map[string]any) modulecatalog.Module {
+func moduleFromRPC(moduleID string, info, schema map[string]any) (modulecatalog.Module, error) {
+	name := strings.TrimSpace(stringValue(info["name"]))
+	configName, configVersion, configHasVersion := modulecatalog.SplitID(moduleID)
+	if name == "" {
+		name = configName
+	}
+	version := strings.TrimSpace(stringValue(info["version"]))
+	if version == "" && configHasVersion {
+		version = configVersion
+	}
+	if name == "" {
+		return modulecatalog.Module{}, errors.New("module handshake missing name")
+	}
+	if version == "" {
+		return modulecatalog.Module{}, errors.New("module handshake missing version")
+	}
+	moduleType, err := modulecatalog.NewModuleType(strings.TrimSpace(stringValue(info["moduleType"])))
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	display := strings.TrimSpace(stringValue(info["displayName"]))
+	if display == "" {
+		display = displayName(name)
+	}
 	return modulecatalog.Module{
-		ID:           moduleID,
-		Name:         displayName(moduleID),
-		Type:         modulecatalog.ModuleType(stringValue(info["moduleType"])),
-		Version:      stringValue(info["version"]),
+		ID:           modulecatalog.CanonicalID(name, version),
+		Name:         display,
+		Type:         moduleType,
+		Version:      version,
 		Summary:      stringValue(info["summary"]),
 		Description:  stringValue(info["description"]),
 		Tags:         stringSlice(info["tags"]),
-		RuntimeKind:  "python-rpc",
+		RuntimeKind:  modulecatalog.RuntimeJSONRPCStdio,
 		Author:       "hovel",
 		Enabled:      true,
 		ChainConfig:  requirementsFromRPC(schema["chainConfig"]),
 		TargetConfig: requirementsFromRPC(schema["targetConfig"]),
-	}
+	}, nil
 }
 
 func requirementsFromRPC(value any) []modulecatalog.Requirement {

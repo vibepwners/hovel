@@ -69,21 +69,16 @@ func (v Version) String() string {
 // Type is one of the recognized module type values from the domain model.
 type Type string
 
+const (
+	TypeSurvey          Type = "survey"
+	TypeExploit         Type = "exploit"
+	TypePayloadProvider Type = "payload_provider"
+)
+
 var validTypes = map[string]struct{}{
-	"survey":           {},
-	"exploit":          {},
-	"payload_provider": {},
-	"transport":        {},
-	"access":           {},
-	"deliver":          {},
-	"payload":          {},
-	"post_action":      {},
-	"cleanup":          {},
-	"transform":        {},
-	"provider":         {},
-	"chain":            {},
-	"utility":          {},
-	"service_client":   {},
+	string(TypeSurvey):          {},
+	string(TypeExploit):         {},
+	string(TypePayloadProvider): {},
 }
 
 // NewType creates a Type, rejecting unknown or empty values.
