@@ -18,6 +18,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 	"github.com/akamensky/argparse"
 )
 
@@ -56,7 +57,9 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 		),
 		Daemons: services.NewDaemonService(store),
 		Runs:    daemonRunClients{},
+		Plans:   store,
 		Session: session,
+		Modules: pythonrpc.MustConfiguredCatalog(),
 	}
 }
 
@@ -123,7 +126,11 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		return 0
 	}
 	if !result.Log.Empty() {
-		fmt.Fprintln(stdout, a.logs.Render(result.Log))
+		renderer := a.logs
+		if parsed.Flag("no-color") {
+			renderer = terminallog.NewPlainRenderer()
+		}
+		fmt.Fprintln(stdout, renderer.Render(result.Log))
 		return 0
 	}
 	if result.Human != "" {
@@ -245,7 +252,9 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, ar
 func usage(definition commands.Definition, parser *argparse.Parser, msg any) string {
 	out := parser.Usage(msg)
 	parserName := "hovel command " + definition.PathString()
+	generatedUsage := regexp.MustCompile(`\[_positionalArg_[\s\S]*?_\d+\s+"<value>"\]`)
 	for i, positional := range definition.Positionals {
+		out = replaceFirst(out, generatedUsage, "<"+positional.Name+">")
 		generated := fmt.Sprintf("_positionalArg_%s_%d", parserName, i+1)
 		out = strings.ReplaceAll(out, fmt.Sprintf(`[%s "<value>"]`, generated), "<"+positional.Name+">")
 		out = strings.ReplaceAll(out, "--"+generated, positional.Name)
@@ -254,6 +263,14 @@ func usage(definition commands.Definition, parser *argparse.Parser, msg any) str
 		out = wrapped.ReplaceAllString(out, "<"+positional.Name+">")
 	}
 	return out
+}
+
+func replaceFirst(text string, pattern *regexp.Regexp, replacement string) string {
+	location := pattern.FindStringIndex(text)
+	if location == nil {
+		return text
+	}
+	return text[:location[0]] + replacement + text[location[1]:]
 }
 
 func topLevelHelpRequested(args []string) bool {
@@ -299,8 +316,12 @@ func (c daemonRunClient) Close() error {
 
 func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMockExploitRequest) (commands.RunMockExploitResponse, error) {
 	result, err := c.client.RunMockExploit(ctx, daemonrpc.RunMockExploitRequest{
-		ModuleID: req.ModuleID,
-		Target:   req.Target,
+		ModuleID:     req.ModuleID,
+		Target:       req.Target,
+		Inputs:       req.Inputs,
+		ChainConfig:  req.ChainConfig,
+		TargetConfig: req.TargetConfig,
+		ThrowStarted: req.ThrowStarted,
 	})
 	if err != nil {
 		return commands.RunMockExploitResponse{}, err
@@ -313,6 +334,7 @@ func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMoc
 		Summary:   result.Summary,
 		Findings:  findingsFromRPC(result.Findings),
 		Artifacts: artifactsFromRPC(result.Artifacts),
+		Logs:      logsFromRPC(result.Logs),
 	}, nil
 }
 
@@ -324,6 +346,50 @@ func findingsFromRPC(findings []daemonrpc.Finding) []commands.Finding {
 			Severity: finding.Severity,
 			Detail:   finding.Detail,
 		})
+	}
+	return out
+}
+
+func logsFromRPC(logs []daemonrpc.LogEntry) []commands.LogEntry {
+	out := make([]commands.LogEntry, 0, len(logs))
+	for _, log := range logs {
+		out = append(out, commands.LogEntry{
+			ID:             log.ID,
+			Time:           log.Time,
+			Topic:          log.Topic,
+			Kind:           log.Kind,
+			Level:          log.Level,
+			Source:         log.Source,
+			Message:        log.Message,
+			Logger:         log.Logger,
+			ChainID:        log.ChainID,
+			ChainName:      log.ChainName,
+			RunID:          log.RunID,
+			Target:         log.Target,
+			ModuleID:       log.ModuleID,
+			ElapsedSeconds: cloneFloat64(log.ElapsedSeconds),
+			Fields:         cloneStringMap(log.Fields),
+			Attributes:     cloneStringMap(log.Attributes),
+		})
+	}
+	return out
+}
+
+func cloneFloat64(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	return &out
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
 	}
 	return out
 }

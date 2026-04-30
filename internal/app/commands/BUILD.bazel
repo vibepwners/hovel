@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/app/commands",
     visibility = ["//:__subpackages__"],
     deps = [
+        "//internal/app/modulecatalog",
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",
@@ -24,6 +25,8 @@ go_test(
     ],
     embed = [":commands"],
     deps = [
+        "//internal/app/modulecatalog",
+        "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/daemon",

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 )
@@ -96,6 +97,26 @@ func writeWorkspace(path string, ws workspace.Workspace) error {
 		Path:    ws.Path,
 	}
 	data, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o644)
+}
+
+func (s WorkspaceStore) RecordThrowPlan(ctx context.Context, plan commands.ThrowPlanRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	workspacePath := workspace.ResolvePath(plan.Workspace)
+	if plan.ID == "" {
+		return errors.New("throw plan id is required")
+	}
+	path := filepath.Join(workspacePath, "runs", plan.ID+".json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
 		return err
 	}

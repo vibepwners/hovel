@@ -135,6 +135,19 @@ func (r Registry) Find(path ...string) (Definition, bool) {
 	return definition, ok
 }
 
+func (r Registry) HasRoot(segment string) bool {
+	segment = strings.TrimSpace(segment)
+	if segment == "" {
+		return false
+	}
+	for _, definition := range r.definitions {
+		if len(definition.Path) > 0 && definition.Path[0] == segment {
+			return true
+		}
+	}
+	return false
+}
+
 func (r Registry) Children(prefix ...string) []Definition {
 	seen := map[string]Definition{}
 	for _, definition := range r.definitions {
@@ -271,13 +284,17 @@ func groupSummary(path []string, fallback string) string {
 	}
 	switch path[len(path)-1] {
 	case "control":
-		return "Operational control commands."
+		return "Initialize workspaces and inspect daemon state."
 	case "daemon":
 		return "Daemon control and inspection commands."
 	case "chain":
-		return "Chain selection and planning commands."
+		return "Build and manage operator chains."
+	case "config":
+		return "Set, list, and fix configuration."
+	case "modules":
+		return "Browse, search, and inspect modules."
 	case "targets":
-		return "Target setup commands."
+		return "Add and configure chain targets."
 	default:
 		return fallback
 	}

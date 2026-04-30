@@ -17,10 +17,15 @@ go_library(
 go_test(
     name = "daemonmanager_test",
     srcs = ["manager_test.go"],
+    data = [
+        "//examples/python:sources",
+        "//sdk/python:sources",
+    ],
     embed = [":daemonmanager"],
     deps = [
         "//internal/adapters/storage/filesystem",
         "//internal/domain/daemon",
         "//internal/infra/daemonruntime",
+        "//internal/testsupport",
     ],
 )

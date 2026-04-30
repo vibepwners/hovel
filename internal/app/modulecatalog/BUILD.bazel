@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "modulecatalog",
+    srcs = [
+        "catalog.go",
+        "validation.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/app/modulecatalog",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "modulecatalog_test",
+    srcs = ["catalog_test.go"],
+    embed = [":modulecatalog"],
+)

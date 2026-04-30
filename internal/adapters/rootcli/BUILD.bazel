@@ -16,9 +16,14 @@ go_library(
 go_test(
     name = "rootcli_test",
     srcs = ["rootcli_test.go"],
+    data = [
+        "//examples/python:sources",
+        "//sdk/python:sources",
+    ],
     embed = [":rootcli"],
     deps = [
         "//internal/adapters/storage/filesystem",
         "//internal/domain/daemon",
+        "//internal/testsupport",
     ],
 )

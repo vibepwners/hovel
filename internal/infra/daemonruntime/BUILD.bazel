@@ -8,17 +8,23 @@ go_library(
     deps = [
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
+        "//internal/app/operatorlog",
+        "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/daemon",
         "//internal/domain/event",
         "//internal/domain/workspace",
-        "//internal/modules/mockexploit",
+        "//internal/modules/pythonrpc",
     ],
 )
 
 go_test(
     name = "daemonruntime_test",
     srcs = ["runtime_test.go"],
+    data = [
+        "//examples/python:sources",
+        "//sdk/python:sources",
+    ],
     embed = [":daemonruntime"],
     deps = [
         "//internal/adapters/daemonrpc",

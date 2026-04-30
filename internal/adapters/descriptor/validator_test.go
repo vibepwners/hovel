@@ -42,6 +42,26 @@ func TestValidateModuleDescriptorAcceptsValidMinimal(t *testing.T) {
 	}
 }
 
+func TestValidateModuleDescriptorAcceptsRuntimeCatalogModuleTypes(t *testing.T) {
+	data := []byte(`{
+		"apiVersion": "hovel.dev/v1alpha1",
+		"kind": "Module",
+		"metadata": {"name": "mock-exploit", "version": "0.1.0"},
+		"spec": {
+			"runtime": {"type": "python-rpc", "entrypoint": "python -m hovel_example_exploit"},
+			"moduleType": "exploit"
+		}
+	}`)
+
+	got, err := ValidateModuleDescriptor(data)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if got.Type != module.Type("exploit") {
+		t.Errorf("Type = %q, want %q", got.Type, "exploit")
+	}
+}
+
 func TestValidateModuleDescriptorRejectsMissingFields(t *testing.T) {
 	cases := []struct {
 		name    string

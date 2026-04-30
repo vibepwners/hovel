@@ -29,12 +29,27 @@ func TestNewIDRejectsEmpty(t *testing.T) {
 }
 
 func TestResolvePathUsesDefault(t *testing.T) {
+	t.Setenv("BUILD_WORKING_DIRECTORY", "")
 	if got := ResolvePath(""); got != ".hovel" {
 		t.Fatalf("ResolvePath(\"\") = %q, want .hovel", got)
 	}
 }
 
+func TestResolvePathUsesBazelWorkingDirectory(t *testing.T) {
+	t.Setenv("BUILD_WORKING_DIRECTORY", "/tmp/hovel-repo")
+	if got := ResolvePath(""); got != "/tmp/hovel-repo/.hovel" {
+		t.Fatalf("ResolvePath(\"\") = %q, want /tmp/hovel-repo/.hovel", got)
+	}
+	if got := ResolvePath("ops"); got != "/tmp/hovel-repo/ops" {
+		t.Fatalf("ResolvePath(\"ops\") = %q, want /tmp/hovel-repo/ops", got)
+	}
+	if got := ResolvePath("/var/tmp/hovel"); got != "/var/tmp/hovel" {
+		t.Fatalf("ResolvePath(abs) = %q, want /var/tmp/hovel", got)
+	}
+}
+
 func TestNewWorkspace(t *testing.T) {
+	t.Setenv("BUILD_WORKING_DIRECTORY", "")
 	id, err := NewID("workspace-1")
 	if err != nil {
 		t.Fatal(err)

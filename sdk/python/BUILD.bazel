@@ -1,0 +1,23 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "sources",
+    srcs = glob(["hovel_sdk/*.py"]),
+)
+
+py_library(
+    name = "hovel_sdk",
+    srcs = glob(["hovel_sdk/*.py"]),
+    imports = ["."],
+)
+
+py_test(
+    name = "hovel_sdk_test",
+    srcs = ["hovel_sdk/sdk_test.py"],
+    imports = ["."],
+    main = "hovel_sdk/sdk_test.py",
+    python_version = "PY3",
+    deps = [":hovel_sdk"],
+)

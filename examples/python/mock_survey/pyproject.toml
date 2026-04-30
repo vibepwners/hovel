@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hovel-example-survey"
+version = "0.0.0"
+description = "Example Hovel Python survey module"
+requires-python = ">=3.12"
+dependencies = ["hovel-sdk"]
+
+[project.scripts]
+hovel-example-survey = "hovel_example_survey.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["hovel_example_survey*"]

@@ -70,18 +70,20 @@ func (v Version) String() string {
 type Type string
 
 var validTypes = map[string]struct{}{
-	"survey":         {},
-	"transport":      {},
-	"access":         {},
-	"deliver":        {},
-	"payload":        {},
-	"post_action":    {},
-	"cleanup":        {},
-	"transform":      {},
-	"provider":       {},
-	"chain":          {},
-	"utility":        {},
-	"service_client": {},
+	"survey":           {},
+	"exploit":          {},
+	"payload_provider": {},
+	"transport":        {},
+	"access":           {},
+	"deliver":          {},
+	"payload":          {},
+	"post_action":      {},
+	"cleanup":          {},
+	"transform":        {},
+	"provider":         {},
+	"chain":            {},
+	"utility":          {},
+	"service_client":   {},
 }
 
 // NewType creates a Type, rejecting unknown or empty values.

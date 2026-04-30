@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
@@ -12,8 +13,12 @@ type ModuleRunner interface {
 }
 
 type ExecuteMockExploitRequest struct {
-	ModuleID string
-	Target   string
+	ModuleID     string
+	Target       string
+	Inputs       map[string]string
+	ChainConfig  map[string]string
+	TargetConfig map[string]string
+	ThrowStarted time.Time
 }
 
 type RunService struct {
@@ -33,23 +38,47 @@ func NewRunService(runner ModuleRunner, events EventSink, ids IDGenerator, clock
 }
 
 func (s RunService) ExecuteMockExploit(ctx context.Context, req ExecuteMockExploitRequest) (run.Result, error) {
+	return s.ExecuteModule(ctx, ExecuteModuleRequest(req))
+}
+
+type ExecuteModuleRequest struct {
+	ModuleID     string
+	Target       string
+	Inputs       map[string]string
+	ChainConfig  map[string]string
+	TargetConfig map[string]string
+	ThrowStarted time.Time
+}
+
+func (s RunService) ExecuteModule(ctx context.Context, req ExecuteModuleRequest) (run.Result, error) {
 	runID := s.ids.NewID()
 	request, err := run.NewRequest(run.RequestArgs{
-		ID:       runID,
-		ModuleID: req.ModuleID,
-		Target:   req.Target,
+		ID:           runID,
+		ModuleID:     req.ModuleID,
+		Target:       req.Target,
+		Inputs:       req.Inputs,
+		ChainConfig:  req.ChainConfig,
+		TargetConfig: req.TargetConfig,
 	})
 	if err != nil {
 		return run.Result{}, err
 	}
-	if err := s.appendRunEvent(ctx, "run.started", request, nil); err != nil {
+	startFields := map[string]string{}
+	if !req.ThrowStarted.IsZero() {
+		startFields["throwStarted"] = req.ThrowStarted.Format(time.RFC3339Nano)
+	}
+	if err := s.appendRunEvent(ctx, "run.started", request, startFields); err != nil {
 		return run.Result{}, err
 	}
 	result, err := s.runner.Run(ctx, request)
 	if err != nil {
 		return run.Result{}, err
 	}
-	if err := s.appendRunEvent(ctx, "run.succeeded", request, map[string]string{
+	eventType := "run.succeeded"
+	if result.State == run.StateFailed {
+		eventType = "run.failed"
+	}
+	if err := s.appendRunEvent(ctx, eventType, request, map[string]string{
 		"summary": result.Summary,
 	}); err != nil {
 		return run.Result{}, err

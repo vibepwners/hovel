@@ -37,6 +37,8 @@ hovel daemon ...
 hovel tui ...
 ```
 
+The same binary may expose direct command aliases such as `hovel chain ...`, `hovel modules ...`, `hovel targets ...`, and `hovel throw ...`. Those aliases must dispatch through the central command registry so command paths, aliases, help, options, and handler bindings remain one shared contract.
+
 `cli` and `tui` must auto-start or attach to the daemon role in local mode. `command` mode must not silently auto-start the daemon for ordinary operator commands; daemon-backed command invocations should require an already-running daemon, except for explicit daemon-management commands.
 
 ```text
@@ -135,7 +137,7 @@ targets clear
 throw
 ```
 
-Chains are durable operator resources, not just a transient prompt variable. The selected chain owns its target set and log topic, and target commands mutate only the active chain. Non-interactive `command` mode must remain scriptable by accepting explicit options such as `hovel command throw --chain mock-exploit --target mock://target`.
+Chains are durable operator resources, not just a transient prompt variable. The selected chain owns its target set and log topic, and target commands mutate only the active chain. Non-interactive `command` mode and direct command aliases must remain scriptable by accepting explicit options such as `hovel command throw --chain mock-exploit --target mock://target` or `hovel throw --chain mock-exploit --target mock://target`.
 
 Adapters consume the registry differently:
 

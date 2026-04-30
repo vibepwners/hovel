@@ -84,6 +84,8 @@ func TestNewVersionRejectsEmpty(t *testing.T) {
 func TestNewTypeValidation(t *testing.T) {
 	valid := []string{
 		"survey",
+		"exploit",
+		"payload_provider",
 		"transport",
 		"access",
 		"deliver",

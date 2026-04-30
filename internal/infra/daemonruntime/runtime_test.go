@@ -3,6 +3,8 @@ package daemonruntime
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,8 +14,13 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 )
 
+func TestMain(m *testing.M) {
+	os.Setenv("HOVEL_MODULE_CONFIG", "examples/python/hovel-modules.json")
+	os.Exit(m.Run())
+}
+
 func TestServeWritesStatusAndClearsOnCancel(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	store := filesystem.NewWorkspaceStore()
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
@@ -46,7 +53,7 @@ func TestServeWritesStatusAndClearsOnCancel(t *testing.T) {
 }
 
 func TestServeRejectsDuplicateWorkspace(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
@@ -83,7 +90,7 @@ func TestServeRejectsDuplicateWorkspace(t *testing.T) {
 }
 
 func TestServeRunsMockExploitOverRPC(t *testing.T) {
-	workspacePath := t.TempDir()
+	workspacePath := shortTempDir(t)
 	socketPath := workspacePath + "/hoveld.sock"
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
@@ -93,7 +100,7 @@ func TestServeRunsMockExploitOverRPC(t *testing.T) {
 			SocketPath:    socketPath,
 			PID:           123,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2", "event-3", "event-4", "event-5"}},
 			Clock:         fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 		})
 	}()
@@ -135,6 +142,20 @@ func TestServeRunsMockExploitOverRPC(t *testing.T) {
 	}
 }
 
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	base := "/private/tmp"
+	if _, err := os.Stat(base); err != nil {
+		base = os.TempDir()
+	}
+	dir, err := os.MkdirTemp(base, "hovel-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 func TestServeReturnsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -156,6 +177,10 @@ type sequenceIDs struct {
 }
 
 func (s *sequenceIDs) NewID() string {
+	if s.next >= len(s.values) {
+		s.next++
+		return fmt.Sprintf("event-%d", s.next)
+	}
 	value := s.values[s.next]
 	s.next++
 	return value

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +15,13 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
+	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 )
+
+func TestMain(m *testing.M) {
+	os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfig)
+	os.Exit(m.Run())
+}
 
 func TestHelpShowsCommandMenu(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -45,6 +53,32 @@ func TestThrowHelpShowsChainTargetAndWorkspace(t *testing.T) {
 	}
 	if strings.Contains(output, "_positionalArg") {
 		t.Fatalf("help output leaked generated positional name:\n%s", output)
+	}
+}
+
+func TestEveryRegisteredCommandHasUsableHelp(t *testing.T) {
+	registry := NewApp().Registry()
+	for _, definition := range registry.Definitions() {
+		t.Run(definition.PathString(), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			args := append(append([]string{}, definition.Path...), "--help")
+			code := Run(context.Background(), args, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+			}
+			output := stdout.String()
+			if !strings.Contains(output, definition.PathString()) {
+				t.Fatalf("help output missing command path %q:\n%s", definition.PathString(), output)
+			}
+			if strings.Contains(output, "_positionalArg") {
+				t.Fatalf("help output leaked generated positional name:\n%s", output)
+			}
+			for _, option := range definition.Options {
+				if !strings.Contains(output, "--"+option.Name) {
+					t.Fatalf("help output missing option --%s:\n%s", option.Name, output)
+				}
+			}
+		})
 	}
 }
 
@@ -143,7 +177,7 @@ func TestDaemonStatusJSONRunning(t *testing.T) {
 
 func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	workspacePath := t.TempDir()
+	workspacePath := testsupport.TempDir(t)
 	socketPath := workspacePath + "/hoveld.sock"
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
@@ -153,7 +187,7 @@ func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
 			SocketPath:    socketPath,
 			PID:           12345,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2", "event-3", "event-4", "event-5"}},
 			Clock:         fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 		})
 	}()
@@ -284,7 +318,7 @@ func TestHumanOutputRendersOperatorLogWhenPresent(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, want := range []string{"HOVEL//RUN", "[*] run", "[+] run"} {
+	for _, want := range []string{"HOVEL//RUN", ":: run", "++ run"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}
@@ -297,6 +331,10 @@ type sequenceIDs struct {
 }
 
 func (s *sequenceIDs) NewID() string {
+	if s.next >= len(s.values) {
+		s.next++
+		return fmt.Sprintf("event-%d", s.next)
+	}
 	value := s.values[s.next]
 	s.next++
 	return value
@@ -311,13 +349,5 @@ func (c fixedClock) Now() time.Time {
 }
 
 func waitFor(t *testing.T, condition func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("condition was not met before deadline")
+	testsupport.WaitFor(t, condition)
 }
