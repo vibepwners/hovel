@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
+        "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/daemon",

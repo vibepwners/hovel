@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
@@ -81,6 +82,7 @@ type RunMockExploitRequest struct {
 	Inputs       map[string]string
 	ChainConfig  map[string]string
 	TargetConfig map[string]string
+	ThrowStarted string
 }
 
 type Finding struct {
@@ -96,10 +98,22 @@ type Artifact struct {
 }
 
 type LogEntry struct {
-	Level   string            `json:"level"`
-	Message string            `json:"message"`
-	Logger  string            `json:"logger"`
-	Fields  map[string]string `json:"fields,omitempty"`
+	ID             string            `json:"id,omitempty"`
+	Time           string            `json:"time,omitempty"`
+	Topic          string            `json:"topic,omitempty"`
+	Kind           string            `json:"kind,omitempty"`
+	Level          string            `json:"level"`
+	Source         string            `json:"source,omitempty"`
+	Message        string            `json:"message"`
+	Logger         string            `json:"logger,omitempty"`
+	ChainID        string            `json:"chainId,omitempty"`
+	ChainName      string            `json:"chainName,omitempty"`
+	RunID          string            `json:"runId,omitempty"`
+	Target         string            `json:"target,omitempty"`
+	ModuleID       string            `json:"moduleId,omitempty"`
+	ElapsedSeconds *float64          `json:"elapsedSeconds,omitempty"`
+	Fields         map[string]string `json:"fields,omitempty"`
+	Attributes     map[string]string `json:"attributes,omitempty"`
 }
 
 type RunMockExploitResponse struct {
@@ -902,25 +916,44 @@ func throwHandler(runtime Runtime) Handler {
 		}
 		defer client.Close()
 
+		throwStarted := time.Now()
+		if runtime.Session != nil && feedbackPublished(runtime.Session) {
+			_ = runtime.Session.AppendLogToChain(throw.Chain, throwHeader(throw.Chain))
+		}
 		var payload ThrowPayload
 		payload.Plan = plan.Payload()
 		payload.Chain = throw.Chain
 		payload.Targets = append([]string(nil), throw.Targets...)
+		if runtime.Session != nil && feedbackPublished(runtime.Session) {
+			_ = runtime.Session.AppendLogToChain(throw.Chain, throwPlanEntries(payload, throwStarted)...)
+		}
 		for _, target := range throw.Targets {
 			for _, moduleID := range throw.Modules {
+				runIndex := len(payload.Results) + 1
+				if runtime.Session != nil && feedbackPublished(runtime.Session) {
+					_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunStartEntries(throw.Chain, target, moduleID, runIndex, len(throw.Targets)*len(throw.Modules), throwStarted)...)
+				}
 				result, err := client.RunMockExploit(ctx, RunMockExploitRequest{
 					ModuleID:     moduleID,
 					Target:       target,
 					ChainConfig:  throw.ChainConfig,
 					TargetConfig: throw.TargetConfigs[target],
+					ThrowStarted: throwStarted.Format(time.RFC3339Nano),
 				})
 				if err != nil {
 					return Result{}, err
 				}
 				payload.Results = append(payload.Results, runPayload(result))
+				if runtime.Session != nil && feedbackPublished(runtime.Session) {
+					_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunResultEntries(payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(throw.Modules), throwStarted)...)
+				}
 			}
 		}
-		log := throwLog(payload)
+		log := throwLog(payload, throwStarted)
+		if runtime.Session != nil && feedbackPublished(runtime.Session) {
+			_ = runtime.Session.AppendLogToChain(payload.Chain, throwCompleteEntries(payload, throwStarted)...)
+			return Result{JSON: payload}, nil
+		}
 		if runtime.Session != nil {
 			_ = runtime.Session.AppendLogToChain(payload.Chain, log.Entries()...)
 		}
@@ -989,13 +1022,15 @@ func throwInputs(runtime Runtime, invocation Invocation) (throwExecution, error)
 		if chain == "" {
 			chain = state.Chain
 		}
-		if selected, ok := selectedChainState(state, chain); ok {
-			for _, step := range selected.Steps {
-				modules = append(modules, step.ModuleID)
-			}
-			chainConfig = cloneStringMap(selected.Config)
-			targetConfigs = cloneTargetConfigs(selected.TargetConfigs)
+		selected, ok := selectedChainState(state, chain)
+		if !ok {
+			return throwExecution{}, fmt.Errorf("chain %s does not exist", chain)
 		}
+		for _, step := range selected.Steps {
+			modules = append(modules, step.ModuleID)
+		}
+		chainConfig = cloneStringMap(selected.Config)
+		targetConfigs = cloneTargetConfigs(selected.TargetConfigs)
 		if len(targets) == 0 {
 			targets = append(targets, targetsForChain(state, chain)...)
 		}
@@ -1007,6 +1042,9 @@ func throwInputs(runtime Runtime, invocation Invocation) (throwExecution, error)
 		return throwExecution{}, fmt.Errorf("target is required; add one with targets add <target> or pass --target")
 	}
 	if len(modules) == 0 {
+		if runtime.Session != nil {
+			return throwExecution{}, fmt.Errorf("chain %s has no modules; add one with chain add <module>", chain)
+		}
 		modules = append(modules, chain)
 	}
 	return throwExecution{
@@ -1271,72 +1309,205 @@ func runPayload(result RunMockExploitResponse) RunPayload {
 	}
 }
 
-func throwLog(payload ThrowPayload) operatorlog.Log {
-	entries := []operatorlog.Entry{
-		operatorlog.Stage("0/5 review plan",
+func throwHeader(chain string) operatorlog.Entry {
+	return operatorlog.Entry{
+		Kind:      operatorlog.KindHeader,
+		Level:     operatorlog.LevelInfo,
+		Message:   "HOVEL//THROW",
+		ChainName: chain,
+	}
+}
+
+func throwPlanEntries(payload ThrowPayload, started time.Time) []operatorlog.Entry {
+	return []operatorlog.Entry{
+		elapsedAt(operatorlog.Stage("0/5 review plan",
 			operatorlog.Field{Name: "plan", Value: payload.Plan.ID},
 			operatorlog.Field{Name: "approval", Value: payload.Plan.ApprovalID},
 			operatorlog.Field{Name: "decision", Value: payload.Plan.Decision},
-		),
-		operatorlog.Stage("1/5 prepare chain",
+		), started, started, payload.Chain),
+		elapsedAt(operatorlog.Stage("1/5 prepare chain",
 			operatorlog.Field{Name: "chain", Value: payload.Chain},
 			operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
-		),
-		operatorlog.Info("chain", "chain staged",
+		), started, started, payload.Chain),
+		elapsedAt(operatorlog.Info("chain", "chain staged",
 			operatorlog.Field{Name: "chain", Value: payload.Chain},
 			operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
-		),
+		), started, started, payload.Chain),
+	}
+}
+
+func throwRunStartEntries(chain, target, moduleID string, runIndex, runCount int, started time.Time) []operatorlog.Entry {
+	at := time.Now()
+	targetStep := fmt.Sprintf("%d/%d", runIndex, runCount)
+	return []operatorlog.Entry{
+		elapsedAt(operatorlog.Stage("2/5 engage target",
+			operatorlog.Field{Name: "target", Value: targetStep},
+			operatorlog.Field{Name: "address", Value: target},
+		).WithTarget(target), at, started, chain),
+		elapsedAt(operatorlog.Info("throw", "target engaged",
+			operatorlog.Field{Name: "run", Value: "pending"},
+			operatorlog.Field{Name: "target", Value: target},
+		).WithTarget(target), at, started, chain),
+		elapsedAt(operatorlog.Stage("3/5 execute module",
+			operatorlog.Field{Name: "target", Value: targetStep},
+			operatorlog.Field{Name: "module", Value: moduleID},
+		).WithTarget(target).WithModule(moduleID), at, started, chain),
+	}
+}
+
+func throwRunResultEntries(payload ThrowPayload, result RunPayload, runIndex, runCount int, started time.Time) []operatorlog.Entry {
+	at := lastLogTime(result.Logs, time.Now())
+	targetStep := fmt.Sprintf("%d/%d", runIndex, runCount)
+	entries := []operatorlog.Entry{
+		elapsedAt(operatorlog.Info("module", result.Summary).
+			WithTarget(result.Target).
+			WithRun(result.RunID).
+			WithModule(result.ModuleID), at, started, payload.Chain),
+		elapsedAt(operatorlog.Stage("4/5 record result",
+			operatorlog.Field{Name: "target", Value: targetStep},
+			operatorlog.Field{Name: "run", Value: result.RunID},
+		).WithTarget(result.Target).WithRun(result.RunID), at, started, payload.Chain),
+	}
+	for _, finding := range result.Findings {
+		entries = append(entries, elapsedAt(operatorlog.Finding("finding", finding.Title,
+			operatorlog.Field{Name: "severity", Value: finding.Severity},
+			operatorlog.Field{Name: "detail", Value: finding.Detail},
+		).WithTarget(result.Target).WithRun(result.RunID), at, started, payload.Chain))
+	}
+	for _, artifact := range result.Artifacts {
+		entries = append(entries, elapsedAt(operatorlog.Artifact("artifact", artifact.Name,
+			operatorlog.Field{Name: "kind", Value: artifact.Kind},
+		).WithTarget(result.Target).WithRun(result.RunID), at, started, payload.Chain))
+	}
+	return entries
+}
+
+func throwCompleteEntries(payload ThrowPayload, started time.Time) []operatorlog.Entry {
+	at := time.Now()
+	return []operatorlog.Entry{
+		elapsedAt(operatorlog.Stage("5/5 complete throw",
+			operatorlog.Field{Name: "chain", Value: payload.Chain},
+			operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
+		), at, started, payload.Chain),
+		elapsedAt(operatorlog.Success("throw", "completed",
+			operatorlog.Field{Name: "chain", Value: payload.Chain},
+			operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
+		), at, started, payload.Chain),
+	}
+}
+
+func throwLog(payload ThrowPayload, started time.Time) operatorlog.Log {
+	elapsed := func(entry operatorlog.Entry) operatorlog.Entry {
+		return elapsedAt(entry, time.Now(), started, payload.Chain)
+	}
+	elapsedAtLogTime := func(entry operatorlog.Entry, log LogEntry) operatorlog.Entry {
+		at, err := time.Parse(time.RFC3339Nano, log.Time)
+		if err != nil || at.IsZero() {
+			at = time.Now()
+		}
+		return elapsedAt(entry, at, started, payload.Chain)
+	}
+	entries := []operatorlog.Entry{
+		elapsedAt(operatorlog.Stage("0/5 review plan",
+			operatorlog.Field{Name: "plan", Value: payload.Plan.ID},
+			operatorlog.Field{Name: "approval", Value: payload.Plan.ApprovalID},
+			operatorlog.Field{Name: "decision", Value: payload.Plan.Decision},
+		), started, started, payload.Chain),
+		elapsedAt(operatorlog.Stage("1/5 prepare chain",
+			operatorlog.Field{Name: "chain", Value: payload.Chain},
+			operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
+		), started, started, payload.Chain),
+		elapsedAt(operatorlog.Info("chain", "chain staged",
+			operatorlog.Field{Name: "chain", Value: payload.Chain},
+			operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
+		), started, started, payload.Chain),
 	}
 	for index, result := range payload.Results {
 		targetStep := fmt.Sprintf("%d/%d", index+1, len(payload.Results))
-		entries = append(entries, operatorlog.Stage("2/5 engage target",
+		resultStarted := firstLogTime(result.Logs, started)
+		resultFinished := lastLogTime(result.Logs, time.Now())
+		entries = append(entries, elapsedAt(operatorlog.Stage("2/5 engage target",
 			operatorlog.Field{Name: "target", Value: targetStep},
 			operatorlog.Field{Name: "address", Value: result.Target},
-		))
-		entries = append(entries, operatorlog.Info("throw", "target engaged",
+		).WithTarget(result.Target).WithRun(result.RunID), resultStarted, started, payload.Chain))
+		entries = append(entries, elapsedAt(operatorlog.Info("throw", "target engaged",
 			operatorlog.Field{Name: "run", Value: result.RunID},
 			operatorlog.Field{Name: "target", Value: result.Target},
-		))
-		entries = append(entries, operatorlog.Stage("3/5 execute module",
+		).WithTarget(result.Target).WithRun(result.RunID), resultStarted, started, payload.Chain))
+		entries = append(entries, elapsedAt(operatorlog.Stage("3/5 execute module",
 			operatorlog.Field{Name: "target", Value: targetStep},
 			operatorlog.Field{Name: "module", Value: result.ModuleID},
-		))
+		).WithTarget(result.Target).WithRun(result.RunID).WithModule(result.ModuleID), resultStarted, started, payload.Chain))
 		for _, log := range result.Logs {
-			entries = append(entries, operatorlog.Info("module", log.Message, logFields(log)...))
+			entries = append(entries, elapsedAtLogTime(operatorlog.Info("module", log.Message, logFields(log)...).
+				WithTarget(result.Target).
+				WithRun(result.RunID).
+				WithModule(result.ModuleID), log))
 		}
 		if result.Summary != "" {
-			entries = append(entries, operatorlog.Info("module", result.Summary))
+			entries = append(entries, elapsedAt(operatorlog.Info("module", result.Summary).
+				WithTarget(result.Target).
+				WithRun(result.RunID).
+				WithModule(result.ModuleID), resultFinished, started, payload.Chain))
 		}
-		entries = append(entries, operatorlog.Stage("4/5 record result",
+		entries = append(entries, elapsedAt(operatorlog.Stage("4/5 record result",
 			operatorlog.Field{Name: "target", Value: targetStep},
 			operatorlog.Field{Name: "run", Value: result.RunID},
-		))
+		).WithTarget(result.Target).WithRun(result.RunID), resultFinished, started, payload.Chain))
 		for _, finding := range result.Findings {
-			entries = append(entries, operatorlog.Finding("finding", finding.Title,
+			entries = append(entries, elapsedAt(operatorlog.Finding("finding", finding.Title,
 				operatorlog.Field{Name: "severity", Value: finding.Severity},
 				operatorlog.Field{Name: "detail", Value: finding.Detail},
-			))
+			).WithTarget(result.Target).WithRun(result.RunID), resultFinished, started, payload.Chain))
 		}
 		for _, artifact := range result.Artifacts {
-			entries = append(entries, operatorlog.Artifact("artifact", artifact.Name,
+			entries = append(entries, elapsedAt(operatorlog.Artifact("artifact", artifact.Name,
 				operatorlog.Field{Name: "kind", Value: artifact.Kind},
-			))
+			).WithTarget(result.Target).WithRun(result.RunID), resultFinished, started, payload.Chain))
 		}
 	}
-	entries = append(entries, operatorlog.Stage("5/5 complete throw",
+	entries = append(entries, elapsed(operatorlog.Stage("5/5 complete throw",
 		operatorlog.Field{Name: "chain", Value: payload.Chain},
 		operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
-	))
-	entries = append(entries, operatorlog.Success("throw", "completed",
+	)))
+	entries = append(entries, elapsed(operatorlog.Success("throw", "completed",
 		operatorlog.Field{Name: "chain", Value: payload.Chain},
 		operatorlog.Field{Name: "targets", Value: fmt.Sprintf("%d", len(payload.Targets))},
-	))
+	)))
 
 	return operatorlog.New(
 		"HOVEL//THROW",
 		payload.Chain,
 		entries,
 	)
+}
+
+func elapsedAt(entry operatorlog.Entry, at, started time.Time, chain string) operatorlog.Entry {
+	if at.Before(started) {
+		at = started
+	}
+	return entry.
+		WithElapsed(at.Sub(started).Seconds()).
+		WithChain(chain).
+		WithTopic("chain/" + chain + "/logs")
+}
+
+func firstLogTime(logs []LogEntry, fallback time.Time) time.Time {
+	for _, log := range logs {
+		if at, err := time.Parse(time.RFC3339Nano, log.Time); err == nil && !at.IsZero() {
+			return at
+		}
+	}
+	return fallback
+}
+
+func lastLogTime(logs []LogEntry, fallback time.Time) time.Time {
+	for i := len(logs) - 1; i >= 0; i-- {
+		if at, err := time.Parse(time.RFC3339Nano, logs[i].Time); err == nil && !at.IsZero() {
+			return at
+		}
+	}
+	return fallback
 }
 
 func logFields(log LogEntry) []operatorlog.Field {

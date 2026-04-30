@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
@@ -17,6 +18,7 @@ type ExecuteMockExploitRequest struct {
 	Inputs       map[string]string
 	ChainConfig  map[string]string
 	TargetConfig map[string]string
+	ThrowStarted time.Time
 }
 
 type RunService struct {
@@ -45,6 +47,7 @@ type ExecuteModuleRequest struct {
 	Inputs       map[string]string
 	ChainConfig  map[string]string
 	TargetConfig map[string]string
+	ThrowStarted time.Time
 }
 
 func (s RunService) ExecuteModule(ctx context.Context, req ExecuteModuleRequest) (run.Result, error) {
@@ -60,7 +63,11 @@ func (s RunService) ExecuteModule(ctx context.Context, req ExecuteModuleRequest)
 	if err != nil {
 		return run.Result{}, err
 	}
-	if err := s.appendRunEvent(ctx, "run.started", request, nil); err != nil {
+	startFields := map[string]string{}
+	if !req.ThrowStarted.IsZero() {
+		startFields["throwStarted"] = req.ThrowStarted.Format(time.RFC3339Nano)
+	}
+	if err := s.appendRunEvent(ctx, "run.started", request, startFields); err != nil {
 		return run.Result{}, err
 	}
 	result, err := s.runner.Run(ctx, request)

@@ -32,7 +32,19 @@ The CLI should render this as a live transcript. The TUI should render the same 
 
 ## Throw Transcript
 
-A throw should look like a live operator transcript, not a JSON blob.
+A throw should look like a live operator transcript, not a JSON blob. The transcript is a terminal rendering of structured log events; JSON, RPC, MCP, files, the CLI, and the eventual TUI must consume the same typed event model rather than parsing terminal text.
+
+Each log event should carry stable structure:
+
+```text
+id, time, topic, kind, level, source, message
+chain_id, chain_name, run_id, target, module_id
+elapsed_seconds
+fields
+attributes
+```
+
+For throw logs, `elapsed_seconds` is seconds since the throw started. The terminal renderer displays it inside the label as fixed-width `000.00` seconds, highlighted separately from the purple label background.
 
 Minimum CLI render:
 
@@ -45,16 +57,16 @@ targets      3
 steps        survey:2 exploit:1 payload_provider:1
 status       validating
 
-[*] validate   checking chain configuration
-[+] validate   global config complete
-[!] validate   target router-01 missing ssh.username
-[*] chain      added module mock-survey as step step-1
-[*] target     added mock://router-01
-[*] throw      started
-[*] survey     router-01 os=linux arch=x86_64
-[*] payload    selected payload mock-payload-x86_64-linux
-[+] exploit    router-01 completed mocked exploit flow
-[+] throw      completed 1/1 target(s)
+┃ :: validate 000.01 checking chain configuration
+┃ ++ validate 000.02 global config complete
+┃ ## validate 000.03 target router-01 missing ssh.username
+┃ :: chain    000.04 added module mock-survey as step step-1
+┃ :: target   000.05 added mock://router-01
+┃ >> stage    000.06 throw started
+┃ :: survey   000.07 router-01 os=linux arch=x86_64
+┃ $$ payload  000.08 selected payload mock-payload-x86_64-linux
+┃ ++ exploit  000.09 router-01 completed mocked exploit flow
+┃ ++ throw    000.10 completed 1/1 target(s)
 ```
 
 The eventual TUI live throw view should split the same state into:

@@ -6,6 +6,7 @@ import (
 	"net/rpc"
 	"net/rpc/jsonrpc"
 	"sync"
+	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
@@ -21,6 +22,7 @@ type RunMockExploitRequest struct {
 	Inputs       map[string]string
 	ChainConfig  map[string]string
 	TargetConfig map[string]string
+	ThrowStarted string
 }
 
 type ExecuteModuleRequest = RunMockExploitRequest
@@ -38,18 +40,40 @@ type Artifact struct {
 }
 
 type LogEntry struct {
-	Level   string
-	Source  string
-	Message string
-	Logger  string
-	Fields  map[string]string
+	ID             string
+	Time           string
+	Topic          string
+	Kind           string
+	Level          string
+	Source         string
+	Message        string
+	Logger         string
+	ChainID        string
+	ChainName      string
+	RunID          string
+	Target         string
+	ModuleID       string
+	ElapsedSeconds *float64
+	Fields         map[string]string
+	Attributes     map[string]string
 }
 
 type OperatorLogEntry struct {
-	Level   string
-	Source  string
-	Message string
-	Fields  map[string]string
+	ID             string
+	Time           string
+	Topic          string
+	Kind           string
+	Level          string
+	Source         string
+	Message        string
+	ChainID        string
+	ChainName      string
+	RunID          string
+	Target         string
+	ModuleID       string
+	ElapsedSeconds *float64
+	Fields         map[string]string
+	Attributes     map[string]string
 }
 
 type PublishedLog struct {
@@ -60,6 +84,7 @@ type PublishedLog struct {
 
 type PollLogsRequest struct {
 	Since uint64
+	Chain string
 }
 
 type PollLogsResponse struct {
@@ -84,6 +109,7 @@ type Server struct {
 	runs    services.RunService
 	session *operatorsession.Session
 	logs    *LogBroker
+	mu      sync.Mutex
 }
 
 func Register(server *rpc.Server, runs services.RunService, options ...ServerOption) error {
@@ -95,7 +121,7 @@ func Register(server *rpc.Server, runs services.RunService, options ...ServerOpt
 	for _, option := range options {
 		option(&rpcServer)
 	}
-	return server.RegisterName(serviceName, rpcServer)
+	return server.RegisterName(serviceName, &rpcServer)
 }
 
 type ServerOption func(*Server)
@@ -121,12 +147,17 @@ func (s Server) RunMockExploit(req RunMockExploitRequest, resp *RunMockExploitRe
 }
 
 func (s Server) ExecuteModule(req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
+	var throwStarted time.Time
+	if req.ThrowStarted != "" {
+		throwStarted, _ = time.Parse(time.RFC3339Nano, req.ThrowStarted)
+	}
 	result, err := s.runs.ExecuteModule(context.Background(), services.ExecuteModuleRequest{
 		ModuleID:     req.ModuleID,
 		Target:       req.Target,
 		Inputs:       req.Inputs,
 		ChainConfig:  req.ChainConfig,
 		TargetConfig: req.TargetConfig,
+		ThrowStarted: throwStarted,
 	})
 	if err != nil {
 		return err
@@ -146,10 +177,12 @@ type RenameChainRequest struct {
 
 type TargetRequest struct {
 	Target string
+	Chain  string
 }
 
 type ModuleRequest struct {
 	ModuleID string
+	Chain    string
 }
 
 type StepResponse struct {
@@ -160,15 +193,19 @@ type StepResponse struct {
 type ConfigRequest struct {
 	Key   string
 	Value string
+	Chain string
 }
 
 type TargetConfigRequest struct {
 	Target string
 	Key    string
 	Value  string
+	Chain  string
 }
 
-type SnapshotRequest struct{}
+type SnapshotRequest struct {
+	Chain string
+}
 
 type SnapshotResponse struct {
 	State operatorsession.PersistedState
@@ -183,7 +220,13 @@ type EmptyResponse struct{}
 
 type EmptyRequest struct{}
 
-func (s Server) CreateChain(req ChainRequest, resp *EmptyResponse) error {
+type ActiveLogsRequest struct {
+	Chain string
+}
+
+func (s *Server) CreateChain(req ChainRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.session.CreateChain(req.Chain); err != nil {
 		return err
 	}
@@ -191,7 +234,9 @@ func (s Server) CreateChain(req ChainRequest, resp *EmptyResponse) error {
 	return nil
 }
 
-func (s Server) UseChain(req ChainRequest, resp *EmptyResponse) error {
+func (s *Server) UseChain(req ChainRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.session.UseChain(req.Chain); err != nil {
 		return err
 	}
@@ -199,7 +244,9 @@ func (s Server) UseChain(req ChainRequest, resp *EmptyResponse) error {
 	return nil
 }
 
-func (s Server) RenameChain(req RenameChainRequest, resp *EmptyResponse) error {
+func (s *Server) RenameChain(req RenameChainRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.session.RenameChain(req.Chain, req.Name); err != nil {
 		return err
 	}
@@ -210,7 +257,9 @@ func (s Server) RenameChain(req RenameChainRequest, resp *EmptyResponse) error {
 	return nil
 }
 
-func (s Server) DeleteChain(req ChainRequest, resp *EmptyResponse) error {
+func (s *Server) DeleteChain(req ChainRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.session.DeleteChain(req.Chain); err != nil {
 		return err
 	}
@@ -218,91 +267,107 @@ func (s Server) DeleteChain(req ChainRequest, resp *EmptyResponse) error {
 	return nil
 }
 
-func (s Server) AddTarget(req TargetRequest, resp *EmptyResponse) error {
-	chain := s.session.Snapshot().ActiveChain
-	if err := s.session.AddTarget(req.Target); err != nil {
-		return err
-	}
-	s.publish(chain, operatorlog.Info("target", "target added", operatorlog.Field{Name: "target", Value: req.Target}))
-	return nil
+func (s *Server) AddTarget(req TargetRequest, resp *EmptyResponse) error {
+	return s.withChain(req.Chain, func(chain string) error {
+		if err := s.session.AddTarget(req.Target); err != nil {
+			return err
+		}
+		s.publish(chain, operatorlog.Info("target", "target added", operatorlog.Field{Name: "target", Value: req.Target}))
+		return nil
+	})
 }
 
-func (s Server) ClearTargets(_ EmptyRequest, resp *EmptyResponse) error {
-	chain := s.session.Snapshot().ActiveChain
-	s.session.ClearTargets()
-	s.publish(chain, operatorlog.Info("target", "targets cleared"))
-	return nil
+func (s *Server) ClearTargets(req ChainRequest, resp *EmptyResponse) error {
+	return s.withChain(req.Chain, func(chain string) error {
+		s.session.ClearTargets()
+		s.publish(chain, operatorlog.Info("target", "targets cleared"))
+		return nil
+	})
 }
 
-func (s Server) AddModule(req ModuleRequest, resp *StepResponse) error {
-	chain := s.session.Snapshot().ActiveChain
-	step, err := s.session.AddModule(req.ModuleID)
-	if err != nil {
-		return err
-	}
-	*resp = StepResponse{ID: step.ID, ModuleID: step.ModuleID}
-	s.publish(chain, operatorlog.Info("chain", "module added",
-		operatorlog.Field{Name: "step", Value: step.ID},
-		operatorlog.Field{Name: "module", Value: req.ModuleID},
-	))
-	return nil
+func (s *Server) AddModule(req ModuleRequest, resp *StepResponse) error {
+	return s.withChain(req.Chain, func(chain string) error {
+		step, err := s.session.AddModule(req.ModuleID)
+		if err != nil {
+			return err
+		}
+		*resp = StepResponse{ID: step.ID, ModuleID: step.ModuleID}
+		s.publish(chain, operatorlog.Info("chain", "module added",
+			operatorlog.Field{Name: "step", Value: step.ID},
+			operatorlog.Field{Name: "module", Value: req.ModuleID},
+		))
+		return nil
+	})
 }
 
-func (s Server) SetChainConfig(req ConfigRequest, resp *EmptyResponse) error {
-	chain := s.session.Snapshot().ActiveChain
-	if err := s.session.SetChainConfig(req.Key, req.Value); err != nil {
-		return err
-	}
-	s.publish(chain, operatorlog.Info("config", "chain config set", operatorlog.Field{Name: "key", Value: req.Key}))
-	return nil
+func (s *Server) SetChainConfig(req ConfigRequest, resp *EmptyResponse) error {
+	return s.withChain(req.Chain, func(chain string) error {
+		if err := s.session.SetChainConfig(req.Key, req.Value); err != nil {
+			return err
+		}
+		s.publish(chain, operatorlog.Info("config", "chain config set", operatorlog.Field{Name: "key", Value: req.Key}))
+		return nil
+	})
 }
 
-func (s Server) UnsetChainConfig(req ConfigRequest, resp *EmptyResponse) error {
-	chain := s.session.Snapshot().ActiveChain
-	if err := s.session.UnsetChainConfig(req.Key); err != nil {
-		return err
-	}
-	s.publish(chain, operatorlog.Info("config", "chain config unset", operatorlog.Field{Name: "key", Value: req.Key}))
-	return nil
+func (s *Server) UnsetChainConfig(req ConfigRequest, resp *EmptyResponse) error {
+	return s.withChain(req.Chain, func(chain string) error {
+		if err := s.session.UnsetChainConfig(req.Key); err != nil {
+			return err
+		}
+		s.publish(chain, operatorlog.Info("config", "chain config unset", operatorlog.Field{Name: "key", Value: req.Key}))
+		return nil
+	})
 }
 
-func (s Server) SetTargetConfig(req TargetConfigRequest, resp *EmptyResponse) error {
-	chain := s.session.Snapshot().ActiveChain
-	if err := s.session.SetTargetConfig(req.Target, req.Key, req.Value); err != nil {
-		return err
-	}
-	s.publish(chain, operatorlog.Info("config", "target config set",
-		operatorlog.Field{Name: "target", Value: req.Target},
-		operatorlog.Field{Name: "key", Value: req.Key},
-	))
-	return nil
+func (s *Server) SetTargetConfig(req TargetConfigRequest, resp *EmptyResponse) error {
+	return s.withChain(req.Chain, func(chain string) error {
+		if err := s.session.SetTargetConfig(req.Target, req.Key, req.Value); err != nil {
+			return err
+		}
+		s.publish(chain, operatorlog.Info("config", "target config set",
+			operatorlog.Field{Name: "target", Value: req.Target},
+			operatorlog.Field{Name: "key", Value: req.Key},
+		))
+		return nil
+	})
 }
 
-func (s Server) UnsetTargetConfig(req TargetConfigRequest, resp *EmptyResponse) error {
-	chain := s.session.Snapshot().ActiveChain
-	if err := s.session.UnsetTargetConfig(req.Target, req.Key); err != nil {
-		return err
-	}
-	s.publish(chain, operatorlog.Info("config", "target config unset",
-		operatorlog.Field{Name: "target", Value: req.Target},
-		operatorlog.Field{Name: "key", Value: req.Key},
-	))
-	return nil
+func (s *Server) UnsetTargetConfig(req TargetConfigRequest, resp *EmptyResponse) error {
+	return s.withChain(req.Chain, func(chain string) error {
+		if err := s.session.UnsetTargetConfig(req.Target, req.Key); err != nil {
+			return err
+		}
+		s.publish(chain, operatorlog.Info("config", "target config unset",
+			operatorlog.Field{Name: "target", Value: req.Target},
+			operatorlog.Field{Name: "key", Value: req.Key},
+		))
+		return nil
+	})
 }
 
-func (s Server) Snapshot(_ SnapshotRequest, resp *SnapshotResponse) error {
+func (s *Server) Snapshot(req SnapshotRequest, resp *SnapshotResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	resp.State = s.session.Export()
-	return nil
-}
-
-func (s Server) ActiveLogs(_ EmptyRequest, resp *[]OperatorLogEntry) error {
-	for _, entry := range s.session.ActiveLogs() {
-		*resp = append(*resp, operatorLogEntry(entry))
+	if req.Chain != "" {
+		resp.State.ActiveChain = req.Chain
 	}
 	return nil
 }
 
-func (s Server) AppendLog(req AppendLogRequest, resp *EmptyResponse) error {
+func (s *Server) ActiveLogs(req ActiveLogsRequest, resp *[]OperatorLogEntry) error {
+	return s.withChain(req.Chain, func(_ string) error {
+		for _, entry := range s.session.ActiveLogs() {
+			*resp = append(*resp, operatorLogEntry(entry))
+		}
+		return nil
+	})
+}
+
+func (s *Server) AppendLog(req AppendLogRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	entries := make([]operatorlog.Entry, 0, len(req.Entries))
 	for _, entry := range req.Entries {
 		entries = append(entries, operatorLogFromRPC(entry))
@@ -320,12 +385,27 @@ func (s Server) AppendLog(req AppendLogRequest, resp *EmptyResponse) error {
 }
 
 func (s Server) PollLogs(req PollLogsRequest, resp *PollLogsResponse) error {
+	if req.Chain != "" {
+		resp.Last, resp.Logs = s.logs.SinceChain(req.Chain, req.Since)
+		return nil
+	}
 	resp.Last, resp.Logs = s.logs.Since(req.Since)
 	return nil
 }
 
-func (s Server) publish(chain string, entries ...operatorlog.Entry) {
+func (s *Server) publish(chain string, entries ...operatorlog.Entry) {
 	s.logs.Publish(chain, entries...)
+}
+
+func (s *Server) withChain(chain string, fn func(activeChain string) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if chain == "" {
+		chain = s.session.Snapshot().ActiveChain
+	} else if err := s.session.UseChain(chain); err != nil {
+		return err
+	}
+	return fn(chain)
 }
 
 type Client struct {
@@ -369,14 +449,24 @@ func (c *Client) ExecuteModule(ctx context.Context, req ExecuteModuleRequest) (E
 }
 
 func (c *Client) PollLogs(ctx context.Context, since uint64) (PollLogsResponse, error) {
+	return c.pollLogs(ctx, "", since)
+}
+
+func (c *Client) PollChainLogs(ctx context.Context, chain string, since uint64) (PollLogsResponse, error) {
+	return c.pollLogs(ctx, chain, since)
+}
+
+func (c *Client) pollLogs(ctx context.Context, chain string, since uint64) (PollLogsResponse, error) {
 	var resp PollLogsResponse
-	err := c.call(ctx, serviceName+".PollLogs", PollLogsRequest{Since: since}, &resp)
+	err := c.call(ctx, serviceName+".PollLogs", PollLogsRequest{Since: since, Chain: chain}, &resp)
 	return resp, err
 }
 
 type SessionClient struct {
-	client *Client
-	ctx    context.Context
+	client      *Client
+	ctx         context.Context
+	mu          sync.Mutex
+	activeChain string
 }
 
 func NewSessionClient(ctx context.Context, client *Client) *SessionClient {
@@ -394,58 +484,74 @@ func (s *SessionClient) CreateChain(chain string) error {
 
 func (s *SessionClient) UseChain(chain string) error {
 	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".UseChain", ChainRequest{Chain: chain}, &resp)
+	if err := s.client.call(s.ctx, serviceName+".UseChain", ChainRequest{Chain: chain}, &resp); err != nil {
+		return err
+	}
+	s.setActiveChain(chain)
+	return nil
 }
 
 func (s *SessionClient) RenameChain(chain, name string) error {
 	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".RenameChain", RenameChainRequest{Chain: chain, Name: name}, &resp)
+	if err := s.client.call(s.ctx, serviceName+".RenameChain", RenameChainRequest{Chain: chain, Name: name}, &resp); err != nil {
+		return err
+	}
+	if s.active() == chain {
+		s.setActiveChain(name)
+	}
+	return nil
 }
 
 func (s *SessionClient) DeleteChain(chain string) error {
 	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".DeleteChain", ChainRequest{Chain: chain}, &resp)
+	if err := s.client.call(s.ctx, serviceName+".DeleteChain", ChainRequest{Chain: chain}, &resp); err != nil {
+		return err
+	}
+	if s.active() == chain {
+		s.setActiveChain("")
+	}
+	return nil
 }
 
 func (s *SessionClient) AddTarget(target string) error {
 	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".AddTarget", TargetRequest{Target: target}, &resp)
+	return s.client.call(s.ctx, serviceName+".AddTarget", TargetRequest{Target: target, Chain: s.active()}, &resp)
 }
 
 func (s *SessionClient) ClearTargets() {
 	var resp EmptyResponse
-	_ = s.client.call(s.ctx, serviceName+".ClearTargets", EmptyRequest{}, &resp)
+	_ = s.client.call(s.ctx, serviceName+".ClearTargets", ChainRequest{Chain: s.active()}, &resp)
 }
 
 func (s *SessionClient) AddModule(moduleID string) (operatorsession.Step, error) {
 	var resp StepResponse
-	err := s.client.call(s.ctx, serviceName+".AddModule", ModuleRequest{ModuleID: moduleID}, &resp)
+	err := s.client.call(s.ctx, serviceName+".AddModule", ModuleRequest{ModuleID: moduleID, Chain: s.active()}, &resp)
 	return operatorsession.Step{ID: resp.ID, ModuleID: resp.ModuleID}, err
 }
 
 func (s *SessionClient) SetChainConfig(key, value string) error {
 	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".SetChainConfig", ConfigRequest{Key: key, Value: value}, &resp)
+	return s.client.call(s.ctx, serviceName+".SetChainConfig", ConfigRequest{Key: key, Value: value, Chain: s.active()}, &resp)
 }
 
 func (s *SessionClient) UnsetChainConfig(key string) error {
 	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".UnsetChainConfig", ConfigRequest{Key: key}, &resp)
+	return s.client.call(s.ctx, serviceName+".UnsetChainConfig", ConfigRequest{Key: key, Chain: s.active()}, &resp)
 }
 
 func (s *SessionClient) SetTargetConfig(target, key, value string) error {
 	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".SetTargetConfig", TargetConfigRequest{Target: target, Key: key, Value: value}, &resp)
+	return s.client.call(s.ctx, serviceName+".SetTargetConfig", TargetConfigRequest{Target: target, Key: key, Value: value, Chain: s.active()}, &resp)
 }
 
 func (s *SessionClient) UnsetTargetConfig(target, key string) error {
 	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".UnsetTargetConfig", TargetConfigRequest{Target: target, Key: key}, &resp)
+	return s.client.call(s.ctx, serviceName+".UnsetTargetConfig", TargetConfigRequest{Target: target, Key: key, Chain: s.active()}, &resp)
 }
 
 func (s *SessionClient) AppendLog(entries ...operatorlog.Entry) error {
 	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".AppendLog", AppendLogRequest{Entries: operatorLogEntries(entries)}, &resp)
+	return s.client.call(s.ctx, serviceName+".AppendLog", AppendLogRequest{Chain: s.active(), Entries: operatorLogEntries(entries)}, &resp)
 }
 
 func (s *SessionClient) AppendLogToChain(chain string, entries ...operatorlog.Entry) error {
@@ -455,7 +561,7 @@ func (s *SessionClient) AppendLogToChain(chain string, entries ...operatorlog.En
 
 func (s *SessionClient) ActiveLogs() []operatorlog.Entry {
 	var resp []OperatorLogEntry
-	if err := s.client.call(s.ctx, serviceName+".ActiveLogs", EmptyRequest{}, &resp); err != nil {
+	if err := s.client.call(s.ctx, serviceName+".ActiveLogs", ActiveLogsRequest{Chain: s.active()}, &resp); err != nil {
 		return nil
 	}
 	out := make([]operatorlog.Entry, 0, len(resp))
@@ -467,12 +573,24 @@ func (s *SessionClient) ActiveLogs() []operatorlog.Entry {
 
 func (s *SessionClient) Snapshot() operatorsession.State {
 	var resp SnapshotResponse
-	if err := s.client.call(s.ctx, serviceName+".Snapshot", SnapshotRequest{}, &resp); err != nil {
+	if err := s.client.call(s.ctx, serviceName+".Snapshot", SnapshotRequest{Chain: s.active()}, &resp); err != nil {
 		return operatorsession.State{}
 	}
 	session := operatorsession.New()
 	session.Import(resp.State)
 	return session.Snapshot()
+}
+
+func (s *SessionClient) active() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activeChain
+}
+
+func (s *SessionClient) setActiveChain(chain string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeChain = chain
 }
 
 func (c *Client) call(ctx context.Context, method string, req any, resp any) error {
@@ -531,6 +649,21 @@ func (b *LogBroker) Since(since uint64) (uint64, []PublishedLog) {
 	return b.next, logs
 }
 
+func (b *LogBroker) SinceChain(chain string, since uint64) (uint64, []PublishedLog) {
+	if b == nil {
+		return 0, nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var logs []PublishedLog
+	for _, log := range b.logs {
+		if log.Seq > since && log.Chain == chain {
+			logs = append(logs, log)
+		}
+	}
+	return b.next, logs
+}
+
 func responseFromResult(result run.Result) RunMockExploitResponse {
 	resp := RunMockExploitResponse{
 		RunID:    result.ID,
@@ -555,22 +688,51 @@ func responseFromResult(result run.Result) RunMockExploitResponse {
 	}
 	for _, log := range result.Logs {
 		resp.Logs = append(resp.Logs, LogEntry{
-			Level:   log.Level,
-			Source:  "module",
-			Message: log.Message,
-			Logger:  log.Logger,
-			Fields:  cloneStringMap(log.Fields),
+			ID:             log.ID,
+			Time:           log.Time,
+			Topic:          log.Topic,
+			Kind:           log.Kind,
+			Level:          log.Level,
+			Source:         sourceOrDefault(log.Source, "module"),
+			Message:        log.Message,
+			Logger:         log.Logger,
+			ChainID:        log.ChainID,
+			ChainName:      log.ChainName,
+			RunID:          log.RunID,
+			Target:         log.Target,
+			ModuleID:       log.ModuleID,
+			ElapsedSeconds: cloneFloat64(log.ElapsedSeconds),
+			Fields:         cloneStringMap(log.Fields),
+			Attributes:     cloneStringMap(log.Attributes),
 		})
 	}
 	return resp
 }
 
+func sourceOrDefault(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
 func operatorLogEntry(entry operatorlog.Entry) OperatorLogEntry {
 	return OperatorLogEntry{
-		Level:   string(entry.Level),
-		Source:  entry.Source,
-		Message: entry.Message,
-		Fields:  fieldsToMap(entry.Fields),
+		ID:             entry.ID,
+		Time:           entry.Time.Format(time.RFC3339Nano),
+		Topic:          entry.Topic,
+		Kind:           string(entry.Kind),
+		Level:          string(entry.Level),
+		Source:         entry.Source,
+		Message:        entry.Message,
+		ChainID:        entry.ChainID,
+		ChainName:      entry.ChainName,
+		RunID:          entry.RunID,
+		Target:         entry.Target,
+		ModuleID:       entry.ModuleID,
+		ElapsedSeconds: cloneFloat64(entry.ElapsedSeconds),
+		Fields:         fieldsToMap(entry.Fields),
+		Attributes:     cloneStringMap(entry.Attributes),
 	}
 }
 
@@ -587,12 +749,32 @@ func operatorLogFromRPC(entry OperatorLogEntry) operatorlog.Entry {
 	for name, value := range entry.Fields {
 		fields = append(fields, operatorlog.Field{Name: name, Value: value})
 	}
+	timestamp, _ := time.Parse(time.RFC3339Nano, entry.Time)
 	return operatorlog.Entry{
-		Level:   operatorlog.Level(entry.Level),
-		Source:  entry.Source,
-		Message: entry.Message,
-		Fields:  fields,
+		ID:             entry.ID,
+		Time:           timestamp,
+		Topic:          entry.Topic,
+		Kind:           operatorlog.Kind(entry.Kind),
+		Level:          operatorlog.Level(entry.Level),
+		Source:         entry.Source,
+		Message:        entry.Message,
+		ChainID:        entry.ChainID,
+		ChainName:      entry.ChainName,
+		RunID:          entry.RunID,
+		Target:         entry.Target,
+		ModuleID:       entry.ModuleID,
+		ElapsedSeconds: cloneFloat64(entry.ElapsedSeconds),
+		Fields:         fields,
+		Attributes:     cloneStringMap(entry.Attributes),
 	}
+}
+
+func cloneFloat64(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	return &out
 }
 
 func fieldsToMap(fields []operatorlog.Field) map[string]string {

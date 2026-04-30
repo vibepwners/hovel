@@ -26,5 +26,6 @@ go_test(
         "//internal/adapters/storage/filesystem",
         "//internal/domain/daemon",
         "//internal/infra/daemonruntime",
+        "//internal/testsupport",
     ],
 )

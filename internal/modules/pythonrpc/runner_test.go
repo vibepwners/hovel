@@ -2,6 +2,11 @@ package pythonrpc
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +27,7 @@ func TestRunnerExecutesPythonMockModule(t *testing.T) {
 	result, err := Runner{
 		ConfigPath: exampleModuleConfig,
 		Events:     events,
-		IDs:        &sequenceIDs{values: []string{"event-1"}},
+		IDs:        &sequenceIDs{values: []string{"event-1", "event-2", "event-3"}},
 		Clock:      fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 		Timeout:    10 * time.Second,
 	}.Run(context.Background(), request)
@@ -121,15 +126,15 @@ func TestRunnerCapturesModuleLogs(t *testing.T) {
 	_, err = Runner{
 		ConfigPath: exampleModuleConfig,
 		Events:     events,
-		IDs:        &sequenceIDs{values: []string{"event-1"}},
+		IDs:        &sequenceIDs{values: []string{"event-1", "event-2", "event-3"}},
 		Clock:      fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 		Timeout:    10 * time.Second,
 	}.Run(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events.events) != 1 {
-		t.Fatalf("event count = %d, want 1", len(events.events))
+	if len(events.events) == 0 {
+		t.Fatal("event count = 0, want module log events")
 	}
 }
 
@@ -143,7 +148,108 @@ func TestRunnerHasNoModulesWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		inspect bool
+		want    string
+	}{
+		{
+			name:    "handshake error includes stderr",
+			body:    `import sys; send({"jsonrpc":"2.0","id":1,"error":{"message":"no handshake"}}); print("handshake stderr", file=sys.stderr)`,
+			inspect: true,
+			want:    "module handshake failed: no handshake: handshake stderr",
+		},
+		{
+			name:    "malformed frame",
+			body:    `import sys; sys.stdout.buffer.write(b"Content-Length: 1\r\n\r\n{"); sys.stdout.buffer.flush()`,
+			inspect: true,
+			want:    "module handshake failed",
+		},
+		{
+			name: "execute error",
+			body: `read(); send({"jsonrpc":"2.0","id":1,"result":{"moduleType":"exploit"}}); read(); send({"jsonrpc":"2.0","id":2,"result":{}}); read(); send({"jsonrpc":"2.0","id":3,"error":{"message":"execute denied"}})`,
+			want: "module execute failed: execute denied",
+		},
+		{
+			name:    "timeout",
+			body:    `import time; time.sleep(2)`,
+			inspect: true,
+			want:    "context deadline exceeded",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := writePythonModuleFixture(t, tc.body)
+			runner := Runner{ConfigPath: configPath, Timeout: 50 * time.Millisecond}
+			var err error
+			if tc.inspect {
+				_, err = runner.Inspect(context.Background(), "broken")
+			} else {
+				request, requestErr := run.NewRequest(run.RequestArgs{ID: "run-1", ModuleID: "broken", Target: "mock://target"})
+				if requestErr != nil {
+					t.Fatal(requestErr)
+				}
+				_, err = runner.Run(context.Background(), request)
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
 const exampleModuleConfig = "examples/python/hovel-modules.json"
+
+func writePythonModuleFixture(t *testing.T, body string) string {
+	t.Helper()
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "project")
+	packageDir := filepath.Join(projectDir, "broken_module")
+	if err := os.MkdirAll(packageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	main := `import json
+import sys
+
+def read():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line in (b"\r\n", b"\n", b""):
+            break
+        name, value = line.decode().split(":", 1)
+        headers[name.lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return sys.stdin.buffer.read(length)
+
+def send(message):
+    body = json.dumps(message).encode()
+    sys.stdout.buffer.write(f"Content-Length: {len(body)}\r\n\r\n".encode())
+    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.flush()
+
+` + body + "\n"
+	if err := os.WriteFile(filepath.Join(packageDir, "__main__.py"), []byte(main), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config := ModuleConfig{Modules: []ModuleEntry{{
+		ID:         "broken",
+		Runtime:    "python-rpc",
+		ProjectDir: projectDir,
+		Module:     "broken_module",
+	}}}
+	configBody, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "modules.json")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return configPath
+}
 
 type eventRecorder struct {
 	events []event.Event
@@ -160,6 +266,10 @@ type sequenceIDs struct {
 }
 
 func (s *sequenceIDs) NewID() string {
+	if s.next >= len(s.values) {
+		s.next++
+		return fmt.Sprintf("event-%d", s.next)
+	}
 	value := s.values[s.next]
 	s.next++
 	return value

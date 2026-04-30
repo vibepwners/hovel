@@ -48,7 +48,7 @@ func NewApp() App {
 		session:     session,
 		modules:     modules,
 		wizard:      newInteractiveConfigWizard(session, modules),
-		moduleCount: builtInModuleCount,
+		moduleCount: len(modules.List()),
 	}
 }
 
@@ -60,7 +60,7 @@ func NewAppWithDependencies(commands commandmode.App, manager daemonmanager.Mana
 		theme:       theme,
 		modules:     modules,
 		wizard:      newInteractiveConfigWizard(nil, modules),
-		moduleCount: builtInModuleCount,
+		moduleCount: len(modules.List()),
 	}
 }
 
@@ -121,7 +121,16 @@ func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surfac
 			case <-pollCtx.Done():
 				return
 			case <-ticker.C:
-				result, err := client.PollLogs(pollCtx, cursor)
+				chain := a.session.Snapshot().ActiveChain
+				if chain == "" {
+					result, err := client.PollLogs(pollCtx, cursor)
+					if err != nil {
+						continue
+					}
+					cursor = result.Last
+					continue
+				}
+				result, err := client.PollChainLogs(pollCtx, chain, cursor)
 				if err != nil {
 					continue
 				}
@@ -720,7 +729,9 @@ func (t Theme) Welcome(info WelcomeInfo) string {
 		t.detail("mode", info.DaemonMode),
 		t.detail("health", info.Health),
 	}
-	return t.panel.Render(joinColumns(splitStyledLines([]string{t.cyan.Render(hovelASCII)}), splitStyledLines(details), 4))
+	panel := t.panel.Render(strings.Join(details, "\n"))
+	hut := centerBlock(t.cyan.Render(hovelASCII), lipgloss.Width(panel))
+	return hut + "\n" + panel
 }
 
 func (t Theme) detail(label, value string) string {
@@ -729,12 +740,29 @@ func (t Theme) detail(label, value string) string {
 
 func operatorLog(log daemonrpc.PublishedLog) operatorlog.Log {
 	entry := operatorlog.Entry{
-		Level:   operatorlog.Level(log.Entry.Level),
-		Source:  log.Entry.Source,
-		Message: log.Entry.Message,
-		Fields:  fieldsFromMap(log.Entry.Fields),
+		ID:             log.Entry.ID,
+		Kind:           operatorlog.Kind(log.Entry.Kind),
+		Level:          operatorlog.Level(log.Entry.Level),
+		Source:         log.Entry.Source,
+		Message:        log.Entry.Message,
+		ChainID:        log.Entry.ChainID,
+		ChainName:      log.Entry.ChainName,
+		RunID:          log.Entry.RunID,
+		Target:         log.Entry.Target,
+		ModuleID:       log.Entry.ModuleID,
+		ElapsedSeconds: cloneFloat64(log.Entry.ElapsedSeconds),
+		Fields:         fieldsFromMap(log.Entry.Fields),
+		Attributes:     cloneStringMap(log.Entry.Attributes),
 	}
 	return operatorlog.New("", "", []operatorlog.Entry{entry})
+}
+
+func cloneFloat64(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	return &out
 }
 
 func fieldsFromMap(values map[string]string) []operatorlog.Field {
@@ -838,8 +866,6 @@ func isExit(line string) bool {
 	return line == "exit" || line == "quit"
 }
 
-const builtInModuleCount = 1
-
 const hovelASCII = `          ~~~
         ~~   ~
            )
@@ -870,6 +896,14 @@ func splitStyledLines(values []string) []string {
 		lines = append(lines, strings.Split(value, "\n")...)
 	}
 	return lines
+}
+
+func centerBlock(value string, width int) string {
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		lines[i] = lipgloss.PlaceHorizontal(width, lipgloss.Center, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func thickRoundedBorder() lipgloss.Border {

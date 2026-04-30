@@ -116,6 +116,9 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 		return run.Result{}, err
 	}
 	defer process.killAndWait()
+	process.client.onLog = func(log rpcLog) error {
+		return r.appendLog(ctx, request, log)
+	}
 
 	if _, err := process.client.call(ctx, "handshake", nil); err != nil {
 		return run.Result{}, withStderr("module handshake failed", err, process.stderr.String())
@@ -133,11 +136,6 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 	})
 	if err != nil {
 		return run.Result{}, withStderr("module execute failed", err, process.stderr.String())
-	}
-	for _, log := range process.client.logs {
-		if err := r.appendLog(ctx, request, log); err != nil {
-			return run.Result{}, err
-		}
 	}
 	_, _ = process.client.call(context.Background(), "shutdown", nil)
 	if err := process.wait(); err != nil {
@@ -367,6 +365,7 @@ type rpcClient struct {
 	mu      sync.Mutex
 	nextID  int
 	logs    []rpcLog
+	onLog   func(rpcLog) error
 }
 
 func newClient(stdout io.Reader, stdin io.WriteCloser) *rpcClient {
@@ -387,7 +386,15 @@ func (c *rpcClient) call(ctx context.Context, method string, params any) (map[st
 			return nil, err
 		}
 		if message.Method == "module/log" {
+			if message.Log.ReceivedAt.IsZero() {
+				message.Log.ReceivedAt = time.Now().UTC()
+			}
 			c.logs = append(c.logs, message.Log)
+			if c.onLog != nil {
+				if err := c.onLog(message.Log); err != nil {
+					return nil, err
+				}
+			}
 			continue
 		}
 		if message.ID != id {
@@ -434,11 +441,12 @@ type rpcError struct {
 }
 
 type rpcLog struct {
-	Level     string         `json:"level"`
-	Message   string         `json:"message"`
-	Logger    string         `json:"logger"`
-	Fields    map[string]any `json:"fields"`
-	Exception string         `json:"exception"`
+	Level      string         `json:"level"`
+	Message    string         `json:"message"`
+	Logger     string         `json:"logger"`
+	Fields     map[string]any `json:"fields"`
+	Exception  string         `json:"exception"`
+	ReceivedAt time.Time      `json:"-"`
 }
 
 type frameDecoder struct {
@@ -522,7 +530,7 @@ func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (r
 		Summary:   stringValue(values["summary"]),
 		Findings:  findingsFromRPC(values["findings"]),
 		Artifacts: artifactsFromRPC(values["artifacts"]),
-		Logs:      logsFromRPC(logs),
+		Logs:      logsFromRPC(request, logs),
 	}
 	if stringValue(values["status"]) == string(run.StateFailed) {
 		return run.Failed(request, args)
@@ -530,7 +538,7 @@ func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (r
 	return run.Succeeded(request, args)
 }
 
-func logsFromRPC(logs []rpcLog) []run.LogEntry {
+func logsFromRPC(request run.Request, logs []rpcLog) []run.LogEntry {
 	out := make([]run.LogEntry, 0, len(logs))
 	for _, log := range logs {
 		fields := make(map[string]string, len(log.Fields)+1)
@@ -541,10 +549,16 @@ func logsFromRPC(logs []rpcLog) []run.LogEntry {
 			fields["exception"] = log.Exception
 		}
 		out = append(out, run.LogEntry{
-			Level:   log.Level,
-			Message: log.Message,
-			Logger:  log.Logger,
-			Fields:  fields,
+			Kind:     "event",
+			Time:     log.ReceivedAt.Format(time.RFC3339Nano),
+			Level:    log.Level,
+			Source:   "module",
+			Message:  log.Message,
+			Logger:   log.Logger,
+			RunID:    request.ID,
+			Target:   request.Target,
+			ModuleID: request.ModuleID,
+			Fields:   fields,
 		})
 	}
 	return out

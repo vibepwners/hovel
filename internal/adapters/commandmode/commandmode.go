@@ -251,7 +251,9 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, ar
 func usage(definition commands.Definition, parser *argparse.Parser, msg interface{}) string {
 	out := parser.Usage(msg)
 	parserName := "hovel command " + definition.PathString()
+	generatedUsage := regexp.MustCompile(`\[_positionalArg_[\s\S]*?_\d+\s+"<value>"\]`)
 	for i, positional := range definition.Positionals {
+		out = replaceFirst(out, generatedUsage, "<"+positional.Name+">")
 		generated := fmt.Sprintf("_positionalArg_%s_%d", parserName, i+1)
 		out = strings.ReplaceAll(out, fmt.Sprintf(`[%s "<value>"]`, generated), "<"+positional.Name+">")
 		out = strings.ReplaceAll(out, "--"+generated, positional.Name)
@@ -260,6 +262,14 @@ func usage(definition commands.Definition, parser *argparse.Parser, msg interfac
 		out = wrapped.ReplaceAllString(out, "<"+positional.Name+">")
 	}
 	return out
+}
+
+func replaceFirst(text string, pattern *regexp.Regexp, replacement string) string {
+	location := pattern.FindStringIndex(text)
+	if location == nil {
+		return text
+	}
+	return text[:location[0]] + replacement + text[location[1]:]
 }
 
 func topLevelHelpRequested(args []string) bool {
@@ -315,6 +325,7 @@ func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMoc
 		Inputs:       req.Inputs,
 		ChainConfig:  req.ChainConfig,
 		TargetConfig: req.TargetConfig,
+		ThrowStarted: req.ThrowStarted,
 	})
 	if err != nil {
 		return commands.RunMockExploitResponse{}, err
@@ -347,13 +358,33 @@ func logsFromRPC(logs []daemonrpc.LogEntry) []commands.LogEntry {
 	out := make([]commands.LogEntry, 0, len(logs))
 	for _, log := range logs {
 		out = append(out, commands.LogEntry{
-			Level:   log.Level,
-			Message: log.Message,
-			Logger:  log.Logger,
-			Fields:  cloneStringMap(log.Fields),
+			ID:             log.ID,
+			Time:           log.Time,
+			Topic:          log.Topic,
+			Kind:           log.Kind,
+			Level:          log.Level,
+			Source:         log.Source,
+			Message:        log.Message,
+			Logger:         log.Logger,
+			ChainID:        log.ChainID,
+			ChainName:      log.ChainName,
+			RunID:          log.RunID,
+			Target:         log.Target,
+			ModuleID:       log.ModuleID,
+			ElapsedSeconds: cloneFloat64(log.ElapsedSeconds),
+			Fields:         cloneStringMap(log.Fields),
+			Attributes:     cloneStringMap(log.Attributes),
 		})
 	}
 	return out
+}
+
+func cloneFloat64(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	return &out
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

@@ -10,18 +10,19 @@ import (
 
 const (
 	defaultWidth = 88
+	markerWidth  = 4
 	sourceWidth  = 9
+	elapsedWidth = 6
+	labelCore    = markerWidth + 1 + sourceWidth
+	labelWidth   = labelCore + 1 + elapsedWidth
 )
 
 type Renderer struct {
 	title    lipgloss.Style
 	subtitle lipgloss.Style
-	info     lipgloss.Style
-	stage    lipgloss.Style
-	success  lipgloss.Style
-	finding  lipgloss.Style
-	artifact lipgloss.Style
-	source   lipgloss.Style
+	rail     lipgloss.Style
+	label    lipgloss.Style
+	elapsed  lipgloss.Style
 	field    lipgloss.Style
 	width    int
 }
@@ -37,19 +38,20 @@ func NewRendererWithWidth(width int) Renderer {
 	return Renderer{
 		title:    lipgloss.NewStyle().Foreground(lipgloss.Color("#ff2bd6")).Bold(true),
 		subtitle: lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af")),
-		info:     lipgloss.NewStyle().Foreground(lipgloss.Color("#d1d5db")),
-		stage:    lipgloss.NewStyle().Foreground(lipgloss.Color("#facc15")).Bold(true),
-		success:  lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
-		finding:  lipgloss.NewStyle().Foreground(lipgloss.Color("#ff2bd6")).Bold(true),
-		artifact: lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
-		source: lipgloss.NewStyle().
+		rail:     lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
+		label: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#ffffff")).
 			Background(lipgloss.Color("#7c3aed")).
 			Bold(true).
-			Padding(0, 1).
-			Width(sourceWidth + 2),
+			Inline(true),
+		elapsed: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#0b1020")).
+			Background(lipgloss.Color("#00e5ff")).
+			Bold(true).
+			Inline(true).
+			Width(elapsedWidth),
 		field: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#c4b5fd")).
+			Foreground(lipgloss.Color("#9ca3af")).
 			Italic(true),
 		width: width,
 	}
@@ -77,39 +79,60 @@ func (r Renderer) Render(log operatorlog.Log) string {
 		if log.Subtitle != "" {
 			header += " " + r.subtitle.Render(log.Subtitle)
 		}
-		lines = append(lines, strings.TrimSpace(header))
+		lines = append(lines, r.renderRailLine(strings.TrimSpace(header)))
+		if len(log.Entries()) > 0 {
+			lines = append(lines, r.renderRailLine(""))
+		}
 	}
 	for _, entry := range log.Entries() {
+		if entry.Kind == operatorlog.KindHeader {
+			header := strings.TrimSpace(entry.Message + " " + entry.ChainName)
+			lines = append(lines, r.renderRailLine(header), r.renderRailLine(""))
+			continue
+		}
 		lines = append(lines, r.renderEntry(entry))
 	}
 	return strings.Join(lines, "\n")
 }
 
 func (r Renderer) renderEntry(entry operatorlog.Entry) string {
-	marker, markerStyle := r.marker(entry.Level)
-	source := r.source.Render(fmt.Sprintf("%-*s", sourceWidth, entry.Source))
-	prefix := fmt.Sprintf("%s %s ", markerStyle.Render(marker), source)
-	message := entry.Message
+	label := r.renderLabel(entry, r.marker(entry.Level))
+	prefix := r.railPrefix() + label + " "
+	continuationPrefix := r.railPrefix() + strings.Repeat(" ", labelWidth+1)
+	lines := []string{wrapLine(prefix, continuationPrefix, entry.Message, r.width)}
 	if len(entry.Fields) > 0 {
 		fields := make([]string, 0, len(entry.Fields))
 		for _, field := range entry.Fields {
 			fields = append(fields, field.Name+"="+field.Value)
 		}
-		if message != "" {
-			message += " "
-		}
-		message += r.field.Render(strings.Join(fields, " "))
+		lines = append(lines, wrapLine(continuationPrefix, continuationPrefix, r.field.Render(strings.Join(fields, "  ")), r.width))
 	}
 
-	return wrapLine(prefix, message, r.width)
+	return strings.Join(lines, "\n")
 }
 
-func wrapLine(prefix, message string, width int) string {
+func (r Renderer) renderLabel(entry operatorlog.Entry, marker string) string {
+	core := fmt.Sprintf("%-*s", labelCore, marker+" "+entry.Source)
+	if entry.ElapsedSeconds == nil {
+		return r.label.Width(labelWidth).Render(fmt.Sprintf("%-*s", labelWidth, core))
+	}
+	elapsed := fmt.Sprintf("%6.2f", *entry.ElapsedSeconds)
+	return r.label.Render(fmt.Sprintf("%-*s", labelCore+1, marker+" "+entry.Source)) + r.elapsed.Render(elapsed)
+}
+
+func (r Renderer) renderRailLine(message string) string {
+	return r.railPrefix() + message
+}
+
+func (r Renderer) railPrefix() string {
+	return r.rail.Render("┃") + " "
+}
+
+func wrapLine(prefix, continuationPrefix, message string, width int) string {
 	if message == "" {
 		return strings.TrimRight(prefix, " ")
 	}
 
-	indent := strings.Repeat(" ", lipgloss.Width(prefix))
 	var lines []string
 	current := prefix
 	currentWidth := lipgloss.Width(prefix)
@@ -117,8 +140,8 @@ func wrapLine(prefix, message string, width int) string {
 		wordWidth := lipgloss.Width(word)
 		if currentWidth > lipgloss.Width(prefix) && currentWidth+1+wordWidth > width {
 			lines = append(lines, current)
-			current = indent + word
-			currentWidth = lipgloss.Width(indent) + wordWidth
+			current = continuationPrefix + word
+			currentWidth = lipgloss.Width(continuationPrefix) + wordWidth
 			continue
 		}
 		if currentWidth == lipgloss.Width(prefix) {
@@ -134,17 +157,17 @@ func wrapLine(prefix, message string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (r Renderer) marker(level operatorlog.Level) (string, lipgloss.Style) {
+func (r Renderer) marker(level operatorlog.Level) string {
 	switch level {
 	case operatorlog.LevelStage:
-		return "[>]", r.stage
+		return ">>"
 	case operatorlog.LevelSuccess:
-		return "[+]", r.success
+		return "++"
 	case operatorlog.LevelFinding:
-		return "[#]", r.finding
+		return "##"
 	case operatorlog.LevelArtifact:
-		return "[$]", r.artifact
+		return "$$"
 	default:
-		return "[*]", r.info
+		return "::"
 	}
 }

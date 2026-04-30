@@ -24,5 +24,6 @@ go_test(
     deps = [
         "//internal/adapters/storage/filesystem",
         "//internal/domain/daemon",
+        "//internal/testsupport",
     ],
 )

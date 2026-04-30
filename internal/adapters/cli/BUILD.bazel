@@ -37,9 +37,14 @@ go_test(
     ],
     embed = [":cli"],
     deps = [
+        "//internal/adapters/commandmode",
+        "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
+        "//internal/app/modulecatalog",
+        "//internal/app/operatorsession",
         "//internal/domain/daemon",
         "//internal/infra/daemonruntime",
+        "//internal/testsupport",
         "@com_github_c_bata_go_prompt//:go-prompt",
     ],
 )

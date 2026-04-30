@@ -31,5 +31,6 @@ go_test(
         "//internal/app/operatorlog",
         "//internal/domain/daemon",
         "//internal/infra/daemonruntime",
+        "//internal/testsupport",
     ],
 )

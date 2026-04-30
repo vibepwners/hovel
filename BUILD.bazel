@@ -47,6 +47,7 @@ test_suite(
         "//internal/adapters/terminallog:terminallog_test",
         "//internal/app/apptest:apptest_test",
         "//internal/app/commands:commands_test",
+        "//internal/app/modulecatalog:modulecatalog_test",
         "//internal/app/operatorlog:operatorlog_test",
         "//internal/app/operatorsession:operatorsession_test",
         "//internal/app/services:services_test",

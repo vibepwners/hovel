@@ -72,10 +72,22 @@ type Artifact struct {
 }
 
 type LogEntry struct {
-	Level   string
-	Message string
-	Logger  string
-	Fields  map[string]string
+	ID             string
+	Time           string
+	Topic          string
+	Kind           string
+	Level          string
+	Source         string
+	Message        string
+	Logger         string
+	ChainID        string
+	ChainName      string
+	RunID          string
+	Target         string
+	ModuleID       string
+	ElapsedSeconds *float64
+	Fields         map[string]string
+	Attributes     map[string]string
 }
 
 type ResultArgs struct {
@@ -135,11 +147,31 @@ func cloneLogs(logs []LogEntry) []LogEntry {
 	out := make([]LogEntry, 0, len(logs))
 	for _, log := range logs {
 		out = append(out, LogEntry{
-			Level:   log.Level,
-			Message: log.Message,
-			Logger:  log.Logger,
-			Fields:  cloneStringMap(log.Fields),
+			ID:             log.ID,
+			Time:           log.Time,
+			Topic:          log.Topic,
+			Kind:           log.Kind,
+			Level:          log.Level,
+			Source:         log.Source,
+			Message:        log.Message,
+			Logger:         log.Logger,
+			ChainID:        log.ChainID,
+			ChainName:      log.ChainName,
+			RunID:          log.RunID,
+			Target:         log.Target,
+			ModuleID:       log.ModuleID,
+			ElapsedSeconds: cloneFloat64(log.ElapsedSeconds),
+			Fields:         cloneStringMap(log.Fields),
+			Attributes:     cloneStringMap(log.Attributes),
 		})
 	}
 	return out
+}
+
+func cloneFloat64(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	out := *value
+	return &out
 }

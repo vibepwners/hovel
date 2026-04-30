@@ -11,10 +11,11 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 )
 
 func TestMain(m *testing.M) {
-	os.Setenv("HOVEL_MODULE_CONFIG", "examples/python/hovel-modules.json")
+	os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfig)
 	os.Exit(m.Run())
 }
 
@@ -122,7 +123,7 @@ func TestTUIRoleIsExplicitlyUnimplemented(t *testing.T) {
 }
 
 func TestMonoBinaryDaemonAndCommandRunMockExploitFlow(t *testing.T) {
-	workspacePath := shortTempDir(t)
+	workspacePath := testsupport.TempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	daemonCodes := make(chan int, 1)
 	var daemonStdout, daemonStderr bytes.Buffer
@@ -138,7 +139,7 @@ func TestMonoBinaryDaemonAndCommandRunMockExploitFlow(t *testing.T) {
 	}()
 
 	store := filesystem.NewWorkspaceStore()
-	waitFor(t, func() bool {
+	testsupport.WaitFor(t, func() bool {
 		status, err := store.DaemonStatus(context.Background(), workspacePath)
 		return err == nil && status.State == daemon.StateRunning
 	})
@@ -190,28 +191,39 @@ func TestMonoBinaryDaemonAndCommandRunMockExploitFlow(t *testing.T) {
 	}
 }
 
-func shortTempDir(t *testing.T) string {
-	t.Helper()
-	base := "/private/tmp"
-	if _, err := os.Stat(base); err != nil {
-		base = os.TempDir()
+func TestDaemonServeStopsOnContextCancellationAndClearsWorkspaceState(t *testing.T) {
+	workspacePath := testsupport.TempDir(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	codes := make(chan int, 1)
+	var stdout, stderr bytes.Buffer
+
+	go func() {
+		codes <- Run(ctx, []string{"daemon", "serve", "--workspace", workspacePath}, &stdout, &stderr)
+	}()
+
+	store := filesystem.NewWorkspaceStore()
+	testsupport.WaitFor(t, func() bool {
+		status, err := store.DaemonStatus(context.Background(), workspacePath)
+		return err == nil && status.State == daemon.StateRunning
+	})
+
+	cancel()
+	select {
+	case code := <-codes:
+		if code != 0 {
+			t.Fatalf("daemon exit code = %d, stderr = %s", code, stderr.String())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon did not stop after context cancellation")
 	}
-	dir, err := os.MkdirTemp(base, "hovel-test-*")
+	status, err := store.DaemonStatus(context.Background(), workspacePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return dir
-}
-
-func waitFor(t *testing.T, condition func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	if status.State != daemon.StateNotRunning {
+		t.Fatalf("daemon state = %s, want not_running", status.State)
 	}
-	t.Fatal("condition was not met before deadline")
+	if _, err := os.Stat(workspacePath + "/hoveld.sock"); !os.IsNotExist(err) {
+		t.Fatalf("socket still exists or stat failed unexpectedly: %v", err)
+	}
 }

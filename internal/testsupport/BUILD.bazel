@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testsupport",
+    srcs = ["testsupport.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/testsupport",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/adapters/storage/filesystem",
+        "//internal/domain/daemon",
+        "//internal/infra/daemonruntime",
+    ],
+)

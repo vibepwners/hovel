@@ -21,11 +21,12 @@ func TestRendererFormatsOperatorLog(t *testing.T) {
 	for _, want := range []string{
 		"HOVEL//RUN",
 		"mock-exploit -> mock://target",
-		"[*]  run",
-		"[>]  stage",
-		"[#]  finding",
-		"[$]  artifact",
-		"[+]  run",
+		"┃",
+		":: run",
+		">> stage",
+		"## finding",
+		"$$ artifact",
+		"++ run",
 		"severity=info",
 	} {
 		if !strings.Contains(plain, want) {
@@ -46,11 +47,22 @@ func TestRendererWrapsContinuationLinesAtMessageIndent(t *testing.T) {
 	if len(lines) < 3 {
 		t.Fatalf("rendered log did not wrap:\n%s", rendered)
 	}
-	if !strings.HasPrefix(lines[1], "[*]  log        this is a really long") {
+	if !strings.HasPrefix(lines[2], "┃ :: log                this is a really") {
 		t.Fatalf("first log line has wrong prefix:\n%s", rendered)
 	}
-	if !strings.HasPrefix(lines[2], "                message that should wrap") {
+	if !strings.HasPrefix(lines[3], "┃                       long message that") {
 		t.Fatalf("wrapped line did not align with message column:\n%s", rendered)
+	}
+}
+
+func TestRendererDisplaysThrowElapsedInLabel(t *testing.T) {
+	rendered := NewRenderer().Render(operatorlog.New("HOVEL//THROW", "", []operatorlog.Entry{
+		operatorlog.Info("module", "mock exploit started").WithElapsed(0.02),
+	}))
+
+	plain := stripANSI(rendered)
+	if !strings.Contains(plain, ":: module        0.02") {
+		t.Fatalf("rendered log missing elapsed label:\n%s", rendered)
 	}
 }
 
@@ -62,7 +74,7 @@ func TestRendererCanRenderEntriesWithoutHeader(t *testing.T) {
 	if strings.Contains(rendered, "HOVEL//") {
 		t.Fatalf("rendered log should not include a synthetic header:\n%s", rendered)
 	}
-	if plain := stripANSI(rendered); !strings.Contains(plain, "[*]  chain") || !strings.Contains(plain, "module added") {
+	if plain := stripANSI(rendered); !strings.Contains(plain, ":: chain") || !strings.Contains(plain, "module added") {
 		t.Fatalf("rendered log missing entry:\n%s", rendered)
 	}
 }

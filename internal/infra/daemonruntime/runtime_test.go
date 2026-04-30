@@ -3,6 +3,7 @@ package daemonruntime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -99,7 +100,7 @@ func TestServeRunsMockExploitOverRPC(t *testing.T) {
 			SocketPath:    socketPath,
 			PID:           123,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2", "event-3"}},
+			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2", "event-3", "event-4", "event-5"}},
 			Clock:         fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 		})
 	}()
@@ -176,6 +177,10 @@ type sequenceIDs struct {
 }
 
 func (s *sequenceIDs) NewID() string {
+	if s.next >= len(s.values) {
+		s.next++
+		return fmt.Sprintf("event-%d", s.next)
+	}
 	value := s.values[s.next]
 	s.next++
 	return value

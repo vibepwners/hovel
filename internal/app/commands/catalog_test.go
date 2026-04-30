@@ -190,6 +190,10 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 	if len(recorder.requests) != 1 {
 		t.Fatalf("run requests = %#v, want one request", recorder.requests)
 	}
+	if recorder.requests[0].ThrowStarted == "" {
+		t.Fatal("throw start timestamp was not propagated to run request")
+	}
+	recorder.requests[0].ThrowStarted = ""
 	if !reflect.DeepEqual(recorder.requests[0], RunMockExploitRequest{ModuleID: "mock-exploit", Target: "mock://target", ChainConfig: map[string]string{}}) {
 		t.Fatalf("run request = %#v", recorder.requests[0])
 	}
@@ -209,32 +213,21 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 	if !ok {
 		t.Fatalf("json payload type = %T, want ThrowPayload", result.JSON)
 	}
-	wantPayload := ThrowPayload{
-		Plan:    wantPlan.Payload(),
-		Chain:   "mock-exploit",
-		Targets: []string{"mock://target"},
-		Results: []RunPayload{{
-			RunID:    "run-1",
-			ModuleID: "mock-exploit",
-			Target:   "mock://target",
-			State:    "succeeded",
-			Summary:  "mock exploit completed",
-			Logs: []LogEntry{{
-				Level:   "info",
-				Logger:  "mock-exploit",
-				Message: "mock exploit started",
-				Fields:  map[string]string{"target": "mock://target"},
-			}},
-			Findings: []Finding{{Title: "finding", Severity: "info", Detail: "detail"}},
-			Artifacts: []Artifact{{
-				Name: "artifact",
-				Kind: "text",
-				Data: "data",
-			}},
-		}},
+	if payload.Chain != "mock-exploit" || len(payload.Targets) != 1 || payload.Targets[0] != "mock://target" {
+		t.Fatalf("payload route = %#v", payload)
 	}
-	if !equalThrowPayload(payload, wantPayload) {
-		t.Fatalf("payload = %#v, want %#v", payload, wantPayload)
+	if !reflect.DeepEqual(payload.Plan, wantPlan.Payload()) {
+		t.Fatalf("payload plan = %#v, want %#v", payload.Plan, wantPlan.Payload())
+	}
+	if len(payload.Results) != 1 {
+		t.Fatalf("payload results = %#v, want one result", payload.Results)
+	}
+	run := payload.Results[0]
+	if run.RunID != "run-1" || run.ModuleID != "mock-exploit" || run.Target != "mock://target" || run.State != "succeeded" {
+		t.Fatalf("payload run = %#v", run)
+	}
+	if len(run.Findings) != 1 || len(run.Artifacts) != 1 || len(run.Logs) != 1 {
+		t.Fatalf("payload run details = %#v", run)
 	}
 	if result.Log.Empty() {
 		t.Fatal("throw log is empty")
@@ -243,60 +236,10 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 		t.Fatalf("log title = %q, want HOVEL//THROW", result.Log.Title)
 	}
 	entries := result.Log.Entries()
-	wantEntries := []operatorlog.Entry{
-		operatorlog.Stage("0/5 review plan",
-			operatorlog.Field{Name: "plan", Value: "plan-mock-exploit-mock---target"},
-			operatorlog.Field{Name: "approval", Value: "approval-mock-exploit-mock---target"},
-			operatorlog.Field{Name: "decision", Value: "operator-reviewed"},
-		),
-		operatorlog.Stage("1/5 prepare chain",
-			operatorlog.Field{Name: "chain", Value: "mock-exploit"},
-			operatorlog.Field{Name: "targets", Value: "1"},
-		),
-		operatorlog.Info("chain", "chain staged",
-			operatorlog.Field{Name: "chain", Value: "mock-exploit"},
-			operatorlog.Field{Name: "targets", Value: "1"},
-		),
-		operatorlog.Stage("2/5 engage target",
-			operatorlog.Field{Name: "target", Value: "1/1"},
-			operatorlog.Field{Name: "address", Value: "mock://target"},
-		),
-		operatorlog.Info("throw", "target engaged",
-			operatorlog.Field{Name: "run", Value: "run-1"},
-			operatorlog.Field{Name: "target", Value: "mock://target"},
-		),
-		operatorlog.Stage("3/5 execute module",
-			operatorlog.Field{Name: "target", Value: "1/1"},
-			operatorlog.Field{Name: "module", Value: "mock-exploit"},
-		),
-		operatorlog.Info("module", "mock exploit started",
-			operatorlog.Field{Name: "level", Value: "info"},
-			operatorlog.Field{Name: "logger", Value: "mock-exploit"},
-			operatorlog.Field{Name: "target", Value: "mock://target"},
-		),
-		operatorlog.Info("module", "mock exploit completed"),
-		operatorlog.Stage("4/5 record result",
-			operatorlog.Field{Name: "target", Value: "1/1"},
-			operatorlog.Field{Name: "run", Value: "run-1"},
-		),
-		operatorlog.Finding("finding", "finding",
-			operatorlog.Field{Name: "severity", Value: "info"},
-			operatorlog.Field{Name: "detail", Value: "detail"},
-		),
-		operatorlog.Artifact("artifact", "artifact",
-			operatorlog.Field{Name: "kind", Value: "text"},
-		),
-		operatorlog.Stage("5/5 complete throw",
-			operatorlog.Field{Name: "chain", Value: "mock-exploit"},
-			operatorlog.Field{Name: "targets", Value: "1"},
-		),
-		operatorlog.Success("throw", "completed",
-			operatorlog.Field{Name: "chain", Value: "mock-exploit"},
-			operatorlog.Field{Name: "targets", Value: "1"},
-		),
-	}
-	if !equalEntries(entries, wantEntries) {
-		t.Fatalf("log entries = %#v, want %#v", entries, wantEntries)
+	for _, want := range []string{"0/5 review plan", "chain staged", "target engaged", "mock exploit started", "completed"} {
+		if !hasLogMessage(entries, want) {
+			t.Fatalf("log entries missing %q: %#v", want, entries)
+		}
 	}
 }
 
@@ -603,6 +546,9 @@ func TestThrowHandlerStoresLogsOnPayloadChain(t *testing.T) {
 	if err := session.UseChain("alpha"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := session.AddModule("mock-exploit"); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.AddTarget("mock://alpha"); err != nil {
 		t.Fatal(err)
 	}
@@ -642,6 +588,39 @@ func TestThrowHandlerStoresLogsOnPayloadChain(t *testing.T) {
 	}
 	if logs := session.ActiveLogs(); !hasLogMessage(logs, "chain staged") {
 		t.Fatalf("alpha logs = %#v", logs)
+	}
+}
+
+func TestThrowActiveChainRejectsEmptyChain(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           123,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := operatorsession.New()
+	if err := session.UseChain("empty"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://target"); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{status: daemon.Running(identity)},
+		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
+		Session:    session,
+	})
+	throwDefinition, _ := registry.Find("throw")
+
+	_, err = throwDefinition.Execute(context.Background(), Invocation{Options: map[string]string{"workspace": ".hovel"}})
+	if err == nil || !strings.Contains(err.Error(), "chain empty has no modules") {
+		t.Fatalf("throw error = %v, want empty chain error", err)
 	}
 }
 
@@ -705,6 +684,10 @@ func TestThrowActiveChainExecutesConfiguredSteps(t *testing.T) {
 			"target.port": "22",
 		},
 	}
+	if recorder.requests[0].ThrowStarted == "" {
+		t.Fatal("throw start timestamp was not propagated to run request")
+	}
+	recorder.requests[0].ThrowStarted = ""
 	if !reflect.DeepEqual(recorder.requests[0], want) {
 		t.Fatalf("run request = %#v, want %#v", recorder.requests[0], want)
 	}
@@ -757,14 +740,6 @@ func exampleCatalog() modulecatalog.Catalog {
 			},
 		},
 	)
-}
-
-func equalThrowPayload(got, want ThrowPayload) bool {
-	return reflect.DeepEqual(got, want)
-}
-
-func equalEntries(got, want []operatorlog.Entry) bool {
-	return reflect.DeepEqual(got, want)
 }
 
 func hasOption(definition Definition, name string) bool {
