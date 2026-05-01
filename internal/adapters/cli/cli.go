@@ -41,8 +41,12 @@ type App struct {
 func NewApp() App {
 	session := operatorsession.New()
 	modules := pythonrpc.MustConfiguredCatalog()
+	return newAppWithSessionAndModules(session, modules)
+}
+
+func newAppWithSessionAndModules(session commands.OperatorSession, modules modulecatalog.Catalog) App {
 	return App{
-		commands:    commandmode.NewAppWithSession(session),
+		commands:    commandmode.NewAppWithSessionAndModules(session, modules),
 		manager:     daemonmanager.New(),
 		theme:       DefaultTheme(),
 		session:     session,
@@ -100,7 +104,7 @@ func (a App) EnsureDaemon(ctx context.Context, workspacePath string) (*daemonman
 func (a App) withDaemonSession(ctx context.Context, client *daemonrpc.Client) App {
 	session := daemonrpc.NewSessionClient(ctx, client)
 	a.session = session
-	a.commands = commandmode.NewAppWithSession(session)
+	a.commands = commandmode.NewAppWithSessionAndModules(session, a.modules)
 	a.wizard = newInteractiveConfigWizard(session, a.modules)
 	return a
 }

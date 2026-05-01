@@ -15,6 +15,7 @@ go_library(
 
 go_test(
     name = "daemonrpc_test",
+    size = "small",
     srcs = ["daemonrpc_test.go"],
     embed = [":daemonrpc"],
     deps = [

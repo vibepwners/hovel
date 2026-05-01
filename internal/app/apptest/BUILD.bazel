@@ -16,6 +16,7 @@ go_library(
 
 go_test(
     name = "apptest_test",
+    size = "small",
     srcs = ["harness_test.go"],
     embed = [":apptest"],
     deps = [

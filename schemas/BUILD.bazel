@@ -12,6 +12,7 @@ filegroup(
 
 py_test(
     name = "schema_smoke_test",
+    size = "small",
     srcs = ["schema_smoke_test.py"],
     args = [
         "$(location hovel.module.schema.json)",

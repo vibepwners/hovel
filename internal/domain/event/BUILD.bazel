@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "event_test",
+    size = "small",
     srcs = ["event_test.go"],
     embed = [":event"],
 )

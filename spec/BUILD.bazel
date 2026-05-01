@@ -18,6 +18,7 @@ mdbook_book(
 
 sh_test(
     name = "book_smoke_test",
+    size = "small",
     srcs = ["//tools/tests:mdbook_smoke_test.sh"],
     args = ["$(location :book)"],
     data = [":book"],

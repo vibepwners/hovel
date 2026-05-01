@@ -19,6 +19,7 @@ go_library(
 
 go_test(
     name = "filesystem_test",
+    size = "small",
     srcs = [
         "daemon_store_test.go",
         "lock_test.go",

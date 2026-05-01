@@ -25,10 +25,13 @@ go_library(
     ],
 )
 
+# keep: fast CLI checks stay separate from daemon/Python E2E coverage.
 go_test(
     name = "cli_test",
+    size = "small",
     srcs = [
         "cli_test.go",
+        "cli_test_helpers_test.go",
         "prompt_writer_test.go",
     ],
     data = [
@@ -36,10 +39,35 @@ go_test(
         "//sdk/python:sources",
     ],
     embed = [":cli"],
+    tags = ["unit"],
+    deps = [
+        "//internal/adapters/commandmode",
+        "//internal/app/modulecatalog",
+        "//internal/app/operatorsession",
+        "//internal/testsupport",
+        "@com_github_c_bata_go_prompt//:go-prompt",
+    ],
+)
+
+# keep: daemon/Python CLI flows are isolated so unit-only runs keep shell coverage.
+go_test(
+    name = "cli_e2e_test",
+    size = "small",
+    srcs = [
+        "cli_e2e_test.go",
+        "cli_test_helpers_test.go",
+    ],
+    data = [
+        "//examples/python:sources",
+        "//sdk/python:sources",
+    ],
+    embed = [":cli"],
+    tags = ["e2e"],
     deps = [
         "//internal/adapters/commandmode",
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
+        "//internal/app/commands",
         "//internal/app/modulecatalog",
         "//internal/app/operatorsession",
         "//internal/domain/daemon",

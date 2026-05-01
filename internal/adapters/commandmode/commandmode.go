@@ -16,6 +16,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
@@ -44,6 +45,12 @@ func NewAppWithRuntime(runtime commands.Runtime) App {
 
 func NewAppWithSession(session commands.OperatorSession) App {
 	return NewAppWithRuntime(defaultRuntime(session))
+}
+
+func NewAppWithSessionAndModules(session commands.OperatorSession, modules modulecatalog.Catalog) App {
+	runtime := defaultRuntime(session)
+	runtime.Modules = modules
+	return NewAppWithRuntime(runtime)
 }
 
 func defaultRuntime(session commands.OperatorSession) commands.Runtime {
