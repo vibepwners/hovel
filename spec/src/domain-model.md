@@ -4,6 +4,7 @@ Hovel revolves around these concepts:
 
 ```text
 Workspace
+Operation
 Target
 Fact
 Provider
@@ -14,6 +15,7 @@ Artifact
 Chain
 Phase
 Step
+Throw
 Run
 Job
 Event
@@ -27,7 +29,7 @@ Credential
 
 ## Workspace
 
-A workspace is the local project/database context for targets, runs, modules, services, artifacts, evidence, and provider state.
+A workspace is the local project/database context for operations, targets, throws, modules, services, artifacts, evidence, and provider state.
 
 MVP storage may be SQLite.
 
@@ -35,7 +37,7 @@ Workspace data:
 
 1. Configuration.
 2. Registry metadata.
-3. Run history.
+3. Throw history.
 4. Target inventory.
 5. Facts.
 6. Artifacts.
@@ -43,6 +45,22 @@ Workspace data:
 8. Provider cache.
 9. Logs.
 10. Listener and session state.
+
+## Operation
+
+An operation is the top-level operator context. It is the thing a red teamer picks up, puts down, and comes back to later. Operations own chains, chain logs, target assignments, throws, evidence, and the operator-facing transcript for the work.
+
+`op` is the primary command spelling. `operation` may remain as a readable alias, but product copy and examples should prefer `op`.
+
+Operation responsibilities:
+
+1. Name and describe the active work context.
+2. Own one or more chains.
+3. Keep each client attachment's active chain separate from the shared chain state.
+4. Preserve chain logs and throw records by operation.
+5. Keep evidence and findings tied to the operation that produced them.
+
+An attached client can work inside one operation at a time. The operation state is daemon-owned shared state; the active chain selected by a CLI, TUI, REST, or MCP client is client-local attachment state.
 
 ## Target
 
@@ -188,13 +206,13 @@ failed
 
 ## Chain
 
-A chain is an operator-owned workflow record and an ordered graph of phases and steps. Chains are CRUD resources: operators can create, select, rename, inspect, list, and delete them through shared application services.
+A chain is an operation-owned workflow record and an ordered graph of phases and steps. Chains are CRUD resources: operators can create, select, rename, inspect, list, and delete them through shared application services.
 
 Chain definitions should be modular and loadable. They are collections of module references and chain-scoped configuration, not modules themselves.
 
-Chains own targets for the current workflow. Adding or clearing targets through an operator front end mutates the active chain's target set, not a global target scratchpad.
+Chains own targets for the current workflow. Adding or clearing targets through an operator front end mutates that client's active chain inside the active operation, not a global target scratchpad.
 
-Chains also own their logging topic. The canonical topic shape is `chain/<chain>/logs`. A front end only renders logs for the chain it has activated or attached to, while daemon-side storage and event streams keep those logs available for other clients attached to the same chain.
+Chains also own their logging topic. The canonical topic shape is `operation/<operation>/chain/<chain>/logs`. A front end only renders logs for the chain selected by its attachment, while daemon-side storage and event streams keep those logs available for other clients attached to the same operation and chain.
 
 Typical phases:
 
@@ -211,18 +229,17 @@ cleanup
 service_cleanup
 ```
 
-## Run
+## Throw
 
-A run is a concrete execution of a chain or module against one or more targets.
+A throw is the operator-facing execution record for a chain or module against one or more targets. `throw` is both the verb and the singular command root used for listing and inspection.
 
-Run states:
+Throw states:
 
 ```text
 created
 planning
 ready
-starting_services
-running
+throwing
 paused
 succeeded
 failed
@@ -230,3 +247,11 @@ cancelled
 partial
 cleaning_up
 ```
+
+Throws must keep the reviewed intent, inputs, targets, chain version, module versions, artifacts, evidence, transcript, errors, and final result.
+
+## Run
+
+A run is an internal runtime execution detail. Operator-facing commands, transcripts, records, and docs should say throw unless the code is describing a low-level module runtime API.
+
+Runtime internals may reuse the throw state machine, but the durable product language remains operation, chain, step, throw, and evidence.

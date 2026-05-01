@@ -10,9 +10,9 @@ Hovel is a platform for wrapping and operating third-party proofs of concept, no
 
 The main product goal is straightforward:
 
-> Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every run.
+> Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every throw.
 
-The central runtime is a local engine, `hoveld`, which owns runs, module processes, managed services, provider state, events, artifacts, and workspace storage. `command` mode, interactive `cli` mode, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.
+The central runtime is a local engine, `hoveld`, which owns operations, chains, throws, module processes, managed services, provider state, events, artifacts, evidence, and workspace storage. `command` mode, interactive `cli` mode, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.
 
 ## Core Decisions
 
@@ -23,7 +23,7 @@ The central runtime is a local engine, `hoveld`, which owns runs, module process
 5. Long-lived capabilities are managed as services.
 6. Providers expose typed resources such as payloads, artifacts, facts, credentials, listeners, and sessions.
 7. Payload providers return tagged bytes with minimal framework validation.
-8. Runs emit structured events consumed by every front end.
+8. Throws emit structured events consumed by every front end.
 9. The first implementation is local-first and alpha-friendly.
 
 ## Product Shape
@@ -80,14 +80,14 @@ The first MVP slice should prove the narrowest useful loop:
 4. Launch one Python module through the SDK path.
 5. Complete handshake, execution, logging, and shutdown.
 6. Emit structured events through the shared event stream.
-7. Persist the throw plan, approval record, artifacts, and replayable run record.
+7. Persist the throw plan, confirmation record, artifacts, evidence, and replayable throw record.
 8. Inspect the throw from the CLI.
 
 The alpha can then add managed services, provider-backed payload resolution, richer chains, MCP execution parity, and the TUI. Those features should attach to the proven loop rather than expanding the platform surface before the core path works.
 
 ## Alpha Deferrals
 
-The following decisions should remain open until the core loop has contract tests and at least one replayable run:
+The following decisions should remain open until the core loop has contract tests and at least one replayable throw:
 
 1. Whether descriptors remain YAML-only or gain TOML support.
 2. Whether chains are only declarative YAML or also authorable in Python or Go.

@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
@@ -117,11 +115,11 @@ func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
 
 	var payload struct {
 		Plan struct {
-			ID         string   `json:"id"`
-			ApprovalID string   `json:"approvalId"`
-			Chain      string   `json:"chain"`
-			Targets    []string `json:"targets"`
-			Decision   string   `json:"decision"`
+			ID             string   `json:"id"`
+			ConfirmationID string   `json:"confirmationId"`
+			Chain          string   `json:"chain"`
+			Targets        []string `json:"targets"`
+			Review         string   `json:"review"`
 		} `json:"plan"`
 		Chain   string   `json:"chain"`
 		Targets []string `json:"targets"`
@@ -162,15 +160,11 @@ func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
 	if !strings.Contains(detail, "module handshake failed") || !strings.Contains(detail, "malformed frame") {
 		t.Fatalf("log detail = %q", detail)
 	}
-	data, err := os.ReadFile(filepath.Join(fixture.WorkspacePath, "runs", payload.Plan.ID+".json"))
+	plan, err := filesystem.NewWorkspaceStore().GetThrowPlan(context.Background(), fixture.WorkspacePath, payload.Plan.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var plan commands.ThrowPlanRecord
-	if err := json.Unmarshal(data, &plan); err != nil {
-		t.Fatal(err)
-	}
-	if plan.ID != payload.Plan.ID || plan.ApprovalID != payload.Plan.ApprovalID || plan.Chain != "broken" || plan.Workspace != fixture.WorkspacePath {
+	if plan.ID != payload.Plan.ID || plan.ConfirmationID != payload.Plan.ConfirmationID || plan.Chain != "broken" || plan.Workspace != fixture.WorkspacePath {
 		t.Fatalf("persisted plan = %#v, payload plan = %#v", plan, payload.Plan)
 	}
 	if !hasEvent(events.events, "run.failed") {

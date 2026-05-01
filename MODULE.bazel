@@ -26,6 +26,8 @@ use_repo(
     "com_github_akamensky_argparse",
     "com_github_c_bata_go_prompt",
     "com_github_charmbracelet_lipgloss",
+    "com_github_pkg_term",
+    "org_modernc_sqlite",
 )
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")

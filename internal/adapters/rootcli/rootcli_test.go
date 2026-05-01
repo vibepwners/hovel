@@ -30,7 +30,7 @@ func TestCommandRoleDelegatesToCommandAdapter(t *testing.T) {
 func TestDirectCommandDelegatesToCommandAdapter(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run(context.Background(), []string{"modules", "list"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"module", "list"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -77,7 +77,7 @@ func TestRootHelpShowsRoleMenu(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"hovel", "chain", "modules", "throw", "shell", "command", "cli", "daemon", "tui"} {
+	for _, want := range []string{"hovel", "op", "chain", "module", "target", "throw", "shell", "command", "cli", "daemon", "tui"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}

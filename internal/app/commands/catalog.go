@@ -37,7 +37,14 @@ type ThrowPlanRecorder interface {
 	RecordThrowPlan(context.Context, ThrowPlanRecord) error
 }
 
+type ThrowPlanRepository interface {
+	ListThrowPlans(context.Context, string) ([]ThrowPlanRecord, error)
+	GetThrowPlan(context.Context, string, string) (ThrowPlanRecord, error)
+}
+
 type OperatorSession interface {
+	CreateOperation(string) error
+	UseOperation(string) error
 	CreateChain(string) error
 	UseChain(string) error
 	RenameChain(string, string) error
@@ -64,6 +71,7 @@ type Runtime struct {
 	Daemons    DaemonStatusProvider
 	Runs       RunClientFactory
 	Plans      ThrowPlanRecorder
+	ThrowPlans ThrowPlanRepository
 	Session    OperatorSession
 	Modules    ModuleDatabase
 }
@@ -163,30 +171,30 @@ type ThrowPayload struct {
 }
 
 type ThrowPlanPayload struct {
-	ID         string   `json:"id"`
-	ApprovalID string   `json:"approvalId"`
-	Chain      string   `json:"chain"`
-	Targets    []string `json:"targets"`
-	Decision   string   `json:"decision"`
+	ID             string   `json:"id"`
+	ConfirmationID string   `json:"confirmationId"`
+	Chain          string   `json:"chain"`
+	Targets        []string `json:"targets"`
+	Review         string   `json:"review"`
 }
 
 type ThrowPlanRecord struct {
-	ID         string   `json:"id"`
-	ApprovalID string   `json:"approvalId"`
-	Workspace  string   `json:"workspace"`
-	Chain      string   `json:"chain"`
-	Targets    []string `json:"targets"`
-	Decision   string   `json:"decision"`
-	Intent     string   `json:"intent"`
+	ID             string   `json:"id"`
+	ConfirmationID string   `json:"confirmationId"`
+	Workspace      string   `json:"workspace"`
+	Chain          string   `json:"chain"`
+	Targets        []string `json:"targets"`
+	Review         string   `json:"review"`
+	Intent         string   `json:"intent"`
 }
 
 func (r ThrowPlanRecord) Payload() ThrowPlanPayload {
 	return ThrowPlanPayload{
-		ID:         r.ID,
-		ApprovalID: r.ApprovalID,
-		Chain:      r.Chain,
-		Targets:    append([]string(nil), r.Targets...),
-		Decision:   r.Decision,
+		ID:             r.ID,
+		ConfirmationID: r.ConfirmationID,
+		Chain:          r.Chain,
+		Targets:        append([]string(nil), r.Targets...),
+		Review:         r.Review,
 	}
 }
 
@@ -217,7 +225,38 @@ func HovelRegistry(runtime Runtime) Registry {
 			Handler: daemonStatusHandler(runtime),
 		},
 		Definition{
+			Path:    []string{"op", "create"},
+			Aliases: [][]string{{"operation", "create"}},
+			Summary: "Create and select an operation.",
+			Positionals: []Positional{
+				{Name: "operation", Help: "Operation name", Required: true},
+			},
+			Handler: operationCreateHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"op", "use"},
+			Aliases: [][]string{{"operation", "use"}},
+			Summary: "Select the active operation.",
+			Positionals: []Positional{
+				{Name: "operation", Help: "Operation name", Required: true},
+			},
+			Handler: operationUseHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"op", "list"},
+			Aliases: [][]string{{"operation", "list"}},
+			Summary: "List operations in the operator session.",
+			Handler: operationListHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"op", "inspect"},
+			Aliases: [][]string{{"operation", "inspect"}},
+			Summary: "Inspect the active operation.",
+			Handler: operationInspectHandler(runtime),
+		},
+		Definition{
 			Path:    []string{"chain", "create"},
+			Aliases: [][]string{{"chains", "create"}},
 			Summary: "Create a chain for the operator session.",
 			Positionals: []Positional{
 				{Name: "chain", Help: "Chain name", Required: true},
@@ -226,6 +265,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"chain", "use"},
+			Aliases: [][]string{{"chains", "use"}},
 			Summary: "Select the active chain for the operator session.",
 			Positionals: []Positional{
 				{Name: "chain", Help: "Chain or module identifier", Required: true},
@@ -234,6 +274,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"chain", "rename"},
+			Aliases: [][]string{{"chains", "rename"}},
 			Summary: "Rename a chain and keep its targets and logs.",
 			Positionals: []Positional{
 				{Name: "chain", Help: "Current chain name", Required: true},
@@ -243,6 +284,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"chain", "add"},
+			Aliases: [][]string{{"chains", "add"}},
 			Summary: "Add a module to the active chain.",
 			Positionals: []Positional{
 				{Name: "module", Help: "Module ID", Required: true},
@@ -251,6 +293,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"chain", "validate"},
+			Aliases: [][]string{{"chains", "validate"}},
 			Summary: "Validate active chain configuration.",
 			Options: []Option{
 				boolOption("json", "j", "Emit JSON output"),
@@ -259,6 +302,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"chain", "config", "set"},
+			Aliases: [][]string{{"chains", "config", "set"}},
 			Summary: "Set active chain configuration.",
 			Positionals: []Positional{
 				{Name: "key", Help: "Configuration key", Required: true},
@@ -268,6 +312,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"chain", "config", "unset"},
+			Aliases: [][]string{{"chains", "config", "unset"}},
 			Summary: "Unset active chain configuration.",
 			Positionals: []Positional{
 				{Name: "key", Help: "Configuration key", Required: true},
@@ -276,21 +321,25 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"chain", "config", "list"},
+			Aliases: [][]string{{"chains", "config", "list"}},
 			Summary: "List active chain configuration.",
 			Handler: chainConfigListHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"chain", "list"},
+			Aliases: [][]string{{"chains", "list"}},
 			Summary: "List chains in the operator session.",
 			Handler: chainListHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"chain", "inspect"},
+			Aliases: [][]string{{"chains", "inspect"}},
 			Summary: "Inspect the active chain.",
 			Handler: chainInspectHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"chain", "delete"},
+			Aliases: [][]string{{"chains", "delete"}},
 			Summary: "Delete a chain from the operator session.",
 			Positionals: []Positional{
 				{Name: "chain", Help: "Chain name", Required: true},
@@ -299,11 +348,13 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"chain", "logs"},
+			Aliases: [][]string{{"chains", "logs"}},
 			Summary: "Show logs for the active chain.",
 			Handler: chainLogsHandler(runtime),
 		},
 		Definition{
-			Path:    []string{"targets", "add"},
+			Path:    []string{"target", "add"},
+			Aliases: [][]string{{"targets", "add"}},
 			Summary: "Add a target to the operator session.",
 			Positionals: []Positional{
 				{Name: "target", Help: "Target identifier", Required: true},
@@ -311,12 +362,14 @@ func HovelRegistry(runtime Runtime) Registry {
 			Handler: targetsAddHandler(runtime),
 		},
 		Definition{
-			Path:    []string{"targets", "clear"},
+			Path:    []string{"target", "clear"},
+			Aliases: [][]string{{"targets", "clear"}},
 			Summary: "Clear targets from the operator session.",
 			Handler: targetsClearHandler(runtime),
 		},
 		Definition{
-			Path:    []string{"targets", "config", "set"},
+			Path:    []string{"target", "config", "set"},
+			Aliases: [][]string{{"targets", "config", "set"}},
 			Summary: "Set target configuration on the active chain.",
 			Positionals: []Positional{
 				{Name: "target", Help: "Target identifier", Required: true},
@@ -326,7 +379,8 @@ func HovelRegistry(runtime Runtime) Registry {
 			Handler: targetsConfigSetHandler(runtime),
 		},
 		Definition{
-			Path:    []string{"targets", "config", "unset"},
+			Path:    []string{"target", "config", "unset"},
+			Aliases: [][]string{{"targets", "config", "unset"}},
 			Summary: "Unset target configuration on the active chain.",
 			Positionals: []Positional{
 				{Name: "target", Help: "Target identifier", Required: true},
@@ -335,7 +389,8 @@ func HovelRegistry(runtime Runtime) Registry {
 			Handler: targetsConfigUnsetHandler(runtime),
 		},
 		Definition{
-			Path:    []string{"targets", "config", "list"},
+			Path:    []string{"target", "config", "list"},
+			Aliases: [][]string{{"targets", "config", "list"}},
 			Summary: "List target configuration on the active chain.",
 			Positionals: []Positional{
 				{Name: "target", Help: "Target identifier", Required: true},
@@ -343,7 +398,8 @@ func HovelRegistry(runtime Runtime) Registry {
 			Handler: targetsConfigListHandler(runtime),
 		},
 		Definition{
-			Path:    []string{"modules", "list"},
+			Path:    []string{"module", "list"},
+			Aliases: [][]string{{"modules", "list"}},
 			Summary: "List modules in the module database.",
 			Options: []Option{
 				stringOption("type", "t", "Module type filter"),
@@ -351,7 +407,8 @@ func HovelRegistry(runtime Runtime) Registry {
 			Handler: modulesListHandler(runtime),
 		},
 		Definition{
-			Path:    []string{"modules", "inspect"},
+			Path:    []string{"module", "inspect"},
+			Aliases: [][]string{{"modules", "inspect"}},
 			Summary: "Inspect a module in the module database.",
 			Positionals: []Positional{
 				{Name: "module", Help: "Module reference", Required: true},
@@ -359,7 +416,8 @@ func HovelRegistry(runtime Runtime) Registry {
 			Handler: modulesInspectHandler(runtime),
 		},
 		Definition{
-			Path:    []string{"modules", "search"},
+			Path:    []string{"module", "search"},
+			Aliases: [][]string{{"modules", "search"}},
 			Summary: "Search modules in the module database.",
 			Positionals: []Positional{
 				{Name: "query", Help: "Search query", Required: true},
@@ -377,6 +435,29 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: throwHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"throw", "list"},
+			Aliases: [][]string{{"throws", "list"}},
+			Summary: "List recorded throw plans.",
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: throwsListHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"throw", "inspect"},
+			Aliases: [][]string{{"throws", "inspect"}},
+			Summary: "Inspect a recorded throw plan.",
+			Positionals: []Positional{
+				{Name: "throw", Help: "Throw plan ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: throwsInspectHandler(runtime),
 		},
 	)...)
 }
@@ -478,6 +559,88 @@ func daemonStatusHandler(runtime Runtime) Handler {
 			Human: fmt.Sprintf("Daemon running for workspace %s pid=%d health=%s", status.WorkspacePath, status.Identity.PID, status.Identity.Health),
 			JSON:  payload,
 		}, nil
+	}
+}
+
+func operationCreateHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		operation := invocation.Positional("operation")
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("op create")
+		}
+		if err := runtime.Session.CreateOperation(operation); err != nil {
+			return Result{}, err
+		}
+		if err := runtime.Session.UseOperation(operation); err != nil {
+			return Result{}, err
+		}
+		return Result{Human: fmt.Sprintf("Operation selected: %s", operation)}, nil
+	}
+}
+
+func operationUseHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		operation := invocation.Positional("operation")
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("op use")
+		}
+		if err := runtime.Session.UseOperation(operation); err != nil {
+			return Result{}, err
+		}
+		return Result{Human: fmt.Sprintf("Operation selected: %s", operation)}, nil
+	}
+}
+
+func operationListHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("op list")
+		}
+		state := runtime.Session.Snapshot()
+		if len(state.Operations) == 0 {
+			return Result{Human: "No operations"}, nil
+		}
+		var lines []string
+		for _, operation := range state.Operations {
+			prefix := " "
+			if operation.Name == state.ActiveOperation {
+				prefix = "*"
+			}
+			lines = append(lines, fmt.Sprintf("%s %s chains=%d", prefix, operation.Name, len(operation.Chains)))
+		}
+		return Result{Human: strings.Join(lines, "\n")}, nil
+	}
+}
+
+func operationInspectHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("op inspect")
+		}
+		state := runtime.Session.Snapshot()
+		lines := []string{
+			fmt.Sprintf("Operation %s chains=%d active_chain=%s", state.ActiveOperation, len(state.Chains), displayValue(state.ActiveChain, "none")),
+		}
+		for _, chain := range state.Chains {
+			prefix := " "
+			if chain.Name == state.ActiveChain {
+				prefix = "*"
+			}
+			lines = append(lines, fmt.Sprintf("%s %s steps=%d targets=%d topic=%s", prefix, chain.Name, len(chain.Steps), len(chain.Targets), chain.LogTopic))
+		}
+		return Result{Human: strings.Join(lines, "\n")}, nil
 	}
 }
 
@@ -747,7 +910,7 @@ func targetsAddHandler(runtime Runtime) Handler {
 		}
 		target := invocation.Positional("target")
 		if runtime.Session == nil {
-			return Result{}, operatorSessionRequiredError("targets add")
+			return Result{}, operatorSessionRequiredError("target add")
 		}
 		if err := runtime.Session.AddTarget(target); err != nil {
 			return Result{}, withActiveChainHelp(err)
@@ -765,7 +928,7 @@ func targetsClearHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, operatorSessionRequiredError("targets clear")
+			return Result{}, operatorSessionRequiredError("target clear")
 		}
 		runtime.Session.ClearTargets()
 		if feedbackPublished(runtime.Session) {
@@ -828,7 +991,7 @@ func targetsConfigListHandler(runtime Runtime) Handler {
 		target := invocation.Positional("target")
 		config, ok := state.TargetConfigs[target]
 		if !ok || len(config) == 0 {
-			return Result{Human: fmt.Sprintf("No target config for %s\n\nNext: targets config set %s <key> <value>", target, target)}, nil
+			return Result{Human: fmt.Sprintf("No target config for %s\n\nNext: target config set %s <key> <value>", target, target)}, nil
 		}
 		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeTarget)
 		return Result{Human: fmt.Sprintf("Target config %s\n%s", target, configLines(config, requirements))}, nil
@@ -965,16 +1128,65 @@ func throwHandler(runtime Runtime) Handler {
 	}
 }
 
+func throwsListHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if runtime.ThrowPlans == nil {
+			return Result{}, fmt.Errorf("throw plan repository is not configured")
+		}
+		workspacePath := invocation.Option("workspace")
+		if workspacePath == "" {
+			workspacePath = ".hovel"
+		}
+		plans, err := runtime.ThrowPlans.ListThrowPlans(ctx, workspacePath)
+		if err != nil {
+			return Result{}, err
+		}
+		if len(plans) == 0 {
+			return Result{Human: "No throws", JSON: plans}, nil
+		}
+		lines := []string{"ID                         CHAIN                     TARGETS REVIEW"}
+		for _, plan := range plans {
+			lines = append(lines, fmt.Sprintf("%-26s %-25s %-7d %s", plan.ID, plan.Chain, len(plan.Targets), plan.Review))
+		}
+		return Result{Human: strings.Join(lines, "\n"), JSON: plans}, nil
+	}
+}
+
+func throwsInspectHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if runtime.ThrowPlans == nil {
+			return Result{}, fmt.Errorf("throw plan repository is not configured")
+		}
+		workspacePath := invocation.Option("workspace")
+		if workspacePath == "" {
+			workspacePath = ".hovel"
+		}
+		plan, err := runtime.ThrowPlans.GetThrowPlan(ctx, workspacePath, invocation.Positional("throw"))
+		if err != nil {
+			return Result{}, err
+		}
+		lines := []string{
+			fmt.Sprintf("Throw %s", plan.ID),
+			fmt.Sprintf("chain          %s", plan.Chain),
+			fmt.Sprintf("targets        %s", strings.Join(plan.Targets, ", ")),
+			fmt.Sprintf("confirmation   %s", plan.ConfirmationID),
+			fmt.Sprintf("review         %s", plan.Review),
+			fmt.Sprintf("intent         %s", plan.Intent),
+		}
+		return Result{Human: strings.Join(lines, "\n"), JSON: plan}, nil
+	}
+}
+
 func newThrowPlan(workspacePath, chain string, targets []string) ThrowPlanRecord {
 	id := "plan-" + stablePlanComponent(chain, targets)
 	return ThrowPlanRecord{
-		ID:         id,
-		ApprovalID: "approval-" + stablePlanComponent(chain, targets),
-		Workspace:  workspacePath,
-		Chain:      chain,
-		Targets:    append([]string(nil), targets...),
-		Decision:   "operator-reviewed",
-		Intent:     fmt.Sprintf("throw chain %s against %d target(s)", chain, len(targets)),
+		ID:             id,
+		ConfirmationID: "confirmation-" + stablePlanComponent(chain, targets),
+		Workspace:      workspacePath,
+		Chain:          chain,
+		Targets:        append([]string(nil), targets...),
+		Review:         "operator-confirmed",
+		Intent:         fmt.Sprintf("throw chain %s against %d target(s)", chain, len(targets)),
 	}
 }
 
@@ -1039,7 +1251,7 @@ func throwInputs(runtime Runtime, invocation Invocation) (throwExecution, error)
 		return throwExecution{}, fmt.Errorf("chain is required; set one with chain use <chain> or pass --chain")
 	}
 	if len(targets) == 0 {
-		return throwExecution{}, fmt.Errorf("target is required; add one with targets add <target> or pass --target")
+		return throwExecution{}, fmt.Errorf("target is required; add one with target add <target> or pass --target")
 	}
 	if len(modules) == 0 {
 		if runtime.Session != nil {
@@ -1112,7 +1324,7 @@ func activeChainRequiredError() error {
 }
 
 func operatorSessionRequiredError(command string) error {
-	return fmt.Errorf("%s needs an operator session\n\nUse the interactive shell:\n  hovel shell\n\nOr keep using one-shot commands that do not depend on selected chain state, such as:\n  hovel modules list\n  hovel throw --chain <chain> --target <target>", command)
+	return fmt.Errorf("%s needs an operator session\n\nUse the interactive shell:\n  hovel shell\n\nOr keep using one-shot commands that do not depend on selected chain state, such as:\n  hovel module list\n  hovel throw --chain <chain> --target <target>", command)
 }
 
 func withActiveChainHelp(err error) error {
@@ -1120,6 +1332,14 @@ func withActiveChainHelp(err error) error {
 		return activeChainRequiredError()
 	}
 	return err
+}
+
+func displayValue(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func moduleDB(runtime Runtime) ModuleDatabase {
@@ -1267,7 +1487,7 @@ func chainInspect(state operatorsession.State) string {
 			lines = append(lines, "  "+target)
 		}
 	}
-	lines = append(lines, "", "Next: add <module>, targets add <target>, config interactive, validate, throw")
+	lines = append(lines, "", "Next: add <module>, target add <target>, config interactive, validate, throw")
 	return strings.Join(lines, "\n")
 }
 
@@ -1326,8 +1546,8 @@ func throwPlanEntries(payload ThrowPayload, started time.Time) []operatorlog.Ent
 	return []operatorlog.Entry{
 		elapsedAt(operatorlog.Stage("0/5 review plan",
 			operatorlog.Field{Name: "plan", Value: payload.Plan.ID},
-			operatorlog.Field{Name: "approval", Value: payload.Plan.ApprovalID},
-			operatorlog.Field{Name: "decision", Value: payload.Plan.Decision},
+			operatorlog.Field{Name: "confirmation", Value: payload.Plan.ConfirmationID},
+			operatorlog.Field{Name: "review", Value: payload.Plan.Review},
 		), started, started, payload.Chain),
 		elapsedAt(operatorlog.Stage("1/5 prepare chain",
 			operatorlog.Field{Name: "chain", Value: payload.Chain},
@@ -1414,8 +1634,8 @@ func throwLog(payload ThrowPayload, started time.Time) operatorlog.Log {
 	entries := []operatorlog.Entry{
 		elapsedAt(operatorlog.Stage("0/5 review plan",
 			operatorlog.Field{Name: "plan", Value: payload.Plan.ID},
-			operatorlog.Field{Name: "approval", Value: payload.Plan.ApprovalID},
-			operatorlog.Field{Name: "decision", Value: payload.Plan.Decision},
+			operatorlog.Field{Name: "confirmation", Value: payload.Plan.ConfirmationID},
+			operatorlog.Field{Name: "review", Value: payload.Plan.Review},
 		), started, started, payload.Chain),
 		elapsedAt(operatorlog.Stage("1/5 prepare chain",
 			operatorlog.Field{Name: "chain", Value: payload.Chain},
@@ -1493,7 +1713,7 @@ func elapsedAt(entry operatorlog.Entry, at, started time.Time, chain string) ope
 	return entry.
 		WithElapsed(at.Sub(started).Seconds()).
 		WithChain(chain).
-		WithTopic("chain/" + chain + "/logs")
+		WithTopic("operation/" + operatorsession.DefaultOperation + "/chain/" + chain + "/logs")
 }
 
 func firstLogTime(logs []LogEntry, fallback time.Time) time.Time {

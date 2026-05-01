@@ -26,6 +26,10 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 	for _, path := range [][]string{
 		{"control", "init"},
 		{"control", "daemon", "status"},
+		{"op", "create"},
+		{"op", "inspect"},
+		{"op", "list"},
+		{"op", "use"},
 		{"chain", "create"},
 		{"chain", "delete"},
 		{"chain", "add"},
@@ -37,19 +41,31 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"chain", "logs"},
 		{"chain", "rename"},
 		{"chain", "validate"},
-		{"modules", "inspect"},
-		{"modules", "list"},
-		{"modules", "search"},
+		{"module", "inspect"},
+		{"module", "list"},
+		{"module", "search"},
 		{"chain", "use"},
-		{"targets", "add"},
-		{"targets", "clear"},
-		{"targets", "config", "list"},
-		{"targets", "config", "set"},
-		{"targets", "config", "unset"},
+		{"target", "add"},
+		{"target", "clear"},
+		{"target", "config", "list"},
+		{"target", "config", "set"},
+		{"target", "config", "unset"},
 		{"throw"},
+		{"throw", "inspect"},
+		{"throw", "list"},
 	} {
 		if _, ok := registry.Find(path...); !ok {
 			t.Fatalf("missing command path %q", strings.Join(path, " "))
+		}
+	}
+	for _, alias := range [][]string{
+		{"chains", "create"},
+		{"modules", "list"},
+		{"targets", "add"},
+		{"throws", "list"},
+	} {
+		if _, ok := registry.Find(alias...); !ok {
+			t.Fatalf("legacy alias %q missing", strings.Join(alias, " "))
 		}
 	}
 }
@@ -86,7 +102,7 @@ func TestRegistryHasRootUsesDefinitions(t *testing.T) {
 		Modules:    exampleCatalog(),
 	})
 
-	for _, root := range []string{"chain", "control", "modules", "targets", "throw"} {
+	for _, root := range []string{"op", "chain", "chains", "control", "module", "modules", "target", "targets", "throw", "throws"} {
 		if !registry.HasRoot(root) {
 			t.Fatalf("HasRoot(%q) = false, want true", root)
 		}
@@ -198,13 +214,13 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 		t.Fatalf("run request = %#v", recorder.requests[0])
 	}
 	wantPlan := ThrowPlanRecord{
-		ID:         "plan-mock-exploit-mock---target",
-		ApprovalID: "approval-mock-exploit-mock---target",
-		Workspace:  ".hovel",
-		Chain:      "mock-exploit",
-		Targets:    []string{"mock://target"},
-		Decision:   "operator-reviewed",
-		Intent:     "throw chain mock-exploit against 1 target(s)",
+		ID:             "plan-mock-exploit-mock---target",
+		ConfirmationID: "confirmation-mock-exploit-mock---target",
+		Workspace:      ".hovel",
+		Chain:          "mock-exploit",
+		Targets:        []string{"mock://target"},
+		Review:         "operator-confirmed",
+		Intent:         "throw chain mock-exploit against 1 target(s)",
 	}
 	if !reflect.DeepEqual(plans.records, []ThrowPlanRecord{wantPlan}) {
 		t.Fatalf("plans = %#v, want %#v", plans.records, []ThrowPlanRecord{wantPlan})
@@ -254,7 +270,7 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	})
 	createDefinition, _ := registry.Find("chain", "create")
 	useDefinition, _ := registry.Find("chain", "use")
-	targetDefinition, _ := registry.Find("targets", "add")
+	targetDefinition, _ := registry.Find("target", "add")
 	listDefinition, _ := registry.Find("chain", "list")
 	inspectDefinition, _ := registry.Find("chain", "inspect")
 	renameDefinition, _ := registry.Find("chain", "rename")
@@ -294,7 +310,7 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 		t.Fatalf("active chain = %q, want beta", state.ActiveChain)
 	}
 	if len(state.Targets) != 1 || state.Targets[0] != "mock://beta" {
-		t.Fatalf("beta targets = %#v", state.Targets)
+		t.Fatalf("beta target = %#v", state.Targets)
 	}
 
 	listResult, err := listDefinition.Execute(context.Background(), Invocation{})
@@ -302,8 +318,8 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"  alpha steps=0 targets=1 topic=chain/alpha/logs",
-		"* beta steps=0 targets=1 topic=chain/beta/logs",
+		"  alpha steps=0 targets=1 topic=operation/default/chain/alpha/logs",
+		"* beta steps=0 targets=1 topic=operation/default/chain/beta/logs",
 	} {
 		if !strings.Contains(listResult.Human, want) {
 			t.Fatalf("chain list missing %q:\n%s", want, listResult.Human)
@@ -314,7 +330,7 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(inspectResult.Human, "Chain beta steps=0 targets=1 config=0 topic=chain/beta/logs") {
+	if !strings.Contains(inspectResult.Human, "Chain beta steps=0 targets=1 config=0 topic=operation/default/chain/beta/logs") {
 		t.Fatalf("inspect result = %q", inspectResult.Human)
 	}
 
@@ -328,9 +344,9 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 		t.Fatalf("active chain = %q, want renamed", state.ActiveChain)
 	}
 	if len(state.Targets) != 1 || state.Targets[0] != "mock://beta" {
-		t.Fatalf("renamed targets = %#v", state.Targets)
+		t.Fatalf("renamed target = %#v", state.Targets)
 	}
-	if state.LogTopic != "chain/renamed/logs" {
+	if state.LogTopic != "operation/default/chain/renamed/logs" {
 		t.Fatalf("renamed log topic = %q", state.LogTopic)
 	}
 
@@ -344,6 +360,65 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	}
 }
 
+func TestOperationHandlersSegmentChainState(t *testing.T) {
+	session := operatorsession.New()
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
+		Session:    session,
+	})
+	opUseDefinition, _ := registry.Find("op", "use")
+	opListDefinition, _ := registry.Find("op", "list")
+	opInspectDefinition, _ := registry.Find("op", "inspect")
+	chainUseDefinition, _ := registry.Find("chain", "use")
+	targetDefinition, _ := registry.Find("target", "add")
+
+	if _, err := opUseDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"operation": "redteam-lab"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chainUseDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"chain": "alpha"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"target": "mock://alpha"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := opUseDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"operation": "afterparty"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chainUseDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"chain": "beta"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"target": "mock://beta"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	state := session.Snapshot()
+	if state.ActiveOperation != "afterparty" || state.ActiveChain != "beta" {
+		t.Fatalf("active attachment = %s/%s, want afterparty/beta", state.ActiveOperation, state.ActiveChain)
+	}
+	if len(state.Targets) != 1 || state.Targets[0] != "mock://beta" {
+		t.Fatalf("afterparty beta target = %#v", state.Targets)
+	}
+	listResult, err := opListDefinition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"  redteam-lab chains=1", "* afterparty chains=1"} {
+		if !strings.Contains(listResult.Human, want) {
+			t.Fatalf("op list missing %q:\n%s", want, listResult.Human)
+		}
+	}
+	inspectResult, err := opInspectDefinition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inspectResult.Human, "Operation afterparty chains=1 active_chain=beta") {
+		t.Fatalf("op inspect = %q", inspectResult.Human)
+	}
+}
+
 func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 	registry := HovelRegistry(Runtime{
 		Workspaces: fakeWorkspaceService{},
@@ -351,9 +426,9 @@ func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 		Runs:       fakeRunClientFactory{},
 		Modules:    exampleCatalog(),
 	})
-	listDefinition, _ := registry.Find("modules", "list")
-	inspectDefinition, _ := registry.Find("modules", "inspect")
-	searchDefinition, _ := registry.Find("modules", "search")
+	listDefinition, _ := registry.Find("module", "list")
+	inspectDefinition, _ := registry.Find("module", "inspect")
+	searchDefinition, _ := registry.Find("module", "search")
 
 	listResult, err := listDefinition.Execute(context.Background(), Invocation{
 		Options: map[string]string{"type": "survey"},
@@ -395,7 +470,7 @@ func TestSessionCommandsRejectOneShotMode(t *testing.T) {
 		Runs:       fakeRunClientFactory{},
 		Modules:    exampleCatalog(),
 	})
-	definition, _ := registry.Find("targets", "add")
+	definition, _ := registry.Find("target", "add")
 
 	_, err := definition.Execute(context.Background(), Invocation{
 		Positionals: map[string]string{"target": "mock://target"},
@@ -418,9 +493,9 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 	addDefinition, _ := registry.Find("chain", "add")
 	chainConfigSetDefinition, _ := registry.Find("chain", "config", "set")
 	chainConfigListDefinition, _ := registry.Find("chain", "config", "list")
-	targetDefinition, _ := registry.Find("targets", "add")
-	targetConfigSetDefinition, _ := registry.Find("targets", "config", "set")
-	targetConfigListDefinition, _ := registry.Find("targets", "config", "list")
+	targetDefinition, _ := registry.Find("target", "add")
+	targetConfigSetDefinition, _ := registry.Find("target", "config", "set")
+	targetConfigListDefinition, _ := registry.Find("target", "config", "list")
 	validateDefinition, _ := registry.Find("chain", "validate")
 
 	if _, err := useDefinition.Execute(context.Background(), Invocation{
@@ -521,7 +596,7 @@ func TestTargetHandlerRequiresActiveChain(t *testing.T) {
 		Modules:    exampleCatalog(),
 		Session:    session,
 	})
-	targetDefinition, _ := registry.Find("targets", "add")
+	targetDefinition, _ := registry.Find("target", "add")
 
 	_, err := targetDefinition.Execute(context.Background(), Invocation{
 		Positionals: map[string]string{"target": "mock://target"},
@@ -575,7 +650,7 @@ func TestThrowHandlerStoresLogsOnPayloadChain(t *testing.T) {
 	}
 	payload := result.JSON.(ThrowPayload)
 	if len(payload.Targets) != 1 || payload.Targets[0] != "mock://alpha" {
-		t.Fatalf("throw targets = %#v, want alpha chain targets", payload.Targets)
+		t.Fatalf("throw target = %#v, want alpha chain targets", payload.Targets)
 	}
 	if session.Snapshot().ActiveChain != "beta" {
 		t.Fatalf("active chain = %q, want beta", session.Snapshot().ActiveChain)

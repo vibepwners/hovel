@@ -19,6 +19,7 @@ go_test(
     srcs = ["daemonrpc_test.go"],
     embed = [":daemonrpc"],
     deps = [
+        "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/event",

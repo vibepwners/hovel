@@ -94,10 +94,11 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 
 func newRootParser() *argparse.Parser {
 	parser := argparse.NewParser("hovel", "Hovel operator console.")
+	parser.NewCommand("op", "Create, select, and inspect operations.")
 	parser.NewCommand("chain", "Build and manage operator chains.")
-	parser.NewCommand("modules", "Browse, search, and inspect modules.")
-	parser.NewCommand("targets", "Add and configure chain targets.")
-	parser.NewCommand("throw", "Execute the selected chain against targets.")
+	parser.NewCommand("module", "Browse, search, and inspect modules.")
+	parser.NewCommand("target", "Add and configure chain targets.")
+	parser.NewCommand("throw", "Execute the selected chain, or list and inspect throws.")
 	parser.NewCommand("init", "Initialize a workspace.")
 	parser.NewCommand("status", "Inspect workspace and daemon status.")
 	parser.NewCommand("shell", "Launch the interactive prompt shell.")

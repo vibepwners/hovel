@@ -36,8 +36,8 @@ defaultConcurrency: 8
 services:
   autoStart: []
   allowRunScoped: true
-policy:
-  requirePlanApproval: true
+guardrails:
+  requireThrowConfirmation: true
   requireConfirmationFor:
     - external_bind
     - dangerous_module
@@ -116,7 +116,7 @@ Module and service sources:
 
 ## Terminal Libraries And Theming
 
-The interactive `cli` shell should use go-prompt for prompt input, history, suggestions, and completions. The `cli` shell and TUI should share a small theme system without making theme work part of the critical MVP path. Lip Gloss is the styling engine for terminal presentation, with shared tokens for colors, borders, severity, focus, muted text, success, warning, danger, and active run state.
+The interactive `cli` shell should use go-prompt for prompt input, history, suggestions, and completions. The `cli` shell and TUI should share a small theme system without making theme work part of the critical MVP path. Lip Gloss is the styling engine for terminal presentation, with shared tokens for colors, borders, severity, focus, muted text, success, warning, danger, and active throw state.
 
 Initial theme names:
 

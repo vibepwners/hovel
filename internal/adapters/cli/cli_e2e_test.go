@@ -4,14 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
@@ -31,8 +28,8 @@ func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
 	if code := app.ExecuteLine(context.Background(), "chain add mock-exploit", &stdout, &stderr); code != 0 {
 		t.Fatalf("chain add exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if code := app.ExecuteLine(context.Background(), "targets add mock://target", &stdout, &stderr); code != 0 {
-		t.Fatalf("targets exit code = %d, stderr = %s", code, stderr.String())
+	if code := app.ExecuteLine(context.Background(), "target add mock://target", &stdout, &stderr); code != 0 {
+		t.Fatalf("target exit code = %d, stderr = %s", code, stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
@@ -47,7 +44,7 @@ func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
 		t.Fatalf("chain = %q, want lab", payload.Chain)
 	}
 	if len(payload.Targets) != 1 || payload.Targets[0] != "mock://target" {
-		t.Fatalf("targets = %#v", payload.Targets)
+		t.Fatalf("target = %#v", payload.Targets)
 	}
 	if len(payload.Results) != 1 || payload.Results[0].State != "succeeded" {
 		t.Fatalf("results = %#v", payload.Results)
@@ -106,6 +103,40 @@ func TestDaemonLogSubscriptionOnlyShowsActiveChain(t *testing.T) {
 	}
 }
 
+func TestDaemonLogSubscriptionFollowsActiveOperation(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client, err := daemonrpc.Dial(fixture.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	app := newTestApp().withDaemonSession(ctx, client)
+	if err := app.session.UseOperation("test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.session.UseChain("new"); err != nil {
+		t.Fatal(err)
+	}
+
+	var output bytes.Buffer
+	stop := app.SubscribeLogs(ctx, client, nil, &output)
+	defer stop()
+
+	if _, err := app.session.AddModule("mock-survey"); err != nil {
+		t.Fatal(err)
+	}
+
+	testsupport.WaitFor(t, func() bool {
+		return strings.Contains(output.String(), "mock-survey")
+	}, func() string {
+		return "output:\n" + output.String()
+	})
+}
+
 func TestDaemonSessionKeepsInjectedModuleCatalog(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
 	client, err := daemonrpc.Dial(fixture.SocketPath)
@@ -125,14 +156,14 @@ func TestDaemonSessionKeepsInjectedModuleCatalog(t *testing.T) {
 	app := newAppWithSessionAndModules(operatorsession.New(), modules).withDaemonSession(context.Background(), client)
 	var stdout, stderr bytes.Buffer
 
-	if code := app.ExecuteLine(context.Background(), "modules list", &stdout, &stderr); code != 0 {
-		t.Fatalf("modules list exit code = %d, stderr = %s", code, stderr.String())
+	if code := app.ExecuteLine(context.Background(), "module list", &stdout, &stderr); code != 0 {
+		t.Fatalf("module list exit code = %d, stderr = %s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "custom-module@v1") {
-		t.Fatalf("modules list output = %q, want injected custom module", stdout.String())
+		t.Fatalf("module list output = %q, want injected custom module", stdout.String())
 	}
 	if strings.Contains(stdout.String(), "mock-exploit") {
-		t.Fatalf("modules list output leaked default catalog: %q", stdout.String())
+		t.Fatalf("module list output leaked default catalog: %q", stdout.String())
 	}
 }
 
@@ -145,9 +176,9 @@ func TestE2EExampleSurveyAuthChainUsesPythonModules(t *testing.T) {
 	executeLines(t, app, &stdout, &stderr,
 		"chain use survey-example",
 		"chain add mock-survey",
-		"targets add mock://router-01",
-		"targets config set mock://router-01 target.host router-01",
-		"targets config set mock://router-01 target.port 22",
+		"target add mock://router-01",
+		"target config set mock://router-01 target.host router-01",
+		"target config set mock://router-01 target.port 22",
 		"chain validate",
 	)
 	stdout.Reset()
@@ -181,10 +212,10 @@ func TestE2EExamplePayloadExploitChainUsesPythonModules(t *testing.T) {
 		"chain use survey-exploit",
 		"chain add mock-survey",
 		"chain add mock-exploit",
-		"targets add mock://router-01",
+		"target add mock://router-01",
 		"chain config set operator.confirmed_lab true",
-		"targets config set mock://router-01 target.host router-01",
-		"targets config set mock://router-01 target.port 22",
+		"target config set mock://router-01 target.host router-01",
+		"target config set mock://router-01 target.port 22",
 		"chain validate",
 	)
 	stdout.Reset()
@@ -223,11 +254,11 @@ func TestE2EExampleFailingChainReportsFailedModule(t *testing.T) {
 	executeLines(t, app, &stdout, &stderr,
 		"chain use failing-example",
 		"chain add mock-exploit",
-		"targets add mock://target",
+		"target add mock://target",
 		"chain config set operator.confirmed_lab true",
 		"chain config set failure_mode execution",
-		"targets config set mock://target target.host target",
-		"targets config set mock://target target.port 443",
+		"target config set mock://target target.host target",
+		"target config set mock://target target.port 443",
 		"chain validate",
 	)
 	stdout.Reset()
@@ -338,11 +369,11 @@ func executeLines(t *testing.T, app App, stdout, stderr *bytes.Buffer, lines ...
 
 type e2eThrowPayload struct {
 	Plan struct {
-		ID         string   `json:"id"`
-		ApprovalID string   `json:"approvalId"`
-		Chain      string   `json:"chain"`
-		Targets    []string `json:"targets"`
-		Decision   string   `json:"decision"`
+		ID             string   `json:"id"`
+		ConfirmationID string   `json:"confirmationId"`
+		Chain          string   `json:"chain"`
+		Targets        []string `json:"targets"`
+		Review         string   `json:"review"`
 	} `json:"plan"`
 	Chain   string   `json:"chain"`
 	Targets []string `json:"targets"`
@@ -425,26 +456,22 @@ func hasPayloadLog(logs []struct {
 }
 
 func assertPersistedPlan(t *testing.T, workspacePath string, plan struct {
-	ID         string   `json:"id"`
-	ApprovalID string   `json:"approvalId"`
-	Chain      string   `json:"chain"`
-	Targets    []string `json:"targets"`
-	Decision   string   `json:"decision"`
+	ID             string   `json:"id"`
+	ConfirmationID string   `json:"confirmationId"`
+	Chain          string   `json:"chain"`
+	Targets        []string `json:"targets"`
+	Review         string   `json:"review"`
 }) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(workspacePath, "runs", plan.ID+".json"))
+	record, err := filesystem.NewWorkspaceStore().GetThrowPlan(context.Background(), workspacePath, plan.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var record commands.ThrowPlanRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		t.Fatal(err)
-	}
-	if record.ID != plan.ID || record.ApprovalID != plan.ApprovalID || record.Chain != plan.Chain || record.Decision != plan.Decision {
+	if record.ID != plan.ID || record.ConfirmationID != plan.ConfirmationID || record.Chain != plan.Chain || record.Review != plan.Review {
 		t.Fatalf("persisted plan = %#v, payload plan = %#v", record, plan)
 	}
 	if strings.Join(record.Targets, ",") != strings.Join(plan.Targets, ",") {
-		t.Fatalf("persisted plan targets = %#v, payload targets = %#v", record.Targets, plan.Targets)
+		t.Fatalf("persisted plan target = %#v, payload target = %#v", record.Targets, plan.Targets)
 	}
 	if record.Workspace != workspacePath {
 		t.Fatalf("persisted plan workspace = %q, want %q", record.Workspace, workspacePath)

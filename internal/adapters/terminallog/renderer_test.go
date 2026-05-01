@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestRendererFormatsOperatorLog(t *testing.T) {
@@ -63,6 +64,50 @@ func TestRendererDisplaysThrowElapsedInLabel(t *testing.T) {
 	plain := stripANSI(rendered)
 	if !strings.Contains(plain, ":: module        0.02") {
 		t.Fatalf("rendered log missing elapsed label:\n%s", rendered)
+	}
+}
+
+func TestRendererStylesThrowHeaderBoldRed(t *testing.T) {
+	renderer := NewRenderer()
+	title, subtitle := renderer.headerStyles("HOVEL//THROW")
+
+	requireBoldRedStyle(t, "title", title)
+	requireBoldRedStyle(t, "subtitle", subtitle)
+
+	rendered := renderer.Render(operatorlog.New("HOVEL//THROW", "new", []operatorlog.Entry{
+		operatorlog.Info("throw", "started"),
+	}))
+	if !strings.Contains(stripANSI(rendered), "HOVEL//THROW new") {
+		t.Fatalf("rendered throw header missing chain name:\n%s", rendered)
+	}
+}
+
+func TestRendererStylesStreamedThrowHeaderBoldRed(t *testing.T) {
+	renderer := NewRenderer()
+	rendered := renderer.Render(operatorlog.New("", "", []operatorlog.Entry{{
+		Kind:      operatorlog.KindHeader,
+		Message:   "HOVEL//THROW",
+		ChainName: "new",
+	}}))
+
+	if !strings.Contains(stripANSI(rendered), "HOVEL//THROW new") {
+		t.Fatalf("rendered streamed throw header missing chain name:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, renderer.throwTitle.Render("HOVEL//THROW")) {
+		t.Fatalf("rendered streamed throw header missing styled title:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, renderer.throwSubtitle.Render("new")) {
+		t.Fatalf("rendered streamed throw header missing styled chain name:\n%s", rendered)
+	}
+}
+
+func requireBoldRedStyle(t *testing.T, name string, style lipgloss.Style) {
+	t.Helper()
+	if !style.GetBold() {
+		t.Fatalf("%s style is not bold", name)
+	}
+	if color, ok := style.GetForeground().(lipgloss.Color); !ok || color != lipgloss.Color("#ff0033") {
+		t.Fatalf("%s style foreground = %#v, want #ff0033", name, style.GetForeground())
 	}
 }
 

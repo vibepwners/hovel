@@ -1,6 +1,6 @@
 # Testing and Roadmap
 
-Testing should focus on contracts first. The risk is not only individual functions breaking; it is adapters disagreeing about the same run, service, provider, or event.
+Testing should focus on contracts first. The risk is not only individual functions breaking; it is adapters disagreeing about the same operation, chain, throw, service, provider, or event.
 
 ## Go Host Tests
 
@@ -36,17 +36,19 @@ First-slice integration tests:
 3. Module emits logs.
 4. Module returns result.
 5. Host captures stdout, stderr, and logging as structured events.
-6. Host records malformed protocol output as a failed module run.
+6. Host records malformed protocol output as a failed module execution.
 7. `command` mode displays throw results.
 8. `hovel` starts or attaches to `hoveld`.
 9. `command` execution crosses the daemon boundary.
-10. Throw plan, approval record, events, artifacts, and final run state are persisted.
+10. Throw plan, confirmation record, events, artifacts, and final throw state are persisted.
 11. A command registered in the central registry is available through both `command` mode and `cli` mode.
 12. Arguments, switches, options, defaults, help, and validation are identical in `command` mode and `cli` mode.
 13. If `cli` or `tui` starts a managed daemon, it stops that daemon on exit.
 14. If `cli` or `tui` attaches to an existing daemon, it leaves that daemon running on exit.
-15. A `cli` session can select a chain, add targets, and issue `throw` using session state.
+15. A `cli` session can select an operation and chain, add targets, and issue `throw` using attachment state.
 16. `command` mode can issue `throw` with explicit `--chain` and `--target` options without session state.
+17. Two daemon clients attached to the same operation can use different active chains concurrently without leaking targets, logs, or prompt context.
+18. An explicit `--chain` command does not mutate another client's active chain.
 
 Follow-on integration tests:
 
@@ -55,8 +57,8 @@ Follow-on integration tests:
 3. Service handshakes.
 4. Service health check passes.
 5. Service provides payload or listener resource.
-6. MCP can inspect and plan the same throw as `command` and `cli` through shared policy checks.
-7. MCP can execute only through the shared approval path.
+6. MCP can inspect and plan the same throw as `command` and `cli` through shared guardrails.
+7. MCP can execute only through the shared confirmation path.
 8. TUI consumes event stream.
 
 ## Coverage Targets
@@ -101,14 +103,14 @@ Strict branch coverage gates for core packages.
 6. Persist module execution events.
 7. Treat malformed frames and unexpected stdout bytes as module failures.
 
-### Milestone 3: Run and Artifact Persistence
+### Milestone 3: Throw and Artifact Persistence
 
-1. Implement persisted run plans.
-2. Implement approval records.
-3. Implement run state persistence.
+1. Implement persisted throw plans.
+2. Implement confirmation records.
+3. Implement throw state persistence.
 4. Implement artifact provider.
 5. Hash-track artifacts and payload-like bytes.
-6. Inspect runs and artifacts from `command` and `cli`.
+6. Inspect throws and artifacts from `command` and `cli`.
 
 ### Milestone 4: Providers
 
@@ -126,13 +128,13 @@ Strict branch coverage gates for core packages.
 4. Implement service health checks.
 5. Implement toy service that emits logs.
 
-### Milestone 6: Chain Runner
+### Milestone 6: Chain Thrower
 
 1. Implement simple sequential chain runner.
 2. Add phases and steps.
 3. Add service start/stop steps.
 4. Add event stream.
-5. Add per-target run state.
+5. Add per-target throw state.
 6. Add cancellation hooks.
 7. Support only simple input and step-output references at first.
 
@@ -143,13 +145,13 @@ Strict branch coverage gates for core packages.
 3. Exercise one managed service placeholder.
 4. Implement delivery strategy selection without project-owned exploit code.
 5. Capture transcript artifact.
-6. Produce full run result.
+6. Produce full throw result.
 
 ### Milestone 8: TUI Alpha
 
 1. Add Bubble Tea app.
 2. Add dashboard.
-3. Add live run view.
+3. Add live throw view.
 4. Add log panel.
 5. Add service panel.
 6. Add listener/session panel.
@@ -161,12 +163,12 @@ Strict branch coverage gates for core packages.
 ## Hard Rules
 
 1. `command` and `cli` first, TUI second.
-2. `hoveld` is mandatory and owns runs, services, modules, events, providers, artifacts, and sessions.
+2. `hoveld` is mandatory and owns operations, chains, throws, services, modules, events, providers, artifacts, evidence, and sessions.
 3. TUI calls application services only.
 4. MCP calls application services only.
 5. REST calls application services only.
-6. MCP has eventual operator parity through the same policy and audit model.
-7. Run execution requires a persisted plan and approval record.
+6. MCP has eventual operator parity through the same guardrail and audit model.
+7. Throw execution requires a persisted plan and confirmation record.
 8. Python module authors should not need to see transport internals.
 9. Python service authors should not need to see transport internals.
 10. All module logs flow through the host.
@@ -176,5 +178,5 @@ Strict branch coverage gates for core packages.
 14. Payload provider outputs are tagged bytes with minimal framework validation.
 15. Services are lifecycle-managed.
 16. Payloads are content-addressed or hash-tracked.
-17. Chain runs are replay-inspectable.
+17. Chain throws are replay-inspectable.
 18. Public demos are authorized and lab-safe.

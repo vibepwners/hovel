@@ -142,6 +142,109 @@ func TestServeRunsMockExploitOverRPC(t *testing.T) {
 	}
 }
 
+func TestServeRestoresOperatorSessionFromWorkspaceDatabase(t *testing.T) {
+	workspacePath := shortTempDir(t)
+	socketPath := workspacePath + "/hoveld.sock"
+	store := filesystem.NewWorkspaceStore()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, 1)
+	go func() {
+		errs <- Serve(ctx, Args{
+			WorkspacePath: workspacePath,
+			SocketPath:    socketPath,
+			PID:           123,
+			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		})
+	}()
+	waitFor(t, func() bool {
+		client, err := daemonrpc.Dial(socketPath)
+		if err != nil {
+			return false
+		}
+		client.Close()
+		return true
+	})
+
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := daemonrpc.NewSessionClient(context.Background(), client)
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-survey"); err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	cancel()
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+
+	persisted, ok, err := store.LoadOperatorSession(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("operator session was not persisted")
+	}
+	if len(persisted.Operations) == 0 {
+		t.Fatalf("persisted state has no operations: %#v", persisted)
+	}
+
+	socketPath = workspacePath + "/hoveld-restarted.sock"
+	ctx, cancel = context.WithCancel(context.Background())
+	errs = make(chan error, 1)
+	go func() {
+		errs <- Serve(ctx, Args{
+			WorkspacePath: workspacePath,
+			SocketPath:    socketPath,
+			PID:           456,
+			StartedAt:     time.Date(2026, 4, 26, 12, 1, 0, 0, time.UTC),
+		})
+	}()
+	defer func() {
+		cancel()
+		<-errs
+	}()
+	waitFor(t, func() bool {
+		client, err := daemonrpc.Dial(socketPath)
+		if err != nil {
+			return false
+		}
+		client.Close()
+		return true
+	})
+
+	client, err = daemonrpc.Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	restored := daemonrpc.NewSessionClient(context.Background(), client)
+	if err := restored.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := restored.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	state := restored.Snapshot()
+	if len(state.Targets) != 1 || state.Targets[0] != "mock://alpha" {
+		t.Fatalf("restored targets = %#v", state.Targets)
+	}
+	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "mock-survey" {
+		t.Fatalf("restored steps = %#v", state.Steps)
+	}
+}
+
 func shortTempDir(t *testing.T) string {
 	t.Helper()
 	base := "/private/tmp"

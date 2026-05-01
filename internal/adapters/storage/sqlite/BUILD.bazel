@@ -1,0 +1,31 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sqlite",
+    srcs = [
+        "migrations.go",
+        "store.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/app/commands",
+        "//internal/app/operatorsession",
+        "//internal/domain/workspace",
+        "@org_modernc_sqlite//:sqlite",
+    ],
+)
+
+go_test(
+    name = "sqlite_test",
+    size = "small",
+    srcs = [
+        "migrations_test.go",
+        "store_test.go",
+    ],
+    embed = [":sqlite"],
+    deps = [
+        "//internal/app/commands",
+        "//internal/app/operatorsession",
+    ],
+)

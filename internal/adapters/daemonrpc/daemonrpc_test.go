@@ -6,9 +6,11 @@ import (
 	"net/rpc"
 	"net/rpc/jsonrpc"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
@@ -193,6 +195,245 @@ func TestPollChainLogsOnlyReturnsRequestedChain(t *testing.T) {
 	if len(allLogs.Logs) != 4 {
 		t.Fatalf("all log count = %d, want 4: %#v", len(allLogs.Logs), allLogs.Logs)
 	}
+}
+
+func TestSessionClientsKeepIndependentOperationChainAttachments(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	server := rpc.NewServer()
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	if err := Register(server, runs, WithSession(operatorsession.New()), WithLogBroker(NewLogBroker())); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go server.ServeCodec(jsonrpc.NewServerCodec(conn))
+		}
+	}()
+
+	clientA, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientA.Close()
+	clientB, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientB.Close()
+
+	alpha := NewSessionClient(context.Background(), clientA)
+	beta := NewSessionClient(context.Background(), clientB)
+	if err := alpha.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := beta.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := alpha.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := beta.UseChain("beta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := alpha.AddTarget("mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := beta.AddTarget("mock://beta"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alpha.AddModule("mock-survey"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := beta.AddModule("mock-exploit"); err != nil {
+		t.Fatal(err)
+	}
+
+	alphaState := alpha.Snapshot()
+	if alphaState.ActiveOperation != "redteam-lab" || alphaState.ActiveChain != "alpha" {
+		t.Fatalf("alpha attachment = %s/%s, want redteam-lab/alpha", alphaState.ActiveOperation, alphaState.ActiveChain)
+	}
+	if len(alphaState.Targets) != 1 || alphaState.Targets[0] != "mock://alpha" {
+		t.Fatalf("alpha targets = %#v", alphaState.Targets)
+	}
+	betaState := beta.Snapshot()
+	if betaState.ActiveOperation != "redteam-lab" || betaState.ActiveChain != "beta" {
+		t.Fatalf("beta attachment = %s/%s, want redteam-lab/beta", betaState.ActiveOperation, betaState.ActiveChain)
+	}
+	if len(betaState.Targets) != 1 || betaState.Targets[0] != "mock://beta" {
+		t.Fatalf("beta targets = %#v", betaState.Targets)
+	}
+
+	alphaLogs, err := clientA.PollOperationChainLogs(context.Background(), "redteam-lab", "alpha", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, log := range alphaLogs.Logs {
+		if log.Operation != "redteam-lab" || log.Chain != "alpha" {
+			t.Fatalf("alpha poll returned wrong topic: %#v", log)
+		}
+	}
+}
+
+func TestSessionMutationsPersistSnapshots(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	server := rpc.NewServer()
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	var persisted []operatorsession.PersistedState
+	if err := Register(server, runs,
+		WithSession(operatorsession.New()),
+		WithLogBroker(NewLogBroker()),
+		WithSessionPersistence(func(state operatorsession.PersistedState) error {
+			persisted = append(persisted, state)
+			return nil
+		}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go server.ServeCodec(jsonrpc.NewServerCodec(conn))
+		}
+	}()
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	session := NewSessionClient(context.Background(), client)
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-survey"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(persisted) == 0 {
+		t.Fatal("no persisted snapshots")
+	}
+	last := persisted[len(persisted)-1]
+	var got operatorsession.PersistedChain
+	for _, operation := range last.Operations {
+		if operation.Name != "redteam-lab" {
+			continue
+		}
+		for _, chain := range operation.Chains {
+			if chain.Name == "alpha" {
+				got = chain
+			}
+		}
+	}
+	if got.Name != "alpha" {
+		t.Fatalf("persisted operations = %#v, want redteam-lab/alpha", last.Operations)
+	}
+	if !reflect.DeepEqual(got.Targets, []string{"mock://alpha"}) {
+		t.Fatalf("persisted targets = %#v", got.Targets)
+	}
+	if !reflect.DeepEqual(got.Steps, []operatorsession.Step{{ID: "step-1", ModuleID: "mock-survey"}}) {
+		t.Fatalf("persisted steps = %#v", got.Steps)
+	}
+}
+
+func TestActiveLogsDoesNotPersistSnapshot(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	server := rpc.NewServer()
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	var persisted []operatorsession.PersistedState
+	if err := Register(server, runs,
+		WithSession(operatorsession.New()),
+		WithLogBroker(NewLogBroker()),
+		WithSessionPersistence(func(state operatorsession.PersistedState) error {
+			persisted = append(persisted, state)
+			return nil
+		}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go server.ServeCodec(jsonrpc.NewServerCodec(conn))
+		}
+	}()
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	session := NewSessionClient(context.Background(), client)
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AppendLogToChain("alpha", operatorlogEntryFromTest("existing log")); err != nil {
+		t.Fatal(err)
+	}
+	persistCount := len(persisted)
+	if persistCount == 0 {
+		t.Fatal("setup did not persist")
+	}
+
+	logs := session.ActiveLogs()
+	if len(logs) != 1 || logs[0].Message != "existing log" {
+		t.Fatalf("active logs = %#v", logs)
+	}
+	if len(persisted) != persistCount {
+		t.Fatalf("persist count = %d, want %d after read-only ActiveLogs", len(persisted), persistCount)
+	}
+}
+
+func operatorlogEntryFromTest(message string) operatorlog.Entry {
+	return operatorlog.Entry{Message: message}
 }
 
 func shortTempDir(t *testing.T) string {

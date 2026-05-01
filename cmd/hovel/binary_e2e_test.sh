@@ -64,6 +64,7 @@ output="$("$hovel_bin" command throw --chain mock-exploit --target mock://target
 python3 - "$workspace" "$output" <<'PY'
 import json
 import pathlib
+import sqlite3
 import sys
 
 workspace = pathlib.Path(sys.argv[1])
@@ -77,9 +78,14 @@ assert result["moduleId"] == "mock-exploit@v0.0.0-example", result
 assert result["findings"], result
 assert result["artifacts"], result
 plan = payload["plan"]
-plan_path = workspace / "runs" / f"{plan['id']}.json"
-record = json.loads(plan_path.read_text())
+db_path = workspace / "workspace.db"
+with sqlite3.connect(db_path) as db:
+    row = db.execute("select plan_json from throw_plans where id = ?", (plan["id"],)).fetchone()
+    versions = [row[0] for row in db.execute("select version from schema_migrations order by version")]
+assert row, payload
+record = json.loads(row[0])
 assert record["id"] == plan["id"], record
-assert record["approvalId"] == plan["approvalId"], record
+assert record["confirmationId"] == plan["confirmationId"], record
 assert record["workspace"] == str(workspace), record
+assert versions == [1], versions
 PY

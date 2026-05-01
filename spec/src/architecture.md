@@ -16,7 +16,7 @@ The domain package must not import CLI, TUI, REST, MCP, storage, RPC, concrete m
 It owns:
 
 1. Workspace database.
-2. Run state.
+2. Throw state.
 3. Chain execution.
 4. Module process lifecycle.
 5. Service lifecycle.
@@ -37,7 +37,7 @@ hovel daemon ...
 hovel tui ...
 ```
 
-The same binary may expose direct command aliases such as `hovel chain ...`, `hovel modules ...`, `hovel targets ...`, and `hovel throw ...`. Those aliases must dispatch through the central command registry so command paths, aliases, help, options, and handler bindings remain one shared contract.
+The same binary may expose direct command aliases such as `hovel op ...`, `hovel chain ...`, `hovel module ...`, `hovel target ...`, and `hovel throw ...`. Those aliases must dispatch through the central command registry so command paths, aliases, help, options, and handler bindings remain one shared contract.
 
 `cli` and `tui` must auto-start or attach to the daemon role in local mode. `command` mode must not silently auto-start the daemon for ordinary operator commands; daemon-backed command invocations should require an already-running daemon, except for explicit daemon-management commands.
 
@@ -63,7 +63,7 @@ MVP daemon rules:
 6. Daemon identity, socket path, PID, start time, and health status should be inspectable with `hovel daemon status` and from the shared registry as `control daemon status`.
 7. Tests may use an in-process engine harness, but production commands should exercise the daemon boundary.
 8. The first RPC contract should prove a fully mocked throw flow: `command` mode calls the daemon over local RPC, the daemon invokes a Go mock module through the selected chain, and the result returns through the RPC boundary.
-9. Mock exploit modules must not perform network exploitation. They exist to test orchestration, events, artifacts, approvals, and transport boundaries.
+9. Mock exploit modules must not perform network exploitation. They exist to test orchestration, events, artifacts, confirmation records, and transport boundaries.
 
 Managed daemon ownership rules:
 
@@ -85,13 +85,13 @@ ManagedServiceService
 ProviderService
 TargetService
 PlanningService
-RunService
+ThrowService
 ArtifactService
 EventService
 WorkspaceService
 ListenerService
 SessionService
-PolicyService
+GuardrailService
 ```
 
 Representative methods:
@@ -102,19 +102,19 @@ InspectModule(ctx, moduleID) (ModuleDescriptor, error)
 ListServices(ctx) ([]ServiceDescriptor, error)
 StartService(ctx, ServiceStartRequest) (ServiceID, error)
 StopService(ctx, ServiceID) error
-PlanRun(ctx, RunRequest) (RunPlan, error)
-ApproveRun(ctx, RunPlanID, Approval) (ApprovedRun, error)
-StartRun(ctx, ApprovedRun) (RunID, error)
-StreamEvents(ctx, RunID) (<-chan Event, error)
-CancelRun(ctx, RunID) error
+PlanThrow(ctx, ThrowRequest) (ThrowPlan, error)
+ConfirmThrow(ctx, ThrowPlanID, Confirmation) (ConfirmedThrow, error)
+StartThrow(ctx, ConfirmedThrow) (ThrowID, error)
+StreamEvents(ctx, ThrowID) (<-chan Event, error)
+CancelThrow(ctx, ThrowID) error
 ResolvePayload(ctx, PayloadQuery) (PayloadRef, error)
 ResolvePayloadBytes(ctx, PayloadQuery) (PayloadBytes, error)
 StartListener(ctx, ListenerRequest) (ListenerRef, error)
-ListSessions(ctx, RunID) ([]SessionRef, error)
-EvaluatePolicy(ctx, ActionRequest) (PolicyDecision, error)
+ListSessions(ctx, ThrowID) ([]SessionRef, error)
+CheckGuardrails(ctx, ActionRequest) (GuardrailResult, error)
 ```
 
-`StartRun` must not accept a raw `RunRequest`. A caller first asks for a plan, reviews the policy output, records the approval or confirmation decision, and then starts the approved plan. This keeps CLI, TUI, REST, and MCP on the same safety path.
+`StartThrow` must not accept a raw `ThrowRequest`. A caller first asks for a plan, reviews the plan output, records the explicit confirmation, and then starts the confirmed throw. This keeps CLI, TUI, REST, and MCP on the same safety path.
 
 ## Command Registry
 
@@ -125,6 +125,10 @@ The initial operator registry should expose execution through chain and target s
 ```text
 control init
 control daemon status
+op create <operation>
+op use <operation>
+op list
+op inspect
 chain create <chain>
 chain use <chain-or-module>
 chain rename <chain> <name>
@@ -132,12 +136,16 @@ chain list
 chain inspect
 chain delete <chain>
 chain logs
-targets add <target>
-targets clear
+target add <target>
+target clear
 throw
+throw list
+throw inspect <throw>
+evidence list
+evidence inspect <evidence>
 ```
 
-Chains are durable operator resources, not just a transient prompt variable. The selected chain owns its target set and log topic, and target commands mutate only the active chain. Non-interactive `command` mode and direct command aliases must remain scriptable by accepting explicit options such as `hovel command throw --chain mock-exploit --target mock://target` or `hovel throw --chain mock-exploit --target mock://target`.
+Operations and chains are durable operator resources, not just transient prompt variables. The selected operation owns chains; each client attachment owns its active chain selection. Target commands mutate only the caller's active chain, and explicit chain options must not move another client's active chain. Non-interactive `command` mode and direct command aliases must remain scriptable by accepting explicit options such as `hovel command throw --chain mock-exploit --target mock://target` or `hovel throw --chain mock-exploit --target mock://target`.
 
 Adapters consume the registry differently:
 
@@ -170,7 +178,7 @@ hovel/
       payload/
       listener/
       session/
-      run/
+      throw/
       artifact/
       event/
     adapters/
@@ -210,18 +218,24 @@ hovel/
 
 Multiple clients should be able to observe the same engine state:
 
-1. One operator creates or activates a chain.
-2. Another operator attaches with the TUI.
-3. MCP tooling attaches to the same chain.
-4. `command` invocations query chain, target, run, and log state while the TUI is open.
-5. CLI prompt commands query and control the same daemon-owned chain state.
-6. The daemon publishes a chain-owned log topic such as `chain/<chain>/logs`.
-7. Clients attached to the same chain see the same chain logs.
+1. One operator creates or activates an operation.
+2. One client selects chain `alpha`; another client selects chain `beta` in the same operation.
+3. MCP tooling can attach to the same operation and choose either chain.
+4. `command` invocations query operation, chain, target, throw, and log state while the TUI is open.
+5. CLI prompt commands query and control the same daemon-owned operation and chain state.
+6. The daemon publishes operation-scoped chain topics such as `operation/<operation>/chain/<chain>/logs`.
+7. Clients attached to the same operation and chain see the same chain logs.
 8. Clients attached to other chains do not receive those logs by default.
-9. Service logs and run events remain centralized and can be correlated back to the owning chain.
+9. Service logs and throw events remain centralized and can be correlated back to the owning operation and chain.
+
+## Workspace Database
+
+Every workspace owns a SQLite database at `<workspace>/workspace.db`. The database is the durable state store for operator session state, operations, chains, targets, steps, config, and throw plans. File directories under the workspace remain for artifacts, logs, modules, services, and other file-shaped data.
+
+Schema changes must go through the formal migration system. Each migration has a contiguous integer version, a stable name, and a checksum recorded in `schema_migrations`. Startup and workspace initialization must apply pending migrations idempotently and reject unknown, renamed, or modified applied migrations.
 
 ## Test Harness
 
-Application services must be constructible in-process for unit, contract, and integration tests. The in-process harness should use the same domain logic, policy checks, event bus contracts, descriptor validation, and storage interfaces as `hoveld`.
+Application services must be constructible in-process for unit, contract, and integration tests. The in-process harness should use the same domain logic, guardrail checks, event bus contracts, descriptor validation, and storage interfaces as `hoveld`.
 
 Production `hovel command`, `hovel cli`, and `hovel tui` behavior should still cross the daemon boundary for daemon-backed operations. Tests may use the in-process harness to keep core behavior fast and deterministic, but daemon-contract tests must verify workspace locking, daemon discovery, managed daemon ownership, health checks, client attachment, and command execution through the local transport.

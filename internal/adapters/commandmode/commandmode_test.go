@@ -22,7 +22,7 @@ func TestHelpShowsCommandMenu(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"hovel command", "control", "chain", "targets", "throw"} {
+	for _, want := range []string{"hovel command", "control", "chain", "target", "throw"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}

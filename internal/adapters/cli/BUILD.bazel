@@ -7,12 +7,16 @@ go_library(
         "interactive_config.go",
         "prompt_writer.go",
         "session_persistence.go",
+        "terminal_state.go",
+        "terminal_state_posix.go",
+        "terminal_state_unsupported.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/cli",
     visibility = ["//visibility:public"],
     deps = [
         "//internal/adapters/commandmode",
         "//internal/adapters/daemonrpc",
+        "//internal/adapters/storage/filesystem",
         "//internal/adapters/terminallog",
         "//internal/app/commands",
         "//internal/app/modulecatalog",
@@ -22,7 +26,42 @@ go_library(
         "//internal/modules/pythonrpc",
         "@com_github_c_bata_go_prompt//:go-prompt",
         "@com_github_charmbracelet_lipgloss//:lipgloss",
-    ],
+    ] + select({
+        "@rules_go//go/platform:aix": [
+            "@com_github_pkg_term//termios",
+        ],
+        "@rules_go//go/platform:android": [
+            "@com_github_pkg_term//termios",
+        ],
+        "@rules_go//go/platform:darwin": [
+            "@com_github_pkg_term//termios",
+        ],
+        "@rules_go//go/platform:dragonfly": [
+            "@com_github_pkg_term//termios",
+        ],
+        "@rules_go//go/platform:freebsd": [
+            "@com_github_pkg_term//termios",
+        ],
+        "@rules_go//go/platform:illumos": [
+            "@com_github_pkg_term//termios",
+        ],
+        "@rules_go//go/platform:ios": [
+            "@com_github_pkg_term//termios",
+        ],
+        "@rules_go//go/platform:linux": [
+            "@com_github_pkg_term//termios",
+        ],
+        "@rules_go//go/platform:netbsd": [
+            "@com_github_pkg_term//termios",
+        ],
+        "@rules_go//go/platform:openbsd": [
+            "@com_github_pkg_term//termios",
+        ],
+        "@rules_go//go/platform:solaris": [
+            "@com_github_pkg_term//termios",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 # keep: fast CLI checks stay separate from daemon/Python E2E coverage.
@@ -33,6 +72,7 @@ go_test(
         "cli_test.go",
         "cli_test_helpers_test.go",
         "prompt_writer_test.go",
+        "terminal_state_test.go",
     ],
     data = [
         "//examples/python:sources",
@@ -42,6 +82,7 @@ go_test(
     tags = ["unit"],
     deps = [
         "//internal/adapters/commandmode",
+        "//internal/adapters/storage/sqlite",
         "//internal/app/modulecatalog",
         "//internal/app/operatorsession",
         "//internal/testsupport",

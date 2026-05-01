@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
@@ -22,7 +25,7 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 		t.Fatalf("root suggestions = %#v, want chain", root)
 	}
 	root = app.Suggestions("")
-	for _, hidden := range []string{"add", "targets", "throw", "validate"} {
+	for _, hidden := range []string{"add", "target", "throw", "validate"} {
 		if containsSuggestion(root, hidden) {
 			t.Fatalf("root suggestions = %#v, should hide %s outside chain context", root, hidden)
 		}
@@ -69,7 +72,7 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 		}
 	}
 
-	moduleChildren := app.Suggestions("modules ")
+	moduleChildren := app.Suggestions("module ")
 	var moduleNames []string
 	for _, suggestion := range moduleChildren {
 		moduleNames = append(moduleNames, suggestion.Text)
@@ -202,7 +205,7 @@ func TestInteractiveConfigWizardEditsCurrentThenFillsRemainingConfig(t *testing.
 	for _, line := range []string{
 		"chain use lab",
 		"chain add mock-exploit",
-		"targets add mock://router-01",
+		"target add mock://router-01",
 		"chain config set operator.confirmed_lab true",
 	} {
 		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
@@ -259,7 +262,7 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 	for _, line := range []string{
 		"chain use lab",
 		"chain add mock-exploit",
-		"targets add mock://router-01",
+		"target add mock://router-01",
 	} {
 		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
 			t.Fatalf("%q exit code = %d, stderr = %s", line, code, stderr.String())
@@ -391,6 +394,31 @@ func TestRunRejectsOneShotCommandArguments(t *testing.T) {
 	}
 }
 
+func TestPromptExitCheckerOnlyExitsAfterSubmittedLine(t *testing.T) {
+	if promptExitChecker("exit", false) {
+		t.Fatal("exit checker fired before Enter")
+	}
+	if !promptExitChecker("exit", true) {
+		t.Fatal("exit checker did not fire after submitted exit")
+	}
+	if !promptExitChecker(" quit ", true) {
+		t.Fatal("exit checker did not accept quit")
+	}
+}
+
+func TestThrowAnimationOnlyWrapsThrowExecution(t *testing.T) {
+	for _, line := range []string{"throw", "throw --workspace .hovel", "throw --chain mock-exploit"} {
+		if !isThrowExecutionCommand(line) {
+			t.Fatalf("%q was not recognized as throw execution", line)
+		}
+	}
+	for _, line := range []string{"", "throw list", "throw inspect plan-1", "throws list", "chain throw"} {
+		if isThrowExecutionCommand(line) {
+			t.Fatalf("%q was recognized as throw execution", line)
+		}
+	}
+}
+
 func TestWorkspaceSessionIsSharedAcrossCLIInstances(t *testing.T) {
 	workspacePath := testsupport.TempDir(t)
 	first := newTestApp().withWorkspaceSession(workspacePath)
@@ -408,6 +436,9 @@ func TestWorkspaceSessionIsSharedAcrossCLIInstances(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "test") {
 		t.Fatalf("chain list output = %q, want test", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(workspacePath, sqlitestore.DatabaseFile)); err != nil {
+		t.Fatalf("workspace database was not created: %v", err)
 	}
 }
 

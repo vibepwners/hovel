@@ -242,9 +242,9 @@ schemas/
   hovel.module.schema.json
   hovel.service.schema.json
   hovel.chain.schema.json
-  hovel.run-plan.schema.json
+  hovel.throw-plan.schema.json
   hovel.event.schema.json
   hovel.provider.schema.json
 ```
 
-Run-plan schemas should cover planned steps, resolved descriptor versions, risk labels, required confirmations, requested targets, expected services, expected providers, and the approval record shape used by `StartRun`.
+Throw-plan schemas should cover planned steps, resolved descriptor versions, risk labels, required confirmations, requested targets, expected services, expected providers, and the confirmation record shape used by `StartThrow`.

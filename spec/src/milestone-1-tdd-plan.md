@@ -38,8 +38,8 @@ workspace
 event
 module
 service
-run
-policy
+throw
+guardrail
 ```
 
 The domain layer must stay pure. Domain packages must not import CLI, Cobra, filesystem adapters, SQLite, sockets, JSON-RPC, YAML parsers, or generated transport code.
@@ -50,8 +50,8 @@ Responsibilities:
 2. `event`: domain event types, event envelope, and event bus port.
 3. `module`: module descriptor identity and validation concepts.
 4. `service`: service descriptor identity and validation concepts.
-5. `run`: run IDs and initial run-plan placeholders only.
-6. `policy`: policy decision placeholders only.
+5. `throw`: throw IDs and initial throw-plan placeholders only.
+6. `guardrail`: initial scope-check placeholders only.
 
 Adapters translate CLI flags, files, daemon transports, and storage records into application service calls. Application services coordinate domain behavior through ports.
 
@@ -115,7 +115,7 @@ Write domain tests first:
 1. Events require IDs.
 2. Event types are validated.
 3. Timestamps are present.
-4. Events can carry workspace, run, module, service, and target references.
+4. Events can carry workspace, throw, module, service, and target references.
 
 Write application tests:
 
@@ -182,7 +182,7 @@ Write harness tests first:
 
 1. Application services can be constructed without a daemon process.
 2. Fake storage and event sinks are injectable.
-3. The harness uses the same domain logic and policy checks as production.
+3. The harness uses the same domain logic and guardrail checks as production.
 
 Then implement `internal/app/apptest` or an equivalent package.
 

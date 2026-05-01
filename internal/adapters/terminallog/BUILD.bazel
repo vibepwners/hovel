@@ -16,5 +16,8 @@ go_test(
     size = "small",
     srcs = ["renderer_test.go"],
     embed = [":terminallog"],
-    deps = ["//internal/app/operatorlog"],
+    deps = [
+        "//internal/app/operatorlog",
+        "@com_github_charmbracelet_lipgloss//:lipgloss",
+    ],
 )
