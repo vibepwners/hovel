@@ -184,6 +184,50 @@ func TestChainAddSuggestsModulesMatchingInput(t *testing.T) {
 	}
 }
 
+func TestPositionalSuggestionsUseCurrentOperatorState(t *testing.T) {
+	app := newTestApp()
+	var stdout, stderr bytes.Buffer
+	for _, line := range []string{
+		"op use engagement",
+		"op use response",
+		"op use engagement",
+		"chain create lab",
+		"chain create prod",
+		"chain add mock-exploit-session",
+		"target add mock://router-01",
+	} {
+		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q exit code = %d, stderr = %s", line, code, stderr.String())
+		}
+	}
+
+	for _, want := range []string{"engagement", "response"} {
+		if suggestions := app.Suggestions("op use "); !containsSuggestion(suggestions, want) {
+			t.Fatalf("op use suggestions = %#v, missing %s", suggestions, want)
+		}
+	}
+	for _, want := range []string{"lab", "prod"} {
+		if suggestions := app.Suggestions("chain use "); !containsSuggestion(suggestions, want) {
+			t.Fatalf("chain use suggestions = %#v, missing %s", suggestions, want)
+		}
+		if suggestions := app.Suggestions("chain rename "); !containsSuggestion(suggestions, want) {
+			t.Fatalf("chain rename suggestions = %#v, missing %s", suggestions, want)
+		}
+	}
+	if suggestions := app.Suggestions("module inspect mock-exploit-s"); len(suggestions) != 1 || suggestions[0].Text != "mock-exploit-session@v0.0.0-example" {
+		t.Fatalf("module inspect suggestions = %#v, want mock-exploit-session", suggestions)
+	}
+	if suggestions := app.Suggestions("chain config set "); !containsSuggestion(suggestions, "operator.confirmed_lab") {
+		t.Fatalf("chain config key suggestions = %#v, missing operator.confirmed_lab", suggestions)
+	}
+	if suggestions := app.Suggestions("target config set "); !containsSuggestion(suggestions, "mock://router-01") {
+		t.Fatalf("target suggestions = %#v, missing mock://router-01", suggestions)
+	}
+	if suggestions := app.Suggestions("target config set mock://router-01 target.p"); !containsSuggestion(suggestions, "target.port") {
+		t.Fatalf("target config key suggestions = %#v, missing target.port", suggestions)
+	}
+}
+
 func TestExecuteLineUsesCommandMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	workspacePath := t.TempDir()
@@ -287,17 +331,30 @@ func TestInteractiveConfigWizardEditsCurrentThenFillsRemainingConfig(t *testing.
 		t.Fatalf("wizard suggestions = %#v, want continue and current item", suggestions)
 	}
 
-	for _, line := range []string{"1", "false", "c", "router-01", "22"} {
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "1", &stdout, &stderr); code != 0 {
+		t.Fatalf("select current exit code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
+	}
+	if got, want := app.PromptPrefix(), "h0v3l [test-op/lab] chain operator.confirmed_lab (bool) [true]: "; got != want {
+		t.Fatalf("prompt prefix = %q, want %q", got, want)
+	}
+	if !strings.Contains(stdout.String(), "Editing chain operator.confirmed_lab=true") {
+		t.Fatalf("select output = %q, want editing line", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "chain operator.confirmed_lab (bool) [true]:") {
+		t.Fatalf("select output printed value prompt instead of using prompt prefix:\n%s", stdout.String())
+	}
+
+	for _, line := range []string{"false", "c", "router-01", "22"} {
 		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
 			t.Fatalf("%q exit code = %d, stderr = %s, stdout = %s", line, code, stderr.String(), stdout.String())
 		}
 	}
 	for _, want := range []string{
 		"Current configuration for chain lab",
-		"1) chain operator.confirmed_lab=true",
-		"chain operator.confirmed_lab (bool) [true]:",
+		"1) chain operator.confirmed_lab=false",
 		"Remaining configuration for chain lab",
-		"target mock://router-01 target.host (host):",
 		"Chain lab configuration complete",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -350,14 +407,14 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 	if code := app.ExecuteLine(context.Background(), "c", &stdout, &stderr); code != 0 {
 		t.Fatalf("continue exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if got := app.PromptPrefix(); got != "h0v3l [test-op/lab] config value > " {
-		t.Fatalf("prompt prefix = %q, want config value", got)
+	if got, want := app.PromptPrefix(), "h0v3l [test-op/lab] chain operator.confirmed_lab (bool): "; got != want {
+		t.Fatalf("prompt prefix = %q, want %q", got, want)
 	}
 	if suggestions := app.Suggestions(""); !containsSuggestion(suggestions, "true") || !containsSuggestion(suggestions, "false") {
 		t.Fatalf("wizard value suggestions = %#v, want bool values", suggestions)
 	}
-	if !strings.Contains(stdout.String(), "chain operator.confirmed_lab (bool):") {
-		t.Fatalf("continue output = %q", stdout.String())
+	if strings.Contains(stdout.String(), "chain operator.confirmed_lab (bool):") {
+		t.Fatalf("continue output printed value prompt instead of using prompt prefix:\n%s", stdout.String())
 	}
 }
 

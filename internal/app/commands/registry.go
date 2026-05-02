@@ -325,6 +325,8 @@ func groupSummary(path []string, fallback string) string {
 		return "Browse, search, and inspect modules."
 	case "throws":
 		return "List and inspect throws."
+	case "session", "sessions":
+		return "List and interact with post-exploitation sessions."
 	case "target", "targets":
 		return "Add and configure chain targets."
 	default:

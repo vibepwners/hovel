@@ -33,6 +33,7 @@ type App struct {
 	theme         Theme
 	session       commands.OperatorSession
 	modules       modulecatalog.Catalog
+	daemonClient  *daemonrpc.Client
 	wizard        *interactiveConfigWizard
 	moduleCount   int
 	workspacePath string
@@ -74,6 +75,7 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if !ok {
 		return code
 	}
+	a.workspacePath = workspacePath
 
 	session, err := a.EnsureDaemon(ctx, workspacePath)
 	if err != nil {
@@ -121,6 +123,7 @@ func (a App) EnsureDaemon(ctx context.Context, workspacePath string) (*daemonman
 
 func (a App) withDaemonSession(ctx context.Context, client *daemonrpc.Client) App {
 	session := daemonrpc.NewSessionClient(ctx, client)
+	a.daemonClient = client
 	a.session = session
 	a.commands = commandmode.NewAppWithSessionAndModules(session, a.modules)
 	a.wizard = newInteractiveConfigWizard(session, a.modules)
@@ -251,6 +254,14 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 		}
 		return code
 	}
+	if isSessionConnectCommand(trimmed) {
+		sessionID, err := parseSessionConnectID(trimmed)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return a.executeSessionConnect(ctx, sessionID, stdout, stderr)
+	}
 	stopThrowing := func() {}
 	if isThrowExecutionCommand(trimmed) && a.surface != nil {
 		stopThrowing = a.surface.StartThrowing(a.PromptPrefix())
@@ -284,6 +295,9 @@ func (a App) PromptPrefix() string {
 	}
 	state := a.session.Snapshot()
 	if a.wizard != nil && a.wizard.Active() {
+		if prompt, ok := a.wizard.ValuePrompt(); ok {
+			return a.theme.ConfigValuePromptPrefix(state.ActiveOperation, state.ActiveChain, prompt)
+		}
 		return a.theme.ConfigPromptPrefix(state.ActiveOperation, state.ActiveChain, a.wizard.PromptMode())
 	}
 	return a.theme.PromptPrefix(state.ActiveOperation, state.ActiveChain)
@@ -388,11 +402,13 @@ func (a App) contextualRootDefinitions() []commands.Definition {
 			"chain":   true,
 			"control": true,
 			"op":      true,
+			"session": true,
 		})
 	}
 	return filterDefinitions(firstSegments, map[string]bool{
 		"control": true,
 		"op":      true,
+		"session": true,
 	})
 }
 
@@ -600,21 +616,172 @@ func (a App) activeChain() string {
 }
 
 func (a App) positionalSuggestions(definition commands.Definition, commandWordCount int, fields []string, endsWithSpace bool) ([]prompt.Suggest, bool) {
-	if definition.PathString() != "chain add" && definition.PathString() != "chains add" {
-		return nil, false
+	provided := len(fields) - commandWordCount
+	prefix := ""
+	if !endsWithSpace && len(fields) > 0 {
+		prefix = fields[len(fields)-1]
 	}
 
-	provided := len(fields) - commandWordCount
-	if endsWithSpace {
-		if provided == 0 {
-			return a.moduleSuggestions(""), true
+	switch definition.PathString() {
+	case "op use", "operation use":
+		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.operationSuggestions), true
+	case "chain use", "chains use", "chain delete", "chains delete":
+		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.chainSuggestions), true
+	case "chain rename", "chains rename":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.chainSuggestions(prefix), true
 		}
 		return nil, true
+	case "chain add", "chains add", "module inspect", "modules inspect":
+		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.moduleSuggestions), true
+	case "chain config set", "chains config set", "chain config unset", "chains config unset":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.chainConfigKeySuggestions(prefix), true
+		}
+		return nil, true
+	case "target config list", "targets config list", "target config set", "targets config set", "target config unset", "targets config unset":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.targetSuggestions(prefix), true
+		}
+		if provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace {
+			return a.targetConfigKeySuggestions(prefix), true
+		}
+		return nil, true
+	case "session connect", "sessions connect", "session close", "sessions close":
+		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.sessionSuggestions), true
+	default:
+		return nil, false
 	}
-	if provided == 1 {
-		return a.moduleSuggestions(fields[len(fields)-1]), true
+}
+
+func (a App) singlePositionalSuggestions(provided int, prefix string, endsWithSpace bool, suggest func(string) []prompt.Suggest) []prompt.Suggest {
+	if provided == 0 || provided == 1 && !endsWithSpace {
+		return suggest(prefix)
 	}
-	return nil, false
+	return nil
+}
+
+func (a App) operationSuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	suggestions := make([]prompt.Suggest, 0, len(state.Operations))
+	for _, operation := range state.Operations {
+		description := fmt.Sprintf("%d chain(s)", len(operation.Chains))
+		if operation.Name == state.ActiveOperation {
+			description = "active operation"
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: operation.Name, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) chainSuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	suggestions := make([]prompt.Suggest, 0, len(state.Chains))
+	for _, chain := range state.Chains {
+		description := fmt.Sprintf("%d step(s), %d target(s)", len(chain.Steps), len(chain.Targets))
+		if chain.Name == state.ActiveChain {
+			description = "active chain"
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: chain.Name, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) targetSuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	suggestions := make([]prompt.Suggest, 0, len(state.Targets))
+	for _, target := range state.Targets {
+		description := "target"
+		if config := state.TargetConfigs[target]; len(config) > 0 {
+			description = fmt.Sprintf("%d config value(s)", len(config))
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: target, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) chainConfigKeySuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	requirements, _ := requirementMaps(a.modules, state)
+	return configKeySuggestions(requirements, state.Config, prefix)
+}
+
+func (a App) targetConfigKeySuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	_, requirements := requirementMaps(a.modules, state)
+	existing := map[string]string{}
+	for _, config := range state.TargetConfigs {
+		for key, value := range config {
+			existing[key] = value
+		}
+	}
+	return configKeySuggestions(requirements, existing, prefix)
+}
+
+func (a App) sessionSuggestions(prefix string) []prompt.Suggest {
+	if a.daemonClient == nil {
+		return nil
+	}
+	type sessionListResult struct {
+		sessions []daemonrpc.SessionRef
+		err      error
+	}
+	results := make(chan sessionListResult, 1)
+	go func() {
+		sessions, err := a.daemonClient.ListSessions(context.Background())
+		results <- sessionListResult{sessions: sessions, err: err}
+	}()
+	var sessions []daemonrpc.SessionRef
+	select {
+	case result := <-results:
+		if result.err != nil {
+			return nil
+		}
+		sessions = result.sessions
+	case <-time.After(100 * time.Millisecond):
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(sessions))
+	for _, session := range sessions {
+		description := strings.TrimSpace(strings.Join([]string{session.Kind, session.State, session.Target, session.Name}, " "))
+		suggestions = append(suggestions, prompt.Suggest{Text: session.ID, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func configKeySuggestions(requirements map[string]modulecatalog.Requirement, existing map[string]string, prefix string) []prompt.Suggest {
+	suggestions := make([]prompt.Suggest, 0, len(requirements)+len(existing))
+	for _, key := range sortedKeys(requirements) {
+		requirement := requirements[key]
+		description := requirement.Description
+		if description == "" {
+			typeName := string(requirement.Type)
+			if typeName == "" {
+				typeName = "string"
+			}
+			description = typeName
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: key, Description: description})
+	}
+	for _, key := range sortedKeys(existing) {
+		suggestions = append(suggestions, prompt.Suggest{Text: key, Description: "current value"})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
 }
 
 func (a App) moduleSuggestions(prefix string) []prompt.Suggest {
@@ -876,6 +1043,25 @@ func (t Theme) ConfigPromptPrefix(operation, chain, mode string) string {
 		return "h0v3l [" + operation + "] " + mode + " > "
 	}
 	return "h0v3l [" + operation + "/" + chain + "] " + mode + " > "
+}
+
+func (t Theme) ConfigValuePromptPrefix(operation, chain, prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return t.ConfigPromptPrefix(operation, chain, "config value")
+	}
+	operation = strings.TrimSpace(operation)
+	chain = strings.TrimSpace(chain)
+	if operation == "" || operation == operatorsession.DefaultOperation {
+		if chain == "" {
+			return "h0v3l " + prompt + " "
+		}
+		return "h0v3l (" + chain + ") " + prompt + " "
+	}
+	if chain == "" {
+		return "h0v3l [" + operation + "] " + prompt + " "
+	}
+	return "h0v3l [" + operation + "/" + chain + "] " + prompt + " "
 }
 
 type WelcomeInfo struct {

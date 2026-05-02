@@ -37,9 +37,12 @@ func (w *promptSurface) WriteAsyncLog(rendered, prefix string) {
 	w.writer.HideCursor()
 	defer w.writer.ShowCursor()
 	w.writer.WriteRaw([]byte("\r"))
+	w.writer.EraseLine()
 	w.writer.EraseDown()
-	w.writer.WriteRawStr(rendered)
-	w.writer.WriteRaw([]byte("\n"))
+	w.writer.WriteRawStr(terminalNewlines(rendered))
+	if !strings.HasSuffix(rendered, "\n") {
+		w.writer.WriteRaw([]byte("\r\n"))
+	}
 	w.writePromptLine(prefix)
 	_ = w.writer.Flush()
 }
@@ -125,6 +128,12 @@ func throwingPrompt(frame int) string {
 	}
 	index := frame % len(frames)
 	return styles[index].Render(frames[index]+" throwing") + " "
+}
+
+func terminalNewlines(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return strings.ReplaceAll(value, "\n", "\r\n")
 }
 
 func (w *promptSurface) WriteRaw(data []byte) {

@@ -61,5 +61,21 @@ func testModuleCatalog() modulecatalog.Catalog {
 				{Key: "target.port", Type: modulecatalog.ValuePort, Required: true, Description: "Target TCP port."},
 			},
 		},
+		modulecatalog.Module{
+			ID:          "mock-exploit-session@v0.0.0-example",
+			Name:        "Mock Exploit Session",
+			Type:        modulecatalog.TypeExploit,
+			Version:     "v0.0.0-example",
+			Summary:     "Open a mock interactive shell session.",
+			RuntimeKind: modulecatalog.RuntimeJSONRPCStdio,
+			Enabled:     true,
+			ChainConfig: []modulecatalog.Requirement{
+				{Key: "operator.confirmed_lab", Type: modulecatalog.ValueBool, Required: true, Description: "Operator confirmed this is an authorized lab."},
+			},
+			TargetConfig: []modulecatalog.Requirement{
+				{Key: "target.host", Type: modulecatalog.ValueHost, Required: true, Description: "Target host name or IP address."},
+				{Key: "target.port", Type: modulecatalog.ValuePort, Required: true, Description: "Target TCP port."},
+			},
+		},
 	)
 }

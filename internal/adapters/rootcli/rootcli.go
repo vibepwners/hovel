@@ -97,6 +97,7 @@ func newRootParser() *argparse.Parser {
 	parser.NewCommand("op", "Create, select, and inspect operations.")
 	parser.NewCommand("chain", "Build and manage operator chains.")
 	parser.NewCommand("module", "Browse, search, and inspect modules.")
+	parser.NewCommand("session", "List, connect, and close active sessions.")
 	parser.NewCommand("target", "Add and configure chain targets.")
 	parser.NewCommand("throw", "Execute the selected chain, or list and inspect throws.")
 	parser.NewCommand("init", "Initialize a workspace.")

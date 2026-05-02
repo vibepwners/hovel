@@ -58,6 +58,7 @@ type Refs struct {
 	ModuleID    string
 	ServiceID   string
 	TargetID    string
+	SessionID   string
 }
 
 type Args struct {

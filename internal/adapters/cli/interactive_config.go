@@ -55,6 +55,19 @@ func (w *interactiveConfigWizard) PromptMode() string {
 	}
 }
 
+func (w *interactiveConfigWizard) ValuePrompt() (string, bool) {
+	if w == nil {
+		return "", false
+	}
+	switch w.stage {
+	case interactiveConfigSetCurrent, interactiveConfigSetMissing:
+		prompt := strings.TrimSpace(w.selected.Prompt())
+		return prompt, prompt != ""
+	default:
+		return "", false
+	}
+}
+
 func (w *interactiveConfigWizard) Start(stdout, stderr io.Writer) int {
 	if w.session == nil {
 		fmt.Fprintln(stderr, "active chain is required")
@@ -137,7 +150,6 @@ func (w *interactiveConfigWizard) selectCurrent(answer string, stdout, stderr io
 	w.selected = w.items[index-1]
 	w.stage = interactiveConfigSetCurrent
 	fmt.Fprintf(stdout, "Editing %s\n", w.selected.Label())
-	w.renderValuePrompt(stdout)
 	return 0
 }
 
@@ -154,7 +166,6 @@ func (w *interactiveConfigWizard) acceptValue(answer string, stdout, stderr io.W
 
 	if err := validateConfigValue(item.Requirement, value); err != nil {
 		fmt.Fprintf(stdout, "invalid value for %s: %v\n", item.Key, err)
-		w.renderValuePrompt(stdout)
 		return 0
 	}
 
@@ -197,7 +208,6 @@ func (w *interactiveConfigWizard) promptNextMissing(stdout, stderr io.Writer) in
 		w.announcedMissing = true
 		fmt.Fprintf(stdout, "Remaining configuration for chain %s\n", w.chain)
 	}
-	w.renderValuePrompt(stdout)
 	return 0
 }
 
@@ -231,10 +241,6 @@ func (w *interactiveConfigWizard) renderCurrentMenu(stdout io.Writer) {
 	}
 	fmt.Fprintln(stdout, "c) continue")
 	fmt.Fprintln(stdout, "select config to edit or c to continue")
-}
-
-func (w *interactiveConfigWizard) renderValuePrompt(stdout io.Writer) {
-	fmt.Fprintln(stdout, w.selected.Prompt())
 }
 
 func (w *interactiveConfigWizard) reset() {

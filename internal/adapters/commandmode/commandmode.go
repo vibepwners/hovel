@@ -343,7 +343,20 @@ func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMoc
 		Findings:  findingsFromRPC(result.Findings),
 		Artifacts: artifactsFromRPC(result.Artifacts),
 		Logs:      logsFromRPC(result.Logs),
+		Sessions:  sessionsFromRPC(result.Sessions),
 	}, nil
+}
+
+func (c daemonRunClient) ListSessions(ctx context.Context) ([]commands.SessionRef, error) {
+	sessions, err := c.client.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return sessionsFromRPC(sessions), nil
+}
+
+func (c daemonRunClient) CloseSession(ctx context.Context, sessionID string) error {
+	return c.client.CloseSession(ctx, sessionID)
 }
 
 func findingsFromRPC(findings []daemonrpc.Finding) []commands.Finding {
@@ -353,6 +366,24 @@ func findingsFromRPC(findings []daemonrpc.Finding) []commands.Finding {
 			Title:    finding.Title,
 			Severity: finding.Severity,
 			Detail:   finding.Detail,
+		})
+	}
+	return out
+}
+
+func sessionsFromRPC(sessions []daemonrpc.SessionRef) []commands.SessionRef {
+	out := make([]commands.SessionRef, 0, len(sessions))
+	for _, session := range sessions {
+		out = append(out, commands.SessionRef{
+			ID:           session.ID,
+			RunID:        session.RunID,
+			ModuleID:     session.ModuleID,
+			Target:       session.Target,
+			Name:         session.Name,
+			Kind:         session.Kind,
+			State:        session.State,
+			Transport:    session.Transport,
+			Capabilities: append([]string(nil), session.Capabilities...),
 		})
 	}
 	return out

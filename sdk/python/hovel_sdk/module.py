@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable
 from typing import Any, ClassVar
 
 from hovel_sdk.config import Requirement
@@ -37,5 +38,5 @@ class HovelModule(ABC):
         }
 
     @abstractmethod
-    def run(self, ctx: Context) -> Result:
+    def run(self, ctx: Context) -> Result | Awaitable[Result]:
         raise NotImplementedError

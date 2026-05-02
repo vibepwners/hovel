@@ -31,6 +31,8 @@ type RunClientFactory interface {
 type RunClient interface {
 	Close() error
 	RunMockExploit(context.Context, RunMockExploitRequest) (RunMockExploitResponse, error)
+	ListSessions(context.Context) ([]SessionRef, error)
+	CloseSession(context.Context, string) error
 }
 
 type ThrowPlanRecorder interface {
@@ -105,6 +107,18 @@ type Artifact struct {
 	Data string `json:"data"`
 }
 
+type SessionRef struct {
+	ID           string   `json:"id"`
+	RunID        string   `json:"runId"`
+	ModuleID     string   `json:"moduleId"`
+	Target       string   `json:"target"`
+	Name         string   `json:"name,omitempty"`
+	Kind         string   `json:"kind"`
+	State        string   `json:"state"`
+	Transport    string   `json:"transport"`
+	Capabilities []string `json:"capabilities"`
+}
+
 type LogEntry struct {
 	ID             string            `json:"id,omitempty"`
 	Time           string            `json:"time,omitempty"`
@@ -133,6 +147,7 @@ type RunMockExploitResponse struct {
 	Findings  []Finding
 	Artifacts []Artifact
 	Logs      []LogEntry
+	Sessions  []SessionRef
 }
 
 type InitPayload struct {
@@ -153,14 +168,15 @@ type DaemonStatusPayload struct {
 }
 
 type RunPayload struct {
-	RunID     string     `json:"runId"`
-	ModuleID  string     `json:"moduleId"`
-	Target    string     `json:"target"`
-	State     string     `json:"state"`
-	Summary   string     `json:"summary"`
-	Findings  []Finding  `json:"findings"`
-	Artifacts []Artifact `json:"artifacts"`
-	Logs      []LogEntry `json:"logs"`
+	RunID     string       `json:"runId"`
+	ModuleID  string       `json:"moduleId"`
+	Target    string       `json:"target"`
+	State     string       `json:"state"`
+	Summary   string       `json:"summary"`
+	Findings  []Finding    `json:"findings"`
+	Artifacts []Artifact   `json:"artifacts"`
+	Logs      []LogEntry   `json:"logs"`
+	Sessions  []SessionRef `json:"sessions"`
 }
 
 type ThrowPayload struct {
@@ -458,6 +474,44 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: throwsInspectHandler(runtime),
+		},
+		Definition{
+			Path:           []string{"session", "list"},
+			Aliases:        [][]string{{"sessions"}},
+			Summary:        "List active post-exploitation sessions.",
+			RequiresDaemon: true,
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: sessionsListHandler(runtime),
+		},
+		Definition{
+			Path:           []string{"session", "connect"},
+			Aliases:        [][]string{{"sessions", "connect"}},
+			Summary:        "Connect interactively to an active session.",
+			RequiresDaemon: true,
+			Positionals: []Positional{
+				{Name: "session", Help: "Session ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+			},
+			Handler: sessionConnectHandler(runtime),
+		},
+		Definition{
+			Path:           []string{"session", "close"},
+			Aliases:        [][]string{{"sessions", "close"}},
+			Summary:        "Close an active session.",
+			RequiresDaemon: true,
+			Positionals: []Positional{
+				{Name: "session", Help: "Session ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: sessionCloseHandler(runtime),
 		},
 	)...)
 }
@@ -1177,6 +1231,74 @@ func throwsInspectHandler(runtime Runtime) Handler {
 	}
 }
 
+func sessionsListHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		client, closeClient, err := dialDaemonRunClient(ctx, runtime, invocation.Option("workspace"))
+		if err != nil {
+			return Result{}, err
+		}
+		defer closeClient()
+		sessions, err := client.ListSessions(ctx)
+		if err != nil {
+			return Result{}, err
+		}
+		if len(sessions) == 0 {
+			return Result{Human: "No active sessions", JSON: sessions}, nil
+		}
+		lines := []string{"ID                         KIND      STATE    TARGET        NAME"}
+		for _, session := range sessions {
+			lines = append(lines, fmt.Sprintf("%-26s %-9s %-8s %-13s %s", session.ID, session.Kind, session.State, session.Target, session.Name))
+		}
+		return Result{Human: strings.Join(lines, "\n"), JSON: sessions}, nil
+	}
+}
+
+func sessionConnectHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		return Result{}, fmt.Errorf("session connect is available in the interactive CLI; run hovel cli and use session connect %s", invocation.Positional("session"))
+	}
+}
+
+func sessionCloseHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		client, closeClient, err := dialDaemonRunClient(ctx, runtime, invocation.Option("workspace"))
+		if err != nil {
+			return Result{}, err
+		}
+		defer closeClient()
+		sessionID := invocation.Positional("session")
+		if err := client.CloseSession(ctx, sessionID); err != nil {
+			return Result{}, err
+		}
+		payload := map[string]string{"sessionId": sessionID, "status": "closed"}
+		return Result{Human: fmt.Sprintf("Session closed: %s", sessionID), JSON: payload}, nil
+	}
+}
+
+func dialDaemonRunClient(ctx context.Context, runtime Runtime, workspacePath string) (RunClient, func(), error) {
+	if runtime.Daemons == nil {
+		return nil, nil, fmt.Errorf("daemon service is not configured")
+	}
+	if runtime.Runs == nil {
+		return nil, nil, fmt.Errorf("run client factory is not configured")
+	}
+	status, err := runtime.Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
+	if err != nil {
+		return nil, nil, err
+	}
+	if status.State != daemon.StateRunning {
+		return nil, nil, fmt.Errorf("daemon is not running for workspace %s", status.WorkspacePath)
+	}
+	client, err := runtime.Runs.DialRunClient(status.Identity.SocketPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return client, func() { _ = client.Close() }, nil
+}
+
 func newThrowPlan(workspacePath, chain string, targets []string) ThrowPlanRecord {
 	id := "plan-" + stablePlanComponent(chain, targets)
 	return ThrowPlanRecord{
@@ -1530,6 +1652,7 @@ func runPayload(result RunMockExploitResponse) RunPayload {
 		Findings:  result.Findings,
 		Artifacts: result.Artifacts,
 		Logs:      result.Logs,
+		Sessions:  result.Sessions,
 	}
 }
 
@@ -1601,6 +1724,13 @@ func throwRunResultEntries(payload ThrowPayload, result RunPayload, runIndex, ru
 	for _, artifact := range result.Artifacts {
 		entries = append(entries, elapsedAt(operatorlog.Artifact("artifact", artifact.Name,
 			operatorlog.Field{Name: "kind", Value: artifact.Kind},
+		).WithTarget(result.Target).WithRun(result.RunID), at, started, payload.Chain))
+	}
+	for _, session := range result.Sessions {
+		entries = append(entries, elapsedAt(operatorlog.Info("session", "session opened",
+			operatorlog.Field{Name: "session", Value: session.ID},
+			operatorlog.Field{Name: "kind", Value: session.Kind},
+			operatorlog.Field{Name: "state", Value: session.State},
 		).WithTarget(result.Target).WithRun(result.RunID), at, started, payload.Chain))
 	}
 	return entries
@@ -1687,6 +1817,13 @@ func throwLog(payload ThrowPayload, started time.Time) operatorlog.Log {
 		for _, artifact := range result.Artifacts {
 			entries = append(entries, elapsedAt(operatorlog.Artifact("artifact", artifact.Name,
 				operatorlog.Field{Name: "kind", Value: artifact.Kind},
+			).WithTarget(result.Target).WithRun(result.RunID), resultFinished, started, payload.Chain))
+		}
+		for _, session := range result.Sessions {
+			entries = append(entries, elapsedAt(operatorlog.Info("session", "session opened",
+				operatorlog.Field{Name: "session", Value: session.ID},
+				operatorlog.Field{Name: "kind", Value: session.Kind},
+				operatorlog.Field{Name: "state", Value: session.State},
 			).WithTarget(result.Target).WithRun(result.RunID), resultFinished, started, payload.Chain))
 		}
 	}

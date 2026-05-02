@@ -6,6 +6,7 @@ go_library(
         "cli.go",
         "interactive_config.go",
         "prompt_writer.go",
+        "session_connect.go",
         "session_persistence.go",
         "terminal_state.go",
         "terminal_state_posix.go",

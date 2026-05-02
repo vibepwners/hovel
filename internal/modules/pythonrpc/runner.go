@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,6 +47,7 @@ type Runner struct {
 	IDs        services.IDGenerator
 	Clock      services.Clock
 	Timeout    time.Duration
+	Sessions   *SessionBroker
 }
 
 func ConfiguredCatalog(ctx context.Context) (modulecatalog.Catalog, error) {
@@ -115,13 +118,18 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	process, err := r.start(ctx, request.ModuleID)
+	process, err := r.start(context.Background(), request.ModuleID)
 	if err != nil {
 		return run.Result{}, err
 	}
-	defer process.killAndWait()
+	keepProcess := false
+	defer func() {
+		if !keepProcess {
+			process.killAndWait()
+		}
+	}()
 	process.client.onLog = func(log rpcLog) error {
-		return r.appendLog(ctx, request, log)
+		return r.appendLog(context.Background(), request, log)
 	}
 
 	if _, err := process.client.call(ctx, "handshake", nil); err != nil {
@@ -141,13 +149,23 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 	if err != nil {
 		return run.Result{}, moduleFailure("module failed during execution", "module execute failed", err, process.stderr.String())
 	}
-	_, _ = process.client.call(context.Background(), "shutdown", nil)
-	if err := process.wait(); err != nil {
-		return run.Result{}, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
-	}
 	result, err := resultFromRPC(request, executeResult, process.client.logs)
 	if err != nil {
 		return run.Result{}, services.NewModuleExecutionFailure("module returned invalid result", err)
+	}
+	for _, session := range result.Sessions {
+		if err := r.appendSessionCreated(context.Background(), request, session); err != nil {
+			return run.Result{}, err
+		}
+	}
+	if len(result.Sessions) > 0 && r.Sessions != nil {
+		r.Sessions.adopt(process, result.Sessions)
+		keepProcess = true
+	} else {
+		_, _ = process.client.call(context.Background(), "shutdown", nil)
+		if err := process.wait(); err != nil {
+			return run.Result{}, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
+		}
 	}
 	return result, nil
 }
@@ -378,6 +396,7 @@ type rpcClient struct {
 	nextID  int
 	logs    []rpcLog
 	onLog   func(rpcLog) error
+	onEvent func(rpcSessionEvent) error
 }
 
 func newClient(stdout io.Reader, stdin io.WriteCloser) *rpcClient {
@@ -386,9 +405,9 @@ func newClient(stdout io.Reader, stdin io.WriteCloser) *rpcClient {
 
 func (c *rpcClient) call(ctx context.Context, method string, params any) (map[string]any, error) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.nextID++
 	id := c.nextID
-	c.mu.Unlock()
 	if err := writeFrame(c.writer, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		return nil, err
 	}
@@ -404,6 +423,14 @@ func (c *rpcClient) call(ctx context.Context, method string, params any) (map[st
 			c.logs = append(c.logs, message.Log)
 			if c.onLog != nil {
 				if err := c.onLog(message.Log); err != nil {
+					return nil, callbackError{err: err}
+				}
+			}
+			continue
+		}
+		if message.Method == "module/session" {
+			if c.onEvent != nil {
+				if err := c.onEvent(message.Session); err != nil {
 					return nil, callbackError{err: err}
 				}
 			}
@@ -441,11 +468,12 @@ func (c *rpcClient) read(ctx context.Context) (rpcMessage, error) {
 }
 
 type rpcMessage struct {
-	ID     int
-	Method string
-	Result map[string]any
-	Log    rpcLog
-	Error  *rpcError
+	ID      int
+	Method  string
+	Result  map[string]any
+	Log     rpcLog
+	Session rpcSessionEvent
+	Error   *rpcError
 }
 
 type rpcError struct {
@@ -459,6 +487,24 @@ type rpcLog struct {
 	Fields     map[string]any `json:"fields"`
 	Exception  string         `json:"exception"`
 	ReceivedAt time.Time      `json:"-"`
+}
+
+type rpcSessionEvent struct {
+	Event   string         `json:"event"`
+	Session rpcSessionRef  `json:"session"`
+	Fields  map[string]any `json:"fields"`
+}
+
+type rpcSessionRef struct {
+	ID           string `json:"id"`
+	RunID        string `json:"runId"`
+	ModuleID     string `json:"moduleId"`
+	Target       string `json:"target"`
+	Name         string `json:"name"`
+	Kind         string `json:"kind"`
+	State        string `json:"state"`
+	Transport    string `json:"transport"`
+	Capabilities []any  `json:"capabilities"`
 }
 
 type frameDecoder struct {
@@ -522,6 +568,11 @@ func (d *frameDecoder) read() (rpcMessage, error) {
 			return rpcMessage{}, err
 		}
 	}
+	if raw.Method == "module/session" && len(raw.Params) > 0 {
+		if err := json.Unmarshal(raw.Params, &message.Session); err != nil {
+			return rpcMessage{}, err
+		}
+	}
 	return message, nil
 }
 
@@ -543,6 +594,7 @@ func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (r
 		Findings:  findingsFromRPC(values["findings"]),
 		Artifacts: artifactsFromRPC(values["artifacts"]),
 		Logs:      logsFromRPC(request, logs),
+		Sessions:  sessionsFromRPC(request, values["sessions"]),
 	}
 	if stringValue(values["status"]) == string(run.StateFailed) {
 		return run.Failed(request, args)
@@ -680,6 +732,191 @@ func artifactsFromRPC(value any) []run.Artifact {
 	return artifacts
 }
 
+type SessionBroker struct {
+	mu       sync.Mutex
+	sessions map[string]*brokerSession
+}
+
+type brokerSession struct {
+	ref     run.SessionRef
+	process *moduleProcess
+}
+
+func NewSessionBroker() *SessionBroker {
+	return &SessionBroker{sessions: map[string]*brokerSession{}}
+}
+
+func (b *SessionBroker) ListSessions(context.Context) ([]run.SessionRef, error) {
+	if b == nil {
+		return nil, nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	sessions := make([]run.SessionRef, 0, len(b.sessions))
+	for _, session := range b.sessions {
+		sessions = append(sessions, cloneSessionRef(session.ref))
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].ID < sessions[j].ID
+	})
+	return sessions, nil
+}
+
+func (b *SessionBroker) WriteSession(ctx context.Context, sessionID string, data []byte) error {
+	session, err := b.lookup(sessionID)
+	if err != nil {
+		return err
+	}
+	_, err = session.process.client.call(ctx, "session/write", map[string]any{
+		"sessionId": sessionID,
+		"data":      base64.StdEncoding.EncodeToString(data),
+	})
+	return err
+}
+
+func (b *SessionBroker) ReadSession(ctx context.Context, sessionID string, timeout time.Duration) (run.SessionChunk, error) {
+	session, err := b.lookup(sessionID)
+	if err != nil {
+		return run.SessionChunk{}, err
+	}
+	timeoutMs := int(timeout / time.Millisecond)
+	if timeoutMs < 0 {
+		timeoutMs = -1
+	}
+	values, err := session.process.client.call(ctx, "session/read", map[string]any{
+		"sessionId": sessionID,
+		"timeoutMs": timeoutMs,
+	})
+	if err != nil {
+		return run.SessionChunk{}, err
+	}
+	data, err := base64.StdEncoding.DecodeString(stringValue(values["data"]))
+	if err != nil {
+		return run.SessionChunk{}, err
+	}
+	chunk := run.SessionChunk{
+		SessionID: defaultString(stringValue(values["sessionId"]), sessionID),
+		Data:      data,
+		Closed:    boolValue(values["closed"]),
+	}
+	if chunk.Closed {
+		b.markClosed(sessionID)
+	}
+	return chunk, nil
+}
+
+func (b *SessionBroker) CloseSession(ctx context.Context, sessionID string) error {
+	session, err := b.lookup(sessionID)
+	if err != nil {
+		return err
+	}
+	_, callErr := session.process.client.call(ctx, "session/close", map[string]any{
+		"sessionId": sessionID,
+		"reason":    "operator requested close",
+	})
+	b.remove(sessionID)
+	if !b.hasProcess(session.process) {
+		_, _ = session.process.client.call(context.Background(), "shutdown", nil)
+		if err := session.process.wait(); err != nil && callErr == nil {
+			callErr = err
+		}
+	}
+	return callErr
+}
+
+func (b *SessionBroker) adopt(process *moduleProcess, sessions []run.SessionRef) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.sessions == nil {
+		b.sessions = map[string]*brokerSession{}
+	}
+	for _, session := range sessions {
+		if session.ID == "" {
+			continue
+		}
+		b.sessions[session.ID] = &brokerSession{ref: cloneSessionRef(session), process: process}
+	}
+}
+
+func (b *SessionBroker) lookup(sessionID string) (*brokerSession, error) {
+	if b == nil {
+		return nil, errors.New("session broker is not configured")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	session, ok := b.sessions[sessionID]
+	if !ok {
+		return nil, fmt.Errorf("session %s does not exist", sessionID)
+	}
+	return session, nil
+}
+
+func (b *SessionBroker) markClosed(sessionID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if session, ok := b.sessions[sessionID]; ok {
+		session.ref.State = "closed"
+	}
+}
+
+func (b *SessionBroker) remove(sessionID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.sessions, sessionID)
+}
+
+func (b *SessionBroker) hasProcess(process *moduleProcess) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, session := range b.sessions {
+		if session.process == process {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneSessionRef(session run.SessionRef) run.SessionRef {
+	session.Capabilities = append([]string(nil), session.Capabilities...)
+	return session
+}
+
+func sessionsFromRPC(request run.Request, value any) []run.SessionRef {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	var sessions []run.SessionRef
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		session := run.SessionRef{
+			ID:           stringValue(object["id"]),
+			RunID:        defaultString(stringValue(object["runId"]), request.ID),
+			ModuleID:     defaultString(stringValue(object["moduleId"]), request.ModuleID),
+			Target:       defaultString(stringValue(object["target"]), request.Target),
+			Name:         stringValue(object["name"]),
+			Kind:         defaultString(stringValue(object["kind"]), "shell"),
+			State:        defaultString(stringValue(object["state"]), "active"),
+			Transport:    defaultString(stringValue(object["transport"]), "stdio"),
+			Capabilities: stringSlice(object["capabilities"]),
+		}
+		if session.ID != "" {
+			sessions = append(sessions, session)
+		}
+	}
+	return sessions
+}
+
+func defaultString(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
 func stringValue(value any) string {
 	if value == nil {
 		return ""
@@ -779,6 +1016,42 @@ func (r Runner) appendLog(ctx context.Context, request run.Request, log rpcLog) 
 			TargetID: request.Target,
 		},
 		Fields: fields,
+	})
+	if err != nil {
+		return err
+	}
+	return r.Events.Append(ctx, evt)
+}
+
+func (r Runner) appendSessionCreated(ctx context.Context, request run.Request, session run.SessionRef) error {
+	if r.Events == nil || r.IDs == nil || r.Clock == nil {
+		return nil
+	}
+	id, err := event.NewID(r.IDs.NewID())
+	if err != nil {
+		return err
+	}
+	eventType, err := event.NewType("session.created")
+	if err != nil {
+		return err
+	}
+	evt, err := event.New(event.Args{
+		ID:        id,
+		Type:      eventType,
+		Timestamp: r.Clock.Now(),
+		Refs: event.Refs{
+			RunID:     request.ID,
+			ModuleID:  request.ModuleID,
+			TargetID:  request.Target,
+			SessionID: session.ID,
+		},
+		Fields: map[string]string{
+			"sessionId": session.ID,
+			"name":      session.Name,
+			"kind":      session.Kind,
+			"state":     session.State,
+			"transport": session.Transport,
+		},
 	})
 	if err != nil {
 		return err

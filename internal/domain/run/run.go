@@ -71,6 +71,24 @@ type Artifact struct {
 	Data string
 }
 
+type SessionRef struct {
+	ID           string
+	RunID        string
+	ModuleID     string
+	Target       string
+	Name         string
+	Kind         string
+	State        string
+	Transport    string
+	Capabilities []string
+}
+
+type SessionChunk struct {
+	SessionID string
+	Data      []byte
+	Closed    bool
+}
+
 type LogEntry struct {
 	ID             string
 	Time           string
@@ -95,6 +113,7 @@ type ResultArgs struct {
 	Findings  []Finding
 	Artifacts []Artifact
 	Logs      []LogEntry
+	Sessions  []SessionRef
 }
 
 type Result struct {
@@ -106,6 +125,7 @@ type Result struct {
 	Findings  []Finding
 	Artifacts []Artifact
 	Logs      []LogEntry
+	Sessions  []SessionRef
 }
 
 func Succeeded(request Request, args ResultArgs) (Result, error) {
@@ -129,6 +149,7 @@ func resultWithState(request Request, state State, args ResultArgs) (Result, err
 		Findings:  append([]Finding(nil), args.Findings...),
 		Artifacts: append([]Artifact(nil), args.Artifacts...),
 		Logs:      cloneLogs(args.Logs),
+		Sessions:  cloneSessions(args.Sessions),
 	}, nil
 }
 
@@ -163,6 +184,24 @@ func cloneLogs(logs []LogEntry) []LogEntry {
 			ElapsedSeconds: cloneFloat64(log.ElapsedSeconds),
 			Fields:         cloneStringMap(log.Fields),
 			Attributes:     cloneStringMap(log.Attributes),
+		})
+	}
+	return out
+}
+
+func cloneSessions(sessions []SessionRef) []SessionRef {
+	out := make([]SessionRef, 0, len(sessions))
+	for _, session := range sessions {
+		out = append(out, SessionRef{
+			ID:           session.ID,
+			RunID:        session.RunID,
+			ModuleID:     session.ModuleID,
+			Target:       session.Target,
+			Name:         session.Name,
+			Kind:         session.Kind,
+			State:        session.State,
+			Transport:    session.Transport,
+			Capabilities: append([]string(nil), session.Capabilities...),
 		})
 	}
 	return out

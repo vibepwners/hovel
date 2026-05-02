@@ -25,14 +25,15 @@ import (
 )
 
 type Args struct {
-	WorkspacePath string
-	SocketPath    string
-	PID           int
-	StartedAt     time.Time
-	IDs           services.IDGenerator
-	Clock         services.Clock
-	Events        services.EventSink
-	ModuleRunner  services.ModuleRunner
+	WorkspacePath  string
+	SocketPath     string
+	PID            int
+	StartedAt      time.Time
+	IDs            services.IDGenerator
+	Clock          services.Clock
+	Events         services.EventSink
+	ModuleRunner   services.ModuleRunner
+	ModuleSessions services.SessionBroker
 }
 
 func Serve(ctx context.Context, args Args) error {
@@ -90,11 +91,15 @@ func Serve(ctx context.Context, args Args) error {
 		return persistSession(session.Export())
 	})
 	runner := args.ModuleRunner
+	sessionBroker := args.ModuleSessions
 	if runner == nil {
+		pythonSessions := pythonrpc.NewSessionBroker()
+		sessionBroker = pythonSessions
 		runner = pythonrpc.Runner{
-			Events: events,
-			IDs:    ids,
-			Clock:  clock,
+			Events:   events,
+			IDs:      ids,
+			Clock:    clock,
+			Sessions: pythonSessions,
 		}
 	}
 
@@ -121,7 +126,7 @@ func Serve(ctx context.Context, args Args) error {
 
 	server := rpc.NewServer()
 	runs := services.NewRunService(runner, events, ids, clock)
-	if err := daemonrpc.Register(server, runs, daemonrpc.WithSession(session), daemonrpc.WithLogBroker(logs), daemonrpc.WithSessionPersistence(persistSession)); err != nil {
+	if err := daemonrpc.Register(server, runs, daemonrpc.WithSession(session), daemonrpc.WithLogBroker(logs), daemonrpc.WithSessionPersistence(persistSession), daemonrpc.WithModuleSessions(sessionBroker)); err != nil {
 		return err
 	}
 	acceptErrs := make(chan error, 1)
@@ -211,6 +216,15 @@ func (s *publishingEventSink) Append(ctx context.Context, evt event.Event) error
 		}
 	case "module.log":
 		entry := s.moduleLogEntry(operation, chain, evt)
+		_ = s.session.AppendLogToChain(chain, entry)
+		s.logs.Publish(operation, chain, entry)
+		return s.persistIfConfigured()
+	case "session.created":
+		entry := s.runEventEntry(operation, chain, evt, operatorlog.Info("session", "session opened",
+			operatorlog.Field{Name: "session", Value: evt.Fields["sessionId"]},
+			operatorlog.Field{Name: "kind", Value: evt.Fields["kind"]},
+			operatorlog.Field{Name: "state", Value: evt.Fields["state"]},
+		))
 		_ = s.session.AppendLogToChain(chain, entry)
 		s.logs.Publish(operation, chain, entry)
 		return s.persistIfConfigured()

@@ -903,3 +903,21 @@ func (c fakeRunClient) RunMockExploit(_ context.Context, req RunMockExploitReque
 		}},
 	}, nil
 }
+
+func (fakeRunClient) ListSessions(context.Context) ([]SessionRef, error) {
+	return []SessionRef{{
+		ID:           "session-1",
+		RunID:        "run-1",
+		ModuleID:     "mock-exploit-session",
+		Target:       "mock://target",
+		Name:         "mock shell on mock://target",
+		Kind:         "shell",
+		State:        "active",
+		Transport:    "stdio",
+		Capabilities: []string{"read", "write", "exec", "close"},
+	}}, nil
+}
+
+func (fakeRunClient) CloseSession(context.Context, string) error {
+	return nil
+}

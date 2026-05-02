@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from hovel_sdk.session import Session, SessionRef
+
+if TYPE_CHECKING:
+    from hovel_sdk.session import SessionRegistry
 
 
 @dataclass(frozen=True)
@@ -14,6 +19,7 @@ class Context:
     chain_config: dict[str, Any] = field(default_factory=dict)
     target_config: dict[str, Any] = field(default_factory=dict)
     log: logging.Logger = field(default_factory=lambda: logging.getLogger("hovel.module"))
+    sessions: SessionRegistry | None = field(default=None, repr=False)
 
     def input(self, key: str, default: Any = None) -> Any:
         if key in self.inputs:
@@ -21,3 +27,22 @@ class Context:
         if key in self.target_config:
             return self.target_config[key]
         return self.chain_config.get(key, default)
+
+    async def open_session(
+        self,
+        session: Session,
+        *,
+        name: str = "",
+        kind: str = "shell",
+        transport: str = "stdio",
+        capabilities: tuple[str, ...] = ("read", "write", "close"),
+    ) -> SessionRef:
+        if self.sessions is None:
+            raise RuntimeError("session support is not available in this runtime")
+        return await self.sessions.open(
+            session,
+            name=name,
+            kind=kind,
+            transport=transport,
+            capabilities=capabilities,
+        )

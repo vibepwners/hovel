@@ -68,7 +68,7 @@ func TestRunnerInspectsPythonModuleDeclaredSchema(t *testing.T) {
 }
 
 func TestRunnerLaunchesEveryBuiltInMockModule(t *testing.T) {
-	for _, moduleID := range []string{"mock-survey", "mock-exploit"} {
+	for _, moduleID := range []string{"mock-survey", "mock-exploit", "mock-exploit-session"} {
 		t.Run(moduleID, func(t *testing.T) {
 			request, err := run.NewRequest(run.RequestArgs{
 				ID:       "run-1",
@@ -90,6 +90,64 @@ func TestRunnerLaunchesEveryBuiltInMockModule(t *testing.T) {
 				t.Fatal("summary is empty")
 			}
 		})
+	}
+}
+
+func TestRunnerKeepsPythonSessionModuleAliveBehindBroker(t *testing.T) {
+	request, err := run.NewRequest(run.RequestArgs{
+		ID:       "run-1",
+		ModuleID: "mock-exploit-session",
+		Target:   "mock://target",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := NewSessionBroker()
+	result, err := Runner{
+		ConfigPath: exampleModuleConfig,
+		Timeout:    10 * time.Second,
+		Sessions:   broker,
+	}.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 1 {
+		t.Fatalf("sessions = %#v, want one session", result.Sessions)
+	}
+	sessionID := result.Sessions[0].ID
+	sessions, err := broker.ListSessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != sessionID {
+		t.Fatalf("broker sessions = %#v, want %s", sessions, sessionID)
+	}
+	prompt, err := broker.ReadSession(context.Background(), sessionID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(prompt.Data) != "mock$ " {
+		t.Fatalf("prompt = %q, want mock prompt", string(prompt.Data))
+	}
+	if err := broker.WriteSession(context.Background(), sessionID, []byte("whoami\n")); err != nil {
+		t.Fatal(err)
+	}
+	echo, err := broker.ReadSession(context.Background(), sessionID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(echo.Data) != "whoami\n" {
+		t.Fatalf("echo = %q, want whoami", string(echo.Data))
+	}
+	output, err := broker.ReadSession(context.Background(), sessionID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(output.Data) != "mock-operator\n" {
+		t.Fatalf("output = %q, want mock operator", string(output.Data))
+	}
+	if err := broker.CloseSession(context.Background(), sessionID); err != nil {
+		t.Fatal(err)
 	}
 }
 

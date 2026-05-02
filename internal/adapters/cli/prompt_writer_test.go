@@ -22,6 +22,22 @@ func TestPromptSurfaceWritesAsyncLogsRaw(t *testing.T) {
 	}
 }
 
+func TestPromptSurfaceRefreshesPromptBelowAsyncLog(t *testing.T) {
+	writer := &recordingConsoleWriter{}
+	surface := newPromptSurface(writer)
+	surface.SetDocument(prompt.Document{Text: "config interactive"})
+
+	surface.WriteAsyncLog("first\nsecond", "h0v3l> ")
+
+	output := writer.String()
+	if !strings.Contains(output, "<erase-line><erase-down>") {
+		t.Fatalf("output = %q, want prompt area cleared before log", output)
+	}
+	if !strings.Contains(output, "first\r\nsecond\r\nh0v3l> config interactive") {
+		t.Fatalf("output = %q, want log followed by refreshed prompt and input", output)
+	}
+}
+
 func TestPromptSurfaceShowsThrowingAnimation(t *testing.T) {
 	writer := &recordingConsoleWriter{}
 	surface := newPromptSurface(writer)

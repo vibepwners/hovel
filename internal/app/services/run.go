@@ -14,6 +14,13 @@ type ModuleRunner interface {
 	Run(context.Context, run.Request) (run.Result, error)
 }
 
+type SessionBroker interface {
+	ListSessions(context.Context) ([]run.SessionRef, error)
+	WriteSession(context.Context, string, []byte) error
+	ReadSession(context.Context, string, time.Duration) (run.SessionChunk, error)
+	CloseSession(context.Context, string) error
+}
+
 type ModuleExecutionFailure interface {
 	error
 	ModuleFailureSummary() string

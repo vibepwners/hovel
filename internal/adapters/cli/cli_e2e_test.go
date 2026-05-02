@@ -259,6 +259,64 @@ func TestE2EExamplePayloadExploitChainUsesPythonModules(t *testing.T) {
 	assertPersistedPlan(t, workspacePath, payload.Plan)
 }
 
+func TestE2ESessionConnectHandlesRawTerminalCarriageReturn(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
+	workspacePath := fixture.WorkspacePath
+
+	app := newTestApp()
+	var stdout, stderr bytes.Buffer
+	executeLines(t, app, &stdout, &stderr,
+		"op use test-op",
+		"chain use session-exploit",
+		"chain add mock-exploit-session",
+		"target add mock://router-01",
+		"chain config set operator.confirmed_lab true",
+		"target config set mock://router-01 target.host router-01",
+		"target config set mock://router-01 target.port 22",
+		"chain validate",
+	)
+	stdout.Reset()
+	stderr.Reset()
+
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	payload := decodeThrowJSON(t, stdout.Bytes())
+	if len(payload.Results) != 1 || len(payload.Results[0].Sessions) != 1 {
+		t.Fatalf("results = %#v, want one session result", payload.Results)
+	}
+	sessionID := payload.Results[0].Sessions[0].ID
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.ExecuteLine(context.Background(), "session list --workspace "+workspacePath, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("session list exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), sessionID) || !strings.Contains(stdout.String(), "mock shell on mock://router-01") {
+		t.Fatalf("session list output = %q", stdout.String())
+	}
+
+	client, err := daemonrpc.Dial(fixture.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	stdout.Reset()
+	stderr.Reset()
+	input := strings.NewReader("whoami\rpwd\r" + string([]byte{sessionDetachByte}))
+	if err := ConnectSession(context.Background(), client, sessionID, input, &stdout); err != nil {
+		t.Fatalf("session connect failed: %v", err)
+	}
+	for _, want := range []string{"Press Ctrl-] to detach", "mock$", "whoami", "mock-operator", "pwd", "/mock/session", "Detached from session"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("session connect output missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
 func TestE2EExampleFailingChainReportsFailedModule(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
 	workspacePath := fixture.WorkspacePath
@@ -313,8 +371,7 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 		"━",
 		"┃",
 		"███████",
-		"modules:",
-		"2",
+		"modules: 3",
 		"hoveld:",
 		"hoveld.sock",
 		"mode:",
@@ -435,6 +492,9 @@ type e2eThrowPayload struct {
 			Logger  string            `json:"logger"`
 			Fields  map[string]string `json:"fields"`
 		} `json:"logs"`
+		Sessions []struct {
+			ID string `json:"id"`
+		} `json:"sessions"`
 	} `json:"results"`
 }
 
@@ -469,6 +529,9 @@ func moduleIDs(results []struct {
 		Logger  string            `json:"logger"`
 		Fields  map[string]string `json:"fields"`
 	} `json:"logs"`
+	Sessions []struct {
+		ID string `json:"id"`
+	} `json:"sessions"`
 }) []string {
 	ids := make([]string, 0, len(results))
 	for _, result := range results {

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import sys
 from typing import Any, BinaryIO
@@ -8,6 +10,7 @@ from hovel_sdk.context import Context
 from hovel_sdk.framing import FrameError, read_message, write_message
 from hovel_sdk.logging import setup_logging
 from hovel_sdk.module import HovelModule
+from hovel_sdk.session import SessionManager
 
 
 class JSONRPCServer:
@@ -15,8 +18,11 @@ class JSONRPCServer:
         self._module = module
         self._stdin = stdin
         self._stdout = stdout
+        self._loop = asyncio.new_event_loop()
+        self._sessions = SessionManager(self._emit_session_event)
 
     def serve_forever(self) -> None:
+        asyncio.set_event_loop(self._loop)
         setup_logging(self._emit_log)
         while True:
             message = read_message(self._stdin)
@@ -62,22 +68,50 @@ class JSONRPCServer:
         if method == "schema":
             return self._module.module_schema()
         if method == "execute":
-            ctx = Context(
-                run_id=str(params.get("runId", "")),
-                module_id=str(params.get("moduleId", self._module.name)),
-                target=str(params.get("target", "")),
-                inputs=dict(params.get("inputs") or {}),
-                chain_config=dict(params.get("chainConfig") or {}),
-                target_config=dict(params.get("targetConfig") or {}),
-                log=logging.getLogger(self._module.name or "hovel.module"),
-            )
-            return self._module.run(ctx).to_rpc()
+            return self._loop.run_until_complete(self._execute(params))
+        if method.startswith("session/"):
+            return self._loop.run_until_complete(self._dispatch_session(method, params))
         if method == "shutdown":
+            self._loop.run_until_complete(self._sessions.close_all())
             return {"status": "ok"}
         raise ValueError(f"unknown method {method!r}")
 
+    async def _dispatch_session(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method == "session/write":
+            return await self._sessions.write_rpc(params)
+        if method == "session/read":
+            return await self._sessions.read_rpc(params)
+        if method == "session/close":
+            return await self._sessions.close_rpc(params)
+        raise ValueError(f"unknown method {method!r}")
+
+    async def _execute(self, params: dict[str, Any]) -> dict[str, Any]:
+        run_id = str(params.get("runId", ""))
+        module_id = str(params.get("moduleId", self._module.name))
+        target = str(params.get("target", ""))
+        sessions = self._sessions.for_run(run_id=run_id, module_id=module_id, target=target)
+        ctx = Context(
+            run_id=run_id,
+            module_id=module_id,
+            target=target,
+            inputs=dict(params.get("inputs") or {}),
+            chain_config=dict(params.get("chainConfig") or {}),
+            target_config=dict(params.get("targetConfig") or {}),
+            log=logging.getLogger(self._module.name or "hovel.module"),
+            sessions=sessions,
+        )
+        maybe_result = self._module.run(ctx)
+        if inspect.isawaitable(maybe_result):
+            result = await maybe_result
+        else:
+            result = maybe_result
+        return result.to_rpc(sessions=sessions.refs())
+
     def _emit_log(self, params: dict[str, Any]) -> None:
         write_message(self._stdout, {"jsonrpc": "2.0", "method": "module/log", "params": params})
+
+    def _emit_session_event(self, params: dict[str, Any]) -> None:
+        write_message(self._stdout, {"jsonrpc": "2.0", "method": "module/session", "params": params})
 
 
 def serve(module: HovelModule, stdin: BinaryIO | None = None, stdout: BinaryIO | None = None) -> None:

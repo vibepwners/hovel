@@ -41,6 +41,24 @@ type Artifact struct {
 	Data string
 }
 
+type SessionRef struct {
+	ID           string
+	RunID        string
+	ModuleID     string
+	Target       string
+	Name         string
+	Kind         string
+	State        string
+	Transport    string
+	Capabilities []string
+}
+
+type SessionChunk struct {
+	SessionID string
+	Data      []byte
+	Closed    bool
+}
+
 type LogEntry struct {
 	ID             string
 	Time           string
@@ -105,12 +123,14 @@ type RunMockExploitResponse struct {
 	Findings  []Finding
 	Artifacts []Artifact
 	Logs      []LogEntry
+	Sessions  []SessionRef
 }
 
 type ExecuteModuleResponse = RunMockExploitResponse
 
 type Server struct {
 	runs           services.RunService
+	moduleSessions services.SessionBroker
 	session        *operatorsession.Session
 	logs           *LogBroker
 	persistSession func(operatorsession.PersistedState) error
@@ -153,6 +173,12 @@ func WithSessionPersistence(persist func(operatorsession.PersistedState) error) 
 	}
 }
 
+func WithModuleSessions(sessions services.SessionBroker) ServerOption {
+	return func(server *Server) {
+		server.moduleSessions = sessions
+	}
+}
+
 func (s Server) RunMockExploit(req RunMockExploitRequest, resp *RunMockExploitResponse) error {
 	return s.ExecuteModule(ExecuteModuleRequest(req), (*ExecuteModuleResponse)(resp))
 }
@@ -175,6 +201,68 @@ func (s Server) ExecuteModule(req ExecuteModuleRequest, resp *ExecuteModuleRespo
 	}
 	*resp = responseFromResult(result)
 	return nil
+}
+
+type SessionReadRequest struct {
+	SessionID string
+	TimeoutMs int
+}
+
+type SessionWriteRequest struct {
+	SessionID string
+	Data      []byte
+}
+
+type SessionCloseRequest struct {
+	SessionID string
+}
+
+type ListSessionsResponse struct {
+	Sessions []SessionRef
+}
+
+func (s Server) ListSessions(_ EmptyRequest, resp *ListSessionsResponse) error {
+	if s.moduleSessions == nil {
+		resp.Sessions = nil
+		return nil
+	}
+	sessions, err := s.moduleSessions.ListSessions(context.Background())
+	if err != nil {
+		return err
+	}
+	resp.Sessions = sessionRefsFromRun(sessions)
+	return nil
+}
+
+func (s Server) ReadSession(req SessionReadRequest, resp *SessionChunk) error {
+	if s.moduleSessions == nil {
+		return errors.New("session broker is not configured")
+	}
+	timeout := time.Duration(req.TimeoutMs) * time.Millisecond
+	chunk, err := s.moduleSessions.ReadSession(context.Background(), req.SessionID, timeout)
+	if err != nil {
+		return err
+	}
+	*resp = SessionChunk{
+		SessionID: chunk.SessionID,
+		Data:      append([]byte(nil), chunk.Data...),
+		Closed:    chunk.Closed,
+	}
+	return nil
+}
+
+func (s Server) WriteSession(req SessionWriteRequest, resp *EmptyResponse) error {
+	if s.moduleSessions == nil {
+		return errors.New("session broker is not configured")
+	}
+	return s.moduleSessions.WriteSession(context.Background(), req.SessionID, req.Data)
+}
+
+func (s Server) CloseSession(req SessionCloseRequest, resp *EmptyResponse) error {
+	if s.moduleSessions == nil {
+		return errors.New("session broker is not configured")
+	}
+	return s.moduleSessions.CloseSession(context.Background(), req.SessionID)
 }
 
 type ChainRequest struct {
@@ -530,6 +618,34 @@ func (c *Client) ExecuteModule(ctx context.Context, req ExecuteModuleRequest) (E
 	}
 }
 
+func (c *Client) ListSessions(ctx context.Context) ([]SessionRef, error) {
+	var resp ListSessionsResponse
+	if err := c.call(ctx, serviceName+".ListSessions", EmptyRequest{}, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Sessions, nil
+}
+
+func (c *Client) ReadSession(ctx context.Context, sessionID string, timeout time.Duration) (SessionChunk, error) {
+	var resp SessionChunk
+	err := c.call(ctx, serviceName+".ReadSession", SessionReadRequest{
+		SessionID: sessionID,
+		TimeoutMs: int(timeout / time.Millisecond),
+	}, &resp)
+	return resp, err
+}
+
+func (c *Client) WriteSession(ctx context.Context, sessionID string, data []byte) error {
+	return c.call(ctx, serviceName+".WriteSession", SessionWriteRequest{
+		SessionID: sessionID,
+		Data:      append([]byte(nil), data...),
+	}, &EmptyResponse{})
+}
+
+func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
+	return c.call(ctx, serviceName+".CloseSession", SessionCloseRequest{SessionID: sessionID}, &EmptyResponse{})
+}
+
 func (c *Client) PollLogs(ctx context.Context, since uint64) (PollLogsResponse, error) {
 	return c.pollLogs(ctx, "", "", since)
 }
@@ -830,6 +946,7 @@ func responseFromResult(result run.Result) RunMockExploitResponse {
 			Data: artifact.Data,
 		})
 	}
+	resp.Sessions = sessionRefsFromRun(result.Sessions)
 	for _, log := range result.Logs {
 		resp.Logs = append(resp.Logs, LogEntry{
 			ID:             log.ID,
@@ -851,6 +968,24 @@ func responseFromResult(result run.Result) RunMockExploitResponse {
 		})
 	}
 	return resp
+}
+
+func sessionRefsFromRun(sessions []run.SessionRef) []SessionRef {
+	out := make([]SessionRef, 0, len(sessions))
+	for _, session := range sessions {
+		out = append(out, SessionRef{
+			ID:           session.ID,
+			RunID:        session.RunID,
+			ModuleID:     session.ModuleID,
+			Target:       session.Target,
+			Name:         session.Name,
+			Kind:         session.Kind,
+			State:        session.State,
+			Transport:    session.Transport,
+			Capabilities: append([]string(nil), session.Capabilities...),
+		})
+	}
+	return out
 }
 
 func sourceOrDefault(value, fallback string) string {
