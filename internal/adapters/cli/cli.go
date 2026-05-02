@@ -20,6 +20,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 )
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -86,7 +87,7 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	a = a.withDaemonSession(ctx, daemonClient)
 	a.surface = newPromptSurface(prompt.NewStdoutWriter())
 
-	fmt.Fprintln(stdout, a.Welcome(session))
+	fmt.Fprintln(stdout, a.WelcomeForWidth(session, terminalWidth(stdout)))
 	stopLogs := a.SubscribeLogs(ctx, daemonClient, a.surface, stdout)
 	defer stopLogs()
 	a.Prompt(ctx, stdout, stderr).Run()
@@ -659,6 +660,10 @@ func cloneTargetConfigs(values map[string]map[string]string) map[string]map[stri
 }
 
 func (a App) Welcome(session *daemonmanager.Session) string {
+	return a.WelcomeForWidth(session, 0)
+}
+
+func (a App) WelcomeForWidth(session *daemonmanager.Session, width int) string {
 	status := session.Status()
 	mode := "remote"
 	if session.Owned() {
@@ -669,6 +674,7 @@ func (a App) Welcome(session *daemonmanager.Session) string {
 		DaemonAddress: status.Identity.SocketPath,
 		DaemonMode:    mode,
 		Health:        string(status.Identity.Health),
+		TerminalWidth: width,
 	})
 }
 
@@ -718,9 +724,22 @@ type WelcomeInfo struct {
 	DaemonAddress string
 	DaemonMode    string
 	Health        string
+	TerminalWidth int
 }
 
 func (t Theme) Welcome(info WelcomeInfo) string {
+	if info.TerminalWidth > 0 && info.TerminalWidth < wideMastheadColumns {
+		details := []string{
+			t.accent.Render(hovelCompactWordmark),
+			"",
+			t.detail("modules", strconv.Itoa(info.ModuleCount)),
+			t.detail("hoveld", info.DaemonAddress),
+			t.detail("mode", info.DaemonMode),
+			t.detail("health", info.Health),
+		}
+		return strings.Join(details, "\n")
+	}
+
 	details := []string{
 		t.accent.Render(hovelWordmark),
 		"",
@@ -732,6 +751,18 @@ func (t Theme) Welcome(info WelcomeInfo) string {
 	panel := t.panel.Render(strings.Join(details, "\n"))
 	hut := centerBlock(t.cyan.Render(hovelASCII), lipgloss.Width(panel))
 	return hut + "\n" + panel
+}
+
+func terminalWidth(writer io.Writer) int {
+	file, ok := writer.(interface{ Fd() uintptr })
+	if !ok {
+		return 0
+	}
+	width, _, err := term.GetSize(file.Fd())
+	if err != nil {
+		return 0
+	}
+	return width
 }
 
 func (t Theme) detail(label, value string) string {
@@ -882,13 +913,23 @@ const hovelASCII = `          ~~~
  |______|_____|______|
      ~~         ~~`
 
-const hovelWordmark = `░▒▓█▓▒░░▒▓█▓▒░░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓████████▓▒░▒▓█▓▒░
-░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░
-░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒▒▓█▓▒░░▒▓█▓▒░      ░▒▓█▓▒░
-░▒▓████████▓▒░▒▓█▓▒░░▒▓█▓▒░░▒▓█▓▒▒▓█▓▒░░▒▓██████▓▒░ ░▒▓█▓▒░
-░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▓█▓▒░ ░▒▓█▓▒░      ░▒▓█▓▒░
-░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ ░▒▓█▓▓█▓▒░ ░▒▓█▓▒░      ░▒▓█▓▒░
-░▒▓█▓▒░░▒▓█▓▒░░▒▓██████▓▒░   ░▒▓██▓▒░  ░▒▓████████▓▒░▒▓████████▓▒░`
+const hovelWordmark = ` █████   █████    ███████    █████   █████ ██████████ █████
+░░███   ░░███   ███░░░░░███ ░░███   ░░███ ░░███░░░░░█░░███
+ ░███    ░███  ███     ░░███ ░███    ░███  ░███  █ ░  ░███
+ ░███████████ ░███      ░███ ░███    ░███  ░██████    ░███
+ ░███░░░░░███ ░███      ░███ ░░███   ███   ░███░░█    ░███
+ ░███    ░███ ░░███     ███   ░░░█████░    ░███ ░   █ ░███      █
+ █████   █████ ░░░███████░      ░░███      ██████████ ███████████
+░░░░░   ░░░░░    ░░░░░░░         ░░░      ░░░░░░░░░░ ░░░░░░░░░░░`
+
+const hovelCompactWordmark = "                          \n" +
+	"|   |,---..    ,,---.|    \n" +
+	"|---||   ||    ||--- |    \n" +
+	"|   ||   | \\  / |    |    \n" +
+	"`   '`---'  `'  `---'`---'\n" +
+	"                          "
+
+const wideMastheadColumns = 69
 
 func splitStyledLines(values []string) []string {
 	var lines []string

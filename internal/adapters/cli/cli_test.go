@@ -714,7 +714,7 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 		"╰",
 		"━",
 		"┃",
-		"▓██████▓",
+		"███████",
 		"modules:",
 		"2",
 		"hoveld:",
@@ -730,6 +730,27 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 	}
 	if lines := strings.Split(welcome, "\n"); len(lines) < 14 {
 		t.Fatalf("welcome line count = %d, want ascii art block:\n%s", len(lines), welcome)
+	}
+
+	narrow := app.WelcomeForWidth(session, wideMastheadColumns-1)
+	for _, want := range []string{
+		"|   |,---..    ,,---.|",
+		"`   '`---'  `'  `---'`---'",
+		"modules:",
+	} {
+		if !strings.Contains(narrow, want) {
+			t.Fatalf("narrow welcome missing %q:\n%s", want, narrow)
+		}
+	}
+	for _, unwanted := range []string{"╭", "╰", "━", "┃", "███████"} {
+		if strings.Contains(narrow, unwanted) {
+			t.Fatalf("narrow welcome contains %q, want compact unbordered masthead:\n%s", unwanted, narrow)
+		}
+	}
+
+	wide := app.WelcomeForWidth(session, wideMastheadColumns)
+	if !strings.Contains(wide, "███████") || !strings.Contains(wide, "╭") {
+		t.Fatalf("wide welcome should keep bordered masthead:\n%s", wide)
 	}
 }
 
