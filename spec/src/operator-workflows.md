@@ -232,6 +232,91 @@ Validation must evaluate:
 
 Validation output must be human-first and scriptable with `--json`.
 
+## Post-Exploitation Sessions (MSF-Style)
+
+Hovel should treat post-exploitation access as a first-class operation object, not an ad-hoc log line. A successful exploit step may open zero, one, or many sessions. Sessions should be stable, interactive, resumable, and automatable across CLI, TUI, and MCP.
+
+### Session Goals
+
+1. **Operator UX parity with Metasploit**: easy `sessions` listing, interact, background, kill, rename, and tagging.
+2. **Multi-entity collaboration**: one operator can hand off a live session to another operator or agent without losing context.
+3. **Module maintainer simplicity**: modules emit typed session open/close/update events and implement a narrow runtime contract.
+4. **Daemon ownership**: session lifecycle and transcript persistence live in `hoveld`, not in front-end memory.
+
+### Session Domain Model
+
+Each session record should include:
+
+1. Session ID (stable within workspace).
+2. Operation and chain identifiers.
+3. Source run ID and source step ID.
+4. Target identifier.
+5. Session kind (`shell`, `meterpreter-like`, `agent`, extensible).
+6. Transport (`tcp`, `http`, `https`, `named-pipe`, etc.).
+7. Lifecycle state (`opening`, `active`, `backgrounded`, `lost`, `closed`).
+8. Ownership and lock state (free, attached, read-only observer).
+9. Capabilities (`exec`, `upload`, `download`, `pivot`, `portfwd`, `pty`, etc.).
+10. Last-seen timestamp and liveness metadata.
+11. Session labels/tags and optional notes.
+
+### Session Control Plane
+
+Initial operator commands:
+
+```text
+session list
+session inspect <session-id>
+session use <session-id>
+session background
+session close <session-id>
+session rename <session-id> <name>
+session tag add <session-id> <tag>
+session tag remove <session-id> <tag>
+```
+
+Control-plane requirements:
+
+1. Session attach/detach is explicit and logged.
+2. Concurrent attach policy is configurable (single-writer + multi-reader by default).
+3. Session loss is surfaced immediately with reason codes.
+4. Session takeover is explicit (`--force`) and audited.
+
+### Session Data Plane
+
+Interactive traffic must flow through daemon-managed streams:
+
+1. Input stream: operator/agent keystrokes or commands.
+2. Output stream: remote stdout/stderr/events/chunks.
+3. Side-channel events: file transfer, port forward lifecycle, privilege escalation hints.
+
+Design constraints:
+
+1. Binary-safe framing (not line-oriented only).
+2. Backpressure-aware buffers per attached entity.
+3. Replay cursor for reconnecting clients.
+4. Redaction hooks for secrets and operator-defined patterns.
+
+### Module Runtime Contract
+
+Modules that can create sessions should implement:
+
+1. Declared capability: `opens_sessions=true`.
+2. Session open event including target, session kind, and capability set.
+3. Optional heartbeat/liveness updates.
+4. Session close event with terminal reason.
+
+This keeps module maintainer burden low: they do not implement global session registries, lock arbitration, or persistence.
+
+### Acceptance Criteria
+
+Operators and maintainers should both agree the model is the default when:
+
+1. A successful exploit reliably emits discoverable session objects within one command (`session list`).
+2. Detach/reattach is lossless for context and transcript.
+3. A second operator can safely observe or take over a session with auditable state transitions.
+4. Session APIs are identical across CLI/TUI/MCP, with only presentation differences.
+5. Module authors can add session support by emitting typed events and passing contract tests.
+
 ## Mock Modules
 
 The mocked stage should provide enough modules to exercise every UI path without executing real target behavior.
