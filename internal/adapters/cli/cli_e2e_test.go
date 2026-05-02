@@ -22,6 +22,9 @@ func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
 
 	app := newTestApp()
 	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(context.Background(), "op use test-op", &stdout, &stderr); code != 0 {
+		t.Fatalf("op use exit code = %d, stderr = %s", code, stderr.String())
+	}
 	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
 		t.Fatalf("chain exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -156,6 +159,15 @@ func TestDaemonSessionKeepsInjectedModuleCatalog(t *testing.T) {
 	app := newAppWithSessionAndModules(operatorsession.New(), modules).withDaemonSession(context.Background(), client)
 	var stdout, stderr bytes.Buffer
 
+	if code := app.ExecuteLine(context.Background(), "op use test-op", &stdout, &stderr); code != 0 {
+		t.Fatalf("op use exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if code := app.ExecuteLine(context.Background(), "chain use catalog", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain use exit code = %d, stderr = %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+
 	if code := app.ExecuteLine(context.Background(), "module list", &stdout, &stderr); code != 0 {
 		t.Fatalf("module list exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -174,6 +186,7 @@ func TestE2EExampleSurveyAuthChainUsesPythonModules(t *testing.T) {
 	app := newTestApp()
 	var stdout, stderr bytes.Buffer
 	executeLines(t, app, &stdout, &stderr,
+		"op use test-op",
 		"chain use survey-example",
 		"chain add mock-survey",
 		"target add mock://router-01",
@@ -209,6 +222,7 @@ func TestE2EExamplePayloadExploitChainUsesPythonModules(t *testing.T) {
 	app := newTestApp()
 	var stdout, stderr bytes.Buffer
 	executeLines(t, app, &stdout, &stderr,
+		"op use test-op",
 		"chain use survey-exploit",
 		"chain add mock-survey",
 		"chain add mock-exploit",
@@ -252,6 +266,7 @@ func TestE2EExampleFailingChainReportsFailedModule(t *testing.T) {
 	app := newTestApp()
 	var stdout, stderr bytes.Buffer
 	executeLines(t, app, &stdout, &stderr,
+		"op use test-op",
 		"chain use failing-example",
 		"chain add mock-exploit",
 		"target add mock://target",

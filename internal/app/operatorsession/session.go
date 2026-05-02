@@ -89,10 +89,11 @@ func NewStore() *Store {
 }
 
 type Session struct {
-	mu              sync.Mutex
-	activeOperation string
-	activeChains    map[string]string
-	store           *Store
+	mu                      sync.Mutex
+	activeOperation         string
+	activeOperationSelected bool
+	activeChains            map[string]string
+	store                   *Store
 }
 
 func NewWithStore(store *Store) *Session {
@@ -124,6 +125,7 @@ func (s *Session) UseOperation(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.activeOperation = name
+	s.activeOperationSelected = true
 	if s.activeChains == nil {
 		s.activeChains = map[string]string{}
 	}
@@ -296,6 +298,12 @@ func (s *Session) Snapshot() State {
 	return s.chainStore().snapshot(operation, activeChain)
 }
 
+func (s *Session) ActiveOperationSelected() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return normalizeOperation(s.activeOperation) != "" && s.activeOperationSelected
+}
+
 func (s *Session) ActiveLogs() []operatorlog.Entry {
 	operation, activeChain := s.activeRef()
 	return s.chainStore().logs(operation, activeChain)
@@ -303,12 +311,17 @@ func (s *Session) ActiveLogs() []operatorlog.Entry {
 
 func (s *Session) Export() PersistedState {
 	operation, activeChain := s.activeRef()
-	return s.chainStore().export(operation, activeChain)
+	state := s.chainStore().export(operation, activeChain)
+	if !s.ActiveOperationSelected() {
+		state.ActiveOperation = ""
+	}
+	return state
 }
 
 func (s *Session) Import(state PersistedState) {
 	s.chainStore().importState(state)
 	activeOperation := normalizeOperation(state.ActiveOperation)
+	activeOperationSelected := activeOperation != ""
 	if activeOperation == "" {
 		activeOperation = DefaultOperation
 	}
@@ -320,6 +333,7 @@ func (s *Session) Import(state PersistedState) {
 	}
 	if s.store.hasOperation(activeOperation) {
 		s.activeOperation = activeOperation
+		s.activeOperationSelected = activeOperationSelected
 		if activeChain != "" && s.store.hasChain(activeOperation, activeChain) {
 			s.activeChains[activeOperation] = activeChain
 			return
@@ -328,6 +342,7 @@ func (s *Session) Import(state PersistedState) {
 		return
 	}
 	s.activeOperation = DefaultOperation
+	s.activeOperationSelected = false
 	s.activeChains[DefaultOperation] = ""
 }
 

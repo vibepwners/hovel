@@ -239,6 +239,10 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 	if rewritten, ok := a.contextualCommand(trimmed); ok {
 		trimmed = rewritten
 	}
+	if err := a.flowError(trimmed); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	if trimmed == "chain config interactive" || trimmed == "chains config interactive" {
 		code := a.ConfigureInteractive(stdout, stderr)
 		if err := a.saveWorkspaceSession(ctx); err != nil {
@@ -340,7 +344,11 @@ func (a App) Suggestions(line string) []prompt.Suggest {
 	if !ok {
 		return nil
 	}
-	if !a.inChainContext() && activeChainDefinition(definition.PathString()) {
+	pathString := definition.PathString()
+	if operationContextRequired(pathString) && !a.inOperationContext() {
+		return nil
+	}
+	if chainContextRequired(pathString) && !a.inChainContext() {
 		return nil
 	}
 	if suggestions, ok := a.positionalSuggestions(definition, commandWordCount, fields, endsWithSpace); ok {
@@ -375,10 +383,15 @@ func (a App) contextualRootDefinitions() []commands.Definition {
 	if a.inChainContext() {
 		return firstSegments
 	}
+	if a.inOperationContext() {
+		return filterDefinitions(firstSegments, map[string]bool{
+			"chain":   true,
+			"control": true,
+			"op":      true,
+		})
+	}
 	return filterDefinitions(firstSegments, map[string]bool{
-		"chain":   true,
 		"control": true,
-		"module":  true,
 		"op":      true,
 	})
 }
@@ -386,6 +399,14 @@ func (a App) contextualRootDefinitions() []commands.Definition {
 func (a App) contextualChildren(path []string, children []commands.Definition) []commands.Definition {
 	if a.inChainContext() {
 		return children
+	}
+	if !a.inOperationContext() {
+		switch strings.Join(path, " ") {
+		case "chain", "chains", "chain config", "chains config", "module", "modules", "target", "target config", "targets", "targets config":
+			return nil
+		default:
+			return children
+		}
 	}
 	switch strings.Join(path, " ") {
 	case "chain", "chains":
@@ -396,11 +417,62 @@ func (a App) contextualChildren(path []string, children []commands.Definition) [
 			"rename": true,
 			"use":    true,
 		})
-	case "chain config", "chains config", "target", "target config", "targets", "targets config":
+	case "chain config", "chains config", "module", "modules", "target", "target config", "targets", "targets config":
 		return nil
 	default:
 		return children
 	}
+}
+
+func (a App) flowError(line string) error {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return nil
+	}
+	registry := a.commands.Registry()
+	definition, _, ok := matchDefinition(registry, fields)
+	path := ""
+	if ok {
+		path = definition.PathString()
+	} else {
+		path = strings.Join(fields, " ")
+	}
+	if operationContextRequired(path) && !a.inOperationContext() {
+		return fmt.Errorf("select an operation first: op use <operation>")
+	}
+	if chainContextRequired(path) && !a.inChainContext() {
+		return fmt.Errorf("select a chain first: chain use <chain>")
+	}
+	return nil
+}
+
+func operationContextRequired(path string) bool {
+	fields := strings.Fields(path)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "chain", "chains", "module", "modules", "target", "targets":
+		return true
+	case "throw":
+		return len(fields) == 1
+	default:
+		return false
+	}
+}
+
+func chainContextRequired(path string) bool {
+	fields := strings.Fields(path)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "module", "modules", "target", "targets":
+		return true
+	case "throw":
+		return len(fields) == 1
+	}
+	return activeChainDefinition(path) || path == "chain config interactive" || path == "chains config interactive"
 }
 
 func activeChainDefinition(path string) bool {
@@ -504,6 +576,20 @@ func joinCommand(head ...string) string {
 
 func (a App) inChainContext() bool {
 	return a.activeChain() != ""
+}
+
+func (a App) inOperationContext() bool {
+	if a.session == nil {
+		return false
+	}
+	if a.activeChain() != "" {
+		return true
+	}
+	if session, ok := a.session.(interface{ ActiveOperationSelected() bool }); ok {
+		return session.ActiveOperationSelected()
+	}
+	state := a.session.Snapshot()
+	return strings.TrimSpace(state.ActiveOperation) != "" && state.ActiveOperation != operatorsession.DefaultOperation
 }
 
 func (a App) activeChain() string {

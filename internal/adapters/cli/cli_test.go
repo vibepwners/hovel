@@ -21,11 +21,11 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 	app := newTestApp()
 
 	root := app.Suggestions("ch")
-	if len(root) != 1 || root[0].Text != "chain" {
-		t.Fatalf("root suggestions = %#v, want chain", root)
+	if len(root) != 0 {
+		t.Fatalf("root suggestions = %#v, want no chain suggestions before operation", root)
 	}
 	root = app.Suggestions("")
-	for _, hidden := range []string{"add", "target", "throw", "validate"} {
+	for _, hidden := range []string{"add", "chain", "module", "target", "throw", "validate"} {
 		if containsSuggestion(root, hidden) {
 			t.Fatalf("root suggestions = %#v, should hide %s outside chain context", root, hidden)
 		}
@@ -34,6 +34,12 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 	controlChildren := app.Suggestions("control ")
 	if len(controlChildren) != 2 || controlChildren[0].Text != "daemon" || controlChildren[1].Text != "init" {
 		t.Fatalf("control suggestions = %#v, want daemon and init", controlChildren)
+	}
+
+	enterTestOperation(t, app)
+	root = app.Suggestions("ch")
+	if len(root) != 1 || root[0].Text != "chain" {
+		t.Fatalf("root suggestions = %#v, want chain after operation", root)
 	}
 
 	chainChildren := app.Suggestions("chain ")
@@ -50,6 +56,9 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 		if contains(chainNames, hidden) {
 			t.Fatalf("chain suggestions = %#v, should hide active-chain command %s", chainNames, hidden)
 		}
+	}
+	if moduleChildren := app.Suggestions("module "); len(moduleChildren) != 0 {
+		t.Fatalf("module suggestions = %#v, want none before chain context", moduleChildren)
 	}
 
 	configChildren := app.Suggestions("chain config ")
@@ -84,8 +93,51 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 	}
 }
 
+func TestExecuteLineEnforcesOperationThenChainFlow(t *testing.T) {
+	app := newTestApp()
+	var stdout, stderr bytes.Buffer
+
+	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 1 {
+		t.Fatalf("chain before op exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "select an operation first") {
+		t.Fatalf("chain before op stderr = %q", stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+
+	if code := app.ExecuteLine(context.Background(), "op use engagement", &stdout, &stderr); code != 0 {
+		t.Fatalf("op use exit code = %d, stderr = %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+
+	if code := app.ExecuteLine(context.Background(), "module list", &stdout, &stderr); code != 1 {
+		t.Fatalf("module before chain exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "select a chain first") {
+		t.Fatalf("module before chain stderr = %q", stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+
+	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain create exit code = %d, stderr = %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+
+	if code := app.ExecuteLine(context.Background(), "module list", &stdout, &stderr); code != 0 {
+		t.Fatalf("module list exit code = %d, stderr = %s", code, stderr.String())
+	}
+}
+
 func TestOptionSuggestionsComeFromCommandRegistry(t *testing.T) {
 	app := newTestApp()
+	enterTestOperation(t, app)
+	if err := app.session.UseChain("lab"); err != nil {
+		t.Fatal(err)
+	}
 
 	suggestions := app.Suggestions("throw --")
 	var names []string
@@ -101,6 +153,7 @@ func TestOptionSuggestionsComeFromCommandRegistry(t *testing.T) {
 
 func TestChainAddSuggestsModulesMatchingInput(t *testing.T) {
 	app := newTestApp()
+	enterTestOperation(t, app)
 	var stdout, stderr bytes.Buffer
 	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
 		t.Fatalf("chain create exit code = %d, stderr = %s", code, stderr.String())
@@ -164,22 +217,29 @@ func TestPromptPrefixTracksActiveChain(t *testing.T) {
 	if got := app.PromptPrefix(); got != "h0v3l> " {
 		t.Fatalf("prompt prefix = %q, want default", got)
 	}
+	if code := app.ExecuteLine(context.Background(), "op use engagement", &stdout, &stderr); code != 0 {
+		t.Fatalf("operation exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if got := app.PromptPrefix(); got != "h0v3l [engagement]> " {
+		t.Fatalf("prompt prefix = %q, want active operation", got)
+	}
 	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
 		t.Fatalf("chain exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if got := app.PromptPrefix(); got != "h0v3l (lab) > " {
+	if got := app.PromptPrefix(); got != "h0v3l [engagement/lab] > " {
 		t.Fatalf("prompt prefix = %q, want active chain", got)
 	}
 }
 
 func TestChainCreateEntersContextAndRootAliasesOperateOnActiveChain(t *testing.T) {
 	app := newTestApp()
+	enterTestOperation(t, app)
 	var stdout, stderr bytes.Buffer
 
 	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
 		t.Fatalf("chain create exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if got := app.PromptPrefix(); got != "h0v3l (lab) > " {
+	if got := app.PromptPrefix(); got != "h0v3l [test-op/lab] > " {
 		t.Fatalf("prompt prefix = %q, want active chain", got)
 	}
 
@@ -203,6 +263,7 @@ func TestInteractiveConfigWizardEditsCurrentThenFillsRemainingConfig(t *testing.
 	app := newTestApp()
 	var stdout, stderr bytes.Buffer
 	for _, line := range []string{
+		"op use test-op",
 		"chain use lab",
 		"chain add mock-exploit",
 		"target add mock://router-01",
@@ -219,7 +280,7 @@ func TestInteractiveConfigWizardEditsCurrentThenFillsRemainingConfig(t *testing.
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
 	}
-	if got := app.PromptPrefix(); got != "h0v3l (lab) config select > " {
+	if got := app.PromptPrefix(); got != "h0v3l [test-op/lab] config select > " {
 		t.Fatalf("prompt prefix = %q, want config select", got)
 	}
 	if suggestions := app.Suggestions(""); !containsSuggestion(suggestions, "continue") || !containsSuggestion(suggestions, "1") {
@@ -260,6 +321,7 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 	app := newTestApp()
 	var stdout, stderr bytes.Buffer
 	for _, line := range []string{
+		"op use test-op",
 		"chain use lab",
 		"chain add mock-exploit",
 		"target add mock://router-01",
@@ -288,7 +350,7 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 	if code := app.ExecuteLine(context.Background(), "c", &stdout, &stderr); code != 0 {
 		t.Fatalf("continue exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if got := app.PromptPrefix(); got != "h0v3l (lab) config value > " {
+	if got := app.PromptPrefix(); got != "h0v3l [test-op/lab] config value > " {
 		t.Fatalf("prompt prefix = %q, want config value", got)
 	}
 	if suggestions := app.Suggestions(""); !containsSuggestion(suggestions, "true") || !containsSuggestion(suggestions, "false") {
@@ -301,6 +363,9 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 
 func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndSecretRedaction(t *testing.T) {
 	session := operatorsession.New()
+	if err := session.UseOperation("test-op"); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.UseChain("typed"); err != nil {
 		t.Fatal(err)
 	}
@@ -424,6 +489,12 @@ func TestWorkspaceSessionIsSharedAcrossCLIInstances(t *testing.T) {
 	first := newTestApp().withWorkspaceSession(workspacePath)
 	second := newTestApp().withWorkspaceSession(workspacePath)
 	var stdout, stderr bytes.Buffer
+
+	if code := first.ExecuteLine(context.Background(), "op use shared", &stdout, &stderr); code != 0 {
+		t.Fatalf("op use exit code = %d, stderr = %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
 
 	if code := first.ExecuteLine(context.Background(), "chain create test", &stdout, &stderr); code != 0 {
 		t.Fatalf("create exit code = %d, stderr = %s", code, stderr.String())

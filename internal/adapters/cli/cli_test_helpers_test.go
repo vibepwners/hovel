@@ -20,6 +20,16 @@ func newTestApp() App {
 	return newAppWithSessionAndModules(session, modules)
 }
 
+func enterTestOperation(t *testing.T, app App) {
+	t.Helper()
+	if app.session == nil {
+		t.Fatal("test app has no session")
+	}
+	if err := app.session.UseOperation("test-op"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testModuleCatalog() modulecatalog.Catalog {
 	return modulecatalog.New(
 		modulecatalog.Module{

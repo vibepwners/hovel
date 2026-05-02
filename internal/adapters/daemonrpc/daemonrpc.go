@@ -686,6 +686,12 @@ func (s *SessionClient) Snapshot() operatorsession.State {
 	return session.Snapshot()
 }
 
+func (s *SessionClient) ActiveOperationSelected() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return strings.TrimSpace(s.activeOperation) != ""
+}
+
 func (s *SessionClient) active() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
