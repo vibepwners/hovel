@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "run_test",
+    size = "small",
     srcs = ["run_test.go"],
     embed = [":run"],
 )

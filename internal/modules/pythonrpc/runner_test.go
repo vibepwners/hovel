@@ -53,8 +53,11 @@ func TestRunnerInspectsPythonModuleDeclaredSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if module.RuntimeKind != "python-rpc" {
-		t.Fatalf("runtime = %q, want python-rpc", module.RuntimeKind)
+	if module.ID != "mock-exploit@v0.0.0-example" {
+		t.Fatalf("id = %q, want mock-exploit@v0.0.0-example", module.ID)
+	}
+	if module.RuntimeKind != "jsonrpc-stdio" {
+		t.Fatalf("runtime = %q, want jsonrpc-stdio", module.RuntimeKind)
 	}
 	if len(module.ChainConfig) != 1 || module.ChainConfig[0].Key != "operator.confirmed_lab" {
 		t.Fatalf("chain config = %#v", module.ChainConfig)
@@ -87,6 +90,24 @@ func TestRunnerLaunchesEveryBuiltInMockModule(t *testing.T) {
 				t.Fatal("summary is empty")
 			}
 		})
+	}
+}
+
+func TestRunnerExecutesCanonicalModuleReference(t *testing.T) {
+	request, err := run.NewRequest(run.RequestArgs{
+		ID:       "run-1",
+		ModuleID: "mock-exploit@v0.0.0-example",
+		Target:   "mock://target",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Runner{ConfigPath: exampleModuleConfig, Timeout: 10 * time.Second}.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != run.StateSucceeded {
+		t.Fatalf("state = %q, want succeeded", result.State)
 	}
 }
 
@@ -158,7 +179,7 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 	}{
 		{
 			name:    "handshake error includes stderr",
-			body:    `import sys; send({"jsonrpc":"2.0","id":1,"error":{"message":"no handshake"}}); print("handshake stderr", file=sys.stderr)`,
+			body:    `import sys; print("handshake stderr", file=sys.stderr); send({"jsonrpc":"2.0","id":1,"error":{"message":"no handshake"}})`,
 			inspect: true,
 			want:    "module handshake failed: no handshake: handshake stderr",
 		},
@@ -242,7 +263,7 @@ def send(message):
 	}
 	config := ModuleConfig{Modules: []ModuleEntry{{
 		ID:         "broken",
-		Runtime:    "python-rpc",
+		Runtime:    "jsonrpc-stdio",
 		ProjectDir: projectDir,
 		Module:     "broken_module",
 	}}}

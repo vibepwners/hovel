@@ -6,7 +6,7 @@
 - [Domain Model](domain-model.md)
 - [Modules and Services](modules-services.md)
 - [Providers, Artifacts, and Events](providers-artifacts.md)
-- [Chains and Runs](chains-runs.md)
+- [Operations, Chains, and Throws](chains-runs.md)
 - [Operator Workflows](operator-workflows.md)
 - [Front Ends](front-ends.md)
 - [Configuration and Distribution](configuration-distribution.md)

@@ -18,13 +18,15 @@ const (
 )
 
 type Renderer struct {
-	title    lipgloss.Style
-	subtitle lipgloss.Style
-	rail     lipgloss.Style
-	label    lipgloss.Style
-	elapsed  lipgloss.Style
-	field    lipgloss.Style
-	width    int
+	title         lipgloss.Style
+	subtitle      lipgloss.Style
+	throwTitle    lipgloss.Style
+	throwSubtitle lipgloss.Style
+	rail          lipgloss.Style
+	label         lipgloss.Style
+	elapsed       lipgloss.Style
+	field         lipgloss.Style
+	width         int
 }
 
 func NewRenderer() Renderer {
@@ -36,9 +38,11 @@ func NewRendererWithWidth(width int) Renderer {
 		width = defaultWidth
 	}
 	return Renderer{
-		title:    lipgloss.NewStyle().Foreground(lipgloss.Color("#ff2bd6")).Bold(true),
-		subtitle: lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af")),
-		rail:     lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
+		title:         lipgloss.NewStyle().Foreground(lipgloss.Color("#ff2bd6")).Bold(true),
+		subtitle:      lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af")),
+		throwTitle:    lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0033")).Bold(true),
+		throwSubtitle: lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0033")).Bold(true),
+		rail:          lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
 		label: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#ffffff")).
 			Background(lipgloss.Color("#7c3aed")).
@@ -75,24 +79,35 @@ func (r Renderer) Render(log operatorlog.Log) string {
 
 	var lines []string
 	if log.Title != "" || log.Subtitle != "" {
-		header := r.title.Render(log.Title)
-		if log.Subtitle != "" {
-			header += " " + r.subtitle.Render(log.Subtitle)
-		}
-		lines = append(lines, r.renderRailLine(strings.TrimSpace(header)))
+		lines = append(lines, r.renderHeader(log.Title, log.Subtitle))
 		if len(log.Entries()) > 0 {
 			lines = append(lines, r.renderRailLine(""))
 		}
 	}
 	for _, entry := range log.Entries() {
 		if entry.Kind == operatorlog.KindHeader {
-			header := strings.TrimSpace(entry.Message + " " + entry.ChainName)
-			lines = append(lines, r.renderRailLine(header), r.renderRailLine(""))
+			lines = append(lines, r.renderHeader(entry.Message, entry.ChainName), r.renderRailLine(""))
 			continue
 		}
 		lines = append(lines, r.renderEntry(entry))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (r Renderer) renderHeader(title, subtitleText string) string {
+	titleStyle, subtitleStyle := r.headerStyles(title)
+	header := titleStyle.Render(title)
+	if subtitleText != "" {
+		header += " " + subtitleStyle.Render(subtitleText)
+	}
+	return r.renderRailLine(strings.TrimSpace(header))
+}
+
+func (r Renderer) headerStyles(title string) (lipgloss.Style, lipgloss.Style) {
+	if title == "HOVEL//THROW" {
+		return r.throwTitle, r.throwSubtitle
+	}
+	return r.title, r.subtitle
 }
 
 func (r Renderer) renderEntry(entry operatorlog.Entry) string {

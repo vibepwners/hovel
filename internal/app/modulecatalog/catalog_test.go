@@ -54,6 +54,35 @@ func TestValidateValueCoversTypedConfig(t *testing.T) {
 	}
 }
 
+func TestCatalogNormalizesVersionedIdentityAndResolvesLatest(t *testing.T) {
+	catalog := New(
+		Module{ID: "loader", Type: TypeExploit, Version: "v1.0.0", Summary: "old"},
+		Module{ID: "loader", Type: TypeExploit, Version: "v1.2.0", Summary: "new"},
+		Module{ID: "loader@v1.1.0", Type: TypeExploit, Summary: "middle"},
+	)
+
+	modules := catalog.List()
+	wantIDs := []string{"loader@v1.0.0", "loader@v1.1.0", "loader@v1.2.0"}
+	var gotIDs []string
+	for _, module := range modules {
+		gotIDs = append(gotIDs, module.ID)
+	}
+	if !reflect.DeepEqual(gotIDs, wantIDs) {
+		t.Fatalf("ids = %#v, want %#v", gotIDs, wantIDs)
+	}
+
+	module, ok := catalog.Find("loader")
+	if !ok {
+		t.Fatal("Find(loader) failed")
+	}
+	if module.ID != "loader@v1.2.0" {
+		t.Fatalf("latest id = %q, want loader@v1.2.0", module.ID)
+	}
+	if _, ok := catalog.Find("loader@v1.1.0"); !ok {
+		t.Fatal("Find(loader@v1.1.0) failed")
+	}
+}
+
 func TestCatalogValidationFindsMissingAndInvalidConfig(t *testing.T) {
 	catalog := exampleCatalog()
 	result := catalog.Validate(ConfigView{
@@ -169,7 +198,7 @@ func exampleCatalog() Catalog {
 			Type:        TypeSurvey,
 			Version:     "v0.0.0-example",
 			Summary:     "Collect example target facts.",
-			RuntimeKind: "python-rpc",
+			RuntimeKind: "jsonrpc-stdio",
 			Enabled:     true,
 			TargetConfig: []Requirement{
 				{Key: "target.host", Type: ValueHost, Required: true},
@@ -182,7 +211,7 @@ func exampleCatalog() Catalog {
 			Type:        TypeExploit,
 			Version:     "v0.0.0-example",
 			Summary:     "Run an example exploit flow.",
-			RuntimeKind: "python-rpc",
+			RuntimeKind: "jsonrpc-stdio",
 			Enabled:     true,
 			ChainConfig: []Requirement{
 				{Key: "operator.confirmed_lab", Type: ValueBool, Required: true},

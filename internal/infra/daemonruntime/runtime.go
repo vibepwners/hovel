@@ -65,9 +65,30 @@ func Serve(ctx context.Context, args Args) error {
 	if baseEvents == nil {
 		baseEvents = discardEvents{}
 	}
+
+	lock, err := filesystem.AcquireWorkspaceLock(workspacePath, fmt.Sprintf("pid:%d", pid))
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
+	store := filesystem.NewWorkspaceStore()
+	if err := store.EnsureWorkspaceDatabase(ctx, workspacePath); err != nil {
+		return err
+	}
 	session := operatorsession.New()
+	if state, ok, err := store.LoadOperatorSession(ctx, workspacePath); err != nil {
+		return err
+	} else if ok {
+		session.Import(state)
+	}
+	persistSession := func(state operatorsession.PersistedState) error {
+		return store.SaveOperatorSession(context.Background(), workspacePath, state)
+	}
 	logs := daemonrpc.NewLogBroker()
-	events := newPublishingEventSink(baseEvents, session, logs)
+	events := newPublishingEventSink(baseEvents, session, logs, func() error {
+		return persistSession(session.Export())
+	})
 	runner := args.ModuleRunner
 	if runner == nil {
 		runner = pythonrpc.Runner{
@@ -77,13 +98,6 @@ func Serve(ctx context.Context, args Args) error {
 		}
 	}
 
-	lock, err := filesystem.AcquireWorkspaceLock(workspacePath, fmt.Sprintf("pid:%d", pid))
-	if err != nil {
-		return err
-	}
-	defer lock.Release()
-
-	store := filesystem.NewWorkspaceStore()
 	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
 		WorkspacePath: workspacePath,
 		PID:           pid,
@@ -107,7 +121,7 @@ func Serve(ctx context.Context, args Args) error {
 
 	server := rpc.NewServer()
 	runs := services.NewRunService(runner, events, ids, clock)
-	if err := daemonrpc.Register(server, runs, daemonrpc.WithSession(session), daemonrpc.WithLogBroker(logs)); err != nil {
+	if err := daemonrpc.Register(server, runs, daemonrpc.WithSession(session), daemonrpc.WithLogBroker(logs), daemonrpc.WithSessionPersistence(persistSession)); err != nil {
 		return err
 	}
 	acceptErrs := make(chan error, 1)
@@ -156,15 +170,17 @@ type publishingEventSink struct {
 	next        services.EventSink
 	session     *operatorsession.Session
 	logs        *daemonrpc.LogBroker
+	persist     func() error
 	runStarts   map[string]time.Time
 	throwStarts map[string]time.Time
 }
 
-func newPublishingEventSink(next services.EventSink, session *operatorsession.Session, logs *daemonrpc.LogBroker) *publishingEventSink {
+func newPublishingEventSink(next services.EventSink, session *operatorsession.Session, logs *daemonrpc.LogBroker, persist func() error) *publishingEventSink {
 	return &publishingEventSink{
 		next:        next,
 		session:     session,
 		logs:        logs,
+		persist:     persist,
 		runStarts:   map[string]time.Time{},
 		throwStarts: map[string]time.Time{},
 	}
@@ -176,7 +192,9 @@ func (s *publishingEventSink) Append(ctx context.Context, evt event.Event) error
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chain := s.session.Snapshot().ActiveChain
+	state := s.session.Snapshot()
+	operation := state.ActiveOperation
+	chain := state.ActiveChain
 	if chain == "" {
 		return nil
 	}
@@ -192,22 +210,32 @@ func (s *publishingEventSink) Append(ctx context.Context, evt event.Event) error
 			s.throwStarts[chain] = evt.Timestamp
 		}
 	case "module.log":
-		entry := s.moduleLogEntry(chain, evt)
+		entry := s.moduleLogEntry(operation, chain, evt)
 		_ = s.session.AppendLogToChain(chain, entry)
-		s.logs.Publish(chain, entry)
+		s.logs.Publish(operation, chain, entry)
+		return s.persistIfConfigured()
 	case "run.succeeded":
-		entry := s.runEventEntry(chain, evt, operatorlog.Success("throw", "run completed"))
+		entry := s.runEventEntry(operation, chain, evt, operatorlog.Success("throw", "run completed"))
 		_ = s.session.AppendLogToChain(chain, entry)
-		s.logs.Publish(chain, entry)
+		s.logs.Publish(operation, chain, entry)
+		return s.persistIfConfigured()
 	case "run.failed":
-		entry := s.runEventEntry(chain, evt, operatorlog.Finding("throw", "run failed"))
+		entry := s.runEventEntry(operation, chain, evt, operatorlog.Finding("throw", "run failed"))
 		_ = s.session.AppendLogToChain(chain, entry)
-		s.logs.Publish(chain, entry)
+		s.logs.Publish(operation, chain, entry)
+		return s.persistIfConfigured()
 	}
 	return nil
 }
 
-func (s *publishingEventSink) moduleLogEntry(chain string, evt event.Event) operatorlog.Entry {
+func (s *publishingEventSink) persistIfConfigured() error {
+	if s.persist == nil {
+		return nil
+	}
+	return s.persist()
+}
+
+func (s *publishingEventSink) moduleLogEntry(operation, chain string, evt event.Event) operatorlog.Entry {
 	fields := make([]operatorlog.Field, 0, len(evt.Fields))
 	for key, value := range evt.Fields {
 		if key == "message" {
@@ -216,10 +244,10 @@ func (s *publishingEventSink) moduleLogEntry(chain string, evt event.Event) oper
 		fields = append(fields, operatorlog.Field{Name: key, Value: value})
 	}
 	entry := operatorlog.Info("module", evt.Fields["message"], fields...)
-	return s.runEventEntry(chain, evt, entry)
+	return s.runEventEntry(operation, chain, evt, entry)
 }
 
-func (s *publishingEventSink) runEventEntry(chain string, evt event.Event, entry operatorlog.Entry) operatorlog.Entry {
+func (s *publishingEventSink) runEventEntry(operation, chain string, evt event.Event, entry operatorlog.Entry) operatorlog.Entry {
 	started := s.throwStarts[chain]
 	if started.IsZero() {
 		started = s.runStarts[evt.Refs.RunID]
@@ -233,7 +261,7 @@ func (s *publishingEventSink) runEventEntry(chain string, evt event.Event, entry
 		WithRun(evt.Refs.RunID).
 		WithTarget(evt.Refs.TargetID).
 		WithModule(evt.Refs.ModuleID).
-		WithTopic("chain/" + chain + "/logs")
+		WithTopic("operation/" + operation + "/chain/" + chain + "/logs")
 }
 
 type systemClock struct{}

@@ -86,17 +86,6 @@ func TestNewTypeValidation(t *testing.T) {
 		"survey",
 		"exploit",
 		"payload_provider",
-		"transport",
-		"access",
-		"deliver",
-		"payload",
-		"post_action",
-		"cleanup",
-		"transform",
-		"provider",
-		"chain",
-		"utility",
-		"service_client",
 	}
 	for _, value := range valid {
 		t.Run("valid/"+value, func(t *testing.T) {
@@ -115,6 +104,9 @@ func TestNewTypeValidation(t *testing.T) {
 		"unknown",
 		"SURVEY",
 		"Survey",
+		"chain",
+		"payload",
+		"provider",
 		"implant",
 		"run",
 	}

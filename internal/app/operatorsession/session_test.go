@@ -26,8 +26,8 @@ func TestSessionCreatesUsesListsAndDeletesChains(t *testing.T) {
 	if state.Chains[0].Name != "first" || state.Chains[1].Name != "second" {
 		t.Fatalf("chains = %#v, want sorted first/second", state.Chains)
 	}
-	if state.LogTopic != "chain/first/logs" {
-		t.Fatalf("log topic = %q, want chain/first/logs", state.LogTopic)
+	if state.LogTopic != "operation/default/chain/first/logs" {
+		t.Fatalf("log topic = %q, want operation/default/chain/first/logs", state.LogTopic)
 	}
 
 	if err := session.DeleteChain("first"); err != nil {
@@ -94,8 +94,8 @@ func TestSessionRenamesChainWithOwnedTargetsAndLogs(t *testing.T) {
 	if len(state.Targets) != 1 || state.Targets[0] != "mock://alpha" {
 		t.Fatalf("targets = %#v", state.Targets)
 	}
-	if state.LogTopic != "chain/renamed/logs" {
-		t.Fatalf("log topic = %q, want chain/renamed/logs", state.LogTopic)
+	if state.LogTopic != "operation/default/chain/renamed/logs" {
+		t.Fatalf("log topic = %q, want operation/default/chain/renamed/logs", state.LogTopic)
 	}
 	if logs := session.ActiveLogs(); !hasLogMessage(logs, "before rename") {
 		t.Fatalf("logs = %#v", logs)
@@ -240,6 +240,52 @@ func TestSessionsShareChainStoreWithIndependentActiveChains(t *testing.T) {
 	}
 	if logs := betaClient.ActiveLogs(); len(logs) != 1 || logs[0].Message != "hidden beta log" {
 		t.Fatalf("beta client logs = %#v", logs)
+	}
+}
+
+func TestOperationsSegmentChainsAndRestoreClientActiveChain(t *testing.T) {
+	store := NewStore()
+	client := NewWithStore(store)
+	observer := NewWithStore(store)
+
+	if err := client.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.AddTarget("mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UseOperation("afterparty"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UseChain("beta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.AddTarget("mock://beta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+
+	state := client.Snapshot()
+	if state.ActiveOperation != "redteam-lab" || state.ActiveChain != "alpha" {
+		t.Fatalf("client attachment = %s/%s, want redteam-lab/alpha", state.ActiveOperation, state.ActiveChain)
+	}
+	if len(state.Targets) != 1 || state.Targets[0] != "mock://alpha" {
+		t.Fatalf("redteam-lab alpha targets = %#v", state.Targets)
+	}
+
+	if err := observer.UseOperation("afterparty"); err != nil {
+		t.Fatal(err)
+	}
+	if err := observer.UseChain("beta"); err != nil {
+		t.Fatal(err)
+	}
+	if targets := observer.Snapshot().Targets; len(targets) != 1 || targets[0] != "mock://beta" {
+		t.Fatalf("afterparty beta targets = %#v", targets)
 	}
 }
 

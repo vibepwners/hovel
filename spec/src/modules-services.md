@@ -4,12 +4,12 @@ Modules and services are separate domain concepts with separate lifecycle expect
 
 ## Module Runtime
 
-The MVP module runtime should optimize for Python ergonomics and debuggability.
+The MVP module runtime should optimize for Python implementation ergonomics and debuggability while keeping the protocol language-neutral.
 
 Runtime types:
 
 ```text
-python-rpc        MVP
+jsonrpc-stdio     MVP
 native-builtin    MVP
 process-rpc       later
 go-binary-rpc     later
@@ -19,7 +19,7 @@ node-rpc          later
 
 MVP priority:
 
-1. Python RPC modules.
+1. Python-implemented modules using JSON-RPC over stdio.
 2. Native built-in Go modules.
 3. Generic process fallback only after the Python path is stable.
 
@@ -147,12 +147,12 @@ The first protocol should optimize for simplicity and observability.
 
 Recommended MVP:
 
-1. JSON-RPC over stdio for Python modules.
+1. JSON-RPC over stdio for modules implemented in Python.
 2. A small shared envelope for logs, events, requests, and responses.
 3. Contract tests before broad runtime support.
 4. gRPC or socket-based protocols only after contracts settle.
 
-Module and service processes may eventually share one protocol, but that should not be assumed before contract tests prove the common lifecycle and event needs. The Python module contract should harden first.
+Module and service processes may eventually share one protocol, but that should not be assumed before contract tests prove the common lifecycle and event needs. The JSON-RPC stdio module contract should harden first.
 
 MVP stdio framing:
 
@@ -175,7 +175,7 @@ Minimal module:
 ```python
 from hovel_sdk import module, Context, Result
 
-@module(name="hello")
+@module(name="hello", version="0.1.0", module_type="survey")
 def run(ctx: Context) -> Result:
     ctx.log.info("hello from module")
     return Result.ok({"message": "done"})
@@ -188,6 +188,8 @@ from hovel_sdk import HovelModule, Context, Result
 
 class SSHMemoryModule(HovelModule):
     name = "ssh-memory"
+    version = "0.1.0"
+    module_type = "exploit"
 
     def run(self, ctx: Context) -> Result:
         target = ctx.input("target")
@@ -229,14 +231,14 @@ Descriptor examples:
 
 ```yaml
 runtime:
-  type: python-rpc
+  type: jsonrpc-stdio
   packaging: source
   entrypoint: python -m hovel_ssh_memory
 ```
 
 ```yaml
 runtime:
-  type: python-service-rpc
+  type: jsonrpc-stdio
   packaging: pex
   entrypoint: hovel_picblob_service:main
 ```

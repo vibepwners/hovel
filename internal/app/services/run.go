@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
@@ -10,6 +12,47 @@ import (
 
 type ModuleRunner interface {
 	Run(context.Context, run.Request) (run.Result, error)
+}
+
+type ModuleExecutionFailure interface {
+	error
+	ModuleFailureSummary() string
+	ModuleFailureDetail() string
+}
+
+type moduleExecutionFailure struct {
+	summary string
+	err     error
+}
+
+func NewModuleExecutionFailure(summary string, err error) error {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		summary = "module execution failed"
+	}
+	return moduleExecutionFailure{summary: summary, err: err}
+}
+
+func (e moduleExecutionFailure) Error() string {
+	if e.err == nil {
+		return e.summary
+	}
+	return e.summary + ": " + e.err.Error()
+}
+
+func (e moduleExecutionFailure) Unwrap() error {
+	return e.err
+}
+
+func (e moduleExecutionFailure) ModuleFailureSummary() string {
+	return e.summary
+}
+
+func (e moduleExecutionFailure) ModuleFailureDetail() string {
+	if e.err == nil {
+		return e.summary
+	}
+	return e.err.Error()
 }
 
 type ExecuteMockExploitRequest struct {
@@ -72,7 +115,17 @@ func (s RunService) ExecuteModule(ctx context.Context, req ExecuteModuleRequest)
 	}
 	result, err := s.runner.Run(ctx, request)
 	if err != nil {
-		return run.Result{}, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return run.Result{}, ctxErr
+		}
+		var moduleFailure ModuleExecutionFailure
+		if !errors.As(err, &moduleFailure) {
+			return run.Result{}, err
+		}
+		result, err = failedModuleResult(s.clock, request, moduleFailure)
+		if err != nil {
+			return run.Result{}, err
+		}
 	}
 	eventType := "run.succeeded"
 	if result.State == run.StateFailed {
@@ -84,6 +137,25 @@ func (s RunService) ExecuteModule(ctx context.Context, req ExecuteModuleRequest)
 		return run.Result{}, err
 	}
 	return result, nil
+}
+
+func failedModuleResult(clock Clock, request run.Request, failure ModuleExecutionFailure) (run.Result, error) {
+	summary := failure.ModuleFailureSummary()
+	detail := failure.ModuleFailureDetail()
+	return run.Failed(request, run.ResultArgs{
+		Summary: summary,
+		Logs: []run.LogEntry{{
+			Kind:     "event",
+			Time:     clock.Now().Format(time.RFC3339Nano),
+			Level:    "error",
+			Source:   "host",
+			Message:  "module execution failed",
+			RunID:    request.ID,
+			Target:   request.Target,
+			ModuleID: request.ModuleID,
+			Fields:   map[string]string{"error": detail},
+		}},
+	})
 }
 
 func (s RunService) appendRunEvent(ctx context.Context, typ string, request run.Request, fields map[string]string) error {

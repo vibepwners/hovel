@@ -1,12 +1,25 @@
-# Chains and Runs
+# Operations, Chains, and Throws
 
-Chains are declarative workflows with typed steps. They should be inspectable before execution and replay-inspectable after execution.
+Operations are the durable work context. Chains are declarative workflows with typed steps inside an operation. Throws are replay-inspectable executions of a chain against targets.
 
-The first chain runner should be intentionally small. It should support sequential steps, literal inputs, `${inputs.*}` references, `${steps.<id>.output}` references, per-step events, cancellation, and artifact creation. It should not initially support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.
+The first chain thrower should be intentionally small. It should support sequential steps, literal inputs, `${inputs.*}` references, `${steps.<id>.output}` references, per-step events, cancellation, and artifact creation. It should not initially support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.
 
-Operator-facing chain records are CRUD resources. A chain can be created, selected with `chain use`, renamed, inspected, listed, deleted, and then thrown against the targets it owns. The active chain determines the prompt context, the default targets for `throw`, and the log topic that the client is subscribed to.
+Operator-facing chain records are CRUD resources. A chain can be created, selected with `chain use`, renamed, inspected, listed, deleted, and then thrown against the targets it owns. The active chain is client attachment state: it determines that client's prompt context, default targets for `throw`, and log topic subscription without changing another client's active chain.
 
-Targets are owned by chains in the operator workflow. A target added while `alpha` is active belongs to `alpha`; switching to `beta` exposes `beta`'s target set instead. Chain logs follow the same boundary: `chain logs` renders the active chain's topic only, and multi-client front ends attached to the same chain observe the same topic.
+Targets are owned by chains in the operator workflow. A target added while `alpha` is active belongs to `alpha`; switching that same client to `beta` exposes `beta`'s target set instead. Chain logs follow the same boundary: `chain logs` renders the active chain's operation-scoped topic only, and multi-client front ends attached to the same operation and chain observe the same topic.
+
+## Operation Attachments
+
+Each CLI, TUI, REST, or MCP client attaches to exactly one operation at a time and keeps its own active chain selection.
+
+Concurrency rules:
+
+1. `op use <operation>` changes only the caller's attached operation.
+2. `chain use <chain>` changes only the caller's active chain inside the attached operation.
+3. `chain add`, `target add`, `chain config`, `target config`, `chain validate`, and `throw` without `--chain` use the caller's active chain.
+4. `throw --chain <chain>` and other explicit chain operations use that chain without moving another client's active chain.
+5. Mutations to one shared chain are serialized by the daemon and broadcast to subscribers of `operation/<operation>/chain/<chain>/logs`.
+6. Different clients may work different chains in the same operation concurrently.
 
 ## Chain Definition
 
@@ -71,9 +84,9 @@ spec:
             listener: ${steps.start-lp.output}
 ```
 
-## First Runner Requirements
+## First Thrower Requirements
 
-The first runner must support:
+The first thrower must support:
 
 1. Sequential steps.
 2. Simple input and step-output references.
@@ -81,10 +94,10 @@ The first runner must support:
 4. Artifact creation.
 5. Fact propagation as ordinary step output.
 6. Cancellation between steps.
-7. Persisted run plans and run records.
+7. Persisted throw plans and throw records.
 8. Service start/stop steps once the service manager milestone is complete.
 
-## Eventual Runtime Requirements
+## Eventual Throw Runtime Requirements
 
 The eventual chain runtime should support:
 

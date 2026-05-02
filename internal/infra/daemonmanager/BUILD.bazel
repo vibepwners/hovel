@@ -16,12 +16,14 @@ go_library(
 
 go_test(
     name = "daemonmanager_test",
+    size = "small",
     srcs = ["manager_test.go"],
     data = [
         "//examples/python:sources",
         "//sdk/python:sources",
     ],
     embed = [":daemonmanager"],
+    tags = ["e2e"],
     deps = [
         "//internal/adapters/storage/filesystem",
         "//internal/domain/daemon",

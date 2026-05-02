@@ -10,6 +10,7 @@ go_library(
 
 go_test(
     name = "operatorsession_test",
+    size = "small",
     srcs = ["session_test.go"],
     embed = [":operatorsession"],
     deps = ["//internal/app/operatorlog"],

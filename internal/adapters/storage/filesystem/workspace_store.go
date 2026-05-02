@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
+	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
+	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 )
@@ -31,6 +33,9 @@ func (s WorkspaceStore) InitWorkspace(ctx context.Context, ws workspace.Workspac
 		if err := ensureWorkspaceLayout(ws.Path); err != nil {
 			return services.WorkspaceRecord{}, err
 		}
+		if err := s.EnsureWorkspaceDatabase(ctx, ws.Path); err != nil {
+			return services.WorkspaceRecord{}, err
+		}
 		return services.WorkspaceRecord{Workspace: existing, Created: false}, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
@@ -43,6 +48,9 @@ func (s WorkspaceStore) InitWorkspace(ctx context.Context, ws workspace.Workspac
 	if err := writeWorkspace(configPath, ws); err != nil {
 		return services.WorkspaceRecord{}, err
 	}
+	if err := s.EnsureWorkspaceDatabase(ctx, ws.Path); err != nil {
+		return services.WorkspaceRecord{}, err
+	}
 	return services.WorkspaceRecord{Workspace: ws, Created: true}, nil
 }
 
@@ -52,7 +60,7 @@ func ensureWorkspaceLayout(path string) error {
 		"artifacts",
 		"logs",
 		"modules",
-		"runs",
+		"throws",
 		"services",
 	} {
 		if err := os.MkdirAll(filepath.Join(path, rel), 0o755); err != nil {
@@ -112,14 +120,34 @@ func (s WorkspaceStore) RecordThrowPlan(ctx context.Context, plan commands.Throw
 	if plan.ID == "" {
 		return errors.New("throw plan id is required")
 	}
-	path := filepath.Join(workspacePath, "runs", plan.ID+".json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	return sqlitestore.NewStore(workspacePath).RecordThrowPlan(ctx, plan)
+}
+
+func (s WorkspaceStore) ListThrowPlans(ctx context.Context, workspacePath string) ([]commands.ThrowPlanRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	data, err := json.MarshalIndent(plan, "", "  ")
-	if err != nil {
-		return err
+	return sqlitestore.NewStore(workspacePath).ListThrowPlans(ctx)
+}
+
+func (s WorkspaceStore) GetThrowPlan(ctx context.Context, workspacePath, id string) (commands.ThrowPlanRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return commands.ThrowPlanRecord{}, err
 	}
-	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
+	if id == "" {
+		return commands.ThrowPlanRecord{}, errors.New("throw id is required")
+	}
+	return sqlitestore.NewStore(workspacePath).GetThrowPlan(ctx, id)
+}
+
+func (s WorkspaceStore) EnsureWorkspaceDatabase(ctx context.Context, workspacePath string) error {
+	return sqlitestore.NewStore(workspacePath).Ensure(ctx)
+}
+
+func (s WorkspaceStore) SaveOperatorSession(ctx context.Context, workspacePath string, state operatorsession.PersistedState) error {
+	return sqlitestore.NewStore(workspacePath).SaveOperatorSession(ctx, state)
+}
+
+func (s WorkspaceStore) LoadOperatorSession(ctx context.Context, workspacePath string) (operatorsession.PersistedState, bool, error) {
+	return sqlitestore.NewStore(workspacePath).LoadOperatorSession(ctx)
 }

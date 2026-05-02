@@ -34,6 +34,7 @@ py_binary(
 
 py_test(
     name = "mock_survey_test",
+    size = "small",
     srcs = ["mock_survey/hovel_example_survey/module_test.py"],
     imports = ["mock_survey"],
     main = "mock_survey/hovel_example_survey/module_test.py",
@@ -65,6 +66,7 @@ py_binary(
 
 py_test(
     name = "mock_exploit_test",
+    size = "small",
     srcs = ["mock_exploit/hovel_example_exploit/module_test.py"],
     imports = ["mock_exploit"],
     main = "mock_exploit/hovel_example_exploit/module_test.py",

@@ -9,6 +9,7 @@ go_library(
 
 go_test(
     name = "operatorlog_test",
+    size = "small",
     srcs = ["log_test.go"],
     embed = [":operatorlog"],
 )

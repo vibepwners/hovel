@@ -20,12 +20,14 @@ go_library(
 
 go_test(
     name = "daemonruntime_test",
+    size = "small",
     srcs = ["runtime_test.go"],
     data = [
         "//examples/python:sources",
         "//sdk/python:sources",
     ],
     embed = [":daemonruntime"],
+    tags = ["e2e"],
     deps = [
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",

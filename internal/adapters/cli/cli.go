@@ -28,22 +28,26 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 type App struct {
-	commands    commandmode.App
-	manager     daemonmanager.Manager
-	theme       Theme
-	session     commands.OperatorSession
-	modules     modulecatalog.Catalog
-	wizard      *interactiveConfigWizard
-	moduleCount int
-	sessionFile string
-	surface     *promptSurface
+	commands      commandmode.App
+	manager       daemonmanager.Manager
+	theme         Theme
+	session       commands.OperatorSession
+	modules       modulecatalog.Catalog
+	wizard        *interactiveConfigWizard
+	moduleCount   int
+	workspacePath string
+	surface       *promptSurface
 }
 
 func NewApp() App {
 	session := operatorsession.New()
 	modules := pythonrpc.MustConfiguredCatalog()
+	return newAppWithSessionAndModules(session, modules)
+}
+
+func newAppWithSessionAndModules(session commands.OperatorSession, modules modulecatalog.Catalog) App {
 	return App{
-		commands:    commandmode.NewAppWithSession(session),
+		commands:    commandmode.NewAppWithSessionAndModules(session, modules),
 		manager:     daemonmanager.New(),
 		theme:       DefaultTheme(),
 		session:     session,
@@ -88,9 +92,26 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	a.surface = newPromptSurface(prompt.NewStdoutWriter())
 
 	fmt.Fprintln(stdout, a.WelcomeForWidth(session, terminalWidth(stdout)))
+	terminalState, err := capturePromptTerminalState()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	terminalRestored := false
+	defer func() {
+		if !terminalRestored {
+			_ = terminalState.Restore()
+		}
+	}()
 	stopLogs := a.SubscribeLogs(ctx, daemonClient, a.surface, stdout)
 	defer stopLogs()
 	a.Prompt(ctx, stdout, stderr).Run()
+	stopLogs()
+	if err := finishPrompt(stdout, terminalState); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	terminalRestored = true
 	return 0
 }
 
@@ -101,7 +122,7 @@ func (a App) EnsureDaemon(ctx context.Context, workspacePath string) (*daemonman
 func (a App) withDaemonSession(ctx context.Context, client *daemonrpc.Client) App {
 	session := daemonrpc.NewSessionClient(ctx, client)
 	a.session = session
-	a.commands = commandmode.NewAppWithSession(session)
+	a.commands = commandmode.NewAppWithSessionAndModules(session, a.modules)
 	a.wizard = newInteractiveConfigWizard(session, a.modules)
 	return a
 }
@@ -122,7 +143,9 @@ func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surfac
 			case <-pollCtx.Done():
 				return
 			case <-ticker.C:
-				chain := a.session.Snapshot().ActiveChain
+				state := a.session.Snapshot()
+				operation := state.ActiveOperation
+				chain := state.ActiveChain
 				if chain == "" {
 					result, err := client.PollLogs(pollCtx, cursor)
 					if err != nil {
@@ -131,7 +154,7 @@ func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surfac
 					cursor = result.Last
 					continue
 				}
-				result, err := client.PollChainLogs(pollCtx, chain, cursor)
+				result, err := client.PollOperationChainLogs(pollCtx, operation, chain, cursor)
 				if err != nil {
 					continue
 				}
@@ -182,9 +205,7 @@ func (a App) Prompt(ctx context.Context, stdout, stderr io.Writer) *prompt.Promp
 		prompt.OptionScrollbarThumbColor(prompt.Turquoise),
 		prompt.OptionScrollbarBGColor(prompt.Black),
 		prompt.OptionMaxSuggestion(10),
-		prompt.OptionSetExitCheckerOnInput(func(in string, _ bool) bool {
-			return isExit(in)
-		}),
+		prompt.OptionSetExitCheckerOnInput(promptExitChecker),
 	)
 }
 
@@ -218,13 +239,18 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 	if rewritten, ok := a.contextualCommand(trimmed); ok {
 		trimmed = rewritten
 	}
-	if trimmed == "chain config interactive" {
+	if trimmed == "chain config interactive" || trimmed == "chains config interactive" {
 		code := a.ConfigureInteractive(stdout, stderr)
 		if err := a.saveWorkspaceSession(ctx); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return code
+	}
+	stopThrowing := func() {}
+	if isThrowExecutionCommand(trimmed) && a.surface != nil {
+		stopThrowing = a.surface.StartThrowing(a.PromptPrefix())
+		defer stopThrowing()
 	}
 	code := a.commands.ExecuteLine(ctx, trimmed, stdout, stderr)
 	if err := a.saveWorkspaceSession(ctx); err != nil {
@@ -234,14 +260,29 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 	return code
 }
 
+func isThrowExecutionCommand(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 || fields[0] != "throw" {
+		return false
+	}
+	if len(fields) > 1 {
+		switch fields[1] {
+		case "list", "inspect":
+			return false
+		}
+	}
+	return true
+}
+
 func (a App) PromptPrefix() string {
 	if a.session == nil {
-		return a.theme.PromptPrefix("")
+		return a.theme.PromptPrefix("", "")
 	}
+	state := a.session.Snapshot()
 	if a.wizard != nil && a.wizard.Active() {
-		return a.theme.ConfigPromptPrefix(a.session.Snapshot().ActiveChain, a.wizard.PromptMode())
+		return a.theme.ConfigPromptPrefix(state.ActiveOperation, state.ActiveChain, a.wizard.PromptMode())
 	}
-	return a.theme.PromptPrefix(a.session.Snapshot().ActiveChain)
+	return a.theme.PromptPrefix(state.ActiveOperation, state.ActiveChain)
 }
 
 func (a App) Completer(document prompt.Document) []prompt.Suggest {
@@ -278,13 +319,18 @@ func (a App) Suggestions(line string) []prompt.Suggest {
 		path = fields[:len(fields)-1]
 	}
 	if children := registry.Children(path...); len(children) > 0 {
+		if !endsWithSpace && strings.HasPrefix(fields[len(fields)-1], "-") {
+			if definition, commandWordCount, ok := matchDefinition(registry, fields); ok && commandWordCount == len(path) {
+				return optionSuggestions(definition, fields[len(fields)-1])
+			}
+		}
 		children = a.contextualChildren(path, children)
 		prefix := ""
 		if !endsWithSpace {
 			prefix = fields[len(fields)-1]
 		}
 		suggestions := suggestionsFromDefinitions(children, prefix)
-		if a.inChainContext() && strings.Join(path, " ") == "chain config" {
+		if a.inChainContext() && (strings.Join(path, " ") == "chain config" || strings.Join(path, " ") == "chains config") {
 			suggestions = appendSuggestion(suggestions, "interactive", "Interactively configure the active chain.", prefix)
 		}
 		return suggestions
@@ -332,7 +378,8 @@ func (a App) contextualRootDefinitions() []commands.Definition {
 	return filterDefinitions(firstSegments, map[string]bool{
 		"chain":   true,
 		"control": true,
-		"modules": true,
+		"module":  true,
+		"op":      true,
 	})
 }
 
@@ -341,7 +388,7 @@ func (a App) contextualChildren(path []string, children []commands.Definition) [
 		return children
 	}
 	switch strings.Join(path, " ") {
-	case "chain":
+	case "chain", "chains":
 		return filterDefinitions(children, map[string]bool{
 			"create": true,
 			"delete": true,
@@ -349,7 +396,7 @@ func (a App) contextualChildren(path []string, children []commands.Definition) [
 			"rename": true,
 			"use":    true,
 		})
-	case "chain config", "targets", "targets config":
+	case "chain config", "chains config", "target", "target config", "targets", "targets config":
 		return nil
 	default:
 		return children
@@ -365,6 +412,18 @@ func activeChainDefinition(path string) bool {
 		"chain inspect",
 		"chain logs",
 		"chain validate",
+		"chains add",
+		"chains config list",
+		"chains config set",
+		"chains config unset",
+		"chains inspect",
+		"chains logs",
+		"chains validate",
+		"target add",
+		"target clear",
+		"target config list",
+		"target config set",
+		"target config unset",
 		"targets add",
 		"targets clear",
 		"targets config list",
@@ -455,7 +514,7 @@ func (a App) activeChain() string {
 }
 
 func (a App) positionalSuggestions(definition commands.Definition, commandWordCount int, fields []string, endsWithSpace bool) ([]prompt.Suggest, bool) {
-	if definition.PathString() != "chain add" {
+	if definition.PathString() != "chain add" && definition.PathString() != "chains add" {
 		return nil, false
 	}
 
@@ -699,24 +758,38 @@ func DefaultTheme() Theme {
 	}
 }
 
-func (t Theme) PromptPrefix(chain string) string {
+func (t Theme) PromptPrefix(operation, chain string) string {
+	operation = strings.TrimSpace(operation)
 	chain = strings.TrimSpace(chain)
-	if chain == "" {
-		return "h0v3l> "
+	if operation == "" || operation == operatorsession.DefaultOperation {
+		if chain == "" {
+			return "h0v3l> "
+		}
+		return "h0v3l (" + chain + ") > "
 	}
-	return "h0v3l (" + chain + ") > "
+	if chain == "" {
+		return "h0v3l [" + operation + "]> "
+	}
+	return "h0v3l [" + operation + "/" + chain + "] > "
 }
 
-func (t Theme) ConfigPromptPrefix(chain, mode string) string {
+func (t Theme) ConfigPromptPrefix(operation, chain, mode string) string {
+	operation = strings.TrimSpace(operation)
 	chain = strings.TrimSpace(chain)
 	mode = strings.TrimSpace(mode)
 	if mode == "" {
 		mode = "config"
 	}
-	if chain == "" {
-		return "h0v3l " + mode + "> "
+	if operation == "" || operation == operatorsession.DefaultOperation {
+		if chain == "" {
+			return "h0v3l " + mode + "> "
+		}
+		return "h0v3l (" + chain + ") " + mode + " > "
 	}
-	return "h0v3l (" + chain + ") " + mode + " > "
+	if chain == "" {
+		return "h0v3l [" + operation + "] " + mode + " > "
+	}
+	return "h0v3l [" + operation + "/" + chain + "] " + mode + " > "
 }
 
 type WelcomeInfo struct {
@@ -895,6 +968,10 @@ func parseArgs(args []string, stdout, stderr io.Writer) (string, bool, int) {
 func isExit(line string) bool {
 	line = strings.TrimSpace(strings.ToLower(line))
 	return line == "exit" || line == "quit"
+}
+
+func promptExitChecker(line string, breakline bool) bool {
+	return breakline && isExit(line)
 }
 
 const hovelASCII = `          ~~~

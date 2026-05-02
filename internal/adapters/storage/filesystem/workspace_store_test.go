@@ -2,13 +2,14 @@ package filesystem
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 
+	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
+	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 )
 
@@ -29,8 +30,9 @@ func TestInitWorkspaceCreatesLayout(t *testing.T) {
 		"artifacts",
 		"logs",
 		"modules",
-		"runs",
+		"throws",
 		"services",
+		sqlitestore.DatabaseFile,
 	} {
 		if _, err := os.Stat(filepath.Join(ws.Path, rel)); err != nil {
 			t.Fatalf("expected %s to exist: %v", rel, err)
@@ -66,28 +68,64 @@ func TestRecordThrowPlanPersistsAuditablePlan(t *testing.T) {
 	store := NewWorkspaceStore()
 	workspacePath := filepath.Join(t.TempDir(), ".hovel")
 	plan := commands.ThrowPlanRecord{
-		ID:         "plan-mock",
-		ApprovalID: "approval-mock",
-		Workspace:  workspacePath,
-		Chain:      "mock-exploit",
-		Targets:    []string{"mock://target"},
-		Decision:   "operator-reviewed",
-		Intent:     "throw chain mock-exploit against 1 target(s)",
+		ID:             "plan-mock",
+		ConfirmationID: "confirmation-mock",
+		Workspace:      workspacePath,
+		Chain:          "mock-exploit",
+		Targets:        []string{"mock://target"},
+		Review:         "operator-confirmed",
+		Intent:         "throw chain mock-exploit against 1 target(s)",
 	}
 
 	if err := store.RecordThrowPlan(context.Background(), plan); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(workspacePath, "runs", "plan-mock.json"))
+	got, err := store.GetThrowPlan(context.Background(), workspacePath, plan.ID)
 	if err != nil {
-		t.Fatal(err)
-	}
-	var got commands.ThrowPlanRecord
-	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(got, plan) {
 		t.Fatalf("plan = %#v, want %#v", got, plan)
+	}
+	plans, err := store.ListThrowPlans(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(plans, []commands.ThrowPlanRecord{plan}) {
+		t.Fatalf("plans = %#v, want %#v", plans, []commands.ThrowPlanRecord{plan})
+	}
+	inspected, err := store.GetThrowPlan(context.Background(), workspacePath, plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(inspected, plan) {
+		t.Fatalf("inspected plan = %#v, want %#v", inspected, plan)
+	}
+}
+
+func TestOperatorSessionPersistsInWorkspaceDatabase(t *testing.T) {
+	store := NewWorkspaceStore()
+	workspacePath := filepath.Join(t.TempDir(), ".hovel")
+	state := operatorsession.PersistedState{
+		ActiveOperation: "redteam-lab",
+		ActiveChain:     "alpha",
+		Operations: []operatorsession.PersistedOperation{
+			{Name: "redteam-lab", Chains: []operatorsession.PersistedChain{{Name: "alpha"}}},
+		},
+	}
+
+	if err := store.SaveOperatorSession(context.Background(), workspacePath, state); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := store.LoadOperatorSession(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("operator session not found")
+	}
+	if !reflect.DeepEqual(got, state) {
+		t.Fatalf("state = %#v, want %#v", got, state)
 	}
 }
 

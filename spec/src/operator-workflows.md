@@ -1,23 +1,37 @@
 # Operator Workflows
 
-The chain is the root object of operator work. A chain is not only an execution graph; it is the shared workspace where entities collaborate, configure targets, add modules, validate readiness, and throw.
+The operation is the root object of operator work. A chain is the throw path inside that operation: it is the shared workspace where clients collaborate, configure targets, add modules, validate readiness, and throw.
 
-An entity is any actor connected to `hoveld`: a human operator in `cli`, a TUI session, an MCP client, an AI agent, or another authorized user. Multiple entities may attach to the same chain. The active chain is client-local, but the chain state, target set, configuration, steps, and logs are daemon-owned shared state.
+An entity is any actor connected to `hoveld`: a human operator in `cli`, a TUI session, an MCP client, an AI agent, or another authorized user. Multiple entities may attach to the same operation. Each attachment has its own active chain, while chain state, target sets, configuration, steps, and logs are daemon-owned shared state.
 
-## Chain Collaboration
+## Operation Collaboration
 
-Every chain owns a log topic:
+Every chain owns an operation-scoped log topic:
 
 ```text
-chain/<chain>/logs
+operation/<operation>/chain/<chain>/logs
 ```
 
-Every entity attached to the chain subscribes to the same topic. A log statement for a chain change must be visible to every connected CLI, TUI, and MCP client attached to that chain.
+Every entity attached to the same operation and chain subscribes to the same topic. A log statement for a chain change must be visible to every connected CLI, TUI, and MCP client attached to that chain, but clients working other chains should not receive it by default.
+
+Client-local attachment state:
+
+1. Attached operation.
+2. Active chain within that operation.
+3. Current prompt mode.
+4. Current log cursor.
+
+Daemon-owned shared state:
+
+1. Operation records.
+2. Chain records, steps, targets, and config.
+3. Throw records.
+4. Logs, evidence, artifacts, and findings.
 
 Required chain log events:
 
 1. Chain created, renamed, inspected, deleted, or selected.
-2. Entity attached or detached.
+2. Entity attached or detached from an operation or chain.
 3. Module added, removed, reordered, or configured.
 4. Target added, removed, updated, or configured.
 5. Chain configuration set or unset.
@@ -26,7 +40,7 @@ Required chain log events:
 8. Survey facts discovered.
 9. Payload provider output selected.
 10. Exploit step started, completed, or failed.
-11. Finding, artifact, evidence, or run result emitted.
+11. Finding, artifact, evidence, or throw result emitted.
 
 The CLI should render this as a live transcript. The TUI should render the same topic in a log panel. MCP should expose the same stream through a tool or resource optimized for agents.
 
@@ -49,9 +63,10 @@ For throw logs, `elapsed_seconds` is seconds since the throw started. The termin
 Minimum CLI render:
 
 ```text
-HOVEL//THROW lab-chain
+HOVEL//THROW op/redteam-lab chain/ssh-memory
 
-chain        lab-chain
+operation    redteam-lab
+chain        ssh-memory
 entities     operator:will, agent:planner
 targets      3
 steps        survey:2 exploit:1 payload_provider:1
@@ -110,10 +125,10 @@ A module database record contains:
 Initial commands:
 
 ```text
-modules list
-modules list --type survey
-modules inspect <module-id>
-modules search <query>
+module list
+module list --type survey
+module inspect <module-id>
+module search <query>
 ```
 
 ## Chain Steps
@@ -123,10 +138,10 @@ Chains contain ordered steps. A step usually references a module from the module
 Initial CLI commands:
 
 ```text
-add <module-id>
-remove <step-id>
-move <step-id> --before <step-id>
-inspect
+chain add <module-id>
+chain remove <step-id>
+chain move <step-id> --before <step-id>
+chain inspect
 ```
 
 Adding a module logs to the chain topic. Removing or reordering a step also logs to the chain topic. Step IDs must be stable so validation errors, logs, and UI selection can point at a specific item.
@@ -138,8 +153,8 @@ Configuration is a typed key-value dictionary.
 Scopes:
 
 ```text
-chain config       applies globally to the chain
-target config      applies to one target within the chain
+chain config       applies globally to the active chain
+target config      applies to one target within the active chain
 ```
 
 Every survey, exploit, payload provider, or future chain item can declare:
@@ -188,14 +203,14 @@ config unset <key>
 config list
 config interactive
 
-targets config set <target> <key> <value>
-targets config unset <target> <key>
-targets config list <target>
+target config set <target> <key> <value>
+target config unset <target> <key>
+target config list <target>
 ```
 
 The CLI and TUI must render secrets as present or missing without revealing their values.
 
-`config interactive` is a guided CLI workflow implemented inside the existing go-prompt loop and backed by the canonical `chain config interactive` command. It first renders the current chain and target configuration as a numbered menu, then changes the prompt into a config-selection mode with completions for editable items, continue, and cancel. When the operator continues, Hovel changes the prompt into config-value mode, offers type-aware completions where possible, walks the remaining required chain and per-target keys, validates each typed value as it is entered, and repeats until all required configuration is set or an unfixable validation issue remains.
+`config interactive` is a guided CLI workflow implemented inside the existing go-prompt loop and backed by the canonical `chain config interactive` command. It first renders the current chain and target configuration as a numbered menu, then changes the prompt into config-selection mode with completions for editable items, continue, and cancel. When the operator continues, Hovel changes the prompt into config-value mode, offers type-aware completions where possible, walks the remaining required chain and per-target keys, validates each typed value as it is entered, and repeats until all required configuration is set or an unfixable validation issue remains.
 
 ## Validation
 

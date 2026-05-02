@@ -10,6 +10,7 @@ from hovel_sdk.server import JSONRPCServer
 
 class EchoModule(HovelModule):
     name = "echo"
+    module_type = "survey"
     global_config: ClassVar[tuple[Requirement, ...]] = (Requirement("operator.confirmed_lab", "bool"),)
     target_config: ClassVar[tuple[Requirement, ...]] = (Requirement("target.host", "host"),)
 

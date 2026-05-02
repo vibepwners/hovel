@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,14 +12,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
-	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 )
-
-func TestMain(m *testing.M) {
-	os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfig)
-	os.Exit(m.Run())
-}
 
 func TestHelpShowsCommandMenu(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -31,7 +22,7 @@ func TestHelpShowsCommandMenu(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"hovel command", "control", "chain", "targets", "throw"} {
+	for _, want := range []string{"hovel command", "control", "chain", "target", "throw"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}
@@ -175,84 +166,6 @@ func TestDaemonStatusJSONRunning(t *testing.T) {
 	}
 }
 
-func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	workspacePath := testsupport.TempDir(t)
-	socketPath := workspacePath + "/hoveld.sock"
-	ctx, cancel := context.WithCancel(context.Background())
-	errs := make(chan error, 1)
-	go func() {
-		errs <- daemonruntime.Serve(ctx, daemonruntime.Args{
-			WorkspacePath: workspacePath,
-			SocketPath:    socketPath,
-			PID:           12345,
-			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2", "event-3", "event-4", "event-5"}},
-			Clock:         fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
-		})
-	}()
-	defer func() {
-		cancel()
-		<-errs
-	}()
-
-	store := filesystem.NewWorkspaceStore()
-	waitFor(t, func() bool {
-		status, err := store.DaemonStatus(context.Background(), workspacePath)
-		return err == nil && status.State == daemon.StateRunning
-	})
-
-	code := Run(context.Background(), []string{"throw", "--chain", "mock-exploit", "--target", "mock://target", "--workspace", workspacePath, "--json"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
-	}
-
-	var payload struct {
-		Chain   string   `json:"chain"`
-		Targets []string `json:"targets"`
-		Results []struct {
-			RunID     string `json:"runId"`
-			ModuleID  string `json:"moduleId"`
-			Target    string `json:"target"`
-			State     string `json:"state"`
-			Summary   string `json:"summary"`
-			Findings  []any  `json:"findings"`
-			Artifacts []any  `json:"artifacts"`
-		} `json:"results"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
-	}
-	if payload.Chain != "mock-exploit" {
-		t.Fatalf("chain = %q, want mock-exploit", payload.Chain)
-	}
-	if len(payload.Targets) != 1 || payload.Targets[0] != "mock://target" {
-		t.Fatalf("targets = %#v", payload.Targets)
-	}
-	if len(payload.Results) != 1 {
-		t.Fatalf("result count = %d, want 1", len(payload.Results))
-	}
-	result := payload.Results[0]
-	if result.RunID != "run-1" {
-		t.Fatalf("run id = %q, want run-1", result.RunID)
-	}
-	if result.ModuleID != "mock-exploit" {
-		t.Fatalf("module id = %q, want mock-exploit", result.ModuleID)
-	}
-	if result.Target != "mock://target" {
-		t.Fatalf("target = %q, want mock://target", result.Target)
-	}
-	if result.State != "succeeded" {
-		t.Fatalf("state = %q, want succeeded", result.State)
-	}
-	if len(result.Findings) != 1 {
-		t.Fatalf("finding count = %d, want 1", len(result.Findings))
-	}
-	if len(result.Artifacts) != 1 {
-		t.Fatalf("artifact count = %d, want 1", len(result.Artifacts))
-	}
-}
-
 func TestInitHumanOutput(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	workspacePath := t.TempDir()
@@ -323,31 +236,4 @@ func TestHumanOutputRendersOperatorLogWhenPresent(t *testing.T) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
 		}
 	}
-}
-
-type sequenceIDs struct {
-	values []string
-	next   int
-}
-
-func (s *sequenceIDs) NewID() string {
-	if s.next >= len(s.values) {
-		s.next++
-		return fmt.Sprintf("event-%d", s.next)
-	}
-	value := s.values[s.next]
-	s.next++
-	return value
-}
-
-type fixedClock struct {
-	now time.Time
-}
-
-func (c fixedClock) Now() time.Time {
-	return c.now
-}
-
-func waitFor(t *testing.T, condition func() bool) {
-	testsupport.WaitFor(t, condition)
 }

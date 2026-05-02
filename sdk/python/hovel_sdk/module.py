@@ -12,7 +12,7 @@ class HovelModule(ABC):
     name: str = ""
     version: str = "0.0.0"
     summary: str = ""
-    module_type: str = "module"
+    module_type: str = ""
     description: str = ""
     tags: ClassVar[tuple[str, ...]] = ()
     global_config: ClassVar[tuple[Requirement, ...]] = ()

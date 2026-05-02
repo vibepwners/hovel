@@ -22,6 +22,26 @@ func TestPromptSurfaceWritesAsyncLogsRaw(t *testing.T) {
 	}
 }
 
+func TestPromptSurfaceShowsThrowingAnimation(t *testing.T) {
+	writer := &recordingConsoleWriter{}
+	surface := newPromptSurface(writer)
+
+	stop := surface.StartThrowing("h0v3l> ")
+	surface.WriteAsyncLog("module log", "h0v3l> ")
+	stop()
+
+	output := writer.String()
+	if !strings.Contains(output, "throwing") {
+		t.Fatalf("output = %q, want throwing animation", output)
+	}
+	if !strings.Contains(output, "module log") {
+		t.Fatalf("output = %q, want async log", output)
+	}
+	if !strings.Contains(output, "h0v3l> ") {
+		t.Fatalf("output = %q, want prompt restored after stop", output)
+	}
+}
+
 type recordingConsoleWriter struct {
 	output strings.Builder
 }

@@ -90,17 +90,21 @@ func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Mod
 
 	info, err := process.client.call(ctx, "handshake", nil)
 	if err != nil {
-		return modulecatalog.Module{}, withStderr("module handshake failed", err, process.stderr.String())
+		return modulecatalog.Module{}, moduleFailure("module failed during startup", "module handshake failed", err, process.stderr.String())
 	}
 	schema, err := process.client.call(ctx, "schema", nil)
 	if err != nil {
-		return modulecatalog.Module{}, withStderr("module schema failed", err, process.stderr.String())
+		return modulecatalog.Module{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderr.String())
 	}
 	_, _ = process.client.call(context.Background(), "shutdown", nil)
 	if err := process.wait(); err != nil {
-		return modulecatalog.Module{}, withStderr("module exited with error", err, process.stderr.String())
+		return modulecatalog.Module{}, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
 	}
-	return moduleFromRPC(moduleID, info, schema), nil
+	module, err := moduleFromRPC(moduleID, info, schema)
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	return module, nil
 }
 
 func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error) {
@@ -121,10 +125,10 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 	}
 
 	if _, err := process.client.call(ctx, "handshake", nil); err != nil {
-		return run.Result{}, withStderr("module handshake failed", err, process.stderr.String())
+		return run.Result{}, moduleFailure("module failed during startup", "module handshake failed", err, process.stderr.String())
 	}
 	if _, err := process.client.call(ctx, "schema", nil); err != nil {
-		return run.Result{}, withStderr("module schema failed", err, process.stderr.String())
+		return run.Result{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderr.String())
 	}
 	executeResult, err := process.client.call(ctx, "execute", map[string]any{
 		"runId":        request.ID,
@@ -135,13 +139,17 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 		"targetConfig": request.TargetConfig,
 	})
 	if err != nil {
-		return run.Result{}, withStderr("module execute failed", err, process.stderr.String())
+		return run.Result{}, moduleFailure("module failed during execution", "module execute failed", err, process.stderr.String())
 	}
 	_, _ = process.client.call(context.Background(), "shutdown", nil)
 	if err := process.wait(); err != nil {
-		return run.Result{}, withStderr("module exited with error", err, process.stderr.String())
+		return run.Result{}, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
 	}
-	return resultFromRPC(request, executeResult, process.client.logs)
+	result, err := resultFromRPC(request, executeResult, process.client.logs)
+	if err != nil {
+		return run.Result{}, services.NewModuleExecutionFailure("module returned invalid result", err)
+	}
+	return result, nil
 }
 
 type moduleProcess struct {
@@ -243,8 +251,9 @@ func (r Runner) moduleEntry(moduleID string) (ModuleEntry, bool, error) {
 	if err != nil {
 		return ModuleEntry{}, false, err
 	}
+	moduleName := modulecatalog.ReferenceName(moduleID)
 	for _, entry := range entries {
-		if entry.ID == moduleID {
+		if entry.ID == moduleID || modulecatalog.ReferenceName(entry.ID) == moduleName {
 			return entry, true, nil
 		}
 	}
@@ -277,7 +286,10 @@ func (r Runner) moduleEntries() ([]ModuleEntry, error) {
 		if entry.ID == "" {
 			continue
 		}
-		if entry.Runtime != "" && entry.Runtime != "python-rpc" {
+		if entry.Runtime == "" {
+			entry.Runtime = modulecatalog.RuntimeJSONRPCStdio
+		}
+		if entry.Runtime != modulecatalog.RuntimeJSONRPCStdio {
 			continue
 		}
 		if entry.ProjectDir == "" || entry.Module == "" {
@@ -392,7 +404,7 @@ func (c *rpcClient) call(ctx context.Context, method string, params any) (map[st
 			c.logs = append(c.logs, message.Log)
 			if c.onLog != nil {
 				if err := c.onLog(message.Log); err != nil {
-					return nil, err
+					return nil, callbackError{err: err}
 				}
 			}
 			continue
@@ -564,21 +576,44 @@ func logsFromRPC(request run.Request, logs []rpcLog) []run.LogEntry {
 	return out
 }
 
-func moduleFromRPC(moduleID string, info, schema map[string]any) modulecatalog.Module {
+func moduleFromRPC(moduleID string, info, schema map[string]any) (modulecatalog.Module, error) {
+	name := strings.TrimSpace(stringValue(info["name"]))
+	configName, configVersion, configHasVersion := modulecatalog.SplitID(moduleID)
+	if name == "" {
+		name = configName
+	}
+	version := strings.TrimSpace(stringValue(info["version"]))
+	if version == "" && configHasVersion {
+		version = configVersion
+	}
+	if name == "" {
+		return modulecatalog.Module{}, errors.New("module handshake missing name")
+	}
+	if version == "" {
+		return modulecatalog.Module{}, errors.New("module handshake missing version")
+	}
+	moduleType, err := modulecatalog.NewModuleType(strings.TrimSpace(stringValue(info["moduleType"])))
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	display := strings.TrimSpace(stringValue(info["displayName"]))
+	if display == "" {
+		display = displayName(name)
+	}
 	return modulecatalog.Module{
-		ID:           moduleID,
-		Name:         displayName(moduleID),
-		Type:         modulecatalog.ModuleType(stringValue(info["moduleType"])),
-		Version:      stringValue(info["version"]),
+		ID:           modulecatalog.CanonicalID(name, version),
+		Name:         display,
+		Type:         moduleType,
+		Version:      version,
 		Summary:      stringValue(info["summary"]),
 		Description:  stringValue(info["description"]),
 		Tags:         stringSlice(info["tags"]),
-		RuntimeKind:  "python-rpc",
+		RuntimeKind:  modulecatalog.RuntimeJSONRPCStdio,
 		Author:       "hovel",
 		Enabled:      true,
 		ChainConfig:  requirementsFromRPC(schema["chainConfig"]),
 		TargetConfig: requirementsFromRPC(schema["targetConfig"]),
-	}
+	}, nil
 }
 
 func requirementsFromRPC(value any) []modulecatalog.Requirement {
@@ -689,6 +724,26 @@ func withStderr(prefix string, err error, stderr string) error {
 		return fmt.Errorf("%s: %w", prefix, err)
 	}
 	return fmt.Errorf("%s: %w: %s", prefix, err, stderr)
+}
+
+func moduleFailure(summary, prefix string, err error, stderr string) error {
+	var callback callbackError
+	if errors.As(err, &callback) {
+		return err
+	}
+	return services.NewModuleExecutionFailure(summary, withStderr(prefix, err, stderr))
+}
+
+type callbackError struct {
+	err error
+}
+
+func (e callbackError) Error() string {
+	return e.err.Error()
+}
+
+func (e callbackError) Unwrap() error {
+	return e.err
 }
 
 func (r Runner) appendLog(ctx context.Context, request run.Request, log rpcLog) error {

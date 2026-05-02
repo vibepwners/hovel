@@ -10,7 +10,9 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem",
     visibility = ["//visibility:public"],
     deps = [
+        "//internal/adapters/storage/sqlite",
         "//internal/app/commands",
+        "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/daemon",
         "//internal/domain/workspace",
@@ -19,6 +21,7 @@ go_library(
 
 go_test(
     name = "filesystem_test",
+    size = "small",
     srcs = [
         "daemon_store_test.go",
         "lock_test.go",
@@ -26,7 +29,9 @@ go_test(
     ],
     embed = [":filesystem"],
     deps = [
+        "//internal/adapters/storage/sqlite",
         "//internal/app/commands",
+        "//internal/app/operatorsession",
         "//internal/domain/daemon",
         "//internal/domain/workspace",
     ],
