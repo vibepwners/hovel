@@ -69,6 +69,7 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 		Confirmations:      store,
 		ThrowConfirmations: store,
 		ThrowPlans:         store,
+		ChainFiles:         chainFileDiskStore{},
 		Session:            session,
 		Modules:            pythonrpc.MustConfiguredCatalog(),
 	}

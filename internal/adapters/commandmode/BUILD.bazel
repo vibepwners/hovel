@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "commandmode",
-    srcs = ["commandmode.go"],
+    srcs = [
+        "chain_file_store.go",
+        "commandmode.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/commandmode",
     visibility = ["//:__subpackages__"],
     deps = [
@@ -23,6 +26,7 @@ go_test(
     name = "commandmode_test",
     size = "small",
     srcs = [
+        "chain_file_store_test.go",
         "commandmode_test.go",
         "commandmode_test_helpers_test.go",
     ],

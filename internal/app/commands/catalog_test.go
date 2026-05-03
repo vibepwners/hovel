@@ -38,8 +38,10 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"chain", "config", "unset"},
 		{"chain", "inspect"},
 		{"chain", "list"},
+		{"chain", "load"},
 		{"chain", "logs"},
 		{"chain", "rename"},
+		{"chain", "save"},
 		{"chain", "validate"},
 		{"module", "inspect"},
 		{"module", "list"},
@@ -61,6 +63,8 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 	}
 	for _, alias := range [][]string{
 		{"chains", "create"},
+		{"chains", "load"},
+		{"chains", "save"},
 		{"modules", "list"},
 		{"targets", "add"},
 		{"throws", "list"},
@@ -807,6 +811,133 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 	}
 }
 
+func TestChainSaveWritesConfiguredAndTemplateFiles(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-exploit@v0.0.0-example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("operator.confirmed_lab", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://target"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://target", "target.host", "router-01"); err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeChainFileStore{writes: map[string]ChainFile{}}
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
+		Session:    session,
+		ChainFiles: store,
+	})
+	saveDefinition, _ := registry.Find("chain", "save")
+
+	result, err := saveDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"file": "alpha.chain.yaml"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "Chain alpha saved as configured") {
+		t.Fatalf("save result = %q", result.Human)
+	}
+	configured := store.writes["alpha.chain.yaml"]
+	if configured.APIVersion != "hovel.dev/v1alpha1" || configured.Kind != "Chain" || configured.Metadata.Name != "alpha" {
+		t.Fatalf("configured metadata = %#v", configured)
+	}
+	if configured.Spec.Mode != "configured" {
+		t.Fatalf("mode = %q, want configured", configured.Spec.Mode)
+	}
+	if got, want := configured.Spec.Steps, []ChainFileStep{{ID: "step-1", Uses: "module:mock-exploit@v0.0.0-example"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("steps = %#v, want %#v", got, want)
+	}
+	if configured.Spec.Config["operator.confirmed_lab"] != "true" {
+		t.Fatalf("chain config = %#v", configured.Spec.Config)
+	}
+	if got, want := configured.Spec.Targets, []ChainFileTarget{{ID: "mock://target", Config: map[string]string{"target.host": "router-01"}}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("targets = %#v, want %#v", got, want)
+	}
+
+	if _, err := saveDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"file": "alpha.template.yaml"},
+		Flags:       map[string]bool{"template": true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	template := store.writes["alpha.template.yaml"]
+	if template.Spec.Mode != "template" {
+		t.Fatalf("template mode = %q, want template", template.Spec.Mode)
+	}
+	if len(template.Spec.Targets) != 0 || len(template.Spec.Config) != 0 || len(template.Spec.TargetConfigs) != 0 {
+		t.Fatalf("template persisted configured data: %#v", template.Spec)
+	}
+}
+
+func TestChainLoadRestoresConfiguredChainFile(t *testing.T) {
+	session := operatorsession.New()
+	store := &fakeChainFileStore{
+		reads: map[string]ChainFile{
+			"alpha.chain.yaml": {
+				APIVersion: "hovel.dev/v1alpha1",
+				Kind:       "Chain",
+				Metadata:   ChainFileMetadata{Name: "alpha"},
+				Spec: ChainFileSpec{
+					Mode: "configured",
+					Steps: []ChainFileStep{
+						{ID: "ignored", Uses: "module:mock-exploit@v0.0.0-example"},
+					},
+					Config: map[string]string{"operator.confirmed_lab": "true"},
+					Targets: []ChainFileTarget{
+						{ID: "mock://target", Config: map[string]string{"target.host": "router-01"}},
+					},
+				},
+			},
+		},
+	}
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
+		Session:    session,
+		ChainFiles: store,
+	})
+	loadDefinition, _ := registry.Find("chain", "load")
+
+	result, err := loadDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"file": "alpha.chain.yaml"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Human != "Chain loaded: alpha" {
+		t.Fatalf("load result = %q", result.Human)
+	}
+	state := session.Snapshot()
+	if state.ActiveChain != "alpha" {
+		t.Fatalf("active chain = %q, want alpha", state.ActiveChain)
+	}
+	if got, want := state.Steps, []operatorsession.Step{{ID: "step-1", ModuleID: "mock-exploit@v0.0.0-example"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("steps = %#v, want %#v", got, want)
+	}
+	if got, want := state.Config, map[string]string{"operator.confirmed_lab": "true"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("config = %#v, want %#v", got, want)
+	}
+	if got, want := state.Targets, []string{"mock://target"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("targets = %#v, want %#v", got, want)
+	}
+	if got, want := state.TargetConfigs, map[string]map[string]string{"mock://target": {"target.host": "router-01"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("target configs = %#v, want %#v", got, want)
+	}
+}
+
 func TestTargetHandlerRequiresActiveChain(t *testing.T) {
 	session := operatorsession.New()
 	registry := HovelRegistry(Runtime{
@@ -1106,6 +1237,27 @@ func (s *fakeConfirmationStore) GetThrowConfirmation(_ context.Context, workspac
 		}
 	}
 	return ThrowConfirmationRecord{}, false, nil
+}
+
+type fakeChainFileStore struct {
+	writes map[string]ChainFile
+	reads  map[string]ChainFile
+}
+
+func (s *fakeChainFileStore) WriteChainFile(_ context.Context, path string, file ChainFile) error {
+	if s.writes == nil {
+		s.writes = map[string]ChainFile{}
+	}
+	s.writes[path] = file
+	return nil
+}
+
+func (s *fakeChainFileStore) ReadChainFile(_ context.Context, path string) (ChainFile, error) {
+	file, ok := s.reads[path]
+	if !ok {
+		return ChainFile{}, nil
+	}
+	return file, nil
 }
 
 type fakeThrowConfirmer struct {

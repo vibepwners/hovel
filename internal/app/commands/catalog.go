@@ -58,6 +58,11 @@ type ThrowPlanRepository interface {
 	GetThrowPlan(context.Context, string, string) (ThrowPlanRecord, error)
 }
 
+type ChainFileStore interface {
+	WriteChainFile(context.Context, string, ChainFile) error
+	ReadChainFile(context.Context, string) (ChainFile, error)
+}
+
 type OperatorSession interface {
 	CreateOperation(string) error
 	UseOperation(string) error
@@ -90,6 +95,7 @@ type Runtime struct {
 	Confirmations      ThrowConfirmationRecorder
 	ThrowConfirmations ThrowConfirmationRepository
 	ThrowPlans         ThrowPlanRepository
+	ChainFiles         ChainFileStore
 	Session            OperatorSession
 	Modules            ModuleDatabase
 }
@@ -248,6 +254,35 @@ type ValidationPayload struct {
 	Issues []modulecatalog.Issue `json:"issues"`
 }
 
+type ChainFile struct {
+	APIVersion string            `json:"apiVersion"`
+	Kind       string            `json:"kind"`
+	Metadata   ChainFileMetadata `json:"metadata"`
+	Spec       ChainFileSpec     `json:"spec"`
+}
+
+type ChainFileMetadata struct {
+	Name string `json:"name"`
+}
+
+type ChainFileSpec struct {
+	Mode          string                       `json:"mode"`
+	Steps         []ChainFileStep              `json:"steps"`
+	Config        map[string]string            `json:"config,omitempty"`
+	Targets       []ChainFileTarget            `json:"targets,omitempty"`
+	TargetConfigs map[string]map[string]string `json:"targetConfigs,omitempty"`
+}
+
+type ChainFileStep struct {
+	ID   string `json:"id"`
+	Uses string `json:"uses"`
+}
+
+type ChainFileTarget struct {
+	ID     string            `json:"id"`
+	Config map[string]string `json:"config,omitempty"`
+}
+
 func HovelRegistry(runtime Runtime) Registry {
 	return MustRegistry(withCommonOptions(
 		Definition{
@@ -344,6 +379,31 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: chainValidateHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"chain", "save"},
+			Aliases: [][]string{{"chains", "save"}},
+			Summary: "Save the active chain to a YAML file.",
+			Positionals: []Positional{
+				{Name: "file", Help: "Chain YAML file path", Required: true},
+			},
+			Options: []Option{
+				boolOption("template", "", "Save a targetless reusable chain template"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: chainSaveHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"chain", "load"},
+			Aliases: [][]string{{"chains", "load"}},
+			Summary: "Load a chain from a YAML file.",
+			Positionals: []Positional{
+				{Name: "file", Help: "Chain YAML file path", Required: true},
+			},
+			Options: []Option{
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: chainLoadHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"chain", "config", "set"},
@@ -859,6 +919,63 @@ func chainValidateHandler(runtime Runtime) Handler {
 		return Result{
 			Human: strings.Join(lines, "\n"),
 			JSON:  payload,
+		}, nil
+	}
+}
+
+func chainSaveHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.ChainFiles == nil {
+			return Result{}, fmt.Errorf("chain file store is not configured")
+		}
+		state, err := activeState(runtime)
+		if err != nil {
+			return Result{}, err
+		}
+		chainFile := chainFileFromState(state, invocation.Flag("template"))
+		path := invocation.Positional("file")
+		if strings.TrimSpace(path) == "" {
+			return Result{}, fmt.Errorf("chain file path is required")
+		}
+		if err := runtime.ChainFiles.WriteChainFile(ctx, path, chainFile); err != nil {
+			return Result{}, err
+		}
+		mode := chainFile.Spec.Mode
+		return Result{
+			Human: fmt.Sprintf("Chain %s saved as %s to %s", chainFile.Metadata.Name, mode, path),
+			JSON:  chainFile,
+		}, nil
+	}
+}
+
+func chainLoadHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.ChainFiles == nil {
+			return Result{}, fmt.Errorf("chain file store is not configured")
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("chain load")
+		}
+		path := invocation.Positional("file")
+		if strings.TrimSpace(path) == "" {
+			return Result{}, fmt.Errorf("chain file path is required")
+		}
+		chainFile, err := runtime.ChainFiles.ReadChainFile(ctx, path)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := loadChainFile(runtime.Session, chainFile); err != nil {
+			return Result{}, err
+		}
+		return Result{
+			Human: fmt.Sprintf("Chain loaded: %s", chainFile.Metadata.Name),
+			JSON:  chainFile,
 		}, nil
 	}
 }
@@ -1554,6 +1671,98 @@ func selectedChainState(state operatorsession.State, chain string) (operatorsess
 		}
 	}
 	return operatorsession.Chain{}, false
+}
+
+func chainFileFromState(state operatorsession.State, template bool) ChainFile {
+	mode := "configured"
+	if template {
+		mode = "template"
+	}
+	file := ChainFile{
+		APIVersion: "hovel.dev/v1alpha1",
+		Kind:       "Chain",
+		Metadata:   ChainFileMetadata{Name: state.ActiveChain},
+		Spec: ChainFileSpec{
+			Mode:  mode,
+			Steps: chainFileSteps(state.Steps),
+		},
+	}
+	if !template {
+		file.Spec.Config = cloneStringMap(state.Config)
+		for _, target := range state.Targets {
+			file.Spec.Targets = append(file.Spec.Targets, ChainFileTarget{
+				ID:     target,
+				Config: cloneStringMap(state.TargetConfigs[target]),
+			})
+		}
+		file.Spec.TargetConfigs = cloneTargetConfigs(state.TargetConfigs)
+	}
+	return file
+}
+
+func chainFileSteps(steps []operatorsession.Step) []ChainFileStep {
+	out := make([]ChainFileStep, 0, len(steps))
+	for _, step := range steps {
+		out = append(out, ChainFileStep{
+			ID:   step.ID,
+			Uses: "module:" + step.ModuleID,
+		})
+	}
+	return out
+}
+
+func loadChainFile(session OperatorSession, file ChainFile) error {
+	if strings.TrimSpace(file.APIVersion) == "" {
+		return fmt.Errorf("chain file apiVersion is required")
+	}
+	if file.Kind != "Chain" {
+		return fmt.Errorf("chain file kind must be Chain")
+	}
+	name := strings.TrimSpace(file.Metadata.Name)
+	if name == "" {
+		return fmt.Errorf("chain file metadata.name is required")
+	}
+	if err := session.DeleteChain(name); err != nil && !strings.Contains(err.Error(), "does not exist") {
+		return err
+	}
+	if err := session.CreateChain(name); err != nil {
+		return err
+	}
+	if err := session.UseChain(name); err != nil {
+		return err
+	}
+	for _, step := range file.Spec.Steps {
+		moduleID := strings.TrimPrefix(strings.TrimSpace(step.Uses), "module:")
+		if moduleID == "" {
+			return fmt.Errorf("chain file step %s module reference is required", step.ID)
+		}
+		if _, err := session.AddModule(moduleID); err != nil {
+			return err
+		}
+	}
+	for key, value := range file.Spec.Config {
+		if err := session.SetChainConfig(key, value); err != nil {
+			return err
+		}
+	}
+	for _, target := range file.Spec.Targets {
+		if strings.TrimSpace(target.ID) == "" {
+			return fmt.Errorf("chain file target id is required")
+		}
+		if err := session.AddTarget(target.ID); err != nil {
+			return err
+		}
+		targetConfig := target.Config
+		if len(targetConfig) == 0 {
+			targetConfig = file.Spec.TargetConfigs[target.ID]
+		}
+		for key, value := range targetConfig {
+			if err := session.SetTargetConfig(target.ID, key, value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func targetsForChain(state operatorsession.State, chain string) []string {
