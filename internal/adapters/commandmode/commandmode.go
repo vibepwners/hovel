@@ -62,13 +62,14 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 			randomIDs{},
 			systemClock{},
 		),
-		Daemons:       services.NewDaemonService(store),
-		Runs:          daemonRunClients{},
-		Plans:         store,
-		Confirmations: store,
-		ThrowPlans:    store,
-		Session:       session,
-		Modules:       pythonrpc.MustConfiguredCatalog(),
+		Daemons:            services.NewDaemonService(store),
+		Runs:               daemonRunClients{},
+		Plans:              store,
+		Confirmations:      store,
+		ThrowConfirmations: store,
+		ThrowPlans:         store,
+		Session:            session,
+		Modules:            pythonrpc.MustConfiguredCatalog(),
 	}
 }
 

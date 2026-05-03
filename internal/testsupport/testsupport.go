@@ -1,6 +1,7 @@
 package testsupport
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -19,7 +20,95 @@ const ExampleModuleConfig = "examples/python/hovel-modules.json"
 
 func UseExampleModuleConfig(t testing.TB) {
 	t.Helper()
-	t.Setenv("HOVEL_MODULE_CONFIG", ExampleModuleConfig)
+	t.Setenv("HOVEL_MODULE_CONFIG", ResolveRunfile(ExampleModuleConfig))
+}
+
+func ExampleModuleConfigPath() string {
+	return ResolveRunfile(ExampleModuleConfig)
+}
+
+func ResolveRunfile(path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	if _, err := os.Stat(path); err == nil {
+		return path
+	}
+	if candidate, ok := runfileManifestLookup(path); ok {
+		return candidate
+	}
+	for _, root := range runfileRoots() {
+		candidate := filepath.Join(root, path)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return path
+}
+
+func runfileRoots() []string {
+	var roots []string
+	if runfiles := os.Getenv("RUNFILES_DIR"); runfiles != "" {
+		roots = append(roots,
+			runfiles,
+			filepath.Join(runfiles, "hovel"),
+			filepath.Join(runfiles, "_main"),
+		)
+	}
+	if testSrcDir := os.Getenv("TEST_SRCDIR"); testSrcDir != "" {
+		roots = append(roots,
+			testSrcDir,
+			filepath.Join(testSrcDir, "hovel"),
+			filepath.Join(testSrcDir, "_main"),
+		)
+		if workspace := os.Getenv("TEST_WORKSPACE"); workspace != "" {
+			roots = append(roots, filepath.Join(testSrcDir, workspace))
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
+		runfiles := exe + ".runfiles"
+		roots = append(roots,
+			runfiles,
+			filepath.Join(runfiles, "hovel"),
+			filepath.Join(runfiles, "_main"),
+		)
+	}
+	return roots
+}
+
+func runfileManifestLookup(path string) (string, bool) {
+	manifest := os.Getenv("RUNFILES_MANIFEST_FILE")
+	if manifest == "" {
+		return "", false
+	}
+	file, err := os.Open(manifest)
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+	keys := []string{
+		filepath.ToSlash(path),
+		filepath.ToSlash(filepath.Join("_main", path)),
+		filepath.ToSlash(filepath.Join("hovel", path)),
+	}
+	if workspace := os.Getenv("TEST_WORKSPACE"); workspace != "" {
+		keys = append(keys, filepath.ToSlash(filepath.Join(workspace, path)))
+	}
+	wanted := map[string]struct{}{}
+	for _, key := range keys {
+		wanted[key] = struct{}{}
+	}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), " ")
+		if !ok {
+			continue
+		}
+		if _, ok := wanted[key]; ok {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 func TempDir(t testing.TB) string {

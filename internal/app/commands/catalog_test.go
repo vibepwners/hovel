@@ -353,6 +353,56 @@ func TestConfirmHandlerRecordsPlanAndConfirmationWithoutRunning(t *testing.T) {
 	}
 }
 
+func TestThrowUsesExistingConfirmationWithoutRecordingTypedYes(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := newThrowPlan(".hovel", "mock-exploit", []string{"mock://target"})
+	confirmations := &fakeConfirmationStore{
+		records: []ThrowConfirmationRecord{
+			newThrowConfirmation(plan, "command", "preconfirmed", time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)),
+		},
+	}
+	recorder := &fakeRunRecorder{}
+	registry := HovelRegistry(Runtime{
+		Workspaces:         fakeWorkspaceService{},
+		Daemons:            fakeDaemonService{status: daemon.Running(identity)},
+		Runs:               fakeRunClientFactory{recorder: recorder},
+		Modules:            exampleCatalog(),
+		Plans:              &fakePlanRecorder{},
+		Confirmations:      confirmations,
+		ThrowConfirmations: confirmations,
+	})
+	definition, _ := registry.Find("throw")
+
+	_, err = definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "mock://target",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(confirmations.records) != 1 {
+		t.Fatalf("confirmations = %#v, want only existing preconfirmation", confirmations.records)
+	}
+	if confirmations.records[0].Method != "preconfirmed" {
+		t.Fatalf("confirmation method = %q, want preconfirmed", confirmations.records[0].Method)
+	}
+	if len(recorder.requests) != 1 {
+		t.Fatalf("run requests = %#v, want one", recorder.requests)
+	}
+}
+
 func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	session := operatorsession.New()
 	registry := HovelRegistry(Runtime{
@@ -961,6 +1011,25 @@ type fakeConfirmationRecorder struct {
 func (r *fakeConfirmationRecorder) RecordThrowConfirmation(_ context.Context, confirmation ThrowConfirmationRecord) error {
 	r.records = append(r.records, confirmation)
 	return nil
+}
+
+type fakeConfirmationStore struct {
+	records []ThrowConfirmationRecord
+}
+
+func (s *fakeConfirmationStore) RecordThrowConfirmation(_ context.Context, confirmation ThrowConfirmationRecord) error {
+	s.records = append(s.records, confirmation)
+	return nil
+}
+
+func (s *fakeConfirmationStore) GetThrowConfirmation(_ context.Context, workspacePath, planHash string) (ThrowConfirmationRecord, bool, error) {
+	for i := len(s.records) - 1; i >= 0; i-- {
+		record := s.records[i]
+		if record.Workspace == workspacePath && record.PlanHash == planHash {
+			return record, true, nil
+		}
+	}
+	return ThrowConfirmationRecord{}, false, nil
 }
 
 type fakeRunClientFactory struct {

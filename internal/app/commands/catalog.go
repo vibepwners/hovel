@@ -45,6 +45,10 @@ type ThrowConfirmationRecorder interface {
 	RecordThrowConfirmation(context.Context, ThrowConfirmationRecord) error
 }
 
+type ThrowConfirmationRepository interface {
+	GetThrowConfirmation(context.Context, string, string) (ThrowConfirmationRecord, bool, error)
+}
+
 type ThrowPlanRepository interface {
 	ListThrowPlans(context.Context, string) ([]ThrowPlanRecord, error)
 	GetThrowPlan(context.Context, string, string) (ThrowPlanRecord, error)
@@ -75,14 +79,15 @@ type publishedFeedbackSession interface {
 }
 
 type Runtime struct {
-	Workspaces    WorkspaceInitializer
-	Daemons       DaemonStatusProvider
-	Runs          RunClientFactory
-	Plans         ThrowPlanRecorder
-	Confirmations ThrowConfirmationRecorder
-	ThrowPlans    ThrowPlanRepository
-	Session       OperatorSession
-	Modules       ModuleDatabase
+	Workspaces         WorkspaceInitializer
+	Daemons            DaemonStatusProvider
+	Runs               RunClientFactory
+	Plans              ThrowPlanRecorder
+	Confirmations      ThrowConfirmationRecorder
+	ThrowConfirmations ThrowConfirmationRepository
+	ThrowPlans         ThrowPlanRepository
+	Session            OperatorSession
+	Modules            ModuleDatabase
 }
 
 type ModuleDatabase interface {
@@ -1163,9 +1168,19 @@ func throwHandler(runtime Runtime) Handler {
 			if invocation.Flag("now") {
 				method = "now_bypass"
 			}
-			confirmation := newThrowConfirmation(plan, confirmationClientID(runtime), method, time.Now().UTC())
-			if err := runtime.Confirmations.RecordThrowConfirmation(ctx, confirmation); err != nil {
-				return Result{}, err
+			confirmed := false
+			if method != "now_bypass" && runtime.ThrowConfirmations != nil {
+				_, ok, err := runtime.ThrowConfirmations.GetThrowConfirmation(ctx, status.WorkspacePath, plan.PlanHash)
+				if err != nil {
+					return Result{}, err
+				}
+				confirmed = ok
+			}
+			if !confirmed {
+				confirmation := newThrowConfirmation(plan, confirmationClientID(runtime), method, time.Now().UTC())
+				if err := runtime.Confirmations.RecordThrowConfirmation(ctx, confirmation); err != nil {
+					return Result{}, err
+				}
 			}
 		}
 

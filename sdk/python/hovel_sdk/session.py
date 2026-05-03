@@ -4,7 +4,7 @@ import asyncio
 import base64
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol, Union
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ class Session(Protocol):
         raise NotImplementedError
 
 
-CommandOutput = str | bytes | None
+CommandOutput = Optional[Union[str, bytes]]
 
 
 class LineShellSession:
