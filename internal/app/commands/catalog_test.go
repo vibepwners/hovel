@@ -89,8 +89,8 @@ func TestThrowDefinitionRequiresDaemonAndCentralOptions(t *testing.T) {
 	if !definition.RequiresDaemon {
 		t.Fatal("throw should require a daemon")
 	}
-	if len(definition.Positionals) != 0 {
-		t.Fatalf("positionals = %#v, want none", definition.Positionals)
+	if got, want := definition.Positionals, []Positional{{Name: "file", Help: "Configured chain YAML file", Required: false}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("positionals = %#v, want %#v", got, want)
 	}
 	for _, name := range []string{"workspace", "chain", "target", "now", "json", "no-color", "verbose", "debug"} {
 		if !hasOption(definition, name) {
@@ -480,6 +480,139 @@ func TestThrowUsesExistingConfirmationWithoutRecordingTypedYes(t *testing.T) {
 	}
 	if len(recorder.requests) != 1 {
 		t.Fatalf("run requests = %#v, want one", recorder.requests)
+	}
+}
+
+func TestThrowChainFileUsesFileConfigWithoutSessionMutation(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := operatorsession.New()
+	if err := session.UseChain("interactive"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-survey@v0.0.0-example"); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &fakeRunRecorder{}
+	store := &fakeChainFileStore{reads: map[string]ChainFile{
+		"alpha.chain.yaml": configuredChainFileFixture("alpha", "mock://target"),
+	}}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+		Session:       session,
+		ChainFiles:    store,
+	})
+	definition, _ := registry.Find("throw")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"file": "alpha.chain.yaml"},
+		Options:     map[string]string{"workspace": ".hovel"},
+		Flags:       map[string]bool{"now": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "Throw completed chain alpha") {
+		t.Fatalf("human result = %q", result.Human)
+	}
+	if len(recorder.requests) != 1 {
+		t.Fatalf("run requests = %#v, want one", recorder.requests)
+	}
+	wantRequest := RunMockExploitRequest{
+		ModuleID:     "mock-exploit@v0.0.0-example",
+		Target:       "mock://target",
+		ChainConfig:  map[string]string{"operator.confirmed_lab": "true"},
+		TargetConfig: map[string]string{"target.host": "router-01", "target.port": "22"},
+	}
+	recorder.requests[0].ThrowStarted = ""
+	if !reflect.DeepEqual(recorder.requests[0], wantRequest) {
+		t.Fatalf("run request = %#v, want %#v", recorder.requests[0], wantRequest)
+	}
+	state := session.Snapshot()
+	if state.ActiveChain != "interactive" || len(state.Targets) != 0 || state.Steps[0].ModuleID != "mock-survey@v0.0.0-example" {
+		t.Fatalf("session mutated by file throw: %#v", state)
+	}
+}
+
+func TestThrowChainFileNonInteractiveRequiresNowOrPreconfirmation(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeChainFileStore{reads: map[string]ChainFile{
+		"alpha.chain.yaml": configuredChainFileFixture("alpha", "mock://target"),
+	}}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		Runs:          fakeRunClientFactory{recorder: &fakeRunRecorder{}},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+		ChainFiles:    store,
+	})
+	definition, _ := registry.Find("throw")
+
+	_, err = definition.Execute(context.Background(), Invocation{
+		Positionals:    map[string]string{"file": "alpha.chain.yaml"},
+		Options:        map[string]string{"workspace": ".hovel"},
+		NonInteractive: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires --now") {
+		t.Fatalf("error = %v, want --now guidance", err)
+	}
+}
+
+func TestConfirmChainFileRecordsSamePlanAsThrowChainFile(t *testing.T) {
+	plans := &fakePlanRecorder{}
+	confirmations := &fakeConfirmationStore{}
+	store := &fakeChainFileStore{reads: map[string]ChainFile{
+		"alpha.chain.yaml": configuredChainFileFixture("alpha", "mock://target"),
+	}}
+	registry := HovelRegistry(Runtime{
+		Workspaces:         fakeWorkspaceService{},
+		Daemons:            fakeDaemonService{},
+		Runs:               fakeRunClientFactory{},
+		Modules:            exampleCatalog(),
+		Plans:              plans,
+		Confirmations:      confirmations,
+		ThrowConfirmations: confirmations,
+		ChainFiles:         store,
+	})
+	confirmDefinition, _ := registry.Find("confirm")
+
+	_, err := confirmDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"file": "alpha.chain.yaml"},
+		Options:     map[string]string{"workspace": ".hovel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPlan := newThrowPlan(".hovel", "alpha", []string{"mock://target"})
+	if !reflect.DeepEqual(plans.records, []ThrowPlanRecord{wantPlan}) {
+		t.Fatalf("plans = %#v, want %#v", plans.records, []ThrowPlanRecord{wantPlan})
+	}
+	if len(confirmations.records) != 1 || confirmations.records[0].PlanHash != wantPlan.PlanHash {
+		t.Fatalf("confirmations = %#v, want plan hash %s", confirmations.records, wantPlan.PlanHash)
 	}
 }
 
@@ -1258,6 +1391,24 @@ func (s *fakeChainFileStore) ReadChainFile(_ context.Context, path string) (Chai
 		return ChainFile{}, nil
 	}
 	return file, nil
+}
+
+func configuredChainFileFixture(name, target string) ChainFile {
+	return ChainFile{
+		APIVersion: "hovel.dev/v1alpha1",
+		Kind:       "Chain",
+		Metadata:   ChainFileMetadata{Name: name},
+		Spec: ChainFileSpec{
+			Mode: "configured",
+			Steps: []ChainFileStep{
+				{ID: "step-1", Uses: "module:mock-exploit@v0.0.0-example"},
+			},
+			Config: map[string]string{"operator.confirmed_lab": "true"},
+			Targets: []ChainFileTarget{
+				{ID: target, Config: map[string]string{"target.host": "router-01", "target.port": "22"}},
+			},
+		},
+	}
 }
 
 type fakeThrowConfirmer struct {

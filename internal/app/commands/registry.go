@@ -57,11 +57,12 @@ func (d Definition) PathString() string {
 }
 
 type Invocation struct {
-	Definition  Definition
-	Positionals map[string]string
-	Options     map[string]string
-	Flags       map[string]bool
-	Confirmer   ThrowConfirmer
+	Definition     Definition
+	Positionals    map[string]string
+	Options        map[string]string
+	Flags          map[string]bool
+	Confirmer      ThrowConfirmer
+	NonInteractive bool
 }
 
 func (i Invocation) Positional(name string) string {

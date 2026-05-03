@@ -126,6 +126,7 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		return code
 	}
 	parsed.Confirmer = terminalThrowConfirmer{in: os.Stdin, out: stdout}
+	parsed.NonInteractive = stdinNonInteractive()
 	result, err := definition.Execute(ctx, parsed)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -150,6 +151,14 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		fmt.Fprintln(stdout, result.Human)
 	}
 	return 0
+}
+
+func stdinNonInteractive() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return true
+	}
+	return info.Mode()&os.ModeCharDevice == 0
 }
 
 type terminalThrowConfirmer struct {

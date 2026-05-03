@@ -531,8 +531,11 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:           []string{"throw"},
-			Summary:        "Throw the selected chain at configured targets.",
+			Summary:        "Throw the selected chain or a configured chain file.",
 			RequiresDaemon: true,
+			Positionals: []Positional{
+				{Name: "file", Help: "Configured chain YAML file", Required: false},
+			},
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
 				stringOption("chain", "c", "Chain name or module reference"),
@@ -544,7 +547,10 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"confirm"},
-			Summary: "Pre-confirm the selected throw plan without executing it.",
+			Summary: "Pre-confirm the selected throw plan or chain file without executing it.",
+			Positionals: []Positional{
+				{Name: "file", Help: "Configured chain YAML file", Required: false},
+			},
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
 				stringOption("chain", "c", "Chain name or module reference"),
@@ -1264,7 +1270,7 @@ func throwHandler(runtime Runtime) Handler {
 		if runtime.Runs == nil {
 			return Result{}, fmt.Errorf("run client factory is not configured")
 		}
-		throw, err := throwInputs(runtime, invocation)
+		throw, err := throwInputs(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -1299,6 +1305,9 @@ func throwHandler(runtime Runtime) Handler {
 			}
 			if !confirmed {
 				if method != "now_bypass" {
+					if invocation.NonInteractive {
+						return Result{}, fmt.Errorf("throw requires --now or a matching preconfirmation in non-interactive mode")
+					}
 					if invocation.Confirmer == nil {
 						return Result{}, fmt.Errorf("throw requires confirmation; run confirm first, type yes at the prompt, or pass --now")
 					}
@@ -1380,7 +1389,7 @@ func confirmHandler(runtime Runtime) Handler {
 		if runtime.Confirmations == nil {
 			return Result{}, fmt.Errorf("throw confirmation recorder is not configured")
 		}
-		throw, err := throwInputs(runtime, invocation)
+		throw, err := throwInputs(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -1602,7 +1611,10 @@ type throwExecution struct {
 	TargetConfigs map[string]map[string]string
 }
 
-func throwInputs(runtime Runtime, invocation Invocation) (throwExecution, error) {
+func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (throwExecution, error) {
+	if file := invocation.Positional("file"); strings.TrimSpace(file) != "" {
+		return throwInputsFromChainFile(ctx, runtime, invocation, file)
+	}
 	chain := invocation.Option("chain")
 	var targets []string
 	if target := invocation.Option("target"); target != "" {
@@ -1652,6 +1664,67 @@ func throwInputs(runtime Runtime, invocation Invocation) (throwExecution, error)
 		ChainConfig:   chainConfig,
 		TargetConfigs: targetConfigs,
 	}, nil
+}
+
+func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation Invocation, path string) (throwExecution, error) {
+	if runtime.ChainFiles == nil {
+		return throwExecution{}, fmt.Errorf("chain file store is not configured")
+	}
+	file, err := runtime.ChainFiles.ReadChainFile(ctx, path)
+	if err != nil {
+		return throwExecution{}, err
+	}
+	if err := validateChainFileForThrow(file); err != nil {
+		return throwExecution{}, err
+	}
+	targets := make([]string, 0, len(file.Spec.Targets))
+	targetConfigs := cloneTargetConfigs(file.Spec.TargetConfigs)
+	for _, target := range file.Spec.Targets {
+		targets = append(targets, target.ID)
+		if len(target.Config) != 0 {
+			if targetConfigs == nil {
+				targetConfigs = map[string]map[string]string{}
+			}
+			targetConfigs[target.ID] = cloneStringMap(target.Config)
+		}
+	}
+	if target := invocation.Option("target"); target != "" {
+		targets = []string{target}
+	}
+	modules := make([]string, 0, len(file.Spec.Steps))
+	for _, step := range file.Spec.Steps {
+		moduleID := strings.TrimPrefix(strings.TrimSpace(step.Uses), "module:")
+		if moduleID == "" {
+			return throwExecution{}, fmt.Errorf("chain file step %s module reference is required", step.ID)
+		}
+		modules = append(modules, moduleID)
+	}
+	if len(targets) == 0 {
+		return throwExecution{}, fmt.Errorf("target is required; configured chain files must include targets or pass --target")
+	}
+	return throwExecution{
+		Chain:         file.Metadata.Name,
+		Targets:       targets,
+		Modules:       modules,
+		ChainConfig:   cloneStringMap(file.Spec.Config),
+		TargetConfigs: targetConfigs,
+	}, nil
+}
+
+func validateChainFileForThrow(file ChainFile) error {
+	if strings.TrimSpace(file.APIVersion) == "" {
+		return fmt.Errorf("chain file apiVersion is required")
+	}
+	if file.Kind != "Chain" {
+		return fmt.Errorf("chain file kind must be Chain")
+	}
+	if strings.TrimSpace(file.Metadata.Name) == "" {
+		return fmt.Errorf("chain file metadata.name is required")
+	}
+	if len(file.Spec.Steps) == 0 {
+		return fmt.Errorf("chain file must include at least one step")
+	}
+	return nil
 }
 
 func selectedChainState(state operatorsession.State, chain string) (operatorsession.Chain, bool) {
