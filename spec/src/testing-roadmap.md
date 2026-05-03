@@ -59,7 +59,7 @@ Follow-on integration tests:
 5. Service provides payload or listener resource.
 6. MCP can inspect and plan the same throw as one-shot execution and `cli` through shared guardrails.
 7. MCP can execute only through the shared confirmation path.
-8. TUI consumes event stream.
+8. TUI consumes the structured logging rail.
 
 ## Coverage Targets
 
@@ -134,7 +134,7 @@ Strict branch coverage gates for core packages.
 2. Add phases and steps.
 3. Add chain template and configured chain save/load.
 4. Add service start/stop steps.
-5. Add event stream.
+5. Add structured logging rail.
 6. Add per-target throw state.
 7. Add cancellation hooks.
 8. Support only simple input and step-output references at first.
@@ -164,7 +164,7 @@ Strict branch coverage gates for core packages.
 ## Hard Rules
 
 1. `cli` and one-shot chain-file execution first, TUI second.
-2. `hoveld` is mandatory and owns operations, chains, throws, services, modules, events, providers, artifacts, evidence, and sessions.
+2. `hoveld` is mandatory and owns operations, chains, throws, services, modules, structured events, providers, artifacts, and sessions.
 3. TUI calls application services only.
 4. MCP calls application services only.
 5. REST calls application services only.

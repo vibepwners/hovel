@@ -19,7 +19,6 @@ Throw
 Run
 Job
 Event
-Evidence
 Finding
 Transport
 Session
@@ -29,7 +28,7 @@ Credential
 
 ## Workspace
 
-A workspace is the local project/database context for operations, targets, throws, modules, services, artifacts, evidence, and provider state.
+A workspace is the local project/database context for operations, targets, throws, modules, services, structured events, artifacts, and provider state.
 
 MVP storage may be SQLite.
 
@@ -41,14 +40,14 @@ Workspace data:
 4. Target inventory.
 5. Facts.
 6. Artifacts.
-7. Evidence.
+7. Structured events.
 8. Provider cache.
-9. Logs.
+9. Logs rendered from structured events.
 10. Listener and session state.
 
 ## Operation
 
-An operation is the top-level operator context. It is the thing a red teamer picks up, puts down, and comes back to later. Operations own chains, chain logs, target assignments, throws, evidence, and the operator-facing transcript for the work.
+An operation is the top-level operator context. It is the thing a red teamer picks up, puts down, and comes back to later. Operations own chains, chain log topics, target assignments, throws, artifacts, and the operator-facing transcript rendered from structured events.
 
 `op` is the primary command spelling. `operation` may remain as a readable alias, but product copy and examples should prefer `op`.
 
@@ -58,7 +57,7 @@ Operation responsibilities:
 2. Own one or more chains.
 3. Keep each client attachment's active chain separate from the shared chain state.
 4. Preserve chain logs and throw records by operation.
-5. Keep evidence and findings tied to the operation that produced them.
+5. Keep findings, artifacts, and structured events tied to the operation that produced them.
 
 An attached client can work inside one operation at a time. The operation state is daemon-owned shared state; the active chain selected by a CLI, TUI, REST, or MCP client is client-local attachment state.
 
@@ -212,7 +211,7 @@ Chain definitions should be modular and loadable. They are collections of module
 
 Chains own targets for the current workflow. Adding or clearing targets through an operator front end mutates that client's active chain inside the active operation, not a global target scratchpad.
 
-Chains also own their logging topic. The canonical topic shape is `operation/<operation>/chain/<chain>/logs`. A front end only renders logs for the chain selected by its attachment, while daemon-side storage and event streams keep those logs available for other clients attached to the same operation and chain.
+Chains also own their logging topic. The canonical topic shape is `operation/<operation>/chain/<chain>/logs`. A front end only renders logs for the chain selected by its attachment, while daemon-side storage and the structured logging rail keep those logs available for other clients attached to the same operation and chain.
 
 Typical phases:
 
@@ -248,10 +247,10 @@ partial
 cleaning_up
 ```
 
-Throws must keep the reviewed intent, inputs, targets, chain version, module versions, artifacts, evidence, transcript, errors, and final result.
+Throws must keep the reviewed intent, inputs, targets, chain version, module versions, artifacts, structured event records, transcript rendering inputs, errors, and final result.
 
 ## Run
 
 A run is an internal runtime execution detail. Operator-facing commands, transcripts, records, and docs should say throw unless the code is describing a low-level module runtime API.
 
-Runtime internals may reuse the throw state machine, but the durable product language remains operation, chain, step, throw, and evidence.
+Runtime internals may reuse the throw state machine, but the durable product language remains operation, chain, step, throw, structured event, artifact, and finding.

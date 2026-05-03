@@ -12,7 +12,7 @@ The main product goal is straightforward:
 
 > Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every throw.
 
-The central runtime is a local engine, `hoveld`, which owns operations, chains, throws, module processes, managed services, provider state, events, artifacts, evidence, and workspace storage. Interactive `cli` mode, one-shot chain-file execution, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.
+The central runtime is a local engine, `hoveld`, which owns operations, chains, throws, module processes, managed services, provider state, structured events, artifacts, and workspace storage. Interactive `cli` mode, one-shot chain-file execution, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.
 
 ## Core Decisions
 
@@ -23,7 +23,7 @@ The central runtime is a local engine, `hoveld`, which owns operations, chains, 
 5. Long-lived capabilities are managed as services.
 6. Providers expose typed resources such as payloads, artifacts, facts, credentials, listeners, and sessions.
 7. Payload providers return tagged bytes with minimal framework validation.
-8. Throws emit structured events consumed by every front end.
+8. Throws emit structured events onto a shared logging rail consumed by every front end and persistence sink.
 9. The first implementation is local-first and alpha-friendly.
 
 ## Product Shape
@@ -79,8 +79,8 @@ The first MVP slice should prove the narrowest useful loop:
 3. Load and validate one module descriptor.
 4. Launch one Python module through the SDK path.
 5. Complete handshake, execution, logging, and shutdown.
-6. Emit structured events through the shared event stream.
-7. Persist the throw plan, confirmation record, artifacts, evidence, and replayable throw record.
+6. Emit structured events through the shared logging rail.
+7. Persist the throw plan, confirmation record, event records, artifacts, and replayable throw record.
 8. Inspect the throw from the CLI.
 9. Save and load targetless chain templates and configured chain YAML files for reuse and one-shot execution.
 

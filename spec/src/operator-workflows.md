@@ -26,7 +26,7 @@ Daemon-owned shared state:
 1. Operation records.
 2. Chain records, steps, targets, and config.
 3. Throw records.
-4. Logs, evidence, artifacts, and findings.
+4. Structured events, rendered logs, artifacts, and findings.
 
 Required chain log events:
 
@@ -40,7 +40,7 @@ Required chain log events:
 8. Survey facts discovered.
 9. Payload provider output selected.
 10. Exploit step started, completed, or failed.
-11. Finding, artifact, evidence, or throw result emitted.
+11. Finding, artifact, structured event, or throw result emitted.
 
 The CLI should render this as a live transcript. The TUI should render the same topic in a log panel. MCP should expose the same stream through a tool or resource optimized for agents.
 
@@ -92,7 +92,7 @@ The eventual TUI live throw view should split the same state into:
 4. Target matrix.
 5. Configuration validation panel.
 6. Chain log stream.
-7. Findings, artifacts, and evidence panel.
+7. Findings and artifacts panel.
 
 ## Module Database
 

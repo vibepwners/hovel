@@ -20,7 +20,7 @@ Third-party modules and services are explicitly supported. Hovel cannot prove ar
 
 1. Every throw must start from a persisted throw plan.
 2. Starting a throw must require an explicit recorded confirmation that the plan was reviewed. In interactive flows this means the operator saw the final configuration and typed `yes`, or deliberately used `throw --now`.
-3. Throws must record operator intent, inputs, target IDs, timestamps, module versions, service versions, payload hashes, artifacts, evidence, and errors.
+3. Throws must record operator intent, inputs, target IDs, timestamps, module versions, service versions, payload hashes, artifacts, structured events, and errors.
 4. Public modules should avoid destructive behavior by default.
 5. Workspace config should support an explicit `allowDangerousModules` gate.
 6. Listeners binding beyond localhost should require explicit configuration.

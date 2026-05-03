@@ -1,6 +1,6 @@
 # Front Ends
 
-Front ends are adapters over application services. They must share validation, planning, execution, event streaming, scope guardrails, and audit behavior.
+Front ends are adapters over application services. They must share validation, planning, execution, structured logging rail subscriptions, scope guardrails, and audit behavior.
 
 Hovel should have multiple first-class operator front ends: `cli` mode for an interactive prompt shell, one-shot chain-file execution for shell workflows, MCP for agentic and tooling workflows, and `tui` mode for a full-screen terminal interface. These surfaces may feel different, but they must attach to the same daemon and use the same application services.
 
@@ -56,7 +56,7 @@ hovel
 
 `cli` mode is the first rich operator interface and should exist before the full TUI becomes complex. It starts an interactive prompt shell with command history, completions, contextual help, and styled output. It should use `go-prompt` for the prompt and completion loop and Lip Gloss for prompt, table, panel, status, and result styling.
 
-CLI mode should be inspired by what operators like about Metasploit: fast discovery, a stable prompt, contextual commands, readable module options, jobs, sessions, and a workflow that lets an operator stay inside the tool while moving from discovery to planning to execution. It should not clone Metasploit command names or behavior wholesale; Hovel should have its own vocabulary around operations, chains, targets, providers, payloads, listeners, sessions, throws, events, artifacts, and evidence.
+CLI mode should be inspired by what operators like about Metasploit: fast discovery, a stable prompt, contextual commands, readable module options, jobs, sessions, and a workflow that lets an operator stay inside the tool while moving from discovery to planning to execution. It should not clone Metasploit command names or behavior wholesale; Hovel should have its own vocabulary around operations, chains, targets, providers, payloads, listeners, sessions, throws, structured events, and artifacts.
 
 Requirements:
 
@@ -178,13 +178,13 @@ The TUI is the visual identity of the project, but it should remain a client ove
 Requirements:
 
 1. Attaches to `hoveld`.
-2. Consumes the same event stream as one-shot execution, `cli`, API, and MCP.
+2. Consumes the same structured logging rail as one-shot execution, `cli`, API, and MCP.
 3. Works over SSH.
 4. Degrades gracefully on limited terminals.
 5. Supports multiple clients attached to the same engine.
 6. Uses Bubble Tea, Bubbles, and Lip Gloss.
 7. Shares theme tokens with `cli` mode.
-8. Presents the same plans, confirmations, throws, sessions, listeners, artifacts, evidence, and events as `cli`, one-shot execution, and MCP.
+8. Presents the same plans, confirmations, throws, sessions, listeners, artifacts, and structured events as `cli`, one-shot execution, and MCP.
 9. Managed daemon lifecycle: attach to an existing daemon if one is running; otherwise start a background daemon owned by the `tui` session and shut it down on exit.
 
 Initial screens:
@@ -200,7 +200,6 @@ Provider Browser
 Payload Browser
 Listener Panel
 Session Panel
-Evidence Viewer
 Artifact Viewer
 Log Stream
 Settings / Theme Selector
@@ -295,7 +294,7 @@ MCP is another front end over the same application services.
 
 MCP has eventual operator parity: anything a human can do through `cli`, one-shot execution, TUI, or API should be representable through MCP, subject to the same guardrail checks, confirmations, planning output, and audit trail. The implementation should ship inspection and planning tools before execution tools unless the shared confirmation and audit path is already complete.
 
-MCP should be treated as a peer front end, not as a privileged back door. It may expose workflows optimized for agents, but those workflows must produce the same plans, guardrail results, confirmations, events, artifacts, and evidence that a CLI or TUI operator would see.
+MCP should be treated as a peer front end, not as a privileged back door. It may expose workflows optimized for agents, but those workflows must produce the same plans, guardrail results, confirmations, structured events, artifacts, and throw records that a CLI or TUI operator would see.
 
 Initial inspection and planning tools:
 

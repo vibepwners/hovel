@@ -82,8 +82,8 @@ spec:
             delivered: ${steps.ssh-deliver.output}
     - name: collect
       steps:
-        - id: collect-evidence
-          uses: module:evidence-collect
+        - id: collect-artifacts
+          uses: module:artifact-collect
     - name: service_cleanup
       steps:
         - id: stop-lp
@@ -154,7 +154,7 @@ Hovel exists because productizing proofs of concept is hard. A chain should abso
 5. Listener startup.
 6. Transport selection.
 7. Error handling.
-8. Evidence capture.
+8. Artifact and transcript capture.
 9. Cleanup.
 10. Logging.
 11. Multi-target execution.
