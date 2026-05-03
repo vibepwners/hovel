@@ -2,7 +2,14 @@
 
 Descriptors are the stable boundary between authored content and the Hovel engine. They should be schema-validated and versioned from the beginning.
 
-MVP descriptors should be YAML documents validated against generated JSON Schema. TOML support can be reconsidered after module, service, chain, event, provider, and run-plan schemas are stable.
+Product authoring uses readable YAML, especially for chain files operators will review and throw from the shell. JSON may exist as an internal canonical form for tests, generated artifacts, and tooling, but YAML is the documented human-authored format for the alpha.
+
+Validation has two layers:
+
+1. Parse YAML into canonical JSON-compatible structs and validate shape with JSON Schema.
+2. Run Go domain validation for semantic rules that JSON Schema cannot express cleanly.
+
+TOML is out of scope for the alpha and can be reconsidered after module, service, chain, event, provider, and run-plan schemas are stable.
 
 ## Module Descriptor
 
@@ -235,7 +242,7 @@ size: 1234
 sha256: abc123
 ```
 
-## Recommended Schema Files
+## Schema Files
 
 ```text
 schemas/
@@ -246,5 +253,9 @@ schemas/
   hovel.event.schema.json
   hovel.provider.schema.json
 ```
+
+Schemas should be hand-authored while the contracts are still moving. Generation from Go types can be reconsidered after the schema contracts stabilize.
+
+Module and service schemas are the first slice. Chain and throw-plan schemas are required before chain-file one-shot execution is product-supported. Event and provider schemas become required before external adapters or third-party providers depend on those contracts.
 
 Throw-plan schemas should cover planned steps, resolved descriptor versions, risk labels, required confirmations, requested targets, expected services, expected providers, and the confirmation record shape used by `StartThrow`.

@@ -19,7 +19,7 @@ Third-party modules and services are explicitly supported. Hovel cannot prove ar
 ## Safety Requirements
 
 1. Every throw must start from a persisted throw plan.
-2. Starting a throw must require an explicit recorded confirmation that the plan was reviewed.
+2. Starting a throw must require an explicit recorded confirmation that the plan was reviewed. In interactive flows this means the operator saw the final configuration and typed `yes`, or deliberately used `throw --now`.
 3. Throws must record operator intent, inputs, target IDs, timestamps, module versions, service versions, payload hashes, artifacts, evidence, and errors.
 4. Public modules should avoid destructive behavior by default.
 5. Workspace config should support an explicit `allowDangerousModules` gate.
@@ -29,6 +29,10 @@ Third-party modules and services are explicitly supported. Hovel cannot prove ar
 9. Chain cleanup steps should be visible and evented.
 10. Throw plans should surface risk labels, external binds, file writes, credential use, network reachability, and cleanup behavior before execution.
 11. Modules should have maximum practical optionality to perform validation, survey, compatibility checks, and target-specific safety checks before performing work.
+
+`throw --now` is an explicit bypass of the typed confirmation prompt, not a bypass of planning, persistence, guardrails, logging, artifact handling, or audit records. The confirmation record for a `--now` throw must preserve that the bypass flag was used.
+
+Hovel should not impose corporate secret-management behavior on chain configuration. Passwords, tokens, keys, and other sensitive values are ordinary operator-controlled configuration values. Operators are responsible for securing their machines, workspaces, and data sources. Hovel may support config value types and validation, but it must not silently redact, omit, or special-case saved configuration values in a way that degrades offensive workflow ergonomics.
 
 ## Code Trust Model
 

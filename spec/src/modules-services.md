@@ -10,7 +10,6 @@ Runtime types:
 
 ```text
 jsonrpc-stdio     MVP
-native-builtin    MVP
 process-rpc       later
 go-binary-rpc     later
 rust-binary-rpc   later
@@ -20,8 +19,12 @@ node-rpc          later
 MVP priority:
 
 1. Python-implemented modules using JSON-RPC over stdio.
-2. Native built-in Go modules.
+2. In-tree modules that are discoverable by default but still load through the same descriptor and runtime paths as ordinary modules.
 3. Generic process fallback only after the Python path is stable.
+
+The thrower must not have a private "native built-in" execution path for production modules. A module may live in the Hovel repository and feel built in to users because it is bundled or discoverable by default, but it should still use the same module catalog, descriptor, planning, validation, logging, event, artifact, and runtime contracts as third-party modules.
+
+Mock exploit modules are test fixtures. They should stay benign, avoid real network exploitation, and exercise orchestration contracts. They are not part of the final shipped product catalog unless deliberately promoted as lab-only examples.
 
 The host starts module processes, connects to them over a controlled channel, exchanges typed messages, receives structured logs, supervises lifecycle, and persists events.
 

@@ -106,7 +106,7 @@ payload_provider
 
 The type set must remain expandable after the first mocked UI stage.
 
-A module may be backed by a process, a built-in Go implementation, or a service call. A reusable composition of modules is a chain, not another module type.
+A module may live in-tree or out-of-tree, but production execution should still go through ordinary module descriptors, planning, validation, logging, event, artifact, and runtime contracts. A reusable composition of modules is a chain, not another module type.
 
 Every module may declare required and optional typed configuration keys. Configuration scopes are `chain` for global chain configuration and `target` for per-target configuration.
 

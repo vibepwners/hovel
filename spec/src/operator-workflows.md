@@ -168,7 +168,6 @@ Built-in value types:
 
 ```text
 string
-secret
 bool
 int
 float
@@ -192,8 +191,7 @@ Each key definition supports:
 5. Description.
 6. Allowed values for enums.
 7. Validation rule.
-8. Secret redaction.
-9. Scope: `chain` or `target`.
+8. Scope: `chain` or `target`.
 
 Initial commands:
 
@@ -207,8 +205,6 @@ target config set <target> <key> <value>
 target config unset <target> <key>
 target config list <target>
 ```
-
-The CLI and TUI must render secrets as present or missing without revealing their values.
 
 `config interactive` is a guided CLI workflow implemented inside the existing go-prompt loop and backed by the canonical `chain config interactive` command. It first renders the current chain and target configuration as a numbered menu, then changes the prompt into config-selection mode with completions for editable items, continue, and cancel. When the operator continues, Hovel changes the prompt into config-value mode, offers type-aware completions where possible, walks the remaining required chain and per-target keys, validates each typed value as it is entered, and repeats until all required configuration is set or an unfixable validation issue remains.
 
@@ -226,7 +222,7 @@ Validation must evaluate:
 6. Required target configuration keys are set for every target.
 7. Values parse into their declared types.
 8. Enum values are valid.
-9. Secrets are present but redacted.
+9. Sensitive operator-controlled values are validated like any other configured value.
 10. Payload provider requirements are satisfiable.
 11. Every chain step has a stable ID.
 
@@ -294,7 +290,7 @@ Design constraints:
 1. Binary-safe framing (not line-oriented only).
 2. Backpressure-aware buffers per attached entity.
 3. Replay cursor for reconnecting clients.
-4. Redaction hooks for secrets and operator-defined patterns.
+4. Operator-defined filtering hooks if users need local output suppression.
 
 ### Module Runtime Contract
 

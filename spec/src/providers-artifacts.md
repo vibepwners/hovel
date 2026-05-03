@@ -134,7 +134,7 @@ MVP provider data may live in SQLite and local files.
   throws/
 ```
 
-`workspace.db` is the canonical durable store for operation session state and throw plans. The `throws/` directory is reserved for future file-shaped throw artifacts, exports, or large records that should not live inline in SQLite.
+`workspace.db` is the canonical durable store for operation session state, throw plans, confirmation records, throw records, event indexes, and artifact metadata. Artifact bytes live in the workspace artifact store or in a configured workspace artifact path. Large artifacts must not be stored inline in SQLite.
 
 ## Artifact
 
@@ -165,6 +165,8 @@ path: .hovel/artifacts/ab/cd/hash
 sha256: abc123
 createdBy: module:ssh-memory
 ```
+
+Artifact bytes should be content-addressed or hash-tracked. Small inline artifacts returned by modules should be materialized into the artifact store and recorded with metadata. Large file artifacts should be saved directly into the workspace artifact store, or into a configured artifact path, with only metadata and hashes in SQLite.
 
 Resolved payload bytes should be persisted as artifacts or otherwise hash-tracked before module execution when practical. This makes throws replay-inspectable without requiring Hovel to understand the payload internals.
 
