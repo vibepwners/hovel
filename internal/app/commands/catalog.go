@@ -49,6 +49,10 @@ type ThrowConfirmationRepository interface {
 	GetThrowConfirmation(context.Context, string, string) (ThrowConfirmationRecord, bool, error)
 }
 
+type ThrowConfirmer interface {
+	ConfirmThrow(context.Context, ThrowPlanRecord) (bool, error)
+}
+
 type ThrowPlanRepository interface {
 	ListThrowPlans(context.Context, string) ([]ThrowPlanRecord, error)
 	GetThrowPlan(context.Context, string, string) (ThrowPlanRecord, error)
@@ -1177,6 +1181,18 @@ func throwHandler(runtime Runtime) Handler {
 				confirmed = ok
 			}
 			if !confirmed {
+				if method != "now_bypass" {
+					if invocation.Confirmer == nil {
+						return Result{}, fmt.Errorf("throw requires confirmation; run confirm first, type yes at the prompt, or pass --now")
+					}
+					ok, err := invocation.Confirmer.ConfirmThrow(ctx, plan)
+					if err != nil {
+						return Result{}, err
+					}
+					if !ok {
+						return Result{}, fmt.Errorf("throw cancelled")
+					}
+				}
 				confirmation := newThrowConfirmation(plan, confirmationClientID(runtime), method, time.Now().UTC())
 				if err := runtime.Confirmations.RecordThrowConfirmation(ctx, confirmation); err != nil {
 					return Result{}, err

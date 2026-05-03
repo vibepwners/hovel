@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -123,6 +124,7 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 	if !ok {
 		return code
 	}
+	parsed.Confirmer = terminalThrowConfirmer{in: os.Stdin, out: stdout}
 	result, err := definition.Execute(ctx, parsed)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -147,6 +149,35 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		fmt.Fprintln(stdout, result.Human)
 	}
 	return 0
+}
+
+type terminalThrowConfirmer struct {
+	in  io.Reader
+	out io.Writer
+}
+
+func (c terminalThrowConfirmer) ConfirmThrow(ctx context.Context, plan commands.ThrowPlanRecord) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if c.out != nil {
+		fmt.Fprintf(c.out, "%s\n", throwReviewText(plan))
+		fmt.Fprint(c.out, "Type yes to throw: ")
+	}
+	var answer string
+	if _, err := fmt.Fscan(c.in, &answer); err != nil {
+		return false, fmt.Errorf("read throw confirmation: %w", err)
+	}
+	return strings.TrimSpace(answer) == "yes", nil
+}
+
+func throwReviewText(plan commands.ThrowPlanRecord) string {
+	return strings.Join([]string{
+		fmt.Sprintf("Throw plan %s", plan.ID),
+		fmt.Sprintf("chain       %s", plan.Chain),
+		fmt.Sprintf("targets     %s", strings.Join(plan.Targets, ", ")),
+		fmt.Sprintf("plan hash   %s", plan.PlanHash),
+	}, "\n")
 }
 
 func (a App) matchDefinition(args []string) (commands.Definition, []string, bool) {

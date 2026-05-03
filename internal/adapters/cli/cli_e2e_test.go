@@ -37,7 +37,7 @@ func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -197,7 +197,7 @@ func TestE2EExampleSurveyAuthChainUsesPythonModules(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -235,7 +235,7 @@ func TestE2EExamplePayloadExploitChainUsesPythonModules(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -278,7 +278,7 @@ func TestE2ESessionConnectHandlesRawTerminalCarriageReturn(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -337,7 +337,7 @@ func TestE2EExampleFailingChainReportsFailedModule(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}

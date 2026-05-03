@@ -196,6 +196,7 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 			"chain":     "mock-exploit",
 			"target":    "mock://target",
 		},
+		Confirmer: fakeThrowConfirmer{confirmed: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -266,6 +267,81 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 		if !hasLogMessage(entries, want) {
 			t.Fatalf("log entries missing %q: %#v", want, entries)
 		}
+	}
+}
+
+func TestThrowRejectsUnconfirmedPlanWithoutPromptOrBypass(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &fakeRunRecorder{}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+	})
+	definition, _ := registry.Find("throw")
+
+	_, err = definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "mock://target",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires confirmation") {
+		t.Fatalf("error = %v, want confirmation required", err)
+	}
+	if len(recorder.requests) != 0 {
+		t.Fatalf("run requests = %#v, want none", recorder.requests)
+	}
+}
+
+func TestThrowCancelsWhenPromptDeclines(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &fakeRunRecorder{}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+	})
+	definition, _ := registry.Find("throw")
+
+	_, err = definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "mock://target",
+		},
+		Confirmer: fakeThrowConfirmer{confirmed: false},
+	})
+	if err == nil || !strings.Contains(err.Error(), "throw cancelled") {
+		t.Fatalf("error = %v, want throw cancelled", err)
+	}
+	if len(recorder.requests) != 0 {
+		t.Fatalf("run requests = %#v, want none", recorder.requests)
 	}
 }
 
@@ -1030,6 +1106,14 @@ func (s *fakeConfirmationStore) GetThrowConfirmation(_ context.Context, workspac
 		}
 	}
 	return ThrowConfirmationRecord{}, false, nil
+}
+
+type fakeThrowConfirmer struct {
+	confirmed bool
+}
+
+func (c fakeThrowConfirmer) ConfirmThrow(context.Context, ThrowPlanRecord) (bool, error) {
+	return c.confirmed, nil
 }
 
 type fakeRunClientFactory struct {

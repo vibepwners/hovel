@@ -61,6 +61,7 @@ type Invocation struct {
 	Positionals map[string]string
 	Options     map[string]string
 	Flags       map[string]bool
+	Confirmer   ThrowConfirmer
 }
 
 func (i Invocation) Positional(name string) string {

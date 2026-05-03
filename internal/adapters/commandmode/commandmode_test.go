@@ -237,3 +237,35 @@ func TestHumanOutputRendersOperatorLogWhenPresent(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalThrowConfirmerRequiresLiteralYes(t *testing.T) {
+	plan := commands.ThrowPlanRecord{
+		ID:       "plan-mock",
+		PlanHash: "hash-mock",
+		Chain:    "mock-exploit",
+		Targets:  []string{"mock://target"},
+	}
+	var stdout strings.Builder
+	confirmer := terminalThrowConfirmer{in: strings.NewReader("yes\n"), out: &stdout}
+
+	ok, err := confirmer.ConfirmThrow(context.Background(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("confirmation = false, want true")
+	}
+	for _, want := range []string{"Throw plan plan-mock", "mock-exploit", "hash-mock", "Type yes to throw:"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("prompt missing %q:\n%s", want, stdout.String())
+		}
+	}
+
+	ok, err = (terminalThrowConfirmer{in: strings.NewReader("y\n")}).ConfirmThrow(context.Background(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("confirmation = true, want false")
+	}
+}

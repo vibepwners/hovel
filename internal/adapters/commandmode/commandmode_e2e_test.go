@@ -42,7 +42,7 @@ func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
 		return err == nil && status.State == daemon.StateRunning
 	})
 
-	code := Run(context.Background(), []string{"throw", "--chain", "mock-exploit", "--target", "mock://target", "--workspace", workspacePath, "--json"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"throw", "--chain", "mock-exploit", "--target", "mock://target", "--workspace", workspacePath, "--now", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -108,7 +108,7 @@ func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
 	})
 	var stdout, stderr bytes.Buffer
 
-	code := Run(context.Background(), []string{"throw", "--chain", "broken", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--json"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"throw", "--chain", "broken", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--now", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -182,7 +182,7 @@ func TestThrowMissingModuleConfigReturnsCommandError(t *testing.T) {
 	})
 	var stdout, stderr bytes.Buffer
 
-	code := Run(context.Background(), []string{"throw", "--chain", "missing", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--json"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"throw", "--chain", "missing", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--now", "--json"}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stdout = %s stderr = %s", code, stdout.String(), stderr.String())
 	}
