@@ -2,6 +2,8 @@ package commands
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -39,6 +41,10 @@ type ThrowPlanRecorder interface {
 	RecordThrowPlan(context.Context, ThrowPlanRecord) error
 }
 
+type ThrowConfirmationRecorder interface {
+	RecordThrowConfirmation(context.Context, ThrowConfirmationRecord) error
+}
+
 type ThrowPlanRepository interface {
 	ListThrowPlans(context.Context, string) ([]ThrowPlanRecord, error)
 	GetThrowPlan(context.Context, string, string) (ThrowPlanRecord, error)
@@ -69,13 +75,14 @@ type publishedFeedbackSession interface {
 }
 
 type Runtime struct {
-	Workspaces WorkspaceInitializer
-	Daemons    DaemonStatusProvider
-	Runs       RunClientFactory
-	Plans      ThrowPlanRecorder
-	ThrowPlans ThrowPlanRepository
-	Session    OperatorSession
-	Modules    ModuleDatabase
+	Workspaces    WorkspaceInitializer
+	Daemons       DaemonStatusProvider
+	Runs          RunClientFactory
+	Plans         ThrowPlanRecorder
+	Confirmations ThrowConfirmationRecorder
+	ThrowPlans    ThrowPlanRepository
+	Session       OperatorSession
+	Modules       ModuleDatabase
 }
 
 type ModuleDatabase interface {
@@ -189,6 +196,7 @@ type ThrowPayload struct {
 type ThrowPlanPayload struct {
 	ID             string   `json:"id"`
 	ConfirmationID string   `json:"confirmationId"`
+	PlanHash       string   `json:"planHash"`
 	Chain          string   `json:"chain"`
 	Targets        []string `json:"targets"`
 	Review         string   `json:"review"`
@@ -197,6 +205,7 @@ type ThrowPlanPayload struct {
 type ThrowPlanRecord struct {
 	ID             string   `json:"id"`
 	ConfirmationID string   `json:"confirmationId"`
+	PlanHash       string   `json:"planHash"`
 	Workspace      string   `json:"workspace"`
 	Chain          string   `json:"chain"`
 	Targets        []string `json:"targets"`
@@ -204,10 +213,21 @@ type ThrowPlanRecord struct {
 	Intent         string   `json:"intent"`
 }
 
+type ThrowConfirmationRecord struct {
+	ID          string `json:"id"`
+	Workspace   string `json:"workspace"`
+	PlanID      string `json:"planId"`
+	PlanHash    string `json:"planHash"`
+	ClientID    string `json:"clientId"`
+	Method      string `json:"method"`
+	ConfirmedAt string `json:"confirmedAt"`
+}
+
 func (r ThrowPlanRecord) Payload() ThrowPlanPayload {
 	return ThrowPlanPayload{
 		ID:             r.ID,
 		ConfirmationID: r.ConfirmationID,
+		PlanHash:       r.PlanHash,
 		Chain:          r.Chain,
 		Targets:        append([]string(nil), r.Targets...),
 		Review:         r.Review,
@@ -448,9 +468,21 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("workspace", "w", "Workspace path"),
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
+				boolOption("now", "", "Bypass typed confirmation prompt"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: throwHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"confirm"},
+			Summary: "Pre-confirm the selected throw plan without executing it.",
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("chain", "c", "Chain name or module reference"),
+				stringOption("target", "t", "Target identifier"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: confirmHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"throw", "list"},
@@ -1126,6 +1158,16 @@ func throwHandler(runtime Runtime) Handler {
 				return Result{}, err
 			}
 		}
+		if runtime.Confirmations != nil {
+			method := "typed_yes"
+			if invocation.Flag("now") {
+				method = "now_bypass"
+			}
+			confirmation := newThrowConfirmation(plan, confirmationClientID(runtime), method, time.Now().UTC())
+			if err := runtime.Confirmations.RecordThrowConfirmation(ctx, confirmation); err != nil {
+				return Result{}, err
+			}
+		}
 
 		client, err := runtime.Runs.DialRunClient(status.Identity.SocketPath)
 		if err != nil {
@@ -1178,6 +1220,37 @@ func throwHandler(runtime Runtime) Handler {
 			Human: fmt.Sprintf("Throw completed chain %s against %d target(s)", payload.Chain, len(payload.Targets)),
 			JSON:  payload,
 			Log:   log,
+		}, nil
+	}
+}
+
+func confirmHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if runtime.Plans == nil {
+			return Result{}, fmt.Errorf("throw plan recorder is not configured")
+		}
+		if runtime.Confirmations == nil {
+			return Result{}, fmt.Errorf("throw confirmation recorder is not configured")
+		}
+		throw, err := throwInputs(runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		workspacePath := invocation.Option("workspace")
+		if workspacePath == "" {
+			workspacePath = ".hovel"
+		}
+		plan := newThrowPlan(workspacePath, throw.Chain, throw.Targets)
+		if err := runtime.Plans.RecordThrowPlan(ctx, plan); err != nil {
+			return Result{}, err
+		}
+		confirmation := newThrowConfirmation(plan, confirmationClientID(runtime), "preconfirmed", time.Now().UTC())
+		if err := runtime.Confirmations.RecordThrowConfirmation(ctx, confirmation); err != nil {
+			return Result{}, err
+		}
+		return Result{
+			Human: fmt.Sprintf("Confirmed throw plan %s for chain %s against %d target(s)", plan.ID, plan.Chain, len(plan.Targets)),
+			JSON:  confirmation,
 		}, nil
 	}
 }
@@ -1304,12 +1377,51 @@ func newThrowPlan(workspacePath, chain string, targets []string) ThrowPlanRecord
 	return ThrowPlanRecord{
 		ID:             id,
 		ConfirmationID: "confirmation-" + stablePlanComponent(chain, targets),
+		PlanHash:       planHash(chain, targets),
 		Workspace:      workspacePath,
 		Chain:          chain,
 		Targets:        append([]string(nil), targets...),
 		Review:         "operator-confirmed",
 		Intent:         fmt.Sprintf("throw chain %s against %d target(s)", chain, len(targets)),
 	}
+}
+
+func newThrowConfirmation(plan ThrowPlanRecord, clientID, method string, confirmedAt time.Time) ThrowConfirmationRecord {
+	if clientID == "" {
+		clientID = "command"
+	}
+	if method == "" {
+		method = "typed_yes"
+	}
+	return ThrowConfirmationRecord{
+		ID:          plan.ConfirmationID,
+		Workspace:   plan.Workspace,
+		PlanID:      plan.ID,
+		PlanHash:    plan.PlanHash,
+		ClientID:    clientID,
+		Method:      method,
+		ConfirmedAt: confirmedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func confirmationClientID(runtime Runtime) string {
+	if runtime.Session != nil && feedbackPublished(runtime.Session) {
+		return "cli"
+	}
+	return "command"
+}
+
+func planHash(chain string, targets []string) string {
+	var b strings.Builder
+	b.WriteString("chain:")
+	b.WriteString(chain)
+	b.WriteString("\ntargets:")
+	for _, target := range targets {
+		b.WriteString("\n")
+		b.WriteString(target)
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:])
 }
 
 func stablePlanComponent(chain string, targets []string) string {

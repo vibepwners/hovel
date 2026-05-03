@@ -70,6 +70,7 @@ func TestRecordThrowPlanPersistsAuditablePlan(t *testing.T) {
 	plan := commands.ThrowPlanRecord{
 		ID:             "plan-mock",
 		ConfirmationID: "confirmation-mock",
+		PlanHash:       "hash-mock",
 		Workspace:      workspacePath,
 		Chain:          "mock-exploit",
 		Targets:        []string{"mock://target"},
@@ -100,6 +101,29 @@ func TestRecordThrowPlanPersistsAuditablePlan(t *testing.T) {
 	}
 	if !reflect.DeepEqual(inspected, plan) {
 		t.Fatalf("inspected plan = %#v, want %#v", inspected, plan)
+	}
+
+	confirmation := commands.ThrowConfirmationRecord{
+		ID:          plan.ConfirmationID,
+		Workspace:   workspacePath,
+		PlanID:      plan.ID,
+		PlanHash:    plan.PlanHash,
+		ClientID:    "command",
+		Method:      "preconfirmed",
+		ConfirmedAt: "2026-05-03T12:00:00Z",
+	}
+	if err := store.RecordThrowConfirmation(context.Background(), confirmation); err != nil {
+		t.Fatal(err)
+	}
+	gotConfirmation, ok, err := store.GetThrowConfirmation(context.Background(), workspacePath, plan.PlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("confirmation not found")
+	}
+	if !reflect.DeepEqual(gotConfirmation, confirmation) {
+		t.Fatalf("confirmation = %#v, want %#v", gotConfirmation, confirmation)
 	}
 }
 

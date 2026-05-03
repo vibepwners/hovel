@@ -48,6 +48,25 @@ CREATE INDEX throw_plans_chain_idx ON throw_plans(chain);
 CREATE INDEX throw_plans_created_at_idx ON throw_plans(created_at);
 `,
 	},
+	{
+		Version: 2,
+		Name:    "throw_confirmations",
+		SQL: `
+CREATE TABLE throw_confirmations (
+	id TEXT PRIMARY KEY,
+	workspace TEXT NOT NULL,
+	plan_id TEXT NOT NULL,
+	plan_hash TEXT NOT NULL,
+	client_id TEXT NOT NULL,
+	method TEXT NOT NULL,
+	confirmed_at TEXT NOT NULL,
+	confirmation_json TEXT NOT NULL
+);
+
+CREATE INDEX throw_confirmations_plan_hash_idx ON throw_confirmations(plan_hash);
+CREATE INDEX throw_confirmations_confirmed_at_idx ON throw_confirmations(confirmed_at);
+`,
+	},
 }
 
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {

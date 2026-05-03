@@ -19,19 +19,38 @@ func TestApplyMigrationsCreatesSchemaAndRecordsChecksums(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, table := range []string{"schema_migrations", "operator_sessions", "throw_plans"} {
+	for _, table := range []string{"schema_migrations", "operator_sessions", "throw_plans", "throw_confirmations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("table %s was not created", table)
 		}
 	}
 
-	var version int
-	var name, checksum string
-	if err := db.QueryRow(`SELECT version, name, checksum FROM schema_migrations`).Scan(&version, &name, &checksum); err != nil {
+	rows, err := db.Query(`SELECT version, name, checksum FROM schema_migrations ORDER BY version`)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 || name != Migrations[0].Name || checksum != Migrations[0].Checksum() {
-		t.Fatalf("migration record = %d %q %q", version, name, checksum)
+	defer rows.Close()
+	var index int
+	for rows.Next() {
+		var version int
+		var name, checksum string
+		if err := rows.Scan(&version, &name, &checksum); err != nil {
+			t.Fatal(err)
+		}
+		if index >= len(Migrations) {
+			t.Fatalf("unexpected migration record = %d %q %q", version, name, checksum)
+		}
+		migration := Migrations[index]
+		if version != migration.Version || name != migration.Name || checksum != migration.Checksum() {
+			t.Fatalf("migration record = %d %q %q, want %d %q %q", version, name, checksum, migration.Version, migration.Name, migration.Checksum())
+		}
+		index++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if index != len(Migrations) {
+		t.Fatalf("migration records = %d, want %d", index, len(Migrations))
 	}
 }
 

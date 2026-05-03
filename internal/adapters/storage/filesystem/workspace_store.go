@@ -123,6 +123,17 @@ func (s WorkspaceStore) RecordThrowPlan(ctx context.Context, plan commands.Throw
 	return sqlitestore.NewStore(workspacePath).RecordThrowPlan(ctx, plan)
 }
 
+func (s WorkspaceStore) RecordThrowConfirmation(ctx context.Context, confirmation commands.ThrowConfirmationRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	workspacePath := workspace.ResolvePath(confirmation.Workspace)
+	if confirmation.ID == "" {
+		return errors.New("throw confirmation id is required")
+	}
+	return sqlitestore.NewStore(workspacePath).RecordThrowConfirmation(ctx, confirmation)
+}
+
 func (s WorkspaceStore) ListThrowPlans(ctx context.Context, workspacePath string) ([]commands.ThrowPlanRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -138,6 +149,16 @@ func (s WorkspaceStore) GetThrowPlan(ctx context.Context, workspacePath, id stri
 		return commands.ThrowPlanRecord{}, errors.New("throw id is required")
 	}
 	return sqlitestore.NewStore(workspacePath).GetThrowPlan(ctx, id)
+}
+
+func (s WorkspaceStore) GetThrowConfirmation(ctx context.Context, workspacePath, planHash string) (commands.ThrowConfirmationRecord, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return commands.ThrowConfirmationRecord{}, false, err
+	}
+	if planHash == "" {
+		return commands.ThrowConfirmationRecord{}, false, errors.New("throw confirmation plan hash is required")
+	}
+	return sqlitestore.NewStore(workspacePath).GetThrowConfirmation(ctx, planHash)
 }
 
 func (s WorkspaceStore) EnsureWorkspaceDatabase(ctx context.Context, workspacePath string) error {

@@ -60,6 +60,7 @@ func TestStorePersistsThrowPlans(t *testing.T) {
 	plan := commands.ThrowPlanRecord{
 		ID:             "plan-mock",
 		ConfirmationID: "confirmation-mock",
+		PlanHash:       "hash-mock",
 		Workspace:      ".hovel",
 		Chain:          "mock-exploit",
 		Targets:        []string{"mock://target"},
@@ -83,5 +84,39 @@ func TestStorePersistsThrowPlans(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, plan) {
 		t.Fatalf("plan = %#v, want %#v", got, plan)
+	}
+}
+
+func TestStorePersistsThrowConfirmations(t *testing.T) {
+	store := NewStore(t.TempDir())
+	confirmation := commands.ThrowConfirmationRecord{
+		ID:          "confirmation-mock",
+		Workspace:   ".hovel",
+		PlanID:      "plan-mock",
+		PlanHash:    "hash-mock",
+		ClientID:    "command",
+		Method:      "preconfirmed",
+		ConfirmedAt: "2026-05-03T12:00:00Z",
+	}
+
+	if err := store.RecordThrowConfirmation(context.Background(), confirmation); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := store.GetThrowConfirmation(context.Background(), confirmation.PlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("confirmation not found")
+	}
+	if !reflect.DeepEqual(got, confirmation) {
+		t.Fatalf("confirmation = %#v, want %#v", got, confirmation)
+	}
+	_, ok, err = store.GetThrowConfirmation(context.Background(), "other-hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("unexpected confirmation for other hash")
 	}
 }

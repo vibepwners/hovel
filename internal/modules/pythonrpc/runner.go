@@ -118,6 +118,13 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	entry, ok, err := r.moduleEntry(request.ModuleID)
+	if err != nil {
+		return run.Result{}, err
+	}
+	if ok {
+		request.ModuleID = entry.ID
+	}
 	process, err := r.start(context.Background(), request.ModuleID)
 	if err != nil {
 		return run.Result{}, err
@@ -132,11 +139,16 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 		return r.appendLog(context.Background(), request, log)
 	}
 
-	if _, err := process.client.call(ctx, "handshake", nil); err != nil {
+	info, err := process.client.call(ctx, "handshake", nil)
+	if err != nil {
 		return run.Result{}, moduleFailure("module failed during startup", "module handshake failed", err, process.stderr.String())
 	}
-	if _, err := process.client.call(ctx, "schema", nil); err != nil {
+	schema, err := process.client.call(ctx, "schema", nil)
+	if err != nil {
 		return run.Result{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderr.String())
+	}
+	if module, err := moduleFromRPC(request.ModuleID, info, schema); err == nil {
+		request.ModuleID = module.ID
 	}
 	executeResult, err := process.client.call(ctx, "execute", map[string]any{
 		"runId":        request.ID,
@@ -331,6 +343,9 @@ func resolveConfigPath(path string) (string, error) {
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
 	}
+	if candidate, ok := runfileManifestLookup(path); ok {
+		return candidate, nil
+	}
 	for _, root := range runfileRoots() {
 		candidate := filepath.Join(root, path)
 		if _, err := os.Stat(candidate); err == nil {
@@ -349,12 +364,30 @@ func runfileRoots() []string {
 			dir = filepath.Dir(dir)
 		}
 	}
+	if exe, err := os.Executable(); err == nil {
+		runfiles := exe + ".runfiles"
+		roots = append(roots,
+			runfiles,
+			filepath.Join(runfiles, "hovel"),
+			filepath.Join(runfiles, "_main"),
+		)
+	}
 	if runfiles := os.Getenv("RUNFILES_DIR"); runfiles != "" {
 		roots = append(roots,
 			runfiles,
 			filepath.Join(runfiles, "hovel"),
 			filepath.Join(runfiles, "_main"),
 		)
+	}
+	if testSrcDir := os.Getenv("TEST_SRCDIR"); testSrcDir != "" {
+		roots = append(roots,
+			testSrcDir,
+			filepath.Join(testSrcDir, "hovel"),
+			filepath.Join(testSrcDir, "_main"),
+		)
+		if workspace := os.Getenv("TEST_WORKSPACE"); workspace != "" {
+			roots = append(roots, filepath.Join(testSrcDir, workspace))
+		}
 	}
 	return roots
 }
@@ -372,7 +405,15 @@ func sdkRootCandidates() []string {
 		addClimbs(cwd)
 	}
 	if exe, err := os.Executable(); err == nil {
-		addClimbs(filepath.Dir(exe))
+		exeDir := filepath.Dir(exe)
+		addClimbs(exeDir)
+		runfiles := exe + ".runfiles"
+		candidates = append(candidates,
+			filepath.Join(runfiles, "hovel", "sdk", "python"),
+			filepath.Join(runfiles, "_main", "sdk", "python"),
+			filepath.Join(runfiles, "sdk", "python"),
+			filepath.Join(exeDir, "sdk", "python"),
+		)
 	}
 	if runfiles := os.Getenv("RUNFILES_DIR"); runfiles != "" {
 		candidates = append(candidates,
@@ -381,7 +422,56 @@ func sdkRootCandidates() []string {
 			filepath.Join(runfiles, "sdk", "python"),
 		)
 	}
+	if testSrcDir := os.Getenv("TEST_SRCDIR"); testSrcDir != "" {
+		candidates = append(candidates,
+			filepath.Join(testSrcDir, "hovel", "sdk", "python"),
+			filepath.Join(testSrcDir, "_main", "sdk", "python"),
+			filepath.Join(testSrcDir, "sdk", "python"),
+		)
+		if workspace := os.Getenv("TEST_WORKSPACE"); workspace != "" {
+			candidates = append(candidates, filepath.Join(testSrcDir, workspace, "sdk", "python"))
+		}
+	}
+	if sdkInit, ok := runfileManifestLookup("sdk/python/hovel_sdk/__init__.py"); ok {
+		candidates = append(candidates, filepath.Dir(filepath.Dir(sdkInit)))
+	}
 	return candidates
+}
+
+func runfileManifestLookup(path string) (string, bool) {
+	manifest := os.Getenv("RUNFILES_MANIFEST_FILE")
+	if manifest == "" {
+		return "", false
+	}
+	file, err := os.Open(manifest)
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+	keys := []string{
+		filepath.ToSlash(path),
+		filepath.ToSlash(filepath.Join("_main", path)),
+		filepath.ToSlash(filepath.Join("hovel", path)),
+	}
+	if workspace := os.Getenv("TEST_WORKSPACE"); workspace != "" {
+		keys = append(keys, filepath.ToSlash(filepath.Join(workspace, path)))
+	}
+	wanted := map[string]struct{}{}
+	for _, key := range keys {
+		wanted[key] = struct{}{}
+	}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		key, value, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		if _, ok := wanted[key]; ok {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 func hasPythonSDK(path string) bool {

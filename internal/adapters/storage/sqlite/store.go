@@ -64,6 +64,15 @@ func (s Store) RecordThrowPlan(ctx context.Context, plan commands.ThrowPlanRecor
 	return RecordThrowPlan(ctx, db, plan)
 }
 
+func (s Store) RecordThrowConfirmation(ctx context.Context, confirmation commands.ThrowConfirmationRecord) error {
+	db, err := s.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return RecordThrowConfirmation(ctx, db, confirmation)
+}
+
 func (s Store) ListThrowPlans(ctx context.Context) ([]commands.ThrowPlanRecord, error) {
 	db, err := s.open(ctx)
 	if err != nil {
@@ -80,6 +89,15 @@ func (s Store) GetThrowPlan(ctx context.Context, id string) (commands.ThrowPlanR
 	}
 	defer db.Close()
 	return GetThrowPlan(ctx, db, id)
+}
+
+func (s Store) GetThrowConfirmation(ctx context.Context, planHash string) (commands.ThrowConfirmationRecord, bool, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return commands.ThrowConfirmationRecord{}, false, err
+	}
+	defer db.Close()
+	return GetThrowConfirmation(ctx, db, planHash)
 }
 
 func (s Store) open(ctx context.Context) (*sql.DB, error) {
@@ -191,6 +209,54 @@ ON CONFLICT(id) DO UPDATE SET
 	return err
 }
 
+func RecordThrowConfirmation(ctx context.Context, db *sql.DB, confirmation commands.ThrowConfirmationRecord) error {
+	if confirmation.ID == "" {
+		return errors.New("throw confirmation id is required")
+	}
+	if confirmation.PlanHash == "" {
+		return errors.New("throw confirmation plan hash is required")
+	}
+	if confirmation.ClientID == "" {
+		return errors.New("throw confirmation client id is required")
+	}
+	if confirmation.ConfirmedAt == "" {
+		return errors.New("throw confirmation timestamp is required")
+	}
+	confirmationJSON, err := json.Marshal(confirmation)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `
+INSERT INTO throw_confirmations(
+	id,
+	workspace,
+	plan_id,
+	plan_hash,
+	client_id,
+	method,
+	confirmed_at,
+	confirmation_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+	workspace = excluded.workspace,
+	plan_id = excluded.plan_id,
+	plan_hash = excluded.plan_hash,
+	client_id = excluded.client_id,
+	method = excluded.method,
+	confirmed_at = excluded.confirmed_at,
+	confirmation_json = excluded.confirmation_json`,
+		confirmation.ID,
+		confirmation.Workspace,
+		confirmation.PlanID,
+		confirmation.PlanHash,
+		confirmation.ClientID,
+		confirmation.Method,
+		confirmation.ConfirmedAt,
+		string(confirmationJSON),
+	)
+	return err
+}
+
 func ListThrowPlans(ctx context.Context, db *sql.DB) ([]commands.ThrowPlanRecord, error) {
 	rows, err := db.QueryContext(ctx, `SELECT plan_json FROM throw_plans ORDER BY id`)
 	if err != nil {
@@ -232,4 +298,28 @@ func GetThrowPlan(ctx context.Context, db *sql.DB, id string) (commands.ThrowPla
 		return commands.ThrowPlanRecord{}, err
 	}
 	return plan, nil
+}
+
+func GetThrowConfirmation(ctx context.Context, db *sql.DB, planHash string) (commands.ThrowConfirmationRecord, bool, error) {
+	if planHash == "" {
+		return commands.ThrowConfirmationRecord{}, false, errors.New("throw confirmation plan hash is required")
+	}
+	var data string
+	err := db.QueryRowContext(ctx, `
+SELECT confirmation_json
+FROM throw_confirmations
+WHERE plan_hash = ?
+ORDER BY confirmed_at DESC
+LIMIT 1`, planHash).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return commands.ThrowConfirmationRecord{}, false, nil
+	}
+	if err != nil {
+		return commands.ThrowConfirmationRecord{}, false, err
+	}
+	var confirmation commands.ThrowConfirmationRecord
+	if err := json.Unmarshal([]byte(data), &confirmation); err != nil {
+		return commands.ThrowConfirmationRecord{}, false, err
+	}
+	return confirmation, true, nil
 }
