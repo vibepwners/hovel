@@ -127,6 +127,36 @@ func TestRecordThrowPlanPersistsAuditablePlan(t *testing.T) {
 	}
 }
 
+func TestMaterializeArtifactStoresBytesOutsideSQLite(t *testing.T) {
+	store := NewWorkspaceStore()
+	workspacePath := filepath.Join(t.TempDir(), ".hovel")
+	record, err := store.MaterializeArtifact(context.Background(), commands.ArtifactMaterialization{
+		Workspace: workspacePath,
+		ThrowID:   "throw-mock",
+		RunID:     "run-1",
+		ModuleID:  "mock-exploit",
+		Target:    "mock://target",
+		Artifact: commands.Artifact{
+			Name: "transcript.txt",
+			Kind: "text/plain",
+			Data: "operator transcript",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Size != len("operator transcript") || record.SHA256 == "" {
+		t.Fatalf("artifact record = %#v", record)
+	}
+	data, err := os.ReadFile(filepath.Join(workspacePath, record.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "operator transcript" {
+		t.Fatalf("artifact bytes = %q", string(data))
+	}
+}
+
 func TestOperatorSessionPersistsInWorkspaceDatabase(t *testing.T) {
 	store := NewWorkspaceStore()
 	workspacePath := filepath.Join(t.TempDir(), ".hovel")

@@ -120,3 +120,39 @@ func TestStorePersistsThrowConfirmations(t *testing.T) {
 		t.Fatal("unexpected confirmation for other hash")
 	}
 }
+
+func TestStorePersistsThrowRecordsAndArtifactMetadata(t *testing.T) {
+	store := NewStore(t.TempDir())
+	record := commands.ThrowRecord{
+		ID:          "throw-mock",
+		Workspace:   ".hovel",
+		PlanID:      "plan-mock",
+		PlanHash:    "hash-mock",
+		Chain:       "mock-exploit",
+		Targets:     []string{"mock://target"},
+		State:       "succeeded",
+		StartedAt:   "2026-05-03T12:00:00Z",
+		CompletedAt: "2026-05-03T12:00:01Z",
+		Runs:        []commands.RunSummary{{RunID: "run-1", ModuleID: "mock-exploit", Target: "mock://target", State: "succeeded", Artifacts: 1}},
+	}
+	if err := store.RecordThrow(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	artifact := commands.ArtifactRecord{
+		ID:        "artifact-mock",
+		Workspace: ".hovel",
+		ThrowID:   record.ID,
+		RunID:     "run-1",
+		ModuleID:  "mock-exploit",
+		Target:    "mock://target",
+		Name:      "transcript.txt",
+		Kind:      "text/plain",
+		Path:      "artifacts/throw-mock/run-1/transcript.txt",
+		SHA256:    "abc123",
+		Size:      12,
+		CreatedAt: "2026-05-03T12:00:01Z",
+	}
+	if err := store.RecordArtifact(context.Background(), artifact); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -221,7 +221,7 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 	if !reflect.DeepEqual(recorder.requests[0], RunMockExploitRequest{ModuleID: "mock-exploit@v0.0.0-example", Target: "mock://target", ChainConfig: map[string]string{}}) {
 		t.Fatalf("run request = %#v", recorder.requests[0])
 	}
-	wantPlan := newThrowPlan(".hovel", "mock-exploit", []string{"mock://target"})
+	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
 	if !reflect.DeepEqual(plans.records, []ThrowPlanRecord{wantPlan}) {
 		t.Fatalf("plans = %#v, want %#v", plans.records, []ThrowPlanRecord{wantPlan})
 	}
@@ -418,7 +418,7 @@ func TestConfirmHandlerRecordsPlanAndConfirmationWithoutRunning(t *testing.T) {
 	if len(recorder.requests) != 0 {
 		t.Fatalf("run requests = %#v, want none", recorder.requests)
 	}
-	wantPlan := newThrowPlan(".hovel", "mock-exploit", []string{"mock://target"})
+	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
 	if !reflect.DeepEqual(plans.records, []ThrowPlanRecord{wantPlan}) {
 		t.Fatalf("plans = %#v, want %#v", plans.records, []ThrowPlanRecord{wantPlan})
 	}
@@ -444,7 +444,7 @@ func TestThrowUsesExistingConfirmationWithoutRecordingTypedYes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := newThrowPlan(".hovel", "mock-exploit", []string{"mock://target"})
+	plan := newThrowPlanForExecution(".hovel", throwExecution{Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
 	confirmations := &fakeConfirmationStore{
 		records: []ThrowConfirmationRecord{
 			newThrowConfirmation(plan, "command", "preconfirmed", time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)),
@@ -547,6 +547,50 @@ func TestThrowChainFileUsesFileConfigWithoutSessionMutation(t *testing.T) {
 	}
 }
 
+func TestThrowRecordsThrowAndMaterializesArtifacts(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	throwRecorder := &fakeThrowRecorder{}
+	artifactRecorder := &fakeArtifactRecorder{}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		Runs:          fakeRunClientFactory{recorder: &fakeRunRecorder{}},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Throws:        throwRecorder,
+		Confirmations: &fakeConfirmationRecorder{},
+		Artifacts:     artifactRecorder,
+	})
+	definition, _ := registry.Find("throw")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": ".hovel", "chain": "mock-exploit", "target": "mock://target"},
+		Flags:   map[string]bool{"now": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := result.JSON.(ThrowPayload)
+	if len(throwRecorder.records) != 1 || throwRecorder.records[0].PlanHash != payload.Plan.PlanHash {
+		t.Fatalf("throw records = %#v, want plan hash %s", throwRecorder.records, payload.Plan.PlanHash)
+	}
+	if len(artifactRecorder.materializations) != 1 {
+		t.Fatalf("artifact materializations = %#v, want one", artifactRecorder.materializations)
+	}
+	if payload.Results[0].Artifacts[0].Data != "" {
+		t.Fatalf("payload artifact data = %q, want scrubbed after materialization", payload.Results[0].Artifacts[0].Data)
+	}
+}
+
 func TestThrowChainFileNonInteractiveRequiresNowOrPreconfirmation(t *testing.T) {
 	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
 		WorkspacePath: ".hovel",
@@ -582,6 +626,30 @@ func TestThrowChainFileNonInteractiveRequiresNowOrPreconfirmation(t *testing.T) 
 	}
 }
 
+func TestThrowPlanHashIncludesReviewedConfigAndSteps(t *testing.T) {
+	base := throwExecution{
+		Chain:       "alpha",
+		Targets:     []string{"mock://target"},
+		Modules:     []string{"mock-exploit@v0.0.0-example"},
+		ChainConfig: map[string]string{"operator.confirmed_lab": "true"},
+		TargetConfigs: map[string]map[string]string{
+			"mock://target": {"target.host": "router-01", "target.port": "22"},
+		},
+	}
+	changedConfig := base
+	changedConfig.ChainConfig = map[string]string{"operator.confirmed_lab": "false"}
+	changedStep := base
+	changedStep.Modules = []string{"mock-survey@v0.0.0-example"}
+
+	baseHash := newThrowPlanForExecution(".hovel", base).PlanHash
+	if baseHash == newThrowPlanForExecution(".hovel", changedConfig).PlanHash {
+		t.Fatal("plan hash did not change when chain config changed")
+	}
+	if baseHash == newThrowPlanForExecution(".hovel", changedStep).PlanHash {
+		t.Fatal("plan hash did not change when step modules changed")
+	}
+}
+
 func TestConfirmChainFileRecordsSamePlanAsThrowChainFile(t *testing.T) {
 	plans := &fakePlanRecorder{}
 	confirmations := &fakeConfirmationStore{}
@@ -607,7 +675,15 @@ func TestConfirmChainFileRecordsSamePlanAsThrowChainFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPlan := newThrowPlan(".hovel", "alpha", []string{"mock://target"})
+	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{
+		Chain:       "alpha",
+		Targets:     []string{"mock://target"},
+		Modules:     []string{"mock-exploit@v0.0.0-example"},
+		ChainConfig: map[string]string{"operator.confirmed_lab": "true"},
+		TargetConfigs: map[string]map[string]string{
+			"mock://target": {"target.host": "router-01", "target.port": "22"},
+		},
+	})
 	if !reflect.DeepEqual(plans.records, []ThrowPlanRecord{wantPlan}) {
 		t.Fatalf("plans = %#v, want %#v", plans.records, []ThrowPlanRecord{wantPlan})
 	}
@@ -1370,6 +1446,37 @@ func (s *fakeConfirmationStore) GetThrowConfirmation(_ context.Context, workspac
 		}
 	}
 	return ThrowConfirmationRecord{}, false, nil
+}
+
+type fakeThrowRecorder struct {
+	records []ThrowRecord
+}
+
+func (r *fakeThrowRecorder) RecordThrow(_ context.Context, record ThrowRecord) error {
+	r.records = append(r.records, record)
+	return nil
+}
+
+type fakeArtifactRecorder struct {
+	materializations []ArtifactMaterialization
+}
+
+func (r *fakeArtifactRecorder) MaterializeArtifact(_ context.Context, materialization ArtifactMaterialization) (ArtifactRecord, error) {
+	r.materializations = append(r.materializations, materialization)
+	return ArtifactRecord{
+		ID:        "artifact-1",
+		Workspace: materialization.Workspace,
+		ThrowID:   materialization.ThrowID,
+		RunID:     materialization.RunID,
+		ModuleID:  materialization.ModuleID,
+		Target:    materialization.Target,
+		Name:      materialization.Artifact.Name,
+		Kind:      materialization.Artifact.Kind,
+		Path:      "artifacts/throw/run/artifact.txt",
+		SHA256:    "hash",
+		Size:      len(materialization.Artifact.Data),
+		CreatedAt: "2026-05-03T12:00:00Z",
+	}, nil
 }
 
 type fakeChainFileStore struct {

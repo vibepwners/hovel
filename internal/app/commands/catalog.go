@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -41,8 +42,16 @@ type ThrowPlanRecorder interface {
 	RecordThrowPlan(context.Context, ThrowPlanRecord) error
 }
 
+type ThrowRecorder interface {
+	RecordThrow(context.Context, ThrowRecord) error
+}
+
 type ThrowConfirmationRecorder interface {
 	RecordThrowConfirmation(context.Context, ThrowConfirmationRecord) error
+}
+
+type ArtifactRecorder interface {
+	MaterializeArtifact(context.Context, ArtifactMaterialization) (ArtifactRecord, error)
 }
 
 type ThrowConfirmationRepository interface {
@@ -92,7 +101,9 @@ type Runtime struct {
 	Daemons            DaemonStatusProvider
 	Runs               RunClientFactory
 	Plans              ThrowPlanRecorder
+	Throws             ThrowRecorder
 	Confirmations      ThrowConfirmationRecorder
+	Artifacts          ArtifactRecorder
 	ThrowConfirmations ThrowConfirmationRepository
 	ThrowPlans         ThrowPlanRepository
 	ChainFiles         ChainFileStore
@@ -127,6 +138,31 @@ type Artifact struct {
 	Name string `json:"name"`
 	Kind string `json:"kind"`
 	Data string `json:"data"`
+}
+
+type ArtifactRecord struct {
+	ID        string `json:"id"`
+	Workspace string `json:"workspace"`
+	ThrowID   string `json:"throwId"`
+	RunID     string `json:"runId"`
+	ModuleID  string `json:"moduleId"`
+	Target    string `json:"target"`
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Path      string `json:"path"`
+	SHA256    string `json:"sha256"`
+	Size      int    `json:"size"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type ArtifactMaterialization struct {
+	Workspace string
+	ThrowID   string
+	RunID     string
+	ModuleID  string
+	Target    string
+	Artifact  Artifact
+	CreatedAt time.Time
 }
 
 type SessionRef struct {
@@ -203,6 +239,7 @@ type RunPayload struct {
 
 type ThrowPayload struct {
 	Plan    ThrowPlanPayload `json:"plan"`
+	ThrowID string           `json:"throwId,omitempty"`
 	Chain   string           `json:"chain"`
 	Targets []string         `json:"targets"`
 	Results []RunPayload     `json:"results"`
@@ -218,14 +255,40 @@ type ThrowPlanPayload struct {
 }
 
 type ThrowPlanRecord struct {
-	ID             string   `json:"id"`
-	ConfirmationID string   `json:"confirmationId"`
-	PlanHash       string   `json:"planHash"`
-	Workspace      string   `json:"workspace"`
-	Chain          string   `json:"chain"`
-	Targets        []string `json:"targets"`
-	Review         string   `json:"review"`
-	Intent         string   `json:"intent"`
+	ID             string                       `json:"id"`
+	ConfirmationID string                       `json:"confirmationId"`
+	PlanHash       string                       `json:"planHash"`
+	Workspace      string                       `json:"workspace"`
+	Chain          string                       `json:"chain"`
+	Targets        []string                     `json:"targets"`
+	Modules        []string                     `json:"modules,omitempty"`
+	ChainConfig    map[string]string            `json:"chainConfig,omitempty"`
+	TargetConfigs  map[string]map[string]string `json:"targetConfigs,omitempty"`
+	Review         string                       `json:"review"`
+	Intent         string                       `json:"intent"`
+}
+
+type ThrowRecord struct {
+	ID          string       `json:"id"`
+	Workspace   string       `json:"workspace"`
+	PlanID      string       `json:"planId"`
+	PlanHash    string       `json:"planHash"`
+	Chain       string       `json:"chain"`
+	Targets     []string     `json:"targets"`
+	State       string       `json:"state"`
+	StartedAt   string       `json:"startedAt"`
+	CompletedAt string       `json:"completedAt"`
+	Runs        []RunSummary `json:"runs"`
+}
+
+type RunSummary struct {
+	RunID     string `json:"runId"`
+	ModuleID  string `json:"moduleId"`
+	Target    string `json:"target"`
+	State     string `json:"state"`
+	Summary   string `json:"summary"`
+	Artifacts int    `json:"artifacts"`
+	Findings  int    `json:"findings"`
 }
 
 type ThrowConfirmationRecord struct {
@@ -1284,7 +1347,7 @@ func throwHandler(runtime Runtime) Handler {
 			return Result{}, fmt.Errorf("daemon is not running for workspace %s", status.WorkspacePath)
 		}
 
-		plan := newThrowPlan(status.WorkspacePath, throw.Chain, throw.Targets)
+		plan := newThrowPlanForExecution(status.WorkspacePath, throw)
 		if runtime.Plans != nil {
 			if err := runtime.Plans.RecordThrowPlan(ctx, plan); err != nil {
 				return Result{}, err
@@ -1338,6 +1401,7 @@ func throwHandler(runtime Runtime) Handler {
 		}
 		var payload ThrowPayload
 		payload.Plan = plan.Payload()
+		payload.ThrowID = throwRecordID(plan)
 		payload.Chain = throw.Chain
 		payload.Targets = append([]string(nil), throw.Targets...)
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
@@ -1360,6 +1424,25 @@ func throwHandler(runtime Runtime) Handler {
 					return Result{}, err
 				}
 				payload.Results = append(payload.Results, runPayload(result))
+				if runtime.Artifacts != nil {
+					resultIndex := len(payload.Results) - 1
+					for artifactIndex, artifact := range payload.Results[resultIndex].Artifacts {
+						record, err := runtime.Artifacts.MaterializeArtifact(ctx, ArtifactMaterialization{
+							Workspace: status.WorkspacePath,
+							ThrowID:   payload.ThrowID,
+							RunID:     result.RunID,
+							ModuleID:  moduleID,
+							Target:    target,
+							Artifact:  artifact,
+							CreatedAt: time.Now().UTC(),
+						})
+						if err != nil {
+							return Result{}, err
+						}
+						payload.Results[resultIndex].Artifacts[artifactIndex].Data = ""
+						payload.Results[resultIndex].Artifacts[artifactIndex].Name = record.Name
+					}
+				}
 				if runtime.Session != nil && feedbackPublished(runtime.Session) {
 					_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunResultEntries(payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(throw.Modules), throwStarted)...)
 				}
@@ -1368,10 +1451,20 @@ func throwHandler(runtime Runtime) Handler {
 		log := throwLog(payload, throwStarted)
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
 			_ = runtime.Session.AppendLogToChain(payload.Chain, throwCompleteEntries(payload, throwStarted)...)
+			if runtime.Throws != nil {
+				if err := runtime.Throws.RecordThrow(ctx, newThrowRecord(status.WorkspacePath, plan, payload, throwStarted, time.Now().UTC())); err != nil {
+					return Result{}, err
+				}
+			}
 			return Result{JSON: payload}, nil
 		}
 		if runtime.Session != nil {
 			_ = runtime.Session.AppendLogToChain(payload.Chain, log.Entries()...)
+		}
+		if runtime.Throws != nil {
+			if err := runtime.Throws.RecordThrow(ctx, newThrowRecord(status.WorkspacePath, plan, payload, throwStarted, time.Now().UTC())); err != nil {
+				return Result{}, err
+			}
 		}
 		return Result{
 			Human: fmt.Sprintf("Throw completed chain %s against %d target(s)", payload.Chain, len(payload.Targets)),
@@ -1397,7 +1490,7 @@ func confirmHandler(runtime Runtime) Handler {
 		if workspacePath == "" {
 			workspacePath = ".hovel"
 		}
-		plan := newThrowPlan(workspacePath, throw.Chain, throw.Targets)
+		plan := newThrowPlanForExecution(workspacePath, throw)
 		if err := runtime.Plans.RecordThrowPlan(ctx, plan); err != nil {
 			return Result{}, err
 		}
@@ -1530,16 +1623,24 @@ func dialDaemonRunClient(ctx context.Context, runtime Runtime, workspacePath str
 }
 
 func newThrowPlan(workspacePath, chain string, targets []string) ThrowPlanRecord {
-	id := "plan-" + stablePlanComponent(chain, targets)
+	return newThrowPlanForExecution(workspacePath, throwExecution{Chain: chain, Targets: targets})
+}
+
+func newThrowPlanForExecution(workspacePath string, throw throwExecution) ThrowPlanRecord {
+	id := "plan-" + stablePlanComponent(throw.Chain, throw.Targets)
+	hash := planHashForExecution(throw)
 	return ThrowPlanRecord{
 		ID:             id,
-		ConfirmationID: "confirmation-" + stablePlanComponent(chain, targets),
-		PlanHash:       planHash(chain, targets),
+		ConfirmationID: "confirmation-" + stablePlanComponent(throw.Chain, throw.Targets),
+		PlanHash:       hash,
 		Workspace:      workspacePath,
-		Chain:          chain,
-		Targets:        append([]string(nil), targets...),
+		Chain:          throw.Chain,
+		Targets:        append([]string(nil), throw.Targets...),
+		Modules:        append([]string(nil), throw.Modules...),
+		ChainConfig:    cloneStringMap(throw.ChainConfig),
+		TargetConfigs:  cloneTargetConfigs(throw.TargetConfigs),
 		Review:         "operator-confirmed",
-		Intent:         fmt.Sprintf("throw chain %s against %d target(s)", chain, len(targets)),
+		Intent:         fmt.Sprintf("throw chain %s against %d target(s)", throw.Chain, len(throw.Targets)),
 	}
 }
 
@@ -1561,6 +1662,39 @@ func newThrowConfirmation(plan ThrowPlanRecord, clientID, method string, confirm
 	}
 }
 
+func throwRecordID(plan ThrowPlanRecord) string {
+	return "throw-" + strings.TrimPrefix(plan.ID, "plan-")
+}
+
+func newThrowRecord(workspacePath string, plan ThrowPlanRecord, payload ThrowPayload, startedAt, completedAt time.Time) ThrowRecord {
+	record := ThrowRecord{
+		ID:          payload.ThrowID,
+		Workspace:   workspacePath,
+		PlanID:      plan.ID,
+		PlanHash:    plan.PlanHash,
+		Chain:       payload.Chain,
+		Targets:     append([]string(nil), payload.Targets...),
+		State:       "succeeded",
+		StartedAt:   startedAt.UTC().Format(time.RFC3339Nano),
+		CompletedAt: completedAt.UTC().Format(time.RFC3339Nano),
+	}
+	for _, result := range payload.Results {
+		if result.State != "succeeded" {
+			record.State = result.State
+		}
+		record.Runs = append(record.Runs, RunSummary{
+			RunID:     result.RunID,
+			ModuleID:  result.ModuleID,
+			Target:    result.Target,
+			State:     result.State,
+			Summary:   result.Summary,
+			Artifacts: len(result.Artifacts),
+			Findings:  len(result.Findings),
+		})
+	}
+	return record
+}
+
 func confirmationClientID(runtime Runtime) string {
 	if runtime.Session != nil && feedbackPublished(runtime.Session) {
 		return "cli"
@@ -1569,6 +1703,32 @@ func confirmationClientID(runtime Runtime) string {
 }
 
 func planHash(chain string, targets []string) string {
+	return planHashForExecution(throwExecution{Chain: chain, Targets: targets})
+}
+
+func planHashForExecution(throw throwExecution) string {
+	review := struct {
+		Chain         string                       `json:"chain"`
+		Targets       []string                     `json:"targets"`
+		Modules       []string                     `json:"modules"`
+		ChainConfig   map[string]string            `json:"chainConfig,omitempty"`
+		TargetConfigs map[string]map[string]string `json:"targetConfigs,omitempty"`
+	}{
+		Chain:         throw.Chain,
+		Targets:       append([]string(nil), throw.Targets...),
+		Modules:       append([]string(nil), throw.Modules...),
+		ChainConfig:   cloneStringMap(throw.ChainConfig),
+		TargetConfigs: cloneTargetConfigs(throw.TargetConfigs),
+	}
+	data, err := json.Marshal(review)
+	if err != nil {
+		return planHashLegacy(throw.Chain, throw.Targets)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func planHashLegacy(chain string, targets []string) string {
 	var b strings.Builder
 	b.WriteString("chain:")
 	b.WriteString(chain)
@@ -1693,6 +1853,9 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 	}
 	modules := make([]string, 0, len(file.Spec.Steps))
 	for _, step := range file.Spec.Steps {
+		if !strings.HasPrefix(strings.TrimSpace(step.Uses), "module:") {
+			return throwExecution{}, fmt.Errorf("chain file step %s uses unsupported runtime %q", step.ID, step.Uses)
+		}
 		moduleID := strings.TrimPrefix(strings.TrimSpace(step.Uses), "module:")
 		if moduleID == "" {
 			return throwExecution{}, fmt.Errorf("chain file step %s module reference is required", step.ID)
@@ -1712,6 +1875,19 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 }
 
 func validateChainFileForThrow(file ChainFile) error {
+	if err := validateChainFileShape(file); err != nil {
+		return err
+	}
+	if file.Spec.Mode != "configured" {
+		return fmt.Errorf("chain file mode must be configured for throw")
+	}
+	if len(file.Spec.Targets) == 0 {
+		return fmt.Errorf("chain file must include targets for throw")
+	}
+	return nil
+}
+
+func validateChainFileShape(file ChainFile) error {
 	if strings.TrimSpace(file.APIVersion) == "" {
 		return fmt.Errorf("chain file apiVersion is required")
 	}
@@ -1721,8 +1897,22 @@ func validateChainFileForThrow(file ChainFile) error {
 	if strings.TrimSpace(file.Metadata.Name) == "" {
 		return fmt.Errorf("chain file metadata.name is required")
 	}
+	if file.Spec.Mode != "" && file.Spec.Mode != "template" && file.Spec.Mode != "configured" {
+		return fmt.Errorf("chain file mode must be template or configured")
+	}
 	if len(file.Spec.Steps) == 0 {
 		return fmt.Errorf("chain file must include at least one step")
+	}
+	for _, step := range file.Spec.Steps {
+		if strings.TrimSpace(step.ID) == "" {
+			return fmt.Errorf("chain file step id is required")
+		}
+		if strings.TrimSpace(step.Uses) == "" {
+			return fmt.Errorf("chain file step %s module reference is required", step.ID)
+		}
+		if !strings.HasPrefix(step.Uses, "module:") && !strings.HasPrefix(step.Uses, "service:") && !strings.HasPrefix(step.Uses, "provider:") {
+			return fmt.Errorf("chain file step %s uses must start with module:, service:, or provider:", step.ID)
+		}
 	}
 	return nil
 }
@@ -1785,16 +1975,10 @@ func chainFileSteps(steps []operatorsession.Step) []ChainFileStep {
 }
 
 func loadChainFile(session OperatorSession, file ChainFile) error {
-	if strings.TrimSpace(file.APIVersion) == "" {
-		return fmt.Errorf("chain file apiVersion is required")
-	}
-	if file.Kind != "Chain" {
-		return fmt.Errorf("chain file kind must be Chain")
+	if err := validateChainFileShape(file); err != nil {
+		return err
 	}
 	name := strings.TrimSpace(file.Metadata.Name)
-	if name == "" {
-		return fmt.Errorf("chain file metadata.name is required")
-	}
 	if err := session.DeleteChain(name); err != nil && !strings.Contains(err.Error(), "does not exist") {
 		return err
 	}

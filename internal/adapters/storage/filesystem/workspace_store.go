@@ -2,10 +2,14 @@ package filesystem
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
@@ -112,6 +116,14 @@ func writeWorkspace(path string, ws workspace.Workspace) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+func safeArtifactName(name string) string {
+	name = filepath.Base(strings.TrimSpace(name))
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return "artifact.bin"
+	}
+	return name
+}
+
 func (s WorkspaceStore) RecordThrowPlan(ctx context.Context, plan commands.ThrowPlanRecord) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -132,6 +144,64 @@ func (s WorkspaceStore) RecordThrowConfirmation(ctx context.Context, confirmatio
 		return errors.New("throw confirmation id is required")
 	}
 	return sqlitestore.NewStore(workspacePath).RecordThrowConfirmation(ctx, confirmation)
+}
+
+func (s WorkspaceStore) RecordThrow(ctx context.Context, record commands.ThrowRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	workspacePath := workspace.ResolvePath(record.Workspace)
+	if record.ID == "" {
+		return errors.New("throw id is required")
+	}
+	return sqlitestore.NewStore(workspacePath).RecordThrow(ctx, record)
+}
+
+func (s WorkspaceStore) MaterializeArtifact(ctx context.Context, materialization commands.ArtifactMaterialization) (commands.ArtifactRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	workspacePath := workspace.ResolvePath(materialization.Workspace)
+	if materialization.ThrowID == "" || materialization.RunID == "" {
+		return commands.ArtifactRecord{}, errors.New("artifact throw id and run id are required")
+	}
+	if materialization.Artifact.Name == "" {
+		return commands.ArtifactRecord{}, errors.New("artifact name is required")
+	}
+	data := []byte(materialization.Artifact.Data)
+	sum := sha256.Sum256(data)
+	sha := hex.EncodeToString(sum[:])
+	artifactID := "artifact-" + sha
+	relPath := filepath.Join("artifacts", materialization.ThrowID, materialization.RunID, safeArtifactName(materialization.Artifact.Name))
+	absPath := filepath.Join(workspacePath, relPath)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	if err := os.WriteFile(absPath, data, 0o600); err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	createdAt := materialization.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	record := commands.ArtifactRecord{
+		ID:        artifactID,
+		Workspace: workspacePath,
+		ThrowID:   materialization.ThrowID,
+		RunID:     materialization.RunID,
+		ModuleID:  materialization.ModuleID,
+		Target:    materialization.Target,
+		Name:      materialization.Artifact.Name,
+		Kind:      materialization.Artifact.Kind,
+		Path:      relPath,
+		SHA256:    sha,
+		Size:      len(data),
+		CreatedAt: createdAt.UTC().Format(time.RFC3339Nano),
+	}
+	if err := sqlitestore.NewStore(workspacePath).RecordArtifact(ctx, record); err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	return record, nil
 }
 
 func (s WorkspaceStore) ListThrowPlans(ctx context.Context, workspacePath string) ([]commands.ThrowPlanRecord, error) {

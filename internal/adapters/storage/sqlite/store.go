@@ -73,6 +73,24 @@ func (s Store) RecordThrowConfirmation(ctx context.Context, confirmation command
 	return RecordThrowConfirmation(ctx, db, confirmation)
 }
 
+func (s Store) RecordThrow(ctx context.Context, record commands.ThrowRecord) error {
+	db, err := s.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return RecordThrow(ctx, db, record)
+}
+
+func (s Store) RecordArtifact(ctx context.Context, record commands.ArtifactRecord) error {
+	db, err := s.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return RecordArtifact(ctx, db, record)
+}
+
 func (s Store) ListThrowPlans(ctx context.Context) ([]commands.ThrowPlanRecord, error) {
 	db, err := s.open(ctx)
 	if err != nil {
@@ -322,4 +340,110 @@ LIMIT 1`, planHash).Scan(&data)
 		return commands.ThrowConfirmationRecord{}, false, err
 	}
 	return confirmation, true, nil
+}
+
+func RecordThrow(ctx context.Context, db *sql.DB, record commands.ThrowRecord) error {
+	if record.ID == "" {
+		return errors.New("throw id is required")
+	}
+	targetsJSON, err := json.Marshal(record.Targets)
+	if err != nil {
+		return err
+	}
+	recordJSON, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `
+INSERT INTO throw_records(
+	id,
+	workspace,
+	plan_id,
+	plan_hash,
+	chain,
+	targets_json,
+	state,
+	throw_json,
+	started_at,
+	completed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+	workspace = excluded.workspace,
+	plan_id = excluded.plan_id,
+	plan_hash = excluded.plan_hash,
+	chain = excluded.chain,
+	targets_json = excluded.targets_json,
+	state = excluded.state,
+	throw_json = excluded.throw_json,
+	started_at = excluded.started_at,
+	completed_at = excluded.completed_at`,
+		record.ID,
+		record.Workspace,
+		record.PlanID,
+		record.PlanHash,
+		record.Chain,
+		string(targetsJSON),
+		record.State,
+		string(recordJSON),
+		record.StartedAt,
+		record.CompletedAt,
+	)
+	return err
+}
+
+func RecordArtifact(ctx context.Context, db *sql.DB, record commands.ArtifactRecord) error {
+	if record.ID == "" {
+		return errors.New("artifact id is required")
+	}
+	if record.Path == "" {
+		return errors.New("artifact path is required")
+	}
+	recordJSON, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `
+INSERT INTO artifacts(
+	id,
+	workspace,
+	throw_id,
+	run_id,
+	module_id,
+	target,
+	name,
+	kind,
+	path,
+	sha256,
+	size,
+	artifact_json,
+	created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+	workspace = excluded.workspace,
+	throw_id = excluded.throw_id,
+	run_id = excluded.run_id,
+	module_id = excluded.module_id,
+	target = excluded.target,
+	name = excluded.name,
+	kind = excluded.kind,
+	path = excluded.path,
+	sha256 = excluded.sha256,
+	size = excluded.size,
+	artifact_json = excluded.artifact_json,
+	created_at = excluded.created_at`,
+		record.ID,
+		record.Workspace,
+		record.ThrowID,
+		record.RunID,
+		record.ModuleID,
+		record.Target,
+		record.Name,
+		record.Kind,
+		record.Path,
+		record.SHA256,
+		record.Size,
+		string(recordJSON),
+		record.CreatedAt,
+	)
+	return err
 }
