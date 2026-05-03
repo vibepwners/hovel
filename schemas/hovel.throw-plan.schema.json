@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hovel.dev/schemas/hovel.throw-plan.schema.json",
+  "title": "Hovel Throw Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {
+      "const": "hovel.dev/v1alpha1"
+    },
+    "kind": {
+      "const": "ThrowPlan"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "createdAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clientId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planHash", "chain", "targets", "review", "confirmation"],
+      "properties": {
+        "planHash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/plannedStep"
+          }
+        },
+        "review": {
+          "type": "string",
+          "minLength": 1
+        },
+        "intent": {
+          "type": "string"
+        },
+        "confirmation": {
+          "$ref": "#/$defs/confirmation"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "plannedStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "uses"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uses": {
+          "type": "string",
+          "pattern": "^(module|service|provider):[^\\s]+$"
+        },
+        "target": {
+          "type": "string"
+        }
+      }
+    },
+    "confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "planHash", "method"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "planHash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clientId": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string",
+          "enum": ["typed_yes", "preconfirmed", "now_bypass"]
+        },
+        "confirmedAt": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
