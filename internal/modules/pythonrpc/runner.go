@@ -817,6 +817,7 @@ func artifactsFromRPC(value any) []run.Artifact {
 			Name: stringValue(object["name"]),
 			Kind: stringValue(object["kind"]),
 			Data: stringValue(object["data"]),
+			Path: stringValue(object["path"]),
 		})
 	}
 	return artifacts

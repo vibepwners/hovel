@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/commandmode",
     visibility = ["//:__subpackages__"],
     deps = [
+        "//internal/adapters/descriptor",
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
         "//internal/adapters/terminallog",

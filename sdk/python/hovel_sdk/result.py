@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from hovel_sdk.session import SessionRef
@@ -20,10 +22,35 @@ class Finding:
 class Artifact:
     name: str
     kind: str
-    data: str
+    data: str = ""
+    path: str = ""
+
+    @classmethod
+    def inline(cls, name: str, kind: str, data: str | bytes) -> Artifact:
+        if isinstance(data, bytes):
+            data = data.decode("utf-8", errors="replace")
+        return cls(name=name, kind=kind, data=data)
+
+    @classmethod
+    def text(cls, name: str, data: str | bytes) -> Artifact:
+        return cls.inline(name, "text/plain", data)
+
+    @classmethod
+    def json(cls, name: str, data: Any) -> Artifact:
+        return cls.inline(name, "application/json", json.dumps(data, sort_keys=True, separators=(",", ":")))
+
+    @classmethod
+    def file(cls, path: str | Path, *, name: str | None = None, kind: str = "application/octet-stream") -> Artifact:
+        path = Path(path)
+        return cls(name=name or path.name, kind=kind, path=str(path))
 
     def to_rpc(self) -> dict[str, Any]:
-        return {"name": self.name, "kind": self.kind, "data": self.data}
+        out = {"name": self.name, "kind": self.kind}
+        if self.data:
+            out["data"] = self.data
+        if self.path:
+            out["path"] = self.path
+        return out
 
 
 @dataclass(frozen=True)

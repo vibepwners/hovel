@@ -72,6 +72,9 @@ func TestClientRunsMockExploitThroughJSONRPC(t *testing.T) {
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifact count = %d, want 1", len(result.Artifacts))
 	}
+	if result.Artifacts[0].Data == "" {
+		t.Fatalf("artifact = %#v, want inline data", result.Artifacts[0])
+	}
 }
 
 func TestSessionClientPublishesModuleAddedLog(t *testing.T) {

@@ -69,6 +69,7 @@ type Artifact struct {
 	Name string
 	Kind string
 	Data string
+	Path string
 }
 
 type SessionRef struct {

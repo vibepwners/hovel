@@ -54,6 +54,11 @@ type ArtifactRecorder interface {
 	MaterializeArtifact(context.Context, ArtifactMaterialization) (ArtifactRecord, error)
 }
 
+type ArtifactRepository interface {
+	ListArtifacts(context.Context, string) ([]ArtifactRecord, error)
+	GetArtifact(context.Context, string, string) (ArtifactRecord, error)
+}
+
 type ThrowConfirmationRepository interface {
 	GetThrowConfirmation(context.Context, string, string) (ThrowConfirmationRecord, bool, error)
 }
@@ -104,6 +109,7 @@ type Runtime struct {
 	Throws             ThrowRecorder
 	Confirmations      ThrowConfirmationRecorder
 	Artifacts          ArtifactRecorder
+	ArtifactRecords    ArtifactRepository
 	ThrowConfirmations ThrowConfirmationRepository
 	ThrowPlans         ThrowPlanRepository
 	ChainFiles         ChainFileStore
@@ -137,7 +143,8 @@ type Finding struct {
 type Artifact struct {
 	Name string `json:"name"`
 	Kind string `json:"kind"`
-	Data string `json:"data"`
+	Data string `json:"data,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 
 type ArtifactRecord struct {
@@ -591,6 +598,29 @@ func HovelRegistry(runtime Runtime) Registry {
 				{Name: "query", Help: "Search query", Required: true},
 			},
 			Handler: modulesSearchHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"artifact", "list"},
+			Aliases: [][]string{{"artifacts", "list"}},
+			Summary: "List materialized artifacts.",
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: artifactsListHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"artifact", "inspect"},
+			Aliases: [][]string{{"artifacts", "inspect"}},
+			Summary: "Inspect a materialized artifact.",
+			Positionals: []Positional{
+				{Name: "artifact", Help: "Artifact ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: artifactsInspectHandler(runtime),
 		},
 		Definition{
 			Path:           []string{"throw"},
@@ -1322,6 +1352,59 @@ func modulesSearchHandler(runtime Runtime) Handler {
 			return Result{Human: "No modules"}, nil
 		}
 		return Result{Human: moduleLines(modules)}, nil
+	}
+}
+
+func artifactsListHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if runtime.ArtifactRecords == nil {
+			return Result{}, fmt.Errorf("artifact repository is not configured")
+		}
+		workspacePath := invocation.Option("workspace")
+		if workspacePath == "" {
+			workspacePath = ".hovel"
+		}
+		artifacts, err := runtime.ArtifactRecords.ListArtifacts(ctx, workspacePath)
+		if err != nil {
+			return Result{}, err
+		}
+		if len(artifacts) == 0 {
+			return Result{Human: "No artifacts", JSON: artifacts}, nil
+		}
+		lines := []string{"ID                                                                 THROW                     NAME                      KIND       SIZE PATH"}
+		for _, artifact := range artifacts {
+			lines = append(lines, fmt.Sprintf("%-66s %-25s %-25s %-10s %-4d %s", artifact.ID, artifact.ThrowID, artifact.Name, artifact.Kind, artifact.Size, artifact.Path))
+		}
+		return Result{Human: strings.Join(lines, "\n"), JSON: artifacts}, nil
+	}
+}
+
+func artifactsInspectHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if runtime.ArtifactRecords == nil {
+			return Result{}, fmt.Errorf("artifact repository is not configured")
+		}
+		workspacePath := invocation.Option("workspace")
+		if workspacePath == "" {
+			workspacePath = ".hovel"
+		}
+		artifact, err := runtime.ArtifactRecords.GetArtifact(ctx, workspacePath, invocation.Positional("artifact"))
+		if err != nil {
+			return Result{}, err
+		}
+		lines := []string{
+			fmt.Sprintf("Artifact %s", artifact.ID),
+			fmt.Sprintf("name       %s", artifact.Name),
+			fmt.Sprintf("kind       %s", artifact.Kind),
+			fmt.Sprintf("throw      %s", artifact.ThrowID),
+			fmt.Sprintf("run        %s", artifact.RunID),
+			fmt.Sprintf("module     %s", artifact.ModuleID),
+			fmt.Sprintf("target     %s", artifact.Target),
+			fmt.Sprintf("size       %d", artifact.Size),
+			fmt.Sprintf("sha256     %s", artifact.SHA256),
+			fmt.Sprintf("path       %s", artifact.Path),
+		}
+		return Result{Human: strings.Join(lines, "\n"), JSON: artifact}, nil
 	}
 }
 

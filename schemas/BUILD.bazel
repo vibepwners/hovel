@@ -25,6 +25,7 @@ py_test(
     data = [
         "fixtures/chain_configured.json",
         "fixtures/chain_template.json",
+        "fixtures/module_artifacts.json",
         "fixtures/throw_plan.json",
         "hovel.chain.schema.json",
         "hovel.module.schema.json",

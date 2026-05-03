@@ -155,4 +155,18 @@ func TestStorePersistsThrowRecordsAndArtifactMetadata(t *testing.T) {
 	if err := store.RecordArtifact(context.Background(), artifact); err != nil {
 		t.Fatal(err)
 	}
+	artifacts, err := store.ListArtifacts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(artifacts, []commands.ArtifactRecord{artifact}) {
+		t.Fatalf("artifacts = %#v, want %#v", artifacts, []commands.ArtifactRecord{artifact})
+	}
+	got, err := store.GetArtifact(context.Background(), artifact.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, artifact) {
+		t.Fatalf("artifact = %#v, want %#v", got, artifact)
+	}
 }

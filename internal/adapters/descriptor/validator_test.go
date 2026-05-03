@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/domain/module"
 	"github.com/Vibe-Pwners/hovel/internal/domain/service"
 )
@@ -231,6 +232,116 @@ func TestValidateModuleDescriptorRejectsMalformedJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for malformed JSON, got nil")
 	}
+}
+
+func TestParseChainFileAcceptsConfiguredJSONAndYAML(t *testing.T) {
+	want := commands.ChainFile{
+		APIVersion: "hovel.dev/v1alpha1",
+		Kind:       "Chain",
+		Metadata:   commands.ChainFileMetadata{Name: "alpha"},
+		Spec: commands.ChainFileSpec{
+			Mode:   "configured",
+			Config: map[string]string{"operator.confirmed_lab": "true"},
+			Steps:  []commands.ChainFileStep{{ID: "step-1", Uses: "module:mock-exploit@v0.0.0-example"}},
+			Targets: []commands.ChainFileTarget{{
+				ID:     "mock://target",
+				Config: map[string]string{"target.host": "router-01"},
+			}},
+		},
+	}
+
+	jsonText := []byte(`{
+		"apiVersion": "hovel.dev/v1alpha1",
+		"kind": "Chain",
+		"metadata": {"name": "alpha"},
+		"spec": {
+			"mode": "configured",
+			"config": {"operator.confirmed_lab": "true"},
+			"steps": [{"id": "step-1", "uses": "module:mock-exploit@v0.0.0-example"}],
+			"targets": [{"id": "mock://target", "config": {"target.host": "router-01"}}]
+		}
+	}`)
+	got, err := ParseChainFile(jsonText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !chainFilesEqual(got, want) {
+		t.Fatalf("json chain = %#v, want %#v", got, want)
+	}
+
+	yamlText := []byte(`
+apiVersion: "hovel.dev/v1alpha1"
+kind: "Chain"
+metadata:
+  name: "alpha"
+spec:
+  mode: "configured"
+  steps:
+    - id: "step-1"
+      uses: "module:mock-exploit@v0.0.0-example"
+  config:
+    "operator.confirmed_lab": "true"
+  targets:
+    - id: "mock://target"
+      config:
+        "target.host": "router-01"
+`)
+	got, err = ParseChainFile(yamlText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !chainFilesEqual(got, want) {
+		t.Fatalf("yaml chain = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseChainFileRejectsSchemaViolationsBeforeSemanticValidation(t *testing.T) {
+	_, err := ParseChainFile([]byte(`{
+		"apiVersion": "hovel.dev/v1alpha1",
+		"kind": "Chain",
+		"metadata": {"name": "alpha"},
+		"spec": {
+			"mode": "configured",
+			"steps": [{"id": "step-1", "uses": "mock-exploit"}],
+			"surprise": true
+		}
+	}`))
+	if err == nil {
+		t.Fatal("expected schema error")
+	}
+	if !strings.Contains(err.Error(), "unexpected key surprise") {
+		t.Fatalf("error = %v, want unexpected schema key", err)
+	}
+}
+
+func chainFilesEqual(got, want commands.ChainFile) bool {
+	if got.APIVersion != want.APIVersion || got.Kind != want.Kind || got.Metadata != want.Metadata || got.Spec.Mode != want.Spec.Mode {
+		return false
+	}
+	if len(got.Spec.Steps) != len(want.Spec.Steps) || len(got.Spec.Targets) != len(want.Spec.Targets) {
+		return false
+	}
+	for i := range got.Spec.Steps {
+		if got.Spec.Steps[i] != want.Spec.Steps[i] {
+			return false
+		}
+	}
+	for key, value := range want.Spec.Config {
+		if got.Spec.Config[key] != value {
+			return false
+		}
+	}
+	for i := range got.Spec.Targets {
+		if got.Spec.Targets[i].ID != want.Spec.Targets[i].ID {
+			return false
+		}
+		for key, value := range want.Spec.Targets[i].Config {
+			if got.Spec.Targets[i].Config[key] != value {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------

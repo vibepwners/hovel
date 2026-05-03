@@ -2,10 +2,14 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "descriptor",
-    srcs = ["validator.go"],
+    srcs = [
+        "chain.go",
+        "validator.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/descriptor",
     visibility = ["//visibility:public"],
     deps = [
+        "//internal/app/commands",
         "//internal/domain/module",
         "//internal/domain/service",
     ],
@@ -17,6 +21,7 @@ go_test(
     srcs = ["validator_test.go"],
     embed = [":descriptor"],
     deps = [
+        "//internal/app/commands",
         "//internal/domain/module",
         "//internal/domain/service",
     ],

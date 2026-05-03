@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -24,6 +25,8 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 	})
 
 	for _, path := range [][]string{
+		{"artifact", "inspect"},
+		{"artifact", "list"},
 		{"control", "init"},
 		{"control", "daemon", "status"},
 		{"op", "create"},
@@ -62,6 +65,8 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		}
 	}
 	for _, alias := range [][]string{
+		{"artifacts", "inspect"},
+		{"artifacts", "list"},
 		{"chains", "create"},
 		{"chains", "load"},
 		{"chains", "save"},
@@ -433,6 +438,57 @@ func TestConfirmHandlerRecordsPlanAndConfirmationWithoutRunning(t *testing.T) {
 	}
 }
 
+func TestArtifactListAndInspectHandlersUseRepository(t *testing.T) {
+	repository := &fakeArtifactRepository{records: []ArtifactRecord{{
+		ID:        "artifact-abc",
+		Workspace: ".hovel",
+		ThrowID:   "throw-alpha",
+		RunID:     "run-1",
+		ModuleID:  "mock-exploit@v0.0.0-example",
+		Target:    "mock://target",
+		Name:      "transcript.txt",
+		Kind:      "text/plain",
+		Path:      "artifacts/throw-alpha/run-1/transcript.txt",
+		SHA256:    "abc123",
+		Size:      19,
+		CreatedAt: "2026-05-03T12:00:00Z",
+	}}}
+	registry := HovelRegistry(Runtime{
+		Workspaces:      fakeWorkspaceService{},
+		Daemons:         fakeDaemonService{},
+		Runs:            fakeRunClientFactory{},
+		Modules:         exampleCatalog(),
+		ArtifactRecords: repository,
+	})
+	listDefinition, _ := registry.Find("artifact", "list")
+	inspectDefinition, _ := registry.Find("artifact", "inspect")
+
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{Options: map[string]string{"workspace": ".hovel"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listResult.Human, "artifact-abc") || !strings.Contains(listResult.Human, "transcript.txt") {
+		t.Fatalf("artifact list = %q", listResult.Human)
+	}
+	if !reflect.DeepEqual(listResult.JSON, repository.records) {
+		t.Fatalf("list json = %#v, want %#v", listResult.JSON, repository.records)
+	}
+
+	inspectResult, err := inspectDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"artifact": "artifact-abc"},
+		Options:     map[string]string{"workspace": ".hovel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inspectResult.Human, "sha256     abc123") || !strings.Contains(inspectResult.Human, "path       artifacts/throw-alpha/run-1/transcript.txt") {
+		t.Fatalf("artifact inspect = %q", inspectResult.Human)
+	}
+	if !reflect.DeepEqual(inspectResult.JSON, repository.records[0]) {
+		t.Fatalf("inspect json = %#v, want %#v", inspectResult.JSON, repository.records[0])
+	}
+}
+
 func TestThrowUsesExistingConfirmationWithoutRecordingTypedYes(t *testing.T) {
 	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
 		WorkspacePath: ".hovel",
@@ -588,6 +644,46 @@ func TestThrowRecordsThrowAndMaterializesArtifacts(t *testing.T) {
 	}
 	if payload.Results[0].Artifacts[0].Data != "" {
 		t.Fatalf("payload artifact data = %q, want scrubbed after materialization", payload.Results[0].Artifacts[0].Data)
+	}
+}
+
+func TestThrowRegistersFileReferenceArtifacts(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &fakeRunRecorder{artifacts: []Artifact{{Name: "loot.txt", Kind: "text/plain", Path: "/tmp/loot.txt"}}}
+	artifactRecorder := &fakeArtifactRecorder{}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+		Artifacts:     artifactRecorder,
+	})
+	definition, _ := registry.Find("throw")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": ".hovel", "chain": "mock-exploit", "target": "mock://target"},
+		Flags:   map[string]bool{"now": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := result.JSON.(ThrowPayload)
+	if len(artifactRecorder.materializations) != 1 || artifactRecorder.materializations[0].Artifact.Path != "/tmp/loot.txt" {
+		t.Fatalf("artifact materializations = %#v, want file reference", artifactRecorder.materializations)
+	}
+	if payload.Results[0].Artifacts[0].Path != "/tmp/loot.txt" || payload.Results[0].Artifacts[0].Data != "" {
+		t.Fatalf("payload artifact = %#v, want file reference without data", payload.Results[0].Artifacts[0])
 	}
 }
 
@@ -1409,6 +1505,7 @@ func (s fakeDaemonService) Status(context.Context, services.DaemonStatusRequest)
 type fakeRunRecorder struct {
 	socketPath string
 	requests   []RunMockExploitRequest
+	artifacts  []Artifact
 }
 
 type fakePlanRecorder struct {
@@ -1477,6 +1574,23 @@ func (r *fakeArtifactRecorder) MaterializeArtifact(_ context.Context, materializ
 		Size:      len(materialization.Artifact.Data),
 		CreatedAt: "2026-05-03T12:00:00Z",
 	}, nil
+}
+
+type fakeArtifactRepository struct {
+	records []ArtifactRecord
+}
+
+func (r *fakeArtifactRepository) ListArtifacts(_ context.Context, _ string) ([]ArtifactRecord, error) {
+	return append([]ArtifactRecord(nil), r.records...), nil
+}
+
+func (r *fakeArtifactRepository) GetArtifact(_ context.Context, _ string, id string) (ArtifactRecord, error) {
+	for _, record := range r.records {
+		if record.ID == id {
+			return record, nil
+		}
+	}
+	return ArtifactRecord{}, fmt.Errorf("artifact %s not found", id)
 }
 
 type fakeChainFileStore struct {
@@ -1549,6 +1663,14 @@ func (c fakeRunClient) RunMockExploit(_ context.Context, req RunMockExploitReque
 	if c.recorder != nil {
 		c.recorder.requests = append(c.recorder.requests, req)
 	}
+	artifacts := []Artifact{{
+		Name: "artifact",
+		Kind: "text",
+		Data: "data",
+	}}
+	if c.recorder != nil && c.recorder.artifacts != nil {
+		artifacts = append([]Artifact(nil), c.recorder.artifacts...)
+	}
 	return RunMockExploitResponse{
 		RunID:    "run-1",
 		ModuleID: req.ModuleID,
@@ -1561,12 +1683,8 @@ func (c fakeRunClient) RunMockExploit(_ context.Context, req RunMockExploitReque
 			Message: "mock exploit started",
 			Fields:  map[string]string{"target": req.Target},
 		}},
-		Findings: []Finding{{Title: "finding", Severity: "info", Detail: "detail"}},
-		Artifacts: []Artifact{{
-			Name: "artifact",
-			Kind: "text",
-			Data: "data",
-		}},
+		Findings:  []Finding{{Title: "finding", Severity: "info", Detail: "detail"}},
+		Artifacts: artifacts,
 	}, nil
 }
 

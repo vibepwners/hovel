@@ -9,6 +9,7 @@ HERE = os.path.dirname(__file__)
 
 SCHEMA_FIXTURES = {
     "Chain": ["fixtures/chain_configured.json", "fixtures/chain_template.json"],
+    "Module": ["fixtures/module_artifacts.json"],
     "ThrowPlan": ["fixtures/throw_plan.json"],
 }
 
@@ -31,6 +32,9 @@ class SchemaSmokeTest(unittest.TestCase):
                     self.assertEqual(spec["runtime"]["properties"]["type"]["enum"], ["jsonrpc-stdio"])
                 if schema["properties"]["kind"]["const"] == "Module":
                     self.assertEqual(spec["moduleType"]["enum"], ["survey", "exploit", "payload_provider"])
+                    artifact = schema["$defs"]["artifactOutput"]
+                    self.assertEqual(artifact["properties"]["mode"]["enum"], ["inline", "file"])
+                    self.assertEqual(spec["outputs"]["properties"]["artifacts"]["items"]["$ref"], "#/$defs/artifactOutput")
                 if schema["properties"]["kind"]["const"] == "Service":
                     self.assertIn("payload_provider", spec["serviceType"]["enum"])
                 if schema["properties"]["kind"]["const"] == "Chain":

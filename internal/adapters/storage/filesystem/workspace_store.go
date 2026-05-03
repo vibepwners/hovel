@@ -168,6 +168,9 @@ func (s WorkspaceStore) MaterializeArtifact(ctx context.Context, materialization
 	if materialization.Artifact.Name == "" {
 		return commands.ArtifactRecord{}, errors.New("artifact name is required")
 	}
+	if strings.TrimSpace(materialization.Artifact.Path) != "" {
+		return s.registerFileArtifact(ctx, workspacePath, materialization)
+	}
 	data := []byte(materialization.Artifact.Data)
 	sum := sha256.Sum256(data)
 	sha := hex.EncodeToString(sum[:])
@@ -204,6 +207,45 @@ func (s WorkspaceStore) MaterializeArtifact(ctx context.Context, materialization
 	return record, nil
 }
 
+func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath string, materialization commands.ArtifactMaterialization) (commands.ArtifactRecord, error) {
+	path := strings.TrimSpace(materialization.Artifact.Path)
+	info, err := os.Stat(path)
+	if err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	if info.IsDir() {
+		return commands.ArtifactRecord{}, errors.New("artifact path must be a file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	sum := sha256.Sum256(data)
+	sha := hex.EncodeToString(sum[:])
+	createdAt := materialization.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	record := commands.ArtifactRecord{
+		ID:        "artifact-" + sha,
+		Workspace: workspacePath,
+		ThrowID:   materialization.ThrowID,
+		RunID:     materialization.RunID,
+		ModuleID:  materialization.ModuleID,
+		Target:    materialization.Target,
+		Name:      materialization.Artifact.Name,
+		Kind:      materialization.Artifact.Kind,
+		Path:      path,
+		SHA256:    sha,
+		Size:      int(info.Size()),
+		CreatedAt: createdAt.UTC().Format(time.RFC3339Nano),
+	}
+	if err := sqlitestore.NewStore(workspacePath).RecordArtifact(ctx, record); err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	return record, nil
+}
+
 func (s WorkspaceStore) ListThrowPlans(ctx context.Context, workspacePath string) ([]commands.ThrowPlanRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -229,6 +271,23 @@ func (s WorkspaceStore) GetThrowConfirmation(ctx context.Context, workspacePath,
 		return commands.ThrowConfirmationRecord{}, false, errors.New("throw confirmation plan hash is required")
 	}
 	return sqlitestore.NewStore(workspacePath).GetThrowConfirmation(ctx, planHash)
+}
+
+func (s WorkspaceStore) ListArtifacts(ctx context.Context, workspacePath string) ([]commands.ArtifactRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return sqlitestore.NewStore(workspacePath).ListArtifacts(ctx)
+}
+
+func (s WorkspaceStore) GetArtifact(ctx context.Context, workspacePath, id string) (commands.ArtifactRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	if id == "" {
+		return commands.ArtifactRecord{}, errors.New("artifact id is required")
+	}
+	return sqlitestore.NewStore(workspacePath).GetArtifact(ctx, id)
 }
 
 func (s WorkspaceStore) EnsureWorkspaceDatabase(ctx context.Context, workspacePath string) error {

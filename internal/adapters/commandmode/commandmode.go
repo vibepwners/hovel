@@ -69,6 +69,7 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 		Throws:             store,
 		Confirmations:      store,
 		Artifacts:          store,
+		ArtifactRecords:    store,
 		ThrowConfirmations: store,
 		ThrowPlans:         store,
 		ChainFiles:         chainFileDiskStore{},
@@ -485,6 +486,7 @@ func artifactsFromRPC(artifacts []daemonrpc.Artifact) []commands.Artifact {
 			Name: artifact.Name,
 			Kind: artifact.Kind,
 			Data: artifact.Data,
+			Path: artifact.Path,
 		})
 	}
 	return out

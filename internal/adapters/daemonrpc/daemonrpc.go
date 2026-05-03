@@ -39,6 +39,7 @@ type Artifact struct {
 	Name string
 	Kind string
 	Data string
+	Path string
 }
 
 type SessionRef struct {
@@ -944,6 +945,7 @@ func responseFromResult(result run.Result) RunMockExploitResponse {
 			Name: artifact.Name,
 			Kind: artifact.Kind,
 			Data: artifact.Data,
+			Path: artifact.Path,
 		})
 	}
 	resp.Sessions = sessionRefsFromRun(result.Sessions)

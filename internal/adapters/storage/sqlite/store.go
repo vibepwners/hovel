@@ -118,6 +118,24 @@ func (s Store) GetThrowConfirmation(ctx context.Context, planHash string) (comma
 	return GetThrowConfirmation(ctx, db, planHash)
 }
 
+func (s Store) ListArtifacts(ctx context.Context) ([]commands.ArtifactRecord, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	return ListArtifacts(ctx, db)
+}
+
+func (s Store) GetArtifact(ctx context.Context, id string) (commands.ArtifactRecord, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	defer db.Close()
+	return GetArtifact(ctx, db, id)
+}
+
 func (s Store) open(ctx context.Context) (*sql.DB, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -446,4 +464,50 @@ ON CONFLICT(id) DO UPDATE SET
 		record.CreatedAt,
 	)
 	return err
+}
+
+func ListArtifacts(ctx context.Context, db *sql.DB) ([]commands.ArtifactRecord, error) {
+	rows, err := db.QueryContext(ctx, `SELECT artifact_json FROM artifacts ORDER BY created_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []commands.ArtifactRecord
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var record commands.ArtifactRecord
+		if err := json.Unmarshal([]byte(data), &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].CreatedAt == records[j].CreatedAt {
+			return records[i].ID < records[j].ID
+		}
+		return records[i].CreatedAt < records[j].CreatedAt
+	})
+	return records, nil
+}
+
+func GetArtifact(ctx context.Context, db *sql.DB, id string) (commands.ArtifactRecord, error) {
+	if id == "" {
+		return commands.ArtifactRecord{}, errors.New("artifact id is required")
+	}
+	var data string
+	if err := db.QueryRowContext(ctx, `SELECT artifact_json FROM artifacts WHERE id = ?`, id).Scan(&data); err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	var record commands.ArtifactRecord
+	if err := json.Unmarshal([]byte(data), &record); err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	return record, nil
 }

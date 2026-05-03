@@ -43,8 +43,23 @@ func TestRunnerExecutesPythonMockModule(t *testing.T) {
 	if len(result.Findings) != 1 {
 		t.Fatalf("finding count = %d, want 1", len(result.Findings))
 	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].Data == "" {
+		t.Fatalf("artifacts = %#v, want inline artifact data", result.Artifacts)
+	}
 	if len(events.events) == 0 || events.events[0].Type.String() != "module.log" {
 		t.Fatalf("events = %#v, want module.log", events.events)
+	}
+}
+
+func TestArtifactsFromRPCSupportsFileReferences(t *testing.T) {
+	artifacts := artifactsFromRPC([]any{
+		map[string]any{"name": "loot.txt", "kind": "text/plain", "path": "/tmp/loot.txt"},
+	})
+	if len(artifacts) != 1 {
+		t.Fatalf("artifacts = %#v, want one", artifacts)
+	}
+	if artifacts[0].Path != "/tmp/loot.txt" || artifacts[0].Data != "" {
+		t.Fatalf("artifact = %#v, want file reference without data", artifacts[0])
 	}
 }
 

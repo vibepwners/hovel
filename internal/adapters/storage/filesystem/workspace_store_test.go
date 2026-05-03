@@ -155,6 +155,54 @@ func TestMaterializeArtifactStoresBytesOutsideSQLite(t *testing.T) {
 	if string(data) != "operator transcript" {
 		t.Fatalf("artifact bytes = %q", string(data))
 	}
+	artifacts, err := store.ListArtifacts(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(artifacts, []commands.ArtifactRecord{record}) {
+		t.Fatalf("artifacts = %#v, want %#v", artifacts, []commands.ArtifactRecord{record})
+	}
+	got, err := store.GetArtifact(context.Background(), workspacePath, record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, record) {
+		t.Fatalf("artifact = %#v, want %#v", got, record)
+	}
+}
+
+func TestMaterializeArtifactRegistersFileReferenceWithoutCopyingBytes(t *testing.T) {
+	store := NewWorkspaceStore()
+	workspacePath := filepath.Join(t.TempDir(), ".hovel")
+	sourcePath := filepath.Join(t.TempDir(), "loot.txt")
+	if err := os.WriteFile(sourcePath, []byte("file artifact bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := store.MaterializeArtifact(context.Background(), commands.ArtifactMaterialization{
+		Workspace: workspacePath,
+		ThrowID:   "throw-mock",
+		RunID:     "run-1",
+		ModuleID:  "mock-exploit",
+		Target:    "mock://target",
+		Artifact: commands.Artifact{
+			Name: "loot.txt",
+			Kind: "text/plain",
+			Path: sourcePath,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Path != sourcePath {
+		t.Fatalf("path = %q, want source file path %q", record.Path, sourcePath)
+	}
+	if record.Size != len("file artifact bytes") || record.SHA256 == "" {
+		t.Fatalf("artifact record = %#v", record)
+	}
+	if _, err := os.Stat(filepath.Join(workspacePath, "artifacts", "throw-mock", "run-1", "loot.txt")); !os.IsNotExist(err) {
+		t.Fatalf("file artifact was copied into workspace, stat err = %v", err)
+	}
 }
 
 func TestOperatorSessionPersistsInWorkspaceDatabase(t *testing.T) {

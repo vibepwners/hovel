@@ -1,0 +1,31 @@
+{
+  "apiVersion": "hovel.dev/v1alpha1",
+  "kind": "Module",
+  "metadata": {
+    "name": "mock-exploit",
+    "version": "v0.0.0-example"
+  },
+  "spec": {
+    "runtime": {
+      "type": "jsonrpc-stdio",
+      "entrypoint": "python -m hovel_example_exploit"
+    },
+    "moduleType": "exploit",
+    "outputs": {
+      "artifacts": [
+        {
+          "name": "transcript.txt",
+          "kind": "text/plain",
+          "mode": "inline",
+          "description": "Command transcript captured during the run."
+        },
+        {
+          "name": "loot.txt",
+          "kind": "text/plain",
+          "mode": "file",
+          "description": "File-reference artifact produced in the workspace."
+        }
+      ]
+    }
+  }
+}
