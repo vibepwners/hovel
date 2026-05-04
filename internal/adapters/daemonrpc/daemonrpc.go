@@ -316,10 +316,17 @@ func (s Server) ListSessions(_ EmptyRequest, resp *ListSessionsResponse) error {
 	return nil
 }
 
-func (s *Server) listSessionsRPC(context.Context, EmptyRequest) (ListSessionsResponse, error) {
+func (s *Server) listSessionsRPC(ctx context.Context, _ EmptyRequest) (ListSessionsResponse, error) {
 	var resp ListSessionsResponse
-	err := s.ListSessions(EmptyRequest{}, &resp)
-	return resp, err
+	if s.moduleSessions == nil {
+		return resp, nil
+	}
+	sessions, err := s.moduleSessions.ListSessions(ctx)
+	if err != nil {
+		return resp, err
+	}
+	resp.Sessions = sessionRefsFromRun(sessions)
+	return resp, nil
 }
 
 func (s Server) ReadSession(req SessionReadRequest, resp *SessionChunk) error {
@@ -339,10 +346,22 @@ func (s Server) ReadSession(req SessionReadRequest, resp *SessionChunk) error {
 	return nil
 }
 
-func (s *Server) readSessionRPC(_ context.Context, req SessionReadRequest) (SessionChunk, error) {
+func (s *Server) readSessionRPC(ctx context.Context, req SessionReadRequest) (SessionChunk, error) {
 	var resp SessionChunk
-	err := s.ReadSession(req, &resp)
-	return resp, err
+	if s.moduleSessions == nil {
+		return resp, errors.New("session broker is not configured")
+	}
+	timeout := time.Duration(req.TimeoutMs) * time.Millisecond
+	chunk, err := s.moduleSessions.ReadSession(ctx, req.SessionID, timeout)
+	if err != nil {
+		return resp, err
+	}
+	resp = SessionChunk{
+		SessionID: chunk.SessionID,
+		Data:      append([]byte(nil), chunk.Data...),
+		Closed:    chunk.Closed,
+	}
+	return resp, nil
 }
 
 func (s Server) WriteSession(req SessionWriteRequest, resp *EmptyResponse) error {
@@ -352,10 +371,11 @@ func (s Server) WriteSession(req SessionWriteRequest, resp *EmptyResponse) error
 	return s.moduleSessions.WriteSession(context.Background(), req.SessionID, req.Data)
 }
 
-func (s *Server) writeSessionRPC(_ context.Context, req SessionWriteRequest) (EmptyResponse, error) {
-	var resp EmptyResponse
-	err := s.WriteSession(req, &resp)
-	return resp, err
+func (s *Server) writeSessionRPC(ctx context.Context, req SessionWriteRequest) (EmptyResponse, error) {
+	if s.moduleSessions == nil {
+		return EmptyResponse{}, errors.New("session broker is not configured")
+	}
+	return EmptyResponse{}, s.moduleSessions.WriteSession(ctx, req.SessionID, req.Data)
 }
 
 func (s Server) CloseSession(req SessionCloseRequest, resp *EmptyResponse) error {
@@ -365,10 +385,11 @@ func (s Server) CloseSession(req SessionCloseRequest, resp *EmptyResponse) error
 	return s.moduleSessions.CloseSession(context.Background(), req.SessionID)
 }
 
-func (s *Server) closeSessionRPC(_ context.Context, req SessionCloseRequest) (EmptyResponse, error) {
-	var resp EmptyResponse
-	err := s.CloseSession(req, &resp)
-	return resp, err
+func (s *Server) closeSessionRPC(ctx context.Context, req SessionCloseRequest) (EmptyResponse, error) {
+	if s.moduleSessions == nil {
+		return EmptyResponse{}, errors.New("session broker is not configured")
+	}
+	return EmptyResponse{}, s.moduleSessions.CloseSession(ctx, req.SessionID)
 }
 
 type ChainRequest struct {
@@ -1151,13 +1172,25 @@ func (e Endpoint) String() string {
 }
 
 type LogBroker struct {
-	mu   sync.Mutex
-	next uint64
-	logs []PublishedLog
+	mu    sync.Mutex
+	next  uint64
+	logs  []PublishedLog
+	limit int
+	start int
+	count int
 }
 
+const defaultLogBrokerLimit = 4096
+
 func NewLogBroker() *LogBroker {
-	return &LogBroker{}
+	return NewLogBrokerWithLimit(defaultLogBrokerLimit)
+}
+
+func NewLogBrokerWithLimit(limit int) *LogBroker {
+	if limit <= 0 {
+		limit = defaultLogBrokerLimit
+	}
+	return &LogBroker{limit: limit}
 }
 
 func (b *LogBroker) Publish(operation, chain string, entries ...operatorlog.Entry) {
@@ -1169,12 +1202,19 @@ func (b *LogBroker) Publish(operation, chain string, entries ...operatorlog.Entr
 	defer b.mu.Unlock()
 	for _, entry := range entries {
 		b.next++
-		b.logs = append(b.logs, PublishedLog{
+		log := PublishedLog{
 			Seq:       b.next,
 			Operation: operation,
 			Chain:     chain,
 			Entry:     operatorLogEntry(entry),
-		})
+		}
+		if b.count < b.limit {
+			b.logs = append(b.logs, log)
+			b.count++
+			continue
+		}
+		b.logs[b.start] = log
+		b.start = (b.start + 1) % b.limit
 	}
 }
 
@@ -1185,7 +1225,8 @@ func (b *LogBroker) Since(since uint64) (uint64, []PublishedLog) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var logs []PublishedLog
-	for _, log := range b.logs {
+	for i := 0; i < b.count; i++ {
+		log := b.logs[(b.start+i)%len(b.logs)]
 		if log.Seq > since {
 			logs = append(logs, log)
 		}
@@ -1201,7 +1242,8 @@ func (b *LogBroker) SinceChain(operation, chain string, since uint64) (uint64, [
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	var logs []PublishedLog
-	for _, log := range b.logs {
+	for i := 0; i < b.count; i++ {
+		log := b.logs[(b.start+i)%len(b.logs)]
 		if log.Seq > since && log.Operation == operation && log.Chain == chain {
 			logs = append(logs, log)
 		}

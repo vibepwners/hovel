@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
@@ -231,6 +234,49 @@ func TestDaemonSessionKeepsInjectedModuleCatalog(t *testing.T) {
 	}
 }
 
+func TestDaemonCLIConfigListRedactsSecrets(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
+	client, err := daemonrpc.Dial(fixture.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	modules := modulecatalog.New(modulecatalog.Module{
+		ID:          "secret-exploit@v1",
+		Name:        "Secret Exploit",
+		Type:        modulecatalog.TypeExploit,
+		Version:     "v1",
+		Summary:     "Requires an API token.",
+		RuntimeKind: modulecatalog.RuntimeJSONRPCStdio,
+		Enabled:     true,
+		ChainConfig: []modulecatalog.Requirement{
+			{Key: "api.token", Type: modulecatalog.ValueSecret, Required: true, Secret: true, Description: "API token."},
+		},
+	})
+	app := newAppWithSessionAndModules(operatorsession.New(), modules).withDaemonSession(context.Background(), client)
+	var stdout, stderr bytes.Buffer
+	executeLines(t, app, &stdout, &stderr,
+		"op use secret-op",
+		"chain use secret-chain",
+		"chain add secret-exploit",
+		"chain config set api.token hunter2",
+	)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "chain config list", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain config list exit code = %d, stderr = %s", code, stderr.String())
+	}
+	output := stdout.String() + stderr.String()
+	if strings.Contains(output, "hunter2") {
+		t.Fatalf("secret leaked through config list output:\n%s", output)
+	}
+	if !strings.Contains(output, "api.token") || !strings.Contains(output, "********") {
+		t.Fatalf("redacted config output = %q, want api.token with redaction", output)
+	}
+}
+
 func TestE2EExampleSurveyAuthChainUsesPythonModules(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
 	workspacePath := fixture.WorkspacePath
@@ -311,6 +357,68 @@ func TestE2EExamplePayloadExploitChainUsesPythonModules(t *testing.T) {
 	assertPersistedPlan(t, workspacePath, payload.Plan)
 }
 
+func TestE2EChainFileSaveLoadRoundTripThenThrows(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
+	workspacePath := fixture.WorkspacePath
+	chainFile := filepath.Join(t.TempDir(), "roundtrip.chain.yaml")
+
+	app := newTestApp()
+	var stdout, stderr bytes.Buffer
+	executeLines(t, app, &stdout, &stderr,
+		"op use test-op",
+		"chain use roundtrip",
+		"chain add mock-exploit",
+		"target add mock://router-01",
+		"chain config set operator.confirmed_lab true",
+		"target config set mock://router-01 target.host router-01",
+		"target config set mock://router-01 target.port 22",
+		"chain save "+chainFile,
+	)
+	if _, err := os.Stat(chainFile); err != nil {
+		t.Fatalf("saved chain file %s: %v", chainFile, err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	executeLines(t, app, &stdout, &stderr,
+		"chain delete roundtrip",
+		"chain load "+chainFile,
+	)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "chain inspect", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain inspect exit code = %d, stderr = %s", code, stderr.String())
+	}
+	for _, want := range []string{"Chain roundtrip", "steps=1", "targets=1", "config=1"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("round-tripped chain inspect missing %q:\n%s", want, stdout.String())
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "target config list mock://router-01", &stdout, &stderr); code != 0 {
+		t.Fatalf("target config list exit code = %d, stderr = %s", code, stderr.String())
+	}
+	for _, want := range []string{"target.host", "router-01", "target.port", "22"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("round-tripped target config missing %q:\n%s", want, stdout.String())
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	payload := decodeThrowJSON(t, stdout.Bytes())
+	if payload.Chain != "roundtrip" || len(payload.Results) != 1 || payload.Results[0].State != "succeeded" {
+		t.Fatalf("round-tripped throw payload = %#v", payload)
+	}
+}
+
 func TestE2ESessionConnectHandlesRawTerminalCarriageReturn(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
 	workspacePath := fixture.WorkspacePath
@@ -369,6 +477,76 @@ func TestE2ESessionConnectHandlesRawTerminalCarriageReturn(t *testing.T) {
 	}
 }
 
+func TestE2ESessionCloseRemovesSessionAndDaemonStillThrows(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
+	workspacePath := fixture.WorkspacePath
+
+	app := newTestApp()
+	var stdout, stderr bytes.Buffer
+	executeLines(t, app, &stdout, &stderr,
+		"op use test-op",
+		"chain use session-close",
+		"chain add mock-exploit-session",
+		"target add mock://router-01",
+		"chain config set operator.confirmed_lab true",
+		"target config set mock://router-01 target.host router-01",
+		"target config set mock://router-01 target.port 22",
+	)
+	stdout.Reset()
+	stderr.Reset()
+
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("session throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	payload := decodeThrowJSON(t, stdout.Bytes())
+	if len(payload.Results) != 1 || len(payload.Results[0].Sessions) != 1 {
+		t.Fatalf("results = %#v, want one session result", payload.Results)
+	}
+	sessionID := payload.Results[0].Sessions[0].ID
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.ExecuteLine(context.Background(), "session close "+sessionID+" --workspace "+workspacePath+" --json", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("session close exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), sessionID) || !strings.Contains(stdout.String(), "closed") {
+		t.Fatalf("session close output = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = app.ExecuteLine(context.Background(), "session list --workspace "+workspacePath, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("session list exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "No active sessions") || strings.Contains(stdout.String(), sessionID) {
+		t.Fatalf("session list after close = %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	executeLines(t, app, &stdout, &stderr,
+		"chain use post-close",
+		"chain add mock-exploit",
+		"target add mock://target",
+		"chain config set operator.confirmed_lab true",
+		"target config set mock://target target.host target",
+		"target config set mock://target target.port 443",
+	)
+	stdout.Reset()
+	stderr.Reset()
+	code = app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("post-close throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	recovered := decodeThrowJSON(t, stdout.Bytes())
+	if len(recovered.Results) != 1 || recovered.Results[0].ModuleID != "mock-exploit@v0.0.0-example" || recovered.Results[0].State != "succeeded" {
+		t.Fatalf("post-close throw results = %#v", recovered.Results)
+	}
+}
+
 func TestE2EExampleFailingChainReportsFailedModule(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
 	workspacePath := fixture.WorkspacePath
@@ -403,6 +581,79 @@ func TestE2EExampleFailingChainReportsFailedModule(t *testing.T) {
 	}
 	if !strings.Contains(result.Summary, "failed during execution") {
 		t.Fatalf("summary = %q", result.Summary)
+	}
+}
+
+func TestDaemonRestartRestoresRemoteChainAndCanThrow(t *testing.T) {
+	workspacePath := testsupport.TempDir(t)
+	socketPath := workspacePath + "/hoveld.sock"
+	cancel, errs := startCLITestDaemon(t, workspacePath, socketPath)
+
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := newTestApp().withDaemonSession(context.Background(), client)
+	var stdout, stderr bytes.Buffer
+	executeLines(t, app, &stdout, &stderr,
+		"op use restart-op",
+		"chain use persisted",
+		"chain add mock-exploit",
+		"target add mock://router-01",
+		"chain config set operator.confirmed_lab true",
+		"target config set mock://router-01 target.host router-01",
+		"target config set mock://router-01 target.port 22",
+	)
+	client.Close()
+	stopCLITestDaemon(t, cancel, errs)
+
+	socketPath = workspacePath + "/hoveld-restarted.sock"
+	cancel, errs = startCLITestDaemon(t, workspacePath, socketPath)
+	defer stopCLITestDaemon(t, cancel, errs)
+
+	client, err = daemonrpc.Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	app = newTestApp().withDaemonSession(context.Background(), client)
+	stdout.Reset()
+	stderr.Reset()
+	executeLines(t, app, &stdout, &stderr,
+		"op use restart-op",
+		"chain use persisted",
+	)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "chain inspect", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain inspect exit code = %d, stderr = %s", code, stderr.String())
+	}
+	for _, want := range []string{"Chain persisted", "steps=1", "targets=1", "config=1"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("restored chain inspect missing %q:\n%s", want, stdout.String())
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "target config list mock://router-01", &stdout, &stderr); code != 0 {
+		t.Fatalf("target config list exit code = %d, stderr = %s", code, stderr.String())
+	}
+	for _, want := range []string{"target.host", "router-01", "target.port", "22"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("restored target config missing %q:\n%s", want, stdout.String())
+		}
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr); code != 0 {
+		t.Fatalf("restored throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	payload := decodeThrowJSON(t, stdout.Bytes())
+	if payload.Chain != "persisted" || len(payload.Results) != 1 || payload.Results[0].State != "succeeded" {
+		t.Fatalf("restored throw payload = %#v", payload)
 	}
 }
 
@@ -634,4 +885,42 @@ func assertPersistedPlan(t *testing.T, workspacePath string, plan struct {
 
 func daemonruntimeArgs() daemonruntime.Args {
 	return daemonruntime.Args{}
+}
+
+func startCLITestDaemon(t *testing.T, workspacePath, socketPath string) (context.CancelFunc, chan error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, 1)
+	go func() {
+		errs <- daemonruntime.Serve(ctx, daemonruntime.Args{
+			WorkspacePath: workspacePath,
+			SocketPath:    socketPath,
+			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		})
+	}()
+	store := filesystem.NewWorkspaceStore()
+	testsupport.WaitFor(t, func() bool {
+		select {
+		case err := <-errs:
+			cancel()
+			t.Fatalf("daemon exited before reporting running status: %v", err)
+		default:
+		}
+		status, err := store.DaemonStatus(context.Background(), workspacePath)
+		return err == nil && status.State == daemon.StateRunning
+	})
+	return cancel, errs
+}
+
+func stopCLITestDaemon(t *testing.T, cancel context.CancelFunc, errs chan error) {
+	t.Helper()
+	cancel()
+	select {
+	case err := <-errs:
+		if err != nil {
+			t.Fatalf("daemon exited with error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("daemon did not stop")
+	}
 }

@@ -75,7 +75,7 @@ func Serve(ctx context.Context, args Args) error {
 		baseEvents = sqlitestore.NewStore(workspacePath)
 	}
 
-	lock, err := filesystem.AcquireWorkspaceLock(workspacePath, fmt.Sprintf("pid:%d", pid))
+	lock, err := filesystem.AcquireWorkspaceLock(workspacePath, fmt.Sprintf("pid:%d", os.Getpid()))
 	if err != nil {
 		return err
 	}

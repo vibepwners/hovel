@@ -135,9 +135,9 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 			process.killAndWait()
 		}
 	}()
-	process.client.onLog = func(log rpcLog) error {
+	process.client.setOnLog(func(log rpcLog) error {
 		return r.appendLog(context.Background(), request, log)
-	}
+	})
 
 	info, err := process.client.call(ctx, "handshake", nil)
 	if err != nil {
@@ -161,7 +161,7 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 	if err != nil {
 		return run.Result{}, moduleFailure("module failed during execution", "module execute failed", err, process.stderr.String())
 	}
-	result, err := resultFromRPC(request, executeResult, process.client.logs)
+	result, err := resultFromRPC(request, executeResult, process.client.logsSnapshot())
 	if err != nil {
 		return run.Result{}, services.NewModuleExecutionFailure("module returned invalid result", err)
 	}
@@ -482,79 +482,170 @@ func hasPythonSDK(path string) bool {
 type rpcClient struct {
 	decoder *frameDecoder
 	writer  io.WriteCloser
+
+	writeMu sync.Mutex
+
 	mu      sync.Mutex
 	nextID  int
+	pending map[int]chan rpcMessage
 	logs    []rpcLog
 	onLog   func(rpcLog) error
 	onEvent func(rpcSessionEvent) error
+	readErr error
+	done    chan struct{}
+	once    sync.Once
 }
 
 func newClient(stdout io.Reader, stdin io.WriteCloser) *rpcClient {
-	return &rpcClient{decoder: newFrameDecoder(stdout), writer: stdin}
+	client := &rpcClient{
+		decoder: newFrameDecoder(stdout),
+		writer:  stdin,
+		pending: map[int]chan rpcMessage{},
+		done:    make(chan struct{}),
+	}
+	go client.readLoop()
+	return client
 }
 
 func (c *rpcClient) call(ctx context.Context, method string, params any) (map[string]any, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.nextID++
-	id := c.nextID
-	if err := writeFrame(c.writer, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+
+	c.mu.Lock()
+	c.nextID++
+	id := c.nextID
+	responses := make(chan rpcMessage, 1)
+	c.pending[id] = responses
+	c.mu.Unlock()
+	defer c.removePending(id)
+
+	c.writeMu.Lock()
+	if err := writeFrame(c.writer, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
+		c.writeMu.Unlock()
+		return nil, err
+	}
+	c.writeMu.Unlock()
+
 	for {
-		message, err := c.read(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if message.Method == "module/log" {
-			if message.Log.ReceivedAt.IsZero() {
-				message.Log.ReceivedAt = time.Now().UTC()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-c.done:
+			select {
+			case message := <-responses:
+				return rpcResult(message)
+			default:
 			}
-			c.logs = append(c.logs, message.Log)
-			if c.onLog != nil {
-				if err := c.onLog(message.Log); err != nil {
-					return nil, callbackError{err: err}
-				}
+			if err := ctx.Err(); err != nil {
+				return nil, err
 			}
-			continue
+			return nil, c.readError()
+		case message := <-responses:
+			return rpcResult(message)
 		}
-		if message.Method == "module/session" {
-			if c.onEvent != nil {
-				if err := c.onEvent(message.Session); err != nil {
-					return nil, callbackError{err: err}
-				}
-			}
-			continue
-		}
-		if message.ID != id {
-			continue
-		}
-		if message.Error != nil {
-			return nil, errors.New(message.Error.Message)
-		}
-		if message.Result == nil {
-			return map[string]any{}, nil
-		}
-		return message.Result, nil
 	}
 }
 
-func (c *rpcClient) read(ctx context.Context) (rpcMessage, error) {
-	type readResult struct {
-		message rpcMessage
-		err     error
+func rpcResult(message rpcMessage) (map[string]any, error) {
+	if message.Error != nil {
+		return nil, errors.New(message.Error.Message)
 	}
-	ch := make(chan readResult, 1)
-	go func() {
+	if message.Result == nil {
+		return map[string]any{}, nil
+	}
+	return message.Result, nil
+}
+
+func (c *rpcClient) readLoop() {
+	for {
 		message, err := c.decoder.read()
-		ch <- readResult{message: message, err: err}
-	}()
-	select {
-	case <-ctx.Done():
-		return rpcMessage{}, ctx.Err()
-	case result := <-ch:
-		return result.message, result.err
+		if err != nil {
+			c.finish(err)
+			return
+		}
+		if message.Method == "module/log" || message.Method == "module/session" {
+			if err := c.handleNotification(message); err != nil {
+				c.finish(err)
+				return
+			}
+			continue
+		}
+		c.mu.Lock()
+		responses := c.pending[message.ID]
+		c.mu.Unlock()
+		if responses == nil {
+			continue
+		}
+		select {
+		case responses <- message:
+		default:
+		}
 	}
+}
+
+func (c *rpcClient) handleNotification(message rpcMessage) error {
+	switch message.Method {
+	case "module/log":
+		if message.Log.ReceivedAt.IsZero() {
+			message.Log.ReceivedAt = time.Now().UTC()
+		}
+		c.mu.Lock()
+		c.logs = append(c.logs, message.Log)
+		onLog := c.onLog
+		c.mu.Unlock()
+		if onLog != nil {
+			if err := onLog(message.Log); err != nil {
+				return callbackError{err: err}
+			}
+		}
+	case "module/session":
+		c.mu.Lock()
+		onEvent := c.onEvent
+		c.mu.Unlock()
+		if onEvent != nil {
+			if err := onEvent(message.Session); err != nil {
+				return callbackError{err: err}
+			}
+		}
+	}
+	return nil
+}
+
+func (c *rpcClient) removePending(id int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.pending, id)
+}
+
+func (c *rpcClient) finish(err error) {
+	c.once.Do(func() {
+		c.mu.Lock()
+		c.readErr = err
+		c.mu.Unlock()
+		close(c.done)
+	})
+}
+
+func (c *rpcClient) readError() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.readErr != nil {
+		return c.readErr
+	}
+	return io.EOF
+}
+
+func (c *rpcClient) setOnLog(fn func(rpcLog) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onLog = fn
+}
+
+func (c *rpcClient) logsSnapshot() []rpcLog {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]rpcLog(nil), c.logs...)
 }
 
 type rpcMessage struct {

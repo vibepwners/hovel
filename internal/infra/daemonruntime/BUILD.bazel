@@ -22,7 +22,10 @@ go_library(
 go_test(
     name = "daemonruntime_test",
     size = "small",
-    srcs = ["runtime_test.go"],
+    srcs = [
+        "runtime_lock_posix_test.go",
+        "runtime_test.go",
+    ],
     data = [
         "//examples/python:sources",
         "//sdk/python:sources",

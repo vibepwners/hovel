@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -217,20 +218,32 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 	if info.IsDir() {
 		return commands.ArtifactRecord{}, errors.New("artifact path must be a file")
 	}
-	data, err := os.ReadFile(path)
+	source, err := os.Open(path)
 	if err != nil {
 		return commands.ArtifactRecord{}, err
 	}
-	sum := sha256.Sum256(data)
-	sha := hex.EncodeToString(sum[:])
+	defer source.Close()
 	relPath := filepath.Join("artifacts", materialization.ThrowID, materialization.RunID, safeArtifactName(materialization.Artifact.Name))
 	absPath := filepath.Join(workspacePath, relPath)
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 		return commands.ArtifactRecord{}, err
 	}
-	if err := os.WriteFile(absPath, data, 0o600); err != nil {
+	destination, err := os.OpenFile(absPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
 		return commands.ArtifactRecord{}, err
 	}
+	hash := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(destination, hash), source)
+	closeErr := destination.Close()
+	if copyErr != nil {
+		_ = os.Remove(absPath)
+		return commands.ArtifactRecord{}, copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(absPath)
+		return commands.ArtifactRecord{}, closeErr
+	}
+	sha := hex.EncodeToString(hash.Sum(nil))
 	createdAt := materialization.CreatedAt
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
@@ -246,7 +259,7 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 		Kind:      materialization.Artifact.Kind,
 		Path:      relPath,
 		SHA256:    sha,
-		Size:      int(info.Size()),
+		Size:      int(written),
 		CreatedAt: createdAt.UTC().Format(time.RFC3339Nano),
 	}
 	if err := sqlitestore.NewStore(workspacePath).RecordArtifact(ctx, record); err != nil {

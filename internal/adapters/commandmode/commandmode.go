@@ -117,11 +117,62 @@ func (a App) run(ctx context.Context, args []string, stdout, stderr io.Writer, e
 }
 
 func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
-	fields := strings.Fields(line)
+	fields, err := splitCommandLine(line)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 	if len(fields) == 0 {
 		return 0
 	}
 	return a.run(ctx, fields, stdout, stderr, true)
+}
+
+func splitCommandLine(line string) ([]string, error) {
+	var fields []string
+	var current strings.Builder
+	var quote rune
+	inField := false
+
+	runes := []rune(line)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		switch {
+		case quote != 0:
+			if r == '\\' && i+1 < len(runes) && (runes[i+1] == quote || runes[i+1] == '\\') {
+				i++
+				current.WriteRune(runes[i])
+				inField = true
+				continue
+			}
+			if r == quote {
+				quote = 0
+				inField = true
+				continue
+			}
+			current.WriteRune(r)
+			inField = true
+		case r == '\'' || r == '"':
+			quote = r
+			inField = true
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			if inField {
+				fields = append(fields, current.String())
+				current.Reset()
+				inField = false
+			}
+		default:
+			current.WriteRune(r)
+			inField = true
+		}
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated quoted string")
+	}
+	if inField {
+		fields = append(fields, current.String())
+	}
+	return fields, nil
 }
 
 func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {

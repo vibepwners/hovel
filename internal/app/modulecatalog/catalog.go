@@ -371,6 +371,12 @@ func ValidateValue(requirement Requirement, raw string) error {
 }
 
 func DisplayValue(requirement Requirement, raw string) string {
+	if requirement.Secret || requirement.Type == ValueSecret {
+		if strings.TrimSpace(raw) == "" {
+			return ""
+		}
+		return "********"
+	}
 	return raw
 }
 

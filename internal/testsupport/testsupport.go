@@ -206,16 +206,37 @@ func (f DaemonFixture) Stop(t testing.TB) {
 	}
 }
 
+type PythonModuleFixture struct {
+	ID   string
+	Body string
+}
+
 func WritePythonModuleFixture(t testing.TB, moduleID, body string) string {
+	return WritePythonModuleFixtures(t, PythonModuleFixture{ID: moduleID, Body: body})
+}
+
+func WritePythonModuleFixtures(t testing.TB, modules ...PythonModuleFixture) string {
 	t.Helper()
 	root := t.TempDir()
 	projectDir := filepath.Join(root, "project")
-	packageName := pythonPackageName(moduleID)
-	packageDir := filepath.Join(projectDir, packageName)
-	if err := os.MkdirAll(packageDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	main := `import json
+	config := struct {
+		Modules []struct {
+			ID         string `json:"id"`
+			Runtime    string `json:"runtime"`
+			ProjectDir string `json:"project_dir"`
+			Module     string `json:"module"`
+		} `json:"modules"`
+	}{}
+	for _, module := range modules {
+		if module.ID == "" {
+			t.Fatal("python module fixture id is required")
+		}
+		packageName := pythonPackageName(module.ID)
+		packageDir := filepath.Join(projectDir, packageName)
+		if err := os.MkdirAll(packageDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		main := `import json
 import sys
 
 def read():
@@ -235,29 +256,22 @@ def send(message):
     sys.stdout.buffer.write(body)
     sys.stdout.buffer.flush()
 
-` + body + "\n"
-	if err := os.WriteFile(filepath.Join(packageDir, "__main__.py"), []byte(main), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	config := struct {
-		Modules []struct {
+` + module.Body + "\n"
+		if err := os.WriteFile(filepath.Join(packageDir, "__main__.py"), []byte(main), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		config.Modules = append(config.Modules, struct {
 			ID         string `json:"id"`
 			Runtime    string `json:"runtime"`
 			ProjectDir string `json:"project_dir"`
 			Module     string `json:"module"`
-		} `json:"modules"`
-	}{}
-	config.Modules = append(config.Modules, struct {
-		ID         string `json:"id"`
-		Runtime    string `json:"runtime"`
-		ProjectDir string `json:"project_dir"`
-		Module     string `json:"module"`
-	}{
-		ID:         moduleID,
-		Runtime:    "jsonrpc-stdio",
-		ProjectDir: projectDir,
-		Module:     packageName,
-	})
+		}{
+			ID:         module.ID,
+			Runtime:    "jsonrpc-stdio",
+			ProjectDir: projectDir,
+			Module:     packageName,
+		})
+	}
 	configBody, err := json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
