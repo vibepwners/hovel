@@ -54,15 +54,15 @@ func (typ Type) String() string {
 }
 
 type Refs struct {
-	WorkspaceID string
-	Operation   string
-	Chain       string
-	ThrowID     string
-	RunID       string
-	ModuleID    string
-	ServiceID   string
-	TargetID    string
-	SessionID   string
+	WorkspaceID string `json:"workspace,omitempty"`
+	Operation   string `json:"operation,omitempty"`
+	Chain       string `json:"chain,omitempty"`
+	ThrowID     string `json:"throwId,omitempty"`
+	RunID       string `json:"runId,omitempty"`
+	ModuleID    string `json:"moduleId,omitempty"`
+	ServiceID   string `json:"serviceId,omitempty"`
+	TargetID    string `json:"target,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
 }
 
 type Level string
@@ -153,6 +153,7 @@ type Filter struct {
 	Level     string
 	Type      string
 	Topic     string
+	PlanHash  string
 }
 
 func (f Filter) Match(evt Event) bool {
@@ -184,6 +185,9 @@ func (f Filter) Match(evt Event) bool {
 		return false
 	}
 	if f.Topic != "" && evt.Topic != f.Topic {
+		return false
+	}
+	if f.PlanHash != "" && evt.Fields["planHash"] != f.PlanHash {
 		return false
 	}
 	return true

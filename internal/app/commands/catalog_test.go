@@ -402,6 +402,7 @@ func TestConfirmHandlerRecordsPlanAndConfirmationWithoutRunning(t *testing.T) {
 	plans := &fakePlanRecorder{}
 	confirmations := &fakeConfirmationRecorder{}
 	recorder := &fakeRunRecorder{}
+	input := &fakeInput{answer: "yes"}
 	registry := HovelRegistry(Runtime{
 		Workspaces:    fakeWorkspaceService{},
 		Daemons:       fakeDaemonService{},
@@ -418,6 +419,7 @@ func TestConfirmHandlerRecordsPlanAndConfirmationWithoutRunning(t *testing.T) {
 			"chain":     "mock-exploit",
 			"target":    "mock://target",
 		},
+		Input: input,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -434,6 +436,9 @@ func TestConfirmHandlerRecordsPlanAndConfirmationWithoutRunning(t *testing.T) {
 	}
 	if confirmations.records[0].PlanHash != wantPlan.PlanHash || confirmations.records[0].Method != "preconfirmed" {
 		t.Fatalf("confirmation = %#v, want preconfirmed for plan hash %s", confirmations.records[0], wantPlan.PlanHash)
+	}
+	if input.prompt.Title != "THROW REVIEW" || input.prompt.Action != "confirm" {
+		t.Fatalf("prompt = %#v, want confirm review prompt", input.prompt)
 	}
 	if _, ok := result.JSON.(ThrowConfirmationRecord); !ok {
 		t.Fatalf("json payload type = %T, want ThrowConfirmationRecord", result.JSON)
@@ -622,7 +627,8 @@ func TestArtifactListAndInspectHandlersUseRepository(t *testing.T) {
 
 func TestThrowInspectCanIncludeStructuredEvents(t *testing.T) {
 	plan := newThrowPlanForExecution(".hovel", throwExecution{Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
-	evt := testEvent(t, "event-1", "hovel.throw.started", "throw started", event.Refs{WorkspaceID: ".hovel", Operation: "default", Chain: plan.Chain, ThrowID: throwRecordID(plan)})
+	evt := testEvent(t, "event-1", "hovel.throw.started", "throw started", event.Refs{WorkspaceID: ".hovel", Operation: "default", Chain: plan.Chain, ThrowID: "throw-1"})
+	evt.Fields = map[string]string{"planHash": plan.PlanHash}
 	plans := &fakePlanRepository{records: []ThrowPlanRecord{plan}}
 	events := &fakeEventRepository{events: []event.Event{evt}}
 	registry := HovelRegistry(Runtime{
@@ -653,8 +659,8 @@ func TestThrowInspectCanIncludeStructuredEvents(t *testing.T) {
 	if len(payload.Events) != 1 {
 		t.Fatalf("events = %#v, want one", payload.Events)
 	}
-	if got := events.filter.ThrowID; got != throwRecordID(plan) {
-		t.Fatalf("event filter throw id = %q, want %q", got, throwRecordID(plan))
+	if got := events.filter.PlanHash; got != plan.PlanHash {
+		t.Fatalf("event filter plan hash = %q, want %q", got, plan.PlanHash)
 	}
 }
 
@@ -922,11 +928,108 @@ func TestThrowPlanHashIncludesReviewedConfigAndSteps(t *testing.T) {
 	if baseHash == newThrowPlanForExecution(".hovel", changedStep).PlanHash {
 		t.Fatal("plan hash did not change when step modules changed")
 	}
+	if newThrowPlanForExecution(".hovel", base).ID == newThrowPlanForExecution(".hovel", changedConfig).ID {
+		t.Fatal("plan id did not change when reviewed config changed")
+	}
+}
+
+func TestThrowRecordsDistinctExecutionsForSamePlan(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	throwRecorder := &fakeThrowRecorder{}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		Runs:          fakeRunClientFactory{recorder: &fakeRunRecorder{}},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Throws:        throwRecorder,
+		Confirmations: &fakeConfirmationRecorder{},
+	})
+	definition, _ := registry.Find("throw")
+	invocation := Invocation{
+		Options: map[string]string{"workspace": ".hovel", "chain": "mock-exploit", "target": "mock://target"},
+		Flags:   map[string]bool{"now": true},
+	}
+
+	first, err := definition.Execute(context.Background(), invocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := definition.Execute(context.Background(), invocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstPayload := first.JSON.(ThrowPayload)
+	secondPayload := second.JSON.(ThrowPayload)
+	if firstPayload.Plan.PlanHash != secondPayload.Plan.PlanHash {
+		t.Fatalf("plan hashes differ = %q / %q", firstPayload.Plan.PlanHash, secondPayload.Plan.PlanHash)
+	}
+	if firstPayload.ThrowID == secondPayload.ThrowID {
+		t.Fatalf("throw ids are equal: %q", firstPayload.ThrowID)
+	}
+	if len(throwRecorder.records) != 2 {
+		t.Fatalf("throw records = %#v, want two executions", throwRecorder.records)
+	}
+}
+
+func TestThrowTargetOverrideScopesTargetConfigs(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-exploit@v0.0.0-example"); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"mock://one", "mock://two"} {
+		if err := session.AddTarget(target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := session.SetTargetConfig("mock://one", "target.host", "one.local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://two", "target.host", "two.local"); err != nil {
+		t.Fatal(err)
+	}
+	runtime := Runtime{Session: session, Modules: exampleCatalog()}
+
+	throw, err := throwInputs(context.Background(), runtime, Invocation{Options: map[string]string{"target": "mock://one"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantConfigs := map[string]map[string]string{"mock://one": {"target.host": "one.local"}}
+	if !reflect.DeepEqual(throw.TargetConfigs, wantConfigs) {
+		t.Fatalf("target configs = %#v, want %#v", throw.TargetConfigs, wantConfigs)
+	}
+	baseHash := planHashForExecution(throw)
+	changed := throw
+	changed.TargetConfigs = map[string]map[string]string{
+		"mock://one": {"target.host": "one.local"},
+		"mock://two": {"target.host": "changed.local"},
+	}
+	if baseHash == planHashForExecution(changed) {
+		t.Fatal("test setup invalid: unscoped target config should affect hash")
+	}
 }
 
 func TestConfirmChainFileRecordsSamePlanAsThrowChainFile(t *testing.T) {
 	plans := &fakePlanRecorder{}
 	confirmations := &fakeConfirmationStore{}
+	input := &fakeInput{answer: "yes"}
 	store := &fakeChainFileStore{reads: map[string]ChainFile{
 		"alpha.chain.yaml": configuredChainFileFixture("alpha", "mock://target"),
 	}}
@@ -945,6 +1048,7 @@ func TestConfirmChainFileRecordsSamePlanAsThrowChainFile(t *testing.T) {
 	_, err := confirmDefinition.Execute(context.Background(), Invocation{
 		Positionals: map[string]string{"file": "alpha.chain.yaml"},
 		Options:     map[string]string{"workspace": ".hovel"},
+		Input:       input,
 	})
 	if err != nil {
 		t.Fatal(err)

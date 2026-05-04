@@ -175,7 +175,7 @@ func (s WorkspaceStore) MaterializeArtifact(ctx context.Context, materialization
 	data := []byte(materialization.Artifact.Data)
 	sum := sha256.Sum256(data)
 	sha := hex.EncodeToString(sum[:])
-	artifactID := "artifact-" + sha
+	artifactID := artifactRecordID(materialization, sha)
 	relPath := filepath.Join("artifacts", materialization.ThrowID, materialization.RunID, safeArtifactName(materialization.Artifact.Name))
 	absPath := filepath.Join(workspacePath, relPath)
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
@@ -228,7 +228,7 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 		createdAt = time.Now().UTC()
 	}
 	record := commands.ArtifactRecord{
-		ID:        "artifact-" + sha,
+		ID:        artifactRecordID(materialization, sha),
 		Workspace: workspacePath,
 		ThrowID:   materialization.ThrowID,
 		RunID:     materialization.RunID,
@@ -245,6 +245,18 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 		return commands.ArtifactRecord{}, err
 	}
 	return record, nil
+}
+
+func artifactRecordID(materialization commands.ArtifactMaterialization, contentSHA string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		materialization.ThrowID,
+		materialization.RunID,
+		materialization.ModuleID,
+		materialization.Target,
+		materialization.Artifact.Name,
+		contentSHA,
+	}, "\x00")))
+	return "artifact-" + hex.EncodeToString(sum[:16])
 }
 
 func (s WorkspaceStore) RecordEvent(ctx context.Context, workspacePath string, evt event.Event) error {

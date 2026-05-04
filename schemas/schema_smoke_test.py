@@ -22,13 +22,22 @@ class SchemaSmokeTest(unittest.TestCase):
                 with open(path, "r", encoding="utf-8") as handle:
                     schema = json.load(handle)
                 self.assertEqual(schema["type"], "object")
+                kind = schema_kind(schema)
+                if kind == "Event":
+                    self.assertIn("id", schema["required"])
+                    self.assertIn("schemaVersion", schema["required"])
+                    self.assertIn("type", schema["required"])
+                    self.assertIn("refs", schema["required"])
+                    spec = schema["properties"]
+                    self.assertEqual(spec["schemaVersion"]["const"], "hovel.event/v1alpha1")
+                    self.assertEqual(spec["level"]["enum"], ["debug", "info", "warn", "error"])
+                    continue
                 self.assertIn("apiVersion", schema["required"])
                 self.assertIn("kind", schema["required"])
                 self.assertIn("metadata", schema["required"])
                 self.assertIn("spec", schema["required"])
                 self.assertIn("const", schema["properties"]["kind"])
                 spec = schema["properties"]["spec"]["properties"]
-                kind = schema["properties"]["kind"]["const"]
                 if kind in {"Module", "Service"}:
                     self.assertEqual(spec["runtime"]["properties"]["type"]["enum"], ["jsonrpc-stdio"])
                 if schema["properties"]["kind"]["const"] == "Module":
@@ -44,17 +53,13 @@ class SchemaSmokeTest(unittest.TestCase):
                 if schema["properties"]["kind"]["const"] == "ThrowPlan":
                     self.assertIn("confirmation", spec)
                     self.assertIn("now_bypass", schema["$defs"]["confirmation"]["properties"]["method"]["enum"])
-                if schema["properties"]["kind"]["const"] == "Event":
-                    self.assertEqual(schema["properties"]["apiVersion"]["const"], "hovel.event/v1alpha1")
-                    self.assertEqual(spec["schemaVersion"]["const"], "hovel.event/v1alpha1")
-                    self.assertEqual(spec["level"]["enum"], ["debug", "info", "warn", "error"])
 
     def test_contract_fixtures_match_schemas(self):
         schemas = {}
         for path in sys.argv[1:]:
             with open(path, "r", encoding="utf-8") as handle:
                 schema = json.load(handle)
-            schemas[schema["properties"]["kind"]["const"]] = schema
+            schemas[schema_kind(schema)] = schema
 
         for kind, fixtures in SCHEMA_FIXTURES.items():
             self.assertIn(kind, schemas)
@@ -78,9 +83,19 @@ def schema_by_kind(paths, kind):
     for path in paths:
         with open(path, "r", encoding="utf-8") as handle:
             schema = json.load(handle)
-        if schema["properties"]["kind"]["const"] == kind:
+        if schema_kind(schema) == kind:
             return schema
     raise AssertionError(f"missing schema for {kind}")
+
+
+def schema_kind(schema):
+    properties = schema.get("properties", {})
+    kind = properties.get("kind", {})
+    if "const" in kind:
+        return kind["const"]
+    if schema.get("$id", "").endswith("/hovel.event.schema.json"):
+        return "Event"
+    raise AssertionError(f"schema kind not identifiable: {schema.get('$id')!r}")
 
 
 def validate(value, schema, root, path):

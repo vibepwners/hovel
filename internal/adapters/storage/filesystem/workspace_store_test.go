@@ -171,6 +171,45 @@ func TestMaterializeArtifactStoresBytesOutsideSQLite(t *testing.T) {
 	}
 }
 
+func TestMaterializeArtifactKeepsSameBytesDistinctAcrossThrows(t *testing.T) {
+	store := NewWorkspaceStore()
+	workspacePath := filepath.Join(t.TempDir(), ".hovel")
+	materialization := commands.ArtifactMaterialization{
+		Workspace: workspacePath,
+		RunID:     "run-1",
+		ModuleID:  "mock-exploit",
+		Target:    "mock://target",
+		Artifact: commands.Artifact{
+			Name: "transcript.txt",
+			Kind: "text/plain",
+			Data: "same bytes",
+		},
+	}
+	first := materialization
+	first.ThrowID = "throw-one"
+	firstRecord, err := store.MaterializeArtifact(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := materialization
+	second.ThrowID = "throw-two"
+	secondRecord, err := store.MaterializeArtifact(context.Background(), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if firstRecord.ID == secondRecord.ID {
+		t.Fatalf("artifact ids collided: %q", firstRecord.ID)
+	}
+	artifacts, err := store.ListArtifacts(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 2 {
+		t.Fatalf("artifacts = %#v, want two records", artifacts)
+	}
+}
+
 func TestMaterializeArtifactRegistersFileReferenceWithoutCopyingBytes(t *testing.T) {
 	store := NewWorkspaceStore()
 	workspacePath := filepath.Join(t.TempDir(), ".hovel")

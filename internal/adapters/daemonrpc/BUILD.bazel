@@ -6,11 +6,11 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_connectrpc_connect//:connect",
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/run",
+        "@com_connectrpc_connect//:connect",
     ],
 )
 

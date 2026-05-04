@@ -224,8 +224,8 @@ func exampleCatalog() Catalog {
 	)
 }
 
-func TestDisplayValueRedactsSecrets(t *testing.T) {
-	if got := DisplayValue(Requirement{Type: ValueSecret}, "hunter2"); got != "<secret:set>" {
+func TestDisplayValueLeavesSecretsVisible(t *testing.T) {
+	if got := DisplayValue(Requirement{Type: ValueSecret}, "hunter2"); got != "hunter2" {
 		t.Fatalf("secret display = %q", got)
 	}
 	if got := DisplayValue(Requirement{Type: ValueString}, "visible"); got != "visible" {

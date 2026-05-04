@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -385,7 +386,6 @@ func HovelRegistry(runtime Runtime) Registry {
 			Summary: "Inspect daemon status for a workspace.",
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
-				boolOption("events", "", "Include structured events"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: daemonStatusHandler(runtime),
@@ -701,6 +701,7 @@ func HovelRegistry(runtime Runtime) Registry {
 			},
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
+				boolOption("events", "", "Include structured events for the reviewed plan"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: throwsInspectHandler(runtime),
@@ -1527,7 +1528,7 @@ func throwHandler(runtime Runtime) Handler {
 		}
 		var payload ThrowPayload
 		payload.Plan = plan.Payload()
-		payload.ThrowID = throwRecordID(plan)
+		payload.ThrowID = newThrowRecordID(plan, throwStarted)
 		payload.Chain = throw.Chain
 		payload.Targets = append([]string(nil), throw.Targets...)
 		if err := recordStructuredEvent(ctx, runtime, status.WorkspacePath, "hovel.throw.started", "throw started", plan, payload.ThrowID, "", event.LevelInfo, nil); err != nil {
@@ -1629,6 +1630,20 @@ func confirmHandler(runtime Runtime) Handler {
 		plan, err := recordThrowPlan(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
+		}
+		if invocation.NonInteractive {
+			return Result{}, fmt.Errorf("confirm requires an interactive typed yes confirmation")
+		}
+		if invocation.Input == nil {
+			return Result{}, fmt.Errorf("confirm requires confirmation; type yes at the prompt")
+		}
+		prompt := throwConfirmationPrompt(plan, "confirm")
+		answer, err := invocation.Input.Confirm(ctx, prompt)
+		if err != nil {
+			return Result{}, err
+		}
+		if !answer.Confirmed(prompt) {
+			return Result{}, fmt.Errorf("confirm cancelled")
 		}
 		confirmation, err := recordThrowConfirmation(ctx, runtime, plan, "preconfirmed")
 		if err != nil {
@@ -1837,7 +1852,7 @@ func throwsInspectHandler(runtime Runtime) Handler {
 			if runtime.EventRecords == nil {
 				return Result{}, fmt.Errorf("event repository is not configured")
 			}
-			events, err := runtime.EventRecords.ListEvents(ctx, workspacePath, event.Filter{ThrowID: throwRecordID(plan)})
+			events, err := runtime.EventRecords.ListEvents(ctx, workspacePath, event.Filter{PlanHash: plan.PlanHash})
 			if err != nil {
 				return Result{}, err
 			}
@@ -1996,11 +2011,10 @@ func newThrowPlan(workspacePath, chain string, targets []string) ThrowPlanRecord
 }
 
 func newThrowPlanForExecution(workspacePath string, throw throwExecution) ThrowPlanRecord {
-	id := "plan-" + stablePlanComponent(throw.Chain, throw.Targets)
 	hash := planHashForExecution(throw)
 	return ThrowPlanRecord{
-		ID:             id,
-		ConfirmationID: "confirmation-" + stablePlanComponent(throw.Chain, throw.Targets),
+		ID:             "plan-" + stableIDComponent(hash),
+		ConfirmationID: "confirmation-" + stableIDComponent(hash),
 		PlanHash:       hash,
 		Workspace:      workspacePath,
 		Operation:      throw.Operation,
@@ -2032,8 +2046,12 @@ func newThrowConfirmation(plan ThrowPlanRecord, clientID, method string, confirm
 	}
 }
 
-func throwRecordID(plan ThrowPlanRecord) string {
-	return "throw-" + strings.TrimPrefix(plan.ID, "plan-")
+func newThrowRecordID(plan ThrowPlanRecord, startedAt time.Time) string {
+	started := startedAt.UTC()
+	if started.IsZero() {
+		started = time.Now().UTC()
+	}
+	return "throw-" + strings.TrimPrefix(plan.ID, "plan-") + "-" + strconv.FormatInt(started.UnixNano(), 36)
 }
 
 func newThrowRecord(workspacePath string, plan ThrowPlanRecord, payload ThrowPayload, startedAt, completedAt time.Time) ThrowRecord {
@@ -2140,6 +2158,17 @@ func stablePlanComponent(chain string, targets []string) string {
 	return out
 }
 
+func stableIDComponent(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 16 {
+		return value[:16]
+	}
+	if value != "" {
+		return value
+	}
+	return "record"
+}
+
 type throwExecution struct {
 	Operation     string
 	Chain         string
@@ -2199,6 +2228,7 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 		}
 		modules = append(modules, moduleRef)
 	}
+	targetConfigs = targetConfigsForTargets(targets, targetConfigs)
 	return throwExecution{
 		Operation:     operation,
 		Chain:         chain,
@@ -2234,6 +2264,7 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 	if target := invocation.Option("target"); target != "" {
 		targets = []string{target}
 	}
+	targetConfigs = targetConfigsForTargets(targets, targetConfigs)
 	modules := make([]string, 0, len(file.Spec.Steps))
 	for _, step := range file.Spec.Steps {
 		if !strings.HasPrefix(strings.TrimSpace(step.Uses), "module:") {
@@ -2256,6 +2287,24 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 		ChainConfig:   cloneStringMap(file.Spec.Config),
 		TargetConfigs: targetConfigs,
 	}, nil
+}
+
+func targetConfigsForTargets(targets []string, configs map[string]map[string]string) map[string]map[string]string {
+	if len(targets) == 0 || len(configs) == 0 {
+		return nil
+	}
+	scoped := make(map[string]map[string]string, len(targets))
+	for _, target := range targets {
+		config := configs[target]
+		if len(config) == 0 {
+			continue
+		}
+		scoped[target] = cloneStringMap(config)
+	}
+	if len(scoped) == 0 {
+		return nil
+	}
+	return scoped
 }
 
 func validateChainFileForThrow(file ChainFile) error {

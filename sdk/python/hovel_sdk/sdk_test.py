@@ -106,7 +106,10 @@ class SDKTest(unittest.TestCase):
 
         self.assertEqual(artifacts[0], {"name": "transcript.txt", "kind": "text/plain", "data": "inline bytes"})
         self.assertEqual(artifacts[1], {"name": "notes.txt", "kind": "text/plain", "data": "operator notes"})
-        self.assertEqual(artifacts[2], {"name": "summary.json", "kind": "application/json", "data": '{"count":2,"ok":true}'})
+        self.assertEqual(
+            artifacts[2],
+            {"name": "summary.json", "kind": "application/json", "data": '{"count":2,"ok":true}'},
+        )
         self.assertEqual(artifacts[3], {"name": "loot.txt", "kind": "text/plain", "path": str(path)})
 
     def test_async_module_can_open_and_drive_shell_session(self) -> None:

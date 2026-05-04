@@ -34,7 +34,6 @@ go_test(
         "//internal/app/commands",
         "//internal/app/operatorsession",
         "//internal/domain/daemon",
-        "//internal/domain/event",
         "//internal/domain/workspace",
     ],
 )
