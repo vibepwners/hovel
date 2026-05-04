@@ -61,7 +61,7 @@ type Invocation struct {
 	Positionals    map[string]string
 	Options        map[string]string
 	Flags          map[string]bool
-	Confirmer      ThrowConfirmer
+	Input          Input
 	NonInteractive bool
 }
 
@@ -90,6 +90,36 @@ type Result struct {
 	Human string
 	JSON  any
 	Log   operatorlog.Log
+}
+
+type Input interface {
+	Confirm(context.Context, ConfirmationPrompt) (ConfirmationAnswer, error)
+}
+
+type ConfirmationPrompt struct {
+	Title           string
+	Action          string
+	RequiredLiteral string
+	Fields          []ConfirmationField
+	Plan            ThrowPlanRecord
+}
+
+type ConfirmationField struct {
+	Label string
+	Value string
+	Muted bool
+}
+
+type ConfirmationAnswer struct {
+	Value string
+}
+
+func (a ConfirmationAnswer) Confirmed(prompt ConfirmationPrompt) bool {
+	required := strings.TrimSpace(prompt.RequiredLiteral)
+	if required == "" {
+		required = "yes"
+	}
+	return strings.TrimSpace(a.Value) == required
 }
 
 type Registry struct {

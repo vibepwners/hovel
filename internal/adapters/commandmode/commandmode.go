@@ -22,6 +22,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 	"github.com/akamensky/argparse"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -70,6 +71,8 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 		Confirmations:      store,
 		Artifacts:          store,
 		ArtifactRecords:    store,
+		Events:             store,
+		EventRecords:       store,
 		ThrowConfirmations: store,
 		ThrowPlans:         store,
 		ChainFiles:         chainFileDiskStore{},
@@ -87,6 +90,10 @@ func (a App) Registry() commands.Registry {
 }
 
 func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return a.run(ctx, args, stdout, stderr, false)
+}
+
+func (a App) run(ctx context.Context, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
 	if len(args) == 0 || topLevelHelpRequested(args) {
 		parser := a.rootParser()
 		if topLevelHelpRequested(args) {
@@ -106,7 +113,7 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		fmt.Fprint(stderr, a.rootParser().Usage(fmt.Sprintf("unknown command %q", strings.Join(commandPath(args), " "))))
 		return 2
 	}
-	return a.runDefinition(ctx, definition, commandArgs, stdout, stderr)
+	return a.runDefinition(ctx, definition, commandArgs, stdout, stderr, echoConfirmationAnswer)
 }
 
 func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
@@ -114,10 +121,10 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 	if len(fields) == 0 {
 		return 0
 	}
-	return a.Run(ctx, fields, stdout, stderr)
+	return a.run(ctx, fields, stdout, stderr, true)
 }
 
-func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer) int {
+func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
 	parser := commandParser(definition)
 	if helpRequested(args) {
 		fmt.Fprint(stdout, usage(definition, parser, nil))
@@ -128,7 +135,7 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 	if !ok {
 		return code
 	}
-	parsed.Confirmer = terminalThrowConfirmer{in: os.Stdin, out: stdout}
+	parsed.Input = terminalInput{in: os.Stdin, out: stdout, echoAnswer: echoConfirmationAnswer}
 	parsed.NonInteractive = stdinNonInteractive()
 	result, err := definition.Execute(ctx, parsed)
 	if err != nil {
@@ -164,33 +171,94 @@ func stdinNonInteractive() bool {
 	return info.Mode()&os.ModeCharDevice == 0
 }
 
-type terminalThrowConfirmer struct {
-	in  io.Reader
-	out io.Writer
+type terminalInput struct {
+	in         io.Reader
+	out        io.Writer
+	echoAnswer bool
 }
 
-func (c terminalThrowConfirmer) ConfirmThrow(ctx context.Context, plan commands.ThrowPlanRecord) (bool, error) {
+func (c terminalInput) Confirm(ctx context.Context, prompt commands.ConfirmationPrompt) (commands.ConfirmationAnswer, error) {
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return commands.ConfirmationAnswer{}, err
 	}
 	if c.out != nil {
-		fmt.Fprintf(c.out, "%s\n", throwReviewText(plan))
-		fmt.Fprint(c.out, "Type yes to throw: ")
+		fmt.Fprintf(c.out, "%s\n", confirmationPromptTextBlock(prompt))
+		fmt.Fprintf(c.out, "%s ", confirmationPromptText(prompt))
+	}
+	restoreTerminal, terminalEchoEnabled := func() (func() error, bool) {
+		if !c.echoAnswer {
+			return nil, false
+		}
+		return enableTerminalEcho()
+	}()
+	if restoreTerminal != nil {
+		defer restoreTerminal()
 	}
 	var answer string
 	if _, err := fmt.Fscan(c.in, &answer); err != nil {
-		return false, fmt.Errorf("read throw confirmation: %w", err)
+		return commands.ConfirmationAnswer{}, fmt.Errorf("read confirmation: %w", err)
 	}
-	return strings.TrimSpace(answer) == "yes", nil
+	if c.echoAnswer && !terminalEchoEnabled && c.out != nil {
+		fmt.Fprintln(c.out, answer)
+	}
+	return commands.ConfirmationAnswer{Value: answer}, nil
 }
 
-func throwReviewText(plan commands.ThrowPlanRecord) string {
-	return strings.Join([]string{
-		fmt.Sprintf("Throw plan %s", plan.ID),
-		fmt.Sprintf("chain       %s", plan.Chain),
-		fmt.Sprintf("targets     %s", strings.Join(plan.Targets, ", ")),
-		fmt.Sprintf("plan hash   %s", plan.PlanHash),
-	}, "\n")
+func confirmationPromptText(prompt commands.ConfirmationPrompt) string {
+	action := strings.TrimSpace(prompt.Action)
+	if action == "" {
+		action = "throw"
+	}
+	required := strings.TrimSpace(prompt.RequiredLiteral)
+	if required == "" {
+		required = "yes"
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#facc15")).Bold(true).Render("Type ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Bold(true).Render(required) +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#facc15")).Bold(true).Render(" to "+action+":")
+}
+
+func confirmationPromptTextBlock(prompt commands.ConfirmationPrompt) string {
+	return confirmationPromptRenderer{}.Render(prompt)
+}
+
+type confirmationPromptRenderer struct{}
+
+func (confirmationPromptRenderer) Render(prompt commands.ConfirmationPrompt) string {
+	titleText := strings.TrimSpace(prompt.Title)
+	if titleText == "" {
+		titleText = "CONFIRM"
+	}
+	title := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0033")).Bold(true).Render(titleText)
+	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af")).Render(prompt.Plan.ID)
+	lines := []string{strings.TrimSpace(title + " " + subtitle), ""}
+	for _, field := range prompt.Fields {
+		lines = append(lines, reviewRow(field))
+	}
+	body := strings.Join(lines, "\n")
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00e5ff")).
+		Padding(1, 2).
+		Width(76).
+		Render(body)
+}
+
+func reviewRow(field commands.ConfirmationField) string {
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true).Width(13)
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Bold(true)
+	if field.Muted {
+		valueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af"))
+	}
+	values := strings.Split(field.Value, "\n")
+	if len(values) == 0 {
+		values = []string{""}
+	}
+	lines := []string{labelStyle.Render(field.Label) + " " + valueStyle.Render(values[0])}
+	for _, value := range values[1:] {
+		lines = append(lines, labelStyle.Render("")+" "+valueStyle.Render(value))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (a App) matchDefinition(args []string) (commands.Definition, []string, bool) {
@@ -370,6 +438,8 @@ func (c daemonRunClient) Close() error {
 
 func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMockExploitRequest) (commands.RunMockExploitResponse, error) {
 	result, err := c.client.RunMockExploit(ctx, daemonrpc.RunMockExploitRequest{
+		Operation:    req.Operation,
+		Chain:        req.Chain,
 		ModuleID:     req.ModuleID,
 		Target:       req.Target,
 		Inputs:       req.Inputs,

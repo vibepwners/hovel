@@ -9,6 +9,7 @@ HERE = os.path.dirname(__file__)
 
 SCHEMA_FIXTURES = {
     "Chain": ["fixtures/chain_configured.json", "fixtures/chain_template.json"],
+    "Event": ["fixtures/event_throw_started.json"],
     "Module": ["fixtures/module_artifacts.json"],
     "ThrowPlan": ["fixtures/throw_plan.json"],
 }
@@ -43,6 +44,10 @@ class SchemaSmokeTest(unittest.TestCase):
                 if schema["properties"]["kind"]["const"] == "ThrowPlan":
                     self.assertIn("confirmation", spec)
                     self.assertIn("now_bypass", schema["$defs"]["confirmation"]["properties"]["method"]["enum"])
+                if schema["properties"]["kind"]["const"] == "Event":
+                    self.assertEqual(schema["properties"]["apiVersion"]["const"], "hovel.event/v1alpha1")
+                    self.assertEqual(spec["schemaVersion"]["const"], "hovel.event/v1alpha1")
+                    self.assertEqual(spec["level"]["enum"], ["debug", "info", "warn", "error"])
 
     def test_contract_fixtures_match_schemas(self):
         schemas = {}

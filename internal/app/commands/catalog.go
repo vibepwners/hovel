@@ -17,6 +17,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 )
 
 type WorkspaceInitializer interface {
@@ -59,12 +60,16 @@ type ArtifactRepository interface {
 	GetArtifact(context.Context, string, string) (ArtifactRecord, error)
 }
 
-type ThrowConfirmationRepository interface {
-	GetThrowConfirmation(context.Context, string, string) (ThrowConfirmationRecord, bool, error)
+type EventRecorder interface {
+	RecordEvent(context.Context, string, event.Event) error
 }
 
-type ThrowConfirmer interface {
-	ConfirmThrow(context.Context, ThrowPlanRecord) (bool, error)
+type EventRepository interface {
+	ListEvents(context.Context, string, event.Filter) ([]event.Event, error)
+}
+
+type ThrowConfirmationRepository interface {
+	GetThrowConfirmation(context.Context, string, string) (ThrowConfirmationRecord, bool, error)
 }
 
 type ThrowPlanRepository interface {
@@ -110,6 +115,8 @@ type Runtime struct {
 	Confirmations      ThrowConfirmationRecorder
 	Artifacts          ArtifactRecorder
 	ArtifactRecords    ArtifactRepository
+	Events             EventRecorder
+	EventRecords       EventRepository
 	ThrowConfirmations ThrowConfirmationRepository
 	ThrowPlans         ThrowPlanRepository
 	ChainFiles         ChainFileStore
@@ -126,6 +133,8 @@ type ModuleDatabase interface {
 }
 
 type RunMockExploitRequest struct {
+	Operation    string
+	Chain        string
 	ModuleID     string
 	Target       string
 	Inputs       map[string]string
@@ -252,6 +261,11 @@ type ThrowPayload struct {
 	Results []RunPayload     `json:"results"`
 }
 
+type ThrowInspectPayload struct {
+	Plan   ThrowPlanRecord `json:"plan"`
+	Events []event.Event   `json:"events,omitempty"`
+}
+
 type ThrowPlanPayload struct {
 	ID             string   `json:"id"`
 	ConfirmationID string   `json:"confirmationId"`
@@ -266,6 +280,7 @@ type ThrowPlanRecord struct {
 	ConfirmationID string                       `json:"confirmationId"`
 	PlanHash       string                       `json:"planHash"`
 	Workspace      string                       `json:"workspace"`
+	Operation      string                       `json:"operation,omitempty"`
 	Chain          string                       `json:"chain"`
 	Targets        []string                     `json:"targets"`
 	Modules        []string                     `json:"modules,omitempty"`
@@ -370,6 +385,7 @@ func HovelRegistry(runtime Runtime) Registry {
 			Summary: "Inspect daemon status for a workspace.",
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
+				boolOption("events", "", "Include structured events"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: daemonStatusHandler(runtime),
@@ -651,6 +667,20 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: confirmHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"review"},
+			Summary: "Review and confirm the selected throw plan or chain file without executing it.",
+			Positionals: []Positional{
+				{Name: "file", Help: "Configured chain YAML file", Required: false},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("chain", "c", "Chain name or module reference"),
+				stringOption("target", "t", "Target identifier"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: reviewHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"throw", "list"},
@@ -1436,6 +1466,12 @@ func throwHandler(runtime Runtime) Handler {
 				return Result{}, err
 			}
 		}
+		if err := recordStructuredEvent(ctx, runtime, status.WorkspacePath, "hovel.throw.planned", "throw planned", plan, "", "", event.LevelInfo, map[string]string{
+			"planHash": plan.PlanHash,
+			"review":   plan.Review,
+		}); err != nil {
+			return Result{}, err
+		}
 		if runtime.Confirmations != nil {
 			method := "typed_yes"
 			if invocation.Flag("now") {
@@ -1454,19 +1490,26 @@ func throwHandler(runtime Runtime) Handler {
 					if invocation.NonInteractive {
 						return Result{}, fmt.Errorf("throw requires --now or a matching preconfirmation in non-interactive mode")
 					}
-					if invocation.Confirmer == nil {
+					if invocation.Input == nil {
 						return Result{}, fmt.Errorf("throw requires confirmation; run confirm first, type yes at the prompt, or pass --now")
 					}
-					ok, err := invocation.Confirmer.ConfirmThrow(ctx, plan)
+					prompt := throwConfirmationPrompt(plan, "throw")
+					answer, err := invocation.Input.Confirm(ctx, prompt)
 					if err != nil {
 						return Result{}, err
 					}
-					if !ok {
+					if !answer.Confirmed(prompt) {
 						return Result{}, fmt.Errorf("throw cancelled")
 					}
 				}
 				confirmation := newThrowConfirmation(plan, confirmationClientID(runtime), method, time.Now().UTC())
 				if err := runtime.Confirmations.RecordThrowConfirmation(ctx, confirmation); err != nil {
+					return Result{}, err
+				}
+				if err := recordStructuredEvent(ctx, runtime, status.WorkspacePath, "hovel.throw.confirmed", "throw confirmed", plan, "", "", event.LevelInfo, map[string]string{
+					"confirmationId": confirmation.ID,
+					"method":         method,
+				}); err != nil {
 					return Result{}, err
 				}
 			}
@@ -1487,6 +1530,9 @@ func throwHandler(runtime Runtime) Handler {
 		payload.ThrowID = throwRecordID(plan)
 		payload.Chain = throw.Chain
 		payload.Targets = append([]string(nil), throw.Targets...)
+		if err := recordStructuredEvent(ctx, runtime, status.WorkspacePath, "hovel.throw.started", "throw started", plan, payload.ThrowID, "", event.LevelInfo, nil); err != nil {
+			return Result{}, err
+		}
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
 			_ = runtime.Session.AppendLogToChain(throw.Chain, throwPlanEntries(payload, throwStarted)...)
 		}
@@ -1497,6 +1543,8 @@ func throwHandler(runtime Runtime) Handler {
 					_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunStartEntries(throw.Chain, target, moduleID, runIndex, len(throw.Targets)*len(throw.Modules), throwStarted)...)
 				}
 				result, err := client.RunMockExploit(ctx, RunMockExploitRequest{
+					Operation:    planOperation(plan),
+					Chain:        throw.Chain,
 					ModuleID:     moduleID,
 					Target:       target,
 					ChainConfig:  throw.ChainConfig,
@@ -1522,6 +1570,15 @@ func throwHandler(runtime Runtime) Handler {
 						if err != nil {
 							return Result{}, err
 						}
+						if err := recordStructuredEvent(ctx, runtime, status.WorkspacePath, "hovel.artifact.recorded", "artifact recorded", plan, payload.ThrowID, result.RunID, event.LevelInfo, map[string]string{
+							"artifactId": record.ID,
+							"name":       record.Name,
+							"kind":       record.Kind,
+							"path":       record.Path,
+							"sha256":     record.SHA256,
+						}); err != nil {
+							return Result{}, err
+						}
 						payload.Results[resultIndex].Artifacts[artifactIndex].Data = ""
 						payload.Results[resultIndex].Artifacts[artifactIndex].Name = record.Name
 					}
@@ -1539,6 +1596,11 @@ func throwHandler(runtime Runtime) Handler {
 					return Result{}, err
 				}
 			}
+			if err := recordStructuredEvent(ctx, runtime, status.WorkspacePath, "hovel.throw.completed", "throw completed", plan, payload.ThrowID, "", event.LevelInfo, map[string]string{
+				"runs": fmt.Sprint(len(payload.Results)),
+			}); err != nil {
+				return Result{}, err
+			}
 			return Result{JSON: payload}, nil
 		}
 		if runtime.Session != nil {
@@ -1548,6 +1610,11 @@ func throwHandler(runtime Runtime) Handler {
 			if err := runtime.Throws.RecordThrow(ctx, newThrowRecord(status.WorkspacePath, plan, payload, throwStarted, time.Now().UTC())); err != nil {
 				return Result{}, err
 			}
+		}
+		if err := recordStructuredEvent(ctx, runtime, status.WorkspacePath, "hovel.throw.completed", "throw completed", plan, payload.ThrowID, "", event.LevelInfo, map[string]string{
+			"runs": fmt.Sprint(len(payload.Results)),
+		}); err != nil {
+			return Result{}, err
 		}
 		return Result{
 			Human: fmt.Sprintf("Throw completed chain %s against %d target(s)", payload.Chain, len(payload.Targets)),
@@ -1559,26 +1626,12 @@ func throwHandler(runtime Runtime) Handler {
 
 func confirmHandler(runtime Runtime) Handler {
 	return func(ctx context.Context, invocation Invocation) (Result, error) {
-		if runtime.Plans == nil {
-			return Result{}, fmt.Errorf("throw plan recorder is not configured")
-		}
-		if runtime.Confirmations == nil {
-			return Result{}, fmt.Errorf("throw confirmation recorder is not configured")
-		}
-		throw, err := throwInputs(ctx, runtime, invocation)
+		plan, err := recordThrowPlan(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
-		workspacePath := invocation.Option("workspace")
-		if workspacePath == "" {
-			workspacePath = ".hovel"
-		}
-		plan := newThrowPlanForExecution(workspacePath, throw)
-		if err := runtime.Plans.RecordThrowPlan(ctx, plan); err != nil {
-			return Result{}, err
-		}
-		confirmation := newThrowConfirmation(plan, confirmationClientID(runtime), "preconfirmed", time.Now().UTC())
-		if err := runtime.Confirmations.RecordThrowConfirmation(ctx, confirmation); err != nil {
+		confirmation, err := recordThrowConfirmation(ctx, runtime, plan, "preconfirmed")
+		if err != nil {
 			return Result{}, err
 		}
 		return Result{
@@ -1586,6 +1639,152 @@ func confirmHandler(runtime Runtime) Handler {
 			JSON:  confirmation,
 		}, nil
 	}
+}
+
+func reviewHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		plan, err := recordThrowPlan(ctx, runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		if invocation.NonInteractive {
+			return Result{}, fmt.Errorf("review requires an interactive typed yes confirmation")
+		}
+		if invocation.Input == nil {
+			return Result{}, fmt.Errorf("review requires confirmation; type yes at the prompt")
+		}
+		prompt := throwConfirmationPrompt(plan, "confirm review")
+		answer, err := invocation.Input.Confirm(ctx, prompt)
+		if err != nil {
+			return Result{}, err
+		}
+		if !answer.Confirmed(prompt) {
+			return Result{}, fmt.Errorf("review cancelled")
+		}
+		confirmation, err := recordThrowConfirmation(ctx, runtime, plan, "reviewed_yes")
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{
+			JSON: confirmation,
+			Log: operatorlog.New("HOVEL//REVIEW", plan.Chain, []operatorlog.Entry{
+				operatorlog.Success("review", "confirmed",
+					operatorlog.Field{Name: "plan", Value: plan.ID},
+					operatorlog.Field{Name: "targets", Value: fmt.Sprint(len(plan.Targets))},
+					operatorlog.Field{Name: "planHash", Value: plan.PlanHash},
+				),
+			}),
+		}, nil
+	}
+}
+
+func throwConfirmationPrompt(plan ThrowPlanRecord, action string) ConfirmationPrompt {
+	return ConfirmationPrompt{
+		Title:           "THROW REVIEW",
+		Action:          action,
+		RequiredLiteral: "yes",
+		Plan:            plan,
+		Fields: []ConfirmationField{
+			{Label: "chain", Value: plan.Chain},
+			{Label: "targets", Value: strings.Join(plan.Targets, ", ")},
+			{Label: "modules", Value: formatReviewList(plan.Modules)},
+			{Label: "chain config", Value: formatReviewConfig(plan.ChainConfig)},
+			{Label: "target config", Value: formatReviewTargetConfigs(plan.Targets, plan.TargetConfigs)},
+			{Label: "plan hash", Value: shortPlanHash(plan.PlanHash), Muted: true},
+		},
+	}
+}
+
+func shortPlanHash(hash string) string {
+	hash = strings.TrimSpace(hash)
+	if len(hash) <= 10 {
+		return hash
+	}
+	return hash[:10]
+}
+
+func formatReviewList(values []string) string {
+	if len(values) == 0 {
+		return "(none)"
+	}
+	return strings.Join(values, ", ")
+}
+
+func formatReviewConfig(config map[string]string) string {
+	if len(config) == 0 {
+		return "(none)"
+	}
+	keys := make([]string, 0, len(config))
+	for key := range config {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		lines = append(lines, fmt.Sprintf("%s=%s", key, config[key]))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatReviewTargetConfigs(targets []string, configs map[string]map[string]string) string {
+	if len(configs) == 0 {
+		return "(none)"
+	}
+	orderedTargets := append([]string(nil), targets...)
+	seen := make(map[string]bool, len(orderedTargets))
+	for _, target := range orderedTargets {
+		seen[target] = true
+	}
+	for target := range configs {
+		if !seen[target] {
+			orderedTargets = append(orderedTargets, target)
+		}
+	}
+	lines := make([]string, 0)
+	for _, target := range orderedTargets {
+		config := configs[target]
+		if len(config) == 0 {
+			continue
+		}
+		lines = append(lines, target)
+		for _, line := range strings.Split(formatReviewConfig(config), "\n") {
+			lines = append(lines, "  "+line)
+		}
+	}
+	if len(lines) == 0 {
+		return "(none)"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func recordThrowPlan(ctx context.Context, runtime Runtime, invocation Invocation) (ThrowPlanRecord, error) {
+	if runtime.Plans == nil {
+		return ThrowPlanRecord{}, fmt.Errorf("throw plan recorder is not configured")
+	}
+	throw, err := throwInputs(ctx, runtime, invocation)
+	if err != nil {
+		return ThrowPlanRecord{}, err
+	}
+	workspacePath := invocation.Option("workspace")
+	if workspacePath == "" {
+		workspacePath = ".hovel"
+	}
+	plan := newThrowPlanForExecution(workspacePath, throw)
+	if err := runtime.Plans.RecordThrowPlan(ctx, plan); err != nil {
+		return ThrowPlanRecord{}, err
+	}
+	return plan, nil
+}
+
+func recordThrowConfirmation(ctx context.Context, runtime Runtime, plan ThrowPlanRecord, method string) (ThrowConfirmationRecord, error) {
+	if runtime.Confirmations == nil {
+		return ThrowConfirmationRecord{}, fmt.Errorf("throw confirmation recorder is not configured")
+	}
+	confirmation := newThrowConfirmation(plan, confirmationClientID(runtime), method, time.Now().UTC())
+	if err := runtime.Confirmations.RecordThrowConfirmation(ctx, confirmation); err != nil {
+		return ThrowConfirmationRecord{}, err
+	}
+	return confirmation, nil
 }
 
 func throwsListHandler(runtime Runtime) Handler {
@@ -1633,8 +1832,95 @@ func throwsInspectHandler(runtime Runtime) Handler {
 			fmt.Sprintf("review         %s", plan.Review),
 			fmt.Sprintf("intent         %s", plan.Intent),
 		}
+		payload := ThrowInspectPayload{Plan: plan}
+		if invocation.Flag("events") {
+			if runtime.EventRecords == nil {
+				return Result{}, fmt.Errorf("event repository is not configured")
+			}
+			events, err := runtime.EventRecords.ListEvents(ctx, workspacePath, event.Filter{ThrowID: throwRecordID(plan)})
+			if err != nil {
+				return Result{}, err
+			}
+			payload.Events = events
+			lines = append(lines, "")
+			lines = append(lines, eventLines(events)...)
+		}
+		if invocation.Flag("events") {
+			return Result{Human: strings.Join(lines, "\n"), JSON: payload}, nil
+		}
 		return Result{Human: strings.Join(lines, "\n"), JSON: plan}, nil
 	}
+}
+
+func eventLines(events []event.Event) []string {
+	if len(events) == 0 {
+		return []string{"No events"}
+	}
+	lines := []string{"EVENTS", "TIME                           LEVEL TYPE                         MESSAGE"}
+	for _, evt := range events {
+		lines = append(lines, fmt.Sprintf("%-30s %-5s %-28s %s", evt.Timestamp.Format(time.RFC3339Nano), evt.Level, evt.Type, evt.Message))
+	}
+	return lines
+}
+
+func recordStructuredEvent(ctx context.Context, runtime Runtime, workspacePath, typ, message string, plan ThrowPlanRecord, throwID, runID string, level event.Level, fields map[string]string) error {
+	if runtime.Events == nil {
+		return nil
+	}
+	id, err := event.NewID(eventID(typ))
+	if err != nil {
+		return err
+	}
+	eventType, err := event.NewType(typ)
+	if err != nil {
+		return err
+	}
+	if fields == nil {
+		fields = map[string]string{}
+	}
+	if plan.PlanHash != "" {
+		fields["planHash"] = plan.PlanHash
+	}
+	topic := ""
+	if plan.Chain != "" {
+		topic = "operation/" + planOperation(plan) + "/chain/" + plan.Chain + "/logs"
+	}
+	evt, err := event.New(event.Args{
+		ID:        id,
+		Type:      eventType,
+		Level:     level,
+		Message:   message,
+		Timestamp: time.Now().UTC(),
+		Topic:     topic,
+		Refs: event.Refs{
+			WorkspaceID: workspacePath,
+			Operation:   planOperation(plan),
+			Chain:       plan.Chain,
+			ThrowID:     throwID,
+			RunID:       runID,
+		},
+		Fields: fields,
+	})
+	if err != nil {
+		return err
+	}
+	return runtime.Events.RecordEvent(ctx, workspacePath, evt)
+}
+
+func eventID(typ string) string {
+	safeType := strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			return r
+		default:
+			return '-'
+		}
+	}, typ)
+	safeType = strings.Trim(safeType, "-")
+	if safeType == "" {
+		safeType = "event"
+	}
+	return fmt.Sprintf("event-%s-%d", safeType, time.Now().UnixNano())
 }
 
 func sessionsListHandler(runtime Runtime) Handler {
@@ -1717,6 +2003,7 @@ func newThrowPlanForExecution(workspacePath string, throw throwExecution) ThrowP
 		ConfirmationID: "confirmation-" + stablePlanComponent(throw.Chain, throw.Targets),
 		PlanHash:       hash,
 		Workspace:      workspacePath,
+		Operation:      throw.Operation,
 		Chain:          throw.Chain,
 		Targets:        append([]string(nil), throw.Targets...),
 		Modules:        append([]string(nil), throw.Modules...),
@@ -1776,6 +2063,13 @@ func newThrowRecord(workspacePath string, plan ThrowPlanRecord, payload ThrowPay
 		})
 	}
 	return record
+}
+
+func planOperation(plan ThrowPlanRecord) string {
+	if plan.Operation != "" {
+		return plan.Operation
+	}
+	return operatorsession.DefaultOperation
 }
 
 func confirmationClientID(runtime Runtime) string {
@@ -1847,6 +2141,7 @@ func stablePlanComponent(chain string, targets []string) string {
 }
 
 type throwExecution struct {
+	Operation     string
 	Chain         string
 	Targets       []string
 	Modules       []string
@@ -1858,6 +2153,7 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 	if file := invocation.Positional("file"); strings.TrimSpace(file) != "" {
 		return throwInputsFromChainFile(ctx, runtime, invocation, file)
 	}
+	operation := operatorsession.DefaultOperation
 	chain := invocation.Option("chain")
 	var targets []string
 	if target := invocation.Option("target"); target != "" {
@@ -1868,6 +2164,9 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 	var modules []string
 	if runtime.Session != nil {
 		state := runtime.Session.Snapshot()
+		if state.ActiveOperation != "" {
+			operation = state.ActiveOperation
+		}
 		if chain == "" {
 			chain = state.Chain
 		}
@@ -1901,6 +2200,7 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 		modules = append(modules, moduleRef)
 	}
 	return throwExecution{
+		Operation:     operation,
 		Chain:         chain,
 		Targets:       targets,
 		Modules:       modules,
@@ -1949,6 +2249,7 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 		return throwExecution{}, fmt.Errorf("target is required; configured chain files must include targets or pass --target")
 	}
 	return throwExecution{
+		Operation:     operatorsession.DefaultOperation,
 		Chain:         file.Metadata.Name,
 		Targets:       targets,
 		Modules:       modules,

@@ -534,6 +534,16 @@ func TestThrowAnimationOnlyWrapsThrowExecution(t *testing.T) {
 			t.Fatalf("%q was not recognized as throw execution", line)
 		}
 	}
+	for _, line := range []string{"throw", "throw --workspace .hovel", "throw --chain mock-exploit"} {
+		if isAnimatedThrowExecutionCommand(line) {
+			t.Fatalf("%q should not animate before confirmation", line)
+		}
+	}
+	for _, line := range []string{"throw --now", "throw --workspace .hovel --now", "throw -n"} {
+		if !isAnimatedThrowExecutionCommand(line) {
+			t.Fatalf("%q should animate immediate throw", line)
+		}
+	}
 	for _, line := range []string{"", "throw list", "throw inspect plan-1", "throws list", "chain throw"} {
 		if isThrowExecutionCommand(line) {
 			t.Fatalf("%q was recognized as throw execution", line)

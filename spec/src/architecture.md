@@ -56,13 +56,15 @@ MVP daemon rules:
 
 1. One active `hoveld` per workspace.
 2. A workspace lock prevents duplicate daemons from owning the same database.
-3. The local client transport is an implementation detail, but must support `cli`, one-shot chain-file execution, `tui`, REST, and MCP attaching to the same daemon.
-4. Unix-like systems should prefer a Unix domain socket under a workspace or runtime directory with filesystem permissions.
-5. Windows should use a named pipe when Windows support is implemented.
-6. Daemon identity, socket path, PID, start time, and health status should be inspectable with `hovel daemon status` and from the shared registry as `control daemon status`.
-7. Tests may use an in-process engine harness, but production commands should exercise the daemon boundary.
-8. The first RPC contract should prove a fully mocked throw flow through the daemon boundary.
-9. Mock exploit modules must not perform network exploitation. They exist in-tree for tests and examples, should exercise the same module-loading path as ordinary modules where practical, and are not part of the final shipped module catalog.
+3. The daemon RPC contract uses ConnectRPC over HTTP with a JSON codec during alpha. It should move to generated protobuf message types once the service contract stabilizes.
+4. The local client transport must support `cli`, one-shot chain-file execution, `tui`, REST, and MCP attaching to the same daemon.
+5. Unix-like systems should prefer a Unix domain socket under a workspace or runtime directory with filesystem permissions.
+6. Explicit daemon serving may also bind TCP with an address such as `tcp://127.0.0.1:9090` for integration and remote-adapter development.
+7. Windows should use a named pipe when Windows support is implemented.
+8. Daemon identity, socket path or listen endpoint, PID, start time, and health status should be inspectable with `hovel daemon status` and from the shared registry as `control daemon status`.
+9. Tests may use an in-process engine harness, but production commands should exercise the daemon boundary.
+10. The first RPC contract should prove a fully mocked throw flow through the daemon boundary.
+11. Mock exploit modules must not perform network exploitation. They exist in-tree for tests and examples, should exercise the same module-loading path as ordinary modules where practical, and are not part of the final shipped module catalog.
 
 Managed daemon ownership rules:
 
@@ -119,9 +121,10 @@ Interactive `throw` behavior:
 
 1. `throw` builds or refreshes the throw plan for the active chain.
 2. If a matching confirmation already exists for the exact plan hash, Hovel starts the throw.
-3. If no matching confirmation exists, `throw` displays the same review surface as `confirm`, asks the operator to type `yes`, records the confirmation, and then starts the throw.
+3. If no matching confirmation exists, `throw` displays the same review surface as `review`, asks the operator to type `yes`, records the confirmation, and then starts the throw.
 4. `throw --now` bypasses the prompt but must still persist a confirmation record showing that the bypass was requested.
-5. `confirm` displays the same configuration review and records a pre-confirmation without starting execution.
+5. `confirm` records a pre-confirmation without starting execution.
+6. `review` always displays the current configuration review, requires the operator to type `yes`, and records or refreshes the confirmation without starting execution.
 
 Confirmations do not expire by time. A confirmation is invalidated by any change that changes the plan hash. The confirmation record should stay small: plan hash, timestamp, and client ID are required. Additional fields may be recorded when already available, but should not require heavyweight identity or account systems.
 
@@ -150,6 +153,7 @@ chain logs
 target add <target>
 target clear
 confirm
+review
 throw
 throw list
 throw inspect <throw>

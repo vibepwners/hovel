@@ -4,9 +4,11 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
+	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 )
 
 func TestStorePersistsOperatorSession(t *testing.T) {
@@ -112,6 +114,22 @@ func TestStorePersistsThrowConfirmations(t *testing.T) {
 	if !reflect.DeepEqual(got, confirmation) {
 		t.Fatalf("confirmation = %#v, want %#v", got, confirmation)
 	}
+	refreshed := confirmation
+	refreshed.Method = "reviewed_yes"
+	refreshed.ConfirmedAt = "2026-05-03T12:05:00Z"
+	if err := store.RecordThrowConfirmation(context.Background(), refreshed); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err = store.GetThrowConfirmation(context.Background(), confirmation.PlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("refreshed confirmation not found")
+	}
+	if !reflect.DeepEqual(got, refreshed) {
+		t.Fatalf("refreshed confirmation = %#v, want %#v", got, refreshed)
+	}
 	_, ok, err = store.GetThrowConfirmation(context.Background(), "other-hash")
 	if err != nil {
 		t.Fatal(err)
@@ -169,4 +187,62 @@ func TestStorePersistsThrowRecordsAndArtifactMetadata(t *testing.T) {
 	if !reflect.DeepEqual(got, artifact) {
 		t.Fatalf("artifact = %#v, want %#v", got, artifact)
 	}
+}
+
+func TestStorePersistsStructuredEvents(t *testing.T) {
+	store := NewStore(t.TempDir())
+	id, _ := event.NewID("event-1")
+	typ, _ := event.NewType("hovel.throw.started")
+	evt, err := event.New(event.Args{
+		ID:        id,
+		Type:      typ,
+		Level:     event.LevelInfo,
+		Message:   "throw started",
+		Timestamp: mustTime("2026-05-03T12:00:00Z"),
+		Topic:     "operation/default/chain/alpha/logs",
+		Refs: event.Refs{
+			WorkspaceID: ".hovel",
+			Operation:   "default",
+			Chain:       "alpha",
+			ThrowID:     "throw-1",
+			RunID:       "run-1",
+			ModuleID:    "mock-exploit",
+			TargetID:    "mock://target",
+		},
+		Fields: map[string]string{"planHash": "hash"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordEvent(context.Background(), evt); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(context.Background(), evt); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.ListEvents(context.Background(), event.Filter{ThrowID: "throw-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one deduped event", events)
+	}
+	if events[0].Message != "throw started" || events[0].Fields["planHash"] != "hash" {
+		t.Fatalf("event = %#v", events[0])
+	}
+	events, err = store.ListEvents(context.Background(), event.Filter{Target: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events for other target = %#v", events)
+	}
+}
+
+func mustTime(value string) time.Time {
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		panic(err)
+	}
+	return parsed
 }

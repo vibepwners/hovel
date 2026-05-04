@@ -104,7 +104,7 @@ class LineShellSession:
                 chunk = await self._output.get()
             else:
                 chunk = await asyncio.wait_for(self._output.get(), timeout=wait)
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             return b""
         return chunk or b""
 

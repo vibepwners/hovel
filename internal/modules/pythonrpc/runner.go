@@ -1082,7 +1082,7 @@ func (r Runner) appendLog(ctx context.Context, request run.Request, log rpcLog) 
 	if err != nil {
 		return err
 	}
-	eventType, err := event.NewType("module.log")
+	eventType, err := event.NewType("hovel.module.log")
 	if err != nil {
 		return err
 	}
@@ -1100,11 +1100,15 @@ func (r Runner) appendLog(ctx context.Context, request run.Request, log rpcLog) 
 	evt, err := event.New(event.Args{
 		ID:        id,
 		Type:      eventType,
+		Level:     event.Level(log.Level),
+		Message:   log.Message,
 		Timestamp: r.Clock.Now(),
 		Refs: event.Refs{
-			RunID:    request.ID,
-			ModuleID: request.ModuleID,
-			TargetID: request.Target,
+			Operation: request.Operation,
+			Chain:     request.Chain,
+			RunID:     request.ID,
+			ModuleID:  request.ModuleID,
+			TargetID:  request.Target,
 		},
 		Fields: fields,
 	})
@@ -1122,15 +1126,18 @@ func (r Runner) appendSessionCreated(ctx context.Context, request run.Request, s
 	if err != nil {
 		return err
 	}
-	eventType, err := event.NewType("session.created")
+	eventType, err := event.NewType("hovel.session.created")
 	if err != nil {
 		return err
 	}
 	evt, err := event.New(event.Args{
 		ID:        id,
 		Type:      eventType,
+		Message:   "session opened",
 		Timestamp: r.Clock.Now(),
 		Refs: event.Refs{
+			Operation: request.Operation,
+			Chain:     request.Chain,
 			RunID:     request.ID,
 			ModuleID:  request.ModuleID,
 			TargetID:  request.Target,

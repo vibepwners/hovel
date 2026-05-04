@@ -2,23 +2,30 @@ package daemonrpc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
-	"net/rpc"
-	"net/rpc/jsonrpc"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
-const serviceName = "Daemon"
+const (
+	serviceName      = "Daemon"
+	serviceURLPrefix = "/hovel.daemon.v1.DaemonService/"
+)
 
 type RunMockExploitRequest struct {
+	Operation    string
+	Chain        string
 	ModuleID     string
 	Target       string
 	Inputs       map[string]string
@@ -138,16 +145,78 @@ type Server struct {
 	mu             sync.Mutex
 }
 
-func Register(server *rpc.Server, runs services.RunService, options ...ServerOption) error {
-	rpcServer := Server{
+func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOption) error {
+	if mux == nil {
+		return errors.New("daemon rpc mux is required")
+	}
+	rpcServer := &Server{
 		runs:    runs,
 		session: operatorsession.New(),
 		logs:    NewLogBroker(),
 	}
 	for _, option := range options {
-		option(&rpcServer)
+		option(rpcServer)
 	}
-	return server.RegisterName(serviceName, &rpcServer)
+	registerUnary[ExecuteModuleRequest, ExecuteModuleResponse](mux, "ExecuteModule", rpcServer.executeModuleRPC)
+	registerUnary[EmptyRequest, ListSessionsResponse](mux, "ListSessions", rpcServer.listSessionsRPC)
+	registerUnary[SessionReadRequest, SessionChunk](mux, "ReadSession", rpcServer.readSessionRPC)
+	registerUnary[SessionWriteRequest, EmptyResponse](mux, "WriteSession", rpcServer.writeSessionRPC)
+	registerUnary[SessionCloseRequest, EmptyResponse](mux, "CloseSession", rpcServer.closeSessionRPC)
+	registerUnary[OperationRequest, EmptyResponse](mux, "CreateOperation", rpcServer.createOperationRPC)
+	registerUnary[OperationRequest, EmptyResponse](mux, "UseOperation", rpcServer.useOperationRPC)
+	registerUnary[ChainRequest, EmptyResponse](mux, "CreateChain", rpcServer.createChainRPC)
+	registerUnary[ChainRequest, EmptyResponse](mux, "UseChain", rpcServer.useChainRPC)
+	registerUnary[RenameChainRequest, EmptyResponse](mux, "RenameChain", rpcServer.renameChainRPC)
+	registerUnary[ChainRequest, EmptyResponse](mux, "DeleteChain", rpcServer.deleteChainRPC)
+	registerUnary[TargetRequest, EmptyResponse](mux, "AddTarget", rpcServer.addTargetRPC)
+	registerUnary[ChainRequest, EmptyResponse](mux, "ClearTargets", rpcServer.clearTargetsRPC)
+	registerUnary[ModuleRequest, StepResponse](mux, "AddModule", rpcServer.addModuleRPC)
+	registerUnary[ConfigRequest, EmptyResponse](mux, "SetChainConfig", rpcServer.setChainConfigRPC)
+	registerUnary[ConfigRequest, EmptyResponse](mux, "UnsetChainConfig", rpcServer.unsetChainConfigRPC)
+	registerUnary[TargetConfigRequest, EmptyResponse](mux, "SetTargetConfig", rpcServer.setTargetConfigRPC)
+	registerUnary[TargetConfigRequest, EmptyResponse](mux, "UnsetTargetConfig", rpcServer.unsetTargetConfigRPC)
+	registerUnary[SnapshotRequest, SnapshotResponse](mux, "Snapshot", rpcServer.snapshotRPC)
+	registerUnary[ActiveLogsRequest, []OperatorLogEntry](mux, "ActiveLogs", rpcServer.activeLogsRPC)
+	registerUnary[AppendLogRequest, EmptyResponse](mux, "AppendLog", rpcServer.appendLogRPC)
+	registerUnary[PollLogsRequest, PollLogsResponse](mux, "PollLogs", rpcServer.pollLogsRPC)
+	return nil
+}
+
+func NewHandler(runs services.RunService, options ...ServerOption) (http.Handler, error) {
+	mux := http.NewServeMux()
+	if err := Register(mux, runs, options...); err != nil {
+		return nil, err
+	}
+	return mux, nil
+}
+
+type jsonCodec struct{}
+
+func (jsonCodec) Name() string {
+	return "json"
+}
+
+func (jsonCodec) Marshal(value any) ([]byte, error) {
+	return json.Marshal(value)
+}
+
+func (jsonCodec) Unmarshal(data []byte, value any) error {
+	return json.Unmarshal(data, value)
+}
+
+func registerUnary[Req, Res any](mux *http.ServeMux, method string, fn func(context.Context, Req) (Res, error)) {
+	path := serviceURLPrefix + method
+	mux.Handle(path, connect.NewUnaryHandler[Req, Res](
+		path,
+		func(ctx context.Context, req *connect.Request[Req]) (*connect.Response[Res], error) {
+			resp, err := fn(ctx, *req.Msg)
+			if err != nil {
+				return nil, connect.NewError(connect.CodeUnknown, err)
+			}
+			return connect.NewResponse(&resp), nil
+		},
+		connect.WithCodec(jsonCodec{}),
+	))
 }
 
 type ServerOption func(*Server)
@@ -184,12 +253,24 @@ func (s Server) RunMockExploit(req RunMockExploitRequest, resp *RunMockExploitRe
 	return s.ExecuteModule(ExecuteModuleRequest(req), (*ExecuteModuleResponse)(resp))
 }
 
+func (s *Server) executeModuleRPC(ctx context.Context, req ExecuteModuleRequest) (ExecuteModuleResponse, error) {
+	var resp ExecuteModuleResponse
+	err := s.executeModule(ctx, req, &resp)
+	return resp, err
+}
+
 func (s Server) ExecuteModule(req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
+	return s.executeModule(context.Background(), req, resp)
+}
+
+func (s Server) executeModule(ctx context.Context, req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
 	var throwStarted time.Time
 	if req.ThrowStarted != "" {
 		throwStarted, _ = time.Parse(time.RFC3339Nano, req.ThrowStarted)
 	}
-	result, err := s.runs.ExecuteModule(context.Background(), services.ExecuteModuleRequest{
+	result, err := s.runs.ExecuteModule(ctx, services.ExecuteModuleRequest{
+		Operation:    req.Operation,
+		Chain:        req.Chain,
 		ModuleID:     req.ModuleID,
 		Target:       req.Target,
 		Inputs:       req.Inputs,
@@ -235,6 +316,12 @@ func (s Server) ListSessions(_ EmptyRequest, resp *ListSessionsResponse) error {
 	return nil
 }
 
+func (s *Server) listSessionsRPC(context.Context, EmptyRequest) (ListSessionsResponse, error) {
+	var resp ListSessionsResponse
+	err := s.ListSessions(EmptyRequest{}, &resp)
+	return resp, err
+}
+
 func (s Server) ReadSession(req SessionReadRequest, resp *SessionChunk) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
@@ -252,6 +339,12 @@ func (s Server) ReadSession(req SessionReadRequest, resp *SessionChunk) error {
 	return nil
 }
 
+func (s *Server) readSessionRPC(_ context.Context, req SessionReadRequest) (SessionChunk, error) {
+	var resp SessionChunk
+	err := s.ReadSession(req, &resp)
+	return resp, err
+}
+
 func (s Server) WriteSession(req SessionWriteRequest, resp *EmptyResponse) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
@@ -259,11 +352,23 @@ func (s Server) WriteSession(req SessionWriteRequest, resp *EmptyResponse) error
 	return s.moduleSessions.WriteSession(context.Background(), req.SessionID, req.Data)
 }
 
+func (s *Server) writeSessionRPC(_ context.Context, req SessionWriteRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.WriteSession(req, &resp)
+	return resp, err
+}
+
 func (s Server) CloseSession(req SessionCloseRequest, resp *EmptyResponse) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
 	return s.moduleSessions.CloseSession(context.Background(), req.SessionID)
+}
+
+func (s *Server) closeSessionRPC(_ context.Context, req SessionCloseRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.CloseSession(req, &resp)
+	return resp, err
 }
 
 type ChainRequest struct {
@@ -528,6 +633,108 @@ func (s Server) PollLogs(req PollLogsRequest, resp *PollLogsResponse) error {
 	return nil
 }
 
+func (s *Server) createOperationRPC(_ context.Context, req OperationRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.CreateOperation(req, &resp)
+	return resp, err
+}
+
+func (s *Server) useOperationRPC(_ context.Context, req OperationRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.UseOperation(req, &resp)
+	return resp, err
+}
+
+func (s *Server) createChainRPC(_ context.Context, req ChainRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.CreateChain(req, &resp)
+	return resp, err
+}
+
+func (s *Server) useChainRPC(_ context.Context, req ChainRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.UseChain(req, &resp)
+	return resp, err
+}
+
+func (s *Server) renameChainRPC(_ context.Context, req RenameChainRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.RenameChain(req, &resp)
+	return resp, err
+}
+
+func (s *Server) deleteChainRPC(_ context.Context, req ChainRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.DeleteChain(req, &resp)
+	return resp, err
+}
+
+func (s *Server) addTargetRPC(_ context.Context, req TargetRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.AddTarget(req, &resp)
+	return resp, err
+}
+
+func (s *Server) clearTargetsRPC(_ context.Context, req ChainRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.ClearTargets(req, &resp)
+	return resp, err
+}
+
+func (s *Server) addModuleRPC(_ context.Context, req ModuleRequest) (StepResponse, error) {
+	var resp StepResponse
+	err := s.AddModule(req, &resp)
+	return resp, err
+}
+
+func (s *Server) setChainConfigRPC(_ context.Context, req ConfigRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.SetChainConfig(req, &resp)
+	return resp, err
+}
+
+func (s *Server) unsetChainConfigRPC(_ context.Context, req ConfigRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.UnsetChainConfig(req, &resp)
+	return resp, err
+}
+
+func (s *Server) setTargetConfigRPC(_ context.Context, req TargetConfigRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.SetTargetConfig(req, &resp)
+	return resp, err
+}
+
+func (s *Server) unsetTargetConfigRPC(_ context.Context, req TargetConfigRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.UnsetTargetConfig(req, &resp)
+	return resp, err
+}
+
+func (s *Server) snapshotRPC(_ context.Context, req SnapshotRequest) (SnapshotResponse, error) {
+	var resp SnapshotResponse
+	err := s.Snapshot(req, &resp)
+	return resp, err
+}
+
+func (s *Server) activeLogsRPC(_ context.Context, req ActiveLogsRequest) ([]OperatorLogEntry, error) {
+	var resp []OperatorLogEntry
+	err := s.ActiveLogs(req, &resp)
+	return resp, err
+}
+
+func (s *Server) appendLogRPC(_ context.Context, req AppendLogRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.AppendLog(req, &resp)
+	return resp, err
+}
+
+func (s *Server) pollLogsRPC(_ context.Context, req PollLogsRequest) (PollLogsResponse, error) {
+	var resp PollLogsResponse
+	err := s.PollLogs(req, &resp)
+	return resp, err
+}
+
 func (s *Server) publish(operation, chain string, entries ...operatorlog.Entry) {
 	s.logs.Publish(operation, chain, entries...)
 }
@@ -580,23 +787,47 @@ func operationOrDefault(operation string) string {
 }
 
 type Client struct {
-	rpc *rpc.Client
+	httpClient *http.Client
+	baseURL    string
 }
 
 func Dial(socketPath string) (*Client, error) {
-	conn, err := net.Dial("unix", socketPath)
+	endpoint, err := ParseEndpoint(socketPath)
 	if err != nil {
 		return nil, err
 	}
-	return NewClient(conn), nil
+	client := NewClient(endpoint)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := client.PollLogs(ctx, 0); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return client, nil
 }
 
-func NewClient(conn net.Conn) *Client {
-	return &Client{rpc: jsonrpc.NewClient(conn)}
+func NewClient(endpoint Endpoint) *Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	baseURL := endpoint.BaseURL()
+	if endpoint.Network == "unix" {
+		address := endpoint.Address
+		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			dialer := net.Dialer{}
+			return dialer.DialContext(ctx, "unix", address)
+		}
+	}
+	return &Client{
+		httpClient: &http.Client{Transport: transport},
+		baseURL:    baseURL,
+	}
 }
 
 func (c *Client) Close() error {
-	return c.rpc.Close()
+	if c == nil || c.httpClient == nil {
+		return nil
+	}
+	c.httpClient.CloseIdleConnections()
+	return nil
 }
 
 func (c *Client) RunMockExploit(ctx context.Context, req RunMockExploitRequest) (RunMockExploitResponse, error) {
@@ -604,47 +835,35 @@ func (c *Client) RunMockExploit(ctx context.Context, req RunMockExploitRequest) 
 }
 
 func (c *Client) ExecuteModule(ctx context.Context, req ExecuteModuleRequest) (ExecuteModuleResponse, error) {
-	var resp ExecuteModuleResponse
-	done := make(chan error, 1)
-	go func() {
-		done <- c.rpc.Call(serviceName+".ExecuteModule", req, &resp)
-	}()
-
-	select {
-	case <-ctx.Done():
-		_ = c.Close()
-		return ExecuteModuleResponse{}, ctx.Err()
-	case err := <-done:
-		return resp, err
-	}
+	return invoke[ExecuteModuleRequest, ExecuteModuleResponse](c, ctx, "ExecuteModule", req)
 }
 
 func (c *Client) ListSessions(ctx context.Context) ([]SessionRef, error) {
-	var resp ListSessionsResponse
-	if err := c.call(ctx, serviceName+".ListSessions", EmptyRequest{}, &resp); err != nil {
+	resp, err := invoke[EmptyRequest, ListSessionsResponse](c, ctx, "ListSessions", EmptyRequest{})
+	if err != nil {
 		return nil, err
 	}
 	return resp.Sessions, nil
 }
 
 func (c *Client) ReadSession(ctx context.Context, sessionID string, timeout time.Duration) (SessionChunk, error) {
-	var resp SessionChunk
-	err := c.call(ctx, serviceName+".ReadSession", SessionReadRequest{
+	return invoke[SessionReadRequest, SessionChunk](c, ctx, "ReadSession", SessionReadRequest{
 		SessionID: sessionID,
 		TimeoutMs: int(timeout / time.Millisecond),
-	}, &resp)
-	return resp, err
+	})
 }
 
 func (c *Client) WriteSession(ctx context.Context, sessionID string, data []byte) error {
-	return c.call(ctx, serviceName+".WriteSession", SessionWriteRequest{
+	_, err := invoke[SessionWriteRequest, EmptyResponse](c, ctx, "WriteSession", SessionWriteRequest{
 		SessionID: sessionID,
 		Data:      append([]byte(nil), data...),
-	}, &EmptyResponse{})
+	})
+	return err
 }
 
 func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
-	return c.call(ctx, serviceName+".CloseSession", SessionCloseRequest{SessionID: sessionID}, &EmptyResponse{})
+	_, err := invoke[SessionCloseRequest, EmptyResponse](c, ctx, "CloseSession", SessionCloseRequest{SessionID: sessionID})
+	return err
 }
 
 func (c *Client) PollLogs(ctx context.Context, since uint64) (PollLogsResponse, error) {
@@ -660,9 +879,7 @@ func (c *Client) PollOperationChainLogs(ctx context.Context, operation, chain st
 }
 
 func (c *Client) pollLogs(ctx context.Context, operation, chain string, since uint64) (PollLogsResponse, error) {
-	var resp PollLogsResponse
-	err := c.call(ctx, serviceName+".PollLogs", PollLogsRequest{Since: since, Operation: operation, Chain: chain}, &resp)
-	return resp, err
+	return invoke[PollLogsRequest, PollLogsResponse](c, ctx, "PollLogs", PollLogsRequest{Since: since, Operation: operation, Chain: chain})
 }
 
 type SessionClient struct {
@@ -686,13 +903,12 @@ func (s *SessionClient) RemoteFeedback() bool {
 }
 
 func (s *SessionClient) CreateOperation(operation string) error {
-	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".CreateOperation", OperationRequest{Operation: operation}, &resp)
+	_, err := invoke[OperationRequest, EmptyResponse](s.client, s.ctx, "CreateOperation", OperationRequest{Operation: operation})
+	return err
 }
 
 func (s *SessionClient) UseOperation(operation string) error {
-	var resp EmptyResponse
-	if err := s.client.call(s.ctx, serviceName+".UseOperation", OperationRequest{Operation: operation}, &resp); err != nil {
+	if _, err := invoke[OperationRequest, EmptyResponse](s.client, s.ctx, "UseOperation", OperationRequest{Operation: operation}); err != nil {
 		return err
 	}
 	s.setActiveOperation(operation)
@@ -700,13 +916,12 @@ func (s *SessionClient) UseOperation(operation string) error {
 }
 
 func (s *SessionClient) CreateChain(chain string) error {
-	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".CreateChain", ChainRequest{Operation: s.operation(), Chain: chain}, &resp)
+	_, err := invoke[ChainRequest, EmptyResponse](s.client, s.ctx, "CreateChain", ChainRequest{Operation: s.operation(), Chain: chain})
+	return err
 }
 
 func (s *SessionClient) UseChain(chain string) error {
-	var resp EmptyResponse
-	if err := s.client.call(s.ctx, serviceName+".UseChain", ChainRequest{Operation: s.operation(), Chain: chain}, &resp); err != nil {
+	if _, err := invoke[ChainRequest, EmptyResponse](s.client, s.ctx, "UseChain", ChainRequest{Operation: s.operation(), Chain: chain}); err != nil {
 		return err
 	}
 	s.setActiveChain(chain)
@@ -714,8 +929,7 @@ func (s *SessionClient) UseChain(chain string) error {
 }
 
 func (s *SessionClient) RenameChain(chain, name string) error {
-	var resp EmptyResponse
-	if err := s.client.call(s.ctx, serviceName+".RenameChain", RenameChainRequest{Operation: s.operation(), Chain: chain, Name: name}, &resp); err != nil {
+	if _, err := invoke[RenameChainRequest, EmptyResponse](s.client, s.ctx, "RenameChain", RenameChainRequest{Operation: s.operation(), Chain: chain, Name: name}); err != nil {
 		return err
 	}
 	if s.active() == chain {
@@ -725,8 +939,7 @@ func (s *SessionClient) RenameChain(chain, name string) error {
 }
 
 func (s *SessionClient) DeleteChain(chain string) error {
-	var resp EmptyResponse
-	if err := s.client.call(s.ctx, serviceName+".DeleteChain", ChainRequest{Operation: s.operation(), Chain: chain}, &resp); err != nil {
+	if _, err := invoke[ChainRequest, EmptyResponse](s.client, s.ctx, "DeleteChain", ChainRequest{Operation: s.operation(), Chain: chain}); err != nil {
 		return err
 	}
 	if s.active() == chain {
@@ -736,54 +949,52 @@ func (s *SessionClient) DeleteChain(chain string) error {
 }
 
 func (s *SessionClient) AddTarget(target string) error {
-	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".AddTarget", TargetRequest{Operation: s.operation(), Target: target, Chain: s.active()}, &resp)
+	_, err := invoke[TargetRequest, EmptyResponse](s.client, s.ctx, "AddTarget", TargetRequest{Operation: s.operation(), Target: target, Chain: s.active()})
+	return err
 }
 
 func (s *SessionClient) ClearTargets() {
-	var resp EmptyResponse
-	_ = s.client.call(s.ctx, serviceName+".ClearTargets", ChainRequest{Operation: s.operation(), Chain: s.active()}, &resp)
+	_, _ = invoke[ChainRequest, EmptyResponse](s.client, s.ctx, "ClearTargets", ChainRequest{Operation: s.operation(), Chain: s.active()})
 }
 
 func (s *SessionClient) AddModule(moduleID string) (operatorsession.Step, error) {
-	var resp StepResponse
-	err := s.client.call(s.ctx, serviceName+".AddModule", ModuleRequest{Operation: s.operation(), ModuleID: moduleID, Chain: s.active()}, &resp)
+	resp, err := invoke[ModuleRequest, StepResponse](s.client, s.ctx, "AddModule", ModuleRequest{Operation: s.operation(), ModuleID: moduleID, Chain: s.active()})
 	return operatorsession.Step{ID: resp.ID, ModuleID: resp.ModuleID}, err
 }
 
 func (s *SessionClient) SetChainConfig(key, value string) error {
-	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".SetChainConfig", ConfigRequest{Operation: s.operation(), Key: key, Value: value, Chain: s.active()}, &resp)
+	_, err := invoke[ConfigRequest, EmptyResponse](s.client, s.ctx, "SetChainConfig", ConfigRequest{Operation: s.operation(), Key: key, Value: value, Chain: s.active()})
+	return err
 }
 
 func (s *SessionClient) UnsetChainConfig(key string) error {
-	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".UnsetChainConfig", ConfigRequest{Operation: s.operation(), Key: key, Chain: s.active()}, &resp)
+	_, err := invoke[ConfigRequest, EmptyResponse](s.client, s.ctx, "UnsetChainConfig", ConfigRequest{Operation: s.operation(), Key: key, Chain: s.active()})
+	return err
 }
 
 func (s *SessionClient) SetTargetConfig(target, key, value string) error {
-	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".SetTargetConfig", TargetConfigRequest{Operation: s.operation(), Target: target, Key: key, Value: value, Chain: s.active()}, &resp)
+	_, err := invoke[TargetConfigRequest, EmptyResponse](s.client, s.ctx, "SetTargetConfig", TargetConfigRequest{Operation: s.operation(), Target: target, Key: key, Value: value, Chain: s.active()})
+	return err
 }
 
 func (s *SessionClient) UnsetTargetConfig(target, key string) error {
-	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".UnsetTargetConfig", TargetConfigRequest{Operation: s.operation(), Target: target, Key: key, Chain: s.active()}, &resp)
+	_, err := invoke[TargetConfigRequest, EmptyResponse](s.client, s.ctx, "UnsetTargetConfig", TargetConfigRequest{Operation: s.operation(), Target: target, Key: key, Chain: s.active()})
+	return err
 }
 
 func (s *SessionClient) AppendLog(entries ...operatorlog.Entry) error {
-	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".AppendLog", AppendLogRequest{Operation: s.operation(), Chain: s.active(), Entries: operatorLogEntries(entries)}, &resp)
+	_, err := invoke[AppendLogRequest, EmptyResponse](s.client, s.ctx, "AppendLog", AppendLogRequest{Operation: s.operation(), Chain: s.active(), Entries: operatorLogEntries(entries)})
+	return err
 }
 
 func (s *SessionClient) AppendLogToChain(chain string, entries ...operatorlog.Entry) error {
-	var resp EmptyResponse
-	return s.client.call(s.ctx, serviceName+".AppendLog", AppendLogRequest{Operation: s.operation(), Chain: chain, Entries: operatorLogEntries(entries)}, &resp)
+	_, err := invoke[AppendLogRequest, EmptyResponse](s.client, s.ctx, "AppendLog", AppendLogRequest{Operation: s.operation(), Chain: chain, Entries: operatorLogEntries(entries)})
+	return err
 }
 
 func (s *SessionClient) ActiveLogs() []operatorlog.Entry {
-	var resp []OperatorLogEntry
-	if err := s.client.call(s.ctx, serviceName+".ActiveLogs", ActiveLogsRequest{Operation: s.operation(), Chain: s.active()}, &resp); err != nil {
+	resp, err := invoke[ActiveLogsRequest, []OperatorLogEntry](s.client, s.ctx, "ActiveLogs", ActiveLogsRequest{Operation: s.operation(), Chain: s.active()})
+	if err != nil {
 		return nil
 	}
 	out := make([]operatorlog.Entry, 0, len(resp))
@@ -794,8 +1005,8 @@ func (s *SessionClient) ActiveLogs() []operatorlog.Entry {
 }
 
 func (s *SessionClient) Snapshot() operatorsession.State {
-	var resp SnapshotResponse
-	if err := s.client.call(s.ctx, serviceName+".Snapshot", SnapshotRequest{Operation: s.operation(), Chain: s.active()}, &resp); err != nil {
+	resp, err := invoke[SnapshotRequest, SnapshotResponse](s.client, s.ctx, "Snapshot", SnapshotRequest{Operation: s.operation(), Chain: s.active()})
+	if err != nil {
 		return operatorsession.State{}
 	}
 	session := operatorsession.New()
@@ -851,19 +1062,92 @@ func (s *SessionClient) setActiveOperation(operation string) {
 	}
 }
 
-func (c *Client) call(ctx context.Context, method string, req any, resp any) error {
-	done := make(chan error, 1)
-	go func() {
-		done <- c.rpc.Call(method, req, resp)
-	}()
-
-	select {
-	case <-ctx.Done():
-		_ = c.Close()
-		return ctx.Err()
-	case err := <-done:
-		return err
+func invoke[Req, Res any](c *Client, ctx context.Context, method string, req Req) (Res, error) {
+	var zero Res
+	if c == nil || c.httpClient == nil || c.baseURL == "" {
+		return zero, errors.New("daemon rpc client is not configured")
 	}
+	client := connect.NewClient[Req, Res](
+		c.httpClient,
+		c.baseURL+serviceURLPrefix+method,
+		connect.WithCodec(jsonCodec{}),
+	)
+	resp, err := client.CallUnary(ctx, connect.NewRequest(&req))
+	if err != nil {
+		return zero, fmt.Errorf("%s: %w", method, err)
+	}
+	return *resp.Msg, nil
+}
+
+type Endpoint struct {
+	Network string
+	Address string
+}
+
+func ParseEndpoint(value string) (Endpoint, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return Endpoint{}, errors.New("daemon rpc endpoint is required")
+	}
+	switch {
+	case strings.HasPrefix(value, "unix://"):
+		path := strings.TrimPrefix(value, "unix://")
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+		return unixEndpoint(path)
+	case strings.HasPrefix(value, "unix:"):
+		return unixEndpoint(strings.TrimPrefix(value, "unix:"))
+	case strings.HasPrefix(value, "tcp://"):
+		return tcpEndpoint(strings.TrimPrefix(value, "tcp://"))
+	case strings.HasPrefix(value, "http://"):
+		return tcpEndpoint(strings.TrimPrefix(value, "http://"))
+	case strings.HasPrefix(value, "https://"):
+		return Endpoint{}, errors.New("daemon rpc tcp endpoint must use http, not https")
+	case strings.Contains(value, "/"):
+		return unixEndpoint(value)
+	default:
+		if _, _, err := net.SplitHostPort(value); err == nil {
+			return tcpEndpoint(value)
+		}
+		return unixEndpoint(value)
+	}
+}
+
+func unixEndpoint(path string) (Endpoint, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return Endpoint{}, errors.New("daemon unix socket path is required")
+	}
+	return Endpoint{Network: "unix", Address: path}, nil
+}
+
+func tcpEndpoint(address string) (Endpoint, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return Endpoint{}, errors.New("daemon tcp address is required")
+	}
+	if _, _, err := net.SplitHostPort(address); err != nil {
+		return Endpoint{}, err
+	}
+	return Endpoint{Network: "tcp", Address: address}, nil
+}
+
+func (e Endpoint) BaseURL() string {
+	if e.Network == "unix" {
+		return "http://hoveld"
+	}
+	return "http://" + e.Address
+}
+
+func (e Endpoint) String() string {
+	if e.Network == "tcp" {
+		return "tcp://" + e.Address
+	}
+	if strings.HasPrefix(e.Address, "unix:") {
+		return e.Address
+	}
+	return e.Address
 }
 
 type LogBroker struct {

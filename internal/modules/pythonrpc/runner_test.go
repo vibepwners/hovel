@@ -46,8 +46,8 @@ func TestRunnerExecutesPythonMockModule(t *testing.T) {
 	if len(result.Artifacts) != 1 || result.Artifacts[0].Data == "" {
 		t.Fatalf("artifacts = %#v, want inline artifact data", result.Artifacts)
 	}
-	if len(events.events) == 0 || events.events[0].Type.String() != "module.log" {
-		t.Fatalf("events = %#v, want module.log", events.events)
+	if len(events.events) == 0 || events.events[0].Type.String() != "hovel.module.log" {
+		t.Fatalf("events = %#v, want hovel.module.log", events.events)
 	}
 }
 

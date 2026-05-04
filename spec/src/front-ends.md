@@ -157,13 +157,13 @@ The canonical interactive execution loop is:
 3. Add chain steps with `add <module>`.
 4. Add one or more targets owned by the active chain with `target add <target>`.
 5. Configure and validate the chain with `config ...` and `validate`.
-6. Optionally pre-confirm with `confirm`.
+6. Optionally pre-confirm with `confirm`, or rerun an explicit typed review with `review`.
 7. Execute the active chain against its owned targets with `throw`.
 8. Persist the chain definition with `chain save <file>` when it should be shared or used from one-shot mode.
 
 Targets belong to chains. `target add` and `target clear` operate on the caller's active chain only, and interactive `throw` uses that active chain and that chain's target set. A targetless chain template can be reused and configured later; a configured chain includes target assignments and per-target config and is ready to review and throw.
 
-`confirm` and `throw` share the same review rendering. `confirm` records a pre-confirmation and stops. `throw` starts execution if the current plan hash already has a matching confirmation; otherwise it shows the review, asks the operator to type `yes`, records the confirmation, and starts execution. Confirmations do not expire by time. They become invalid when the reviewed plan hash changes. `throw --now` skips the prompt but records the bypass in the confirmation record.
+`review` and `throw` share the same review rendering. `confirm` records a pre-confirmation and stops. `review` always displays the current plan, requires the operator to type `yes`, records or refreshes the confirmation, and stops. `throw` starts execution if the current plan hash already has a matching confirmation; otherwise it shows the review, asks the operator to type `yes`, records the confirmation, and starts execution. Confirmations do not expire by time. They become invalid when the reviewed plan hash changes. `throw --now` skips the prompt but records the bypass in the confirmation record.
 
 Chains own their operation-scoped log topic. A chain topic is addressable as `operation/<operation>/chain/<chain>/logs`, and `chain logs` shows only the logs for the active chain. In multi-client sessions, a `cli`, `tui`, or MCP client attached to an operation and chain subscribes to that chain topic; clients attached to the same operation and chain see the same logs, while clients attached to other chains do not see them by default.
 

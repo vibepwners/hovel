@@ -87,5 +87,5 @@ record = json.loads(row[0])
 assert record["id"] == plan["id"], record
 assert record["confirmationId"] == plan["confirmationId"], record
 assert record["workspace"] == str(workspace), record
-assert versions == [1, 2, 3], versions
+assert versions == [1, 2, 3, 4], versions
 PY

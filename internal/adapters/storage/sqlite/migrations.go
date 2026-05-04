@@ -107,6 +107,36 @@ CREATE INDEX artifacts_throw_id_idx ON artifacts(throw_id);
 CREATE INDEX artifacts_run_id_idx ON artifacts(run_id);
 `,
 	},
+	{
+		Version: 4,
+		Name:    "structured_events",
+		SQL: `
+CREATE TABLE events (
+	id TEXT PRIMARY KEY,
+	schema_version TEXT NOT NULL,
+	timestamp TEXT NOT NULL,
+	level TEXT NOT NULL,
+	type TEXT NOT NULL,
+	message TEXT NOT NULL,
+	workspace TEXT NOT NULL,
+	operation TEXT NOT NULL,
+	chain TEXT NOT NULL,
+	throw_id TEXT NOT NULL,
+	run_id TEXT NOT NULL,
+	module_id TEXT NOT NULL,
+	target TEXT NOT NULL,
+	topic TEXT NOT NULL,
+	fields_json TEXT NOT NULL,
+	event_json TEXT NOT NULL
+);
+
+CREATE INDEX events_throw_id_idx ON events(throw_id);
+CREATE INDEX events_run_id_idx ON events(run_id);
+CREATE INDEX events_type_idx ON events(type);
+CREATE INDEX events_topic_idx ON events(topic);
+CREATE INDEX events_timestamp_idx ON events(timestamp);
+`,
+	},
 }
 
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {

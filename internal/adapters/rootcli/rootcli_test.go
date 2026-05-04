@@ -92,7 +92,7 @@ func TestDaemonServeHelpShowsOptions(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"daemon serve", "--workspace", "--socket"} {
+	for _, want := range []string{"daemon serve", "--workspace", "--socket", "--listen"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}

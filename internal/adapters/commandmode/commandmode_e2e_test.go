@@ -167,8 +167,8 @@ func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
 	if plan.ID != payload.Plan.ID || plan.ConfirmationID != payload.Plan.ConfirmationID || plan.Chain != "broken" || plan.Workspace != fixture.WorkspacePath {
 		t.Fatalf("persisted plan = %#v, payload plan = %#v", plan, payload.Plan)
 	}
-	if !hasEvent(events.events, "run.failed") {
-		t.Fatalf("events = %#v, want run.failed", events.events)
+	if !hasEvent(events.events, "hovel.run.failed") {
+		t.Fatalf("events = %#v, want hovel.run.failed", events.events)
 	}
 }
 

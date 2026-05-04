@@ -41,7 +41,7 @@ First-slice integration tests:
 8. `hovel` starts or attaches to `hoveld`.
 9. One-shot chain-file execution crosses the daemon boundary.
 10. Throw plan, confirmation record, events, artifacts, and final throw state are persisted.
-11. Interactive `throw`, `confirm`, and one-shot chain-file execution share the same planning and review path.
+11. Interactive `throw`, `review`, `confirm`, and one-shot chain-file execution share the same planning path, while `review` and prompted `throw` share the same typed review path.
 12. `throw --now` persists an auditable bypass confirmation record.
 13. If `cli` or `tui` starts a managed daemon, it stops that daemon on exit.
 14. If `cli` or `tui` attaches to an existing daemon, it leaves that daemon running on exit.

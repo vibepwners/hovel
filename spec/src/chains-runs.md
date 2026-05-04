@@ -122,7 +122,7 @@ The first thrower must support:
 8. Confirmation records, including prompt confirmations and `--now` bypass confirmations.
 9. Service start/stop steps once the service manager milestone is complete.
 
-`confirm` and `throw` share the same planning and review code path. `confirm` stops after recording the confirmation. `throw` starts execution only after an existing confirmation, an inline typed `yes`, or an explicit `--now` bypass has produced a confirmation record.
+`review` and `throw` share the same planning and review code path. `confirm` stops after recording a pre-confirmation. `review` always displays the reviewed plan, requires the operator to type `yes`, and records or refreshes the confirmation without starting execution. `throw` starts execution only after an existing confirmation, an inline typed `yes`, or an explicit `--now` bypass has produced a confirmation record.
 
 ## Eventual Throw Runtime Requirements
 

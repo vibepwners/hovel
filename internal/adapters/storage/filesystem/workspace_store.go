@@ -15,6 +15,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
+	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 )
 
@@ -246,6 +247,13 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 	return record, nil
 }
 
+func (s WorkspaceStore) RecordEvent(ctx context.Context, workspacePath string, evt event.Event) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return sqlitestore.NewStore(workspacePath).RecordEvent(ctx, evt)
+}
+
 func (s WorkspaceStore) ListThrowPlans(ctx context.Context, workspacePath string) ([]commands.ThrowPlanRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -288,6 +296,13 @@ func (s WorkspaceStore) GetArtifact(ctx context.Context, workspacePath, id strin
 		return commands.ArtifactRecord{}, errors.New("artifact id is required")
 	}
 	return sqlitestore.NewStore(workspacePath).GetArtifact(ctx, id)
+}
+
+func (s WorkspaceStore) ListEvents(ctx context.Context, workspacePath string, filter event.Filter) ([]event.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return sqlitestore.NewStore(workspacePath).ListEvents(ctx, filter)
 }
 
 func (s WorkspaceStore) EnsureWorkspaceDatabase(ctx context.Context, workspacePath string) error {

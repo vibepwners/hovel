@@ -63,6 +63,8 @@ func (e moduleExecutionFailure) ModuleFailureDetail() string {
 }
 
 type ExecuteMockExploitRequest struct {
+	Operation    string
+	Chain        string
 	ModuleID     string
 	Target       string
 	Inputs       map[string]string
@@ -92,6 +94,8 @@ func (s RunService) ExecuteMockExploit(ctx context.Context, req ExecuteMockExplo
 }
 
 type ExecuteModuleRequest struct {
+	Operation    string
+	Chain        string
 	ModuleID     string
 	Target       string
 	Inputs       map[string]string
@@ -104,6 +108,8 @@ func (s RunService) ExecuteModule(ctx context.Context, req ExecuteModuleRequest)
 	runID := s.ids.NewID()
 	request, err := run.NewRequest(run.RequestArgs{
 		ID:           runID,
+		Operation:    req.Operation,
+		Chain:        req.Chain,
 		ModuleID:     req.ModuleID,
 		Target:       req.Target,
 		Inputs:       req.Inputs,
@@ -117,7 +123,7 @@ func (s RunService) ExecuteModule(ctx context.Context, req ExecuteModuleRequest)
 	if !req.ThrowStarted.IsZero() {
 		startFields["throwStarted"] = req.ThrowStarted.Format(time.RFC3339Nano)
 	}
-	if err := s.appendRunEvent(ctx, "run.started", request, startFields); err != nil {
+	if err := s.appendRunEvent(ctx, "hovel.run.started", "run started", request, startFields); err != nil {
 		return run.Result{}, err
 	}
 	result, err := s.runner.Run(ctx, request)
@@ -134,11 +140,13 @@ func (s RunService) ExecuteModule(ctx context.Context, req ExecuteModuleRequest)
 			return run.Result{}, err
 		}
 	}
-	eventType := "run.succeeded"
+	eventType := "hovel.run.completed"
+	message := "run completed"
 	if result.State == run.StateFailed {
-		eventType = "run.failed"
+		eventType = "hovel.run.failed"
+		message = "run failed"
 	}
-	if err := s.appendRunEvent(ctx, eventType, request, map[string]string{
+	if err := s.appendRunEvent(ctx, eventType, message, request, map[string]string{
 		"summary": result.Summary,
 	}); err != nil {
 		return run.Result{}, err
@@ -165,7 +173,7 @@ func failedModuleResult(clock Clock, request run.Request, failure ModuleExecutio
 	})
 }
 
-func (s RunService) appendRunEvent(ctx context.Context, typ string, request run.Request, fields map[string]string) error {
+func (s RunService) appendRunEvent(ctx context.Context, typ, message string, request run.Request, fields map[string]string) error {
 	id, err := event.NewID(s.ids.NewID())
 	if err != nil {
 		return err
@@ -177,11 +185,14 @@ func (s RunService) appendRunEvent(ctx context.Context, typ string, request run.
 	evt, err := event.New(event.Args{
 		ID:        id,
 		Type:      eventType,
+		Message:   message,
 		Timestamp: s.clock.Now(),
 		Refs: event.Refs{
-			RunID:    request.ID,
-			ModuleID: request.ModuleID,
-			TargetID: request.Target,
+			Operation: request.Operation,
+			Chain:     request.Chain,
+			RunID:     request.ID,
+			ModuleID:  request.ModuleID,
+			TargetID:  request.Target,
 		},
 		Fields: fields,
 	})

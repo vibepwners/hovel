@@ -89,6 +89,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 	parser := argparse.NewParser("hovel daemon serve", "Run the daemon role in the mono-binary.")
 	workspacePath := parser.String("w", "workspace", &argparse.Options{Help: "Workspace path"})
 	socketPath := parser.String("s", "socket", &argparse.Options{Help: "Local RPC socket path"})
+	listenAddress := parser.String("", "listen", &argparse.Options{Help: "RPC listen endpoint, such as unix:/tmp/hoveld.sock or tcp://127.0.0.1:9090"})
 	if ok, code := parseArgs(parser, args, stdout, stderr); !ok {
 		return code
 	}
@@ -97,6 +98,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 	if err := daemonruntime.Serve(ctx, daemonruntime.Args{
 		WorkspacePath: *workspacePath,
 		SocketPath:    *socketPath,
+		ListenAddress: *listenAddress,
 	}); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 0

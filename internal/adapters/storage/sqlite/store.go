@@ -12,6 +12,7 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
+	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	_ "modernc.org/sqlite"
 )
@@ -91,6 +92,19 @@ func (s Store) RecordArtifact(ctx context.Context, record commands.ArtifactRecor
 	return RecordArtifact(ctx, db, record)
 }
 
+func (s Store) Append(ctx context.Context, evt event.Event) error {
+	return s.RecordEvent(ctx, evt)
+}
+
+func (s Store) RecordEvent(ctx context.Context, evt event.Event) error {
+	db, err := s.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return RecordEvent(ctx, db, evt)
+}
+
 func (s Store) ListThrowPlans(ctx context.Context) ([]commands.ThrowPlanRecord, error) {
 	db, err := s.open(ctx)
 	if err != nil {
@@ -134,6 +148,15 @@ func (s Store) GetArtifact(ctx context.Context, id string) (commands.ArtifactRec
 	}
 	defer db.Close()
 	return GetArtifact(ctx, db, id)
+}
+
+func (s Store) ListEvents(ctx context.Context, filter event.Filter) ([]event.Event, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	return ListEvents(ctx, db, filter)
 }
 
 func (s Store) open(ctx context.Context) (*sql.DB, error) {
@@ -510,4 +533,91 @@ func GetArtifact(ctx context.Context, db *sql.DB, id string) (commands.ArtifactR
 		return commands.ArtifactRecord{}, err
 	}
 	return record, nil
+}
+
+func RecordEvent(ctx context.Context, db *sql.DB, evt event.Event) error {
+	if evt.ID == "" {
+		return errors.New("event id is required")
+	}
+	if evt.Type == "" {
+		return errors.New("event type is required")
+	}
+	fieldsJSON, err := json.Marshal(evt.Fields)
+	if err != nil {
+		return err
+	}
+	eventJSON, err := json.Marshal(evt)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `
+INSERT INTO events(
+	id,
+	schema_version,
+	timestamp,
+	level,
+	type,
+	message,
+	workspace,
+	operation,
+	chain,
+	throw_id,
+	run_id,
+	module_id,
+	target,
+	topic,
+	fields_json,
+	event_json
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO NOTHING`,
+		evt.ID.String(),
+		evt.SchemaVersion,
+		evt.Timestamp.UTC().Format(time.RFC3339Nano),
+		string(evt.Level),
+		evt.Type.String(),
+		evt.Message,
+		evt.Refs.WorkspaceID,
+		evt.Refs.Operation,
+		evt.Refs.Chain,
+		evt.Refs.ThrowID,
+		evt.Refs.RunID,
+		evt.Refs.ModuleID,
+		evt.Refs.TargetID,
+		evt.Topic,
+		string(fieldsJSON),
+		string(eventJSON),
+	)
+	return err
+}
+
+func ListEvents(ctx context.Context, db *sql.DB, filter event.Filter) ([]event.Event, error) {
+	rows, err := db.QueryContext(ctx, `SELECT event_json FROM events ORDER BY timestamp, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []event.Event
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var evt event.Event
+		if err := json.Unmarshal([]byte(data), &evt); err != nil {
+			return nil, err
+		}
+		if filter.Match(evt) {
+			events = append(events, evt)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].Timestamp.Equal(events[j].Timestamp) {
+			return events[i].ID.String() < events[j].ID.String()
+		}
+		return events[i].Timestamp.Before(events[j].Timestamp)
+	})
+	return events, nil
 }

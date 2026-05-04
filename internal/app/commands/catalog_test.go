@@ -13,6 +13,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 )
 
@@ -29,6 +30,7 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"artifact", "list"},
 		{"control", "init"},
 		{"control", "daemon", "status"},
+		{"review"},
 		{"op", "create"},
 		{"op", "inspect"},
 		{"op", "list"},
@@ -205,7 +207,7 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 			"chain":     "mock-exploit",
 			"target":    "mock://target",
 		},
-		Confirmer: fakeThrowConfirmer{confirmed: true},
+		Input: &fakeInput{answer: "yes"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -223,10 +225,10 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 		t.Fatal("throw start timestamp was not propagated to run request")
 	}
 	recorder.requests[0].ThrowStarted = ""
-	if !reflect.DeepEqual(recorder.requests[0], RunMockExploitRequest{ModuleID: "mock-exploit@v0.0.0-example", Target: "mock://target", ChainConfig: map[string]string{}}) {
+	if !reflect.DeepEqual(recorder.requests[0], RunMockExploitRequest{Operation: operatorsession.DefaultOperation, Chain: "mock-exploit", ModuleID: "mock-exploit@v0.0.0-example", Target: "mock://target", ChainConfig: map[string]string{}}) {
 		t.Fatalf("run request = %#v", recorder.requests[0])
 	}
-	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
+	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{Operation: operatorsession.DefaultOperation, Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
 	if !reflect.DeepEqual(plans.records, []ThrowPlanRecord{wantPlan}) {
 		t.Fatalf("plans = %#v, want %#v", plans.records, []ThrowPlanRecord{wantPlan})
 	}
@@ -344,7 +346,7 @@ func TestThrowCancelsWhenPromptDeclines(t *testing.T) {
 			"chain":     "mock-exploit",
 			"target":    "mock://target",
 		},
-		Confirmer: fakeThrowConfirmer{confirmed: false},
+		Input: &fakeInput{answer: "no"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "throw cancelled") {
 		t.Fatalf("error = %v, want throw cancelled", err)
@@ -423,7 +425,7 @@ func TestConfirmHandlerRecordsPlanAndConfirmationWithoutRunning(t *testing.T) {
 	if len(recorder.requests) != 0 {
 		t.Fatalf("run requests = %#v, want none", recorder.requests)
 	}
-	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
+	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{Operation: operatorsession.DefaultOperation, Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
 	if !reflect.DeepEqual(plans.records, []ThrowPlanRecord{wantPlan}) {
 		t.Fatalf("plans = %#v, want %#v", plans.records, []ThrowPlanRecord{wantPlan})
 	}
@@ -435,6 +437,135 @@ func TestConfirmHandlerRecordsPlanAndConfirmationWithoutRunning(t *testing.T) {
 	}
 	if _, ok := result.JSON.(ThrowConfirmationRecord); !ok {
 		t.Fatalf("json payload type = %T, want ThrowConfirmationRecord", result.JSON)
+	}
+}
+
+func TestReviewHandlerRerunsTypedConfirmationWithoutRunning(t *testing.T) {
+	plans := &fakePlanRecorder{}
+	confirmations := &fakeConfirmationRecorder{}
+	recorder := &fakeRunRecorder{}
+	input := &fakeInput{answer: "yes"}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{},
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         plans,
+		Confirmations: confirmations,
+	})
+	definition, _ := registry.Find("review")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "mock://target",
+		},
+		Input: input,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.requests) != 0 {
+		t.Fatalf("run requests = %#v, want none", recorder.requests)
+	}
+	if len(plans.records) != 1 {
+		t.Fatalf("plans = %#v, want one", plans.records)
+	}
+	if len(confirmations.records) != 1 {
+		t.Fatalf("confirmations = %#v, want one", confirmations.records)
+	}
+	if confirmations.records[0].PlanHash != plans.records[0].PlanHash || confirmations.records[0].Method != "reviewed_yes" {
+		t.Fatalf("confirmation = %#v, want reviewed_yes for plan hash %s", confirmations.records[0], plans.records[0].PlanHash)
+	}
+	if input.prompt.Title != "THROW REVIEW" || input.prompt.Action != "confirm review" || input.prompt.RequiredLiteral != "yes" {
+		t.Fatalf("prompt = %#v, want review confirmation prompt", input.prompt)
+	}
+	if !result.Log.Empty() {
+		if result.Log.Title != "HOVEL//REVIEW" {
+			t.Fatalf("review log title = %q, want HOVEL//REVIEW", result.Log.Title)
+		}
+	} else {
+		t.Fatal("review result log is empty")
+	}
+	if result.Human != "" {
+		t.Fatalf("human result = %q, want empty because review emits an operator log", result.Human)
+	}
+	if _, ok := result.JSON.(ThrowConfirmationRecord); !ok {
+		t.Fatalf("json payload type = %T, want ThrowConfirmationRecord", result.JSON)
+	}
+}
+
+func TestReviewHandlerCancelledDoesNotRecordConfirmation(t *testing.T) {
+	plans := &fakePlanRecorder{}
+	confirmations := &fakeConfirmationRecorder{}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{},
+		Runs:          fakeRunClientFactory{},
+		Modules:       exampleCatalog(),
+		Plans:         plans,
+		Confirmations: confirmations,
+	})
+	definition, _ := registry.Find("review")
+
+	_, err := definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "mock://target",
+		},
+		Input: &fakeInput{answer: "no"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "review cancelled") {
+		t.Fatalf("err = %v, want review cancelled", err)
+	}
+	if len(plans.records) != 1 {
+		t.Fatalf("plans = %#v, want one reviewed plan", plans.records)
+	}
+	if len(confirmations.records) != 0 {
+		t.Fatalf("confirmations = %#v, want none", confirmations.records)
+	}
+}
+
+func TestThrowConfirmationPromptDisplaysReviewableConfiguration(t *testing.T) {
+	plan := newThrowPlanForExecution(".hovel", throwExecution{
+		Chain:   "alpha",
+		Targets: []string{"mock://target"},
+		Modules: []string{
+			"mock-exploit@v0.0.0-example",
+		},
+		ChainConfig: map[string]string{
+			"operator.confirmed_lab": "true",
+			"payload.mode":           "survey",
+		},
+		TargetConfigs: map[string]map[string]string{
+			"mock://target": {
+				"target.host": "router-01",
+				"target.port": "443",
+			},
+		},
+	})
+
+	prompt := throwConfirmationPrompt(plan, "throw")
+
+	if got := promptFieldValue(prompt, "plan hash"); got != plan.PlanHash[:10] {
+		t.Fatalf("plan hash field = %q, want short hash %q", got, plan.PlanHash[:10])
+	}
+	if got := promptFieldValue(prompt, "modules"); got != "mock-exploit@v0.0.0-example" {
+		t.Fatalf("modules field = %q", got)
+	}
+	chainConfig := promptFieldValue(prompt, "chain config")
+	for _, want := range []string{"operator.confirmed_lab=true", "payload.mode=survey"} {
+		if !strings.Contains(chainConfig, want) {
+			t.Fatalf("chain config = %q, missing %q", chainConfig, want)
+		}
+	}
+	targetConfig := promptFieldValue(prompt, "target config")
+	for _, want := range []string{"mock://target", "target.host=router-01", "target.port=443"} {
+		if !strings.Contains(targetConfig, want) {
+			t.Fatalf("target config = %q, missing %q", targetConfig, want)
+		}
 	}
 }
 
@@ -486,6 +617,44 @@ func TestArtifactListAndInspectHandlersUseRepository(t *testing.T) {
 	}
 	if !reflect.DeepEqual(inspectResult.JSON, repository.records[0]) {
 		t.Fatalf("inspect json = %#v, want %#v", inspectResult.JSON, repository.records[0])
+	}
+}
+
+func TestThrowInspectCanIncludeStructuredEvents(t *testing.T) {
+	plan := newThrowPlanForExecution(".hovel", throwExecution{Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
+	evt := testEvent(t, "event-1", "hovel.throw.started", "throw started", event.Refs{WorkspaceID: ".hovel", Operation: "default", Chain: plan.Chain, ThrowID: throwRecordID(plan)})
+	plans := &fakePlanRepository{records: []ThrowPlanRecord{plan}}
+	events := &fakeEventRepository{events: []event.Event{evt}}
+	registry := HovelRegistry(Runtime{
+		Workspaces:   fakeWorkspaceService{},
+		Daemons:      fakeDaemonService{},
+		Runs:         fakeRunClientFactory{},
+		Modules:      exampleCatalog(),
+		ThrowPlans:   plans,
+		EventRecords: events,
+	})
+	definition, _ := registry.Find("throw", "inspect")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"throw": plan.ID},
+		Options:     map[string]string{"workspace": ".hovel"},
+		Flags:       map[string]bool{"events": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "EVENTS") || !strings.Contains(result.Human, "hovel.throw.started") {
+		t.Fatalf("inspect output = %q", result.Human)
+	}
+	payload, ok := result.JSON.(ThrowInspectPayload)
+	if !ok {
+		t.Fatalf("json payload = %T, want ThrowInspectPayload", result.JSON)
+	}
+	if len(payload.Events) != 1 {
+		t.Fatalf("events = %#v, want one", payload.Events)
+	}
+	if got := events.filter.ThrowID; got != throwRecordID(plan) {
+		t.Fatalf("event filter throw id = %q, want %q", got, throwRecordID(plan))
 	}
 }
 
@@ -588,6 +757,8 @@ func TestThrowChainFileUsesFileConfigWithoutSessionMutation(t *testing.T) {
 		t.Fatalf("run requests = %#v, want one", recorder.requests)
 	}
 	wantRequest := RunMockExploitRequest{
+		Operation:    operatorsession.DefaultOperation,
+		Chain:        "alpha",
 		ModuleID:     "mock-exploit@v0.0.0-example",
 		Target:       "mock://target",
 		ChainConfig:  map[string]string{"operator.confirmed_lab": "true"},
@@ -616,6 +787,7 @@ func TestThrowRecordsThrowAndMaterializesArtifacts(t *testing.T) {
 	}
 	throwRecorder := &fakeThrowRecorder{}
 	artifactRecorder := &fakeArtifactRecorder{}
+	eventRecorder := &fakeEventRecorder{}
 	registry := HovelRegistry(Runtime{
 		Workspaces:    fakeWorkspaceService{},
 		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
@@ -625,6 +797,7 @@ func TestThrowRecordsThrowAndMaterializesArtifacts(t *testing.T) {
 		Throws:        throwRecorder,
 		Confirmations: &fakeConfirmationRecorder{},
 		Artifacts:     artifactRecorder,
+		Events:        eventRecorder,
 	})
 	definition, _ := registry.Find("throw")
 
@@ -644,6 +817,11 @@ func TestThrowRecordsThrowAndMaterializesArtifacts(t *testing.T) {
 	}
 	if payload.Results[0].Artifacts[0].Data != "" {
 		t.Fatalf("payload artifact data = %q, want scrubbed after materialization", payload.Results[0].Artifacts[0].Data)
+	}
+	for _, typ := range []string{"hovel.throw.planned", "hovel.throw.confirmed", "hovel.throw.started", "hovel.artifact.recorded", "hovel.throw.completed"} {
+		if !hasStructuredEvent(eventRecorder.events, typ) {
+			t.Fatalf("events = %#v, missing %s", eventRecorder.events, typ)
+		}
 	}
 }
 
@@ -772,6 +950,7 @@ func TestConfirmChainFileRecordsSamePlanAsThrowChainFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{
+		Operation:   operatorsession.DefaultOperation,
 		Chain:       "alpha",
 		Targets:     []string{"mock://target"},
 		Modules:     []string{"mock-exploit@v0.0.0-example"},
@@ -1407,6 +1586,8 @@ func TestThrowActiveChainExecutesConfiguredSteps(t *testing.T) {
 		t.Fatalf("run requests = %#v, want one request", recorder.requests)
 	}
 	want := RunMockExploitRequest{
+		Operation:   operatorsession.DefaultOperation,
+		Chain:       "test1",
 		ModuleID:    "mock-exploit",
 		Target:      "mock://target",
 		ChainConfig: map[string]string{"operator.confirmed_lab": "true"},
@@ -1517,6 +1698,23 @@ func (r *fakePlanRecorder) RecordThrowPlan(_ context.Context, plan ThrowPlanReco
 	return nil
 }
 
+type fakePlanRepository struct {
+	records []ThrowPlanRecord
+}
+
+func (r *fakePlanRepository) ListThrowPlans(_ context.Context, _ string) ([]ThrowPlanRecord, error) {
+	return append([]ThrowPlanRecord(nil), r.records...), nil
+}
+
+func (r *fakePlanRepository) GetThrowPlan(_ context.Context, _ string, id string) (ThrowPlanRecord, error) {
+	for _, record := range r.records {
+		if record.ID == id {
+			return record, nil
+		}
+	}
+	return ThrowPlanRecord{}, fmt.Errorf("throw plan %s not found", id)
+}
+
 type fakeConfirmationRecorder struct {
 	records []ThrowConfirmationRecord
 }
@@ -1584,6 +1782,72 @@ func (r *fakeArtifactRepository) ListArtifacts(_ context.Context, _ string) ([]A
 	return append([]ArtifactRecord(nil), r.records...), nil
 }
 
+type fakeEventRecorder struct {
+	events []event.Event
+}
+
+func (r *fakeEventRecorder) RecordEvent(_ context.Context, _ string, evt event.Event) error {
+	r.events = append(r.events, evt)
+	return nil
+}
+
+type fakeEventRepository struct {
+	events []event.Event
+	filter event.Filter
+}
+
+func (r *fakeEventRepository) ListEvents(_ context.Context, _ string, filter event.Filter) ([]event.Event, error) {
+	r.filter = filter
+	var out []event.Event
+	for _, evt := range r.events {
+		if filter.Match(evt) {
+			out = append(out, evt)
+		}
+	}
+	return out, nil
+}
+
+func testEvent(t *testing.T, idValue, typeValue, message string, refs event.Refs) event.Event {
+	t.Helper()
+	id, err := event.NewID(idValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typ, err := event.NewType(typeValue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evt, err := event.New(event.Args{
+		ID:        id,
+		Type:      typ,
+		Message:   message,
+		Timestamp: time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC),
+		Refs:      refs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evt
+}
+
+func hasStructuredEvent(events []event.Event, typ string) bool {
+	for _, evt := range events {
+		if evt.Type.String() == typ {
+			return true
+		}
+	}
+	return false
+}
+
+func promptFieldValue(prompt ConfirmationPrompt, label string) string {
+	for _, field := range prompt.Fields {
+		if field.Label == label {
+			return field.Value
+		}
+	}
+	return ""
+}
+
 func (r *fakeArtifactRepository) GetArtifact(_ context.Context, _ string, id string) (ArtifactRecord, error) {
 	for _, record := range r.records {
 		if record.ID == id {
@@ -1632,12 +1896,14 @@ func configuredChainFileFixture(name, target string) ChainFile {
 	}
 }
 
-type fakeThrowConfirmer struct {
-	confirmed bool
+type fakeInput struct {
+	answer string
+	prompt ConfirmationPrompt
 }
 
-func (c fakeThrowConfirmer) ConfirmThrow(context.Context, ThrowPlanRecord) (bool, error) {
-	return c.confirmed, nil
+func (i *fakeInput) Confirm(_ context.Context, prompt ConfirmationPrompt) (ConfirmationAnswer, error) {
+	i.prompt = prompt
+	return ConfirmationAnswer{Value: i.answer}, nil
 }
 
 type fakeRunClientFactory struct {
