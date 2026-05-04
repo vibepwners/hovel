@@ -223,6 +223,14 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 	}
 	sum := sha256.Sum256(data)
 	sha := hex.EncodeToString(sum[:])
+	relPath := filepath.Join("artifacts", materialization.ThrowID, materialization.RunID, safeArtifactName(materialization.Artifact.Name))
+	absPath := filepath.Join(workspacePath, relPath)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		return commands.ArtifactRecord{}, err
+	}
+	if err := os.WriteFile(absPath, data, 0o600); err != nil {
+		return commands.ArtifactRecord{}, err
+	}
 	createdAt := materialization.CreatedAt
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
@@ -236,7 +244,7 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 		Target:    materialization.Target,
 		Name:      materialization.Artifact.Name,
 		Kind:      materialization.Artifact.Kind,
-		Path:      path,
+		Path:      relPath,
 		SHA256:    sha,
 		Size:      int(info.Size()),
 		CreatedAt: createdAt.UTC().Format(time.RFC3339Nano),

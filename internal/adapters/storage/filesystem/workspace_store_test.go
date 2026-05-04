@@ -210,7 +210,7 @@ func TestMaterializeArtifactKeepsSameBytesDistinctAcrossThrows(t *testing.T) {
 	}
 }
 
-func TestMaterializeArtifactRegistersFileReferenceWithoutCopyingBytes(t *testing.T) {
+func TestMaterializeArtifactCopiesFileArtifactIntoWorkspace(t *testing.T) {
 	store := NewWorkspaceStore()
 	workspacePath := filepath.Join(t.TempDir(), ".hovel")
 	sourcePath := filepath.Join(t.TempDir(), "loot.txt")
@@ -233,14 +233,19 @@ func TestMaterializeArtifactRegistersFileReferenceWithoutCopyingBytes(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.Path != sourcePath {
-		t.Fatalf("path = %q, want source file path %q", record.Path, sourcePath)
+	wantPath := filepath.Join("artifacts", "throw-mock", "run-1", "loot.txt")
+	if record.Path != wantPath {
+		t.Fatalf("path = %q, want workspace artifact path %q", record.Path, wantPath)
 	}
 	if record.Size != len("file artifact bytes") || record.SHA256 == "" {
 		t.Fatalf("artifact record = %#v", record)
 	}
-	if _, err := os.Stat(filepath.Join(workspacePath, "artifacts", "throw-mock", "run-1", "loot.txt")); !os.IsNotExist(err) {
-		t.Fatalf("file artifact was copied into workspace, stat err = %v", err)
+	copied, err := os.ReadFile(filepath.Join(workspacePath, record.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(copied) != "file artifact bytes" {
+		t.Fatalf("copied artifact bytes = %q", string(copied))
 	}
 }
 
