@@ -10,6 +10,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.1
 	github.com/pkg/term v1.2.0-beta.2
 	golang.org/x/sys v0.42.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.0
 )
 

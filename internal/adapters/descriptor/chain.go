@@ -1,15 +1,14 @@
 package descriptor
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
+	"gopkg.in/yaml.v3"
 )
 
 var chainStepUsesPattern = regexp.MustCompile(`^(module|service|provider):[^\s]+$`)
@@ -20,12 +19,12 @@ type CanonicalDescriptor struct {
 	JSON []byte
 }
 
-// Decode parses a descriptor document from JSON or the alpha YAML subset used
-// by persisted Hovel files, then returns canonical JSON bytes.
+// Decode parses a descriptor document from JSON or YAML, then returns canonical
+// JSON bytes for schema validation.
 func Decode(data []byte) (CanonicalDescriptor, error) {
 	var value any
 	if err := json.Unmarshal(data, &value); err != nil {
-		parsed, yamlErr := parseYAMLDescriptor(string(data))
+		parsed, yamlErr := parseYAMLDescriptor(data)
 		if yamlErr != nil {
 			return CanonicalDescriptor{}, err
 		}
@@ -245,117 +244,59 @@ func requireString(path string, value any) error {
 	return nil
 }
 
-func parseYAMLDescriptor(text string) (map[string]any, error) {
-	file, err := parseChainYAML(text)
+func parseYAMLDescriptor(data []byte) (map[string]any, error) {
+	var value any
+	if err := yaml.Unmarshal(data, &value); err != nil {
+		return nil, err
+	}
+	converted, err := yamlToJSONValue(value)
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(file)
-	if err != nil {
-		return nil, err
-	}
-	var out map[string]any
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func parseChainYAML(text string) (commands.ChainFile, error) {
-	file := commands.ChainFile{}
-	var section string
-	var currentTarget *commands.ChainFileTarget
-	scanner := bufio.NewScanner(strings.NewReader(text))
-	for scanner.Scan() {
-		raw := scanner.Text()
-		if strings.TrimSpace(raw) == "" || strings.HasPrefix(strings.TrimSpace(raw), "#") {
-			continue
-		}
-		indent := leadingSpaces(raw)
-		line := strings.TrimSpace(raw)
-		switch {
-		case indent == 0 && strings.HasPrefix(line, "apiVersion:"):
-			file.APIVersion = yamlValue(line)
-		case indent == 0 && strings.HasPrefix(line, "kind:"):
-			file.Kind = yamlValue(line)
-		case indent == 0 && line == "metadata:":
-			section = "metadata"
-		case indent == 0 && line == "spec:":
-			section = "spec"
-		case indent == 2 && section == "metadata" && strings.HasPrefix(line, "name:"):
-			file.Metadata.Name = yamlValue(line)
-		case indent == 2 && strings.HasPrefix(line, "mode:"):
-			file.Spec.Mode = yamlValue(line)
-			section = "spec"
-		case indent == 2 && line == "steps:":
-			section = "steps"
-		case indent == 4 && section == "steps" && strings.HasPrefix(line, "- id:"):
-			file.Spec.Steps = append(file.Spec.Steps, commands.ChainFileStep{ID: yamlValue(strings.TrimPrefix(line, "- "))})
-		case indent == 6 && section == "steps" && strings.HasPrefix(line, "uses:"):
-			if len(file.Spec.Steps) == 0 {
-				return commands.ChainFile{}, fmt.Errorf("chain file step uses without step id")
-			}
-			file.Spec.Steps[len(file.Spec.Steps)-1].Uses = yamlValue(line)
-		case indent == 2 && line == "config:":
-			section = "config"
-			file.Spec.Config = map[string]string{}
-		case indent == 4 && section == "config":
-			key, value, ok := yamlPair(line)
-			if ok {
-				file.Spec.Config[key] = value
-			}
-		case indent == 2 && line == "targets:":
-			section = "targets"
-		case indent == 4 && section == "targets" && strings.HasPrefix(line, "- id:"):
-			file.Spec.Targets = append(file.Spec.Targets, commands.ChainFileTarget{ID: yamlValue(strings.TrimPrefix(line, "- "))})
-			currentTarget = &file.Spec.Targets[len(file.Spec.Targets)-1]
-		case indent == 6 && section == "targets" && line == "config:":
-			if currentTarget == nil {
-				return commands.ChainFile{}, fmt.Errorf("chain file target config without target")
-			}
-			currentTarget.Config = map[string]string{}
-			section = "target-config"
-		case indent == 8 && section == "target-config":
-			key, value, ok := yamlPair(line)
-			if ok && currentTarget != nil {
-				currentTarget.Config[key] = value
-			}
-		case indent == 4 && section == "target-config" && strings.HasPrefix(line, "- id:"):
-			section = "targets"
-			file.Spec.Targets = append(file.Spec.Targets, commands.ChainFileTarget{ID: yamlValue(strings.TrimPrefix(line, "- "))})
-			currentTarget = &file.Spec.Targets[len(file.Spec.Targets)-1]
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return commands.ChainFile{}, err
-	}
-	return file, nil
-}
-
-func leadingSpaces(text string) int {
-	return len(text) - len(strings.TrimLeft(text, " "))
-}
-
-func yamlValue(line string) string {
-	_, value, ok := strings.Cut(line, ":")
+	object, ok := converted.(map[string]any)
 	if !ok {
-		return ""
+		return nil, errors.New("descriptor must be an object")
 	}
-	return unquoteYAML(strings.TrimSpace(value))
+	return object, nil
 }
 
-func yamlPair(line string) (string, string, bool) {
-	key, value, ok := strings.Cut(line, ":")
-	if !ok {
-		return "", "", false
+func yamlToJSONValue(value any) (any, error) {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			converted, err := yamlToJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[key] = converted
+		}
+		return out, nil
+	case map[any]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			keyText, ok := key.(string)
+			if !ok {
+				return nil, fmt.Errorf("descriptor YAML map key %v must be a string", key)
+			}
+			converted, err := yamlToJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[keyText] = converted
+		}
+		return out, nil
+	case []any:
+		out := make([]any, len(typed))
+		for index, item := range typed {
+			converted, err := yamlToJSONValue(item)
+			if err != nil {
+				return nil, err
+			}
+			out[index] = converted
+		}
+		return out, nil
+	default:
+		return typed, nil
 	}
-	return unquoteYAML(strings.TrimSpace(key)), unquoteYAML(strings.TrimSpace(value)), true
-}
-
-func unquoteYAML(value string) string {
-	value = strings.TrimSpace(value)
-	if unquoted, err := strconv.Unquote(value); err == nil {
-		return unquoted
-	}
-	return value
 }

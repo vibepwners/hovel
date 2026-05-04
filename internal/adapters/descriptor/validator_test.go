@@ -314,6 +314,27 @@ func TestParseChainFileRejectsSchemaViolationsBeforeSemanticValidation(t *testin
 	}
 }
 
+func TestParseChainFileRejectsUnknownYAMLKeysBeforeCanonicalization(t *testing.T) {
+	_, err := ParseChainFile([]byte(`
+apiVersion: "hovel.dev/v1alpha1"
+kind: "Chain"
+metadata:
+  name: "alpha"
+spec:
+  mode: "configured"
+  surprise: true
+  steps:
+    - id: "step-1"
+      uses: "module:mock-exploit@v0.0.0-example"
+`))
+	if err == nil {
+		t.Fatal("expected schema error")
+	}
+	if !strings.Contains(err.Error(), "unexpected key surprise") {
+		t.Fatalf("error = %v, want unexpected schema key", err)
+	}
+}
+
 func chainFilesEqual(got, want commands.ChainFile) bool {
 	if got.APIVersion != want.APIVersion || got.Kind != want.Kind || got.Metadata != want.Metadata || got.Spec.Mode != want.Spec.Mode {
 		return false

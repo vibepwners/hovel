@@ -12,6 +12,7 @@ go_library(
         "//internal/app/commands",
         "//internal/domain/module",
         "//internal/domain/service",
+        "@in_gopkg_yaml_v3//:yaml_v3",
     ],
 )
 
