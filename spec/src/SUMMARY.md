@@ -5,7 +5,7 @@
 - [Architecture](architecture.md)
 - [Domain Model](domain-model.md)
 - [Modules and Services](modules-services.md)
-- [Providers, Artifacts, and Events](providers-artifacts.md)
+- [Providers, Artifacts, and Structured Logging](providers-artifacts.md)
 - [Operations, Chains, and Throws](chains-runs.md)
 - [Operator Workflows](operator-workflows.md)
 - [Front Ends](front-ends.md)

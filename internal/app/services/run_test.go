@@ -39,11 +39,11 @@ func TestRunServiceExecutesMockExploitAndEmitsEvents(t *testing.T) {
 	if len(events.events) != 2 {
 		t.Fatalf("event count = %d, want 2", len(events.events))
 	}
-	if events.events[0].Type.String() != "run.started" {
-		t.Fatalf("first event = %q, want run.started", events.events[0].Type)
+	if events.events[0].Type.String() != "hovel.run.started" {
+		t.Fatalf("first event = %q, want hovel.run.started", events.events[0].Type)
 	}
-	if events.events[1].Type.String() != "run.succeeded" {
-		t.Fatalf("second event = %q, want run.succeeded", events.events[1].Type)
+	if events.events[1].Type.String() != "hovel.run.completed" {
+		t.Fatalf("second event = %q, want hovel.run.completed", events.events[1].Type)
 	}
 }
 
@@ -91,7 +91,7 @@ func TestRunServiceConvertsRunnerErrorToFailedRun(t *testing.T) {
 	if len(events.events) != 2 {
 		t.Fatalf("event count = %d, want 2", len(events.events))
 	}
-	if events.events[1].Type.String() != "run.failed" || events.events[1].Fields["summary"] != result.Summary {
+	if events.events[1].Type.String() != "hovel.run.failed" || events.events[1].Fields["summary"] != result.Summary {
 		t.Fatalf("failed event = %#v", events.events[1])
 	}
 }
@@ -111,8 +111,8 @@ func TestRunServiceReturnsHostRunnerError(t *testing.T) {
 	if !errors.Is(err, runnerErr) {
 		t.Fatalf("error = %v, want %v", err, runnerErr)
 	}
-	if len(events.events) != 1 || events.events[0].Type.String() != "run.started" {
-		t.Fatalf("events = %#v, want only run.started", events.events)
+	if len(events.events) != 1 || events.events[0].Type.String() != "hovel.run.started" {
+		t.Fatalf("events = %#v, want only hovel.run.started", events.events)
 	}
 }
 

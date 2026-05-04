@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//internal/app/commands",
         "//internal/app/operatorsession",
+        "//internal/domain/event",
         "//internal/domain/workspace",
         "@org_modernc_sqlite//:sqlite",
     ],
@@ -27,5 +28,6 @@ go_test(
     deps = [
         "//internal/app/commands",
         "//internal/app/operatorsession",
+        "//internal/domain/event",
     ],
 )

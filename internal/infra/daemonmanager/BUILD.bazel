@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager",
     visibility = ["//:__subpackages__"],
     deps = [
+        "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
         "//internal/app/services",
         "//internal/domain/daemon",

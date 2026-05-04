@@ -1,10 +1,12 @@
 import base64
 import io
 import logging
+import tempfile
 import unittest
+from pathlib import Path
 from typing import Any, ClassVar
 
-from hovel_sdk import Context, HovelModule, LineShellSession, Requirement, Result, setup_logging
+from hovel_sdk import Artifact, Context, HovelModule, LineShellSession, Requirement, Result, setup_logging
 from hovel_sdk.framing import encode_message, read_message, write_message
 from hovel_sdk.server import JSONRPCServer
 
@@ -88,6 +90,27 @@ class SDKTest(unittest.TestCase):
         assert message is not None
         self.assertEqual(message["result"]["chainConfig"][0]["key"], "operator.confirmed_lab")
         self.assertEqual(message["result"]["targetConfig"][0]["type"], "host")
+
+    def test_artifact_helpers_emit_inline_and_file_references(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "loot.txt"
+            path.write_text("loot", encoding="utf-8")
+
+            result = Result.ok(artifacts=[
+                Artifact.inline("transcript.txt", "text/plain", "inline bytes"),
+                Artifact.text("notes.txt", b"operator notes"),
+                Artifact.json("summary.json", {"ok": True, "count": 2}),
+                Artifact.file(path, kind="text/plain"),
+            ])
+            artifacts = result.to_rpc()["artifacts"]
+
+        self.assertEqual(artifacts[0], {"name": "transcript.txt", "kind": "text/plain", "data": "inline bytes"})
+        self.assertEqual(artifacts[1], {"name": "notes.txt", "kind": "text/plain", "data": "operator notes"})
+        self.assertEqual(
+            artifacts[2],
+            {"name": "summary.json", "kind": "application/json", "data": '{"count":2,"ok":true}'},
+        )
+        self.assertEqual(artifacts[3], {"name": "loot.txt", "kind": "text/plain", "path": str(path)})
 
     def test_async_module_can_open_and_drive_shell_session(self) -> None:
         stdin = io.BytesIO(

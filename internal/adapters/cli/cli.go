@@ -263,7 +263,7 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 		return a.executeSessionConnect(ctx, sessionID, stdout, stderr)
 	}
 	stopThrowing := func() {}
-	if isThrowExecutionCommand(trimmed) && a.surface != nil {
+	if isAnimatedThrowExecutionCommand(trimmed) && a.surface != nil {
 		stopThrowing = a.surface.StartThrowing(a.PromptPrefix())
 		defer stopThrowing()
 	}
@@ -287,6 +287,19 @@ func isThrowExecutionCommand(line string) bool {
 		}
 	}
 	return true
+}
+
+func isAnimatedThrowExecutionCommand(line string) bool {
+	if !isThrowExecutionCommand(line) {
+		return false
+	}
+	fields := strings.Fields(line)
+	for _, field := range fields[1:] {
+		if field == "--now" || field == "-n" || strings.HasPrefix(field, "--now=") {
+			return true
+		}
+	}
+	return false
 }
 
 func (a App) PromptPrefix() string {

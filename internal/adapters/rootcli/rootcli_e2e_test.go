@@ -36,7 +36,7 @@ func TestMonoBinaryDaemonAndCommandRunMockExploitFlow(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	code := Run(context.Background(), []string{"command", "throw", "--chain", "mock-exploit", "--target", "mock://target", "--workspace", workspacePath, "--json"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"command", "throw", "--chain", "mock-exploit", "--target", "mock://target", "--workspace", workspacePath, "--now", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}

@@ -237,3 +237,85 @@ func TestHumanOutputRendersOperatorLogWhenPresent(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalInputRequiresLiteralYes(t *testing.T) {
+	prompt := testConfirmationPrompt()
+	var stdout strings.Builder
+	input := terminalInput{in: strings.NewReader("yes\n"), out: &stdout}
+
+	answer, err := input.Confirm(context.Background(), prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Confirmed(prompt) {
+		t.Fatal("confirmation = false, want true")
+	}
+	for _, want := range []string{"THROW REVIEW", "plan-mock", "mock-exploit", "hash-mock", "Type yes to throw:"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("prompt missing %q:\n%s", want, stdout.String())
+		}
+	}
+
+	answer, err = (terminalInput{in: strings.NewReader("y\n")}).Confirm(context.Background(), prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer.Confirmed(prompt) {
+		t.Fatal("confirmation = true, want false")
+	}
+}
+
+func TestTerminalInputUsesPromptAction(t *testing.T) {
+	prompt := testConfirmationPrompt()
+	prompt.Action = "confirm review"
+	var stdout strings.Builder
+	input := terminalInput{in: strings.NewReader("yes\n"), out: &stdout}
+
+	answer, err := input.Confirm(context.Background(), prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Confirmed(prompt) {
+		t.Fatal("confirmation = false, want true")
+	}
+	if !strings.Contains(stdout.String(), "Type yes to confirm review:") {
+		t.Fatalf("prompt = %q, want review action", stdout.String())
+	}
+}
+
+func TestTerminalInputEchoesAnswerWhenRequested(t *testing.T) {
+	prompt := testConfirmationPrompt()
+	var stdout strings.Builder
+	input := terminalInput{in: strings.NewReader("yes\n"), out: &stdout, echoAnswer: true}
+
+	answer, err := input.Confirm(context.Background(), prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Confirmed(prompt) {
+		t.Fatal("confirmation = false, want true")
+	}
+	if !strings.Contains(stdout.String(), "Type yes to throw: yes\n") {
+		t.Fatalf("prompt = %q, want echoed answer", stdout.String())
+	}
+}
+
+func testConfirmationPrompt() commands.ConfirmationPrompt {
+	plan := commands.ThrowPlanRecord{
+		ID:       "plan-mock",
+		PlanHash: "hash-mock",
+		Chain:    "mock-exploit",
+		Targets:  []string{"mock://target"},
+	}
+	return commands.ConfirmationPrompt{
+		Title:           "THROW REVIEW",
+		Action:          "throw",
+		RequiredLiteral: "yes",
+		Plan:            plan,
+		Fields: []commands.ConfirmationField{
+			{Label: "chain", Value: plan.Chain},
+			{Label: "targets", Value: strings.Join(plan.Targets, ", ")},
+			{Label: "plan hash", Value: plan.PlanHash, Muted: true},
+		},
+	}
+}

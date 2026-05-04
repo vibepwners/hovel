@@ -51,7 +51,7 @@ Module and service configs should be schema-validated.
 
 ## Build Strategy
 
-Hovel should start as a monorepo because built-in modules, services, SDKs, schemas, CLI, TUI, API, and MCP adapters need to evolve together.
+Hovel should start as a monorepo because in-tree modules, services, SDKs, schemas, CLI, TUI, API, and MCP adapters need to evolve together.
 
 Bazel is the authoritative build, test, docs, and release interface from day one. Ordinary Go and Python tooling may remain useful for local authoring, but CI and project workflows should go through Bazel.
 
@@ -89,25 +89,25 @@ hoveld-darwin-arm64
 hoveld-windows-amd64.exe
 ```
 
-The `hovel` binary is the production mono-binary. It includes `command`, `cli`, `daemon`, and `tui` roles. A separate `hoveld` binary may exist only as a development shim if it materially improves local testing; it is not the product contract.
+The `hovel` binary is the production mono-binary. It includes `cli`, one-shot chain-file execution, `daemon`, and `tui` roles. A separate `hoveld` binary may exist only as a development shim if it materially improves local testing; it is not the product contract.
 
 Hovel may also publish a PyPI wrapper for Python-centric users:
 
 ```bash
-uvx hovel command throw --chain ssh-memory --target 10.41.32.2
+uvx hovel throw ./ssh-memory.chain.yaml
 ```
 
-The wrapper may also support the direct alias form when it is available from the embedded binary:
+The wrapper should expose the same one-shot confirmation behavior as the native binary:
 
 ```bash
-uvx hovel throw --chain ssh-memory --target 10.41.32.2
+uvx hovel throw ./ssh-memory.chain.yaml --now
 ```
 
 The PyPI package may download or include the Go binary, similar to other compiled tools distributed through Python package indexes.
 
 Module and service sources:
 
-1. Built-in modules and services in the monorepo.
+1. In-tree modules and services in the monorepo, loaded through the ordinary module and service contracts.
 2. Local module and service directories.
 3. Git repositories.
 4. PEX packages.

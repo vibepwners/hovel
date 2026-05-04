@@ -37,7 +37,7 @@ func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -140,6 +140,58 @@ func TestDaemonLogSubscriptionFollowsActiveOperation(t *testing.T) {
 	})
 }
 
+func TestDaemonLogSubscriptionReceivesThrowRuntimeLogs(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
+	workspacePath := fixture.WorkspacePath
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client, err := daemonrpc.Dial(fixture.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	app := newTestApp().withDaemonSession(ctx, client)
+	if err := app.session.UseOperation("test-op"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.session.UseChain("lab"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.session.AddModule("mock-exploit@v0.0.0-example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.session.AddTarget("mock://router-01"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.session.SetChainConfig("operator.confirmed_lab", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.session.SetTargetConfig("mock://router-01", "target.host", "router-01"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.session.SetTargetConfig("mock://router-01", "target.port", "22"); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	stop := app.SubscribeLogs(ctx, client, nil, &logs)
+	defer stop()
+
+	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(ctx, "throw --workspace "+workspacePath+" --now", &stdout, &stderr); code != 0 {
+		t.Fatalf("throw exit code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
+	}
+
+	testsupport.WaitFor(t, func() bool {
+		output := logs.String()
+		return strings.Contains(output, "example exploit started") && strings.Contains(output, "run completed")
+	}, func() string {
+		return "logs:\n" + logs.String() + "\nstdout:\n" + stdout.String() + "\nstderr:\n" + stderr.String()
+	})
+}
+
 func TestDaemonSessionKeepsInjectedModuleCatalog(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
 	client, err := daemonrpc.Dial(fixture.SocketPath)
@@ -197,7 +249,7 @@ func TestE2EExampleSurveyAuthChainUsesPythonModules(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -235,7 +287,7 @@ func TestE2EExamplePayloadExploitChainUsesPythonModules(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -278,7 +330,7 @@ func TestE2ESessionConnectHandlesRawTerminalCarriageReturn(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -337,7 +389,7 @@ func TestE2EExampleFailingChainReportsFailedModule(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --json", &stdout, &stderr)
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+workspacePath+" --now --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
 	}

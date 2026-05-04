@@ -74,13 +74,46 @@
           "type": "object"
         },
         "outputs": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "artifacts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/artifactOutput"
+              }
+            }
+          }
         },
         "requires": {
           "type": "object"
         },
         "risk": {
           "type": "object"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifactOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "mode"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["inline", "file"]
+        },
+        "description": {
+          "type": "string"
         }
       }
     }

@@ -59,7 +59,7 @@ if [[ ! -S "$workspace/hoveld.sock" ]]; then
   exit 1
 fi
 
-output="$("$hovel_bin" command throw --chain mock-exploit --target mock://target --workspace "$workspace" --json)"
+output="$("$hovel_bin" command throw --chain mock-exploit --target mock://target --workspace "$workspace" --now --json)"
 
 python3 - "$workspace" "$output" <<'PY'
 import json
@@ -87,5 +87,5 @@ record = json.loads(row[0])
 assert record["id"] == plan["id"], record
 assert record["confirmationId"] == plan["confirmationId"], record
 assert record["workspace"] == str(workspace), record
-assert versions == [1], versions
+assert versions == [1, 2, 3, 4], versions
 PY

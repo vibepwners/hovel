@@ -1,6 +1,14 @@
 # Operations, Chains, and Throws
 
-Operations are the durable work context. Chains are declarative workflows with typed steps inside an operation. Throws are replay-inspectable executions of a chain against targets.
+Operations are the durable work context. Chains are workflows with typed steps inside an operation. Throws are replay-inspectable executions of a chain against targets.
+
+Chains have three related forms:
+
+1. An interactive chain record owned by an operation and edited through `hovel cli`.
+2. A chain template, which is a targetless reusable chain definition with steps and configuration schema but without target assignments.
+3. A configured chain file, which fully represents a chain, its steps, configuration schema, configured values, target assignments, and target config for review, sharing, and one-shot execution.
+
+Interactive editing and persistent representation are separate concerns. `chain add <module>` remains the fast CLI workflow for building a chain. `chain save <file>` writes the active chain to a YAML file, and `chain load <file>` imports or updates a chain from that file. One-shot shell execution throws a configured chain file rather than relying on prompt session state. Target config is essential to configured chain files because it is part of what the operator reviews and confirms before throwing.
 
 The first chain thrower should be intentionally small. It should support sequential steps, literal inputs, `${inputs.*}` references, `${steps.<id>.output}` references, per-step events, cancellation, and artifact creation. It should not initially support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.
 
@@ -17,7 +25,7 @@ Concurrency rules:
 1. `op use <operation>` changes only the caller's attached operation.
 2. `chain use <chain>` changes only the caller's active chain inside the attached operation.
 3. `chain add`, `target add`, `chain config`, `target config`, `chain validate`, and `throw` without `--chain` use the caller's active chain.
-4. `throw --chain <chain>` and other explicit chain operations use that chain without moving another client's active chain.
+4. Saved chain-file throws import or execute the file without moving another client's active chain.
 5. Mutations to one shared chain are serialized by the daemon and broadcast to subscribers of `operation/<operation>/chain/<chain>/logs`.
 6. Different clients may work different chains in the same operation concurrently.
 
@@ -74,8 +82,8 @@ spec:
             delivered: ${steps.ssh-deliver.output}
     - name: collect
       steps:
-        - id: collect-evidence
-          uses: module:evidence-collect
+        - id: collect-artifacts
+          uses: module:artifact-collect
     - name: service_cleanup
       steps:
         - id: stop-lp
@@ -83,6 +91,22 @@ spec:
           with:
             listener: ${steps.start-lp.output}
 ```
+
+A chain template records reusable workflow shape:
+
+1. Chain identity and version.
+2. Ordered phases and steps.
+3. Module references with resolved versions when available.
+4. Chain-level and target-level configuration schema.
+5. Expected providers, services, listeners, sessions, and artifacts when known.
+
+A configured chain file must contain enough information to reconstruct the review surface without relying on hidden prompt state. At minimum it records:
+
+1. Everything in the chain template.
+2. Chain-level configured values.
+3. Target list.
+4. Per-target configuration values.
+5. Risk and confirmation metadata produced by planning.
 
 ## First Thrower Requirements
 
@@ -95,7 +119,10 @@ The first thrower must support:
 5. Fact propagation as ordinary step output.
 6. Cancellation between steps.
 7. Persisted throw plans and throw records.
-8. Service start/stop steps once the service manager milestone is complete.
+8. Confirmation records, including prompt confirmations and `--now` bypass confirmations.
+9. Service start/stop steps once the service manager milestone is complete.
+
+`review` and `throw` share the same planning and review code path. `confirm` stops after recording a pre-confirmation. `review` always displays the reviewed plan, requires the operator to type `yes`, and records or refreshes the confirmation without starting execution. `throw` starts execution only after an existing confirmation, an inline typed `yes`, or an explicit `--now` bypass has produced a confirmation record.
 
 ## Eventual Throw Runtime Requirements
 
@@ -127,7 +154,7 @@ Hovel exists because productizing proofs of concept is hard. A chain should abso
 5. Listener startup.
 6. Transport selection.
 7. Error handling.
-8. Evidence capture.
+8. Artifact and transcript capture.
 9. Cleanup.
 10. Logging.
 11. Multi-target execution.

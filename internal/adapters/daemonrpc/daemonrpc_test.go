@@ -3,8 +3,7 @@ package daemonrpc
 import (
 	"context"
 	"net"
-	"net/rpc"
-	"net/rpc/jsonrpc"
+	"net/http"
 	"os"
 	"reflect"
 	"testing"
@@ -17,31 +16,15 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/modules/mockexploit"
 )
 
-func TestClientRunsMockExploitThroughJSONRPC(t *testing.T) {
+func TestClientRunsMockExploitThroughConnectRPC(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-
-	server := rpc.NewServer()
 	runs := services.NewRunService(
 		mockexploit.Runner{},
 		discardEvents{},
 		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
 		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 	)
-	if err := Register(server, runs); err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		server.ServeCodec(jsonrpc.NewServerCodec(conn))
-	}()
+	serveTestDaemon(t, socketPath, runs)
 
 	client, err := Dial(socketPath)
 	if err != nil {
@@ -72,35 +55,53 @@ func TestClientRunsMockExploitThroughJSONRPC(t *testing.T) {
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifact count = %d, want 1", len(result.Artifacts))
 	}
+	if result.Artifacts[0].Data == "" {
+		t.Fatalf("artifact = %#v, want inline data", result.Artifacts[0])
+	}
 }
 
-func TestSessionClientPublishesModuleAddedLog(t *testing.T) {
-	socketPath := shortTempDir(t) + "/hoveld.sock"
-	listener, err := net.Listen("unix", socketPath)
+func TestClientCanDialConnectRPCOverTCP(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
-
-	server := rpc.NewServer()
+	address := listener.Addr().String()
+	_ = listener.Close()
 	runs := services.NewRunService(
 		mockexploit.Runner{},
 		discardEvents{},
 		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
 		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 	)
-	if err := Register(server, runs, WithSession(operatorsession.New()), WithLogBroker(NewLogBroker())); err != nil {
+	serveTestDaemon(t, "tcp://"+address, runs)
+
+	client, err := Dial("tcp://" + address)
+	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			go server.ServeCodec(jsonrpc.NewServerCodec(conn))
-		}
-	}()
+	defer client.Close()
+
+	result, err := client.RunMockExploit(context.Background(), RunMockExploitRequest{
+		ModuleID: "mock-exploit",
+		Target:   "mock://target",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RunID != "run-1" || result.State != "succeeded" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestSessionClientPublishesModuleAddedLog(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs, WithSession(operatorsession.New()), WithLogBroker(NewLogBroker()))
 
 	client, err := Dial(socketPath)
 	if err != nil {
@@ -130,31 +131,13 @@ func TestSessionClientPublishesModuleAddedLog(t *testing.T) {
 
 func TestPollChainLogsOnlyReturnsRequestedChain(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-
-	server := rpc.NewServer()
 	runs := services.NewRunService(
 		mockexploit.Runner{},
 		discardEvents{},
 		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
 		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 	)
-	if err := Register(server, runs, WithSession(operatorsession.New()), WithLogBroker(NewLogBroker())); err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			go server.ServeCodec(jsonrpc.NewServerCodec(conn))
-		}
-	}()
+	serveTestDaemon(t, socketPath, runs, WithSession(operatorsession.New()), WithLogBroker(NewLogBroker()))
 
 	client, err := Dial(socketPath)
 	if err != nil {
@@ -199,31 +182,13 @@ func TestPollChainLogsOnlyReturnsRequestedChain(t *testing.T) {
 
 func TestSessionClientsKeepIndependentOperationChainAttachments(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-
-	server := rpc.NewServer()
 	runs := services.NewRunService(
 		mockexploit.Runner{},
 		discardEvents{},
 		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
 		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 	)
-	if err := Register(server, runs, WithSession(operatorsession.New()), WithLogBroker(NewLogBroker())); err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			go server.ServeCodec(jsonrpc.NewServerCodec(conn))
-		}
-	}()
+	serveTestDaemon(t, socketPath, runs, WithSession(operatorsession.New()), WithLogBroker(NewLogBroker()))
 
 	clientA, err := Dial(socketPath)
 	if err != nil {
@@ -291,13 +256,6 @@ func TestSessionClientsKeepIndependentOperationChainAttachments(t *testing.T) {
 
 func TestSessionMutationsPersistSnapshots(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-
-	server := rpc.NewServer()
 	runs := services.NewRunService(
 		mockexploit.Runner{},
 		discardEvents{},
@@ -305,25 +263,14 @@ func TestSessionMutationsPersistSnapshots(t *testing.T) {
 		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 	)
 	var persisted []operatorsession.PersistedState
-	if err := Register(server, runs,
+	serveTestDaemon(t, socketPath, runs,
 		WithSession(operatorsession.New()),
 		WithLogBroker(NewLogBroker()),
 		WithSessionPersistence(func(state operatorsession.PersistedState) error {
 			persisted = append(persisted, state)
 			return nil
 		}),
-	); err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			go server.ServeCodec(jsonrpc.NewServerCodec(conn))
-		}
-	}()
+	)
 
 	client, err := Dial(socketPath)
 	if err != nil {
@@ -372,13 +319,6 @@ func TestSessionMutationsPersistSnapshots(t *testing.T) {
 
 func TestActiveLogsDoesNotPersistSnapshot(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-
-	server := rpc.NewServer()
 	runs := services.NewRunService(
 		mockexploit.Runner{},
 		discardEvents{},
@@ -386,25 +326,14 @@ func TestActiveLogsDoesNotPersistSnapshot(t *testing.T) {
 		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
 	)
 	var persisted []operatorsession.PersistedState
-	if err := Register(server, runs,
+	serveTestDaemon(t, socketPath, runs,
 		WithSession(operatorsession.New()),
 		WithLogBroker(NewLogBroker()),
 		WithSessionPersistence(func(state operatorsession.PersistedState) error {
 			persisted = append(persisted, state)
 			return nil
 		}),
-	); err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			go server.ServeCodec(jsonrpc.NewServerCodec(conn))
-		}
-	}()
+	)
 
 	client, err := Dial(socketPath)
 	if err != nil {
@@ -434,6 +363,30 @@ func TestActiveLogsDoesNotPersistSnapshot(t *testing.T) {
 
 func operatorlogEntryFromTest(message string) operatorlog.Entry {
 	return operatorlog.Entry{Message: message}
+}
+
+func serveTestDaemon(t *testing.T, endpoint string, runs services.RunService, options ...ServerOption) {
+	t.Helper()
+	parsed, err := ParseEndpoint(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen(parsed.Network, parsed.Address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewHandler(runs, options...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: handler}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		_ = server.Close()
+		_ = listener.Close()
+	})
 }
 
 func shortTempDir(t *testing.T) string {

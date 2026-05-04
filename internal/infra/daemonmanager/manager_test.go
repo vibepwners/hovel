@@ -2,7 +2,6 @@ package daemonmanager
 
 import (
 	"context"
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,7 +14,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfig)
+	os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfigPath())
 	os.Exit(m.Run())
 }
 
@@ -102,22 +101,15 @@ func TestEnsureStartsManagedDaemonWhenStatusSocketIsStale(t *testing.T) {
 }
 
 func TestEnsureAttachesToReachableWorkspaceSocketWithoutStatus(t *testing.T) {
-	workspacePath := testsupport.TempDir(t)
-	socketPath := filepath.Join(workspacePath, "hoveld.sock")
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{
+		PID:       12345,
+		StartedAt: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+	})
+	workspacePath := fixture.WorkspacePath
+	socketPath := fixture.SocketPath
+	if err := filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), workspacePath); err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
-	done := make(chan error, 1)
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			done <- err
-			return
-		}
-		done <- conn.Close()
-	}()
 
 	session, err := New().Ensure(context.Background(), workspacePath)
 	if err != nil {
@@ -132,33 +124,18 @@ func TestEnsureAttachesToReachableWorkspaceSocketWithoutStatus(t *testing.T) {
 	if err := session.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestEnsureAttachesWhenStatusSocketPathIsRelative(t *testing.T) {
 	repoPath := testsupport.TempDir(t)
 	workspacePath := filepath.Join(repoPath, ".hovel")
-	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	t.Chdir(repoPath)
-	socketPath := filepath.Join(workspacePath, "hoveld.sock")
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	done := make(chan error, 1)
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			done <- err
-			return
-		}
-		done <- conn.Close()
-	}()
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{
+		WorkspacePath: workspacePath,
+		PID:           12345,
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+	})
+	socketPath := fixture.SocketPath
 
 	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
 		WorkspacePath: ".hovel",
@@ -185,9 +162,6 @@ func TestEnsureAttachesWhenStatusSocketPathIsRelative(t *testing.T) {
 		t.Fatalf("socket path = %q, want %q", session.Status().Identity.SocketPath, socketPath)
 	}
 	if err := session.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 }

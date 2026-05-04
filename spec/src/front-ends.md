@@ -1,136 +1,67 @@
 # Front Ends
 
-Front ends are adapters over application services. They must share validation, planning, execution, event streaming, scope guardrails, and audit behavior.
+Front ends are adapters over application services. They must share validation, planning, execution, structured logging rail subscriptions, scope guardrails, and audit behavior.
 
-Hovel should have multiple first-class operator front ends: MCP for agentic and tooling workflows, `command` mode for normal shell invocations, `cli` mode for an interactive prompt shell, and `tui` mode for a full-screen terminal interface. These surfaces may feel different, but they must attach to the same daemon and use the same application services.
+Hovel should have multiple first-class operator front ends: `cli` mode for an interactive prompt shell, one-shot chain-file execution for shell workflows, MCP for agentic and tooling workflows, and `tui` mode for a full-screen terminal interface. These surfaces may feel different, but they must attach to the same daemon and use the same application services.
 
 The production entrypoint is the `hovel` mono-binary. Top-level subcommands select the front-end or daemon role:
 
 ```text
-hovel command ...
 hovel cli ...
+hovel throw <chain-file>
 hovel daemon ...
 hovel tui ...
 ```
 
-For operator ergonomics, the mono-binary also exposes registry-backed direct command aliases such as `hovel op ...`, `hovel chain ...`, `hovel module ...`, `hovel target ...`, and `hovel throw ...`. These aliases are part of the shell-facing product surface, but they must be generated from or dispatched through the same central command registry as `hovel command ...`.
+General-purpose `hovel command ...` mode is not part of the product contract. The shell-facing product surface should be deliberately narrow: daemon management, help, and one-shot execution of a saved chain file.
 
 ## Terminology
 
 These terms are normative:
 
-1. `command` mode is the normal shell command line. It runs one command, prints output, and exits.
-2. `cli` mode is an interactive prompt shell. It takes over the terminal like a REPL, but it is not a full-screen TUI.
+1. `cli` mode is an interactive prompt shell. It takes over the terminal like a REPL, but it is not a full-screen TUI.
+2. One-shot mode throws a saved chain file from the shell, prints output, and exits.
 3. `tui` mode is the full-screen terminal UI.
 4. `daemon` mode runs or inspects the engine role directly.
 
-The old phrase "CLI command mode" should be avoided. Use `command` for non-interactive shell invocations and `cli` for the interactive prompt shell.
+The old phrase "CLI command mode" should be avoided. Use `cli` for the interactive prompt shell and "one-shot chain-file execution" for shell throws.
 
-## Command Mode
+## One-Shot Mode
 
-`command` mode is for scripts, automation, CI, quick inspection, and normal shell usage. It should include every operation that makes sense outside the interactive `cli` or full-screen `tui` environments.
+One-shot mode is for scripts, automation, CI, demos, and cases where an operator wants to execute a durable chain definition without entering the interactive prompt.
 
-Command mode rules:
+One-shot rules:
 
-1. Invoked as `hovel command ...` or an equivalent registry-backed direct alias such as `hovel throw ...`.
-2. Runs one command and exits.
-3. Uses shared command definitions from the central command registry.
-4. Uses the same argument, switch, option, help, validation, completion metadata, and handlers as `cli` mode.
-5. Uses `--json` for structured automation.
-6. Uses `--no-color` for simple terminals and logs.
-7. Requires an already-running daemon for daemon-backed operator commands.
-8. Provides daemon-management commands such as status and explicit daemon startup where appropriate.
-9. Does not silently spawn a managed daemon for ordinary commands. Automatic managed-daemon startup is reserved for `cli` and `tui`.
+1. Invoked as `hovel throw <chain-file>`.
+2. Loads a configured chain YAML file and produces the same throw plan as interactive `throw`.
+3. Displays the same final configuration review as interactive `confirm` and `throw`.
+4. Requires the operator to type `yes` before execution unless `--now` is passed.
+5. Records a confirmation record for both typed confirmations and `--now` bypasses.
+6. Persists throw plans, confirmation records, events, artifacts, throw records, and final state.
+7. Uses `--json` for structured output.
+8. Uses `--no-color` for simple terminals and logs.
+9. Does not rely on or mutate another client's active operation or chain selection.
 
-Recommended command tree:
+Recommended shell surface:
 
 ```text
 hovel
-  command
-    control
-      init
-      daemon
-        status
-        stop
-    op
-      create <operation>
-      use <operation>
-      list
-      inspect
-    chain
-      create <chain>
-      use <chain-or-module>
-      rename <chain> <name>
-      add <module-id>
-      remove <step-id>
-      move <step-id>
-      validate
-      config
-        set <key> <value>
-        unset <key>
-        list
-        interactive
-      list
-      inspect
-      delete <chain>
-      logs
-      plan
-    target
-      add <target>
-      clear
-      config
-        set <target> <key> <value>
-        unset <target> <key>
-        list <target>
-      list
-      inspect
-      import
-    throw [--chain <chain> --target <target>]
-      list
-      inspect <throw>
-    module
-      list
-      inspect <module>
-      scaffold
-      validate <path>
-    service
-      list
-      inspect <service>
-      start <service>
-      stop <service>
-      logs <service>
-      scaffold
-      validate <path>
-    provider
-      list
-      inspect <provider>
-    payload
-      list
-      inspect <payload>
-      build <payload>
-    listener
-      list
-      inspect <listener>
-      stop <listener>
-    session
-      list
-      attach <session>
-      close <session>
-    evidence
-      list
-      inspect <evidence>
+  throw <chain-file> [--now] [--workspace <workspace>] [--json] [--no-color]
+  daemon
+    serve
+    status
 ```
 
 ## CLI Mode
 
 `cli` mode is the first rich operator interface and should exist before the full TUI becomes complex. It starts an interactive prompt shell with command history, completions, contextual help, and styled output. It should use `go-prompt` for the prompt and completion loop and Lip Gloss for prompt, table, panel, status, and result styling.
 
-CLI mode should be inspired by what operators like about Metasploit: fast discovery, a stable prompt, contextual commands, readable module options, jobs, sessions, and a workflow that lets an operator stay inside the tool while moving from discovery to planning to execution. It should not clone Metasploit command names or behavior wholesale; Hovel should have its own vocabulary around operations, chains, targets, providers, payloads, listeners, sessions, throws, events, artifacts, and evidence.
+CLI mode should be inspired by what operators like about Metasploit: fast discovery, a stable prompt, contextual commands, readable module options, jobs, sessions, and a workflow that lets an operator stay inside the tool while moving from discovery to planning to execution. It should not clone Metasploit command names or behavior wholesale; Hovel should have its own vocabulary around operations, chains, targets, providers, payloads, listeners, sessions, throws, structured events, and artifacts.
 
 Requirements:
 
 1. Human-readable output by default.
-2. `--json` for structured automation.
+2. `--json` for structured output where useful.
 3. `--no-color` for simple terminals.
 4. `--verbose` and `--debug`.
 5. `--workspace` selection.
@@ -152,7 +83,7 @@ hovel
   cli
 ```
 
-Direct command aliases are durable only when they remain registry-backed and behaviorally equivalent to the corresponding `hovel command ...` path. Root role commands such as `hovel cli`, `hovel daemon`, and `hovel tui` remain explicit role selectors.
+Root role commands such as `hovel cli`, `hovel daemon`, and `hovel tui` remain explicit role selectors. Product docs should not present broad direct aliases such as `hovel op ...` as the durable shell contract.
 
 Recommended prompt shape:
 
@@ -179,6 +110,8 @@ op inspect
 chain create
 chain use
 chain rename
+chain save
+chain load
 chain list
 chain delete
 add
@@ -210,12 +143,12 @@ back
 exit
 ```
 
-The prompt should show workspace, active operation, and active chain context, but should only enter modal flows when the mode is visible in the prompt. When a chain is activated with `chain use <chain>` or created with `chain create <chain>`, the prompt includes the selected operation and chain as `h0v3l [<operation>/<chain>] >`; the chain segment should render in cyan. `chain config interactive` remains inside the active go-prompt session, changes the prompt into config-selection or config-value mode, and switches completions to current menu choices or type-aware values for the key being configured. Every interactive action should have an equivalent `command` mode invocation or application service call.
+The prompt should show workspace, active operation, and active chain context, but should only enter modal flows when the mode is visible in the prompt. When a chain is activated with `chain use <chain>` or created with `chain create <chain>`, the prompt includes the selected operation and chain as `h0v3l [<operation>/<chain>] >`; the chain segment should render in cyan. `chain config interactive` remains inside the active go-prompt session, changes the prompt into config-selection or config-value mode, and switches completions to current menu choices or type-aware values for the key being configured. Interactive actions should call application services through validated command invocations.
 
 CLI mode has two discovery contexts:
 
 1. Normal context, with no active chain: root completions focus on setup and navigation, including `control`, `op`, `module`, and chain lifecycle commands such as `chain create`, `chain use`, `chain list`, `chain rename`, and `chain delete`. Active-chain commands such as `chain add`, `chain config`, `chain validate`, `chain inspect`, and `chain logs` are hidden from completion until a chain is active.
-2. Chain context, with an active chain: active-chain operations are promoted to root commands. `add <module>`, `config ...`, `validate`, `inspect`, `logs`, and `rename <name>` are CLI aliases over the canonical `chain ...` command handlers. The legacy plural `chains ...` spelling may remain as a compatibility alias, but docs, help, and examples should prefer `chain`.
+2. Chain context, with an active chain: active-chain operations are promoted to root commands. `add <module>`, `config ...`, `validate`, `inspect`, `logs`, and `rename <name>` are CLI aliases over the canonical `chain ...` command handlers. Docs, help, and examples should prefer `chain`.
 
 The canonical interactive execution loop is:
 
@@ -224,13 +157,17 @@ The canonical interactive execution loop is:
 3. Add chain steps with `add <module>`.
 4. Add one or more targets owned by the active chain with `target add <target>`.
 5. Configure and validate the chain with `config ...` and `validate`.
-6. Execute the active chain against its owned targets with `throw`.
+6. Optionally pre-confirm with `confirm`, or rerun an explicit typed review with `review`.
+7. Execute the active chain against its owned targets with `throw`.
+8. Persist the chain definition with `chain save <file>` when it should be shared or used from one-shot mode.
 
-Targets belong to chains. `target add` and `target clear` operate on the caller's active chain only, and `throw` without explicit options uses that active chain and that chain's target set.
+Targets belong to chains. `target add` and `target clear` operate on the caller's active chain only, and interactive `throw` uses that active chain and that chain's target set. A targetless chain template can be reused and configured later; a configured chain includes target assignments and per-target config and is ready to review and throw.
+
+`review` and `throw` share the same review rendering. `confirm` records a pre-confirmation and stops. `review` always displays the current plan, requires the operator to type `yes`, records or refreshes the confirmation, and stops. `throw` starts execution if the current plan hash already has a matching confirmation; otherwise it shows the review, asks the operator to type `yes`, records the confirmation, and starts execution. Confirmations do not expire by time. They become invalid when the reviewed plan hash changes. `throw --now` skips the prompt but records the bypass in the confirmation record.
 
 Chains own their operation-scoped log topic. A chain topic is addressable as `operation/<operation>/chain/<chain>/logs`, and `chain logs` shows only the logs for the active chain. In multi-client sessions, a `cli`, `tui`, or MCP client attached to an operation and chain subscribes to that chain topic; clients attached to the same operation and chain see the same logs, while clients attached to other chains do not see them by default.
 
-Operational setup commands such as workspace initialization and daemon inspection must be grouped under `control` in the registry exposed to `cli` and `command`. The old top-level `run` command should not be the durable operator contract; `throw` is the execution verb for the selected chain and target set.
+Operational setup commands such as workspace initialization and daemon inspection must be grouped under `control` in the registry exposed to `cli`. The old top-level `run` command should not be the durable operator contract; `throw` is the execution verb for the selected chain and target set.
 
 The visual goal is "1337 af" but maintainable: high contrast, sharp prompt styling, clear context, readable tables, severe/status colors, and deterministic render tests. Styling should be centralized in the shared terminal theme package rather than scattered across command handlers.
 
@@ -241,13 +178,13 @@ The TUI is the visual identity of the project, but it should remain a client ove
 Requirements:
 
 1. Attaches to `hoveld`.
-2. Consumes the same event stream as `command`, `cli`, API, and MCP.
+2. Consumes the same structured logging rail as one-shot execution, `cli`, API, and MCP.
 3. Works over SSH.
 4. Degrades gracefully on limited terminals.
 5. Supports multiple clients attached to the same engine.
 6. Uses Bubble Tea, Bubbles, and Lip Gloss.
 7. Shares theme tokens with `cli` mode.
-8. Presents the same plans, confirmations, throws, sessions, listeners, artifacts, evidence, and events as `cli`, `command`, and MCP.
+8. Presents the same plans, confirmations, throws, sessions, listeners, artifacts, and structured events as `cli`, one-shot execution, and MCP.
 9. Managed daemon lifecycle: attach to an existing daemon if one is running; otherwise start a background daemon owned by the `tui` session and shut it down on exit.
 
 Initial screens:
@@ -263,7 +200,6 @@ Provider Browser
 Payload Browser
 Listener Panel
 Session Panel
-Evidence Viewer
 Artifact Viewer
 Log Stream
 Settings / Theme Selector
@@ -294,12 +230,13 @@ Visual direction:
 
 ## Shared Command Registry
 
-Hovel must have a central command registry that is the single source of truth for operator commands.
+Hovel must have a central command registry that is the single source of truth for interactive operator commands and shared action metadata.
 
-Registering a command once should make it available to both:
+Registering an operator action once should make it available to:
 
-1. `command` mode as a normal shell invocation.
-2. `cli` mode as an interactive command with prompt completion and contextual help.
+1. `cli` mode as an interactive command with prompt completion and contextual help.
+2. TUI action palettes and key-bound actions where applicable.
+3. One-shot chain-file execution only where the action belongs to the saved-file execution workflow.
 
 The registry owns:
 
@@ -314,9 +251,9 @@ The registry owns:
 9. Handler binding to application services or daemon RPC calls.
 10. Safety and confirmation metadata.
 
-Command handlers must not parse argv directly. They receive a validated command invocation built from registry metadata. Command mode should adapt registry metadata into argparse parsers. CLI mode should adapt the same metadata into go-prompt suggestions, contextual help, and validated invocations.
+Command handlers must not parse argv directly. They receive a validated command invocation built from registry metadata. CLI mode should adapt registry metadata into go-prompt suggestions, contextual help, and validated invocations. One-shot mode should use the shared planning, confirmation, and throw services rather than reimplementing a parallel shell-only path.
 
-Golden tests should verify that a command registered in the central registry appears in both command mode help and CLI mode completion/help. Contract tests should verify that arguments, switches, default values, required fields, and validation errors are identical across both modes.
+Golden tests should verify CLI help and completion. Contract tests should verify that one-shot chain-file execution and interactive `throw` produce equivalent plans, review surfaces, confirmation records, events, artifacts, throw records, and final state for the same chain file.
 
 ## REST/OpenAPI
 
@@ -330,7 +267,7 @@ Primary uses:
 2. MCP adapter.
 3. External automation.
 4. Future web UI.
-5. Chain execution from scripts.
+5. Chain-file execution from scripts.
 6. Service lifecycle management.
 7. Listener and session inspection.
 
@@ -355,9 +292,9 @@ Event streaming may use Server-Sent Events or WebSockets.
 
 MCP is another front end over the same application services.
 
-MCP has eventual operator parity: anything a human can do through `command`, `cli`, TUI, or API should be representable through MCP, subject to the same guardrail checks, confirmations, planning output, and audit trail. The implementation should ship inspection and planning tools before execution tools unless the shared confirmation and audit path is already complete.
+MCP has eventual operator parity: anything a human can do through `cli`, one-shot execution, TUI, or API should be representable through MCP, subject to the same guardrail checks, confirmations, planning output, and audit trail. The implementation should ship inspection and planning tools before execution tools unless the shared confirmation and audit path is already complete.
 
-MCP should be treated as a peer front end, not as a privileged back door. It may expose workflows optimized for agents, but those workflows must produce the same plans, guardrail results, confirmations, events, artifacts, and evidence that a CLI or TUI operator would see.
+MCP should be treated as a peer front end, not as a privileged back door. It may expose workflows optimized for agents, but those workflows must produce the same plans, guardrail results, confirmations, structured events, artifacts, and throw records that a CLI or TUI operator would see.
 
 Initial inspection and planning tools:
 

@@ -20,6 +20,8 @@ const (
 
 type RequestArgs struct {
 	ID           string
+	Operation    string
+	Chain        string
 	ModuleID     string
 	Target       string
 	Inputs       map[string]string
@@ -29,6 +31,8 @@ type RequestArgs struct {
 
 type Request struct {
 	ID           string
+	Operation    string
+	Chain        string
 	ModuleID     string
 	Target       string
 	Inputs       map[string]string
@@ -51,6 +55,8 @@ func NewRequest(args RequestArgs) (Request, error) {
 	}
 	return Request{
 		ID:           args.ID,
+		Operation:    strings.TrimSpace(args.Operation),
+		Chain:        strings.TrimSpace(args.Chain),
 		ModuleID:     args.ModuleID,
 		Target:       args.Target,
 		Inputs:       cloneStringMap(args.Inputs),
@@ -69,6 +75,7 @@ type Artifact struct {
 	Name string
 	Kind string
 	Data string
+	Path string
 }
 
 type SessionRef struct {

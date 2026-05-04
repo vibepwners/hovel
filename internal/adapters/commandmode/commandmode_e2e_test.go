@@ -42,7 +42,7 @@ func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
 		return err == nil && status.State == daemon.StateRunning
 	})
 
-	code := Run(context.Background(), []string{"throw", "--chain", "mock-exploit", "--target", "mock://target", "--workspace", workspacePath, "--json"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"throw", "--chain", "mock-exploit", "--target", "mock://target", "--workspace", workspacePath, "--now", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -108,7 +108,7 @@ func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
 	})
 	var stdout, stderr bytes.Buffer
 
-	code := Run(context.Background(), []string{"throw", "--chain", "broken", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--json"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"throw", "--chain", "broken", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--now", "--json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -167,8 +167,8 @@ func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
 	if plan.ID != payload.Plan.ID || plan.ConfirmationID != payload.Plan.ConfirmationID || plan.Chain != "broken" || plan.Workspace != fixture.WorkspacePath {
 		t.Fatalf("persisted plan = %#v, payload plan = %#v", plan, payload.Plan)
 	}
-	if !hasEvent(events.events, "run.failed") {
-		t.Fatalf("events = %#v, want run.failed", events.events)
+	if !hasEvent(events.events, "hovel.run.failed") {
+		t.Fatalf("events = %#v, want hovel.run.failed", events.events)
 	}
 }
 
@@ -182,7 +182,7 @@ func TestThrowMissingModuleConfigReturnsCommandError(t *testing.T) {
 	})
 	var stdout, stderr bytes.Buffer
 
-	code := Run(context.Background(), []string{"throw", "--chain", "missing", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--json"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"throw", "--chain", "missing", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--now", "--json"}, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit code = %d, want 1; stdout = %s stderr = %s", code, stdout.String(), stderr.String())
 	}

@@ -1,4 +1,4 @@
-# Providers, Artifacts, and Events
+# Providers, Artifacts, and Structured Logging
 
 Providers let modules and chains ask for typed resources without hard-coding where those resources come from.
 
@@ -21,7 +21,7 @@ The first provider implementation should stay narrow:
 
 1. `ArtifactProvider` records file-like outputs, hashes, metadata, and run associations.
 2. `PayloadProvider` resolves tagged bytes and records hashes or artifact refs before execution.
-3. The event stream reports provider resolution and artifact creation, but is not itself a provider.
+3. The structured logging rail reports provider resolution and artifact creation, but is not itself a provider.
 
 `FactProvider`, `CredentialProvider`, `ListenerProvider`, and `SessionProvider` remain part of the domain model, but should not block the first useful execution loop. Facts can start as module outputs, credentials can start as explicit run inputs, and listeners/sessions can arrive with the managed-service milestone.
 
@@ -134,7 +134,7 @@ MVP provider data may live in SQLite and local files.
   throws/
 ```
 
-`workspace.db` is the canonical durable store for operation session state and throw plans. The `throws/` directory is reserved for future file-shaped throw artifacts, exports, or large records that should not live inline in SQLite.
+`workspace.db` is the canonical durable store for operation session state, throw plans, confirmation records, throw records, event indexes, and artifact metadata. Artifact bytes live in the workspace artifact store or in a configured workspace artifact path. Large artifacts must not be stored inline in SQLite.
 
 ## Artifact
 
@@ -166,23 +166,9 @@ sha256: abc123
 createdBy: module:ssh-memory
 ```
 
+Artifact bytes should be content-addressed or hash-tracked. Small inline artifacts returned by modules should be materialized into the artifact store and recorded with metadata. Large file artifacts should be saved directly into the workspace artifact store, or into a configured artifact path, with only metadata and hashes in SQLite.
+
 Resolved payload bytes should be persisted as artifacts or otherwise hash-tracked before module execution when practical. This makes throws replay-inspectable without requiring Hovel to understand the payload internals.
-
-## Evidence
-
-Evidence is a higher-level assertion backed by artifacts and facts.
-
-```yaml
-id: evidence-uuid
-throwId: throw-uuid
-targetId: target-uuid
-title: Target supports requested payload execution path
-severity: info
-facts:
-  - fact-uuid
-artifacts:
-  - artifact-uuid
-```
 
 ## Session
 
@@ -213,37 +199,82 @@ session.closed
 session.error
 ```
 
-## Event Bus
+## Structured Logging Rail
 
-Everything interesting emits an event.
+Hovel does not treat evidence as a first-class product vertical in the alpha. Other tools can handle assessment evidence, reporting, and proof curation. Hovel is responsible for being a red-team thrower with excellent structured observability: operators should be able to see what ran, what it did, what it produced, where it failed, and which artifacts or sessions were created.
 
-Event categories:
+Structured logging is a logging rail, not only a database table. Producers emit typed structured events. Handlers subscribe to those events and decide what to do with them. Persistence is one handler. CLI and TUI rendering are handlers. Future NDJSON export, remote streaming, debug sinks, and test recorders are handlers.
 
-```text
-run.created
-run.started
-run.finished
-phase.started
-phase.finished
-step.started
-step.finished
-module.log
-module.stdout
-module.stderr
-service.registered
-service.started
-service.healthy
-service.log
-service.failed
-service.stopped
-listener.started
-listener.connection
-listener.session_created
-artifact.created
-finding.created
-fact.observed
-provider.resolved
-error.raised
+Required components:
+
+1. `Event` is the durable envelope.
+2. `EventBus` fans events out to registered handlers.
+3. `EventHandler` receives events and may filter before acting.
+4. `EventFilter` supports operation, chain, throw, run, module, target, level, type, and topic filters.
+5. `SQLiteEventStore` persists event envelopes and small JSON fields.
+6. `TerminalRenderer` renders human-readable output from the same events.
+7. `InMemoryEventRecorder` supports tests.
+
+Every event must include a human `message`, but terminal text is not the source of truth. Front ends render structured event records. Automation consumes structured event records. No adapter should parse terminal output.
+
+Minimum event envelope:
+
+```yaml
+id: event-uuid
+schemaVersion: hovel.event/v1alpha1
+timestamp: 2026-05-03T12:00:00Z
+level: info
+type: hovel.throw.started
+message: Throw started
+workspace: .hovel
+operation: redteam-lab
+chain: ssh-memory
+throwId: throw-uuid
+runId: run-uuid
+moduleId: mock-exploit@v0.0.0-example
+target: mock://router-01
+topic: operation/redteam-lab/chain/ssh-memory/logs
+fields:
+  stepId: step-1
+  elapsedSeconds: "000.06"
 ```
 
-The TUI, CLI, REST stream, and MCP adapter should all consume the same event stream.
+Envelope rules:
+
+1. Events are append-only. Corrections are new events.
+2. Event IDs are generated, not globally deduplicated.
+3. Hovel reserves `hovel.*` event types.
+4. Modules may emit custom types under `module.<module-name>.*`.
+5. The envelope is validated. `fields` is arbitrary JSON.
+6. Large payloads, transcripts, and binary data must be stored as artifacts. Events reference artifact IDs or paths and hashes.
+7. Module crashes, malformed frames, protocol timeouts, artifact registration failures, and guardrail failures must produce structured failure events when the host can observe them.
+
+Core event types:
+
+```text
+hovel.throw.planned
+hovel.throw.confirmed
+hovel.throw.started
+hovel.throw.completed
+hovel.throw.failed
+hovel.run.started
+hovel.run.completed
+hovel.run.failed
+hovel.module.log
+hovel.module.stdout
+hovel.module.stderr
+hovel.artifact.recorded
+hovel.provider.resolved
+hovel.session.created
+hovel.session.input
+hovel.session.output
+hovel.session.closed
+hovel.service.started
+hovel.service.healthy
+hovel.service.log
+hovel.service.failed
+hovel.service.stopped
+hovel.error.raised
+```
+
+The TUI, CLI, REST stream, and MCP adapter should all subscribe to the same logging rail. They may apply different filters and renderers, but they must observe the same underlying event contract.

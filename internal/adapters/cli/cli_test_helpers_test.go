@@ -10,7 +10,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfig)
+	os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfigPath())
 	os.Exit(m.Run())
 }
 

@@ -5,8 +5,11 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "descriptor_schemas",
     srcs = [
+        "hovel.chain.schema.json",
+        "hovel.event.schema.json",
         "hovel.module.schema.json",
         "hovel.service.schema.json",
+        "hovel.throw-plan.schema.json",
     ],
 )
 
@@ -15,12 +18,23 @@ py_test(
     size = "small",
     srcs = ["schema_smoke_test.py"],
     args = [
+        "$(location hovel.chain.schema.json)",
+        "$(location hovel.event.schema.json)",
         "$(location hovel.module.schema.json)",
         "$(location hovel.service.schema.json)",
+        "$(location hovel.throw-plan.schema.json)",
     ],
     data = [
+        "fixtures/chain_configured.json",
+        "fixtures/chain_template.json",
+        "fixtures/event_throw_started.json",
+        "fixtures/module_artifacts.json",
+        "fixtures/throw_plan.json",
+        "hovel.chain.schema.json",
+        "hovel.event.schema.json",
         "hovel.module.schema.json",
         "hovel.service.schema.json",
+        "hovel.throw-plan.schema.json",
     ],
     python_version = "PY3",
 )

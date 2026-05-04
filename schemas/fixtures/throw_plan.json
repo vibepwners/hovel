@@ -1,0 +1,31 @@
+{
+  "apiVersion": "hovel.dev/v1alpha1",
+  "kind": "ThrowPlan",
+  "metadata": {
+    "id": "plan-alpha-mock-target",
+    "clientId": "command",
+    "createdAt": "2026-05-03T12:00:00Z"
+  },
+  "spec": {
+    "planHash": "7ac17b59d6b0626f83c7d3efa2aa123d9b7f0d2936e1db074db5d1c42c39e120",
+    "workspace": ".hovel",
+    "chain": "alpha",
+    "targets": ["mock://target"],
+    "steps": [
+      {
+        "id": "step-1",
+        "uses": "module:mock-exploit@v0.0.0-example",
+        "target": "mock://target"
+      }
+    ],
+    "review": "operator-confirmed",
+    "intent": "throw chain alpha against 1 target(s)",
+    "confirmation": {
+      "id": "confirmation-alpha-mock-target",
+      "planHash": "7ac17b59d6b0626f83c7d3efa2aa123d9b7f0d2936e1db074db5d1c42c39e120",
+      "clientId": "command",
+      "method": "preconfirmed",
+      "confirmedAt": "2026-05-03T12:00:00Z"
+    }
+  }
+}

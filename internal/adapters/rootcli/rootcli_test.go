@@ -77,7 +77,7 @@ func TestRootHelpShowsRoleMenu(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"hovel", "op", "chain", "module", "target", "throw", "shell", "command", "cli", "daemon", "tui"} {
+	for _, want := range []string{"hovel", "op", "chain", "module", "artifact", "target", "throw", "shell", "command", "cli", "daemon", "tui"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}
@@ -92,7 +92,7 @@ func TestDaemonServeHelpShowsOptions(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"daemon serve", "--workspace", "--socket"} {
+	for _, want := range []string{"daemon serve", "--workspace", "--socket", "--listen"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}
@@ -108,5 +108,38 @@ func TestTUIRoleIsExplicitlyUnimplemented(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "not implemented") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestThrowFileArgDetectsOneShotChainFile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "plain file", args: []string{"alpha.chain.yaml"}, want: "alpha.chain.yaml"},
+		{name: "file after workspace", args: []string{"--workspace", ".hovel", "alpha.chain.yaml", "--now"}, want: "alpha.chain.yaml"},
+		{name: "file before target override", args: []string{"alpha.chain.yaml", "--target", "mock://target"}, want: "alpha.chain.yaml"},
+		{name: "subcommand list", args: []string{"list"}, want: ""},
+		{name: "subcommand inspect", args: []string{"inspect", "plan-alpha"}, want: ""},
+		{name: "legacy chain throw", args: []string{"--chain", "mock-exploit", "--target", "mock://target"}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := throwFileArg(tc.args); got != tc.want {
+				t.Fatalf("throwFileArg(%#v) = %q, want %q", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestThrowWorkspaceArgUsesDefaultAndOverride(t *testing.T) {
+	if got := throwWorkspaceArg([]string{"alpha.chain.yaml"}); got != ".hovel" {
+		t.Fatalf("workspace = %q, want .hovel", got)
+	}
+	if got := throwWorkspaceArg([]string{"--workspace", "/tmp/hovel", "alpha.chain.yaml"}); got != "/tmp/hovel" {
+		t.Fatalf("workspace = %q, want override", got)
+	}
+	if got := throwWorkspaceArg([]string{"--workspace=/tmp/hovel", "alpha.chain.yaml"}); got != "/tmp/hovel" {
+		t.Fatalf("workspace = %q, want override", got)
 	}
 }

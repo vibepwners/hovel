@@ -1,0 +1,16 @@
+{
+  "apiVersion": "hovel.dev/v1alpha1",
+  "kind": "Chain",
+  "metadata": {
+    "name": "alpha-template"
+  },
+  "spec": {
+    "mode": "template",
+    "steps": [
+      {
+        "id": "step-1",
+        "uses": "module:mock-exploit@v0.0.0-example"
+      }
+    ]
+  }
+}

@@ -12,7 +12,7 @@ Require:
 4. Module protocol contract tests.
 5. Service protocol contract tests.
 6. Supervisor tests.
-7. Golden tests for `command` output.
+7. Golden tests for one-shot chain-file output.
 8. CLI prompt model, completion, and render tests.
 9. TUI model/update tests.
 
@@ -37,18 +37,18 @@ First-slice integration tests:
 4. Module returns result.
 5. Host captures stdout, stderr, and logging as structured events.
 6. Host records malformed protocol output as a failed module execution.
-7. `command` mode displays throw results.
+7. One-shot chain-file execution displays throw results.
 8. `hovel` starts or attaches to `hoveld`.
-9. `command` execution crosses the daemon boundary.
+9. One-shot chain-file execution crosses the daemon boundary.
 10. Throw plan, confirmation record, events, artifacts, and final throw state are persisted.
-11. A command registered in the central registry is available through both `command` mode and `cli` mode.
-12. Arguments, switches, options, defaults, help, and validation are identical in `command` mode and `cli` mode.
+11. Interactive `throw`, `review`, `confirm`, and one-shot chain-file execution share the same planning path, while `review` and prompted `throw` share the same typed review path.
+12. `throw --now` persists an auditable bypass confirmation record.
 13. If `cli` or `tui` starts a managed daemon, it stops that daemon on exit.
 14. If `cli` or `tui` attaches to an existing daemon, it leaves that daemon running on exit.
 15. A `cli` session can select an operation and chain, add targets, and issue `throw` using attachment state.
-16. `command` mode can issue `throw` with explicit `--chain` and `--target` options without session state.
+16. `chain save <file>` and `chain load <file>` preserve both targetless chain templates and configured chains with target config.
 17. Two daemon clients attached to the same operation can use different active chains concurrently without leaking targets, logs, or prompt context.
-18. An explicit `--chain` command does not mutate another client's active chain.
+18. One-shot execution of a saved chain file does not mutate another client's active chain.
 
 Follow-on integration tests:
 
@@ -57,9 +57,9 @@ Follow-on integration tests:
 3. Service handshakes.
 4. Service health check passes.
 5. Service provides payload or listener resource.
-6. MCP can inspect and plan the same throw as `command` and `cli` through shared guardrails.
+6. MCP can inspect and plan the same throw as one-shot execution and `cli` through shared guardrails.
 7. MCP can execute only through the shared confirmation path.
-8. TUI consumes event stream.
+8. TUI consumes the structured logging rail.
 
 ## Coverage Targets
 
@@ -99,18 +99,18 @@ Strict branch coverage gates for core packages.
 2. Implement Python SDK handshake.
 3. Implement Python logging handler.
 4. Run a toy Python module from Go.
-5. Stream logs into `command` and `cli`.
+5. Stream logs into one-shot execution and `cli`.
 6. Persist module execution events.
 7. Treat malformed frames and unexpected stdout bytes as module failures.
 
 ### Milestone 3: Throw and Artifact Persistence
 
 1. Implement persisted throw plans.
-2. Implement confirmation records.
+2. Implement minimal confirmation records keyed by plan hash.
 3. Implement throw state persistence.
 4. Implement artifact provider.
-5. Hash-track artifacts and payload-like bytes.
-6. Inspect throws and artifacts from `command` and `cli`.
+5. Hash-track artifacts and payload-like bytes, storing large artifact bytes outside SQLite.
+6. Inspect throws and artifacts from `cli` and supported API surfaces.
 
 ### Milestone 4: Providers
 
@@ -132,11 +132,12 @@ Strict branch coverage gates for core packages.
 
 1. Implement simple sequential chain runner.
 2. Add phases and steps.
-3. Add service start/stop steps.
-4. Add event stream.
-5. Add per-target throw state.
-6. Add cancellation hooks.
-7. Support only simple input and step-output references at first.
+3. Add chain template and configured chain save/load.
+4. Add service start/stop steps.
+5. Add structured logging rail.
+6. Add per-target throw state.
+7. Add cancellation hooks.
+8. Support only simple input and step-output references at first.
 
 ### Milestone 7: Conceptual Chain Demo
 
@@ -162,8 +163,8 @@ Strict branch coverage gates for core packages.
 
 ## Hard Rules
 
-1. `command` and `cli` first, TUI second.
-2. `hoveld` is mandatory and owns operations, chains, throws, services, modules, events, providers, artifacts, evidence, and sessions.
+1. `cli` and one-shot chain-file execution first, TUI second.
+2. `hoveld` is mandatory and owns operations, chains, throws, services, modules, structured events, providers, artifacts, and sessions.
 3. TUI calls application services only.
 4. MCP calls application services only.
 5. REST calls application services only.

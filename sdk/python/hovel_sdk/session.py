@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+_TIMEOUT_ERRORS = (asyncio.TimeoutError,)
+
 
 @dataclass(frozen=True)
 class SessionRef:
@@ -66,9 +68,6 @@ class Session(Protocol):
         raise NotImplementedError
 
 
-CommandOutput = str | bytes | None
-
-
 class LineShellSession:
     """Small async shell base class for modules that can answer line commands."""
 
@@ -104,7 +103,7 @@ class LineShellSession:
                 chunk = await self._output.get()
             else:
                 chunk = await asyncio.wait_for(self._output.get(), timeout=wait)
-        except TimeoutError:
+        except _TIMEOUT_ERRORS:
             return b""
         return chunk or b""
 
@@ -120,7 +119,7 @@ class LineShellSession:
             data = data.encode()
         await self._output.put(data)
 
-    async def handle_command(self, command: str) -> CommandOutput:
+    async def handle_command(self, command: str) -> str | bytes | None:
         raise NotImplementedError
 
     async def _handle_line(self, command: str) -> None:

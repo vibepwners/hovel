@@ -97,6 +97,7 @@ func (s WorkspaceService) appendWorkspaceInitialized(ctx context.Context, ws wor
 	evt, err := event.New(event.Args{
 		ID:        id,
 		Type:      typ,
+		Message:   "workspace initialized",
 		Timestamp: s.clock.Now(),
 		Refs: event.Refs{
 			WorkspaceID: ws.ID.String(),

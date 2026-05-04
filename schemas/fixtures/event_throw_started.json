@@ -1,0 +1,19 @@
+{
+  "id": "event-throw-started",
+  "schemaVersion": "hovel.event/v1alpha1",
+  "type": "hovel.throw.started",
+  "level": "info",
+  "message": "throw started",
+  "timestamp": "2026-05-03T12:00:00Z",
+  "topic": "operation/default/chain/mock-exploit/logs",
+  "refs": {
+    "workspace": ".hovel",
+    "operation": "default",
+    "chain": "mock-exploit",
+    "throwId": "throw-mock-exploit-mock-target",
+    "target": "mock://target"
+  },
+  "fields": {
+    "planHash": "7ac17b59d6b0626f83c7d3efa2aa123d9b7f0d2936e1db074db5d1c42c39e120"
+  }
+}
