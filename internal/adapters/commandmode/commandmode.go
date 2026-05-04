@@ -132,19 +132,19 @@ func splitCommandLine(line string) ([]string, error) {
 	var fields []string
 	var current strings.Builder
 	var quote rune
-	escaped := false
 	inField := false
 
-	for _, r := range line {
+	runes := []rune(line)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
 		switch {
-		case escaped:
-			current.WriteRune(r)
-			escaped = false
-			inField = true
-		case r == '\\':
-			escaped = true
-			inField = true
 		case quote != 0:
+			if r == '\\' && i+1 < len(runes) && (runes[i+1] == quote || runes[i+1] == '\\') {
+				i++
+				current.WriteRune(runes[i])
+				inField = true
+				continue
+			}
 			if r == quote {
 				quote = 0
 				inField = true
@@ -165,9 +165,6 @@ func splitCommandLine(line string) ([]string, error) {
 			current.WriteRune(r)
 			inField = true
 		}
-	}
-	if escaped {
-		current.WriteRune('\\')
 	}
 	if quote != 0 {
 		return nil, fmt.Errorf("unterminated quoted string")

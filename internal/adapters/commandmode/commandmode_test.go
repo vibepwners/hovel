@@ -260,6 +260,58 @@ func TestExecuteLinePreservesQuotedArguments(t *testing.T) {
 	}
 }
 
+func TestExecuteLinePreservesLiteralBackslashes(t *testing.T) {
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"echo"},
+		Summary: "Echo one value",
+		Positionals: []commands.Positional{
+			{Name: "value", Required: true},
+		},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: invocation.Positional("value")}, nil
+		},
+	})
+
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "unquoted windows path",
+			line: `echo C:\tmp\plan.yaml`,
+			want: `C:\tmp\plan.yaml`,
+		},
+		{
+			name: "quoted windows path with spaces",
+			line: `echo "C:\Program Files\hovel\plan.yaml"`,
+			want: `C:\Program Files\hovel\plan.yaml`,
+		},
+		{
+			name: "escaped quote inside quoted value",
+			line: `echo "operator \"quoted\" value"`,
+			want: `operator "quoted" value`,
+		},
+		{
+			name: "escaped backslash inside quoted value",
+			line: `echo "C:\\tmp\\plan.yaml"`,
+			want: `C:\tmp\plan.yaml`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := NewAppWithRegistry(registry).ExecuteLine(context.Background(), tc.line, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+			}
+			if got := strings.TrimSpace(stdout.String()); got != tc.want {
+				t.Fatalf("stdout = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestExecuteLineRejectsUnterminatedQuotedArgument(t *testing.T) {
 	registry := commands.MustRegistry(commands.Definition{
 		Path:    []string{"echo"},
