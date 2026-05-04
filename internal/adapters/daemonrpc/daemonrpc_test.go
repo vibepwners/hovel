@@ -3,6 +3,7 @@ package daemonrpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -223,6 +224,154 @@ func TestLogBrokerPublishDoesNotScanHistory(t *testing.T) {
 	}
 	if len(broker.logs) != 32 {
 		t.Fatalf("retained logs = %d, want 32", len(broker.logs))
+	}
+}
+
+func TestSessionLogFloodIsBoundedThroughRPC(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs, WithSession(operatorsession.New()), WithLogBroker(NewLogBrokerWithLimit(64)))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	session := NewSessionClient(context.Background(), client)
+	if err := session.UseOperation("flood-op"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("flood"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 250; i++ {
+		if err := session.AppendLog(operatorlog.Info("flood", "log")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	logs, err := client.PollOperationChainLogs(context.Background(), "flood-op", "flood", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logs.Last < 250 {
+		t.Fatalf("last = %d, want at least 250 flood logs", logs.Last)
+	}
+	if len(logs.Logs) != 64 {
+		t.Fatalf("retained logs = %d, want broker limit 64", len(logs.Logs))
+	}
+	wantFirst := logs.Last - uint64(len(logs.Logs)) + 1
+	if logs.Logs[0].Seq != wantFirst || logs.Logs[len(logs.Logs)-1].Seq != logs.Last {
+		t.Fatalf("retained seq range = %d..%d, want contiguous tail %d..%d", logs.Logs[0].Seq, logs.Logs[len(logs.Logs)-1].Seq, wantFirst, logs.Last)
+	}
+
+	next, err := client.PollOperationChainLogs(context.Background(), "flood-op", "flood", logs.Last)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Last != logs.Last || len(next.Logs) != 0 {
+		t.Fatalf("poll after cursor = %#v, want no new logs", next)
+	}
+}
+
+func TestConcurrentSessionClientsAppendLogsWithoutCrossChainContamination(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs, WithSession(operatorsession.New()), WithLogBroker(NewLogBrokerWithLimit(512)))
+
+	clientA, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientA.Close()
+	clientB, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientB.Close()
+
+	alpha := NewSessionClient(context.Background(), clientA)
+	beta := NewSessionClient(context.Background(), clientB)
+	for _, setup := range []struct {
+		name    string
+		session *SessionClient
+		chain   string
+	}{
+		{name: "alpha", session: alpha, chain: "alpha"},
+		{name: "beta", session: beta, chain: "beta"},
+	} {
+		if err := setup.session.UseOperation("concurrent-op"); err != nil {
+			t.Fatalf("%s operation: %v", setup.name, err)
+		}
+		if err := setup.session.UseChain(setup.chain); err != nil {
+			t.Fatalf("%s chain: %v", setup.name, err)
+		}
+	}
+	alphaCursor, err := clientA.PollOperationChainLogs(context.Background(), "concurrent-op", "alpha", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaCursor, err := clientB.PollOperationChainLogs(context.Background(), "concurrent-op", "beta", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	appendLogs := func(session *SessionClient, chain string) {
+		<-start
+		for i := 0; i < 50; i++ {
+			if err := session.AppendLog(operatorlog.Info("concurrent", fmt.Sprintf("%s-%02d", chain, i))); err != nil {
+				errs <- err
+				return
+			}
+		}
+		errs <- nil
+	}
+	go appendLogs(alpha, "alpha")
+	go appendLogs(beta, "beta")
+	close(start)
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	alphaLogs, err := clientA.PollOperationChainLogs(context.Background(), "concurrent-op", "alpha", alphaCursor.Last)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaLogs, err := clientB.PollOperationChainLogs(context.Background(), "concurrent-op", "beta", betaCursor.Last)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertConcurrentChainLogs(t, "alpha", alphaLogs.Logs)
+	assertConcurrentChainLogs(t, "beta", betaLogs.Logs)
+}
+
+func assertConcurrentChainLogs(t *testing.T, chain string, logs []PublishedLog) {
+	t.Helper()
+	if len(logs) != 50 {
+		t.Fatalf("%s log count = %d, want 50: %#v", chain, len(logs), logs)
+	}
+	for i, log := range logs {
+		if log.Operation != "concurrent-op" || log.Chain != chain {
+			t.Fatalf("%s log %d topic = %s/%s, want concurrent-op/%s: %#v", chain, i, log.Operation, log.Chain, chain, log)
+		}
+		wantMessage := fmt.Sprintf("%s-%02d", chain, i)
+		if log.Entry.Message != wantMessage {
+			t.Fatalf("%s log %d message = %q, want %q", chain, i, log.Entry.Message, wantMessage)
+		}
 	}
 }
 

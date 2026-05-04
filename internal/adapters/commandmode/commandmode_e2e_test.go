@@ -3,12 +3,16 @@ package commandmode
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
@@ -169,6 +173,257 @@ func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
 	}
 	if !hasEvent(events.events, "hovel.run.failed") {
 		t.Fatalf("events = %#v, want hovel.run.failed", events.events)
+	}
+}
+
+func TestMalformedPythonModuleDoesNotPoisonDaemonForNextThrow(t *testing.T) {
+	t.Setenv("HOVEL_MODULE_CONFIG", testsupport.WritePythonModuleFixtures(t,
+		testsupport.PythonModuleFixture{
+			ID:   "broken",
+			Body: `import sys; sys.stdout.write("not a frame\n"); sys.stdout.flush()`,
+		},
+		testsupport.PythonModuleFixture{
+			ID: "healthy",
+			Body: `
+while True:
+    request = json.loads(read().decode())
+    method = request.get("method")
+    response = {"jsonrpc": "2.0", "id": request.get("id")}
+    if method == "handshake":
+        response["result"] = {"name": "healthy", "version": "v1", "moduleType": "exploit"}
+    elif method == "schema":
+        response["result"] = {}
+    elif method == "execute":
+        response["result"] = {"status": "succeeded", "summary": "healthy module recovered", "findings": [], "artifacts": []}
+    elif method == "shutdown":
+        response["result"] = {}
+        send(response)
+        break
+    else:
+        response["error"] = {"message": "unknown method " + str(method)}
+    send(response)
+`,
+		},
+	))
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{
+		IDs:       &sequenceIDs{},
+		Clock:     fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+		StartedAt: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{"throw", "--chain", "broken", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--now", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("broken throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var failed struct {
+		Results []struct {
+			State   string `json:"state"`
+			Summary string `json:"summary"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &failed); err != nil {
+		t.Fatalf("invalid broken JSON %q: %v", stdout.String(), err)
+	}
+	if len(failed.Results) != 1 || failed.Results[0].State != "failed" {
+		t.Fatalf("broken results = %#v, want failed result", failed.Results)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = Run(context.Background(), []string{"throw", "--chain", "healthy", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--now", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("healthy throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var recovered struct {
+		Results []struct {
+			ModuleID string `json:"moduleId"`
+			State    string `json:"state"`
+			Summary  string `json:"summary"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &recovered); err != nil {
+		t.Fatalf("invalid healthy JSON %q: %v", stdout.String(), err)
+	}
+	if len(recovered.Results) != 1 || recovered.Results[0].ModuleID != "healthy@v1" || recovered.Results[0].State != "succeeded" || recovered.Results[0].Summary != "healthy module recovered" {
+		t.Fatalf("recovered results = %#v", recovered.Results)
+	}
+}
+
+func TestTimedOutPythonModuleDoesNotPoisonDaemonForNextThrow(t *testing.T) {
+	t.Setenv("HOVEL_MODULE_CONFIG", testsupport.WritePythonModuleFixtures(t,
+		testsupport.PythonModuleFixture{
+			ID: "slow",
+			Body: `
+import time
+
+while True:
+    request = json.loads(read().decode())
+    method = request.get("method")
+    response = {"jsonrpc": "2.0", "id": request.get("id")}
+    if method == "handshake":
+        response["result"] = {"name": "slow", "version": "v1", "moduleType": "exploit"}
+    elif method == "schema":
+        response["result"] = {}
+    elif method == "execute":
+        time.sleep(10)
+        response["result"] = {"status": "succeeded", "summary": "too late", "findings": [], "artifacts": []}
+    elif method == "shutdown":
+        response["result"] = {}
+        send(response)
+        break
+    else:
+        response["error"] = {"message": "unknown method " + str(method)}
+    send(response)
+`,
+		},
+		testsupport.PythonModuleFixture{
+			ID: "healthy",
+			Body: `
+while True:
+    request = json.loads(read().decode())
+    method = request.get("method")
+    response = {"jsonrpc": "2.0", "id": request.get("id")}
+    if method == "handshake":
+        response["result"] = {"name": "healthy", "version": "v1", "moduleType": "exploit"}
+    elif method == "schema":
+        response["result"] = {}
+    elif method == "execute":
+        response["result"] = {"status": "succeeded", "summary": "healthy after timeout", "findings": [], "artifacts": []}
+    elif method == "shutdown":
+        response["result"] = {}
+        send(response)
+        break
+    else:
+        response["error"] = {"message": "unknown method " + str(method)}
+    send(response)
+`,
+		},
+	))
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{
+		IDs:       &sequenceIDs{},
+		Clock:     fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+		StartedAt: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+	})
+	client, err := daemonrpc.Dial(fixture.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	_, err = client.RunMockExploit(timeoutCtx, daemonrpc.RunMockExploitRequest{
+		ModuleID: "slow",
+		Target:   "mock://target",
+	})
+	cancel()
+	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("slow module error = %v, want context deadline exceeded", err)
+	}
+
+	result, err := client.RunMockExploit(context.Background(), daemonrpc.RunMockExploitRequest{
+		ModuleID: "healthy",
+		Target:   "mock://target",
+	})
+	if err != nil {
+		t.Fatalf("healthy throw failed after slow timeout: %v", err)
+	}
+	if result.ModuleID != "healthy@v1" || result.State != "succeeded" || result.Summary != "healthy after timeout" {
+		t.Fatalf("healthy result = %#v", result)
+	}
+}
+
+func TestPythonFileArtifactMaterializesThroughDaemonThrow(t *testing.T) {
+	t.Setenv("HOVEL_MODULE_CONFIG", testsupport.WritePythonModuleFixture(t, "file-artifact", `
+import os
+import tempfile
+
+while True:
+    request = json.loads(read().decode())
+    method = request.get("method")
+    response = {"jsonrpc": "2.0", "id": request.get("id")}
+    if method == "handshake":
+        response["result"] = {"name": "file-artifact", "version": "v1", "moduleType": "exploit"}
+    elif method == "schema":
+        response["result"] = {}
+    elif method == "execute":
+        fd, path = tempfile.mkstemp(prefix="hovel-artifact-", suffix=".bin")
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(b"large-artifact:" + b"x" * (1024 * 1024))
+        response["result"] = {
+            "status": "succeeded",
+            "summary": "file artifact emitted",
+            "findings": [],
+            "artifacts": [{"name": "loot.bin", "kind": "application/octet-stream", "path": path}],
+        }
+    elif method == "shutdown":
+        response["result"] = {}
+        send(response)
+        break
+    else:
+        response["error"] = {"message": "unknown method " + str(method)}
+    send(response)
+`))
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{
+		IDs:       &sequenceIDs{},
+		Clock:     fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+		StartedAt: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+	})
+	var stdout, stderr bytes.Buffer
+
+	code := Run(context.Background(), []string{"throw", "--chain", "file-artifact", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--now", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var payload struct {
+		ThrowID string `json:"throwId"`
+		Results []struct {
+			RunID     string `json:"runId"`
+			ModuleID  string `json:"moduleId"`
+			State     string `json:"state"`
+			Summary   string `json:"summary"`
+			Artifacts []struct {
+				Name string `json:"name"`
+				Kind string `json:"kind"`
+				Data string `json:"data"`
+			} `json:"artifacts"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
+	}
+	if len(payload.Results) != 1 || payload.Results[0].ModuleID != "file-artifact@v1" || payload.Results[0].State != "succeeded" {
+		t.Fatalf("results = %#v", payload.Results)
+	}
+	if len(payload.Results[0].Artifacts) != 1 || payload.Results[0].Artifacts[0].Name != "loot.bin" || payload.Results[0].Artifacts[0].Data != "" {
+		t.Fatalf("payload artifacts = %#v, want materialized file artifact without inline data", payload.Results[0].Artifacts)
+	}
+
+	records, err := filesystem.NewWorkspaceStore().ListArtifacts(context.Background(), fixture.WorkspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("artifact records = %#v, want one", records)
+	}
+	record := records[0]
+	if record.ThrowID != payload.ThrowID || record.RunID != payload.Results[0].RunID || record.ModuleID != "file-artifact@v1" || record.Name != "loot.bin" {
+		t.Fatalf("artifact record = %#v, payload = %#v", record, payload)
+	}
+	copied, err := os.ReadFile(filepath.Join(fixture.WorkspacePath, record.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSize := len("large-artifact:") + 1024*1024
+	if record.Size != wantSize || len(copied) != wantSize {
+		t.Fatalf("artifact size record=%d bytes=%d want %d", record.Size, len(copied), wantSize)
+	}
+	sum := sha256.Sum256(copied)
+	if gotSHA := hex.EncodeToString(sum[:]); record.SHA256 != gotSHA {
+		t.Fatalf("artifact sha = %s, want %s", record.SHA256, gotSHA)
+	}
+	if !bytes.HasPrefix(copied, []byte("large-artifact:")) {
+		t.Fatalf("artifact bytes missing prefix")
 	}
 }
 
