@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,4 +51,24 @@ func TestWorkspaceLockStaleLockFileIsConservativelyRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when stale lock file exists, got nil")
 	}
+}
+
+func TestWorkspaceLockReclaimsDeadPIDOwner(t *testing.T) {
+	if !stalePIDLockDetectionSupported() {
+		t.Skip("pid-based stale lock detection is not supported on this platform")
+	}
+	workspacePath := t.TempDir()
+	stalePID := 999999999
+	if processRunning(stalePID) {
+		t.Skipf("test pid %d exists on this machine", stalePID)
+	}
+	if err := os.WriteFile(filepath.Join(workspacePath, "daemon.lock"), []byte(fmt.Sprintf("pid:%d\n", stalePID)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lock, err := AcquireWorkspaceLock(workspacePath, "owner-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
 }

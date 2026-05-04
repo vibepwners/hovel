@@ -24,6 +24,7 @@ go_test(
         "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/event",
+        "//internal/domain/run",
         "//internal/modules/mockexploit",
     ],
 )

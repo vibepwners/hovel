@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 const workspaceLockFile = "daemon.lock"
@@ -25,7 +27,13 @@ func AcquireWorkspaceLock(workspacePath, owner string) (*WorkspaceLock, error) {
 	path := filepath.Join(workspacePath, workspaceLockFile)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if errors.Is(err, os.ErrExist) {
-		return nil, fmt.Errorf("workspace is already locked: %s", path)
+		if stalePIDWorkspaceLock(path) {
+			_ = os.Remove(path)
+			file, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		}
+		if errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("workspace is already locked: %s", path)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -36,6 +44,23 @@ func AcquireWorkspaceLock(workspacePath, owner string) (*WorkspaceLock, error) {
 		return nil, err
 	}
 	return &WorkspaceLock{path: path, file: file}, nil
+}
+
+func stalePIDWorkspaceLock(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	owner := strings.TrimSpace(string(data))
+	pidText, ok := strings.CutPrefix(owner, "pid:")
+	if !ok {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(pidText))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	return !processRunning(pid)
 }
 
 func (l *WorkspaceLock) Release() error {

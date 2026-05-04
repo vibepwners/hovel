@@ -272,7 +272,7 @@ func configValueSuggestions(item configItem, prefix string) []prompt.Suggest {
 	if requirement.Default != "" {
 		suggestions = append(suggestions, prompt.Suggest{Text: requirement.Default, Description: "Default value."})
 	}
-	if item.Value != "" {
+	if item.Value != "" && !requirement.Secret && requirement.Type != modulecatalog.ValueSecret {
 		suggestions = append(suggestions, prompt.Suggest{Text: item.Value, Description: "Current value."})
 	}
 	return filterSuggestions(dedupeSuggestions(suggestions), prefix)

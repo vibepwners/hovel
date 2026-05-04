@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -297,6 +298,70 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 				t.Fatalf("error = %v, want containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestRPCClientTimeoutDoesNotCorruptNextCall(t *testing.T) {
+	moduleStdoutReader, moduleStdoutWriter := io.Pipe()
+	moduleStdinReader, moduleStdinWriter := io.Pipe()
+	defer moduleStdoutReader.Close()
+	defer moduleStdoutWriter.Close()
+	defer moduleStdinReader.Close()
+	defer moduleStdinWriter.Close()
+
+	client := newClient(moduleStdoutReader, moduleStdinWriter)
+	done := make(chan error, 1)
+	go func() {
+		decoder := newFrameDecoder(moduleStdinReader)
+		first, err := decoder.read()
+		if err != nil {
+			done <- err
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		if err := writeFrame(moduleStdoutWriter, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      first.ID,
+			"result":  map[string]any{"call": "late-first"},
+		}); err != nil {
+			done <- err
+			return
+		}
+		second, err := decoder.read()
+		if err != nil {
+			done <- err
+			return
+		}
+		if err := writeFrame(moduleStdoutWriter, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      second.ID,
+			"result":  map[string]any{"call": "second"},
+		}); err != nil {
+			done <- err
+			return
+		}
+		done <- nil
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	_, err := client.call(ctx, "first", nil)
+	cancel()
+	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("first call error = %v, want deadline", err)
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	result, err := client.call(ctx, "second", nil)
+	cancel()
+	if err != nil {
+		t.Fatalf("second call failed after first timeout: %v", err)
+	}
+	if result["call"] != "second" {
+		t.Fatalf("second result = %#v, want second response", result)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

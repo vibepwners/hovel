@@ -2,6 +2,7 @@ package daemonrpc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	"github.com/Vibe-Pwners/hovel/internal/modules/mockexploit"
 )
 
@@ -177,6 +179,50 @@ func TestPollChainLogsOnlyReturnsRequestedChain(t *testing.T) {
 	}
 	if len(allLogs.Logs) != 4 {
 		t.Fatalf("all log count = %d, want 4: %#v", len(allLogs.Logs), allLogs.Logs)
+	}
+}
+
+func TestLogBrokerRetainsBoundedHistory(t *testing.T) {
+	broker := NewLogBrokerWithLimit(3)
+	for i := 1; i <= 10; i++ {
+		chain := "alpha"
+		if i%2 == 0 {
+			chain = "beta"
+		}
+		broker.Publish("op", chain, operatorlog.Entry{Message: "log"})
+	}
+
+	last, logs := broker.Since(0)
+	if last != 10 {
+		t.Fatalf("last = %d, want 10", last)
+	}
+	if len(logs) != 3 {
+		t.Fatalf("retained logs = %d, want 3", len(logs))
+	}
+	if logs[0].Seq != 8 || logs[2].Seq != 10 {
+		t.Fatalf("retained seqs = %#v, want 8..10", logs)
+	}
+
+	last, alpha := broker.SinceChain("op", "alpha", 0)
+	if last != 10 {
+		t.Fatalf("chain last = %d, want 10", last)
+	}
+	if len(alpha) != 1 || alpha[0].Seq != 9 {
+		t.Fatalf("alpha logs = %#v, want only retained alpha seq 9", alpha)
+	}
+}
+
+func TestLogBrokerPublishDoesNotScanHistory(t *testing.T) {
+	broker := NewLogBrokerWithLimit(32)
+	started := time.Now()
+	for i := 0; i < 10000; i++ {
+		broker.Publish("op", "chain", operatorlog.Entry{Message: "log"})
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("publishing 10000 bounded logs took %s, want under 500ms", elapsed)
+	}
+	if len(broker.logs) != 32 {
+		t.Fatalf("retained logs = %d, want 32", len(broker.logs))
 	}
 }
 
@@ -361,8 +407,52 @@ func TestActiveLogsDoesNotPersistSnapshot(t *testing.T) {
 	}
 }
 
+func TestSessionRPCPropagatesRequestContext(t *testing.T) {
+	server := &Server{moduleSessions: contextCheckingSessionBroker{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := server.listSessionsRPC(ctx, EmptyRequest{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("list sessions error = %v, want context canceled", err)
+	}
+	if _, err := server.readSessionRPC(ctx, SessionReadRequest{SessionID: "s1"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("read session error = %v, want context canceled", err)
+	}
+	if _, err := server.writeSessionRPC(ctx, SessionWriteRequest{SessionID: "s1", Data: []byte("x")}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("write session error = %v, want context canceled", err)
+	}
+	if _, err := server.closeSessionRPC(ctx, SessionCloseRequest{SessionID: "s1"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("close session error = %v, want context canceled", err)
+	}
+}
+
 func operatorlogEntryFromTest(message string) operatorlog.Entry {
 	return operatorlog.Entry{Message: message}
+}
+
+type contextCheckingSessionBroker struct{}
+
+func (contextCheckingSessionBroker) ListSessions(ctx context.Context) ([]run.SessionRef, error) {
+	return nil, contextOrMissing(ctx)
+}
+
+func (contextCheckingSessionBroker) WriteSession(ctx context.Context, _ string, _ []byte) error {
+	return contextOrMissing(ctx)
+}
+
+func (contextCheckingSessionBroker) ReadSession(ctx context.Context, _ string, _ time.Duration) (run.SessionChunk, error) {
+	return run.SessionChunk{}, contextOrMissing(ctx)
+}
+
+func (contextCheckingSessionBroker) CloseSession(ctx context.Context, _ string) error {
+	return contextOrMissing(ctx)
+}
+
+func contextOrMissing(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.New("request context was not propagated")
 }
 
 func serveTestDaemon(t *testing.T, endpoint string, runs services.RunService, options ...ServerOption) {

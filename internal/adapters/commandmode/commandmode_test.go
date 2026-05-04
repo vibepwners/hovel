@@ -238,6 +238,47 @@ func TestHumanOutputRendersOperatorLogWhenPresent(t *testing.T) {
 	}
 }
 
+func TestExecuteLinePreservesQuotedArguments(t *testing.T) {
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"echo"},
+		Summary: "Echo one value",
+		Positionals: []commands.Positional{
+			{Name: "value", Required: true},
+		},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: invocation.Positional("value")}, nil
+		},
+	})
+	var stdout, stderr bytes.Buffer
+
+	code := NewAppWithRegistry(registry).ExecuteLine(context.Background(), `echo "hello operator"`, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "hello operator" {
+		t.Fatalf("stdout = %q, want quoted value preserved", got)
+	}
+}
+
+func TestExecuteLineRejectsUnterminatedQuotedArgument(t *testing.T) {
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"echo"},
+		Summary: "Echo one value",
+		Handler: func(_ context.Context, _ commands.Invocation) (commands.Result, error) {
+			return commands.Result{}, nil
+		},
+	})
+	var stdout, stderr bytes.Buffer
+
+	code := NewAppWithRegistry(registry).ExecuteLine(context.Background(), `echo "unterminated`, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "unterminated quoted string") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestTerminalInputRequiresLiteralYes(t *testing.T) {
 	prompt := testConfirmationPrompt()
 	var stdout strings.Builder

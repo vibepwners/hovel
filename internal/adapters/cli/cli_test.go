@@ -418,7 +418,7 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 	}
 }
 
-func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndVisibleSecrets(t *testing.T) {
+func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndRedactsSecrets(t *testing.T) {
 	session := operatorsession.New()
 	if err := session.UseOperation("test-op"); err != nil {
 		t.Fatal(err)
@@ -461,11 +461,11 @@ func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndVisibleSe
 	if code := app.ExecuteLine(context.Background(), "chain config interactive", &stdout, &stderr); code != 0 {
 		t.Fatalf("interactive exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "chain api.token=hunter2") {
-		t.Fatalf("current config should show secret like ordinary config:\n%s", stdout.String())
+	if strings.Contains(stdout.String(), "hunter2") || !strings.Contains(stdout.String(), "chain api.token=********") {
+		t.Fatalf("current config should redact secret:\n%s", stdout.String())
 	}
-	if suggestions := app.Suggestions(""); !containsSuggestionDescription(suggestions, "hunter2") {
-		t.Fatalf("secret current value missing from suggestions: %#v", suggestions)
+	if suggestions := app.Suggestions(""); containsSuggestion(suggestions, "hunter2") || containsSuggestionDescription(suggestions, "hunter2") {
+		t.Fatalf("secret current value leaked into suggestions: %#v", suggestions)
 	}
 	stdout.Reset()
 	if code := app.ExecuteLine(context.Background(), "c", &stdout, &stderr); code != 0 {
