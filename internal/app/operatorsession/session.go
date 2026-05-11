@@ -11,6 +11,13 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 )
 
+const DefaultOperation = "default"
+
+type Operation struct {
+	Name   string
+	Chains []Chain
+}
+
 type Chain struct {
 	Name          string
 	Targets       []string
@@ -28,19 +35,29 @@ type Step struct {
 }
 
 type State struct {
-	ActiveChain   string
-	Chain         string
-	Targets       []string
-	Steps         []Step
-	Config        map[string]string
-	TargetConfigs map[string]map[string]string
-	LogTopic      string
-	Chains        []Chain
+	ActiveOperation string
+	Operation       string
+	ActiveChain     string
+	Chain           string
+	Targets         []string
+	Steps           []Step
+	Config          map[string]string
+	TargetConfigs   map[string]map[string]string
+	LogTopic        string
+	Chains          []Chain
+	Operations      []Operation
 }
 
 type PersistedState struct {
-	ActiveChain string           `json:"activeChain"`
-	Chains      []PersistedChain `json:"chains"`
+	ActiveOperation string               `json:"activeOperation,omitempty"`
+	ActiveChain     string               `json:"activeChain"`
+	Operations      []PersistedOperation `json:"operations,omitempty"`
+	Chains          []PersistedChain     `json:"chains,omitempty"`
+}
+
+type PersistedOperation struct {
+	Name   string           `json:"name"`
+	Chains []PersistedChain `json:"chains"`
 }
 
 type PersistedChain struct {
@@ -54,7 +71,12 @@ type PersistedChain struct {
 }
 
 type Store struct {
-	mu     sync.Mutex
+	mu         sync.Mutex
+	operations map[string]*operationState
+}
+
+type operationState struct {
+	Name   string
 	chains map[string]*Chain
 }
 
@@ -63,20 +85,51 @@ func New() *Session {
 }
 
 func NewStore() *Store {
-	return &Store{chains: map[string]*Chain{}}
+	return &Store{operations: map[string]*operationState{}}
 }
 
 type Session struct {
-	mu          sync.Mutex
-	activeChain string
-	store       *Store
+	mu                      sync.Mutex
+	activeOperation         string
+	activeOperationSelected bool
+	activeChains            map[string]string
+	store                   *Store
 }
 
 func NewWithStore(store *Store) *Session {
 	if store == nil {
 		store = NewStore()
 	}
-	return &Session{store: store}
+	return &Session{
+		activeChains: map[string]string{},
+		store:        store,
+	}
+}
+
+func (s *Session) CreateOperation(name string) error {
+	name = normalizeName(name)
+	if name == "" {
+		return errors.New("operation is required")
+	}
+	return s.chainStore().createOperation(name)
+}
+
+func (s *Session) UseOperation(name string) error {
+	name = normalizeName(name)
+	if name == "" {
+		return errors.New("operation is required")
+	}
+	if err := s.chainStore().createOperation(name); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeOperation = name
+	s.activeOperationSelected = true
+	if s.activeChains == nil {
+		s.activeChains = map[string]string{}
+	}
+	return nil
 }
 
 func (s *Session) CreateChain(name string) error {
@@ -84,7 +137,7 @@ func (s *Session) CreateChain(name string) error {
 	if name == "" {
 		return errors.New("chain is required")
 	}
-	return s.chainStore().createChain(name)
+	return s.chainStore().createChain(s.activeOperationName(), name)
 }
 
 func (s *Session) UseChain(name string) error {
@@ -92,12 +145,16 @@ func (s *Session) UseChain(name string) error {
 	if name == "" {
 		return errors.New("chain is required")
 	}
-	if err := s.chainStore().createChain(name); err != nil {
+	operation := s.activeOperationName()
+	if err := s.chainStore().createChain(operation, name); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.activeChain = name
+	if s.activeChains == nil {
+		s.activeChains = map[string]string{}
+	}
+	s.activeChains[operation] = name
 	return nil
 }
 
@@ -107,13 +164,14 @@ func (s *Session) RenameChain(oldName, newName string) error {
 	if oldName == "" || newName == "" {
 		return errors.New("chain is required")
 	}
-	if err := s.chainStore().renameChain(oldName, newName); err != nil {
+	operation := s.activeOperationName()
+	if err := s.chainStore().renameChain(operation, oldName, newName); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.activeChain == oldName {
-		s.activeChain = newName
+	if s.activeChains[operation] == oldName {
+		s.activeChains[operation] = newName
 	}
 	return nil
 }
@@ -123,13 +181,14 @@ func (s *Session) DeleteChain(name string) error {
 	if name == "" {
 		return errors.New("chain is required")
 	}
-	if err := s.chainStore().deleteChain(name); err != nil {
+	operation := s.activeOperationName()
+	if err := s.chainStore().deleteChain(operation, name); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.activeChain == name {
-		s.activeChain = ""
+	if s.activeChains[operation] == name {
+		s.activeChains[operation] = ""
 	}
 	return nil
 }
@@ -139,19 +198,19 @@ func (s *Session) AddTarget(target string) error {
 	if target == "" {
 		return errors.New("target is required")
 	}
-	activeChain := s.active()
+	operation, activeChain := s.activeRef()
 	if activeChain == "" {
 		return errors.New("active chain is required")
 	}
-	return s.chainStore().addTarget(activeChain, target)
+	return s.chainStore().addTarget(operation, activeChain, target)
 }
 
 func (s *Session) ClearTargets() {
-	activeChain := s.active()
+	operation, activeChain := s.activeRef()
 	if activeChain == "" {
 		return
 	}
-	s.chainStore().clearTargets(activeChain)
+	s.chainStore().clearTargets(operation, activeChain)
 }
 
 func (s *Session) AddModule(moduleID string) (Step, error) {
@@ -159,11 +218,11 @@ func (s *Session) AddModule(moduleID string) (Step, error) {
 	if moduleID == "" {
 		return Step{}, errors.New("module is required")
 	}
-	activeChain := s.active()
+	operation, activeChain := s.activeRef()
 	if activeChain == "" {
 		return Step{}, errors.New("active chain is required")
 	}
-	return s.chainStore().addModule(activeChain, moduleID)
+	return s.chainStore().addModule(operation, activeChain, moduleID)
 }
 
 func (s *Session) SetChainConfig(key, value string) error {
@@ -172,11 +231,11 @@ func (s *Session) SetChainConfig(key, value string) error {
 	if key == "" || value == "" {
 		return errors.New("config key and value are required")
 	}
-	activeChain := s.active()
+	operation, activeChain := s.activeRef()
 	if activeChain == "" {
 		return errors.New("active chain is required")
 	}
-	return s.chainStore().setChainConfig(activeChain, key, value)
+	return s.chainStore().setChainConfig(operation, activeChain, key, value)
 }
 
 func (s *Session) UnsetChainConfig(key string) error {
@@ -184,11 +243,11 @@ func (s *Session) UnsetChainConfig(key string) error {
 	if key == "" {
 		return errors.New("config key is required")
 	}
-	activeChain := s.active()
+	operation, activeChain := s.activeRef()
 	if activeChain == "" {
 		return errors.New("active chain is required")
 	}
-	return s.chainStore().unsetChainConfig(activeChain, key)
+	return s.chainStore().unsetChainConfig(operation, activeChain, key)
 }
 
 func (s *Session) SetTargetConfig(target, key, value string) error {
@@ -198,11 +257,11 @@ func (s *Session) SetTargetConfig(target, key, value string) error {
 	if target == "" || key == "" || value == "" {
 		return errors.New("target, config key, and value are required")
 	}
-	activeChain := s.active()
+	operation, activeChain := s.activeRef()
 	if activeChain == "" {
 		return errors.New("active chain is required")
 	}
-	return s.chainStore().setTargetConfig(activeChain, target, key, value)
+	return s.chainStore().setTargetConfig(operation, activeChain, target, key, value)
 }
 
 func (s *Session) UnsetTargetConfig(target, key string) error {
@@ -211,15 +270,15 @@ func (s *Session) UnsetTargetConfig(target, key string) error {
 	if target == "" || key == "" {
 		return errors.New("target and config key are required")
 	}
-	activeChain := s.active()
+	operation, activeChain := s.activeRef()
 	if activeChain == "" {
 		return errors.New("active chain is required")
 	}
-	return s.chainStore().unsetTargetConfig(activeChain, target, key)
+	return s.chainStore().unsetTargetConfig(operation, activeChain, target, key)
 }
 
 func (s *Session) AppendLog(entries ...operatorlog.Entry) error {
-	activeChain := s.active()
+	_, activeChain := s.activeRef()
 	if activeChain == "" {
 		return errors.New("active chain is required")
 	}
@@ -231,37 +290,89 @@ func (s *Session) AppendLogToChain(name string, entries ...operatorlog.Entry) er
 	if name == "" {
 		return errors.New("chain is required")
 	}
-	return s.chainStore().appendLog(name, entries...)
+	return s.chainStore().appendLog(s.activeOperationName(), name, entries...)
 }
 
 func (s *Session) Snapshot() State {
-	return s.chainStore().snapshot(s.active())
+	operation, activeChain := s.activeRef()
+	return s.chainStore().snapshot(operation, activeChain)
+}
+
+func (s *Session) ActiveOperationSelected() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return normalizeOperation(s.activeOperation) != "" && s.activeOperationSelected
 }
 
 func (s *Session) ActiveLogs() []operatorlog.Entry {
-	return s.chainStore().logs(s.active())
+	operation, activeChain := s.activeRef()
+	return s.chainStore().logs(operation, activeChain)
 }
 
 func (s *Session) Export() PersistedState {
-	return s.chainStore().export(s.active())
+	operation, activeChain := s.activeRef()
+	state := s.chainStore().export(operation, activeChain)
+	if !s.ActiveOperationSelected() {
+		state.ActiveOperation = ""
+	}
+	return state
 }
 
 func (s *Session) Import(state PersistedState) {
 	s.chainStore().importState(state)
+	activeOperation := normalizeOperation(state.ActiveOperation)
+	activeOperationSelected := activeOperation != ""
+	if activeOperation == "" {
+		activeOperation = DefaultOperation
+	}
 	activeChain := normalizeName(state.ActiveChain)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if activeChain != "" && s.store.hasChain(activeChain) {
-		s.activeChain = activeChain
+	if s.activeChains == nil {
+		s.activeChains = map[string]string{}
+	}
+	if s.store.hasOperation(activeOperation) {
+		s.activeOperation = activeOperation
+		s.activeOperationSelected = activeOperationSelected
+		if activeChain != "" && s.store.hasChain(activeOperation, activeChain) {
+			s.activeChains[activeOperation] = activeChain
+			return
+		}
+		s.activeChains[activeOperation] = ""
 		return
 	}
-	s.activeChain = ""
+	s.activeOperation = DefaultOperation
+	s.activeOperationSelected = false
+	s.activeChains[DefaultOperation] = ""
 }
 
-func (s *Session) active() string {
+func (s *Session) Attachment(operation, chain string) *Session {
+	attachment := NewWithStore(s.chainStore())
+	if normalizeOperation(operation) != "" {
+		_ = attachment.UseOperation(operation)
+	}
+	if normalizeName(chain) != "" {
+		_ = attachment.UseChain(chain)
+	}
+	return attachment
+}
+
+func (s *Session) activeOperationName() string {
+	operation, _ := s.activeRef()
+	return operation
+}
+
+func (s *Session) activeRef() (string, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.activeChain
+	operation := normalizeOperation(s.activeOperation)
+	if operation == "" {
+		operation = DefaultOperation
+	}
+	if s.activeChains == nil {
+		s.activeChains = map[string]string{}
+	}
+	return operation, s.activeChains[operation]
 }
 
 func (s *Session) chainStore() *Store {
@@ -273,47 +384,56 @@ func (s *Session) chainStore() *Store {
 	return s.store
 }
 
-func (s *Store) createChain(name string) error {
+func (s *Store) createOperation(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.ensureChain(name)
+	s.ensureOperation(name)
 	return nil
 }
 
-func (s *Store) renameChain(oldName, newName string) error {
+func (s *Store) createChain(operationName, chainName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chain, ok := s.chains[oldName]
+	s.ensureChain(operationName, chainName)
+	return nil
+}
+
+func (s *Store) renameChain(operationName, oldName, newName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	operation := s.ensureOperation(operationName)
+	chain, ok := operation.chains[oldName]
 	if !ok {
 		return errors.New("chain does not exist")
 	}
 	if oldName == newName {
 		return nil
 	}
-	if _, exists := s.chains[newName]; exists {
+	if _, exists := operation.chains[newName]; exists {
 		return errors.New("chain already exists")
 	}
-	delete(s.chains, oldName)
+	delete(operation.chains, oldName)
 	chain.Name = newName
-	chain.LogTopic = logTopic(newName)
-	s.chains[newName] = chain
+	chain.LogTopic = logTopic(operation.Name, newName)
+	operation.chains[newName] = chain
 	return nil
 }
 
-func (s *Store) deleteChain(name string) error {
+func (s *Store) deleteChain(operationName, chainName string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.chains[name]; !ok {
+	operation := s.ensureOperation(operationName)
+	if _, ok := operation.chains[chainName]; !ok {
 		return errors.New("chain does not exist")
 	}
-	delete(s.chains, name)
+	delete(operation.chains, chainName)
 	return nil
 }
 
-func (s *Store) addTarget(chainName, target string) error {
+func (s *Store) addTarget(operationName, chainName, target string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chain := s.ensureChain(chainName)
+	chain := s.ensureChain(operationName, chainName)
 	if !hasString(chain.Targets, target) {
 		chain.TargetConfigs[target] = map[string]string{}
 		chain.Targets = append(chain.Targets, target)
@@ -324,19 +444,19 @@ func (s *Store) addTarget(chainName, target string) error {
 	return nil
 }
 
-func (s *Store) clearTargets(chainName string) {
+func (s *Store) clearTargets(operationName, chainName string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chain := s.ensureChain(chainName)
+	chain := s.ensureChain(operationName, chainName)
 	chain.Targets = nil
 	chain.TargetConfigs = map[string]map[string]string{}
 	chain.Logs = append(chain.Logs, operatorlog.Info("target", "targets cleared"))
 }
 
-func (s *Store) addModule(chainName, moduleID string) (Step, error) {
+func (s *Store) addModule(operationName, chainName, moduleID string) (Step, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chain := s.ensureChain(chainName)
+	chain := s.ensureChain(operationName, chainName)
 	chain.nextStep++
 	step := Step{
 		ID:       fmt.Sprintf("step-%d", chain.nextStep),
@@ -350,10 +470,10 @@ func (s *Store) addModule(chainName, moduleID string) (Step, error) {
 	return step, nil
 }
 
-func (s *Store) setChainConfig(chainName, key, value string) error {
+func (s *Store) setChainConfig(operationName, chainName, key, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chain := s.ensureChain(chainName)
+	chain := s.ensureChain(operationName, chainName)
 	if chain.Config == nil {
 		chain.Config = map[string]string{}
 	}
@@ -364,10 +484,10 @@ func (s *Store) setChainConfig(chainName, key, value string) error {
 	return nil
 }
 
-func (s *Store) unsetChainConfig(chainName, key string) error {
+func (s *Store) unsetChainConfig(operationName, chainName, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chain := s.ensureChain(chainName)
+	chain := s.ensureChain(operationName, chainName)
 	delete(chain.Config, key)
 	chain.Logs = append(chain.Logs, operatorlog.Info("config", "chain config unset",
 		operatorlog.Field{Name: "key", Value: key},
@@ -375,10 +495,10 @@ func (s *Store) unsetChainConfig(chainName, key string) error {
 	return nil
 }
 
-func (s *Store) setTargetConfig(chainName, target, key, value string) error {
+func (s *Store) setTargetConfig(operationName, chainName, target, key, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chain := s.ensureChain(chainName)
+	chain := s.ensureChain(operationName, chainName)
 	if !hasString(chain.Targets, target) {
 		return errors.New("target does not exist")
 	}
@@ -396,10 +516,10 @@ func (s *Store) setTargetConfig(chainName, target, key, value string) error {
 	return nil
 }
 
-func (s *Store) unsetTargetConfig(chainName, target, key string) error {
+func (s *Store) unsetTargetConfig(operationName, chainName, target, key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chain := s.ensureChain(chainName)
+	chain := s.ensureChain(operationName, chainName)
 	if !hasString(chain.Targets, target) {
 		return errors.New("target does not exist")
 	}
@@ -411,23 +531,26 @@ func (s *Store) unsetTargetConfig(chainName, target, key string) error {
 	return nil
 }
 
-func (s *Store) appendLog(chainName string, entries ...operatorlog.Entry) error {
+func (s *Store) appendLog(operationName, chainName string, entries ...operatorlog.Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chain := s.ensureChain(chainName)
+	chain := s.ensureChain(operationName, chainName)
 	chain.Logs = append(chain.Logs, cloneEntries(entries)...)
 	return nil
 }
 
-func (s *Store) snapshot(activeChain string) State {
+func (s *Store) snapshot(operationName, activeChain string) State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	operation := s.ensureOperation(operationName)
 	state := State{
-		ActiveChain: activeChain,
-		Chain:       activeChain,
+		ActiveOperation: operation.Name,
+		Operation:       operation.Name,
+		ActiveChain:     activeChain,
+		Chain:           activeChain,
 	}
 	if activeChain != "" {
-		if chain, ok := s.chains[activeChain]; ok {
+		if chain, ok := operation.chains[activeChain]; ok {
 			state.Targets = append([]string(nil), chain.Targets...)
 			state.Steps = cloneSteps(chain.Steps)
 			state.Config = cloneStringMap(chain.Config)
@@ -435,62 +558,78 @@ func (s *Store) snapshot(activeChain string) State {
 			state.LogTopic = chain.LogTopic
 		}
 	}
-	state.Chains = s.snapshotChains()
+	state.Chains = snapshotChains(operation)
+	state.Operations = s.snapshotOperations()
 	return state
 }
 
-func (s *Store) logs(activeChain string) []operatorlog.Entry {
+func (s *Store) logs(operationName, activeChain string) []operatorlog.Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if activeChain == "" {
 		return nil
 	}
-	chain, ok := s.chains[activeChain]
+	operation := s.ensureOperation(operationName)
+	chain, ok := operation.chains[activeChain]
 	if !ok {
 		return nil
 	}
 	return cloneEntries(chain.Logs)
 }
 
-func (s *Store) export(activeChain string) PersistedState {
+func (s *Store) export(activeOperation, activeChain string) PersistedState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	chains := make([]PersistedChain, 0, len(s.chains))
-	snapshots := make([]Chain, 0, len(s.chains))
-	for _, chain := range s.chains {
-		snapshots = append(snapshots, cloneChain(*chain))
-	}
-	sort.Slice(snapshots, func(i, j int) bool {
-		return snapshots[i].Name < snapshots[j].Name
-	})
-	for _, chain := range snapshots {
-		chains = append(chains, PersistedChain{
-			Name:          chain.Name,
-			Targets:       append([]string(nil), chain.Targets...),
-			Steps:         cloneSteps(chain.Steps),
-			Config:        cloneStringMap(chain.Config),
-			TargetConfigs: cloneTargetConfigs(chain.TargetConfigs),
-			LogTopic:      chain.LogTopic,
-			Logs:          cloneEntries(chain.Logs),
+	operations := make([]PersistedOperation, 0, len(s.operations))
+	snapshots := s.snapshotOperations()
+	for _, operation := range snapshots {
+		operations = append(operations, PersistedOperation{
+			Name:   operation.Name,
+			Chains: persistedChains(operation.Chains),
 		})
 	}
-	return PersistedState{
-		ActiveChain: activeChain,
-		Chains:      chains,
+	state := PersistedState{
+		ActiveOperation: activeOperation,
+		ActiveChain:     activeChain,
+		Operations:      operations,
 	}
+	if operation, ok := s.operations[activeOperation]; ok {
+		state.Chains = persistedChains(snapshotChains(operation))
+	}
+	return state
 }
 
 func (s *Store) importState(state PersistedState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.chains = map[string]*Chain{}
-	for _, persisted := range state.Chains {
-		name := normalizeName(persisted.Name)
-		if name == "" {
+	s.operations = map[string]*operationState{}
+	if len(state.Operations) > 0 {
+		for _, persistedOperation := range state.Operations {
+			s.importOperation(persistedOperation)
+		}
+		return
+	}
+	operationName := normalizeOperation(state.ActiveOperation)
+	if operationName == "" {
+		operationName = DefaultOperation
+	}
+	s.importOperation(PersistedOperation{Name: operationName, Chains: state.Chains})
+}
+
+func (s *Store) importOperation(persistedOperation PersistedOperation) {
+	name := normalizeOperation(persistedOperation.Name)
+	if name == "" {
+		name = DefaultOperation
+	}
+	operation := s.ensureOperation(name)
+	operation.chains = map[string]*Chain{}
+	for _, persisted := range persistedOperation.Chains {
+		chainName := normalizeName(persisted.Name)
+		if chainName == "" {
 			continue
 		}
 		chain := &Chain{
-			Name:          name,
+			Name:          chainName,
 			Targets:       append([]string(nil), persisted.Targets...),
 			Steps:         cloneSteps(persisted.Steps),
 			Config:        cloneStringMap(persisted.Config),
@@ -505,46 +644,104 @@ func (s *Store) importState(state PersistedState) {
 		if chain.TargetConfigs == nil {
 			chain.TargetConfigs = map[string]map[string]string{}
 		}
-		if chain.LogTopic == "" {
-			chain.LogTopic = logTopic(name)
+		if chain.LogTopic == "" || strings.HasPrefix(chain.LogTopic, "chain/") {
+			chain.LogTopic = logTopic(name, chainName)
 		}
-		s.chains[name] = chain
+		operation.chains[chainName] = chain
 	}
 }
 
-func (s *Store) hasChain(name string) bool {
+func (s *Store) hasOperation(name string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.chains[name]
+	_, ok := s.operations[normalizeOperation(name)]
 	return ok
 }
 
-func (s *Store) ensureChain(name string) *Chain {
-	if s.chains == nil {
-		s.chains = map[string]*Chain{}
+func (s *Store) hasChain(operationName, chainName string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	operation, ok := s.operations[normalizeOperation(operationName)]
+	if !ok {
+		return false
 	}
-	if chain, ok := s.chains[name]; ok {
+	_, ok = operation.chains[chainName]
+	return ok
+}
+
+func (s *Store) ensureOperation(name string) *operationState {
+	name = normalizeOperation(name)
+	if name == "" {
+		name = DefaultOperation
+	}
+	if s.operations == nil {
+		s.operations = map[string]*operationState{}
+	}
+	if operation, ok := s.operations[name]; ok {
+		return operation
+	}
+	operation := &operationState{
+		Name:   name,
+		chains: map[string]*Chain{},
+	}
+	s.operations[name] = operation
+	return operation
+}
+
+func (s *Store) ensureChain(operationName, chainName string) *Chain {
+	operation := s.ensureOperation(operationName)
+	if chain, ok := operation.chains[chainName]; ok {
 		return chain
 	}
 	chain := &Chain{
-		Name:          name,
+		Name:          chainName,
 		Config:        map[string]string{},
 		TargetConfigs: map[string]map[string]string{},
-		LogTopic:      logTopic(name),
+		LogTopic:      logTopic(operation.Name, chainName),
 	}
-	s.chains[name] = chain
+	operation.chains[chainName] = chain
 	return chain
 }
 
-func (s *Store) snapshotChains() []Chain {
-	chains := make([]Chain, 0, len(s.chains))
-	for _, chain := range s.chains {
+func (s *Store) snapshotOperations() []Operation {
+	operations := make([]Operation, 0, len(s.operations))
+	for _, operation := range s.operations {
+		operations = append(operations, Operation{
+			Name:   operation.Name,
+			Chains: snapshotChains(operation),
+		})
+	}
+	sort.Slice(operations, func(i, j int) bool {
+		return operations[i].Name < operations[j].Name
+	})
+	return operations
+}
+
+func snapshotChains(operation *operationState) []Chain {
+	chains := make([]Chain, 0, len(operation.chains))
+	for _, chain := range operation.chains {
 		chains = append(chains, cloneChain(*chain))
 	}
 	sort.Slice(chains, func(i, j int) bool {
 		return chains[i].Name < chains[j].Name
 	})
 	return chains
+}
+
+func persistedChains(chains []Chain) []PersistedChain {
+	persisted := make([]PersistedChain, 0, len(chains))
+	for _, chain := range chains {
+		persisted = append(persisted, PersistedChain{
+			Name:          chain.Name,
+			Targets:       append([]string(nil), chain.Targets...),
+			Steps:         cloneSteps(chain.Steps),
+			Config:        cloneStringMap(chain.Config),
+			TargetConfigs: cloneTargetConfigs(chain.TargetConfigs),
+			LogTopic:      chain.LogTopic,
+			Logs:          cloneEntries(chain.Logs),
+		})
+	}
+	return persisted
 }
 
 func cloneChain(chain Chain) Chain {
@@ -589,8 +786,16 @@ func normalizeName(name string) string {
 	return strings.TrimSpace(name)
 }
 
-func logTopic(chain string) string {
-	return "chain/" + chain + "/logs"
+func normalizeOperation(name string) string {
+	return strings.TrimSpace(name)
+}
+
+func logTopic(operation, chain string) string {
+	operation = normalizeOperation(operation)
+	if operation == "" {
+		operation = DefaultOperation
+	}
+	return "operation/" + operation + "/chain/" + chain + "/logs"
 }
 
 func hasString(values []string, want string) bool {

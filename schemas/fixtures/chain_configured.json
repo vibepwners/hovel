@@ -1,0 +1,34 @@
+{
+  "apiVersion": "hovel.dev/v1alpha1",
+  "kind": "Chain",
+  "metadata": {
+    "name": "alpha"
+  },
+  "spec": {
+    "mode": "configured",
+    "steps": [
+      {
+        "id": "step-1",
+        "uses": "module:mock-exploit@v0.0.0-example"
+      }
+    ],
+    "config": {
+      "operator.confirmed_lab": "true"
+    },
+    "targets": [
+      {
+        "id": "mock://target",
+        "config": {
+          "target.host": "router-01",
+          "target.port": "22"
+        }
+      }
+    ],
+    "targetConfigs": {
+      "mock://target": {
+        "target.host": "router-01",
+        "target.port": "22"
+      }
+    }
+  }
+}

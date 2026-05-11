@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
@@ -16,10 +17,12 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 	"github.com/akamensky/argparse"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -46,6 +49,12 @@ func NewAppWithSession(session commands.OperatorSession) App {
 	return NewAppWithRuntime(defaultRuntime(session))
 }
 
+func NewAppWithSessionAndModules(session commands.OperatorSession, modules modulecatalog.Catalog) App {
+	runtime := defaultRuntime(session)
+	runtime.Modules = modules
+	return NewAppWithRuntime(runtime)
+}
+
 func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 	store := filesystem.NewWorkspaceStore()
 	return commands.Runtime{
@@ -55,11 +64,20 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 			randomIDs{},
 			systemClock{},
 		),
-		Daemons: services.NewDaemonService(store),
-		Runs:    daemonRunClients{},
-		Plans:   store,
-		Session: session,
-		Modules: pythonrpc.MustConfiguredCatalog(),
+		Daemons:            services.NewDaemonService(store),
+		Runs:               daemonRunClients{},
+		Plans:              store,
+		Throws:             store,
+		Confirmations:      store,
+		Artifacts:          store,
+		ArtifactRecords:    store,
+		Events:             store,
+		EventRecords:       store,
+		ThrowConfirmations: store,
+		ThrowPlans:         store,
+		ChainFiles:         chainFileDiskStore{},
+		Session:            session,
+		Modules:            pythonrpc.MustConfiguredCatalog(),
 	}
 }
 
@@ -72,6 +90,10 @@ func (a App) Registry() commands.Registry {
 }
 
 func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return a.run(ctx, args, stdout, stderr, false)
+}
+
+func (a App) run(ctx context.Context, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
 	if len(args) == 0 || topLevelHelpRequested(args) {
 		parser := a.rootParser()
 		if topLevelHelpRequested(args) {
@@ -91,18 +113,69 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		fmt.Fprint(stderr, a.rootParser().Usage(fmt.Sprintf("unknown command %q", strings.Join(commandPath(args), " "))))
 		return 2
 	}
-	return a.runDefinition(ctx, definition, commandArgs, stdout, stderr)
+	return a.runDefinition(ctx, definition, commandArgs, stdout, stderr, echoConfirmationAnswer)
 }
 
 func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
-	fields := strings.Fields(line)
+	fields, err := splitCommandLine(line)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 	if len(fields) == 0 {
 		return 0
 	}
-	return a.Run(ctx, fields, stdout, stderr)
+	return a.run(ctx, fields, stdout, stderr, true)
 }
 
-func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer) int {
+func splitCommandLine(line string) ([]string, error) {
+	var fields []string
+	var current strings.Builder
+	var quote rune
+	inField := false
+
+	runes := []rune(line)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		switch {
+		case quote != 0:
+			if r == '\\' && i+1 < len(runes) && (runes[i+1] == quote || runes[i+1] == '\\') {
+				i++
+				current.WriteRune(runes[i])
+				inField = true
+				continue
+			}
+			if r == quote {
+				quote = 0
+				inField = true
+				continue
+			}
+			current.WriteRune(r)
+			inField = true
+		case r == '\'' || r == '"':
+			quote = r
+			inField = true
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			if inField {
+				fields = append(fields, current.String())
+				current.Reset()
+				inField = false
+			}
+		default:
+			current.WriteRune(r)
+			inField = true
+		}
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated quoted string")
+	}
+	if inField {
+		fields = append(fields, current.String())
+	}
+	return fields, nil
+}
+
+func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
 	parser := commandParser(definition)
 	if helpRequested(args) {
 		fmt.Fprint(stdout, usage(definition, parser, nil))
@@ -113,6 +186,8 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 	if !ok {
 		return code
 	}
+	parsed.Input = terminalInput{in: os.Stdin, out: stdout, echoAnswer: echoConfirmationAnswer}
+	parsed.NonInteractive = stdinNonInteractive()
 	result, err := definition.Execute(ctx, parsed)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -137,6 +212,104 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		fmt.Fprintln(stdout, result.Human)
 	}
 	return 0
+}
+
+func stdinNonInteractive() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return true
+	}
+	return info.Mode()&os.ModeCharDevice == 0
+}
+
+type terminalInput struct {
+	in         io.Reader
+	out        io.Writer
+	echoAnswer bool
+}
+
+func (c terminalInput) Confirm(ctx context.Context, prompt commands.ConfirmationPrompt) (commands.ConfirmationAnswer, error) {
+	if err := ctx.Err(); err != nil {
+		return commands.ConfirmationAnswer{}, err
+	}
+	if c.out != nil {
+		fmt.Fprintf(c.out, "%s\n", confirmationPromptTextBlock(prompt))
+		fmt.Fprintf(c.out, "%s ", confirmationPromptText(prompt))
+	}
+	restoreTerminal, terminalEchoEnabled := func() (func() error, bool) {
+		if !c.echoAnswer {
+			return nil, false
+		}
+		return enableTerminalEcho()
+	}()
+	if restoreTerminal != nil {
+		defer restoreTerminal()
+	}
+	var answer string
+	if _, err := fmt.Fscan(c.in, &answer); err != nil {
+		return commands.ConfirmationAnswer{}, fmt.Errorf("read confirmation: %w", err)
+	}
+	if c.echoAnswer && !terminalEchoEnabled && c.out != nil {
+		fmt.Fprintln(c.out, answer)
+	}
+	return commands.ConfirmationAnswer{Value: answer}, nil
+}
+
+func confirmationPromptText(prompt commands.ConfirmationPrompt) string {
+	action := strings.TrimSpace(prompt.Action)
+	if action == "" {
+		action = "throw"
+	}
+	required := strings.TrimSpace(prompt.RequiredLiteral)
+	if required == "" {
+		required = "yes"
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#facc15")).Bold(true).Render("Type ") +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Bold(true).Render(required) +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#facc15")).Bold(true).Render(" to "+action+":")
+}
+
+func confirmationPromptTextBlock(prompt commands.ConfirmationPrompt) string {
+	return confirmationPromptRenderer{}.Render(prompt)
+}
+
+type confirmationPromptRenderer struct{}
+
+func (confirmationPromptRenderer) Render(prompt commands.ConfirmationPrompt) string {
+	titleText := strings.TrimSpace(prompt.Title)
+	if titleText == "" {
+		titleText = "CONFIRM"
+	}
+	title := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0033")).Bold(true).Render(titleText)
+	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af")).Render(prompt.Plan.ID)
+	lines := []string{strings.TrimSpace(title + " " + subtitle), ""}
+	for _, field := range prompt.Fields {
+		lines = append(lines, reviewRow(field))
+	}
+	body := strings.Join(lines, "\n")
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00e5ff")).
+		Padding(1, 2).
+		Width(76).
+		Render(body)
+}
+
+func reviewRow(field commands.ConfirmationField) string {
+	labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true).Width(13)
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffffff")).Bold(true)
+	if field.Muted {
+		valueStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#9ca3af"))
+	}
+	values := strings.Split(field.Value, "\n")
+	if len(values) == 0 {
+		values = []string{""}
+	}
+	lines := []string{labelStyle.Render(field.Label) + " " + valueStyle.Render(values[0])}
+	for _, value := range values[1:] {
+		lines = append(lines, labelStyle.Render("")+" "+valueStyle.Render(value))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (a App) matchDefinition(args []string) (commands.Definition, []string, bool) {
@@ -316,6 +489,8 @@ func (c daemonRunClient) Close() error {
 
 func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMockExploitRequest) (commands.RunMockExploitResponse, error) {
 	result, err := c.client.RunMockExploit(ctx, daemonrpc.RunMockExploitRequest{
+		Operation:    req.Operation,
+		Chain:        req.Chain,
 		ModuleID:     req.ModuleID,
 		Target:       req.Target,
 		Inputs:       req.Inputs,
@@ -335,7 +510,20 @@ func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMoc
 		Findings:  findingsFromRPC(result.Findings),
 		Artifacts: artifactsFromRPC(result.Artifacts),
 		Logs:      logsFromRPC(result.Logs),
+		Sessions:  sessionsFromRPC(result.Sessions),
 	}, nil
+}
+
+func (c daemonRunClient) ListSessions(ctx context.Context) ([]commands.SessionRef, error) {
+	sessions, err := c.client.ListSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return sessionsFromRPC(sessions), nil
+}
+
+func (c daemonRunClient) CloseSession(ctx context.Context, sessionID string) error {
+	return c.client.CloseSession(ctx, sessionID)
 }
 
 func findingsFromRPC(findings []daemonrpc.Finding) []commands.Finding {
@@ -345,6 +533,24 @@ func findingsFromRPC(findings []daemonrpc.Finding) []commands.Finding {
 			Title:    finding.Title,
 			Severity: finding.Severity,
 			Detail:   finding.Detail,
+		})
+	}
+	return out
+}
+
+func sessionsFromRPC(sessions []daemonrpc.SessionRef) []commands.SessionRef {
+	out := make([]commands.SessionRef, 0, len(sessions))
+	for _, session := range sessions {
+		out = append(out, commands.SessionRef{
+			ID:           session.ID,
+			RunID:        session.RunID,
+			ModuleID:     session.ModuleID,
+			Target:       session.Target,
+			Name:         session.Name,
+			Kind:         session.Kind,
+			State:        session.State,
+			Transport:    session.Transport,
+			Capabilities: append([]string(nil), session.Capabilities...),
 		})
 	}
 	return out
@@ -401,6 +607,7 @@ func artifactsFromRPC(artifacts []daemonrpc.Artifact) []commands.Artifact {
 			Name: artifact.Name,
 			Kind: artifact.Kind,
 			Data: artifact.Data,
+			Path: artifact.Path,
 		})
 	}
 	return out

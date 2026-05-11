@@ -48,7 +48,7 @@
           "properties": {
             "type": {
               "type": "string",
-              "minLength": 1
+              "enum": ["jsonrpc-stdio"]
             },
             "packaging": {
               "type": "string"
@@ -61,19 +61,59 @@
         },
         "moduleType": {
           "type": "string",
-          "minLength": 1
+          "enum": ["survey", "exploit", "payload_provider"]
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         },
         "inputs": {
           "type": "object"
         },
         "outputs": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "artifacts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/artifactOutput"
+              }
+            }
+          }
         },
         "requires": {
           "type": "object"
         },
         "risk": {
           "type": "object"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifactOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "mode"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["inline", "file"]
+        },
+        "description": {
+          "type": "string"
         }
       }
     }

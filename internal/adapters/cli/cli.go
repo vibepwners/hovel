@@ -28,22 +28,27 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 type App struct {
-	commands    commandmode.App
-	manager     daemonmanager.Manager
-	theme       Theme
-	session     commands.OperatorSession
-	modules     modulecatalog.Catalog
-	wizard      *interactiveConfigWizard
-	moduleCount int
-	sessionFile string
-	surface     *promptSurface
+	commands      commandmode.App
+	manager       daemonmanager.Manager
+	theme         Theme
+	session       commands.OperatorSession
+	modules       modulecatalog.Catalog
+	daemonClient  *daemonrpc.Client
+	wizard        *interactiveConfigWizard
+	moduleCount   int
+	workspacePath string
+	surface       *promptSurface
 }
 
 func NewApp() App {
 	session := operatorsession.New()
 	modules := pythonrpc.MustConfiguredCatalog()
+	return newAppWithSessionAndModules(session, modules)
+}
+
+func newAppWithSessionAndModules(session commands.OperatorSession, modules modulecatalog.Catalog) App {
 	return App{
-		commands:    commandmode.NewAppWithSession(session),
+		commands:    commandmode.NewAppWithSessionAndModules(session, modules),
 		manager:     daemonmanager.New(),
 		theme:       DefaultTheme(),
 		session:     session,
@@ -70,6 +75,7 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if !ok {
 		return code
 	}
+	a.workspacePath = workspacePath
 
 	session, err := a.EnsureDaemon(ctx, workspacePath)
 	if err != nil {
@@ -88,9 +94,26 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	a.surface = newPromptSurface(prompt.NewStdoutWriter())
 
 	fmt.Fprintln(stdout, a.WelcomeForWidth(session, terminalWidth(stdout)))
+	terminalState, err := capturePromptTerminalState()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	terminalRestored := false
+	defer func() {
+		if !terminalRestored {
+			_ = terminalState.Restore()
+		}
+	}()
 	stopLogs := a.SubscribeLogs(ctx, daemonClient, a.surface, stdout)
 	defer stopLogs()
 	a.Prompt(ctx, stdout, stderr).Run()
+	stopLogs()
+	if err := finishPrompt(stdout, terminalState); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	terminalRestored = true
 	return 0
 }
 
@@ -100,8 +123,9 @@ func (a App) EnsureDaemon(ctx context.Context, workspacePath string) (*daemonman
 
 func (a App) withDaemonSession(ctx context.Context, client *daemonrpc.Client) App {
 	session := daemonrpc.NewSessionClient(ctx, client)
+	a.daemonClient = client
 	a.session = session
-	a.commands = commandmode.NewAppWithSession(session)
+	a.commands = commandmode.NewAppWithSessionAndModules(session, a.modules)
 	a.wizard = newInteractiveConfigWizard(session, a.modules)
 	return a
 }
@@ -122,7 +146,9 @@ func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surfac
 			case <-pollCtx.Done():
 				return
 			case <-ticker.C:
-				chain := a.session.Snapshot().ActiveChain
+				state := a.session.Snapshot()
+				operation := state.ActiveOperation
+				chain := state.ActiveChain
 				if chain == "" {
 					result, err := client.PollLogs(pollCtx, cursor)
 					if err != nil {
@@ -131,7 +157,7 @@ func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surfac
 					cursor = result.Last
 					continue
 				}
-				result, err := client.PollChainLogs(pollCtx, chain, cursor)
+				result, err := client.PollOperationChainLogs(pollCtx, operation, chain, cursor)
 				if err != nil {
 					continue
 				}
@@ -182,9 +208,7 @@ func (a App) Prompt(ctx context.Context, stdout, stderr io.Writer) *prompt.Promp
 		prompt.OptionScrollbarThumbColor(prompt.Turquoise),
 		prompt.OptionScrollbarBGColor(prompt.Black),
 		prompt.OptionMaxSuggestion(10),
-		prompt.OptionSetExitCheckerOnInput(func(in string, _ bool) bool {
-			return isExit(in)
-		}),
+		prompt.OptionSetExitCheckerOnInput(promptExitChecker),
 	)
 }
 
@@ -218,13 +242,30 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 	if rewritten, ok := a.contextualCommand(trimmed); ok {
 		trimmed = rewritten
 	}
-	if trimmed == "chain config interactive" {
+	if err := a.flowError(trimmed); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if trimmed == "chain config interactive" || trimmed == "chains config interactive" {
 		code := a.ConfigureInteractive(stdout, stderr)
 		if err := a.saveWorkspaceSession(ctx); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
 		return code
+	}
+	if isSessionConnectCommand(trimmed) {
+		sessionID, err := parseSessionConnectID(trimmed)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return a.executeSessionConnect(ctx, sessionID, stdout, stderr)
+	}
+	stopThrowing := func() {}
+	if isAnimatedThrowExecutionCommand(trimmed) && a.surface != nil {
+		stopThrowing = a.surface.StartThrowing(a.PromptPrefix())
+		defer stopThrowing()
 	}
 	code := a.commands.ExecuteLine(ctx, trimmed, stdout, stderr)
 	if err := a.saveWorkspaceSession(ctx); err != nil {
@@ -234,14 +275,45 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 	return code
 }
 
+func isThrowExecutionCommand(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 || fields[0] != "throw" {
+		return false
+	}
+	if len(fields) > 1 {
+		switch fields[1] {
+		case "list", "inspect":
+			return false
+		}
+	}
+	return true
+}
+
+func isAnimatedThrowExecutionCommand(line string) bool {
+	if !isThrowExecutionCommand(line) {
+		return false
+	}
+	fields := strings.Fields(line)
+	for _, field := range fields[1:] {
+		if field == "--now" || field == "-n" || strings.HasPrefix(field, "--now=") {
+			return true
+		}
+	}
+	return false
+}
+
 func (a App) PromptPrefix() string {
 	if a.session == nil {
-		return a.theme.PromptPrefix("")
+		return a.theme.PromptPrefix("", "")
 	}
+	state := a.session.Snapshot()
 	if a.wizard != nil && a.wizard.Active() {
-		return a.theme.ConfigPromptPrefix(a.session.Snapshot().ActiveChain, a.wizard.PromptMode())
+		if prompt, ok := a.wizard.ValuePrompt(); ok {
+			return a.theme.ConfigValuePromptPrefix(state.ActiveOperation, state.ActiveChain, prompt)
+		}
+		return a.theme.ConfigPromptPrefix(state.ActiveOperation, state.ActiveChain, a.wizard.PromptMode())
 	}
-	return a.theme.PromptPrefix(a.session.Snapshot().ActiveChain)
+	return a.theme.PromptPrefix(state.ActiveOperation, state.ActiveChain)
 }
 
 func (a App) Completer(document prompt.Document) []prompt.Suggest {
@@ -278,13 +350,18 @@ func (a App) Suggestions(line string) []prompt.Suggest {
 		path = fields[:len(fields)-1]
 	}
 	if children := registry.Children(path...); len(children) > 0 {
+		if !endsWithSpace && strings.HasPrefix(fields[len(fields)-1], "-") {
+			if definition, commandWordCount, ok := matchDefinition(registry, fields); ok && commandWordCount == len(path) {
+				return optionSuggestions(definition, fields[len(fields)-1])
+			}
+		}
 		children = a.contextualChildren(path, children)
 		prefix := ""
 		if !endsWithSpace {
 			prefix = fields[len(fields)-1]
 		}
 		suggestions := suggestionsFromDefinitions(children, prefix)
-		if a.inChainContext() && strings.Join(path, " ") == "chain config" {
+		if a.inChainContext() && (strings.Join(path, " ") == "chain config" || strings.Join(path, " ") == "chains config") {
 			suggestions = appendSuggestion(suggestions, "interactive", "Interactively configure the active chain.", prefix)
 		}
 		return suggestions
@@ -294,7 +371,11 @@ func (a App) Suggestions(line string) []prompt.Suggest {
 	if !ok {
 		return nil
 	}
-	if !a.inChainContext() && activeChainDefinition(definition.PathString()) {
+	pathString := definition.PathString()
+	if operationContextRequired(pathString) && !a.inOperationContext() {
+		return nil
+	}
+	if chainContextRequired(pathString) && !a.inChainContext() {
 		return nil
 	}
 	if suggestions, ok := a.positionalSuggestions(definition, commandWordCount, fields, endsWithSpace); ok {
@@ -329,10 +410,18 @@ func (a App) contextualRootDefinitions() []commands.Definition {
 	if a.inChainContext() {
 		return firstSegments
 	}
+	if a.inOperationContext() {
+		return filterDefinitions(firstSegments, map[string]bool{
+			"chain":   true,
+			"control": true,
+			"op":      true,
+			"session": true,
+		})
+	}
 	return filterDefinitions(firstSegments, map[string]bool{
-		"chain":   true,
 		"control": true,
-		"modules": true,
+		"op":      true,
+		"session": true,
 	})
 }
 
@@ -340,8 +429,16 @@ func (a App) contextualChildren(path []string, children []commands.Definition) [
 	if a.inChainContext() {
 		return children
 	}
+	if !a.inOperationContext() {
+		switch strings.Join(path, " ") {
+		case "chain", "chains", "chain config", "chains config", "module", "modules", "target", "target config", "targets", "targets config":
+			return nil
+		default:
+			return children
+		}
+	}
 	switch strings.Join(path, " ") {
-	case "chain":
+	case "chain", "chains":
 		return filterDefinitions(children, map[string]bool{
 			"create": true,
 			"delete": true,
@@ -349,11 +446,62 @@ func (a App) contextualChildren(path []string, children []commands.Definition) [
 			"rename": true,
 			"use":    true,
 		})
-	case "chain config", "targets", "targets config":
+	case "chain config", "chains config", "module", "modules", "target", "target config", "targets", "targets config":
 		return nil
 	default:
 		return children
 	}
+}
+
+func (a App) flowError(line string) error {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return nil
+	}
+	registry := a.commands.Registry()
+	definition, _, ok := matchDefinition(registry, fields)
+	path := ""
+	if ok {
+		path = definition.PathString()
+	} else {
+		path = strings.Join(fields, " ")
+	}
+	if operationContextRequired(path) && !a.inOperationContext() {
+		return fmt.Errorf("select an operation first: op use <operation>")
+	}
+	if chainContextRequired(path) && !a.inChainContext() {
+		return fmt.Errorf("select a chain first: chain use <chain>")
+	}
+	return nil
+}
+
+func operationContextRequired(path string) bool {
+	fields := strings.Fields(path)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "chain", "chains", "module", "modules", "target", "targets":
+		return true
+	case "throw":
+		return len(fields) == 1
+	default:
+		return false
+	}
+}
+
+func chainContextRequired(path string) bool {
+	fields := strings.Fields(path)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "module", "modules", "target", "targets":
+		return true
+	case "throw":
+		return len(fields) == 1
+	}
+	return activeChainDefinition(path) || path == "chain config interactive" || path == "chains config interactive"
 }
 
 func activeChainDefinition(path string) bool {
@@ -365,6 +513,18 @@ func activeChainDefinition(path string) bool {
 		"chain inspect",
 		"chain logs",
 		"chain validate",
+		"chains add",
+		"chains config list",
+		"chains config set",
+		"chains config unset",
+		"chains inspect",
+		"chains logs",
+		"chains validate",
+		"target add",
+		"target clear",
+		"target config list",
+		"target config set",
+		"target config unset",
 		"targets add",
 		"targets clear",
 		"targets config list",
@@ -447,6 +607,20 @@ func (a App) inChainContext() bool {
 	return a.activeChain() != ""
 }
 
+func (a App) inOperationContext() bool {
+	if a.session == nil {
+		return false
+	}
+	if a.activeChain() != "" {
+		return true
+	}
+	if session, ok := a.session.(interface{ ActiveOperationSelected() bool }); ok {
+		return session.ActiveOperationSelected()
+	}
+	state := a.session.Snapshot()
+	return strings.TrimSpace(state.ActiveOperation) != "" && state.ActiveOperation != operatorsession.DefaultOperation
+}
+
 func (a App) activeChain() string {
 	if a.session == nil {
 		return ""
@@ -455,21 +629,172 @@ func (a App) activeChain() string {
 }
 
 func (a App) positionalSuggestions(definition commands.Definition, commandWordCount int, fields []string, endsWithSpace bool) ([]prompt.Suggest, bool) {
-	if definition.PathString() != "chain add" {
-		return nil, false
+	provided := len(fields) - commandWordCount
+	prefix := ""
+	if !endsWithSpace && len(fields) > 0 {
+		prefix = fields[len(fields)-1]
 	}
 
-	provided := len(fields) - commandWordCount
-	if endsWithSpace {
-		if provided == 0 {
-			return a.moduleSuggestions(""), true
+	switch definition.PathString() {
+	case "op use", "operation use":
+		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.operationSuggestions), true
+	case "chain use", "chains use", "chain delete", "chains delete":
+		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.chainSuggestions), true
+	case "chain rename", "chains rename":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.chainSuggestions(prefix), true
 		}
 		return nil, true
+	case "chain add", "chains add", "module inspect", "modules inspect":
+		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.moduleSuggestions), true
+	case "chain config set", "chains config set", "chain config unset", "chains config unset":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.chainConfigKeySuggestions(prefix), true
+		}
+		return nil, true
+	case "target config list", "targets config list", "target config set", "targets config set", "target config unset", "targets config unset":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.targetSuggestions(prefix), true
+		}
+		if provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace {
+			return a.targetConfigKeySuggestions(prefix), true
+		}
+		return nil, true
+	case "session connect", "sessions connect", "session close", "sessions close":
+		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.sessionSuggestions), true
+	default:
+		return nil, false
 	}
-	if provided == 1 {
-		return a.moduleSuggestions(fields[len(fields)-1]), true
+}
+
+func (a App) singlePositionalSuggestions(provided int, prefix string, endsWithSpace bool, suggest func(string) []prompt.Suggest) []prompt.Suggest {
+	if provided == 0 || provided == 1 && !endsWithSpace {
+		return suggest(prefix)
 	}
-	return nil, false
+	return nil
+}
+
+func (a App) operationSuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	suggestions := make([]prompt.Suggest, 0, len(state.Operations))
+	for _, operation := range state.Operations {
+		description := fmt.Sprintf("%d chain(s)", len(operation.Chains))
+		if operation.Name == state.ActiveOperation {
+			description = "active operation"
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: operation.Name, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) chainSuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	suggestions := make([]prompt.Suggest, 0, len(state.Chains))
+	for _, chain := range state.Chains {
+		description := fmt.Sprintf("%d step(s), %d target(s)", len(chain.Steps), len(chain.Targets))
+		if chain.Name == state.ActiveChain {
+			description = "active chain"
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: chain.Name, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) targetSuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	suggestions := make([]prompt.Suggest, 0, len(state.Targets))
+	for _, target := range state.Targets {
+		description := "target"
+		if config := state.TargetConfigs[target]; len(config) > 0 {
+			description = fmt.Sprintf("%d config value(s)", len(config))
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: target, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) chainConfigKeySuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	requirements, _ := requirementMaps(a.modules, state)
+	return configKeySuggestions(requirements, state.Config, prefix)
+}
+
+func (a App) targetConfigKeySuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	_, requirements := requirementMaps(a.modules, state)
+	existing := map[string]string{}
+	for _, config := range state.TargetConfigs {
+		for key, value := range config {
+			existing[key] = value
+		}
+	}
+	return configKeySuggestions(requirements, existing, prefix)
+}
+
+func (a App) sessionSuggestions(prefix string) []prompt.Suggest {
+	if a.daemonClient == nil {
+		return nil
+	}
+	type sessionListResult struct {
+		sessions []daemonrpc.SessionRef
+		err      error
+	}
+	results := make(chan sessionListResult, 1)
+	go func() {
+		sessions, err := a.daemonClient.ListSessions(context.Background())
+		results <- sessionListResult{sessions: sessions, err: err}
+	}()
+	var sessions []daemonrpc.SessionRef
+	select {
+	case result := <-results:
+		if result.err != nil {
+			return nil
+		}
+		sessions = result.sessions
+	case <-time.After(100 * time.Millisecond):
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(sessions))
+	for _, session := range sessions {
+		description := strings.TrimSpace(strings.Join([]string{session.Kind, session.State, session.Target, session.Name}, " "))
+		suggestions = append(suggestions, prompt.Suggest{Text: session.ID, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func configKeySuggestions(requirements map[string]modulecatalog.Requirement, existing map[string]string, prefix string) []prompt.Suggest {
+	suggestions := make([]prompt.Suggest, 0, len(requirements)+len(existing))
+	for _, key := range sortedKeys(requirements) {
+		requirement := requirements[key]
+		description := requirement.Description
+		if description == "" {
+			typeName := string(requirement.Type)
+			if typeName == "" {
+				typeName = "string"
+			}
+			description = typeName
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: key, Description: description})
+	}
+	for _, key := range sortedKeys(existing) {
+		suggestions = append(suggestions, prompt.Suggest{Text: key, Description: "current value"})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
 }
 
 func (a App) moduleSuggestions(prefix string) []prompt.Suggest {
@@ -699,24 +1024,57 @@ func DefaultTheme() Theme {
 	}
 }
 
-func (t Theme) PromptPrefix(chain string) string {
+func (t Theme) PromptPrefix(operation, chain string) string {
+	operation = strings.TrimSpace(operation)
 	chain = strings.TrimSpace(chain)
-	if chain == "" {
-		return "h0v3l> "
+	if operation == "" || operation == operatorsession.DefaultOperation {
+		if chain == "" {
+			return "h0v3l> "
+		}
+		return "h0v3l (" + chain + ") > "
 	}
-	return "h0v3l (" + chain + ") > "
+	if chain == "" {
+		return "h0v3l [" + operation + "]> "
+	}
+	return "h0v3l [" + operation + "/" + chain + "] > "
 }
 
-func (t Theme) ConfigPromptPrefix(chain, mode string) string {
+func (t Theme) ConfigPromptPrefix(operation, chain, mode string) string {
+	operation = strings.TrimSpace(operation)
 	chain = strings.TrimSpace(chain)
 	mode = strings.TrimSpace(mode)
 	if mode == "" {
 		mode = "config"
 	}
-	if chain == "" {
-		return "h0v3l " + mode + "> "
+	if operation == "" || operation == operatorsession.DefaultOperation {
+		if chain == "" {
+			return "h0v3l " + mode + "> "
+		}
+		return "h0v3l (" + chain + ") " + mode + " > "
 	}
-	return "h0v3l (" + chain + ") " + mode + " > "
+	if chain == "" {
+		return "h0v3l [" + operation + "] " + mode + " > "
+	}
+	return "h0v3l [" + operation + "/" + chain + "] " + mode + " > "
+}
+
+func (t Theme) ConfigValuePromptPrefix(operation, chain, prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return t.ConfigPromptPrefix(operation, chain, "config value")
+	}
+	operation = strings.TrimSpace(operation)
+	chain = strings.TrimSpace(chain)
+	if operation == "" || operation == operatorsession.DefaultOperation {
+		if chain == "" {
+			return "h0v3l " + prompt + " "
+		}
+		return "h0v3l (" + chain + ") " + prompt + " "
+	}
+	if chain == "" {
+		return "h0v3l [" + operation + "] " + prompt + " "
+	}
+	return "h0v3l [" + operation + "/" + chain + "] " + prompt + " "
 }
 
 type WelcomeInfo struct {
@@ -895,6 +1253,10 @@ func parseArgs(args []string, stdout, stderr io.Writer) (string, bool, int) {
 func isExit(line string) bool {
 	line = strings.TrimSpace(strings.ToLower(line))
 	return line == "exit" || line == "quit"
+}
+
+func promptExitChecker(line string, breakline bool) bool {
+	return breakline && isExit(line)
 }
 
 const hovelASCII = `          ~~~

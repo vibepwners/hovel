@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,8 +44,23 @@ func TestRunnerExecutesPythonMockModule(t *testing.T) {
 	if len(result.Findings) != 1 {
 		t.Fatalf("finding count = %d, want 1", len(result.Findings))
 	}
-	if len(events.events) == 0 || events.events[0].Type.String() != "module.log" {
-		t.Fatalf("events = %#v, want module.log", events.events)
+	if len(result.Artifacts) != 1 || result.Artifacts[0].Data == "" {
+		t.Fatalf("artifacts = %#v, want inline artifact data", result.Artifacts)
+	}
+	if len(events.events) == 0 || events.events[0].Type.String() != "hovel.module.log" {
+		t.Fatalf("events = %#v, want hovel.module.log", events.events)
+	}
+}
+
+func TestArtifactsFromRPCSupportsFileReferences(t *testing.T) {
+	artifacts := artifactsFromRPC([]any{
+		map[string]any{"name": "loot.txt", "kind": "text/plain", "path": "/tmp/loot.txt"},
+	})
+	if len(artifacts) != 1 {
+		t.Fatalf("artifacts = %#v, want one", artifacts)
+	}
+	if artifacts[0].Path != "/tmp/loot.txt" || artifacts[0].Data != "" {
+		t.Fatalf("artifact = %#v, want file reference without data", artifacts[0])
 	}
 }
 
@@ -53,8 +69,11 @@ func TestRunnerInspectsPythonModuleDeclaredSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if module.RuntimeKind != "python-rpc" {
-		t.Fatalf("runtime = %q, want python-rpc", module.RuntimeKind)
+	if module.ID != "mock-exploit@v0.0.0-example" {
+		t.Fatalf("id = %q, want mock-exploit@v0.0.0-example", module.ID)
+	}
+	if module.RuntimeKind != "jsonrpc-stdio" {
+		t.Fatalf("runtime = %q, want jsonrpc-stdio", module.RuntimeKind)
 	}
 	if len(module.ChainConfig) != 1 || module.ChainConfig[0].Key != "operator.confirmed_lab" {
 		t.Fatalf("chain config = %#v", module.ChainConfig)
@@ -65,7 +84,7 @@ func TestRunnerInspectsPythonModuleDeclaredSchema(t *testing.T) {
 }
 
 func TestRunnerLaunchesEveryBuiltInMockModule(t *testing.T) {
-	for _, moduleID := range []string{"mock-survey", "mock-exploit"} {
+	for _, moduleID := range []string{"mock-survey", "mock-exploit", "mock-exploit-session"} {
 		t.Run(moduleID, func(t *testing.T) {
 			request, err := run.NewRequest(run.RequestArgs{
 				ID:       "run-1",
@@ -87,6 +106,82 @@ func TestRunnerLaunchesEveryBuiltInMockModule(t *testing.T) {
 				t.Fatal("summary is empty")
 			}
 		})
+	}
+}
+
+func TestRunnerKeepsPythonSessionModuleAliveBehindBroker(t *testing.T) {
+	request, err := run.NewRequest(run.RequestArgs{
+		ID:       "run-1",
+		ModuleID: "mock-exploit-session",
+		Target:   "mock://target",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := NewSessionBroker()
+	result, err := Runner{
+		ConfigPath: exampleModuleConfig,
+		Timeout:    10 * time.Second,
+		Sessions:   broker,
+	}.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 1 {
+		t.Fatalf("sessions = %#v, want one session", result.Sessions)
+	}
+	sessionID := result.Sessions[0].ID
+	sessions, err := broker.ListSessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != sessionID {
+		t.Fatalf("broker sessions = %#v, want %s", sessions, sessionID)
+	}
+	prompt, err := broker.ReadSession(context.Background(), sessionID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(prompt.Data) != "mock$ " {
+		t.Fatalf("prompt = %q, want mock prompt", string(prompt.Data))
+	}
+	if err := broker.WriteSession(context.Background(), sessionID, []byte("whoami\n")); err != nil {
+		t.Fatal(err)
+	}
+	echo, err := broker.ReadSession(context.Background(), sessionID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(echo.Data) != "whoami\n" {
+		t.Fatalf("echo = %q, want whoami", string(echo.Data))
+	}
+	output, err := broker.ReadSession(context.Background(), sessionID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(output.Data) != "mock-operator\n" {
+		t.Fatalf("output = %q, want mock operator", string(output.Data))
+	}
+	if err := broker.CloseSession(context.Background(), sessionID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunnerExecutesCanonicalModuleReference(t *testing.T) {
+	request, err := run.NewRequest(run.RequestArgs{
+		ID:       "run-1",
+		ModuleID: "mock-exploit@v0.0.0-example",
+		Target:   "mock://target",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Runner{ConfigPath: exampleModuleConfig, Timeout: 10 * time.Second}.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != run.StateSucceeded {
+		t.Fatalf("state = %q, want succeeded", result.State)
 	}
 }
 
@@ -158,7 +253,7 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 	}{
 		{
 			name:    "handshake error includes stderr",
-			body:    `import sys; send({"jsonrpc":"2.0","id":1,"error":{"message":"no handshake"}}); print("handshake stderr", file=sys.stderr)`,
+			body:    `import sys; print("handshake stderr", file=sys.stderr); send({"jsonrpc":"2.0","id":1,"error":{"message":"no handshake"}})`,
 			inspect: true,
 			want:    "module handshake failed: no handshake: handshake stderr",
 		},
@@ -206,6 +301,70 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 	}
 }
 
+func TestRPCClientTimeoutDoesNotCorruptNextCall(t *testing.T) {
+	moduleStdoutReader, moduleStdoutWriter := io.Pipe()
+	moduleStdinReader, moduleStdinWriter := io.Pipe()
+	defer moduleStdoutReader.Close()
+	defer moduleStdoutWriter.Close()
+	defer moduleStdinReader.Close()
+	defer moduleStdinWriter.Close()
+
+	client := newClient(moduleStdoutReader, moduleStdinWriter)
+	done := make(chan error, 1)
+	go func() {
+		decoder := newFrameDecoder(moduleStdinReader)
+		first, err := decoder.read()
+		if err != nil {
+			done <- err
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		if err := writeFrame(moduleStdoutWriter, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      first.ID,
+			"result":  map[string]any{"call": "late-first"},
+		}); err != nil {
+			done <- err
+			return
+		}
+		second, err := decoder.read()
+		if err != nil {
+			done <- err
+			return
+		}
+		if err := writeFrame(moduleStdoutWriter, map[string]any{
+			"jsonrpc": "2.0",
+			"id":      second.ID,
+			"result":  map[string]any{"call": "second"},
+		}); err != nil {
+			done <- err
+			return
+		}
+		done <- nil
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	_, err := client.call(ctx, "first", nil)
+	cancel()
+	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("first call error = %v, want deadline", err)
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	result, err := client.call(ctx, "second", nil)
+	cancel()
+	if err != nil {
+		t.Fatalf("second call failed after first timeout: %v", err)
+	}
+	if result["call"] != "second" {
+		t.Fatalf("second result = %#v, want second response", result)
+	}
+
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 const exampleModuleConfig = "examples/python/hovel-modules.json"
 
 func writePythonModuleFixture(t *testing.T, body string) string {
@@ -242,7 +401,7 @@ def send(message):
 	}
 	config := ModuleConfig{Modules: []ModuleEntry{{
 		ID:         "broken",
-		Runtime:    "python-rpc",
+		Runtime:    "jsonrpc-stdio",
 		ProjectDir: projectDir,
 		Module:     "broken_module",
 	}}}

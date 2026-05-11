@@ -30,8 +30,8 @@
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="domain-model.html">Domain Model</a></li>
         <li><a href="modules-services.html">Modules and Services</a></li>
-        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
-        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html" aria-current="page">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
@@ -47,18 +47,32 @@
       <article>
         <h1>Operator Workflows</h1>
 
-        <p>The chain is the root object of operator work. A chain is not only an execution graph; it is the shared workspace where entities collaborate, configure targets, add modules, validate readiness, and throw.</p>
-        <p>An entity is any actor connected to <code>hoveld</code>: a human operator in <code>cli</code>, a TUI session, an MCP client, an AI agent, or another authorized user. Multiple entities may attach to the same chain. The active chain is client-local, but the chain state, target set, configuration, steps, and logs are daemon-owned shared state.</p>
+        <p>The operation is the root object of operator work. A chain is the throw path inside that operation: it is the shared workspace where clients collaborate, configure targets, add modules, validate readiness, and throw.</p>
+        <p>An entity is any actor connected to <code>hoveld</code>: a human operator in <code>cli</code>, a TUI session, an MCP client, an AI agent, or another authorized user. Multiple entities may attach to the same operation. Each attachment has its own active chain, while chain state, target sets, configuration, steps, and logs are daemon-owned shared state.</p>
 
-        <h2>Chain Collaboration</h2>
-        <p>Every chain owns a log topic:</p>
-<pre data-lang="topic"><code>chain/&lt;chain&gt;/logs
+        <h2>Operation Collaboration</h2>
+        <p>Every chain owns an operation-scoped log topic:</p>
+<pre data-lang="topic"><code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs
 </code></pre>
-        <p>Every entity attached to the chain subscribes to the same topic. A log statement for a chain change must be visible to every connected CLI, TUI, and MCP client attached to that chain.</p>
+        <p>Every entity attached to the same operation and chain subscribes to the same topic. A log statement for a chain change must be visible to every connected CLI, TUI, and MCP client attached to that chain, but clients working other chains should not receive it by default.</p>
+        <p>Client-local attachment state:</p>
+        <ol>
+          <li>Attached operation.</li>
+          <li>Active chain within that operation.</li>
+          <li>Current prompt mode.</li>
+          <li>Current log cursor.</li>
+        </ol>
+        <p>Daemon-owned shared state:</p>
+        <ol>
+          <li>Operation records.</li>
+          <li>Chain records, steps, targets, and config.</li>
+          <li>Throw records.</li>
+          <li>Structured events, rendered logs, artifacts, and findings.</li>
+        </ol>
         <p>Required chain log events:</p>
         <ol>
           <li>Chain created, renamed, inspected, deleted, or selected.</li>
-          <li>Entity attached or detached.</li>
+          <li>Entity attached or detached from an operation or chain.</li>
           <li>Module added, removed, reordered, or configured.</li>
           <li>Target added, removed, updated, or configured.</li>
           <li>Chain configuration set or unset.</li>
@@ -67,7 +81,7 @@
           <li>Survey facts discovered.</li>
           <li>Payload provider output selected.</li>
           <li>Exploit step started, completed, or failed.</li>
-          <li>Finding, artifact, evidence, or run result emitted.</li>
+          <li>Finding, artifact, structured event, or throw result emitted.</li>
         </ol>
         <p>The CLI should render this as a live transcript. The TUI should render the same topic in a log panel. MCP should expose the same stream through a tool or resource optimized for agents.</p>
 
@@ -82,9 +96,10 @@ attributes
 </code></pre>
         <p>For throw logs, <code>elapsed_seconds</code> is seconds since the throw started. The terminal renderer displays it inside the label as fixed-width <code>000.00</code> seconds, highlighted separately from the purple label background.</p>
         <p>Minimum CLI render:</p>
-<pre data-lang="cli"><code>HOVEL//THROW lab-chain
+<pre data-lang="cli"><code>HOVEL//THROW op/redteam-lab chain/ssh-memory
 
-chain        lab-chain
+operation    redteam-lab
+chain        ssh-memory
 entities     operator:will, agent:planner
 targets      3
 steps        survey:2 exploit:1 payload_provider:1
@@ -109,7 +124,7 @@ status       validating
           <li>Target matrix.</li>
           <li>Configuration validation panel.</li>
           <li>Chain log stream.</li>
-          <li>Findings, artifacts, and evidence panel.</li>
+          <li>Findings and artifacts panel.</li>
         </ol>
 
         <h2>Module Database</h2>
@@ -136,27 +151,27 @@ payload_provider
           <li>Enabled or disabled state.</li>
         </ol>
         <p>Initial commands:</p>
-<pre data-lang="commands"><code>modules list
-modules list --type survey
-modules inspect &lt;module-id&gt;
-modules search &lt;query&gt;
+<pre data-lang="commands"><code>module list
+module list --type survey
+module inspect &lt;module-id&gt;
+module search &lt;query&gt;
 </code></pre>
 
         <h2>Chain Steps</h2>
         <p>Chains contain ordered steps. A step usually references a module from the module database.</p>
         <p>Initial CLI commands:</p>
-<pre data-lang="commands"><code>add &lt;module-id&gt;
-remove &lt;step-id&gt;
-move &lt;step-id&gt; --before &lt;step-id&gt;
-inspect
+<pre data-lang="commands"><code>chain add &lt;module-id&gt;
+chain remove &lt;step-id&gt;
+chain move &lt;step-id&gt; --before &lt;step-id&gt;
+chain inspect
 </code></pre>
         <p>Adding a module logs to the chain topic. Removing or reordering a step also logs to the chain topic. Step IDs must be stable so validation errors, logs, and UI selection can point at a specific item.</p>
 
         <h2>Configuration</h2>
         <p>Configuration is a typed key-value dictionary.</p>
         <p>Scopes:</p>
-<pre data-lang="scopes"><code>chain config       applies globally to the chain
-target config      applies to one target within the chain
+<pre data-lang="scopes"><code>chain config       applies globally to the active chain
+target config      applies to one target within the active chain
 </code></pre>
         <p>Every survey, exploit, payload provider, or future chain item can declare:</p>
         <ol>
@@ -167,7 +182,6 @@ target config      applies to one target within the chain
         </ol>
         <p>Built-in value types:</p>
 <pre data-lang="types"><code>string
-secret
 bool
 int
 float
@@ -190,7 +204,6 @@ map&lt;string,string&gt;
           <li>Description.</li>
           <li>Allowed values for enums.</li>
           <li>Validation rule.</li>
-          <li>Secret redaction.</li>
           <li>Scope: <code>chain</code> or <code>target</code>.</li>
         </ol>
         <p>Initial commands:</p>
@@ -199,12 +212,11 @@ config unset &lt;key&gt;
 config list
 config interactive
 
-targets config set &lt;target&gt; &lt;key&gt; &lt;value&gt;
-targets config unset &lt;target&gt; &lt;key&gt;
-targets config list &lt;target&gt;
+target config set &lt;target&gt; &lt;key&gt; &lt;value&gt;
+target config unset &lt;target&gt; &lt;key&gt;
+target config list &lt;target&gt;
 </code></pre>
-        <p>The CLI and TUI must render secrets as present or missing without revealing their values.</p>
-        <p><code>config interactive</code> is a guided CLI workflow implemented inside the existing go-prompt loop and backed by the canonical <code>chain config interactive</code> command. It first renders the current chain and target configuration as a numbered menu, then changes the prompt into a config-selection mode with completions for editable items, continue, and cancel. When the operator continues, Hovel changes the prompt into config-value mode, offers type-aware completions where possible, walks the remaining required chain and per-target keys, validates each typed value as it is entered, and repeats until all required configuration is set or an unfixable validation issue remains.</p>
+        <p><code>config interactive</code> is a guided CLI workflow implemented inside the existing go-prompt loop and backed by the canonical <code>chain config interactive</code> command. It first renders the current chain and target configuration as a numbered menu, then changes the prompt into config-selection mode with completions for editable items, continue, and cancel. When the operator continues, Hovel changes the prompt into config-value mode, offers type-aware completions where possible, walks the remaining required chain and per-target keys, validates each typed value as it is entered, and repeats until all required configuration is set or an unfixable validation issue remains.</p>
 
         <h2>Validation</h2>
         <p><code>chain validate</code> checks whether the active chain is ready to throw.</p>
@@ -218,11 +230,92 @@ targets config list &lt;target&gt;
           <li>Required target configuration keys are set for every target.</li>
           <li>Values parse into their declared types.</li>
           <li>Enum values are valid.</li>
-          <li>Secrets are present but redacted.</li>
+          <li>Sensitive operator-controlled values are validated like any other configured value.</li>
           <li>Payload provider requirements are satisfiable.</li>
           <li>Every chain step has a stable ID.</li>
         </ol>
         <p>Validation output must be human-first and scriptable with <code>--json</code>.</p>
+
+        <h2>Post-Exploitation Sessions (MSF-Style)</h2>
+        <p>Hovel should treat post-exploitation access as a first-class operation object, not an ad-hoc log line. A successful exploit step may open zero, one, or many sessions. Sessions should be stable, interactive, resumable, and automatable across CLI, TUI, and MCP.</p>
+
+        <h3>Session Goals</h3>
+        <ol>
+          <li><strong>Operator UX parity with Metasploit</strong>: easy <code>sessions</code> listing, interact, background, kill, rename, and tagging.</li>
+          <li><strong>Multi-entity collaboration</strong>: one operator can hand off a live session to another operator or agent without losing context.</li>
+          <li><strong>Module maintainer simplicity</strong>: modules emit typed session open/close/update events and implement a narrow runtime contract.</li>
+          <li><strong>Daemon ownership</strong>: session lifecycle and transcript persistence live in <code>hoveld</code>, not in front-end memory.</li>
+        </ol>
+
+        <h3>Session Domain Model</h3>
+        <p>Each session record should include:</p>
+        <ol>
+          <li>Session ID (stable within workspace).</li>
+          <li>Operation and chain identifiers.</li>
+          <li>Source run ID and source step ID.</li>
+          <li>Target identifier.</li>
+          <li>Session kind (<code>shell</code>, <code>meterpreter-like</code>, <code>agent</code>, extensible).</li>
+          <li>Transport (<code>tcp</code>, <code>http</code>, <code>https</code>, <code>named-pipe</code>, etc.).</li>
+          <li>Lifecycle state (<code>opening</code>, <code>active</code>, <code>backgrounded</code>, <code>lost</code>, <code>closed</code>).</li>
+          <li>Ownership and lock state (free, attached, read-only observer).</li>
+          <li>Capabilities (<code>exec</code>, <code>upload</code>, <code>download</code>, <code>pivot</code>, <code>portfwd</code>, <code>pty</code>, etc.).</li>
+          <li>Last-seen timestamp and liveness metadata.</li>
+          <li>Session labels/tags and optional notes.</li>
+        </ol>
+
+        <h3>Session Control Plane</h3>
+        <p>Initial operator commands:</p>
+<pre data-lang="commands"><code>session list
+session inspect &lt;session-id&gt;
+session use &lt;session-id&gt;
+session background
+session close &lt;session-id&gt;
+session rename &lt;session-id&gt; &lt;name&gt;
+session tag add &lt;session-id&gt; &lt;tag&gt;
+session tag remove &lt;session-id&gt; &lt;tag&gt;
+</code></pre>
+        <p>Control-plane requirements:</p>
+        <ol>
+          <li>Session attach/detach is explicit and logged.</li>
+          <li>Concurrent attach policy is configurable (single-writer + multi-reader by default).</li>
+          <li>Session loss is surfaced immediately with reason codes.</li>
+          <li>Session takeover is explicit (<code>--force</code>) and audited.</li>
+        </ol>
+
+        <h3>Session Data Plane</h3>
+        <p>Interactive traffic must flow through daemon-managed streams:</p>
+        <ol>
+          <li>Input stream: operator/agent keystrokes or commands.</li>
+          <li>Output stream: remote stdout/stderr/events/chunks.</li>
+          <li>Side-channel events: file transfer, port forward lifecycle, privilege escalation hints.</li>
+        </ol>
+        <p>Design constraints:</p>
+        <ol>
+          <li>Binary-safe framing (not line-oriented only).</li>
+          <li>Backpressure-aware buffers per attached entity.</li>
+          <li>Replay cursor for reconnecting clients.</li>
+          <li>Operator-defined filtering hooks if users need local output suppression.</li>
+        </ol>
+
+        <h3>Module Runtime Contract</h3>
+        <p>Modules that can create sessions should implement:</p>
+        <ol>
+          <li>Declared capability: <code>opens_sessions=true</code>.</li>
+          <li>Session open event including target, session kind, and capability set.</li>
+          <li>Optional heartbeat/liveness updates.</li>
+          <li>Session close event with terminal reason.</li>
+        </ol>
+        <p>This keeps module maintainer burden low: they do not implement global session registries, lock arbitration, or persistence.</p>
+
+        <h3>Acceptance Criteria</h3>
+        <p>Operators and maintainers should both agree the model is the default when:</p>
+        <ol>
+          <li>A successful exploit reliably emits discoverable session objects within one command (<code>session list</code>).</li>
+          <li>Detach/reattach is lossless for context and transcript.</li>
+          <li>A second operator can safely observe or take over a session with auditable state transitions.</li>
+          <li>Session APIs are identical across CLI/TUI/MCP, with only presentation differences.</li>
+          <li>Module authors can add session support by emitting typed events and passing contract tests.</li>
+        </ol>
 
         <h2>Mock Modules</h2>
         <p>The mocked stage should provide enough modules to exercise every UI path without executing real target behavior.</p>
@@ -254,7 +347,7 @@ targets config list &lt;target&gt;
       </article>
 
       <nav class="page-nav">
-        <a class="prev" href="chains-runs.html">← Chains and Runs</a>
+        <a class="prev" href="chains-runs.html">← Operations, Chains, Throws</a>
         <span class="spacer"></span>
         <a class="next" href="front-ends.html">Front Ends →</a>
       </nav>

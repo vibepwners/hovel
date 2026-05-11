@@ -22,6 +22,42 @@ func TestPromptSurfaceWritesAsyncLogsRaw(t *testing.T) {
 	}
 }
 
+func TestPromptSurfaceRefreshesPromptBelowAsyncLog(t *testing.T) {
+	writer := &recordingConsoleWriter{}
+	surface := newPromptSurface(writer)
+	surface.SetDocument(prompt.Document{Text: "config interactive"})
+
+	surface.WriteAsyncLog("first\nsecond", "h0v3l> ")
+
+	output := writer.String()
+	if !strings.Contains(output, "<erase-line><erase-down>") {
+		t.Fatalf("output = %q, want prompt area cleared before log", output)
+	}
+	if !strings.Contains(output, "first\r\nsecond\r\nh0v3l> config interactive") {
+		t.Fatalf("output = %q, want log followed by refreshed prompt and input", output)
+	}
+}
+
+func TestPromptSurfaceShowsThrowingAnimation(t *testing.T) {
+	writer := &recordingConsoleWriter{}
+	surface := newPromptSurface(writer)
+
+	stop := surface.StartThrowing("h0v3l> ")
+	surface.WriteAsyncLog("module log", "h0v3l> ")
+	stop()
+
+	output := writer.String()
+	if !strings.Contains(output, "throwing") {
+		t.Fatalf("output = %q, want throwing animation", output)
+	}
+	if !strings.Contains(output, "module log") {
+		t.Fatalf("output = %q, want async log", output)
+	}
+	if !strings.Contains(output, "h0v3l> ") {
+		t.Fatalf("output = %q, want prompt restored after stop", output)
+	}
+}
+
 type recordingConsoleWriter struct {
 	output strings.Builder
 }

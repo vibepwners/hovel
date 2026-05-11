@@ -8,19 +8,45 @@ go_library(
     deps = [
         "//internal/adapters/cli",
         "//internal/adapters/commandmode",
+        "//internal/infra/daemonmanager",
         "//internal/infra/daemonruntime",
         "@com_github_akamensky_argparse//:argparse",
     ],
 )
 
+# keep: fast root command/help checks stay separate from daemon E2E coverage.
 go_test(
     name = "rootcli_test",
-    srcs = ["rootcli_test.go"],
+    size = "small",
+    srcs = [
+        "rootcli_test.go",
+        "rootcli_test_helpers_test.go",
+    ],
     data = [
         "//examples/python:sources",
         "//sdk/python:sources",
     ],
     embed = [":rootcli"],
+    tags = ["unit"],
+    deps = [
+        "//internal/testsupport",
+    ],
+)
+
+# keep: mono-binary daemon flows are process-level E2E checks.
+go_test(
+    name = "rootcli_e2e_test",
+    size = "small",
+    srcs = [
+        "rootcli_e2e_test.go",
+        "rootcli_test_helpers_test.go",
+    ],
+    data = [
+        "//examples/python:sources",
+        "//sdk/python:sources",
+    ],
+    embed = [":rootcli"],
+    tags = ["e2e"],
     deps = [
         "//internal/adapters/storage/filesystem",
         "//internal/domain/daemon",

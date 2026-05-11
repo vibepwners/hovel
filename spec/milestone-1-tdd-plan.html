@@ -30,8 +30,8 @@
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="domain-model.html">Domain Model</a></li>
         <li><a href="modules-services.html">Modules and Services</a></li>
-        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
-        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
@@ -81,8 +81,8 @@
 event
 module
 service
-run
-policy
+throw
+guardrail
 </code></pre>
         <p>The domain layer must stay pure. Domain packages must not import CLI, Cobra, filesystem adapters, SQLite, sockets, JSON-RPC, YAML parsers, or generated transport code.</p>
         <p>Responsibilities:</p>
@@ -91,8 +91,8 @@ policy
           <li><code>event</code>: domain event types, event envelope, and event bus port.</li>
           <li><code>module</code>: module descriptor identity and validation concepts.</li>
           <li><code>service</code>: service descriptor identity and validation concepts.</li>
-          <li><code>run</code>: run IDs and initial run-plan placeholders only.</li>
-          <li><code>policy</code>: policy decision placeholders only.</li>
+          <li><code>throw</code>: throw IDs and initial throw-plan placeholders only.</li>
+          <li><code>guardrail</code>: initial scope-check placeholders only.</li>
         </ol>
         <p>Adapters translate CLI flags, files, daemon transports, and storage records into application service calls. Application services coordinate domain behavior through ports.</p>
 
@@ -140,8 +140,8 @@ policy
         <h3>4. CLI <code>control init</code></h3>
         <p>Write CLI golden tests first:</p>
         <ol>
-          <li><code>hovel command control init --workspace &lt;tmp&gt;</code> prints stable human-readable output.</li>
-          <li><code>hovel command control init --workspace &lt;tmp&gt; --json</code> emits structured JSON.</li>
+          <li>Workspace initialization has a stable CLI flow.</li>
+          <li>Workspace initialization can emit structured JSON where automation needs it.</li>
           <li>Invalid workspace paths return a non-zero exit and a stable error.</li>
         </ol>
         <p>Then implement the minimal CLI adapter. The CLI should call application services only.</p>
@@ -152,7 +152,7 @@ policy
           <li>Events require IDs.</li>
           <li>Event types are validated.</li>
           <li>Timestamps are present.</li>
-          <li>Events can carry workspace, run, module, service, and target references.</li>
+          <li>Events can carry workspace, throw, module, service, and target references.</li>
         </ol>
         <p>Write application tests:</p>
         <ol>
@@ -204,7 +204,7 @@ policy
         <ol>
           <li>Start <code>hoveld</code> against a temporary workspace.</li>
           <li>Wait until it reports healthy.</li>
-          <li><code>hovel command control daemon status --workspace &lt;tmp&gt;</code> reports the same daemon identity.</li>
+          <li>The product daemon-status flow reports the same daemon identity.</li>
           <li>Duplicate daemon startup for the same workspace is rejected.</li>
         </ol>
         <p>Then implement the minimal daemon lifecycle and local transport. The transport can be narrow in Milestone 1, but production <code>hovel</code> commands should exercise the daemon boundary when they claim daemon behavior.</p>
@@ -214,7 +214,7 @@ policy
         <ol>
           <li>Application services can be constructed without a daemon process.</li>
           <li>Fake storage and event sinks are injectable.</li>
-          <li>The harness uses the same domain logic and policy checks as production.</li>
+          <li>The harness uses the same domain logic and guardrail checks as production.</li>
         </ol>
         <p>Then implement <code>internal/app/apptest</code> or an equivalent package.</p>
 
@@ -235,8 +235,8 @@ bazel test //...
 bazel run //:gazelle -- -mode=diff
 </code></pre>
         <p>The repository should also expose these user-visible flows:</p>
-<pre data-lang="bash"><code>bazel run //cmd/hovel -- command control init --workspace /tmp/hovel-lab
-bazel run //cmd/hovel -- command control daemon status --workspace /tmp/hovel-lab
+<pre data-lang="bash"><code>bazel run //cmd/hovel -- cli --workspace /tmp/hovel-lab
+bazel run //cmd/hovel -- daemon status --workspace /tmp/hovel-lab
 </code></pre>
         <p>The daemon status may be minimal, but the tests must enforce the domain/application/adapter boundaries and the daemon contract.</p>
       </article>

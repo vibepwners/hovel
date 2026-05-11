@@ -30,8 +30,8 @@
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="domain-model.html">Domain Model</a></li>
         <li><a href="modules-services.html">Modules and Services</a></li>
-        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
-        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="configuration-distribution.html" aria-current="page">Configuration &amp; Distribution</a></li>
@@ -78,8 +78,8 @@ defaultConcurrency: 8
 services:
   autoStart: []
   allowRunScoped: true
-policy:
-  requirePlanApproval: true
+guardrails:
+  requireThrowConfirmation: true
   requireConfirmationFor:
     - external_bind
     - dangerous_module
@@ -91,7 +91,7 @@ policy:
         <p>Module and service configs should be schema-validated.</p>
 
         <h2>Build Strategy</h2>
-        <p>Hovel should start as a monorepo because built-in modules, services, SDKs, schemas, CLI, TUI, API, and MCP adapters need to evolve together.</p>
+        <p>Hovel should start as a monorepo because in-tree modules, services, SDKs, schemas, CLI, TUI, API, and MCP adapters need to evolve together.</p>
         <p>Bazel is the authoritative build, test, docs, and release interface from day one. Ordinary Go and Python tooling may remain useful for local authoring, but CI and project workflows should go through Bazel.</p>
         <p>Initial Bazel responsibilities:</p>
         <ol>
@@ -120,17 +120,17 @@ hoveld-linux-arm64
 hoveld-darwin-arm64
 hoveld-windows-amd64.exe
 </code></pre>
-        <p>The <code>hovel</code> binary is the production mono-binary. It includes <code>command</code>, <code>cli</code>, <code>daemon</code>, and <code>tui</code> roles. A separate <code>hoveld</code> binary may exist only as a development shim if it materially improves local testing; it is not the product contract.</p>
+        <p>The <code>hovel</code> binary is the production mono-binary. It includes <code>cli</code>, one-shot chain-file execution, <code>daemon</code>, and <code>tui</code> roles. A separate <code>hoveld</code> binary may exist only as a development shim if it materially improves local testing; it is not the product contract.</p>
         <p>Hovel may also publish a PyPI wrapper for Python-centric users:</p>
-<pre data-lang="bash"><code>uvx hovel command throw --chain ssh-memory --target 10.41.32.2
+<pre data-lang="bash"><code>uvx hovel throw ./ssh-memory.chain.yaml
 </code></pre>
-        <p>The wrapper may also support the direct alias form when it is available from the embedded binary:</p>
-<pre data-lang="bash"><code>uvx hovel throw --chain ssh-memory --target 10.41.32.2
+        <p>The wrapper should expose the same one-shot confirmation behavior as the native binary:</p>
+<pre data-lang="bash"><code>uvx hovel throw ./ssh-memory.chain.yaml --now
 </code></pre>
         <p>The PyPI package may download or include the Go binary, similar to other compiled tools distributed through Python package indexes.</p>
         <p>Module and service sources:</p>
         <ol>
-          <li>Built-in modules and services in the monorepo.</li>
+          <li>In-tree modules and services in the monorepo, loaded through the ordinary module and service contracts.</li>
           <li>Local module and service directories.</li>
           <li>Git repositories.</li>
           <li>PEX packages.</li>
@@ -139,7 +139,7 @@ hoveld-windows-amd64.exe
         </ol>
 
         <h2>Terminal Libraries And Theming</h2>
-        <p>The interactive <code>cli</code> shell should use go-prompt for prompt input, history, suggestions, and completions. The <code>cli</code> shell and TUI should share a small theme system without making theme work part of the critical MVP path. Lip Gloss is the styling engine for terminal presentation, with shared tokens for colors, borders, severity, focus, muted text, success, warning, danger, and active run state.</p>
+        <p>The interactive <code>cli</code> shell should use go-prompt for prompt input, history, suggestions, and completions. The <code>cli</code> shell and TUI should share a small theme system without making theme work part of the critical MVP path. Lip Gloss is the styling engine for terminal presentation, with shared tokens for colors, borders, severity, focus, muted text, success, warning, danger, and active throw state.</p>
         <p>Initial theme names:</p>
 <pre data-lang="themes"><code>31337
 acid

@@ -3,11 +3,11 @@ package daemonmanager
 import (
 	"context"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
@@ -82,7 +82,7 @@ func (m Manager) Ensure(ctx context.Context, workspacePath string) (*Session, er
 }
 
 func normalizeStatus(status daemon.Status, workspacePath string) daemon.Status {
-	if status.State != daemon.StateRunning || filepath.IsAbs(status.Identity.SocketPath) {
+	if status.State != daemon.StateRunning || filepath.IsAbs(status.Identity.SocketPath) || isEndpointAddress(status.Identity.SocketPath) {
 		return status
 	}
 	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
@@ -96,6 +96,11 @@ func normalizeStatus(status daemon.Status, workspacePath string) daemon.Status {
 		return status
 	}
 	return daemon.Running(identity)
+}
+
+func isEndpointAddress(value string) bool {
+	endpoint, err := daemonrpc.ParseEndpoint(value)
+	return err == nil && endpoint.Network == "tcp"
 }
 
 func (m Manager) statusFromReachableSocket(ctx context.Context, workspacePath string) (daemon.Status, bool) {
@@ -120,12 +125,17 @@ func socketReachable(ctx context.Context, socketPath string) bool {
 	if socketPath == "" {
 		return false
 	}
-	dialer := net.Dialer{Timeout: 100 * time.Millisecond}
-	conn, err := dialer.DialContext(ctx, "unix", socketPath)
+	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	client, err := daemonrpc.Dial(socketPath)
 	if err != nil {
 		return false
 	}
-	_ = conn.Close()
+	defer client.Close()
+	_, err = client.PollLogs(ctx, 0)
+	if err != nil {
+		return false
+	}
 	return true
 }
 

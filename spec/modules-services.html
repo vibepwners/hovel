@@ -30,8 +30,8 @@
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="domain-model.html">Domain Model</a></li>
         <li><a href="modules-services.html" aria-current="page">Modules and Services</a></li>
-        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
-        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
@@ -49,10 +49,9 @@
         <p>Modules and services are separate domain concepts with separate lifecycle expectations.</p>
 
         <h2>Module Runtime</h2>
-        <p>The MVP module runtime should optimize for Python ergonomics and debuggability.</p>
+        <p>The MVP module runtime should optimize for Python implementation ergonomics and debuggability while keeping the protocol language-neutral.</p>
         <p>Runtime types:</p>
-<pre data-lang="runtimes"><code>python-rpc        MVP
-native-builtin    MVP
+<pre data-lang="runtimes"><code>jsonrpc-stdio     MVP
 process-rpc       later
 go-binary-rpc     later
 rust-binary-rpc   later
@@ -60,10 +59,12 @@ node-rpc          later
 </code></pre>
         <p>MVP priority:</p>
         <ol>
-          <li>Python RPC modules.</li>
-          <li>Native built-in Go modules.</li>
+          <li>Python-implemented modules using JSON-RPC over stdio.</li>
+          <li>In-tree modules that are discoverable by default but still load through the same descriptor and runtime paths as ordinary modules.</li>
           <li>Generic process fallback only after the Python path is stable.</li>
         </ol>
+        <p>The thrower must not have a private "native built-in" execution path for production modules. A module may live in the Hovel repository and feel built in to users because it is bundled or discoverable by default, but it should still use the same module catalog, descriptor, planning, validation, logging, event, artifact, and runtime contracts as third-party modules.</p>
+        <p>Mock exploit modules are test fixtures. They should stay benign, avoid real network exploitation, and exercise orchestration contracts. They are not part of the final shipped product catalog unless deliberately promoted as lab-only examples.</p>
         <p>The host starts module processes, connects to them over a controlled channel, exchanges typed messages, receives structured logs, supervises lifecycle, and persists events.</p>
 
         <h2>Module Lifecycle</h2>
@@ -158,12 +159,12 @@ close_session(sessionRef) -&gt; CloseResult
         <p>The first protocol should optimize for simplicity and observability.</p>
         <p>Recommended MVP:</p>
         <ol>
-          <li>JSON-RPC over stdio for Python modules.</li>
+          <li>JSON-RPC over stdio for modules implemented in Python.</li>
           <li>A small shared envelope for logs, events, requests, and responses.</li>
           <li>Contract tests before broad runtime support.</li>
           <li>gRPC or socket-based protocols only after contracts settle.</li>
         </ol>
-        <p>Module and service processes may eventually share one protocol, but that should not be assumed before contract tests prove the common lifecycle and event needs. The Python module contract should harden first.</p>
+        <p>Module and service processes may eventually share one protocol, but that should not be assumed before contract tests prove the common lifecycle and event needs. The JSON-RPC stdio module contract should harden first.</p>
         <p>MVP stdio framing:</p>
         <ol>
           <li>Use UTF-8 JSON-RPC 2.0 messages.</li>
@@ -181,7 +182,7 @@ close_session(sessionRef) -&gt; CloseResult
         <p>Minimal module:</p>
 <pre data-lang="python"><code>from hovel_sdk import module, Context, Result
 
-@module(name="hello")
+@module(name="hello", version="0.1.0", module_type="survey")
 def run(ctx: Context) -&gt; Result:
     ctx.log.info("hello from module")
     return Result.ok({"message": "done"})
@@ -191,6 +192,8 @@ def run(ctx: Context) -&gt; Result:
 
 class SSHMemoryModule(HovelModule):
     name = "ssh-memory"
+    version = "0.1.0"
+    module_type = "exploit"
 
     def run(self, ctx: Context) -&gt; Result:
         target = ctx.input("target")
@@ -226,12 +229,12 @@ class PicBlobProvider:
         </ol>
         <p>Descriptor examples:</p>
 <pre data-lang="yaml"><code>runtime:
-  type: python-rpc
+  type: jsonrpc-stdio
   packaging: source
   entrypoint: python -m hovel_ssh_memory
 </code></pre>
 <pre data-lang="yaml"><code>runtime:
-  type: python-service-rpc
+  type: jsonrpc-stdio
   packaging: pex
   entrypoint: hovel_picblob_service:main
 </code></pre>
@@ -248,7 +251,7 @@ setup_logging()
       <nav class="page-nav">
         <a class="prev" href="domain-model.html">← Domain Model</a>
         <span class="spacer"></span>
-        <a class="next" href="providers-artifacts.html">Providers, Artifacts, Events →</a>
+        <a class="next" href="providers-artifacts.html">Providers, Artifacts, Logging →</a>
       </nav>
     </main>
   </div>

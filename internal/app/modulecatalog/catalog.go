@@ -9,14 +9,20 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	domainmodule "github.com/Vibe-Pwners/hovel/internal/domain/module"
 )
 
-type ModuleType string
+type ModuleType = domainmodule.Type
 
 const (
-	TypeSurvey          ModuleType = "survey"
-	TypeExploit         ModuleType = "exploit"
-	TypePayloadProvider ModuleType = "payload_provider"
+	TypeSurvey          = domainmodule.TypeSurvey
+	TypeExploit         = domainmodule.TypeExploit
+	TypePayloadProvider = domainmodule.TypePayloadProvider
+)
+
+const (
+	RuntimeJSONRPCStdio = "jsonrpc-stdio"
 )
 
 type ValueType string
@@ -72,19 +78,21 @@ type Module struct {
 
 type Catalog struct {
 	modules map[string]Module
+	aliases map[string]string
 }
 
 func New(modules ...Module) Catalog {
-	catalog := Catalog{modules: make(map[string]Module, len(modules))}
+	catalog := Catalog{
+		modules: make(map[string]Module, len(modules)),
+		aliases: make(map[string]string, len(modules)),
+	}
 	for _, module := range modules {
-		module.ID = strings.TrimSpace(module.ID)
+		module = normalizeModule(module)
 		if module.ID == "" {
 			continue
 		}
-		module.Tags = append([]string(nil), module.Tags...)
-		module.ChainConfig = cloneRequirements(module.ChainConfig)
-		module.TargetConfig = cloneRequirements(module.TargetConfig)
 		catalog.modules[module.ID] = module
+		catalog.trackLatestAlias(module)
 	}
 	return catalog
 }
@@ -121,7 +129,7 @@ func (c Catalog) Search(query string) []Module {
 	}
 	var modules []Module
 	for _, module := range c.List() {
-		haystack := strings.ToLower(module.ID + " " + module.Name + " " + module.Summary + " " + strings.Join(module.Tags, " "))
+		haystack := strings.ToLower(module.ID + " " + ReferenceName(module.ID) + " " + module.Name + " " + module.Summary + " " + strings.Join(module.Tags, " "))
 		if strings.Contains(haystack, query) {
 			modules = append(modules, module)
 		}
@@ -130,11 +138,166 @@ func (c Catalog) Search(query string) []Module {
 }
 
 func (c Catalog) Find(id string) (Module, bool) {
-	module, ok := c.modules[strings.TrimSpace(id)]
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Module{}, false
+	}
+	module, ok := c.modules[id]
+	if !ok {
+		if canonicalID, hasAlias := c.aliases[id]; hasAlias {
+			module, ok = c.modules[canonicalID]
+		}
+	}
 	if !ok {
 		return Module{}, false
 	}
 	return cloneModule(module), true
+}
+
+func NewModuleType(value string) (ModuleType, error) {
+	return domainmodule.NewType(value)
+}
+
+func CanonicalID(name, version string) string {
+	name = strings.TrimSpace(name)
+	version = strings.TrimSpace(version)
+	if name == "" {
+		return ""
+	}
+	if version == "" {
+		return name
+	}
+	return name + "@" + version
+}
+
+func SplitID(id string) (name, version string, hasVersion bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", "", false
+	}
+	name, version, hasVersion = strings.Cut(id, "@")
+	name = strings.TrimSpace(name)
+	version = strings.TrimSpace(version)
+	if !hasVersion || name == "" || version == "" {
+		return id, "", false
+	}
+	return name, version, true
+}
+
+func ReferenceName(id string) string {
+	name, _, _ := SplitID(id)
+	return name
+}
+
+func normalizeModule(module Module) Module {
+	module.ID = strings.TrimSpace(module.ID)
+	module.Version = strings.TrimSpace(module.Version)
+	name, version, hasVersion := SplitID(module.ID)
+	switch {
+	case module.ID == "":
+		return module
+	case hasVersion && module.Version == "":
+		module.ID = CanonicalID(name, version)
+		module.Version = version
+	case hasVersion:
+		module.ID = CanonicalID(name, module.Version)
+	case module.Version != "":
+		module.ID = CanonicalID(module.ID, module.Version)
+	}
+	module.Tags = append([]string(nil), module.Tags...)
+	module.ChainConfig = cloneRequirements(module.ChainConfig)
+	module.TargetConfig = cloneRequirements(module.TargetConfig)
+	return module
+}
+
+func (c Catalog) trackLatestAlias(module Module) {
+	name := ReferenceName(module.ID)
+	if name == "" || name == module.ID {
+		return
+	}
+	currentID, ok := c.aliases[name]
+	if !ok {
+		c.aliases[name] = module.ID
+		return
+	}
+	current := c.modules[currentID]
+	cmp := compareVersions(module.Version, current.Version)
+	if cmp > 0 || cmp == 0 && module.ID > currentID {
+		c.aliases[name] = module.ID
+	}
+}
+
+func compareVersions(left, right string) int {
+	left = normalizeVersion(left)
+	right = normalizeVersion(right)
+	leftCore, leftPre := splitVersion(left)
+	rightCore, rightPre := splitVersion(right)
+	maxLen := len(leftCore)
+	if len(rightCore) > maxLen {
+		maxLen = len(rightCore)
+	}
+	for i := 0; i < maxLen; i++ {
+		var leftValue, rightValue int
+		if i < len(leftCore) {
+			leftValue = leftCore[i]
+		}
+		if i < len(rightCore) {
+			rightValue = rightCore[i]
+		}
+		if leftValue < rightValue {
+			return -1
+		}
+		if leftValue > rightValue {
+			return 1
+		}
+	}
+	switch {
+	case leftPre == "" && rightPre != "":
+		return 1
+	case leftPre != "" && rightPre == "":
+		return -1
+	case leftPre < rightPre:
+		return -1
+	case leftPre > rightPre:
+		return 1
+	case left < right:
+		return -1
+	case left > right:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func normalizeVersion(version string) string {
+	version = strings.TrimSpace(strings.ToLower(version))
+	return strings.TrimPrefix(version, "v")
+}
+
+func splitVersion(version string) ([]int, string) {
+	core := version
+	if before, _, ok := strings.Cut(core, "+"); ok {
+		core = before
+	}
+	pre := ""
+	if before, after, ok := strings.Cut(core, "-"); ok {
+		core = before
+		pre = after
+	}
+	parts := strings.Split(core, ".")
+	values := make([]int, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			values = append(values, 0)
+			continue
+		}
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			value = 0
+		}
+		values = append(values, value)
+	}
+	return values, pre
 }
 
 func ValidateValue(requirement Requirement, raw string) error {
@@ -210,9 +373,9 @@ func ValidateValue(requirement Requirement, raw string) error {
 func DisplayValue(requirement Requirement, raw string) string {
 	if requirement.Secret || requirement.Type == ValueSecret {
 		if strings.TrimSpace(raw) == "" {
-			return "<secret:missing>"
+			return ""
 		}
-		return "<secret:set>"
+		return "********"
 	}
 	return raw
 }

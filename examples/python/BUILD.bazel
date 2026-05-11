@@ -8,6 +8,8 @@ filegroup(
         "hovel-modules.json",
         "mock_exploit/**/*.py",
         "mock_exploit/pyproject.toml",
+        "mock_exploit_session/**/*.py",
+        "mock_exploit_session/pyproject.toml",
         "mock_survey/**/*.py",
         "mock_survey/pyproject.toml",
     ]),
@@ -34,6 +36,7 @@ py_binary(
 
 py_test(
     name = "mock_survey_test",
+    size = "small",
     srcs = ["mock_survey/hovel_example_survey/module_test.py"],
     imports = ["mock_survey"],
     main = "mock_survey/hovel_example_survey/module_test.py",
@@ -65,12 +68,45 @@ py_binary(
 
 py_test(
     name = "mock_exploit_test",
+    size = "small",
     srcs = ["mock_exploit/hovel_example_exploit/module_test.py"],
     imports = ["mock_exploit"],
     main = "mock_exploit/hovel_example_exploit/module_test.py",
     python_version = "PY3",
     deps = [
         ":mock_exploit_lib",
+        "//sdk/python:hovel_sdk",
+    ],
+)
+
+py_library(
+    name = "mock_exploit_session_lib",
+    srcs = glob(["mock_exploit_session/hovel_example_exploit_session/*.py"]),
+    imports = ["mock_exploit_session"],
+    deps = ["//sdk/python:hovel_sdk"],
+)
+
+py_binary(
+    name = "mock_exploit_session_module",
+    srcs = ["mock_exploit_session/hovel_example_exploit_session/__main__.py"],
+    imports = ["mock_exploit_session"],
+    main = "mock_exploit_session/hovel_example_exploit_session/__main__.py",
+    python_version = "PY3",
+    deps = [
+        ":mock_exploit_session_lib",
+        "//sdk/python:hovel_sdk",
+    ],
+)
+
+py_test(
+    name = "mock_exploit_session_test",
+    size = "small",
+    srcs = ["mock_exploit_session/hovel_example_exploit_session/module_test.py"],
+    imports = ["mock_exploit_session"],
+    main = "mock_exploit_session/hovel_example_exploit_session/module_test.py",
+    python_version = "PY3",
+    deps = [
+        ":mock_exploit_session_lib",
         "//sdk/python:hovel_sdk",
     ],
 )

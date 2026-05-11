@@ -32,6 +32,7 @@ type rawModuleSpec struct {
 }
 
 const expectedAPIVersion = "hovel.dev/v1alpha1"
+const runtimeJSONRPCStdio = "jsonrpc-stdio"
 
 // ValidateModuleDescriptor parses JSON bytes and returns a module.Descriptor.
 // Returns error if JSON is malformed, required fields are missing, or values fail domain validation.
@@ -66,6 +67,9 @@ func ValidateModuleDescriptor(data []byte) (module.Descriptor, error) {
 
 	if spec.Runtime.Type == "" {
 		return module.Descriptor{}, errors.New("spec.runtime.type is required")
+	}
+	if spec.Runtime.Type != runtimeJSONRPCStdio {
+		return module.Descriptor{}, errors.New("spec.runtime.type is not valid: " + spec.Runtime.Type)
 	}
 	if spec.Runtime.Entrypoint == "" {
 		return module.Descriptor{}, errors.New("spec.runtime.entrypoint is required")
@@ -140,6 +144,9 @@ func ValidateServiceDescriptor(data []byte) (service.Descriptor, error) {
 	}
 	if runtime.Type == "" {
 		return service.Descriptor{}, errors.New("spec.runtime.type is required")
+	}
+	if runtime.Type != runtimeJSONRPCStdio {
+		return service.Descriptor{}, errors.New("spec.runtime.type is not valid: " + runtime.Type)
 	}
 	if runtime.Entrypoint == "" {
 		return service.Descriptor{}, errors.New("spec.runtime.entrypoint is required")

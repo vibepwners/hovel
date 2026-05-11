@@ -10,17 +10,21 @@ go_library(
         "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/run",
+        "@com_connectrpc_connect//:connect",
     ],
 )
 
 go_test(
     name = "daemonrpc_test",
+    size = "small",
     srcs = ["daemonrpc_test.go"],
     embed = [":daemonrpc"],
     deps = [
+        "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/event",
+        "//internal/domain/run",
         "//internal/modules/mockexploit",
     ],
 )

@@ -42,7 +42,7 @@
           "properties": {
             "type": {
               "type": "string",
-              "minLength": 1
+              "enum": ["jsonrpc-stdio"]
             },
             "packaging": {
               "type": "string"
@@ -55,7 +55,16 @@
         },
         "serviceType": {
           "type": "string",
-          "minLength": 1
+          "enum": [
+            "payload_provider",
+            "listener",
+            "session_broker",
+            "credential_broker",
+            "artifact_server",
+            "callback_listener",
+            "inventory_sync",
+            "generic"
+          ]
         },
         "provides": {
           "type": "array",

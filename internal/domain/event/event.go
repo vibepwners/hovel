@@ -1,6 +1,7 @@
 package event
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -53,27 +54,48 @@ func (typ Type) String() string {
 }
 
 type Refs struct {
-	WorkspaceID string
-	RunID       string
-	ModuleID    string
-	ServiceID   string
-	TargetID    string
+	WorkspaceID string `json:"workspace,omitempty"`
+	Operation   string `json:"operation,omitempty"`
+	Chain       string `json:"chain,omitempty"`
+	ThrowID     string `json:"throwId,omitempty"`
+	RunID       string `json:"runId,omitempty"`
+	ModuleID    string `json:"moduleId,omitempty"`
+	ServiceID   string `json:"serviceId,omitempty"`
+	TargetID    string `json:"target,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
 }
 
+type Level string
+
+const (
+	LevelDebug Level = "debug"
+	LevelInfo  Level = "info"
+	LevelWarn  Level = "warn"
+	LevelError Level = "error"
+)
+
 type Args struct {
-	ID        ID
-	Type      Type
-	Timestamp time.Time
-	Refs      Refs
-	Fields    map[string]string
+	ID            ID
+	SchemaVersion string
+	Type          Type
+	Level         Level
+	Message       string
+	Timestamp     time.Time
+	Topic         string
+	Refs          Refs
+	Fields        map[string]string
 }
 
 type Event struct {
-	ID        ID
-	Type      Type
-	Timestamp time.Time
-	Refs      Refs
-	Fields    map[string]string
+	ID            ID                `json:"id"`
+	SchemaVersion string            `json:"schemaVersion"`
+	Type          Type              `json:"type"`
+	Level         Level             `json:"level"`
+	Message       string            `json:"message"`
+	Timestamp     time.Time         `json:"timestamp"`
+	Topic         string            `json:"topic,omitempty"`
+	Refs          Refs              `json:"refs"`
+	Fields        map[string]string `json:"fields,omitempty"`
 }
 
 func New(args Args) (Event, error) {
@@ -86,15 +108,139 @@ func New(args Args) (Event, error) {
 	if args.Timestamp.IsZero() {
 		return Event{}, errors.New("event timestamp is required")
 	}
+	level := args.Level
+	if level == "" {
+		level = LevelInfo
+	}
+	switch level {
+	case LevelDebug, LevelInfo, LevelWarn, LevelError:
+	default:
+		return Event{}, errors.New("event level is not valid")
+	}
+	schemaVersion := strings.TrimSpace(args.SchemaVersion)
+	if schemaVersion == "" {
+		schemaVersion = "hovel.event/v1alpha1"
+	}
+	message := strings.TrimSpace(args.Message)
+	if message == "" {
+		message = string(args.Type)
+	}
 	fields := make(map[string]string, len(args.Fields))
 	for k, v := range args.Fields {
 		fields[k] = v
 	}
 	return Event{
-		ID:        args.ID,
-		Type:      args.Type,
-		Timestamp: args.Timestamp,
-		Refs:      args.Refs,
-		Fields:    fields,
+		ID:            args.ID,
+		SchemaVersion: schemaVersion,
+		Type:          args.Type,
+		Level:         level,
+		Message:       message,
+		Timestamp:     args.Timestamp,
+		Topic:         strings.TrimSpace(args.Topic),
+		Refs:          args.Refs,
+		Fields:        fields,
 	}, nil
+}
+
+type Filter struct {
+	Workspace string
+	Operation string
+	Chain     string
+	ThrowID   string
+	RunID     string
+	ModuleID  string
+	Target    string
+	Level     string
+	Type      string
+	Topic     string
+	PlanHash  string
+}
+
+func (f Filter) Match(evt Event) bool {
+	if f.Workspace != "" && evt.Refs.WorkspaceID != f.Workspace {
+		return false
+	}
+	if f.Operation != "" && evt.Refs.Operation != f.Operation {
+		return false
+	}
+	if f.Chain != "" && evt.Refs.Chain != f.Chain {
+		return false
+	}
+	if f.ThrowID != "" && evt.Refs.ThrowID != f.ThrowID {
+		return false
+	}
+	if f.RunID != "" && evt.Refs.RunID != f.RunID {
+		return false
+	}
+	if f.ModuleID != "" && evt.Refs.ModuleID != f.ModuleID {
+		return false
+	}
+	if f.Target != "" && evt.Refs.TargetID != f.Target {
+		return false
+	}
+	if f.Level != "" && string(evt.Level) != f.Level {
+		return false
+	}
+	if f.Type != "" && evt.Type.String() != f.Type {
+		return false
+	}
+	if f.Topic != "" && evt.Topic != f.Topic {
+		return false
+	}
+	if f.PlanHash != "" && evt.Fields["planHash"] != f.PlanHash {
+		return false
+	}
+	return true
+}
+
+type Handler interface {
+	Handle(context.Context, Event) error
+}
+
+type HandlerFunc func(context.Context, Event) error
+
+func (fn HandlerFunc) Handle(ctx context.Context, evt Event) error {
+	return fn(ctx, evt)
+}
+
+type Subscription struct {
+	Filter  Filter
+	Handler Handler
+}
+
+type Bus struct {
+	subscriptions []Subscription
+}
+
+func NewBus(subscriptions ...Subscription) Bus {
+	return Bus{subscriptions: append([]Subscription(nil), subscriptions...)}
+}
+
+func (b Bus) Append(ctx context.Context, evt Event) error {
+	for _, subscription := range b.subscriptions {
+		if subscription.Handler == nil || !subscription.Filter.Match(evt) {
+			continue
+		}
+		if err := subscription.Handler.Handle(ctx, evt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type Recorder struct {
+	Events []Event
+	Filter Filter
+}
+
+func (r *Recorder) Append(ctx context.Context, evt Event) error {
+	return r.Handle(ctx, evt)
+}
+
+func (r *Recorder) Handle(_ context.Context, evt Event) error {
+	if !r.Filter.Match(evt) {
+		return nil
+	}
+	r.Events = append(r.Events, evt)
+	return nil
 }

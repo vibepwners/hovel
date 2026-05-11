@@ -15,6 +15,7 @@ py_library(
 
 py_test(
     name = "hovel_sdk_test",
+    size = "small",
     srcs = ["hovel_sdk/sdk_test.py"],
     imports = ["."],
     main = "hovel_sdk/sdk_test.py",

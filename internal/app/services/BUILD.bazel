@@ -19,6 +19,7 @@ go_library(
 
 go_test(
     name = "services_test",
+    size = "small",
     srcs = [
         "daemon_test.go",
         "run_test.go",

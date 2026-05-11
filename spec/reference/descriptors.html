@@ -30,8 +30,8 @@
         <li><a href="../architecture.html">Architecture</a></li>
         <li><a href="../domain-model.html">Domain Model</a></li>
         <li><a href="../modules-services.html">Modules and Services</a></li>
-        <li><a href="../providers-artifacts.html">Providers, Artifacts, Events</a></li>
-        <li><a href="../chains-runs.html">Chains and Runs</a></li>
+        <li><a href="../providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="../chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="../operator-workflows.html">Operator Workflows</a></li>
         <li><a href="../front-ends.html">Front Ends</a></li>
         <li><a href="../configuration-distribution.html">Configuration &amp; Distribution</a></li>
@@ -48,7 +48,13 @@
         <h1>Descriptors and Schemas</h1>
 
         <p>Descriptors are the stable boundary between authored content and the Hovel engine. They should be schema-validated and versioned from the beginning.</p>
-        <p>MVP descriptors should be YAML documents validated against generated JSON Schema. TOML support can be reconsidered after module, service, chain, event, provider, and run-plan schemas are stable.</p>
+        <p>Product authoring uses readable YAML, especially for chain files operators will review and throw from the shell. JSON may exist as an internal canonical form for tests, generated artifacts, and tooling, but YAML is the documented human-authored format for the alpha.</p>
+        <p>Validation has two layers:</p>
+        <ol>
+          <li>Parse YAML into canonical JSON-compatible structs and validate shape with JSON Schema.</li>
+          <li>Run Go domain validation for semantic rules that JSON Schema cannot express cleanly.</li>
+        </ol>
+        <p>TOML is out of scope for the alpha and can be reconsidered after module, service, chain, event, provider, and run-plan schemas are stable.</p>
 
         <h2>Module Descriptor</h2>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
@@ -67,10 +73,10 @@ metadata:
     - payload
 spec:
   runtime:
-    type: python-rpc
+    type: jsonrpc-stdio
     packaging: source
     entrypoint: python -m hovel_ssh_memory
-  moduleType: chain
+  moduleType: exploit
   inputs:
     target:
       type: targetRef
@@ -110,6 +116,26 @@ spec:
     requiresCredentials: true
 </code></pre>
 
+        <h2>Chain Descriptor</h2>
+        <p>Chains are loadable collections of modules and chain-scoped configuration. A chain definition may reference a module as <code>name@version</code>; a bare <code>name</code> asks the catalog to resolve the latest available version.</p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: Chain
+metadata:
+  name: ssh-memory-flow
+  version: 0.1.0
+  description: Survey a target and run the SSH memory module.
+spec:
+  steps:
+    - id: survey
+      module: ssh-survey
+    - id: exploit
+      module: ssh-memory@0.1.0
+  config:
+    operator.confirmed_lab:
+      type: bool
+      required: true
+</code></pre>
+
         <h2>Service Descriptor</h2>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: Service
@@ -119,7 +145,7 @@ metadata:
   description: External provider adapter for PIC payload bytes.
 spec:
   runtime:
-    type: python-service-rpc
+    type: jsonrpc-stdio
     packaging: source
     entrypoint: python -m hovel_picblob_service
   serviceType: payload_provider
@@ -149,7 +175,7 @@ metadata:
   description: Go listening post for sshplant sessions.
 spec:
   runtime:
-    type: go-service-rpc
+    type: jsonrpc-stdio
     entrypoint: ./sshplant-lp
   serviceType: listener
   provides:
@@ -172,7 +198,7 @@ spec:
 
         <h2>Execute Request</h2>
 <pre data-lang="yaml"><code>runId: run-uuid
-moduleId: ssh-memory
+moduleId: ssh-memory@0.1.0
 targets:
   - id: target-uuid
     address: 10.41.32.2
@@ -210,7 +236,7 @@ outputs:
 <pre data-lang="yaml"><code>id: event-uuid
 runId: run-uuid
 targetId: target-uuid
-moduleId: ssh-survey
+moduleId: ssh-survey@0.1.0
 type: module.log
 level: info
 message: detected target architecture
@@ -239,16 +265,18 @@ size: 1234
 sha256: abc123
 </code></pre>
 
-        <h2>Recommended Schema Files</h2>
+        <h2>Schema Files</h2>
 <pre data-lang="tree"><code>schemas/
   hovel.module.schema.json
   hovel.service.schema.json
   hovel.chain.schema.json
-  hovel.run-plan.schema.json
+  hovel.throw-plan.schema.json
   hovel.event.schema.json
   hovel.provider.schema.json
 </code></pre>
-        <p>Run-plan schemas should cover planned steps, resolved descriptor versions, risk labels, required confirmations, requested targets, expected services, expected providers, and the approval record shape used by <code>StartRun</code>.</p>
+        <p>Schemas should be hand-authored while the contracts are still moving. Generation from Go types can be reconsidered after the schema contracts stabilize.</p>
+        <p>Module and service schemas are the first slice. Chain and throw-plan schemas are required before chain-file one-shot execution is product-supported. Event and provider schemas become required before external adapters or third-party providers depend on those contracts.</p>
+        <p>Throw-plan schemas should cover planned steps, resolved descriptor versions, risk labels, required confirmations, requested targets, expected services, expected providers, and the confirmation record shape used by <code>StartThrow</code>.</p>
       </article>
 
       <nav class="page-nav">

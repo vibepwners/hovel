@@ -3,14 +3,18 @@ package cli
 import (
 	"strings"
 	"sync"
+	"time"
 
 	prompt "github.com/c-bata/go-prompt"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type promptSurface struct {
-	mu       sync.Mutex
-	writer   *styledPromptWriter
-	document prompt.Document
+	mu            sync.Mutex
+	writer        *styledPromptWriter
+	document      prompt.Document
+	throwing      bool
+	throwingFrame int
 }
 
 func newPromptSurface(writer prompt.ConsoleWriter) *promptSurface {
@@ -33,14 +37,75 @@ func (w *promptSurface) WriteAsyncLog(rendered, prefix string) {
 	w.writer.HideCursor()
 	defer w.writer.ShowCursor()
 	w.writer.WriteRaw([]byte("\r"))
+	w.writer.EraseLine()
 	w.writer.EraseDown()
-	w.writer.WriteRawStr(rendered)
-	w.writer.WriteRaw([]byte("\n"))
+	w.writer.WriteRawStr(terminalNewlines(rendered))
+	if !strings.HasSuffix(rendered, "\n") {
+		w.writer.WriteRaw([]byte("\r\n"))
+	}
+	w.writePromptLine(prefix)
+	_ = w.writer.Flush()
+}
+
+func (w *promptSurface) StartThrowing(prefix string) func() {
+	if w == nil {
+		return func() {}
+	}
+	done := make(chan struct{})
+	var once sync.Once
+	w.setThrowing(prefix, true)
+	go func() {
+		ticker := time.NewTicker(120 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				w.advanceThrowing(prefix)
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() {
+			close(done)
+			w.setThrowing(prefix, false)
+		})
+	}
+}
+
+func (w *promptSurface) setThrowing(prefix string, active bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.throwing = active
+	w.throwingFrame = 0
+	w.redrawPromptLine(prefix)
+}
+
+func (w *promptSurface) advanceThrowing(prefix string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.throwing {
+		return
+	}
+	w.throwingFrame++
+	w.redrawPromptLine(prefix)
+}
+
+func (w *promptSurface) redrawPromptLine(prefix string) {
+	w.writer.HideCursor()
+	defer w.writer.ShowCursor()
+	w.writer.WriteRaw([]byte("\r"))
+	w.writer.EraseDown()
 	w.writePromptLine(prefix)
 	_ = w.writer.Flush()
 }
 
 func (w *promptSurface) writePromptLine(prefix string) {
+	if w.throwing {
+		w.writer.WriteRawStr(throwingPrompt(w.throwingFrame))
+		return
+	}
 	text := w.document.Text
 	w.writer.SetColor(prompt.Fuchsia, prompt.DefaultColor, false)
 	w.writer.WriteStr(prefix)
@@ -51,6 +116,24 @@ func (w *promptSurface) writePromptLine(prefix string) {
 	if afterWidth := len([]rune(afterCursor)); afterWidth > 0 {
 		w.writer.CursorBackward(afterWidth)
 	}
+}
+
+func throwingPrompt(frame int) string {
+	frames := []string{"|", "/", "-", "\\"}
+	styles := []lipgloss.Style{
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#ff2bd6")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#00e5ff")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#facc15")).Bold(true),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Bold(true),
+	}
+	index := frame % len(frames)
+	return styles[index].Render(frames[index]+" throwing") + " "
+}
+
+func terminalNewlines(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return strings.ReplaceAll(value, "\n", "\r\n")
 }
 
 func (w *promptSurface) WriteRaw(data []byte) {

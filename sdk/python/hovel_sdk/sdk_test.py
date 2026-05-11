@@ -1,21 +1,45 @@
+import base64
 import io
 import logging
+import tempfile
 import unittest
+from pathlib import Path
 from typing import Any, ClassVar
 
-from hovel_sdk import Context, HovelModule, Requirement, Result, setup_logging
+from hovel_sdk import Artifact, Context, HovelModule, LineShellSession, Requirement, Result, setup_logging
 from hovel_sdk.framing import encode_message, read_message, write_message
 from hovel_sdk.server import JSONRPCServer
 
 
 class EchoModule(HovelModule):
     name = "echo"
+    module_type = "survey"
     global_config: ClassVar[tuple[Requirement, ...]] = (Requirement("operator.confirmed_lab", "bool"),)
     target_config: ClassVar[tuple[Requirement, ...]] = (Requirement("target.host", "host"),)
 
     def run(self, ctx: Context) -> Result:
         ctx.log.info("echo running", extra={"target": ctx.target})
         return Result.ok({"target": ctx.target}, summary="echo done")
+
+
+class TestShell(LineShellSession):
+    async def handle_command(self, command: str) -> str:
+        if command == "whoami":
+            return "mock-user"
+        return f"unknown command: {command}"
+
+
+class SessionModule(HovelModule):
+    name = "session-echo"
+    module_type = "exploit"
+
+    async def run(self, ctx: Context) -> Result:
+        session = await ctx.open_session(
+            TestShell(prompt="mock$ "),
+            name="mock shell",
+            capabilities=("read", "write", "exec", "close"),
+        )
+        return Result.ok({"sessionId": session.id}, summary="session opened")
 
 
 class SDKTest(unittest.TestCase):
@@ -66,6 +90,78 @@ class SDKTest(unittest.TestCase):
         assert message is not None
         self.assertEqual(message["result"]["chainConfig"][0]["key"], "operator.confirmed_lab")
         self.assertEqual(message["result"]["targetConfig"][0]["type"], "host")
+
+    def test_artifact_helpers_emit_inline_and_file_references(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "loot.txt"
+            path.write_text("loot", encoding="utf-8")
+
+            result = Result.ok(artifacts=[
+                Artifact.inline("transcript.txt", "text/plain", "inline bytes"),
+                Artifact.text("notes.txt", b"operator notes"),
+                Artifact.json("summary.json", {"ok": True, "count": 2}),
+                Artifact.file(path, kind="text/plain"),
+            ])
+            artifacts = result.to_rpc()["artifacts"]
+
+        self.assertEqual(artifacts[0], {"name": "transcript.txt", "kind": "text/plain", "data": "inline bytes"})
+        self.assertEqual(artifacts[1], {"name": "notes.txt", "kind": "text/plain", "data": "operator notes"})
+        self.assertEqual(
+            artifacts[2],
+            {"name": "summary.json", "kind": "application/json", "data": '{"count":2,"ok":true}'},
+        )
+        self.assertEqual(artifacts[3], {"name": "loot.txt", "kind": "text/plain", "path": str(path)})
+
+    def test_async_module_can_open_and_drive_shell_session(self) -> None:
+        stdin = io.BytesIO(
+            encode_message({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "execute",
+                "params": {"runId": "run-1", "moduleId": "session-echo", "target": "mock://target"},
+            })
+            + encode_message({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "session/read",
+                "params": {"sessionId": "run-1-session-1", "timeoutMs": 100},
+            })
+            + encode_message({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session/write",
+                "params": {"sessionId": "run-1-session-1", "data": base64.b64encode(b"whoami\n").decode()},
+            })
+            + encode_message({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "session/read",
+                "params": {"sessionId": "run-1-session-1", "timeoutMs": 100},
+            })
+            + encode_message({
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "shutdown",
+            }),
+        )
+        stdout = io.BytesIO()
+
+        JSONRPCServer(SessionModule(), stdin, stdout).serve_forever()
+
+        messages: list[dict[str, Any]] = []
+        stdout.seek(0)
+        while True:
+            message = read_message(stdout)
+            if message is None:
+                break
+            messages.append(message)
+
+        execute = next(message for message in messages if message.get("id") == 1)
+        self.assertEqual(execute["result"]["sessions"][0]["id"], "run-1-session-1")
+        prompt = next(message for message in messages if message.get("id") == 2)
+        self.assertEqual(base64.b64decode(prompt["result"]["data"]), b"mock$ ")
+        output = next(message for message in messages if message.get("id") == 4)
+        self.assertEqual(base64.b64decode(output["result"]["data"]), b"mock-user\n")
 
     def test_logging_handler_forwards_extra_fields(self) -> None:
         emitted: list[dict[str, Any]] = []

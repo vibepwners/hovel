@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hovel.dev/schemas/hovel.event.schema.json",
+  "title": "Hovel Structured Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "schemaVersion", "type", "level", "message", "timestamp", "refs"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schemaVersion": {
+      "const": "hovel.event/v1alpha1"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^(hovel|module)\\.[^\\s]+\\.[^\\s]+$"
+    },
+    "level": {
+      "type": "string",
+      "enum": ["debug", "info", "warn", "error"]
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1
+    },
+    "topic": {
+      "type": "string"
+    },
+    "refs": {
+      "$ref": "#/$defs/refs"
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workspace": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "chain": {
+          "type": "string"
+        },
+        "throwId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "moduleId": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "serviceId": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

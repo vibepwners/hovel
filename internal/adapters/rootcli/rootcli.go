@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/cli"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/akamensky/argparse"
 )
@@ -41,12 +43,25 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	case "status":
 		return commandmode.Run(ctx, append([]string{"control", "daemon", "status"}, args[1:]...), stdout, stderr)
 	default:
+		if args[0] == "throw" && throwFileArg(args[1:]) != "" {
+			return runOneShotThrow(ctx, args, stdout, stderr)
+		}
 		if commandmode.NewApp().Registry().HasRoot(args[0]) {
 			return commandmode.Run(ctx, args, stdout, stderr)
 		}
 		fmt.Fprint(stderr, newRootParser().Usage(fmt.Sprintf("unknown command or role %q", args[0])))
 		return 2
 	}
+}
+
+func runOneShotThrow(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	session, err := daemonmanager.New().Ensure(ctx, throwWorkspaceArg(args[1:]))
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	defer session.Close()
+	return commandmode.Run(ctx, args, stdout, stderr)
 }
 
 func runDaemon(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -74,6 +89,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 	parser := argparse.NewParser("hovel daemon serve", "Run the daemon role in the mono-binary.")
 	workspacePath := parser.String("w", "workspace", &argparse.Options{Help: "Workspace path"})
 	socketPath := parser.String("s", "socket", &argparse.Options{Help: "Local RPC socket path"})
+	listenAddress := parser.String("", "listen", &argparse.Options{Help: "RPC listen endpoint, such as unix:/tmp/hoveld.sock or tcp://127.0.0.1:9090"})
 	if ok, code := parseArgs(parser, args, stdout, stderr); !ok {
 		return code
 	}
@@ -82,6 +98,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 	if err := daemonruntime.Serve(ctx, daemonruntime.Args{
 		WorkspacePath: *workspacePath,
 		SocketPath:    *socketPath,
+		ListenAddress: *listenAddress,
 	}); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 0
@@ -94,10 +111,13 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 
 func newRootParser() *argparse.Parser {
 	parser := argparse.NewParser("hovel", "Hovel operator console.")
+	parser.NewCommand("op", "Create, select, and inspect operations.")
 	parser.NewCommand("chain", "Build and manage operator chains.")
-	parser.NewCommand("modules", "Browse, search, and inspect modules.")
-	parser.NewCommand("targets", "Add and configure chain targets.")
-	parser.NewCommand("throw", "Execute the selected chain against targets.")
+	parser.NewCommand("module", "Browse, search, and inspect modules.")
+	parser.NewCommand("artifact", "List and inspect materialized artifacts.")
+	parser.NewCommand("session", "List, connect, and close active sessions.")
+	parser.NewCommand("target", "Add and configure chain targets.")
+	parser.NewCommand("throw", "Execute the selected chain, or list and inspect throws.")
 	parser.NewCommand("init", "Initialize a workspace.")
 	parser.NewCommand("status", "Inspect workspace and daemon status.")
 	parser.NewCommand("shell", "Launch the interactive prompt shell.")
@@ -141,6 +161,38 @@ func helpRequested(args []string) bool {
 		}
 	}
 	return false
+}
+
+func throwFileArg(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "list" || arg == "inspect":
+			return ""
+		case arg == "--workspace" || arg == "-w" || arg == "--chain" || arg == "-c" || arg == "--target" || arg == "-t":
+			i++
+		case strings.HasPrefix(arg, "--workspace=") || strings.HasPrefix(arg, "--chain=") || strings.HasPrefix(arg, "--target="):
+		case strings.HasPrefix(arg, "-"):
+		default:
+			return arg
+		}
+	}
+	return ""
+}
+
+func throwWorkspaceArg(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--workspace" || arg == "-w":
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		case strings.HasPrefix(arg, "--workspace="):
+			return strings.TrimPrefix(arg, "--workspace=")
+		}
+	}
+	return ".hovel"
 }
 
 func displayWorkspace(path string) string {

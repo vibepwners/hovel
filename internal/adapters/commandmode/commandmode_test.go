@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,14 +12,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
-	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 )
-
-func TestMain(m *testing.M) {
-	os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfig)
-	os.Exit(m.Run())
-}
 
 func TestHelpShowsCommandMenu(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -31,7 +22,7 @@ func TestHelpShowsCommandMenu(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"hovel command", "control", "chain", "targets", "throw"} {
+	for _, want := range []string{"hovel command", "control", "chain", "target", "throw"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}
@@ -175,84 +166,6 @@ func TestDaemonStatusJSONRunning(t *testing.T) {
 	}
 }
 
-func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	workspacePath := testsupport.TempDir(t)
-	socketPath := workspacePath + "/hoveld.sock"
-	ctx, cancel := context.WithCancel(context.Background())
-	errs := make(chan error, 1)
-	go func() {
-		errs <- daemonruntime.Serve(ctx, daemonruntime.Args{
-			WorkspacePath: workspacePath,
-			SocketPath:    socketPath,
-			PID:           12345,
-			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2", "event-3", "event-4", "event-5"}},
-			Clock:         fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
-		})
-	}()
-	defer func() {
-		cancel()
-		<-errs
-	}()
-
-	store := filesystem.NewWorkspaceStore()
-	waitFor(t, func() bool {
-		status, err := store.DaemonStatus(context.Background(), workspacePath)
-		return err == nil && status.State == daemon.StateRunning
-	})
-
-	code := Run(context.Background(), []string{"throw", "--chain", "mock-exploit", "--target", "mock://target", "--workspace", workspacePath, "--json"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
-	}
-
-	var payload struct {
-		Chain   string   `json:"chain"`
-		Targets []string `json:"targets"`
-		Results []struct {
-			RunID     string `json:"runId"`
-			ModuleID  string `json:"moduleId"`
-			Target    string `json:"target"`
-			State     string `json:"state"`
-			Summary   string `json:"summary"`
-			Findings  []any  `json:"findings"`
-			Artifacts []any  `json:"artifacts"`
-		} `json:"results"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
-	}
-	if payload.Chain != "mock-exploit" {
-		t.Fatalf("chain = %q, want mock-exploit", payload.Chain)
-	}
-	if len(payload.Targets) != 1 || payload.Targets[0] != "mock://target" {
-		t.Fatalf("targets = %#v", payload.Targets)
-	}
-	if len(payload.Results) != 1 {
-		t.Fatalf("result count = %d, want 1", len(payload.Results))
-	}
-	result := payload.Results[0]
-	if result.RunID != "run-1" {
-		t.Fatalf("run id = %q, want run-1", result.RunID)
-	}
-	if result.ModuleID != "mock-exploit" {
-		t.Fatalf("module id = %q, want mock-exploit", result.ModuleID)
-	}
-	if result.Target != "mock://target" {
-		t.Fatalf("target = %q, want mock://target", result.Target)
-	}
-	if result.State != "succeeded" {
-		t.Fatalf("state = %q, want succeeded", result.State)
-	}
-	if len(result.Findings) != 1 {
-		t.Fatalf("finding count = %d, want 1", len(result.Findings))
-	}
-	if len(result.Artifacts) != 1 {
-		t.Fatalf("artifact count = %d, want 1", len(result.Artifacts))
-	}
-}
-
 func TestInitHumanOutput(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	workspacePath := t.TempDir()
@@ -325,29 +238,177 @@ func TestHumanOutputRendersOperatorLogWhenPresent(t *testing.T) {
 	}
 }
 
-type sequenceIDs struct {
-	values []string
-	next   int
-}
+func TestExecuteLinePreservesQuotedArguments(t *testing.T) {
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"echo"},
+		Summary: "Echo one value",
+		Positionals: []commands.Positional{
+			{Name: "value", Required: true},
+		},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: invocation.Positional("value")}, nil
+		},
+	})
+	var stdout, stderr bytes.Buffer
 
-func (s *sequenceIDs) NewID() string {
-	if s.next >= len(s.values) {
-		s.next++
-		return fmt.Sprintf("event-%d", s.next)
+	code := NewAppWithRegistry(registry).ExecuteLine(context.Background(), `echo "hello operator"`, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	value := s.values[s.next]
-	s.next++
-	return value
+	if got := strings.TrimSpace(stdout.String()); got != "hello operator" {
+		t.Fatalf("stdout = %q, want quoted value preserved", got)
+	}
 }
 
-type fixedClock struct {
-	now time.Time
+func TestExecuteLinePreservesLiteralBackslashes(t *testing.T) {
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"echo"},
+		Summary: "Echo one value",
+		Positionals: []commands.Positional{
+			{Name: "value", Required: true},
+		},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: invocation.Positional("value")}, nil
+		},
+	})
+
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "unquoted windows path",
+			line: `echo C:\tmp\plan.yaml`,
+			want: `C:\tmp\plan.yaml`,
+		},
+		{
+			name: "quoted windows path with spaces",
+			line: `echo "C:\Program Files\hovel\plan.yaml"`,
+			want: `C:\Program Files\hovel\plan.yaml`,
+		},
+		{
+			name: "escaped quote inside quoted value",
+			line: `echo "operator \"quoted\" value"`,
+			want: `operator "quoted" value`,
+		},
+		{
+			name: "escaped backslash inside quoted value",
+			line: `echo "C:\\tmp\\plan.yaml"`,
+			want: `C:\tmp\plan.yaml`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := NewAppWithRegistry(registry).ExecuteLine(context.Background(), tc.line, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+			}
+			if got := strings.TrimSpace(stdout.String()); got != tc.want {
+				t.Fatalf("stdout = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
 
-func (c fixedClock) Now() time.Time {
-	return c.now
+func TestExecuteLineRejectsUnterminatedQuotedArgument(t *testing.T) {
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"echo"},
+		Summary: "Echo one value",
+		Handler: func(_ context.Context, _ commands.Invocation) (commands.Result, error) {
+			return commands.Result{}, nil
+		},
+	})
+	var stdout, stderr bytes.Buffer
+
+	code := NewAppWithRegistry(registry).ExecuteLine(context.Background(), `echo "unterminated`, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "unterminated quoted string") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
 }
 
-func waitFor(t *testing.T, condition func() bool) {
-	testsupport.WaitFor(t, condition)
+func TestTerminalInputRequiresLiteralYes(t *testing.T) {
+	prompt := testConfirmationPrompt()
+	var stdout strings.Builder
+	input := terminalInput{in: strings.NewReader("yes\n"), out: &stdout}
+
+	answer, err := input.Confirm(context.Background(), prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Confirmed(prompt) {
+		t.Fatal("confirmation = false, want true")
+	}
+	for _, want := range []string{"THROW REVIEW", "plan-mock", "mock-exploit", "hash-mock", "Type yes to throw:"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("prompt missing %q:\n%s", want, stdout.String())
+		}
+	}
+
+	answer, err = (terminalInput{in: strings.NewReader("y\n")}).Confirm(context.Background(), prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer.Confirmed(prompt) {
+		t.Fatal("confirmation = true, want false")
+	}
+}
+
+func TestTerminalInputUsesPromptAction(t *testing.T) {
+	prompt := testConfirmationPrompt()
+	prompt.Action = "confirm review"
+	var stdout strings.Builder
+	input := terminalInput{in: strings.NewReader("yes\n"), out: &stdout}
+
+	answer, err := input.Confirm(context.Background(), prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Confirmed(prompt) {
+		t.Fatal("confirmation = false, want true")
+	}
+	if !strings.Contains(stdout.String(), "Type yes to confirm review:") {
+		t.Fatalf("prompt = %q, want review action", stdout.String())
+	}
+}
+
+func TestTerminalInputEchoesAnswerWhenRequested(t *testing.T) {
+	prompt := testConfirmationPrompt()
+	var stdout strings.Builder
+	input := terminalInput{in: strings.NewReader("yes\n"), out: &stdout, echoAnswer: true}
+
+	answer, err := input.Confirm(context.Background(), prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !answer.Confirmed(prompt) {
+		t.Fatal("confirmation = false, want true")
+	}
+	if !strings.Contains(stdout.String(), "Type yes to throw: yes\n") {
+		t.Fatalf("prompt = %q, want echoed answer", stdout.String())
+	}
+}
+
+func testConfirmationPrompt() commands.ConfirmationPrompt {
+	plan := commands.ThrowPlanRecord{
+		ID:       "plan-mock",
+		PlanHash: "hash-mock",
+		Chain:    "mock-exploit",
+		Targets:  []string{"mock://target"},
+	}
+	return commands.ConfirmationPrompt{
+		Title:           "THROW REVIEW",
+		Action:          "throw",
+		RequiredLiteral: "yes",
+		Plan:            plan,
+		Fields: []commands.ConfirmationField{
+			{Label: "chain", Value: plan.Chain},
+			{Label: "targets", Value: strings.Join(plan.Targets, ", ")},
+			{Label: "plan hash", Value: plan.PlanHash, Muted: true},
+		},
+	}
 }

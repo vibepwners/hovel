@@ -30,8 +30,8 @@
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="domain-model.html">Domain Model</a></li>
         <li><a href="modules-services.html">Modules and Services</a></li>
-        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
-        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
@@ -53,27 +53,27 @@
         <p>Hovel is a platform for wrapping and operating third-party proofs of concept, not a catalog of first-party exploits. The project should provide the engine, SDKs, descriptors, providers, guardrails, examples, and operator experience that make third-party modules acceptable to run and inspect.</p>
         <p>The main product goal is straightforward:</p>
         <blockquote>
-          <p>Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every run.</p>
+          <p>Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every throw.</p>
         </blockquote>
-        <p>The central runtime is a local engine, <code>hoveld</code>, which owns runs, module processes, managed services, provider state, events, artifacts, and workspace storage. <code>command</code> mode, interactive <code>cli</code> mode, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.</p>
+        <p>The central runtime is a local engine, <code>hoveld</code>, which owns operations, chains, throws, module processes, managed services, provider state, structured events, artifacts, and workspace storage. Interactive <code>cli</code> mode, one-shot chain-file execution, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.</p>
 
         <h2>Core Decisions</h2>
         <ol>
           <li>The host is written in Go.</li>
           <li>Python is the first-class module authoring language.</li>
           <li><code>hoveld</code> is mandatory; invoking <code>hovel</code> starts or attaches to a daemon.</li>
-          <li>Modules run as bounded processes or built-in implementations.</li>
+          <li>Modules run as bounded processes through normal module runtime contracts.</li>
           <li>Long-lived capabilities are managed as services.</li>
           <li>Providers expose typed resources such as payloads, artifacts, facts, credentials, listeners, and sessions.</li>
           <li>Payload providers return tagged bytes with minimal framework validation.</li>
-          <li>Runs emit structured events consumed by every front end.</li>
+          <li>Throws emit structured events onto a shared logging rail consumed by every front end and persistence sink.</li>
           <li>The first implementation is local-first and alpha-friendly.</li>
         </ol>
 
         <h2>Product Shape</h2>
         <p>Hovel exposes one engine through multiple front ends:</p>
 <pre data-lang="diagram"><code> +--------------+ +--------------+ +--------------+
- |   command    | |     cli      | |     TUI      |
+ |  one-shot    | |     cli      | |     TUI      |
  +------+-------+ +------+-------+ +------+-------+
         |                |                |
 +-------v------+ +-------v------+ +-------v------+
@@ -95,10 +95,10 @@
  +-------v------+ +-----v-------+ +-------v------+
  | module       | | payloads,   | | artifacts,   |
  | processes    | | listeners,  | | facts,       |
- | and builtins | | sessions    | | credentials  |
+ |              | | sessions    | | credentials  |
  +--------------+ +-------------+ +--------------+
 </code></pre>
-        <p>All front ends must call the same application services. The TUI must not contain business logic. The MCP adapter must not bypass validation. <code>command</code> and <code>cli</code> modes must not implement their own chain runners. The REST API must not become a second framework.</p>
+        <p>All front ends must call the same application services. The TUI must not contain business logic. The MCP adapter must not bypass validation. One-shot execution and <code>cli</code> mode must not implement their own chain runners. The REST API must not become a second framework.</p>
 
         <h2>MVP Boundaries</h2>
         <p>The MVP should avoid pretending to be the final platform. Defer:</p>
@@ -118,16 +118,16 @@
           <li>Load and validate one module descriptor.</li>
           <li>Launch one Python module through the SDK path.</li>
           <li>Complete handshake, execution, logging, and shutdown.</li>
-          <li>Emit structured events through the shared event stream.</li>
-          <li>Persist the throw plan, approval record, artifacts, and replayable run record.</li>
+          <li>Emit structured events through the shared logging rail.</li>
+          <li>Persist the throw plan, confirmation record, event records, artifacts, and replayable throw record.</li>
           <li>Inspect the throw from the CLI.</li>
+          <li>Save and load targetless chain templates and configured chain YAML files for reuse and one-shot execution.</li>
         </ol>
         <p>The alpha can then add managed services, provider-backed payload resolution, richer chains, MCP execution parity, and the TUI. Those features should attach to the proven loop rather than expanding the platform surface before the core path works.</p>
 
         <h2>Alpha Deferrals</h2>
-        <p>The following decisions should remain open until the core loop has contract tests and at least one replayable run:</p>
+        <p>The following decisions should remain open until the core loop has contract tests and at least one replayable throw:</p>
         <ol>
-          <li>Whether descriptors remain YAML-only or gain TOML support.</li>
           <li>Whether chains are only declarative YAML or also authorable in Python or Go.</li>
           <li>Whether REST ships in the first alpha or follows the CLI and TUI.</li>
           <li>Whether service processes and module processes share one protocol.</li>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Chains and Runs — Hovel spec</title>
+  <title>Operations, Chains, and Throws — Hovel spec</title>
   <link rel="icon" type="image/png" href="../assets/hovel.png">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
@@ -30,8 +30,8 @@
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="domain-model.html">Domain Model</a></li>
         <li><a href="modules-services.html">Modules and Services</a></li>
-        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
-        <li><a href="chains-runs.html" aria-current="page">Chains and Runs</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html" aria-current="page">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
@@ -45,12 +45,31 @@
     </aside>
     <main class="content">
       <article>
-        <h1>Chains and Runs</h1>
+        <h1>Operations, Chains, and Throws</h1>
 
-        <p>Chains are declarative workflows with typed steps. They should be inspectable before execution and replay-inspectable after execution.</p>
-        <p>The first chain runner should be intentionally small. It should support sequential steps, literal inputs, <code>${inputs.*}</code> references, <code>${steps.&lt;id&gt;.output}</code> references, per-step events, cancellation, and artifact creation. It should not initially support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.</p>
-        <p>Operator-facing chain records are CRUD resources. A chain can be created, selected with <code>chain use</code>, renamed, inspected, listed, deleted, and then thrown against the targets it owns. The active chain determines the prompt context, the default targets for <code>throw</code>, and the log topic that the client is subscribed to.</p>
-        <p>Targets are owned by chains in the operator workflow. A target added while <code>alpha</code> is active belongs to <code>alpha</code>; switching to <code>beta</code> exposes <code>beta</code>'s target set instead. Chain logs follow the same boundary: <code>chain logs</code> renders the active chain's topic only, and multi-client front ends attached to the same chain observe the same topic.</p>
+        <p>Operations are the durable work context. Chains are workflows with typed steps inside an operation. Throws are replay-inspectable executions of a chain against targets.</p>
+        <p>Chains have three related forms:</p>
+        <ol>
+          <li>An interactive chain record owned by an operation and edited through <code>hovel cli</code>.</li>
+          <li>A chain template, which is a targetless reusable chain definition with steps and configuration schema but without target assignments.</li>
+          <li>A configured chain file, which fully represents a chain, its steps, configuration schema, configured values, target assignments, and target config for review, sharing, and one-shot execution.</li>
+        </ol>
+        <p>Interactive editing and persistent representation are separate concerns. <code>chain add &lt;module&gt;</code> remains the fast CLI workflow for building a chain. <code>chain save &lt;file&gt;</code> writes the active chain to a YAML file, and <code>chain load &lt;file&gt;</code> imports or updates a chain from that file. One-shot shell execution throws a configured chain file rather than relying on prompt session state. Target config is essential to configured chain files because it is part of what the operator reviews and confirms before throwing.</p>
+        <p>The first chain thrower should be intentionally small. It should support sequential steps, literal inputs, <code>${inputs.*}</code> references, <code>${steps.&lt;id&gt;.output}</code> references, per-step events, cancellation, and artifact creation. It should not initially support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.</p>
+        <p>Operator-facing chain records are CRUD resources. A chain can be created, selected with <code>chain use</code>, renamed, inspected, listed, deleted, and then thrown against the targets it owns. The active chain is client attachment state: it determines that client's prompt context, default targets for <code>throw</code>, and log topic subscription without changing another client's active chain.</p>
+        <p>Targets are owned by chains in the operator workflow. A target added while <code>alpha</code> is active belongs to <code>alpha</code>; switching that same client to <code>beta</code> exposes <code>beta</code>'s target set instead. Chain logs follow the same boundary: <code>chain logs</code> renders the active chain's operation-scoped topic only, and multi-client front ends attached to the same operation and chain observe the same topic.</p>
+
+        <h2>Operation Attachments</h2>
+        <p>Each CLI, TUI, REST, or MCP client attaches to exactly one operation at a time and keeps its own active chain selection.</p>
+        <p>Concurrency rules:</p>
+        <ol>
+          <li><code>op use &lt;operation&gt;</code> changes only the caller's attached operation.</li>
+          <li><code>chain use &lt;chain&gt;</code> changes only the caller's active chain inside the attached operation.</li>
+          <li><code>chain add</code>, <code>target add</code>, <code>chain config</code>, <code>target config</code>, <code>chain validate</code>, and <code>throw</code> without <code>--chain</code> use the caller's active chain.</li>
+          <li>Saved chain-file throws import or execute the file without moving another client's active chain.</li>
+          <li>Mutations to one shared chain are serialized by the daemon and broadcast to subscribers of <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>.</li>
+          <li>Different clients may work different chains in the same operation concurrently.</li>
+        </ol>
 
         <h2>Chain Definition</h2>
         <p>Example:</p>
@@ -102,8 +121,8 @@ spec:
             delivered: ${steps.ssh-deliver.output}
     - name: collect
       steps:
-        - id: collect-evidence
-          uses: module:evidence-collect
+        - id: collect-artifacts
+          uses: module:artifact-collect
     - name: service_cleanup
       steps:
         - id: stop-lp
@@ -111,9 +130,25 @@ spec:
           with:
             listener: ${steps.start-lp.output}
 </code></pre>
+        <p>A chain template records reusable workflow shape:</p>
+        <ol>
+          <li>Chain identity and version.</li>
+          <li>Ordered phases and steps.</li>
+          <li>Module references with resolved versions when available.</li>
+          <li>Chain-level and target-level configuration schema.</li>
+          <li>Expected providers, services, listeners, sessions, and artifacts when known.</li>
+        </ol>
+        <p>A configured chain file must contain enough information to reconstruct the review surface without relying on hidden prompt state. At minimum it records:</p>
+        <ol>
+          <li>Everything in the chain template.</li>
+          <li>Chain-level configured values.</li>
+          <li>Target list.</li>
+          <li>Per-target configuration values.</li>
+          <li>Risk and confirmation metadata produced by planning.</li>
+        </ol>
 
-        <h2>First Runner Requirements</h2>
-        <p>The first runner must support:</p>
+        <h2>First Thrower Requirements</h2>
+        <p>The first thrower must support:</p>
         <ol>
           <li>Sequential steps.</li>
           <li>Simple input and step-output references.</li>
@@ -121,11 +156,13 @@ spec:
           <li>Artifact creation.</li>
           <li>Fact propagation as ordinary step output.</li>
           <li>Cancellation between steps.</li>
-          <li>Persisted run plans and run records.</li>
+          <li>Persisted throw plans and throw records.</li>
+          <li>Confirmation records, including prompt confirmations and <code>--now</code> bypass confirmations.</li>
           <li>Service start/stop steps once the service manager milestone is complete.</li>
         </ol>
+        <p><code>review</code> and <code>throw</code> share the same planning and review code path. <code>confirm</code> stops after recording a pre-confirmation. <code>review</code> always displays the reviewed plan, requires the operator to type <code>yes</code>, and records or refreshes the confirmation without starting execution. <code>throw</code> starts execution only after an existing confirmation, an inline typed <code>yes</code>, or an explicit <code>--now</code> bypass has produced a confirmation record.</p>
 
-        <h2>Eventual Runtime Requirements</h2>
+        <h2>Eventual Throw Runtime Requirements</h2>
         <p>The eventual chain runtime should support:</p>
         <ol>
           <li>Sequential steps.</li>
@@ -154,7 +191,7 @@ spec:
           <li>Listener startup.</li>
           <li>Transport selection.</li>
           <li>Error handling.</li>
-          <li>Evidence capture.</li>
+          <li>Artifact and transcript capture.</li>
           <li>Cleanup.</li>
           <li>Logging.</li>
           <li>Multi-target execution.</li>
@@ -207,7 +244,7 @@ command_only
       </article>
 
       <nav class="page-nav">
-        <a class="prev" href="providers-artifacts.html">← Providers, Artifacts, Events</a>
+        <a class="prev" href="providers-artifacts.html">← Providers, Artifacts, Logging</a>
         <span class="spacer"></span>
         <a class="next" href="operator-workflows.html">Operator Workflows →</a>
       </nav>

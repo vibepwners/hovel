@@ -2,15 +2,21 @@
   "modules": [
     {
       "id": "mock-survey",
-      "runtime": "python-rpc",
+      "runtime": "jsonrpc-stdio",
       "project_dir": "mock_survey",
       "module": "hovel_example_survey"
     },
     {
       "id": "mock-exploit",
-      "runtime": "python-rpc",
+      "runtime": "jsonrpc-stdio",
       "project_dir": "mock_exploit",
       "module": "hovel_example_exploit"
+    },
+    {
+      "id": "mock-exploit-session",
+      "runtime": "jsonrpc-stdio",
+      "project_dir": "mock_exploit_session",
+      "module": "hovel_example_exploit_session"
     }
   ]
 }

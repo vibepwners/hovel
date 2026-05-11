@@ -36,6 +36,7 @@ type Handler func(context.Context, Invocation) (Result, error)
 
 type Definition struct {
 	Path           []string
+	Aliases        [][]string
 	Summary        string
 	Positionals    []Positional
 	Options        []Option
@@ -56,10 +57,12 @@ func (d Definition) PathString() string {
 }
 
 type Invocation struct {
-	Definition  Definition
-	Positionals map[string]string
-	Options     map[string]string
-	Flags       map[string]bool
+	Definition     Definition
+	Positionals    map[string]string
+	Options        map[string]string
+	Flags          map[string]bool
+	Input          Input
+	NonInteractive bool
 }
 
 func (i Invocation) Positional(name string) string {
@@ -89,6 +92,36 @@ type Result struct {
 	Log   operatorlog.Log
 }
 
+type Input interface {
+	Confirm(context.Context, ConfirmationPrompt) (ConfirmationAnswer, error)
+}
+
+type ConfirmationPrompt struct {
+	Title           string
+	Action          string
+	RequiredLiteral string
+	Fields          []ConfirmationField
+	Plan            ThrowPlanRecord
+}
+
+type ConfirmationField struct {
+	Label string
+	Value string
+	Muted bool
+}
+
+type ConfirmationAnswer struct {
+	Value string
+}
+
+func (a ConfirmationAnswer) Confirmed(prompt ConfirmationPrompt) bool {
+	required := strings.TrimSpace(prompt.RequiredLiteral)
+	if required == "" {
+		required = "yes"
+	}
+	return strings.TrimSpace(a.Value) == required
+}
+
 type Registry struct {
 	definitions []Definition
 	byPath      map[string]Definition
@@ -109,6 +142,15 @@ func NewRegistry(definitions ...Definition) (Registry, error) {
 		}
 		registry.definitions = append(registry.definitions, definition)
 		registry.byPath[key] = definition
+		for _, alias := range definition.Aliases {
+			aliasDefinition := definition
+			aliasDefinition.Path = alias
+			aliasKey := aliasDefinition.PathString()
+			if _, exists := registry.byPath[aliasKey]; exists {
+				return Registry{}, fmt.Errorf("duplicate command path %q", aliasKey)
+			}
+			registry.byPath[aliasKey] = aliasDefinition
+		}
 	}
 	sort.Slice(registry.definitions, func(i, j int) bool {
 		return registry.definitions[i].PathString() < registry.definitions[j].PathString()
@@ -144,6 +186,11 @@ func (r Registry) HasRoot(segment string) bool {
 		if len(definition.Path) > 0 && definition.Path[0] == segment {
 			return true
 		}
+		for _, alias := range definition.Aliases {
+			if len(alias) > 0 && alias[0] == segment {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -151,19 +198,23 @@ func (r Registry) HasRoot(segment string) bool {
 func (r Registry) Children(prefix ...string) []Definition {
 	seen := map[string]Definition{}
 	for _, definition := range r.definitions {
-		if len(definition.Path) <= len(prefix) {
-			continue
-		}
-		if hasPathPrefix(definition.Path, prefix) {
+		for _, path := range definitionPaths(definition) {
+			if len(path) <= len(prefix) {
+				continue
+			}
+			if !hasPathPrefix(path, prefix) {
+				continue
+			}
 			childPath := append([]string(nil), prefix...)
-			childPath = append(childPath, definition.Path[len(prefix)])
+			childPath = append(childPath, path[len(prefix)])
 			key := strings.Join(childPath, " ")
 			child := Definition{
 				Path:    childPath,
 				Summary: groupSummary(childPath, definition.Summary),
 			}
-			if len(definition.Path) == len(childPath) {
+			if len(path) == len(childPath) {
 				child = definition
+				child.Path = path
 			}
 			if existing, ok := seen[key]; ok {
 				if len(child.Path) < len(existing.Path) || existing.Handler == nil && child.Handler != nil {
@@ -182,6 +233,13 @@ func (r Registry) Children(prefix ...string) []Definition {
 		return children[i].PathString() < children[j].PathString()
 	})
 	return children
+}
+
+func definitionPaths(definition Definition) [][]string {
+	paths := make([][]string, 0, 1+len(definition.Aliases))
+	paths = append(paths, definition.Path)
+	paths = append(paths, definition.Aliases...)
+	return paths
 }
 
 func (r Registry) FirstSegments() []Definition {
@@ -217,9 +275,11 @@ func validateDefinition(definition Definition) error {
 	if len(definition.Path) == 0 {
 		return errors.New("command path is required")
 	}
-	for _, segment := range definition.Path {
-		if strings.TrimSpace(segment) == "" || strings.Contains(segment, " ") {
-			return fmt.Errorf("invalid command path segment %q", segment)
+	for _, path := range append([][]string{definition.Path}, definition.Aliases...) {
+		for _, segment := range path {
+			if strings.TrimSpace(segment) == "" || strings.Contains(segment, " ") {
+				return fmt.Errorf("invalid command path segment %q", segment)
+			}
 		}
 	}
 	if strings.TrimSpace(definition.Summary) == "" {
@@ -287,13 +347,19 @@ func groupSummary(path []string, fallback string) string {
 		return "Initialize workspaces and inspect daemon state."
 	case "daemon":
 		return "Daemon control and inspection commands."
-	case "chain":
+	case "chain", "chains":
 		return "Build and manage operator chains."
+	case "op":
+		return "Create, select, and inspect operations."
 	case "config":
 		return "Set, list, and fix configuration."
-	case "modules":
+	case "module", "modules":
 		return "Browse, search, and inspect modules."
-	case "targets":
+	case "throws":
+		return "List and inspect throws."
+	case "session", "sessions":
+		return "List and interact with post-exploitation sessions."
+	case "target", "targets":
 		return "Add and configure chain targets."
 	default:
 		return fallback

@@ -9,6 +9,7 @@ filegroup(
 
 sh_test(
     name = "site_smoke_test",
+    size = "small",
     srcs = ["//tools/tests:site_smoke_test.sh"],
     args = [
         "$(rootpath :index.html)",

@@ -5,20 +5,61 @@ go_library(
     srcs = [
         "daemon_store.go",
         "lock.go",
+        "lock_posix.go",
+        "lock_unsupported.go",
         "workspace_store.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem",
     visibility = ["//visibility:public"],
     deps = [
+        "//internal/adapters/storage/sqlite",
         "//internal/app/commands",
+        "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/daemon",
+        "//internal/domain/event",
         "//internal/domain/workspace",
-    ],
+    ] + select({
+        "@rules_go//go/platform:aix": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:android": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:darwin": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:dragonfly": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:freebsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:illumos": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:ios": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:linux": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:netbsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:openbsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:solaris": [
+            "@org_golang_x_sys//unix",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 go_test(
     name = "filesystem_test",
+    size = "small",
     srcs = [
         "daemon_store_test.go",
         "lock_test.go",
@@ -26,7 +67,9 @@ go_test(
     ],
     embed = [":filesystem"],
     deps = [
+        "//internal/adapters/storage/sqlite",
         "//internal/app/commands",
+        "//internal/app/operatorsession",
         "//internal/domain/daemon",
         "//internal/domain/workspace",
     ],
