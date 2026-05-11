@@ -4,5 +4,6 @@
 
 Hovel is a Go-hosted framework for authorized security research, adversary emulation, lab exploitation, defensive validation, and operator workflow automation.
 
-> The project documentation lives as a static website rooted at [`index.html`](index.html).
-> Open it in a browser, or start at [`spec/index.html`](spec/index.html) for the specification.
+## → [vibe-pwners.github.io/hovel](https://vibe-pwners.github.io/hovel/index.html) ←
+
+The project documentation is a static website. The site source is rooted at [`index.html`](index.html); open it locally or visit the deployed link above.
