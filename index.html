@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hovel — authorized security research framework</title>
+  <meta name="description" content="A Go-hosted framework for authorized security research, adversary emulation, lab exploitation, defensive validation, and operator workflow automation.">
+  <link rel="icon" type="image/png" href="assets/hovel.png">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html">
+      <img src="assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// v0.0.0</span>
+    </a>
+    <nav class="top-nav">
+      <a href="index.html" aria-current="page">Home</a>
+      <a href="spec/index.html">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="hero-text">
+      <p class="hero-tag">// authorized security research</p>
+      <h1>Hovel</h1>
+      <p class="hero-lede">
+        A Go-hosted framework for authorized security research, adversary emulation,
+        lab exploitation, defensive validation, and operator workflow automation.
+      </p>
+      <p>
+        <a class="cta" href="spec/introduction.html">Read the spec →</a>
+        <a class="cta ghost" href="spec/milestone-1-tdd-plan.html">Milestone 1 plan</a>
+      </p>
+    </div>
+    <img src="assets/hovel.png" alt="hovel logo" class="hero-img">
+  </section>
+
+  <main class="content" style="max-width: 1080px; margin: 0 auto; padding: 2rem 2.5rem 3rem;">
+    <h2>The pitch</h2>
+    <blockquote>
+      <p>
+        As a red-team operator, I want one local engine to manage modules,
+        services, providers, runs, events, and artifacts.
+      </p>
+      <p>
+        As an exploit developer or module author, I want a clear descriptor
+        and testable runtime contract so third-party capabilities are easy to
+        build, inspect, and operate safely.
+      </p>
+    </blockquote>
+
+    <h2>What is here</h2>
+    <p>
+      Hovel is a platform for wrapping and operating third-party proofs of concept,
+      not a catalog of first-party exploits. The project provides the engine, SDKs,
+      descriptors, providers, guardrails, examples, and operator experience that
+      make third-party modules acceptable to run and inspect.
+    </p>
+    <p>
+      The central runtime is a local engine, <code>hoveld</code>, which owns runs,
+      module processes, managed services, provider state, events, artifacts, and
+      workspace storage. <code>command</code> mode, interactive <code>cli</code>
+      mode, the TUI, REST, and MCP are clients over the same application services.
+    </p>
+
+    <h2>Start here</h2>
+    <div class="tiles">
+      <a class="tile" href="spec/introduction.html">
+        <span class="tile-label">01 // Read</span>
+        <span class="tile-title">Introduction</span>
+        <span class="tile-desc">Core decisions, product shape, MVP boundaries.</span>
+      </a>
+      <a class="tile" href="spec/architecture.html">
+        <span class="tile-label">02 // Read</span>
+        <span class="tile-title">Architecture</span>
+        <span class="tile-desc">Daemon contract, application services, command registry.</span>
+      </a>
+      <a class="tile" href="spec/modules-services.html">
+        <span class="tile-label">03 // Read</span>
+        <span class="tile-title">Modules &amp; services</span>
+        <span class="tile-desc">Runtime, lifecycle, Python SDK, protocol position.</span>
+      </a>
+      <a class="tile" href="spec/testing-roadmap.html">
+        <span class="tile-label">04 // Read</span>
+        <span class="tile-title">Testing &amp; roadmap</span>
+        <span class="tile-desc">Contract tests, coverage targets, milestones 1–8.</span>
+      </a>
+      <a class="tile" href="spec/index.html">
+        <span class="tile-label">// Full</span>
+        <span class="tile-title">Spec index</span>
+        <span class="tile-desc">Every chapter, in order.</span>
+      </a>
+      <a class="tile" href="spec/safety.html">
+        <span class="tile-label">// Safety</span>
+        <span class="tile-title">Scope &amp; trust</span>
+        <span class="tile-desc">What Hovel is for, and what it is not.</span>
+      </a>
+    </div>
+
+    <h2>Build it</h2>
+    <pre data-lang="bash"><code>bazel build //...
+bazel test //...
+bazel run //:gazelle</code></pre>
+  </main>
+
+  <footer class="sitefoot">
+    <p>Hovel · authorized security research · <a href="LICENSE">LICENSE</a> · <a href="https://github.com/Vibe-Pwners/hovel">github.com/Vibe-Pwners/hovel</a></p>
+  </footer>
+</body>
+</html>

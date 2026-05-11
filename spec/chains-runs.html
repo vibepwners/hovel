@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operations, Chains, and Throws — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html" aria-current="page">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Operations, Chains, and Throws</h1>
+
+        <p>Operations are the durable work context. Chains are workflows with typed steps inside an operation. Throws are replay-inspectable executions of a chain against targets.</p>
+        <p>Chains have three related forms:</p>
+        <ol>
+          <li>An interactive chain record owned by an operation and edited through <code>hovel cli</code>.</li>
+          <li>A chain template, which is a targetless reusable chain definition with steps and configuration schema but without target assignments.</li>
+          <li>A configured chain file, which fully represents a chain, its steps, configuration schema, configured values, target assignments, and target config for review, sharing, and one-shot execution.</li>
+        </ol>
+        <p>Interactive editing and persistent representation are separate concerns. <code>chain add &lt;module&gt;</code> remains the fast CLI workflow for building a chain. <code>chain save &lt;file&gt;</code> writes the active chain to a YAML file, and <code>chain load &lt;file&gt;</code> imports or updates a chain from that file. One-shot shell execution throws a configured chain file rather than relying on prompt session state. Target config is essential to configured chain files because it is part of what the operator reviews and confirms before throwing.</p>
+        <p>The first chain thrower should be intentionally small. It should support sequential steps, literal inputs, <code>${inputs.*}</code> references, <code>${steps.&lt;id&gt;.output}</code> references, per-step events, cancellation, and artifact creation. It should not initially support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.</p>
+        <p>Operator-facing chain records are CRUD resources. A chain can be created, selected with <code>chain use</code>, renamed, inspected, listed, deleted, and then thrown against the targets it owns. The active chain is client attachment state: it determines that client's prompt context, default targets for <code>throw</code>, and log topic subscription without changing another client's active chain.</p>
+        <p>Targets are owned by chains in the operator workflow. A target added while <code>alpha</code> is active belongs to <code>alpha</code>; switching that same client to <code>beta</code> exposes <code>beta</code>'s target set instead. Chain logs follow the same boundary: <code>chain logs</code> renders the active chain's operation-scoped topic only, and multi-client front ends attached to the same operation and chain observe the same topic.</p>
+
+        <h2>Operation Attachments</h2>
+        <p>Each CLI, TUI, REST, or MCP client attaches to exactly one operation at a time and keeps its own active chain selection.</p>
+        <p>Concurrency rules:</p>
+        <ol>
+          <li><code>op use &lt;operation&gt;</code> changes only the caller's attached operation.</li>
+          <li><code>chain use &lt;chain&gt;</code> changes only the caller's active chain inside the attached operation.</li>
+          <li><code>chain add</code>, <code>target add</code>, <code>chain config</code>, <code>target config</code>, <code>chain validate</code>, and <code>throw</code> without <code>--chain</code> use the caller's active chain.</li>
+          <li>Saved chain-file throws import or execute the file without moving another client's active chain.</li>
+          <li>Mutations to one shared chain are serialized by the daemon and broadcast to subscribers of <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>.</li>
+          <li>Different clients may work different chains in the same operation concurrently.</li>
+        </ol>
+
+        <h2>Chain Definition</h2>
+        <p>Example:</p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: Chain
+metadata:
+  name: ssh-memory
+spec:
+  inputs:
+    target:
+      type: targetRef
+    payload:
+      type: payloadRef
+  phases:
+    - name: service_prepare
+      steps:
+        - id: start-lp
+          uses: service:sshplant-lp.start_listener
+          with:
+            bindHost: 127.0.0.1
+            bindPort: 0
+    - name: survey
+      steps:
+        - id: ssh-survey
+          uses: module:ssh-survey
+          with:
+            target: ${inputs.target}
+    - name: prepare
+      steps:
+        - id: resolve-payload
+          uses: provider:payload.resolve
+          with:
+            payload: ${inputs.payload}
+            facts: ${steps.ssh-survey.output.facts}
+            listener: ${steps.start-lp.output}
+    - name: deliver
+      steps:
+        - id: ssh-deliver
+          uses: module:ssh-deliver
+          with:
+            target: ${inputs.target}
+            payload: ${steps.resolve-payload.output}
+    - name: execute
+      steps:
+        - id: ssh-execute
+          uses: module:ssh-execute
+          with:
+            target: ${inputs.target}
+            delivered: ${steps.ssh-deliver.output}
+    - name: collect
+      steps:
+        - id: collect-artifacts
+          uses: module:artifact-collect
+    - name: service_cleanup
+      steps:
+        - id: stop-lp
+          uses: service:sshplant-lp.stop_listener
+          with:
+            listener: ${steps.start-lp.output}
+</code></pre>
+        <p>A chain template records reusable workflow shape:</p>
+        <ol>
+          <li>Chain identity and version.</li>
+          <li>Ordered phases and steps.</li>
+          <li>Module references with resolved versions when available.</li>
+          <li>Chain-level and target-level configuration schema.</li>
+          <li>Expected providers, services, listeners, sessions, and artifacts when known.</li>
+        </ol>
+        <p>A configured chain file must contain enough information to reconstruct the review surface without relying on hidden prompt state. At minimum it records:</p>
+        <ol>
+          <li>Everything in the chain template.</li>
+          <li>Chain-level configured values.</li>
+          <li>Target list.</li>
+          <li>Per-target configuration values.</li>
+          <li>Risk and confirmation metadata produced by planning.</li>
+        </ol>
+
+        <h2>First Thrower Requirements</h2>
+        <p>The first thrower must support:</p>
+        <ol>
+          <li>Sequential steps.</li>
+          <li>Simple input and step-output references.</li>
+          <li>Per-step status and logging.</li>
+          <li>Artifact creation.</li>
+          <li>Fact propagation as ordinary step output.</li>
+          <li>Cancellation between steps.</li>
+          <li>Persisted throw plans and throw records.</li>
+          <li>Confirmation records, including prompt confirmations and <code>--now</code> bypass confirmations.</li>
+          <li>Service start/stop steps once the service manager milestone is complete.</li>
+        </ol>
+        <p><code>review</code> and <code>throw</code> share the same planning and review code path. <code>confirm</code> stops after recording a pre-confirmation. <code>review</code> always displays the reviewed plan, requires the operator to type <code>yes</code>, and records or refreshes the confirmation without starting execution. <code>throw</code> starts execution only after an existing confirmation, an inline typed <code>yes</code>, or an explicit <code>--now</code> bypass has produced a confirmation record.</p>
+
+        <h2>Eventual Throw Runtime Requirements</h2>
+        <p>The eventual chain runtime should support:</p>
+        <ol>
+          <li>Sequential steps.</li>
+          <li>Parallel steps across targets.</li>
+          <li>Conditional branches.</li>
+          <li>Step retries.</li>
+          <li>Timeouts.</li>
+          <li>Cancellation.</li>
+          <li>Service startup.</li>
+          <li>Service teardown.</li>
+          <li>Per-step logging.</li>
+          <li>Per-service logging.</li>
+          <li>Per-target status.</li>
+          <li>Artifact creation.</li>
+          <li>Fact propagation.</li>
+          <li>Listener and session state.</li>
+        </ol>
+
+        <h2>Productizing PoCs</h2>
+        <p>Hovel exists because productizing proofs of concept is hard. A chain should absorb the work needed to turn a crude one-off script into a repeatable operator workflow:</p>
+        <ol>
+          <li>Input validation.</li>
+          <li>Target normalization.</li>
+          <li>Survey and fact collection.</li>
+          <li>Payload selection.</li>
+          <li>Listener startup.</li>
+          <li>Transport selection.</li>
+          <li>Error handling.</li>
+          <li>Artifact and transcript capture.</li>
+          <li>Cleanup.</li>
+          <li>Logging.</li>
+          <li>Multi-target execution.</li>
+        </ol>
+
+        <h2>Conceptual SSH Memory Chain</h2>
+        <p>This chain is a conceptual example, not an MVP dependency. It uses authenticated SSH as a transport and demonstrates payload delivery/execution in a controlled authorized environment.</p>
+        <p>The Hovel repository should not need to provide the payload generator, listening post, or target-specific execution components for this example. Those should arrive through providers, managed services, or third-party modules.</p>
+        <p>Phases:</p>
+<pre data-lang="phases"><code>service_prepare
+survey
+resolve_payload
+prepare_delivery
+execute
+collect
+cleanup
+service_cleanup
+</code></pre>
+        <p>Survey questions:</p>
+        <ol>
+          <li>What OS is the target?</li>
+          <li>What architecture is the target?</li>
+          <li>Is <code>/dev/shm</code> present?</li>
+          <li>Is <code>/tmp</code> memory-backed?</li>
+          <li>Is Python 3 present?</li>
+          <li>What shell is available?</li>
+          <li>Are required environment variables present?</li>
+          <li>What execution constraints exist?</li>
+        </ol>
+        <p>Delivery strategy categories:</p>
+<pre data-lang="strategies"><code>stdin_loader
+python_ctypes_loader
+tmpfs_exec
+command_only
+</code></pre>
+        <p>Public examples should keep payloads benign and lab-oriented.</p>
+        <p>Expected outputs:</p>
+        <ol>
+          <li>Target facts.</li>
+          <li>Started services.</li>
+          <li>Started listeners.</li>
+          <li>Selected strategy.</li>
+          <li>Payload metadata.</li>
+          <li>Execution transcript.</li>
+          <li>Session refs.</li>
+          <li>Artifacts.</li>
+          <li>Result status.</li>
+          <li>Cleanup status.</li>
+        </ol>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="providers-artifacts.html">← Providers, Artifacts, Logging</a>
+        <span class="spacer"></span>
+        <a class="next" href="operator-workflows.html">Operator Workflows →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

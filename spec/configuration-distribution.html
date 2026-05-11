@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configuration and Distribution — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html" aria-current="page">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Configuration and Distribution</h1>
+        <p>Configuration should be explicit, schema-validated, and easy to inspect.</p>
+
+        <h2>Global Config</h2>
+<pre data-lang="yaml"><code>theme: acid
+workspace: .hovel
+modules:
+  searchPaths:
+    - ./modules
+    - ~/.hovel/modules
+services:
+  searchPaths:
+    - ./services
+    - ~/.hovel/services
+runtime:
+  python:
+    interpreter: python3
+    preferPex: true
+logging:
+  level: info
+  captureStdout: sdk
+  captureStderr: true
+</code></pre>
+
+        <h2>Workspace Config</h2>
+<pre data-lang="yaml"><code>name: lab
+artifactRetentionDays: 30
+allowDangerousModules: false
+requireAuthorizationBanner: true
+defaultConcurrency: 8
+services:
+  autoStart: []
+  allowRunScoped: true
+guardrails:
+  requireThrowConfirmation: true
+  requireConfirmationFor:
+    - external_bind
+    - dangerous_module
+    - credential_use
+  mcp:
+    parity: true
+    requirePlanReview: true
+</code></pre>
+        <p>Module and service configs should be schema-validated.</p>
+
+        <h2>Build Strategy</h2>
+        <p>Hovel should start as a monorepo because in-tree modules, services, SDKs, schemas, CLI, TUI, API, and MCP adapters need to evolve together.</p>
+        <p>Bazel is the authoritative build, test, docs, and release interface from day one. Ordinary Go and Python tooling may remain useful for local authoring, but CI and project workflows should go through Bazel.</p>
+        <p>Initial Bazel responsibilities:</p>
+        <ol>
+          <li>Build and test all Go packages and binaries.</li>
+          <li>Build and test the Python SDK.</li>
+          <li>Build the static documentation site from the in-tree HTML sources.</li>
+          <li>Run Gazelle for Go BUILD file generation.</li>
+          <li>Own generated schemas and contract-test outputs.</li>
+          <li>Produce release archives when binaries exist.</li>
+        </ol>
+        <p>The minimum repository contract is:</p>
+<pre data-lang="bash"><code>bazel build //...
+bazel test //...
+bazel run //:gazelle
+</code></pre>
+        <p>Non-Bazel scripts should be convenience wrappers over Bazel targets, not alternate build systems.</p>
+
+        <h2>Distribution</h2>
+        <p>Primary distribution should be native Go binaries:</p>
+<pre data-lang="binaries"><code>hovel-linux-amd64
+hovel-linux-arm64
+hovel-darwin-arm64
+hovel-windows-amd64.exe
+hoveld-linux-amd64
+hoveld-linux-arm64
+hoveld-darwin-arm64
+hoveld-windows-amd64.exe
+</code></pre>
+        <p>The <code>hovel</code> binary is the production mono-binary. It includes <code>cli</code>, one-shot chain-file execution, <code>daemon</code>, and <code>tui</code> roles. A separate <code>hoveld</code> binary may exist only as a development shim if it materially improves local testing; it is not the product contract.</p>
+        <p>Hovel may also publish a PyPI wrapper for Python-centric users:</p>
+<pre data-lang="bash"><code>uvx hovel throw ./ssh-memory.chain.yaml
+</code></pre>
+        <p>The wrapper should expose the same one-shot confirmation behavior as the native binary:</p>
+<pre data-lang="bash"><code>uvx hovel throw ./ssh-memory.chain.yaml --now
+</code></pre>
+        <p>The PyPI package may download or include the Go binary, similar to other compiled tools distributed through Python package indexes.</p>
+        <p>Module and service sources:</p>
+        <ol>
+          <li>In-tree modules and services in the monorepo, loaded through the ordinary module and service contracts.</li>
+          <li>Local module and service directories.</li>
+          <li>Git repositories.</li>
+          <li>PEX packages.</li>
+          <li>Native binaries.</li>
+          <li>Future registry.</li>
+        </ol>
+
+        <h2>Terminal Libraries And Theming</h2>
+        <p>The interactive <code>cli</code> shell should use go-prompt for prompt input, history, suggestions, and completions. The <code>cli</code> shell and TUI should share a small theme system without making theme work part of the critical MVP path. Lip Gloss is the styling engine for terminal presentation, with shared tokens for colors, borders, severity, focus, muted text, success, warning, danger, and active throw state.</p>
+        <p>Initial theme names:</p>
+<pre data-lang="themes"><code>31337
+acid
+bloodmoon
+ghost
+crt
+paperhovel
+midnight
+amberterm
+</code></pre>
+        <p>The visual target is a readable 1337 operator console with high contrast, tight navigation, and clear live status. The look should feel distinctive, but output must remain usable in low-color terminals, over SSH, in logs, and with <code>--no-color</code>. Animation should clarify state changes, not compete with the work.</p>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="front-ends.html">← Front Ends</a>
+        <span class="spacer"></span>
+        <a class="next" href="testing-roadmap.html">Testing &amp; Roadmap →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

@@ -15,14 +15,15 @@ filegroup(
 filegroup(
     name = "docs_sources",
     srcs = [
-        "spec.md",
-        "//spec:sources",
+        "index.html",
+        "//assets:site_assets",
+        "//spec:site",
     ],
 )
 
 filegroup(
     name = "docs",
-    srcs = ["//spec:book"],
+    srcs = [":docs_sources"],
 )
 
 filegroup(
@@ -69,6 +70,6 @@ test_suite(
         "//internal/modules/pythonrpc:pythonrpc_test",
         "//schemas:schema_smoke_test",
         "//sdk/python:hovel_sdk_test",
-        "//spec:book_smoke_test",
+        "//spec:site_smoke_test",
     ],
 )

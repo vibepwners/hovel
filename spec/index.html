@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Specification — Hovel</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html" aria-current="page">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Hovel Specification</h1>
+        <p>
+          Status: Draft 0.3. Audience: Hovel maintainers, module authors,
+          service authors, and operator-tooling engineers.
+        </p>
+
+        <h2>Specification</h2>
+        <div class="tiles">
+          <a class="tile" href="introduction.html">
+            <span class="tile-label">01</span>
+            <span class="tile-title">Introduction</span>
+            <span class="tile-desc">Core decisions, product shape, MVP boundaries, alpha deferrals.</span>
+          </a>
+          <a class="tile" href="safety.html">
+            <span class="tile-label">02</span>
+            <span class="tile-title">Safety and Scope</span>
+            <span class="tile-desc">Caller trust model, safety requirements, code trust model.</span>
+          </a>
+          <a class="tile" href="architecture.html">
+            <span class="tile-label">03</span>
+            <span class="tile-title">Architecture</span>
+            <span class="tile-desc">Engine, daemon contract, application services, command registry.</span>
+          </a>
+          <a class="tile" href="domain-model.html">
+            <span class="tile-label">04</span>
+            <span class="tile-title">Domain Model</span>
+            <span class="tile-desc">Workspaces, operations, targets, modules, services, providers, chains, throws.</span>
+          </a>
+          <a class="tile" href="modules-services.html">
+            <span class="tile-label">05</span>
+            <span class="tile-title">Modules and Services</span>
+            <span class="tile-desc">Runtime, lifecycle, Python SDK, protocol position.</span>
+          </a>
+          <a class="tile" href="providers-artifacts.html">
+            <span class="tile-label">06</span>
+            <span class="tile-title">Providers, Artifacts, Logging</span>
+            <span class="tile-desc">Payload providers, listener providers, artifact store, structured logging rail.</span>
+          </a>
+          <a class="tile" href="chains-runs.html">
+            <span class="tile-label">07</span>
+            <span class="tile-title">Operations, Chains, Throws</span>
+            <span class="tile-desc">Operation attachments, chain templates, configured chain files, throw runner.</span>
+          </a>
+          <a class="tile" href="operator-workflows.html">
+            <span class="tile-label">08</span>
+            <span class="tile-title">Operator Workflows</span>
+            <span class="tile-desc">Operation collaboration, throw transcripts, sessions, validation, mock modules.</span>
+          </a>
+          <a class="tile" href="front-ends.html">
+            <span class="tile-label">09</span>
+            <span class="tile-title">Front Ends</span>
+            <span class="tile-desc">cli, one-shot chain-file execution, TUI, REST, MCP — one engine, many adapters.</span>
+          </a>
+          <a class="tile" href="configuration-distribution.html">
+            <span class="tile-label">10</span>
+            <span class="tile-title">Configuration &amp; Distribution</span>
+            <span class="tile-desc">Configs, build strategy, distribution, themes.</span>
+          </a>
+          <a class="tile" href="testing-roadmap.html">
+            <span class="tile-label">11</span>
+            <span class="tile-title">Testing &amp; Roadmap</span>
+            <span class="tile-desc">Test layers, coverage targets, milestones 1–8.</span>
+          </a>
+          <a class="tile" href="milestone-1-tdd-plan.html">
+            <span class="tile-label">12</span>
+            <span class="tile-title">Milestone 1 TDD Plan</span>
+            <span class="tile-desc">Scope, domain boundaries, TDD sequence, definition of done.</span>
+          </a>
+        </div>
+
+        <h2>Reference</h2>
+        <div class="tiles">
+          <a class="tile" href="reference/descriptors.html">
+            <span class="tile-label">Ref</span>
+            <span class="tile-title">Descriptors and Schemas</span>
+            <span class="tile-desc">Module, chain, service, execute, event, schema files.</span>
+          </a>
+        </div>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="../index.html">← Home</a>
+        <span class="spacer"></span>
+        <a class="next" href="introduction.html">Introduction →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

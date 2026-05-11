@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Milestone 1 TDD Plan — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html" aria-current="page">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Milestone 1 TDD Plan</h1>
+
+        <p>Milestone 1 should establish the Bazel-first Go skeleton, domain vocabulary, workspace initialization, daemon contract, descriptor validation shape, event model, and in-process test harness. It should not include real module execution.</p>
+        <p>The implementation approach is domain-driven design with test-driven development:</p>
+        <ol>
+          <li>Write a failing acceptance or contract test.</li>
+          <li>Add the smallest domain, application, or adapter code that passes.</li>
+          <li>Refactor toward clear bounded contexts and ports.</li>
+          <li>Repeat until the milestone definition of done is satisfied.</li>
+        </ol>
+
+        <h2>Target Scope</h2>
+        <p>Milestone 1 should deliver:</p>
+        <ol>
+          <li><code>cmd/hovel</code>.</li>
+          <li>Mono-binary daemon role through <code>hovel daemon</code>.</li>
+          <li><code>internal/domain/...</code>.</li>
+          <li><code>internal/app/services/...</code>.</li>
+          <li><code>internal/adapters/cli/...</code>.</li>
+          <li><code>internal/adapters/storage/...</code>.</li>
+          <li><code>internal/infra/...</code>.</li>
+          <li>Workspace initialization.</li>
+          <li>Daemon status model.</li>
+          <li>Workspace locking contract.</li>
+          <li>Event model.</li>
+          <li>Module and service descriptor schema files.</li>
+          <li>In-process application service test harness.</li>
+        </ol>
+        <p>Milestone 1 should not deliver the Python module runtime, real managed services, provider-backed payload resolution, chain execution, REST, MCP execution, or the TUI.</p>
+
+        <h2>Domain Boundaries</h2>
+        <p>Initial bounded contexts:</p>
+<pre data-lang="contexts"><code>workspace
+event
+module
+service
+throw
+guardrail
+</code></pre>
+        <p>The domain layer must stay pure. Domain packages must not import CLI, Cobra, filesystem adapters, SQLite, sockets, JSON-RPC, YAML parsers, or generated transport code.</p>
+        <p>Responsibilities:</p>
+        <ol>
+          <li><code>workspace</code>: workspace identity, paths, lock ownership, and config concepts.</li>
+          <li><code>event</code>: domain event types, event envelope, and event bus port.</li>
+          <li><code>module</code>: module descriptor identity and validation concepts.</li>
+          <li><code>service</code>: service descriptor identity and validation concepts.</li>
+          <li><code>throw</code>: throw IDs and initial throw-plan placeholders only.</li>
+          <li><code>guardrail</code>: initial scope-check placeholders only.</li>
+        </ol>
+        <p>Adapters translate CLI flags, files, daemon transports, and storage records into application service calls. Application services coordinate domain behavior through ports.</p>
+
+        <h2>TDD Sequence</h2>
+
+        <h3>1. Repository Shape</h3>
+        <p>Write the failing tests first:</p>
+        <ol>
+          <li><code>bazel test //...</code> discovers at least one Go or shell test target.</li>
+          <li><code>bazel run //:gazelle -- -mode=diff</code> succeeds.</li>
+        </ol>
+        <p>Then implement:</p>
+        <ol>
+          <li>Empty Go package skeletons.</li>
+          <li>BUILD targets generated or accepted by Gazelle.</li>
+          <li>One smoke test that keeps the test graph non-empty.</li>
+        </ol>
+
+        <h3>2. Workspace Domain</h3>
+        <p>Write domain unit tests first:</p>
+        <ol>
+          <li>Workspace names validate allowed and rejected values.</li>
+          <li>Default workspace path resolves to <code>.hovel</code>.</li>
+          <li>Workspace IDs are non-empty value objects.</li>
+          <li>Workspace identity does not depend on filesystem access.</li>
+        </ol>
+        <p>Then implement <code>internal/domain/workspace</code>.</p>
+
+        <h3>3. Workspace Init Service</h3>
+        <p>Write application service tests first:</p>
+        <ol>
+          <li><code>InitWorkspace</code> creates the expected workspace metadata model.</li>
+          <li>Re-running <code>InitWorkspace</code> is idempotent.</li>
+          <li><code>InitWorkspace</code> emits a domain event.</li>
+        </ol>
+        <p>Write adapter tests with temporary directories:</p>
+        <ol>
+          <li><code>.hovel/</code> is created.</li>
+          <li>Workspace config is created.</li>
+          <li>Initial storage directories are created.</li>
+          <li>Existing valid workspace data is preserved.</li>
+        </ol>
+        <p>Then implement <code>WorkspaceService</code> and filesystem-backed storage ports.</p>
+
+        <h3>4. CLI <code>control init</code></h3>
+        <p>Write CLI golden tests first:</p>
+        <ol>
+          <li>Workspace initialization has a stable CLI flow.</li>
+          <li>Workspace initialization can emit structured JSON where automation needs it.</li>
+          <li>Invalid workspace paths return a non-zero exit and a stable error.</li>
+        </ol>
+        <p>Then implement the minimal CLI adapter. The CLI should call application services only.</p>
+
+        <h3>5. Event Model</h3>
+        <p>Write domain tests first:</p>
+        <ol>
+          <li>Events require IDs.</li>
+          <li>Event types are validated.</li>
+          <li>Timestamps are present.</li>
+          <li>Events can carry workspace, throw, module, service, and target references.</li>
+        </ol>
+        <p>Write application tests:</p>
+        <ol>
+          <li>Workspace initialization emits <code>workspace.initialized</code>.</li>
+          <li>Events are available through an in-memory event sink in tests.</li>
+        </ol>
+        <p>Then implement the event model and in-memory event bus port implementation.</p>
+
+        <h3>6. Descriptor Schema Files</h3>
+        <p>Write schema smoke tests first:</p>
+        <ol>
+          <li>Module schema file exists.</li>
+          <li>Service schema file exists.</li>
+          <li>A valid minimal module descriptor passes.</li>
+          <li>An invalid module descriptor fails.</li>
+          <li>A valid minimal service descriptor passes.</li>
+          <li>An invalid service descriptor fails.</li>
+        </ol>
+        <p>Then implement schema files and a validation adapter. The domain should receive validated descriptor structs rather than parsing YAML directly.</p>
+
+        <h3>7. Daemon Identity and Status</h3>
+        <p>Write domain tests first:</p>
+        <ol>
+          <li>Daemon identity includes workspace ID or path.</li>
+          <li>Daemon identity includes PID.</li>
+          <li>Daemon identity includes socket path.</li>
+          <li>Daemon identity includes start time.</li>
+          <li>Daemon identity includes health status.</li>
+        </ol>
+        <p>Write application service tests:</p>
+        <ol>
+          <li><code>DaemonStatus</code> returns <code>not_running</code> before daemon startup.</li>
+          <li><code>DaemonStatus</code> returns the active daemon identity after startup in a harness.</li>
+        </ol>
+        <p>Then implement the daemon status model and service.</p>
+
+        <h3>8. Workspace Locking</h3>
+        <p>Write adapter tests with temporary directories:</p>
+        <ol>
+          <li>First lock acquisition succeeds.</li>
+          <li>Second lock acquisition for the same workspace fails.</li>
+          <li>Lock release permits reacquisition.</li>
+          <li>Stale-lock behavior is explicit and conservative.</li>
+        </ol>
+        <p>Then implement the file lock adapter. The domain may model lock ownership, but real locking remains an infrastructure concern.</p>
+
+        <h3>9. <code>hoveld</code> Skeleton</h3>
+        <p>Write daemon contract tests first:</p>
+        <ol>
+          <li>Start <code>hoveld</code> against a temporary workspace.</li>
+          <li>Wait until it reports healthy.</li>
+          <li>The product daemon-status flow reports the same daemon identity.</li>
+          <li>Duplicate daemon startup for the same workspace is rejected.</li>
+        </ol>
+        <p>Then implement the minimal daemon lifecycle and local transport. The transport can be narrow in Milestone 1, but production <code>hovel</code> commands should exercise the daemon boundary when they claim daemon behavior.</p>
+
+        <h3>10. In-Process Test Harness</h3>
+        <p>Write harness tests first:</p>
+        <ol>
+          <li>Application services can be constructed without a daemon process.</li>
+          <li>Fake storage and event sinks are injectable.</li>
+          <li>The harness uses the same domain logic and guardrail checks as production.</li>
+        </ol>
+        <p>Then implement <code>internal/app/apptest</code> or an equivalent package.</p>
+
+        <h2>Test Layers</h2>
+        <p>Use these layers consistently:</p>
+        <ol>
+          <li>Domain unit tests: fast, deterministic, no filesystem.</li>
+          <li>Application service tests: fake ports, no real daemon.</li>
+          <li>Adapter tests: temporary directories and real file operations.</li>
+          <li>CLI golden tests: stable stdout, stderr, exit codes, and JSON.</li>
+          <li>Daemon contract tests: real process or daemon harness, with production CLI crossing the daemon boundary where applicable.</li>
+        </ol>
+
+        <h2>Definition of Done</h2>
+        <p>Milestone 1 is complete when these commands pass:</p>
+<pre data-lang="bash"><code>bazel build //...
+bazel test //...
+bazel run //:gazelle -- -mode=diff
+</code></pre>
+        <p>The repository should also expose these user-visible flows:</p>
+<pre data-lang="bash"><code>bazel run //cmd/hovel -- cli --workspace /tmp/hovel-lab
+bazel run //cmd/hovel -- daemon status --workspace /tmp/hovel-lab
+</code></pre>
+        <p>The daemon status may be minimal, but the tests must enforce the domain/application/adapter boundaries and the daemon contract.</p>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="testing-roadmap.html">← Testing &amp; Roadmap</a>
+        <span class="spacer"></span>
+        <a class="next" href="reference/descriptors.html">Descriptors &amp; Schemas →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

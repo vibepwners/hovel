@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Descriptors and Schemas — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../../assets/hovel.png">
+  <link rel="stylesheet" href="../../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../../index.html">
+      <img src="../../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../../index.html">Home</a>
+      <a href="../index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="../index.html">Contents</a></li>
+        <li><a href="../introduction.html">Introduction</a></li>
+        <li><a href="../safety.html">Safety and Scope</a></li>
+        <li><a href="../architecture.html">Architecture</a></li>
+        <li><a href="../domain-model.html">Domain Model</a></li>
+        <li><a href="../modules-services.html">Modules and Services</a></li>
+        <li><a href="../providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="../chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="../operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="../front-ends.html">Front Ends</a></li>
+        <li><a href="../configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="../testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="../milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="descriptors.html" aria-current="page">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Descriptors and Schemas</h1>
+
+        <p>Descriptors are the stable boundary between authored content and the Hovel engine. They should be schema-validated and versioned from the beginning.</p>
+        <p>Product authoring uses readable YAML, especially for chain files operators will review and throw from the shell. JSON may exist as an internal canonical form for tests, generated artifacts, and tooling, but YAML is the documented human-authored format for the alpha.</p>
+        <p>Validation has two layers:</p>
+        <ol>
+          <li>Parse YAML into canonical JSON-compatible structs and validate shape with JSON Schema.</li>
+          <li>Run Go domain validation for semantic rules that JSON Schema cannot express cleanly.</li>
+        </ol>
+        <p>TOML is out of scope for the alpha and can be reconsidered after module, service, chain, event, provider, and run-plan schemas are stable.</p>
+
+        <h2>Module Descriptor</h2>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: Module
+metadata:
+  name: ssh-memory
+  version: 0.1.0
+  description: Survey and execute an in-memory payload over SSH in an authorized lab.
+  source:
+    type: git
+    url: https://example.invalid/third-party/ssh-memory
+    revision: abc123
+  tags:
+    - ssh
+    - lab
+    - payload
+spec:
+  runtime:
+    type: jsonrpc-stdio
+    packaging: source
+    entrypoint: python -m hovel_ssh_memory
+  moduleType: exploit
+  inputs:
+    target:
+      type: targetRef
+      required: true
+    port:
+      type: integer
+      default: 22
+    username:
+      type: string
+      required: true
+    auth:
+      type: credentialRef
+      required: true
+    payload:
+      type: payloadRef
+      required: true
+  outputs:
+    session:
+      type: sessionRef
+    artifacts:
+      type: artifactRef[]
+    facts:
+      type: fact[]
+  requires:
+    providers:
+      - payload
+      - credential
+      - artifact
+  capabilities:
+    - survey
+    - deliver
+    - execute
+  risk:
+    network: target
+    writesDisk: false
+    bindsListener: false
+    requiresCredentials: true
+</code></pre>
+
+        <h2>Chain Descriptor</h2>
+        <p>Chains are loadable collections of modules and chain-scoped configuration. A chain definition may reference a module as <code>name@version</code>; a bare <code>name</code> asks the catalog to resolve the latest available version.</p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: Chain
+metadata:
+  name: ssh-memory-flow
+  version: 0.1.0
+  description: Survey a target and run the SSH memory module.
+spec:
+  steps:
+    - id: survey
+      module: ssh-survey
+    - id: exploit
+      module: ssh-memory@0.1.0
+  config:
+    operator.confirmed_lab:
+      type: bool
+      required: true
+</code></pre>
+
+        <h2>Service Descriptor</h2>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: Service
+metadata:
+  name: picblob-provider
+  version: 0.1.0
+  description: External provider adapter for PIC payload bytes.
+spec:
+  runtime:
+    type: jsonrpc-stdio
+    packaging: source
+    entrypoint: python -m hovel_picblob_service
+  serviceType: payload_provider
+  provides:
+    - provider: payload
+      kinds:
+        - pic
+  inputs:
+    arch:
+      type: string
+    os:
+      type: string
+    format:
+      type: string
+  lifecycle:
+    startMode: on_demand
+    healthCheck:
+      method: rpc
+      interval: 5s
+</code></pre>
+        <p>Listener service example:</p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: Service
+metadata:
+  name: sshplant-lp
+  version: 0.1.0
+  description: Go listening post for sshplant sessions.
+spec:
+  runtime:
+    type: jsonrpc-stdio
+    entrypoint: ./sshplant-lp
+  serviceType: listener
+  provides:
+    - provider: listener
+    - provider: session
+  inputs:
+    bindHost:
+      type: string
+      default: 127.0.0.1
+    bindPort:
+      type: integer
+      default: 0
+  lifecycle:
+    startMode: run_scoped
+    healthCheck:
+      method: http
+      path: /healthz
+      interval: 2s
+</code></pre>
+
+        <h2>Execute Request</h2>
+<pre data-lang="yaml"><code>runId: run-uuid
+moduleId: ssh-memory@0.1.0
+targets:
+  - id: target-uuid
+    address: 10.41.32.2
+inputs:
+  port: 22
+  username: user
+  payload:
+    id: payload:sshplant-x86_64-linux
+    kind: elf
+    bytes: !!binary |
+      AAEC...
+    sha256: abc123
+providers:
+  payload: provider-ref
+  artifact: provider-ref
+  facts: provider-ref
+env:
+  HOVEL_RUN_ID: run-uuid
+</code></pre>
+
+        <h2>Execute Result</h2>
+<pre data-lang="yaml"><code>status: succeeded
+facts:
+  - type: os.name
+    value: linux
+    confidence: 0.95
+artifacts:
+  - artifact:artifact-uuid
+findings: []
+outputs:
+  session: session-ref
+</code></pre>
+
+        <h2>Event Shape</h2>
+<pre data-lang="yaml"><code>id: event-uuid
+runId: run-uuid
+targetId: target-uuid
+moduleId: ssh-survey@0.1.0
+type: module.log
+level: info
+message: detected target architecture
+fields:
+  arch: x86_64
+timestamp: 2026-04-25T18:00:00Z
+</code></pre>
+        <p>Service event:</p>
+<pre data-lang="yaml"><code>id: event-uuid
+runId: run-uuid
+serviceId: service:sshplant-lp
+type: service.log
+level: info
+message: listener started
+fields:
+  bindHost: 127.0.0.1
+  bindPort: 49152
+timestamp: 2026-04-25T18:00:00Z
+</code></pre>
+        <p>Artifact event:</p>
+<pre data-lang="yaml"><code>type: artifact.created
+artifactId: artifact-uuid
+name: ssh-transcript.txt
+mediaType: text/plain
+size: 1234
+sha256: abc123
+</code></pre>
+
+        <h2>Schema Files</h2>
+<pre data-lang="tree"><code>schemas/
+  hovel.module.schema.json
+  hovel.service.schema.json
+  hovel.chain.schema.json
+  hovel.throw-plan.schema.json
+  hovel.event.schema.json
+  hovel.provider.schema.json
+</code></pre>
+        <p>Schemas should be hand-authored while the contracts are still moving. Generation from Go types can be reconsidered after the schema contracts stabilize.</p>
+        <p>Module and service schemas are the first slice. Chain and throw-plan schemas are required before chain-file one-shot execution is product-supported. Event and provider schemas become required before external adapters or third-party providers depend on those contracts.</p>
+        <p>Throw-plan schemas should cover planned steps, resolved descriptor versions, risk labels, required confirmations, requested targets, expected services, expected providers, and the confirmation record shape used by <code>StartThrow</code>.</p>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="../milestone-1-tdd-plan.html">← Milestone 1 TDD Plan</a>
+        <span class="spacer"></span>
+        <a class="next" href="../index.html">Contents →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

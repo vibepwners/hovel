@@ -1,25 +1,24 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//tools/mdbook:mdbook.bzl", "mdbook_book")
 
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
-    name = "sources",
-    srcs = ["book.toml"] + glob(["src/**/*.md"]),
-)
-
-mdbook_book(
-    name = "book",
-    srcs = [":sources"],
-    out = "book",
-    config = "book.toml",
-    mdbook = "//tools/mdbook:mdbook",
+    name = "site",
+    srcs = glob(["**/*.html"]),
 )
 
 sh_test(
-    name = "book_smoke_test",
+    name = "site_smoke_test",
     size = "small",
-    srcs = ["//tools/tests:mdbook_smoke_test.sh"],
-    args = ["$(location :book)"],
-    data = [":book"],
+    srcs = ["//tools/tests:site_smoke_test.sh"],
+    args = [
+        "$(rootpath :index.html)",
+        "$(rootpath :introduction.html)",
+        "$(rootpath :reference/descriptors.html)",
+    ],
+    data = [
+        "index.html",
+        "introduction.html",
+        "reference/descriptors.html",
+    ],
 )
