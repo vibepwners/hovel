@@ -1,5 +1,4 @@
 .hovel/
-spec/book/
 .task/
 lefthook-local.yml
 bazel-*

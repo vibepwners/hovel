@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Domain Model — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html" aria-current="page">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
+        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Domain Model</h1>
+        <p>Hovel revolves around these concepts:</p>
+<pre data-lang="concepts"><code>Workspace
+Target
+Fact
+Provider
+Service
+Module
+Payload
+Artifact
+Chain
+Phase
+Step
+Run
+Job
+Event
+Evidence
+Finding
+Transport
+Session
+Listener
+Credential
+</code></pre>
+
+        <h2>Workspace</h2>
+        <p>A workspace is the local project/database context for targets, runs, modules, services, artifacts, evidence, and provider state.</p>
+        <p>MVP storage may be SQLite.</p>
+        <p>Workspace data:</p>
+        <ol>
+          <li>Configuration.</li>
+          <li>Registry metadata.</li>
+          <li>Run history.</li>
+          <li>Target inventory.</li>
+          <li>Facts.</li>
+          <li>Artifacts.</li>
+          <li>Evidence.</li>
+          <li>Provider cache.</li>
+          <li>Logs.</li>
+          <li>Listener and session state.</li>
+        </ol>
+
+        <h2>Target</h2>
+        <p>A target represents something the operator is authorized to test.</p>
+<pre data-lang="yaml"><code>id: target-uuid
+name: router-01
+addresses:
+  - 10.41.32.2
+ports:
+  - 22/tcp
+labels:
+  env: lab
+  owner: will
+facts: []
+</code></pre>
+
+        <h2>Fact</h2>
+        <p>Facts are typed observations about a target.</p>
+<pre data-lang="yaml"><code>type: os.name
+value: linux
+source: ssh-survey
+confidence: 0.95
+</code></pre>
+        <p>Facts must be mergeable, source-attributed, and queryable.</p>
+
+        <h2>Module</h2>
+        <p>A module is a typed user-facing unit of bounded functionality.</p>
+        <p>Initial module types:</p>
+<pre data-lang="types"><code>survey
+exploit
+payload_provider
+</code></pre>
+        <p>The type set must remain expandable after the first mocked UI stage.</p>
+        <p>A module may be backed by a process, a built-in Go implementation, a service call, or a composition of other modules.</p>
+        <p>Every module may declare required and optional typed configuration keys. Configuration scopes are <code>chain</code> for global chain configuration and <code>target</code> for per-target configuration.</p>
+
+        <h2>Service</h2>
+        <p>A service is a long-lived or reusable capability managed by Hovel.</p>
+        <p>Service examples:</p>
+        <ol>
+          <li>Payload build service.</li>
+          <li>PIC blob generation service.</li>
+          <li>Listening post.</li>
+          <li>Session broker.</li>
+          <li>Credential broker.</li>
+          <li>Artifact HTTP server.</li>
+          <li>Callback listener.</li>
+          <li>Target inventory sync service.</li>
+        </ol>
+        <p>The key distinction:</p>
+<pre data-lang="distinction"><code>Module: run this bounded operation.
+Service: start this capability, keep it alive, expose typed operations, manage lifecycle.
+</code></pre>
+
+        <h2>Provider</h2>
+        <p>A provider supplies typed resources to modules, chains, and services.</p>
+        <p>Provider types in the product model:</p>
+<pre data-lang="providers"><code>PayloadProvider
+ArtifactProvider
+FactProvider
+CredentialProvider
+ListenerProvider
+SessionProvider
+</code></pre>
+        <p>The first provider implementation should only require <code>PayloadProvider</code> and <code>ArtifactProvider</code>. Facts may be plain module outputs at first, and credential, listener, and session providers should wait until service lifecycle, policy review, and artifact/event capture are stable.</p>
+        <p>Future providers may include build, encoder, shellcode, stager, and implant providers.</p>
+        <p>Payload generation is outside the Hovel core. Hovel resolves payload bytes through provider interfaces, tags them with declared metadata, records hashes and artifacts, then passes the bytes to the next module in the chain.</p>
+
+        <h2>Payload</h2>
+        <p>A payload is tagged bytes returned by a provider.</p>
+        <p>Payload types:</p>
+<pre data-lang="kinds"><code>elf
+pe
+pic
+shellcode
+script
+command
+archive
+opaque_blob
+implant
+loader
+</code></pre>
+        <p>Payload metadata:</p>
+<pre data-lang="yaml"><code>id: payload-uuid
+name: sshplant-x86_64-linux
+kind: elf
+arch: x86_64
+os: linux
+format: bytes
+entrypoint: default
+size: 123456
+sha256: abc123
+capabilities:
+  - interactive_session
+  - stdio_transport
+constraints:
+  requiresExec: true
+  writesDisk: false
+requiresPython: false
+</code></pre>
+
+        <h2>Listener</h2>
+        <p>A listener or listening post is a managed service that receives callbacks, brokers sessions, serves staged payloads, or controls post-execution sessions.</p>
+        <p>Lifecycle states:</p>
+<pre data-lang="states"><code>registered
+starting
+listening
+healthy
+degraded
+stopping
+stopped
+failed
+</code></pre>
+
+        <h2>Chain</h2>
+        <p>A chain is an operator-owned workflow record and an ordered graph of phases and steps. Chains are CRUD resources: operators can create, select, rename, inspect, list, and delete them through shared application services.</p>
+        <p>Chains own targets for the current workflow. Adding or clearing targets through an operator front end mutates the active chain's target set, not a global target scratchpad.</p>
+        <p>Chains also own their logging topic. The canonical topic shape is <code>chain/&lt;chain&gt;/logs</code>. A front end only renders logs for the chain it has activated or attached to, while daemon-side storage and event streams keep those logs available for other clients attached to the same chain.</p>
+        <p>Typical phases:</p>
+<pre data-lang="phases"><code>service_prepare
+survey
+prepare
+access
+deliver
+execute
+post
+collect
+cleanup
+service_cleanup
+</code></pre>
+
+        <h2>Run</h2>
+        <p>A run is a concrete execution of a chain or module against one or more targets.</p>
+        <p>Run states:</p>
+<pre data-lang="states"><code>created
+planning
+ready
+starting_services
+running
+paused
+succeeded
+failed
+cancelled
+partial
+cleaning_up
+</code></pre>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="architecture.html">← Architecture</a>
+        <span class="spacer"></span>
+        <a class="next" href="modules-services.html">Modules and Services →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

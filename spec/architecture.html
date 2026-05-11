@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html" aria-current="page">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
+        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Architecture</h1>
+
+        <p>Hovel uses a clean application core with adapters at the edges.</p>
+<pre data-lang="layers"><code>adapters -&gt; app -&gt; domain
+infra    -&gt; app -&gt; domain
+</code></pre>
+        <p>The domain package must not import CLI, TUI, REST, MCP, storage, RPC, concrete module code, or concrete service code.</p>
+
+        <h2>Engine</h2>
+        <p><code>hoveld</code> is the local engine role and is not optional. It is served by the <code>hovel</code> mono-binary rather than a separate production binary. User-facing commands may bootstrap it, but execution happens through the daemon role.</p>
+        <p>It owns:</p>
+        <ol>
+          <li>Workspace database.</li>
+          <li>Run state.</li>
+          <li>Chain execution.</li>
+          <li>Module process lifecycle.</li>
+          <li>Service lifecycle.</li>
+          <li>Provider registry.</li>
+          <li>Artifact store.</li>
+          <li>Event bus.</li>
+          <li>Logging pipeline.</li>
+          <li>REST/OpenAPI endpoint when enabled.</li>
+          <li>MCP endpoint or adapter when enabled.</li>
+          <li>TUI attachment endpoint.</li>
+        </ol>
+        <p>The primary executable is one <code>hovel</code> binary with four top-level roles:</p>
+<pre data-lang="shell"><code>hovel command ...
+hovel cli ...
+hovel daemon ...
+hovel tui ...
+</code></pre>
+        <p>The same binary may expose direct command aliases such as <code>hovel chain ...</code>, <code>hovel modules ...</code>, <code>hovel targets ...</code>, and <code>hovel throw ...</code>. Those aliases must dispatch through the central command registry so command paths, aliases, help, options, and handler bindings remain one shared contract.</p>
+        <p><code>cli</code> and <code>tui</code> must auto-start or attach to the daemon role in local mode. <code>command</code> mode must not silently auto-start the daemon for ordinary operator commands; daemon-backed command invocations should require an already-running daemon, except for explicit daemon-management commands.</p>
+<pre data-lang="modes"><code>managed local mode: hovel cli or hovel tui starts or uses a local daemon
+command mode:       hovel command connects to an existing daemon unless explicitly managing daemon lifecycle
+server mode: hovel daemon serve is explicitly launched and clients attach
+</code></pre>
+        <p>MVP should implement local mode first.</p>
+
+        <h2>Daemon Contract</h2>
+        <p>Daemon-backed <code>hovel</code> operations must resolve a workspace, locate the matching local daemon, wait until it is healthy, then execute through application services. <code>cli</code> and <code>tui</code> may start a managed daemon when none exists. <code>command</code> mode should require an already-running daemon unless the operator explicitly invokes daemon lifecycle management.</p>
+        <p>MVP daemon rules:</p>
+        <ol>
+          <li>One active <code>hoveld</code> per workspace.</li>
+          <li>A workspace lock prevents duplicate daemons from owning the same database.</li>
+          <li>The local client transport is an implementation detail, but must support <code>command</code>, <code>cli</code>, <code>tui</code>, REST, and MCP attaching to the same daemon.</li>
+          <li>Unix-like systems should prefer a Unix domain socket under a workspace or runtime directory with filesystem permissions.</li>
+          <li>Windows should use a named pipe when Windows support is implemented.</li>
+          <li>Daemon identity, socket path, PID, start time, and health status should be inspectable with <code>hovel daemon status</code> and from the shared registry as <code>control daemon status</code>.</li>
+          <li>Tests may use an in-process engine harness, but production commands should exercise the daemon boundary.</li>
+          <li>The first RPC contract should prove a fully mocked throw flow: <code>command</code> mode calls the daemon over local RPC, the daemon invokes a Go mock module through the selected chain, and the result returns through the RPC boundary.</li>
+          <li>Mock exploit modules must not perform network exploitation. They exist to test orchestration, events, artifacts, approvals, and transport boundaries.</li>
+        </ol>
+        <p>Managed daemon ownership rules:</p>
+        <ol>
+          <li>If <code>hovel cli</code> or <code>hovel tui</code> finds an already-running daemon for the workspace, it attaches and leaves that daemon running on exit.</li>
+          <li>If <code>hovel cli</code> or <code>hovel tui</code> starts the daemon because none is running, that daemon is owned by the interactive session.</li>
+          <li>An owned daemon should shut down when the owning <code>cli</code> or <code>tui</code> session exits.</li>
+          <li>Ownership must be explicit in tests: started-by-session daemons are stopped on exit; preexisting daemons are not.</li>
+          <li><code>hovel command</code> should not create a session-owned daemon as a side effect of an ordinary command.</li>
+        </ol>
+
+        <h2>Application Services</h2>
+        <p>Application services are the only things front ends should call.</p>
+        <p>Initial services:</p>
+<pre data-lang="services"><code>ModuleService
+ManagedServiceService
+ProviderService
+TargetService
+PlanningService
+RunService
+ArtifactService
+EventService
+WorkspaceService
+ListenerService
+SessionService
+PolicyService
+</code></pre>
+        <p>Representative methods:</p>
+<pre data-lang="api"><code>ListModules(ctx) ([]ModuleDescriptor, error)
+InspectModule(ctx, moduleID) (ModuleDescriptor, error)
+ListServices(ctx) ([]ServiceDescriptor, error)
+StartService(ctx, ServiceStartRequest) (ServiceID, error)
+StopService(ctx, ServiceID) error
+PlanRun(ctx, RunRequest) (RunPlan, error)
+ApproveRun(ctx, RunPlanID, Approval) (ApprovedRun, error)
+StartRun(ctx, ApprovedRun) (RunID, error)
+StreamEvents(ctx, RunID) (&lt;-chan Event, error)
+CancelRun(ctx, RunID) error
+ResolvePayload(ctx, PayloadQuery) (PayloadRef, error)
+ResolvePayloadBytes(ctx, PayloadQuery) (PayloadBytes, error)
+StartListener(ctx, ListenerRequest) (ListenerRef, error)
+ListSessions(ctx, RunID) ([]SessionRef, error)
+EvaluatePolicy(ctx, ActionRequest) (PolicyDecision, error)
+</code></pre>
+        <p><code>StartRun</code> must not accept a raw <code>RunRequest</code>. A caller first asks for a plan, reviews the policy output, records the approval or confirmation decision, and then starts the approved plan. This keeps CLI, TUI, REST, and MCP on the same safety path.</p>
+
+        <h2>Command Registry</h2>
+        <p>Application command definitions live in a central registry. The registry is the single source of truth for command paths, aliases, arguments, switches, options, defaults, required values, validation, help text, completion metadata, output modes, and handler bindings.</p>
+        <p>The initial operator registry should expose execution through chain and target setup, not a top-level <code>run</code> command:</p>
+<pre data-lang="commands"><code>control init
+control daemon status
+chain create &lt;chain&gt;
+chain use &lt;chain-or-module&gt;
+chain rename &lt;chain&gt; &lt;name&gt;
+chain list
+chain inspect
+chain delete &lt;chain&gt;
+chain logs
+targets add &lt;target&gt;
+targets clear
+throw
+</code></pre>
+        <p>Chains are durable operator resources, not just a transient prompt variable. The selected chain owns its target set and log topic, and target commands mutate only the active chain. Non-interactive <code>command</code> mode and direct command aliases must remain scriptable by accepting explicit options such as <code>hovel command throw --chain mock-exploit --target mock://target</code> or <code>hovel throw --chain mock-exploit --target mock://target</code>.</p>
+        <p>Adapters consume the registry differently:</p>
+        <ol>
+          <li><code>command</code> mode renders registry definitions as argparse parsers.</li>
+          <li><code>cli</code> mode renders registry definitions as go-prompt completions, contextual help, and validated interactive invocations.</li>
+          <li><code>tui</code> mode may use the registry for command palettes and action metadata.</li>
+          <li>MCP and REST may use the registry metadata where useful, but they must still call application services through typed APIs.</li>
+        </ol>
+        <p>Command handlers receive validated invocation objects from the registry layer. They must not parse raw shell strings or argv themselves.</p>
+
+        <h2>Package Layout</h2>
+        <p>Recommended initial Go layout:</p>
+<pre data-lang="tree"><code>hovel/
+  cmd/
+    hovel/
+  internal/
+    app/
+      services/
+      commands/
+      queries/
+    domain/
+      target/
+      module/
+      service/
+      chain/
+      provider/
+      payload/
+      listener/
+      session/
+      run/
+      artifact/
+      event/
+    adapters/
+      command/
+      cli/
+      tui/
+      rest/
+      mcp/
+      modulerpc/
+      servicerpc/
+      storage/
+      logging/
+    ui/
+      terminaltheme/
+      prompt/
+    infra/
+      daemonmanager/
+      process/
+      rpc/
+      sqlite/
+      filesystem/
+      scheduler/
+      supervisor/
+      network/
+  sdks/
+    python/
+      hovel_sdk/
+  modules/
+    builtin/
+    examples/
+  services/
+    examples/
+  schemas/
+</code></pre>
+
+        <h2>Multi-Client Attach</h2>
+        <p>Multiple clients should be able to observe the same engine state:</p>
+        <ol>
+          <li>One operator creates or activates a chain.</li>
+          <li>Another operator attaches with the TUI.</li>
+          <li>MCP tooling attaches to the same chain.</li>
+          <li><code>command</code> invocations query chain, target, run, and log state while the TUI is open.</li>
+          <li>CLI prompt commands query and control the same daemon-owned chain state.</li>
+          <li>The daemon publishes a chain-owned log topic such as <code>chain/&lt;chain&gt;/logs</code>.</li>
+          <li>Clients attached to the same chain see the same chain logs.</li>
+          <li>Clients attached to other chains do not receive those logs by default.</li>
+          <li>Service logs and run events remain centralized and can be correlated back to the owning chain.</li>
+        </ol>
+
+        <h2>Test Harness</h2>
+        <p>Application services must be constructible in-process for unit, contract, and integration tests. The in-process harness should use the same domain logic, policy checks, event bus contracts, descriptor validation, and storage interfaces as <code>hoveld</code>.</p>
+        <p>Production <code>hovel command</code>, <code>hovel cli</code>, and <code>hovel tui</code> behavior should still cross the daemon boundary for daemon-backed operations. Tests may use the in-process harness to keep core behavior fast and deterministic, but daemon-contract tests must verify workspace locking, daemon discovery, managed daemon ownership, health checks, client attachment, and command execution through the local transport.</p>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="safety.html">← Safety and Scope</a>
+        <span class="spacer"></span>
+        <a class="next" href="domain-model.html">Domain Model →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

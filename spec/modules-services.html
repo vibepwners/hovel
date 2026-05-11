@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Modules and Services — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html" aria-current="page">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
+        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Modules and Services</h1>
+        <p>Modules and services are separate domain concepts with separate lifecycle expectations.</p>
+
+        <h2>Module Runtime</h2>
+        <p>The MVP module runtime should optimize for Python ergonomics and debuggability.</p>
+        <p>Runtime types:</p>
+<pre data-lang="runtimes"><code>python-rpc        MVP
+native-builtin    MVP
+process-rpc       later
+go-binary-rpc     later
+rust-binary-rpc   later
+node-rpc          later
+</code></pre>
+        <p>MVP priority:</p>
+        <ol>
+          <li>Python RPC modules.</li>
+          <li>Native built-in Go modules.</li>
+          <li>Generic process fallback only after the Python path is stable.</li>
+        </ol>
+        <p>The host starts module processes, connects to them over a controlled channel, exchanges typed messages, receives structured logs, supervises lifecycle, and persists events.</p>
+
+        <h2>Module Lifecycle</h2>
+<pre data-lang="lifecycle"><code>discover
+validate
+start
+handshake
+configure
+execute
+stream events
+finish
+shutdown
+</code></pre>
+        <p>Every module must provide or emulate:</p>
+<pre data-lang="rpc"><code>handshake() -&gt; ModuleInfo
+schema() -&gt; ModuleSchema
+execute(request: ExecuteRequest) -&gt; ExecuteResult
+shutdown() -&gt; ShutdownResult
+</code></pre>
+        <p>Optional methods:</p>
+<pre data-lang="rpc"><code>plan(request: PlanRequest) -&gt; PlanResult
+validate(request: ValidateRequest) -&gt; ValidateResult
+cancel(request: CancelRequest) -&gt; CancelResult
+stream() -&gt; EventStream
+</code></pre>
+
+        <h2>Service Runtime</h2>
+        <p>Services are long-lived capabilities managed by Hovel.</p>
+        <p>A service may be:</p>
+        <ol>
+          <li>Built into the Go host.</li>
+          <li>A Go binary launched by Hovel.</li>
+          <li>A Python process launched by Hovel.</li>
+          <li>A Rust binary launched by Hovel.</li>
+          <li>A pre-existing process Hovel connects to.</li>
+          <li>A future remote service.</li>
+        </ol>
+        <p>Services expose typed operations to the Hovel engine.</p>
+
+        <h2>Service Lifecycle</h2>
+<pre data-lang="lifecycle"><code>discover
+validate
+start
+handshake
+configure
+health_check
+ready
+serve
+reload
+stop
+cleanup
+</code></pre>
+        <p>Service states:</p>
+<pre data-lang="states"><code>registered
+starting
+configuring
+healthy
+degraded
+failed
+stopping
+stopped
+</code></pre>
+        <p>Start modes:</p>
+<pre data-lang="modes"><code>manual       operator starts explicitly
+on_demand    started when a provider or service is requested
+run_scoped   started for one run and stopped after cleanup
+workspace    started with workspace or daemon
+external     Hovel connects to an already running service
+</code></pre>
+        <p>Every service must implement or emulate:</p>
+<pre data-lang="rpc"><code>handshake() -&gt; ServiceInfo
+schema() -&gt; ServiceSchema
+start(request: StartRequest) -&gt; StartResult
+health() -&gt; HealthResult
+stop(request: StopRequest) -&gt; StopResult
+</code></pre>
+        <p>Provider services additionally implement provider-specific methods.</p>
+        <p>Payload provider service methods:</p>
+<pre data-lang="rpc"><code>list_payloads(query) -&gt; []PayloadRef
+resolve_payload(query) -&gt; PayloadRef
+generate_payload(request) -&gt; PayloadRef
+</code></pre>
+        <p>Listener service methods:</p>
+<pre data-lang="rpc"><code>start_listener(request) -&gt; ListenerRef
+stop_listener(listenerRef) -&gt; StopResult
+list_sessions(listenerRef) -&gt; []SessionRef
+attach_session(sessionRef) -&gt; SessionStream
+close_session(sessionRef) -&gt; CloseResult
+</code></pre>
+
+        <h2>Protocol Position</h2>
+        <p>The first protocol should optimize for simplicity and observability.</p>
+        <p>Recommended MVP:</p>
+        <ol>
+          <li>JSON-RPC over stdio for Python modules.</li>
+          <li>A small shared envelope for logs, events, requests, and responses.</li>
+          <li>Contract tests before broad runtime support.</li>
+          <li>gRPC or socket-based protocols only after contracts settle.</li>
+        </ol>
+        <p>Module and service processes may eventually share one protocol, but that should not be assumed before contract tests prove the common lifecycle and event needs. The Python module contract should harden first.</p>
+        <p>MVP stdio framing:</p>
+        <ol>
+          <li>Use UTF-8 JSON-RPC 2.0 messages.</li>
+          <li>Frame each message with an LSP-style <code>Content-Length: &lt;bytes&gt;\r\n\r\n</code> header.</li>
+          <li>Reserve stdout exclusively for framed protocol messages.</li>
+          <li>Capture Python <code>print()</code>, <code>logging</code>, and stderr in the SDK and forward them as structured log events.</li>
+          <li>Treat malformed frames, unexpected stdout bytes, and protocol timeouts as module failures with persisted events.</li>
+          <li>Support host-to-module cancellation as a JSON-RPC notification.</li>
+          <li>Add a lightweight heartbeat or health request before supporting long-running modules.</li>
+        </ol>
+        <p>Do not use the same byte stream for both RPC frames and arbitrary module output. Modules that write arbitrary bytes directly to file descriptor 1 are incompatible with stdio RPC and should use a later process mode or a dedicated side-channel transport.</p>
+
+        <h2>Python SDK</h2>
+        <p>Python module authors should not have to know about RPC. They should write normal Python with a tiny Hovel SDK surface area.</p>
+        <p>Minimal module:</p>
+<pre data-lang="python"><code>from hovel_sdk import module, Context, Result
+
+@module(name="hello")
+def run(ctx: Context) -&gt; Result:
+    ctx.log.info("hello from module")
+    return Result.ok({"message": "done"})
+</code></pre>
+        <p>Class-based module:</p>
+<pre data-lang="python"><code>from hovel_sdk import HovelModule, Context, Result
+
+class SSHMemoryModule(HovelModule):
+    name = "ssh-memory"
+
+    def run(self, ctx: Context) -&gt; Result:
+        target = ctx.input("target")
+        payload = ctx.providers.payload.resolve(ctx.input("payload"))
+        ctx.log.info("resolved payload", extra={"payload": payload.name})
+        return Result.ok({"target": target})
+</code></pre>
+        <p>Service author experience:</p>
+<pre data-lang="python"><code>from hovel_sdk import service, ServiceContext
+
+@service(name="picblob-provider")
+class PicBlobProvider:
+    def generate_payload(self, ctx: ServiceContext, req):
+        ctx.log.info("generating PIC payload", extra={"arch": req.arch})
+        blob = build_blob(req)
+        return ctx.payloads.bytes(blob, kind="pic", arch=req.arch)
+</code></pre>
+
+        <h2>Python Packaging</h2>
+        <p>Supported packaging options:</p>
+        <ol>
+          <li>Source directory with <code>pyproject.toml</code>.</li>
+          <li>PEX file.</li>
+          <li>Zipapp/pyz.</li>
+          <li>Installed Python package.</li>
+          <li>Arbitrary command.</li>
+        </ol>
+        <p>Recommended sequence:</p>
+        <ol>
+          <li>Start with local source modules and services.</li>
+          <li>Add PEX support for dependency isolation.</li>
+          <li>Add broader package discovery after the descriptor schema is stable.</li>
+        </ol>
+        <p>Descriptor examples:</p>
+<pre data-lang="yaml"><code>runtime:
+  type: python-rpc
+  packaging: source
+  entrypoint: python -m hovel_ssh_memory
+</code></pre>
+<pre data-lang="yaml"><code>runtime:
+  type: python-service-rpc
+  packaging: pex
+  entrypoint: hovel_picblob_service:main
+</code></pre>
+
+        <h2>Logging</h2>
+        <p>The Python SDK must install a logging handler that forwards structured logs to the host.</p>
+<pre data-lang="python"><code>from hovel_sdk import setup_logging
+
+setup_logging()
+</code></pre>
+        <p>If a module uses the <code>@module</code> decorator, <code>@service</code> decorator, or Hovel entrypoint, logging setup should happen automatically.</p>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="domain-model.html">← Domain Model</a>
+        <span class="spacer"></span>
+        <a class="next" href="providers-artifacts.html">Providers, Artifacts, Events →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

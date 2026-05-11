@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Testing and Roadmap — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
+        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html" aria-current="page">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Testing and Roadmap</h1>
+
+        <p>Testing should focus on contracts first. The risk is not only individual functions breaking; it is adapters disagreeing about the same run, service, provider, or event.</p>
+
+        <h2>Go Host Tests</h2>
+        <p>Require:</p>
+        <ol>
+          <li>Unit tests for domain logic.</li>
+          <li>Application service tests.</li>
+          <li>Adapter tests with fake services.</li>
+          <li>Module protocol contract tests.</li>
+          <li>Service protocol contract tests.</li>
+          <li>Supervisor tests.</li>
+          <li>Golden tests for <code>command</code> output.</li>
+          <li>CLI prompt model, completion, and render tests.</li>
+          <li>TUI model/update tests.</li>
+        </ol>
+
+        <h2>Python SDK Tests</h2>
+        <p>Require:</p>
+        <ol>
+          <li>Logging handler tests.</li>
+          <li>RPC protocol tests.</li>
+          <li>Decorator and class module tests.</li>
+          <li>Service decorator tests.</li>
+          <li>Provider client tests.</li>
+          <li>Packaging tests.</li>
+        </ol>
+
+        <h2>Integration Tests</h2>
+        <p>First-slice integration tests:</p>
+        <ol>
+          <li>Host launches Python module.</li>
+          <li>Module handshakes.</li>
+          <li>Module emits logs.</li>
+          <li>Module returns result.</li>
+          <li>Host captures stdout, stderr, and logging as structured events.</li>
+          <li>Host records malformed protocol output as a failed module run.</li>
+          <li><code>command</code> mode displays throw results.</li>
+          <li><code>hovel</code> starts or attaches to <code>hoveld</code>.</li>
+          <li><code>command</code> execution crosses the daemon boundary.</li>
+          <li>Throw plan, approval record, events, artifacts, and final run state are persisted.</li>
+          <li>A command registered in the central registry is available through both <code>command</code> mode and <code>cli</code> mode.</li>
+          <li>Arguments, switches, options, defaults, help, and validation are identical in <code>command</code> mode and <code>cli</code> mode.</li>
+          <li>If <code>cli</code> or <code>tui</code> starts a managed daemon, it stops that daemon on exit.</li>
+          <li>If <code>cli</code> or <code>tui</code> attaches to an existing daemon, it leaves that daemon running on exit.</li>
+          <li>A <code>cli</code> session can select a chain, add targets, and issue <code>throw</code> using session state.</li>
+          <li><code>command</code> mode can issue <code>throw</code> with explicit <code>--chain</code> and <code>--target</code> options without session state.</li>
+        </ol>
+        <p>Follow-on integration tests:</p>
+        <ol>
+          <li>Module requests a provider resource.</li>
+          <li>Host launches managed service.</li>
+          <li>Service handshakes.</li>
+          <li>Service health check passes.</li>
+          <li>Service provides payload or listener resource.</li>
+          <li>MCP can inspect and plan the same throw as <code>command</code> and <code>cli</code> through shared policy checks.</li>
+          <li>MCP can execute only through the shared approval path.</li>
+          <li>TUI consumes event stream.</li>
+        </ol>
+
+        <h2>Coverage Targets</h2>
+        <p>Initial targets:</p>
+<pre data-lang="targets"><code>Domain: 90%+
+Application services: 85%+
+Adapters: practical coverage, not vanity coverage
+Python SDK: 85%+
+</code></pre>
+        <p>Eventually:</p>
+<pre data-lang="targets"><code>Strict branch coverage gates for core packages.
+</code></pre>
+
+        <h2>Milestones</h2>
+
+        <h3>Milestone 1: Skeleton</h3>
+        <ol>
+          <li>Create Go repo skeleton.</li>
+          <li>Add <code>hovel</code> mono-binary root.</li>
+          <li>Add <code>hovel daemon</code> engine skeleton.</li>
+          <li>Add domain packages.</li>
+          <li>Add event model.</li>
+          <li>Add module descriptor schema.</li>
+          <li>Add service descriptor schema.</li>
+          <li>Add local workspace initialization under <code>control init</code>.</li>
+          <li>Add in-process application service test harness.</li>
+          <li>Add daemon status under <code>control daemon status</code> and workspace locking contract.</li>
+        </ol>
+
+        <h3>Milestone 2: Module Runtime</h3>
+        <ol>
+          <li>Implement JSON-RPC-over-stdio module host with <code>Content-Length</code> framing.</li>
+          <li>Implement Python SDK handshake.</li>
+          <li>Implement Python logging handler.</li>
+          <li>Run a toy Python module from Go.</li>
+          <li>Stream logs into <code>command</code> and <code>cli</code>.</li>
+          <li>Persist module execution events.</li>
+          <li>Treat malformed frames and unexpected stdout bytes as module failures.</li>
+        </ol>
+
+        <h3>Milestone 3: Run and Artifact Persistence</h3>
+        <ol>
+          <li>Implement persisted run plans.</li>
+          <li>Implement approval records.</li>
+          <li>Implement run state persistence.</li>
+          <li>Implement artifact provider.</li>
+          <li>Hash-track artifacts and payload-like bytes.</li>
+          <li>Inspect runs and artifacts from <code>command</code> and <code>cli</code>.</li>
+        </ol>
+
+        <h3>Milestone 4: Providers</h3>
+        <ol>
+          <li>Implement payload provider interface.</li>
+          <li>Add local payload registry.</li>
+          <li>Resolve tagged bytes from local or stub providers.</li>
+          <li>Persist payload metadata and hashes before execution when practical.</li>
+          <li>Return payload refs to Python modules.</li>
+        </ol>
+
+        <h3>Milestone 5: Service Manager</h3>
+        <ol>
+          <li>Implement supervised service process manager.</li>
+          <li>Implement service descriptor loading.</li>
+          <li>Implement service handshake.</li>
+          <li>Implement service health checks.</li>
+          <li>Implement toy service that emits logs.</li>
+        </ol>
+
+        <h3>Milestone 6: Chain Runner</h3>
+        <ol>
+          <li>Implement simple sequential chain runner.</li>
+          <li>Add phases and steps.</li>
+          <li>Add service start/stop steps.</li>
+          <li>Add event stream.</li>
+          <li>Add per-target run state.</li>
+          <li>Add cancellation hooks.</li>
+          <li>Support only simple input and step-output references at first.</li>
+        </ol>
+
+        <h3>Milestone 7: Conceptual Chain Demo</h3>
+        <ol>
+          <li>Implement a survey module against controlled lab inputs.</li>
+          <li>Resolve a tagged byte payload from a local or stub provider.</li>
+          <li>Exercise one managed service placeholder.</li>
+          <li>Implement delivery strategy selection without project-owned exploit code.</li>
+          <li>Capture transcript artifact.</li>
+          <li>Produce full run result.</li>
+        </ol>
+
+        <h3>Milestone 8: TUI Alpha</h3>
+        <ol>
+          <li>Add Bubble Tea app.</li>
+          <li>Add dashboard.</li>
+          <li>Add live run view.</li>
+          <li>Add log panel.</li>
+          <li>Add service panel.</li>
+          <li>Add listener/session panel.</li>
+          <li>Add target matrix.</li>
+          <li>Add theme selector.</li>
+          <li>Add README demo.</li>
+          <li>Cut alpha release.</li>
+        </ol>
+
+        <h2>Hard Rules</h2>
+        <ol>
+          <li><code>command</code> and <code>cli</code> first, TUI second.</li>
+          <li><code>hoveld</code> is mandatory and owns runs, services, modules, events, providers, artifacts, and sessions.</li>
+          <li>TUI calls application services only.</li>
+          <li>MCP calls application services only.</li>
+          <li>REST calls application services only.</li>
+          <li>MCP has eventual operator parity through the same policy and audit model.</li>
+          <li>Run execution requires a persisted plan and approval record.</li>
+          <li>Python module authors should not need to see transport internals.</li>
+          <li>Python service authors should not need to see transport internals.</li>
+          <li>All module logs flow through the host.</li>
+          <li>All service logs flow through the host.</li>
+          <li>Providers are typed.</li>
+          <li>First-slice providers are artifact and payload only.</li>
+          <li>Payload provider outputs are tagged bytes with minimal framework validation.</li>
+          <li>Services are lifecycle-managed.</li>
+          <li>Payloads are content-addressed or hash-tracked.</li>
+          <li>Chain runs are replay-inspectable.</li>
+          <li>Public demos are authorized and lab-safe.</li>
+        </ol>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="configuration-distribution.html">← Configuration &amp; Distribution</a>
+        <span class="spacer"></span>
+        <a class="next" href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

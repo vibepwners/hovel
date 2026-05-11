@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Providers, Artifacts, and Events — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html" aria-current="page">Providers, Artifacts, Events</a></li>
+        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Providers, Artifacts, and Events</h1>
+        <p>Providers let modules and chains ask for typed resources without hard-coding where those resources come from.</p>
+        <p>Example:</p>
+<pre data-lang="python"><code>payload = ctx.providers.payload.resolve(
+    name="sshplant",
+    os="linux",
+    arch="x86_64",
+    kind="elf",
+)
+</code></pre>
+        <p>The module should not care whether the payload came from a local file, a build step, an artifact cache, another module, a managed service, or an external project.</p>
+
+        <h2>MVP Provider Scope</h2>
+        <p>The first provider implementation should stay narrow:</p>
+        <ol>
+          <li><code>ArtifactProvider</code> records file-like outputs, hashes, metadata, and run associations.</li>
+          <li><code>PayloadProvider</code> resolves tagged bytes and records hashes or artifact refs before execution.</li>
+          <li>The event stream reports provider resolution and artifact creation, but is not itself a provider.</li>
+        </ol>
+        <p><code>FactProvider</code>, <code>CredentialProvider</code>, <code>ListenerProvider</code>, and <code>SessionProvider</code> remain part of the domain model, but should not block the first useful execution loop. Facts can start as module outputs, credentials can start as explicit run inputs, and listeners/sessions can arrive with the managed-service milestone.</p>
+
+        <h2>Payload Provider</h2>
+        <p>Payload query:</p>
+<pre data-lang="yaml"><code>name: sshplant
+kind: elf
+os: linux
+arch: x86_64
+capabilities:
+  - interactive_session
+constraints:
+  writesDisk: false
+</code></pre>
+        <p>Payload response:</p>
+<pre data-lang="yaml"><code>id: payload-uuid
+name: sshplant-x86_64-linux
+kind: elf
+os: linux
+arch: x86_64
+bytes: !!binary |
+  AAEC...
+metadata:
+  entrypoint: default
+  size: 123456
+  sha256: abc123
+capabilities:
+  - interactive_session
+</code></pre>
+        <p>Provider outputs are logically bytes. An implementation may stream bytes or store them in an artifact first for efficiency, but the contract exposed to the next module is a tagged byte payload.</p>
+        <p>Hovel performs minimal payload validation:</p>
+        <ol>
+          <li>Ensure bytes were returned.</li>
+          <li>Record declared kind, size, and hash.</li>
+          <li>Enforce configured size limits.</li>
+          <li>Persist or hash-track the bytes for audit.</li>
+          <li>Pass the bytes to the next module without parsing or proving the payload format.</li>
+        </ol>
+
+        <h2>PIC Payloads</h2>
+        <p>PIC payloads are ordinary payload resources with specific metadata. Hovel should not implement PIC generation in core; external providers can generate or supply bytes.</p>
+<pre data-lang="yaml"><code>kind: pic
+arch: x86_64
+abi: sysv
+os: linux
+entrypoint: offset:0
+relocatable: true
+requires:
+  - executable_memory
+</code></pre>
+        <p>An external provider may be a local service, a Python package wrapper, a binary, or a pre-existing process. For example, <a href="https://github.com/williamkborn/pic"><code>pic</code></a> can be wrapped as a provider for PIC payload bytes, but Hovel must treat it as a replaceable provider implementation rather than a core dependency. The only Hovel requirement is that the provider returns tagged payload bytes through the provider interface.</p>
+
+        <h2>Listener Provider</h2>
+        <p>Listener providers are an early-alpha capability, not a first-slice MVP requirement.</p>
+        <p>Listener providers expose managed listener capabilities.</p>
+        <p>Listener query:</p>
+<pre data-lang="yaml"><code>name: sshplant-lp
+protocol: tcp
+bindHost: 127.0.0.1
+bindPort: 0
+sessionType: stdio
+</code></pre>
+        <p>Listener response:</p>
+<pre data-lang="yaml"><code>id: listener-uuid
+serviceId: service:sshplant-lp
+bindHost: 127.0.0.1
+bindPort: 49152
+protocol: tcp
+status: listening
+capabilities:
+  - session_broker
+  - artifact_capture
+</code></pre>
+
+        <h2>Provider Storage</h2>
+        <p>MVP provider data may live in SQLite and local files.</p>
+<pre data-lang="tree"><code>.hovel/
+  workspace.db
+  artifacts/
+    ab/
+      cd/
+        artifact-by-sha
+  payloads/
+  services/
+  listeners/
+  sessions/
+  logs/
+  runs/
+</code></pre>
+
+        <h2>Artifact</h2>
+        <p>An artifact is any file-like result generated by a run, module, service, or provider.</p>
+        <p>Examples:</p>
+        <ol>
+          <li>Logs.</li>
+          <li>Transcripts.</li>
+          <li>Captures.</li>
+          <li>Payload builds.</li>
+          <li>Raw responses.</li>
+          <li>Generated commands.</li>
+          <li>Plans.</li>
+          <li>Listener captures.</li>
+          <li>Session transcripts.</li>
+        </ol>
+        <p>Artifact metadata:</p>
+<pre data-lang="yaml"><code>id: artifact-uuid
+runId: run-uuid
+targetId: target-uuid
+serviceId: service:sshplant-lp
+name: ssh-transcript.txt
+mediaType: text/plain
+path: .hovel/artifacts/ab/cd/hash
+sha256: abc123
+createdBy: module:ssh-memory
+</code></pre>
+        <p>Resolved payload bytes should be persisted as artifacts or otherwise hash-tracked before module execution when practical. This makes runs replay-inspectable without requiring Hovel to understand the payload internals.</p>
+
+        <h2>Evidence</h2>
+        <p>Evidence is a higher-level assertion backed by artifacts and facts.</p>
+<pre data-lang="yaml"><code>id: evidence-uuid
+runId: run-uuid
+targetId: target-uuid
+title: Target supports requested payload execution path
+severity: info
+facts:
+  - fact-uuid
+artifacts:
+  - artifact-uuid
+</code></pre>
+
+        <h2>Session</h2>
+        <p>A session is an interactive or semi-interactive connection produced by a payload, listener, transport, or service.</p>
+<pre data-lang="yaml"><code>id: session-uuid
+runId: run-uuid
+targetId: target-uuid
+listenerId: listener-uuid
+serviceId: service:sshplant-lp
+type: stdio
+state: open
+openedAt: 2026-04-25T18:00:00Z
+capabilities:
+  - read
+  - write
+  - close
+</code></pre>
+        <p>Session events:</p>
+<pre data-lang="events"><code>session.created
+session.input
+session.output
+session.closed
+session.error
+</code></pre>
+
+        <h2>Event Bus</h2>
+        <p>Everything interesting emits an event.</p>
+        <p>Event categories:</p>
+<pre data-lang="events"><code>run.created
+run.started
+run.finished
+phase.started
+phase.finished
+step.started
+step.finished
+module.log
+module.stdout
+module.stderr
+service.registered
+service.started
+service.healthy
+service.log
+service.failed
+service.stopped
+listener.started
+listener.connection
+listener.session_created
+artifact.created
+finding.created
+fact.observed
+provider.resolved
+error.raised
+</code></pre>
+        <p>The TUI, CLI, REST stream, and MCP adapter should all consume the same event stream.</p>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="modules-services.html">← Modules and Services</a>
+        <span class="spacer"></span>
+        <a class="next" href="chains-runs.html">Chains and Runs →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

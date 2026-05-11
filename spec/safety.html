@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Safety and Scope — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html" aria-current="page">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
+        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Safety and Scope</h1>
+
+        <p>Hovel is intended for authorized security testing, adversary emulation, internal lab research, CTF-style training, defensive validation, and controlled red-team development.</p>
+        <p>The framework may orchestrate dangerous primitives because realistic security tooling often requires them. Public documentation and examples should emphasize authorization, lab use, auditability, reproducibility, and operator accountability.</p>
+        <p>Public examples should prefer benign transports, local lab devices, toy payloads, and non-destructive demonstrations. The first demonstration may use authenticated SSH because it is easy to reason about, easy to log, and does not require publishing exploit code.</p>
+
+        <h2>Caller Trust Model</h2>
+        <p>Hovel does not treat human operators, AI agents, CLI clients, TUI clients, REST clients, or MCP clients as inherently trusted. Every caller uses the same application services, validation model, safety policy, and audit trail.</p>
+        <p>MCP should eventually be able to do everything an operator can do. Safety should come from shared guardrails, policy checks, explicit confirmations, descriptor metadata, module-level validation, run planning, and auditability, not from giving MCP a weaker private API.</p>
+        <p>MCP execution parity should be phased. Inspection and planning tools may ship first. Execution tools should require the same plan review, explicit confirmation records, policy decisions, and audit events as CLI and REST before they are enabled.</p>
+        <p>Third-party modules and services are explicitly supported. Hovel cannot prove arbitrary third-party code is safe; it provides descriptors, process supervision, policy gates, logs, artifacts, and replayable records so operators can make informed decisions.</p>
+
+        <h2>Safety Requirements</h2>
+        <ol>
+          <li>Every run must start from a persisted run plan.</li>
+          <li>Starting a run must require an approved plan or an explicit recorded decision that the plan was reviewed.</li>
+          <li>Runs must record operator intent, inputs, target IDs, timestamps, module versions, service versions, payload hashes, artifacts, and errors.</li>
+          <li>Public modules should avoid destructive behavior by default.</li>
+          <li>Workspace config should support an explicit <code>allowDangerousModules</code> gate.</li>
+          <li>Listeners binding beyond localhost should require explicit configuration.</li>
+          <li>MCP execution tools should require the same validation and audit trail as CLI and REST execution.</li>
+          <li>Artifacts should be content-addressed or hash-tracked.</li>
+          <li>Chain cleanup steps should be visible and evented.</li>
+          <li>Run plans should surface risk labels, external binds, file writes, credential use, network reachability, and cleanup behavior before execution.</li>
+          <li>Modules should have maximum practical optionality to perform validation, survey, compatibility checks, and target-specific safety checks before performing work.</li>
+        </ol>
+
+        <h2>Code Trust Model</h2>
+        <p>MVP assumes local single-user or trusted small-team infrastructure, but not trusted intent. The operator chooses modules and services to run, while Hovel records decisions and enforces configured policy. Hovel should isolate where practical, but should not imply that arbitrary third-party code is safe.</p>
+        <p>Initial isolation levels:</p>
+<pre data-lang="levels"><code>none        local process, full user privileges
+process     separate supervised process
+venv        Python virtual environment isolation
+pex         packaged Python dependency isolation
+binary      native binary process isolation
+container   future optional container isolation
+remote      future remote service isolation
+</code></pre>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="introduction.html">← Introduction</a>
+        <span class="spacer"></span>
+        <a class="next" href="architecture.html">Architecture →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

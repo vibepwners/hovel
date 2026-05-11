@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Operator Workflows — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
+        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="operator-workflows.html" aria-current="page">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Operator Workflows</h1>
+
+        <p>The chain is the root object of operator work. A chain is not only an execution graph; it is the shared workspace where entities collaborate, configure targets, add modules, validate readiness, and throw.</p>
+        <p>An entity is any actor connected to <code>hoveld</code>: a human operator in <code>cli</code>, a TUI session, an MCP client, an AI agent, or another authorized user. Multiple entities may attach to the same chain. The active chain is client-local, but the chain state, target set, configuration, steps, and logs are daemon-owned shared state.</p>
+
+        <h2>Chain Collaboration</h2>
+        <p>Every chain owns a log topic:</p>
+<pre data-lang="topic"><code>chain/&lt;chain&gt;/logs
+</code></pre>
+        <p>Every entity attached to the chain subscribes to the same topic. A log statement for a chain change must be visible to every connected CLI, TUI, and MCP client attached to that chain.</p>
+        <p>Required chain log events:</p>
+        <ol>
+          <li>Chain created, renamed, inspected, deleted, or selected.</li>
+          <li>Entity attached or detached.</li>
+          <li>Module added, removed, reordered, or configured.</li>
+          <li>Target added, removed, updated, or configured.</li>
+          <li>Chain configuration set or unset.</li>
+          <li>Validation started, completed, or failed.</li>
+          <li>Throw planned, started, progressed, completed, or failed.</li>
+          <li>Survey facts discovered.</li>
+          <li>Payload provider output selected.</li>
+          <li>Exploit step started, completed, or failed.</li>
+          <li>Finding, artifact, evidence, or run result emitted.</li>
+        </ol>
+        <p>The CLI should render this as a live transcript. The TUI should render the same topic in a log panel. MCP should expose the same stream through a tool or resource optimized for agents.</p>
+
+        <h2>Throw Transcript</h2>
+        <p>A throw should look like a live operator transcript, not a JSON blob. The transcript is a terminal rendering of structured log events; JSON, RPC, MCP, files, the CLI, and the eventual TUI must consume the same typed event model rather than parsing terminal text.</p>
+        <p>Each log event should carry stable structure:</p>
+<pre data-lang="event"><code>id, time, topic, kind, level, source, message
+chain_id, chain_name, run_id, target, module_id
+elapsed_seconds
+fields
+attributes
+</code></pre>
+        <p>For throw logs, <code>elapsed_seconds</code> is seconds since the throw started. The terminal renderer displays it inside the label as fixed-width <code>000.00</code> seconds, highlighted separately from the purple label background.</p>
+        <p>Minimum CLI render:</p>
+<pre data-lang="cli"><code>HOVEL//THROW lab-chain
+
+chain        lab-chain
+entities     operator:will, agent:planner
+targets      3
+steps        survey:2 exploit:1 payload_provider:1
+status       validating
+
+┃ :: validate 000.01 checking chain configuration
+┃ ++ validate 000.02 global config complete
+┃ ## validate 000.03 target router-01 missing ssh.username
+┃ :: chain    000.04 added module mock-survey as step step-1
+┃ :: target   000.05 added mock://router-01
+┃ &gt;&gt; stage    000.06 throw started
+┃ :: survey   000.07 router-01 os=linux arch=x86_64
+┃ $$ payload  000.08 selected payload mock-payload-x86_64-linux
+┃ ++ exploit  000.09 router-01 completed mocked exploit flow
+┃ ++ throw    000.10 completed 1/1 target(s)
+</code></pre>
+        <p>The eventual TUI live throw view should split the same state into:</p>
+        <ol>
+          <li>Chain header.</li>
+          <li>Attached entity presence.</li>
+          <li>Step timeline.</li>
+          <li>Target matrix.</li>
+          <li>Configuration validation panel.</li>
+          <li>Chain log stream.</li>
+          <li>Findings, artifacts, and evidence panel.</li>
+        </ol>
+
+        <h2>Module Database</h2>
+        <p>Hovel needs a daemon-owned module database. The initial module types are:</p>
+<pre data-lang="types"><code>survey
+exploit
+payload_provider
+</code></pre>
+        <p>The type set must be expandable later without changing the chain model.</p>
+        <p>A module database record contains:</p>
+        <ol>
+          <li>Module ID.</li>
+          <li>Name.</li>
+          <li>Module type.</li>
+          <li>Version.</li>
+          <li>Summary and description.</li>
+          <li>Tags.</li>
+          <li>Runtime kind.</li>
+          <li>Author or source.</li>
+          <li>Required and optional chain configuration schema.</li>
+          <li>Required and optional target configuration schema.</li>
+          <li>Output schema.</li>
+          <li>Safety labels.</li>
+          <li>Enabled or disabled state.</li>
+        </ol>
+        <p>Initial commands:</p>
+<pre data-lang="commands"><code>modules list
+modules list --type survey
+modules inspect &lt;module-id&gt;
+modules search &lt;query&gt;
+</code></pre>
+
+        <h2>Chain Steps</h2>
+        <p>Chains contain ordered steps. A step usually references a module from the module database.</p>
+        <p>Initial CLI commands:</p>
+<pre data-lang="commands"><code>add &lt;module-id&gt;
+remove &lt;step-id&gt;
+move &lt;step-id&gt; --before &lt;step-id&gt;
+inspect
+</code></pre>
+        <p>Adding a module logs to the chain topic. Removing or reordering a step also logs to the chain topic. Step IDs must be stable so validation errors, logs, and UI selection can point at a specific item.</p>
+
+        <h2>Configuration</h2>
+        <p>Configuration is a typed key-value dictionary.</p>
+        <p>Scopes:</p>
+<pre data-lang="scopes"><code>chain config       applies globally to the chain
+target config      applies to one target within the chain
+</code></pre>
+        <p>Every survey, exploit, payload provider, or future chain item can declare:</p>
+        <ol>
+          <li>Required chain configuration keys.</li>
+          <li>Optional chain configuration keys.</li>
+          <li>Required per-target configuration keys.</li>
+          <li>Optional per-target configuration keys.</li>
+        </ol>
+        <p>Built-in value types:</p>
+<pre data-lang="types"><code>string
+secret
+bool
+int
+float
+enum
+duration
+url
+host
+port
+cidr
+path
+list&lt;string&gt;
+map&lt;string,string&gt;
+</code></pre>
+        <p>Each key definition supports:</p>
+        <ol>
+          <li>Name.</li>
+          <li>Type.</li>
+          <li>Required flag.</li>
+          <li>Default.</li>
+          <li>Description.</li>
+          <li>Allowed values for enums.</li>
+          <li>Validation rule.</li>
+          <li>Secret redaction.</li>
+          <li>Scope: <code>chain</code> or <code>target</code>.</li>
+        </ol>
+        <p>Initial commands:</p>
+<pre data-lang="commands"><code>config set &lt;key&gt; &lt;value&gt;
+config unset &lt;key&gt;
+config list
+config interactive
+
+targets config set &lt;target&gt; &lt;key&gt; &lt;value&gt;
+targets config unset &lt;target&gt; &lt;key&gt;
+targets config list &lt;target&gt;
+</code></pre>
+        <p>The CLI and TUI must render secrets as present or missing without revealing their values.</p>
+        <p><code>config interactive</code> is a guided CLI workflow implemented inside the existing go-prompt loop and backed by the canonical <code>chain config interactive</code> command. It first renders the current chain and target configuration as a numbered menu, then changes the prompt into a config-selection mode with completions for editable items, continue, and cancel. When the operator continues, Hovel changes the prompt into config-value mode, offers type-aware completions where possible, walks the remaining required chain and per-target keys, validates each typed value as it is entered, and repeats until all required configuration is set or an unfixable validation issue remains.</p>
+
+        <h2>Validation</h2>
+        <p><code>chain validate</code> checks whether the active chain is ready to throw.</p>
+        <p>Validation must evaluate:</p>
+        <ol>
+          <li>Active chain exists.</li>
+          <li>Chain has at least one step.</li>
+          <li>Chain has at least one target.</li>
+          <li>Every step references an enabled module in the module database.</li>
+          <li>Required chain configuration keys are set.</li>
+          <li>Required target configuration keys are set for every target.</li>
+          <li>Values parse into their declared types.</li>
+          <li>Enum values are valid.</li>
+          <li>Secrets are present but redacted.</li>
+          <li>Payload provider requirements are satisfiable.</li>
+          <li>Every chain step has a stable ID.</li>
+        </ol>
+        <p>Validation output must be human-first and scriptable with <code>--json</code>.</p>
+
+        <h2>Mock Modules</h2>
+        <p>The mocked stage should provide enough modules to exercise every UI path without executing real target behavior.</p>
+        <p>Required example modules:</p>
+        <ol>
+          <li>
+            <code>mock-survey</code>
+            <ul>
+              <li>Type: <code>survey</code>.</li>
+              <li>Lives in its own Python project under <code>examples/python/mock_survey</code>.</li>
+              <li>Requires target config: <code>target.host: host</code>, <code>target.port: port</code>.</li>
+              <li>Emits facts and a module log.</li>
+              <li>Tests per-target config, fact output, SDK schema declaration, and stdio JSON-RPC launch.</li>
+            </ul>
+          </li>
+          <li>
+            <code>mock-exploit</code>
+            <ul>
+              <li>Type: <code>exploit</code>.</li>
+              <li>Lives in its own Python project under <code>examples/python/mock_exploit</code>.</li>
+              <li>Requires chain config: <code>operator.confirmed_lab: bool</code>.</li>
+              <li>Requires target config: <code>target.host: host</code>, <code>target.port: port</code>.</li>
+              <li>Emits an example finding, artifact, result, and module log.</li>
+              <li>Tests throw transcript, final result rendering, SDK schema declaration, and stdio JSON-RPC launch.</li>
+              <li>Tests error rendering and failed throw states.</li>
+            </ul>
+          </li>
+        </ol>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="chains-runs.html">← Chains and Runs</a>
+        <span class="spacer"></span>
+        <a class="next" href="front-ends.html">Front Ends →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

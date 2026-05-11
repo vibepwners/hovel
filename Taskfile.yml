@@ -79,9 +79,9 @@ tasks:
       - bash tools/lint/check_python.sh
 
   docs:
-    desc: Build the mdBook spec.
+    desc: Build the static spec site (filegroup).
     cmds:
-      - bazel build //spec:book
+      - bazel build //spec:site
 
   "hooks:install":
     desc: Install Git hooks through Lefthook.

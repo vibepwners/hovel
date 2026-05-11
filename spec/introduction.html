@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Introduction — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html" aria-current="page">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Events</a></li>
+        <li><a href="chains-runs.html">Chains and Runs</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Introduction</h1>
+
+        <p>Status: Draft 0.3</p>
+        <p>Audience: Hovel maintainers, module authors, service authors, and operator-tooling engineers.</p>
+        <p>Hovel is a Go-hosted framework for authorized security research, adversary emulation, lab exploitation, defensive validation, and operator workflow automation.</p>
+        <p>Hovel is a platform for wrapping and operating third-party proofs of concept, not a catalog of first-party exploits. The project should provide the engine, SDKs, descriptors, providers, guardrails, examples, and operator experience that make third-party modules acceptable to run and inspect.</p>
+        <p>The main product goal is straightforward:</p>
+        <blockquote>
+          <p>Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every run.</p>
+        </blockquote>
+        <p>The central runtime is a local engine, <code>hoveld</code>, which owns runs, module processes, managed services, provider state, events, artifacts, and workspace storage. <code>command</code> mode, interactive <code>cli</code> mode, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.</p>
+
+        <h2>Core Decisions</h2>
+        <ol>
+          <li>The host is written in Go.</li>
+          <li>Python is the first-class module authoring language.</li>
+          <li><code>hoveld</code> is mandatory; invoking <code>hovel</code> starts or attaches to a daemon.</li>
+          <li>Modules run as bounded processes or built-in implementations.</li>
+          <li>Long-lived capabilities are managed as services.</li>
+          <li>Providers expose typed resources such as payloads, artifacts, facts, credentials, listeners, and sessions.</li>
+          <li>Payload providers return tagged bytes with minimal framework validation.</li>
+          <li>Runs emit structured events consumed by every front end.</li>
+          <li>The first implementation is local-first and alpha-friendly.</li>
+        </ol>
+
+        <h2>Product Shape</h2>
+        <p>Hovel exposes one engine through multiple front ends:</p>
+<pre data-lang="diagram"><code> +--------------+ +--------------+ +--------------+
+ |   command    | |     cli      | |     TUI      |
+ +------+-------+ +------+-------+ +------+-------+
+        |                |                |
++-------v------+ +-------v------+ +-------v------+
+|     MCP      |&gt;|   hoveld     |&lt;| REST/OpenAPI |
++--------------+ | Application  | +--------------+
+                 |   Services   |
+                 +------+-------+
+                        |
+                 +------v-------+
+                 | Domain Core  |
+                 +------+-------+
+                        |
+         +--------------+-----------------+
+         |              |                 |
+ +-------v------+ +-----v-------+ +-------v------+
+ | Module Host  | | Service Mgr | | Provider Reg |
+ +-------+------+ +-----+-------+ +-------+------+
+         |              |                 |
+ +-------v------+ +-----v-------+ +-------v------+
+ | module       | | payloads,   | | artifacts,   |
+ | processes    | | listeners,  | | facts,       |
+ | and builtins | | sessions    | | credentials  |
+ +--------------+ +-------------+ +--------------+
+</code></pre>
+        <p>All front ends must call the same application services. The TUI must not contain business logic. The MCP adapter must not bypass validation. <code>command</code> and <code>cli</code> modes must not implement their own chain runners. The REST API must not become a second framework.</p>
+
+        <h2>MVP Boundaries</h2>
+        <p>The MVP should avoid pretending to be the final platform. Defer:</p>
+        <ol>
+          <li>Distributed team-server architecture.</li>
+          <li>Persistent multi-user RBAC.</li>
+          <li>Public module marketplace semantics.</li>
+          <li>Automatic stealth guarantees.</li>
+          <li>Browser UI.</li>
+          <li>Mandatory container isolation.</li>
+          <li>First-party exploit or payload corpus.</li>
+        </ol>
+        <p>The first MVP slice should prove the narrowest useful loop:</p>
+        <ol>
+          <li>Initialize a local workspace.</li>
+          <li>Start or attach to <code>hoveld</code> from <code>hovel</code>.</li>
+          <li>Load and validate one module descriptor.</li>
+          <li>Launch one Python module through the SDK path.</li>
+          <li>Complete handshake, execution, logging, and shutdown.</li>
+          <li>Emit structured events through the shared event stream.</li>
+          <li>Persist the throw plan, approval record, artifacts, and replayable run record.</li>
+          <li>Inspect the throw from the CLI.</li>
+        </ol>
+        <p>The alpha can then add managed services, provider-backed payload resolution, richer chains, MCP execution parity, and the TUI. Those features should attach to the proven loop rather than expanding the platform surface before the core path works.</p>
+
+        <h2>Alpha Deferrals</h2>
+        <p>The following decisions should remain open until the core loop has contract tests and at least one replayable run:</p>
+        <ol>
+          <li>Whether descriptors remain YAML-only or gain TOML support.</li>
+          <li>Whether chains are only declarative YAML or also authorable in Python or Go.</li>
+          <li>Whether REST ships in the first alpha or follows the CLI and TUI.</li>
+          <li>Whether service processes and module processes share one protocol.</li>
+          <li>How much provider state is persisted versus run-scoped.</li>
+          <li>Which isolation mechanisms are required beyond process supervision and Python dependency isolation.</li>
+        </ol>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="index.html">← Contents</a>
+        <span class="spacer"></span>
+        <a class="next" href="safety.html">Safety and Scope →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>
