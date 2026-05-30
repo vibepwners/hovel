@@ -147,27 +147,38 @@ func (s Store) ListEvents(ctx context.Context, filter event.Filter) ([]event.Eve
 // connection pool and re-running migrations on every operation is both slow and
 // needlessly destructive; the daemon owns a single workspace for its lifetime,
 // so the handle is opened, configured, and migrated exactly once per path.
-var connCache sync.Map // map[string]*cachedConn
-
-type cachedConn struct {
-	once sync.Once
-	db   *sql.DB
-	err  error
-}
+//
+// Only successful opens are cached. A failed open (e.g. a request whose context
+// was cancelled mid-migration) is never stored, so a transient error cannot
+// poison the entry and wedge the workspace for the rest of the process; the next
+// call retries with a fresh context.
+var (
+	connMu    sync.Mutex
+	connCache = map[string]*sql.DB{}
+)
 
 // open returns the shared *sql.DB for this workspace. Callers must NOT close the
 // returned handle; it is owned by the cache and reused across operations.
+//
+// The lock is held across openDatabase so a path is opened at most once. Opens
+// are rare (first access per path) and a daemon owns a single workspace, so the
+// brief serialization is immaterial; every later call is just a map lookup.
 func (s Store) open(ctx context.Context) (*sql.DB, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	path := s.Path()
-	value, _ := connCache.LoadOrStore(path, &cachedConn{})
-	cached := value.(*cachedConn)
-	cached.once.Do(func() {
-		cached.db, cached.err = openDatabase(ctx, s.workspacePath, path)
-	})
-	return cached.db, cached.err
+	connMu.Lock()
+	defer connMu.Unlock()
+	if db, ok := connCache[path]; ok {
+		return db, nil
+	}
+	db, err := openDatabase(ctx, s.workspacePath, path)
+	if err != nil {
+		return nil, err
+	}
+	connCache[path] = db
+	return db, nil
 }
 
 func openDatabase(ctx context.Context, workspacePath, dbPath string) (*sql.DB, error) {
