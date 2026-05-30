@@ -165,6 +165,13 @@ tasks:
 
   precommit:
     aliases: [pre-commit]
-    desc: Run the checks enforced by the Lefthook pre-commit hook.
+    desc: Fast checks run by the Lefthook pre-commit hook (lint + build).
     cmds:
-      - task: check
+      - task: lint
+      - task: build
+
+  prepush:
+    aliases: [pre-push]
+    desc: Thorough checks run by the Lefthook pre-push hook (tests).
+    cmds:
+      - task: test
