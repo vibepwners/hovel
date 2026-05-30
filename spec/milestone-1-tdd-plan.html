@@ -101,8 +101,8 @@ guardrail
         <h3>1. Repository Shape</h3>
         <p>Write the failing tests first:</p>
         <ol>
-          <li><code>bazel test //...</code> discovers at least one Go or shell test target.</li>
-          <li><code>bazel run //:gazelle -- -mode=diff</code> succeeds.</li>
+          <li><code>task test</code> discovers at least one Go or shell test target.</li>
+          <li><code>task lint</code> (Gazelle diff check) succeeds.</li>
         </ol>
         <p>Then implement:</p>
         <ol>
@@ -229,14 +229,12 @@ guardrail
         </ol>
 
         <h2>Definition of Done</h2>
-        <p>Milestone 1 is complete when these commands pass:</p>
-<pre data-lang="bash"><code>bazel build //...
-bazel test //...
-bazel run //:gazelle -- -mode=diff
+        <p>Milestone 1 is complete when this passes:</p>
+<pre data-lang="bash"><code>task ci      # lint + build + test
 </code></pre>
         <p>The repository should also expose these user-visible flows:</p>
-<pre data-lang="bash"><code>bazel run //cmd/hovel -- cli --workspace /tmp/hovel-lab
-bazel run //cmd/hovel -- daemon status --workspace /tmp/hovel-lab
+<pre data-lang="bash"><code>HOVEL_WORKSPACE=/tmp/hovel-lab task cli
+task run -- //cmd/hovel -- daemon status --workspace /tmp/hovel-lab
 </code></pre>
         <p>The daemon status may be minimal, but the tests must enforce the domain/application/adapter boundaries and the daemon contract.</p>
       </article>

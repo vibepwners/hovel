@@ -102,12 +102,12 @@ guardrails:
           <li>Own generated schemas and contract-test outputs.</li>
           <li>Produce release archives when binaries exist.</li>
         </ol>
-        <p>The minimum repository contract is:</p>
-<pre data-lang="bash"><code>bazel build //...
-bazel test //...
-bazel run //:gazelle
+        <p>The minimum repository contract is, with <a href="https://taskfile.dev/">Task</a> as the single entry point:</p>
+<pre data-lang="bash"><code>task build
+task test
+task fmt     # gofmt + gazelle
 </code></pre>
-        <p>Non-Bazel scripts should be convenience wrappers over Bazel targets, not alternate build systems.</p>
+        <p><code>Taskfile.yml</code> is the one correct way to build, test, lint, format, and run; contributors, CI, and tooling never invoke Bazel, gofmt, uv, or lefthook directly. Tasks are thin wrappers over Bazel targets, not an alternate build system.</p>
 
         <h2>Distribution</h2>
         <p>Primary distribution should be native Go binaries:</p>

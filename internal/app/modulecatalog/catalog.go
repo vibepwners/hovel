@@ -76,6 +76,21 @@ type Module struct {
 	TargetConfig []Requirement
 }
 
+// DangerTag marks a module that may perform destructive or otherwise dangerous
+// actions. Modules advertise it through their descriptor tags; the operator must
+// explicitly opt in before such a module can be thrown.
+const DangerTag = "dangerous"
+
+// Dangerous reports whether the module is tagged as dangerous (case-insensitive).
+func (m Module) Dangerous() bool {
+	for _, tag := range m.Tags {
+		if strings.EqualFold(strings.TrimSpace(tag), DangerTag) {
+			return true
+		}
+	}
+	return false
+}
+
 type Catalog struct {
 	modules map[string]Module
 	aliases map[string]string

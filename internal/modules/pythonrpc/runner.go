@@ -55,8 +55,19 @@ func ConfiguredCatalog(ctx context.Context) (modulecatalog.Catalog, error) {
 }
 
 func MustConfiguredCatalog() modulecatalog.Catalog {
+	return MustConfiguredCatalogWithWarning(os.Stderr)
+}
+
+// MustConfiguredCatalogWithWarning loads the configured module catalog, falling
+// back to an empty catalog if loading fails. Unlike a silent fallback, the
+// underlying error is reported to warn so operators can tell "no modules
+// configured" apart from "module configuration failed to load".
+func MustConfiguredCatalogWithWarning(warn io.Writer) modulecatalog.Catalog {
 	catalog, err := ConfiguredCatalog(context.Background())
 	if err != nil {
+		if warn != nil {
+			fmt.Fprintf(warn, "hovel: failed to load module catalog: %v\n", err)
+		}
 		return modulecatalog.New()
 	}
 	return catalog

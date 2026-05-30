@@ -101,9 +101,10 @@
     </div>
 
     <h2>Build it</h2>
-    <pre data-lang="bash"><code>bazel build //...
-bazel test //...
-bazel run //:gazelle</code></pre>
+    <p>Everything goes through <a href="https://taskfile.dev/">Task</a> — the single entry point. Run <code>task --list</code> to see all commands.</p>
+    <pre data-lang="bash"><code>task build
+task test
+task ci      # lint + build + test</code></pre>
   </main>
 
   <footer class="sitefoot">
