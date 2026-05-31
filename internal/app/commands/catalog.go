@@ -650,6 +650,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
 				boolOption("now", "", "Bypass typed confirmation prompt"),
+				boolOption("allow-dangerous", "", "Permit modules tagged dangerous"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: throwHandler(runtime),
@@ -1451,6 +1452,9 @@ func throwHandler(runtime Runtime) Handler {
 		if err != nil {
 			return Result{}, err
 		}
+		if err := guardDangerousModules(runtime, throw.Modules, invocation.Flag("allow-dangerous")); err != nil {
+			return Result{}, err
+		}
 		status, err := runtime.Daemons.Status(ctx, services.DaemonStatusRequest{
 			WorkspacePath: invocation.Option("workspace"),
 		})
@@ -2176,6 +2180,29 @@ type throwExecution struct {
 	Modules       []string
 	ChainConfig   map[string]string
 	TargetConfigs map[string]map[string]string
+}
+
+// guardDangerousModules refuses to throw a chain that contains a module tagged
+// dangerous unless the operator explicitly opted in with --allow-dangerous. The
+// check runs before any plan, confirmation, or daemon work so a refused throw
+// leaves no records behind. Unknown module IDs are treated as not-dangerous here;
+// they fail later with a clearer "module does not exist" error.
+func guardDangerousModules(runtime Runtime, modules []string, allow bool) error {
+	if allow {
+		return nil
+	}
+	db := moduleDB(runtime)
+	var blocked []string
+	for _, moduleID := range modules {
+		module, ok := db.Find(moduleID)
+		if ok && module.Dangerous() {
+			blocked = append(blocked, module.ID)
+		}
+	}
+	if len(blocked) == 0 {
+		return nil
+	}
+	return fmt.Errorf("refusing to throw dangerous module(s) %s without --allow-dangerous", strings.Join(blocked, ", "))
 }
 
 func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (throwExecution, error) {

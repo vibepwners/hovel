@@ -237,3 +237,26 @@ func TestDisplayValueRedactsSecrets(t *testing.T) {
 		t.Fatalf("string display = %q", got)
 	}
 }
+
+func TestModuleDangerous(t *testing.T) {
+	cases := []struct {
+		name string
+		tags []string
+		want bool
+	}{
+		{name: "no tags", tags: nil, want: false},
+		{name: "benign tags", tags: []string{"recon", "safe"}, want: false},
+		{name: "dangerous tag", tags: []string{"dangerous"}, want: true},
+		{name: "mixed tags", tags: []string{"recon", "dangerous"}, want: true},
+		{name: "case insensitive", tags: []string{"Dangerous"}, want: true},
+		{name: "whitespace padded", tags: []string{" dangerous "}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			module := Module{ID: "m@1", Tags: tc.tags}
+			if got := module.Dangerous(); got != tc.want {
+				t.Fatalf("Dangerous() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

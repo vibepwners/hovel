@@ -1,5 +1,19 @@
+# Lefthook drives the same Task targets developers and CI use. Each Git hook
+# maps to one task so the Taskfile stays the single source of truth.
+#
+# Install (or refresh) the hooks with: task hooks:install
+#
+# pre-commit  -> task precommit  (lint + build; fast)
+# pre-push    -> task prepush    (tests; thorough)
+#
+# Skip a hook for one command with LEFTHOOK=0, e.g. LEFTHOOK=0 git commit ...
+
 pre-commit:
-  parallel: false
-  commands:
-    check:
+  jobs:
+    - name: precommit
       run: task precommit
+
+pre-push:
+  jobs:
+    - name: prepush
+      run: task prepush

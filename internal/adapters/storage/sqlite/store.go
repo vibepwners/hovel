@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
@@ -30,12 +31,8 @@ func (s Store) Path() string {
 }
 
 func (s Store) Ensure(ctx context.Context) error {
-	db, err := s.open(ctx)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	return nil
+	_, err := s.open(ctx)
+	return err
 }
 
 func (s Store) SaveOperatorSession(ctx context.Context, state operatorsession.PersistedState) error {
@@ -43,7 +40,6 @@ func (s Store) SaveOperatorSession(ctx context.Context, state operatorsession.Pe
 	if err != nil {
 		return err
 	}
-	defer db.Close()
 	return SaveOperatorSession(ctx, db, state)
 }
 
@@ -52,7 +48,6 @@ func (s Store) LoadOperatorSession(ctx context.Context) (operatorsession.Persist
 	if err != nil {
 		return operatorsession.PersistedState{}, false, err
 	}
-	defer db.Close()
 	return LoadOperatorSession(ctx, db)
 }
 
@@ -61,7 +56,6 @@ func (s Store) RecordThrowPlan(ctx context.Context, plan commands.ThrowPlanRecor
 	if err != nil {
 		return err
 	}
-	defer db.Close()
 	return RecordThrowPlan(ctx, db, plan)
 }
 
@@ -70,7 +64,6 @@ func (s Store) RecordThrowConfirmation(ctx context.Context, confirmation command
 	if err != nil {
 		return err
 	}
-	defer db.Close()
 	return RecordThrowConfirmation(ctx, db, confirmation)
 }
 
@@ -79,7 +72,6 @@ func (s Store) RecordThrow(ctx context.Context, record commands.ThrowRecord) err
 	if err != nil {
 		return err
 	}
-	defer db.Close()
 	return RecordThrow(ctx, db, record)
 }
 
@@ -88,7 +80,6 @@ func (s Store) RecordArtifact(ctx context.Context, record commands.ArtifactRecor
 	if err != nil {
 		return err
 	}
-	defer db.Close()
 	return RecordArtifact(ctx, db, record)
 }
 
@@ -101,7 +92,6 @@ func (s Store) RecordEvent(ctx context.Context, evt event.Event) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
 	return RecordEvent(ctx, db, evt)
 }
 
@@ -110,7 +100,6 @@ func (s Store) ListThrowPlans(ctx context.Context) ([]commands.ThrowPlanRecord, 
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
 	return ListThrowPlans(ctx, db)
 }
 
@@ -119,7 +108,6 @@ func (s Store) GetThrowPlan(ctx context.Context, id string) (commands.ThrowPlanR
 	if err != nil {
 		return commands.ThrowPlanRecord{}, err
 	}
-	defer db.Close()
 	return GetThrowPlan(ctx, db, id)
 }
 
@@ -128,7 +116,6 @@ func (s Store) GetThrowConfirmation(ctx context.Context, planHash string) (comma
 	if err != nil {
 		return commands.ThrowConfirmationRecord{}, false, err
 	}
-	defer db.Close()
 	return GetThrowConfirmation(ctx, db, planHash)
 }
 
@@ -137,7 +124,6 @@ func (s Store) ListArtifacts(ctx context.Context) ([]commands.ArtifactRecord, er
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
 	return ListArtifacts(ctx, db)
 }
 
@@ -146,7 +132,6 @@ func (s Store) GetArtifact(ctx context.Context, id string) (commands.ArtifactRec
 	if err != nil {
 		return commands.ArtifactRecord{}, err
 	}
-	defer db.Close()
 	return GetArtifact(ctx, db, id)
 }
 
@@ -155,29 +140,70 @@ func (s Store) ListEvents(ctx context.Context, filter event.Filter) ([]event.Eve
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
 	return ListEvents(ctx, db, filter)
 }
 
+// connCache holds one long-lived *sql.DB per database file. Opening a fresh
+// connection pool and re-running migrations on every operation is both slow and
+// needlessly destructive; the daemon owns a single workspace for its lifetime,
+// so the handle is opened, configured, and migrated exactly once per path.
+//
+// Only successful opens are cached. A failed open (e.g. a request whose context
+// was cancelled mid-migration) is never stored, so a transient error cannot
+// poison the entry and wedge the workspace for the rest of the process; the next
+// call retries with a fresh context.
+var (
+	connMu    sync.Mutex
+	connCache = map[string]*sql.DB{}
+)
+
+// open returns the shared *sql.DB for this workspace. Callers must NOT close the
+// returned handle; it is owned by the cache and reused across operations.
+//
+// The lock is held across openDatabase so a path is opened at most once. Opens
+// are rare (first access per path) and a daemon owns a single workspace, so the
+// brief serialization is immaterial; every later call is just a map lookup.
 func (s Store) open(ctx context.Context) (*sql.DB, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(s.workspacePath, 0o755); err != nil {
-		return nil, err
+	path := s.Path()
+	connMu.Lock()
+	defer connMu.Unlock()
+	if db, ok := connCache[path]; ok {
+		return db, nil
 	}
-	db, err := sql.Open("sqlite", s.Path())
+	db, err := openDatabase(ctx, s.workspacePath, path)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
-		db.Close()
+	connCache[path] = db
+	return db, nil
+}
+
+func openDatabase(ctx context.Context, workspacePath, dbPath string) (*sql.DB, error) {
+	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
 		return nil, err
 	}
-	if _, err := db.ExecContext(ctx, `PRAGMA busy_timeout = 5000`); err != nil {
-		db.Close()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
 		return nil, err
+	}
+	// A single connection keeps the SQLite single-writer model simple: the
+	// daemon owns one workspace, so serializing operations on one connection is
+	// correct and avoids SQLITE_BUSY churn. WAL improves durability and read
+	// latency over the default rollback journal.
+	db.SetMaxOpenConns(1)
+	pragmas := []string{
+		`PRAGMA foreign_keys = ON`,
+		`PRAGMA busy_timeout = 5000`,
+		`PRAGMA journal_mode = WAL`,
+	}
+	for _, pragma := range pragmas {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	if err := ApplyMigrations(ctx, db); err != nil {
 		db.Close()

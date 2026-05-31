@@ -1,43 +1,110 @@
 version: '3'
 
+# Taskfile is the single entry point for the Hovel build system.
+#
+# Do NOT invoke bazel, gofmt, uv, or lefthook directly. Every supported
+# operation is a task below; humans, CI, git hooks, and AI agents all go
+# through `task <name>`. This keeps one correct, discoverable way to build,
+# test, lint, run, and format the project.
+#
+# Conventions:
+#   task <name>                 run a task
+#   task <name> -- <args>       forward extra args to the underlying tool
+#                               (supported by build, test, run, throw)
+#   task --list                 list tasks
+#
+# Quick start for developers:
+#   task start                  build and launch the interactive CLI
+#   task status                 is the dev daemon running?
+#   task reset                  wipe local state and relaunch fresh
+# The dev workspace defaults to ./.hovel; override with HOVEL_WORKSPACE.
+
+vars:
+  MODULE_CONFIG: examples/python/hovel-modules.json
+  WORKSPACE:
+    sh: echo "${HOVEL_WORKSPACE:-$PWD/.hovel}"
+
 tasks:
   default:
     desc: List available tasks.
     cmds:
       - task --list
+    silent: true
+
+  # --- Developer quick start ----------------------------------------------
+
+  start:
+    aliases: [dev, up, cli]
+    desc: Build and launch the interactive Hovel CLI (auto-starts a daemon).
+    interactive: true
+    env:
+      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
+    cmds:
+      - bazel run //cmd/hovel -- cli --workspace "{{.WORKSPACE}}"
+
+  daemon:
+    desc: Run hoveld in the foreground on the default Unix socket.
+    interactive: true
+    env:
+      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
+    cmds:
+      - bazel run //cmd/hovel -- daemon serve --workspace "{{.WORKSPACE}}"
+
+  status:
+    aliases: [st]
+    desc: Show daemon status for the dev workspace.
+    cmds:
+      - bazel run //cmd/hovel -- status --workspace "{{.WORKSPACE}}"
+
+  init:
+    desc: Initialize the dev workspace (./.hovel).
+    cmds:
+      - bazel run //cmd/hovel -- init --workspace "{{.WORKSPACE}}"
+
+  throw:
+    desc: 'One-shot throw of a saved chain file: task throw -- path/to/chain.yaml.'
+    env:
+      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
+    cmds:
+      - bazel run //cmd/hovel -- throw {{.CLI_ARGS}} --workspace "{{.WORKSPACE}}"
+
+  clean:
+    desc: Remove local dev state (./.hovel workspace and .task cache). Leaves the Bazel cache alone.
+    cmds:
+      - rm -rf "{{.WORKSPACE}}" .task
+
+  reset:
+    aliases: [fresh]
+    desc: Wipe local dev state, then launch a fresh interactive CLI.
+    cmds:
+      - task: clean
+      - task: start
+
+  # --- Build, test, run ---------------------------------------------------
 
   build:
     aliases: [b]
-    desc: Build every Bazel target.
+    desc: Build Bazel targets (default //...; e.g. task build -- //cmd/hovel).
     cmds:
-      - bazel build //...
-
-  cli:
-    desc: Start the interactive Hovel CLI.
-    interactive: true
-    cmds:
-      - HOVEL_MODULE_CONFIG=examples/python/hovel-modules.json bazel run //cmd/hovel -- cli --workspace "$PWD/.hovel"
-
-  daemon:
-    desc: Start hoveld with the default Unix domain socket.
-    interactive: true
-    cmds:
-      - bazel build //cmd/hovel
-      - HOVEL_MODULE_CONFIG=examples/python/hovel-modules.json ./bazel-bin/cmd/hovel/hovel_/hovel daemon serve --workspace "$PWD/.hovel"
+      - bazel build {{.CLI_ARGS | default "//..."}}
 
   test:
     aliases: [t]
-    desc: Run every Bazel test.
+    desc: Run Bazel tests (default //...; e.g. task test -- //internal/domain/...).
     cmds:
-      - bazel test //...
+      - bazel test {{.CLI_ARGS | default "//..."}}
 
-  lint:
-    aliases: [l]
-    desc: Run all lint checks.
+  run:
+    desc: 'Run any Bazel target: task run -- //cmd/hovel -- daemon status.'
     cmds:
-      - task: gofmt:check
-      - task: gazelle:check
-      - task: python:check
+      - bazel run {{.CLI_ARGS}}
+
+  docs:
+    desc: Build the static spec site.
+    cmds:
+      - bazel build //spec:site
+
+  # --- Checks (what CI runs) ----------------------------------------------
 
   check:
     aliases: [ci]
@@ -47,18 +114,29 @@ tasks:
       - task: build
       - task: test
 
-  precommit:
-    aliases: [pre-commit]
-    desc: Run the checks enforced by Lefthook pre-commit.
+  lint:
+    aliases: [l]
+    desc: Run all lint checks (Go formatting, Gazelle, Python).
     cmds:
-      - task: check
+      - task: gofmt:check
+      - task: gazelle:check
+      - task: python:check
+
+  fmt:
+    aliases: [format]
+    desc: Auto-format the tree (Go source, Gazelle BUILD metadata).
+    cmds:
+      - task: gofmt
+      - task: gazelle
+
+  # --- Individual quality steps (composed by lint/fmt above) --------------
 
   gofmt:
     desc: Format Go files in place.
     cmds:
       - bash tools/lint/gofmt_all.sh
 
-  "gofmt:check":
+  gofmt:check:
     desc: Check Go formatting.
     cmds:
       - bash tools/lint/check_gofmt.sh
@@ -68,27 +146,32 @@ tasks:
     cmds:
       - bazel run //:gazelle
 
-  "gazelle:check":
-    desc: Check Go BUILD metadata is up to date.
+  gazelle:check:
+    desc: Check that Go BUILD metadata is up to date.
     cmds:
       - bazel run //:gazelle -- -mode=diff
 
-  "python:check":
+  python:check:
     desc: Run Python lint, type, and doc checks.
     cmds:
       - bash tools/lint/check_python.sh
 
-  docs:
-    desc: Build the static spec site (filegroup).
-    cmds:
-      - bazel build //spec:site
+  # --- Git hooks ----------------------------------------------------------
 
-  "hooks:install":
+  hooks:install:
     desc: Install Git hooks through Lefthook.
     cmds:
       - lefthook install
 
-  "hooks:run":
-    desc: Run Lefthook pre-commit checks.
+  precommit:
+    aliases: [pre-commit]
+    desc: Fast checks run by the Lefthook pre-commit hook (lint + build).
     cmds:
-      - lefthook run pre-commit
+      - task: lint
+      - task: build
+
+  prepush:
+    aliases: [pre-push]
+    desc: Thorough checks run by the Lefthook pre-push hook (tests).
+    cmds:
+      - task: test

@@ -2075,3 +2075,27 @@ func (fakeRunClient) ListSessions(context.Context) ([]SessionRef, error) {
 func (fakeRunClient) CloseSession(context.Context, string) error {
 	return nil
 }
+
+func TestGuardDangerousModules(t *testing.T) {
+	runtime := Runtime{Modules: modulecatalog.New(
+		modulecatalog.Module{ID: "safe-mod@1", Version: "1", Type: modulecatalog.ModuleType("survey")},
+		modulecatalog.Module{ID: "risky-mod@1", Version: "1", Type: modulecatalog.ModuleType("exploit"), Tags: []string{"dangerous"}},
+	)}
+
+	if err := guardDangerousModules(runtime, []string{"safe-mod@1"}, false); err != nil {
+		t.Fatalf("benign module blocked: %v", err)
+	}
+	if err := guardDangerousModules(runtime, []string{"unknown-mod@1"}, false); err != nil {
+		t.Fatalf("unknown module should not be blocked here: %v", err)
+	}
+	err := guardDangerousModules(runtime, []string{"safe-mod@1", "risky-mod@1"}, false)
+	if err == nil {
+		t.Fatal("dangerous module not blocked without --allow-dangerous")
+	}
+	if !strings.Contains(err.Error(), "risky-mod@1") {
+		t.Fatalf("error should name the dangerous module, got: %v", err)
+	}
+	if err := guardDangerousModules(runtime, []string{"risky-mod@1"}, true); err != nil {
+		t.Fatalf("--allow-dangerous should permit dangerous module: %v", err)
+	}
+}
