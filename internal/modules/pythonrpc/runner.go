@@ -33,10 +33,18 @@ type ModuleConfig struct {
 }
 
 type ModuleEntry struct {
-	ID         string `json:"id"`
-	Runtime    string `json:"runtime"`
-	ProjectDir string `json:"project_dir"`
-	Module     string `json:"module"`
+	ID         string   `json:"id"`
+	Runtime    string   `json:"runtime"`
+	ProjectDir string   `json:"project_dir"`
+	Module     string   `json:"module"`
+	Command    []string `json:"command"`
+}
+
+// usesCommand reports whether the entry launches an arbitrary executable
+// (any language that speaks the stdio JSON-RPC protocol) rather than the
+// built-in Python interpreter path.
+func (e ModuleEntry) usesCommand() bool {
+	return len(e.Command) > 0
 }
 
 type Runner struct {
@@ -201,26 +209,18 @@ type moduleProcess struct {
 }
 
 func (r Runner) start(ctx context.Context, moduleID string) (*moduleProcess, error) {
-	python, err := r.pythonPath()
-	if err != nil {
-		return nil, err
-	}
-	sdkRoot, err := r.sdkRoot()
-	if err != nil {
-		return nil, err
-	}
 	entrypoint, ok, err := r.moduleEntry(moduleID)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("unknown python module %q", moduleID)
+		return nil, fmt.Errorf("unknown module %q", moduleID)
 	}
-	projectRoot := entrypoint.ProjectDir
 
-	cmd := exec.CommandContext(ctx, python, "-m", entrypoint.Module)
-	cmd.Env = append(os.Environ(), "PYTHONPATH="+strings.Join([]string{sdkRoot, projectRoot}, string(os.PathListSeparator)))
-	cmd.Dir = projectRoot
+	cmd, err := r.command(ctx, entrypoint)
+	if err != nil {
+		return nil, err
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -235,6 +235,34 @@ func (r Runner) start(ctx context.Context, moduleID string) (*moduleProcess, err
 		return nil, err
 	}
 	return &moduleProcess{cmd: cmd, client: newClient(stdout, stdin), stderr: stderr}, nil
+}
+
+// command builds the OS command that launches a module process. Entries with an
+// explicit "command" run an arbitrary executable that speaks the stdio JSON-RPC
+// protocol (Go, Rust, or any other language); entries without one use the
+// built-in Python interpreter path (python -m <module>).
+func (r Runner) command(ctx context.Context, entry ModuleEntry) (*exec.Cmd, error) {
+	if entry.usesCommand() {
+		cmd := exec.CommandContext(ctx, entry.Command[0], entry.Command[1:]...)
+		cmd.Env = os.Environ()
+		if entry.ProjectDir != "" {
+			cmd.Dir = entry.ProjectDir
+		}
+		return cmd, nil
+	}
+
+	python, err := r.pythonPath()
+	if err != nil {
+		return nil, err
+	}
+	sdkRoot, err := r.sdkRoot()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, python, "-m", entry.Module)
+	cmd.Env = append(os.Environ(), "PYTHONPATH="+strings.Join([]string{sdkRoot, entry.ProjectDir}, string(os.PathListSeparator)))
+	cmd.Dir = entry.ProjectDir
+	return cmd, nil
 }
 
 func (p *moduleProcess) wait() error {
@@ -333,11 +361,20 @@ func (r Runner) moduleEntries() ([]ModuleEntry, error) {
 		if entry.Runtime != modulecatalog.RuntimeJSONRPCStdio {
 			continue
 		}
+		if entry.ProjectDir != "" && !filepath.IsAbs(entry.ProjectDir) {
+			entry.ProjectDir = filepath.Join(baseDir, entry.ProjectDir)
+		}
+		if entry.usesCommand() {
+			// command[0] may be a path relative to the config file; resolve it
+			// so the runner can launch the binary regardless of working dir.
+			if program := entry.Command[0]; program != "" && !filepath.IsAbs(program) && strings.ContainsRune(program, os.PathSeparator) {
+				entry.Command[0] = filepath.Join(baseDir, program)
+			}
+			entries = append(entries, entry)
+			continue
+		}
 		if entry.ProjectDir == "" || entry.Module == "" {
 			return nil, fmt.Errorf("module %q missing project_dir or module", entry.ID)
-		}
-		if !filepath.IsAbs(entry.ProjectDir) {
-			entry.ProjectDir = filepath.Join(baseDir, entry.ProjectDir)
 		}
 		entries = append(entries, entry)
 	}

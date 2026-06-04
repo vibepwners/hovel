@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rust Modules — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+      <p class="sidebar-section">Module Development</p>
+      <ul>
+        <li><a href="module-development.html">Overview</a></li>
+        <li><a href="module-protocol.html">Wire Protocol</a></li>
+        <li><a href="module-python.html">Python Modules</a></li>
+        <li><a href="module-go.html">Go Modules</a></li>
+        <li><a href="module-rust.html" aria-current="page">Rust Modules</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Rust Modules</h1>
+        <p>
+          A Rust module compiles to a single binary that the daemon launches by path. The SDK
+          lives at <code>sdk/rust/hovel</code> and is <strong>dependency-free</strong>: it
+          hand-rolls a tiny JSON layer and base64 codec rather than pulling in
+          <code>serde_json</code>, so the whole crate builds with nothing but the standard
+          library. Real modules are free to add whatever crates they like. The worked examples
+          are under <code>examples/rust/</code>.
+        </p>
+        <blockquote>
+          Rust's standard library already defines <code>Result</code>, so this SDK names the
+          module return type <code>Outcome</code>. It is the exact equivalent of the
+          Python/Go <code>Result</code>.
+        </blockquote>
+
+        <h2>The Module trait</h2>
+<pre data-lang="rust"><code>pub trait Module {
+    fn info(&amp;self) -&gt; Info;                       // → handshake
+    fn schema(&amp;self) -&gt; Schema;                   // → schema
+    fn run(&amp;self, ctx: &amp;mut Context) -&gt; Outcome;  // → execute
+}
+
+fn main() { hovel::serve(MyModule); }</code></pre>
+
+        <h2>A survey module</h2>
+<pre data-lang="examples/rust/mock_survey/src/main.rs"><code>use hovel::json::Value;
+use hovel::{Context, Info, Module, ModuleType, Outcome, Requirement, Schema};
+
+struct MockSurvey;
+
+impl Module for MockSurvey {
+    fn info(&amp;self) -&gt; Info {
+        Info {
+            name: "mock-survey-rust".into(),
+            version: "v0.0.0-example".into(),
+            module_type: ModuleType::Survey,
+            summary: "Collect example target facts.".into(),
+            description: String::new(),
+            tags: vec!["example".into(), "survey".into(), "rust".into()],
+        }
+    }
+
+    fn schema(&amp;self) -&gt; Schema {
+        Schema {
+            target_config: vec![
+                Requirement::new("target.host", "host", "Target host name or IP address."),
+                Requirement::new("target.port", "port", "Target TCP port."),
+            ],
+            ..Schema::default()
+        }
+    }
+
+    fn run(&amp;self, ctx: &amp;mut Context) -&gt; Outcome {
+        let host = ctx.input_str("target.host", &amp;ctx.target);
+        let port = ctx.input_str("target.port", "unknown");
+        ctx.info("connecting to target",
+            &amp;[("host", Value::from(host.as_str())), ("port", Value::from(port.as_str()))]);
+        let facts = Value::object(vec![
+            ("host", Value::from(host.as_str())),
+            ("port", Value::from(port.as_str())),
+            ("reachable", Value::from(true)),
+        ]);
+        Outcome::ok(vec![("facts".into(), facts)])
+            .with_summary(&amp;format!("example survey reached {host}:{port}"))
+    }
+}
+
+fn main() { hovel::serve(MockSurvey); }</code></pre>
+        <p>
+          <code>ctx.input_str(key, default)</code> resolves a config value as a string.
+          <code>ctx.info(message, fields)</code> emits a <code>module/log</code> notification;
+          fields are <code>(&amp;str, Value)</code> pairs built with the <code>Value::from</code>
+          conversions.
+        </p>
+
+        <h2>Findings and artifacts</h2>
+        <p>The <code>Outcome</code> builder chains with <code>with_*</code> methods.</p>
+<pre data-lang="rust"><code>fn run(&amp;self, ctx: &amp;mut Context) -&gt; Outcome {
+    if ctx.input_str("failure_mode", "") == "execution" {
+        return Outcome::failed("example exploit failed during execution");
+    }
+    Outcome::ok(vec![("target".into(), Value::from(ctx.target.as_str()))])
+        .with_summary("example exploit completed without target interaction")
+        .with_finding(Finding::new(
+            "example exploit path verified", "info",
+            "exercised orchestration without touching a real target",
+        ))
+        .with_artifact(Artifact::inline(
+            "mock-exploit-rust-transcript.txt", "text/plain",
+            "example module invoked through daemon RPC",
+        ))
+}</code></pre>
+
+        <h2>Interactive sessions</h2>
+        <p>
+          <code>LineShellSession::new</code> takes a prompt, an echo flag, and a command
+          handler closure. <code>ctx.open_session</code> registers it; the session outlives
+          <code>run</code>.
+        </p>
+<pre data-lang="rust"><code>fn run(&amp;self, ctx: &amp;mut Context) -&gt; Outcome {
+    let target = ctx.target.clone();
+    let shell = LineShellSession::new("mock$ ", true, move |command| match command {
+        "whoami" =&gt; "mock-operator".to_string(),
+        other =&gt; format!("mock-shell: command not found: {other}"),
+    });
+    let sref = match ctx.open_session(
+        Box::new(shell),
+        SessionOptions::default()
+            .with_name(&amp;format!("mock shell on {target}"))
+            .with_capabilities(&amp;["read", "write", "exec", "close"]),
+    ) {
+        Ok(sref) =&gt; sref,
+        Err(err) =&gt; return Outcome::failed(&amp;format!("failed to open session: {err}")),
+    };
+    Outcome::ok(vec![("sessionId".into(), Value::from(sref.id.as_str()))])
+        .with_summary("mock exploit opened an interactive shell session")
+}</code></pre>
+
+        <h2>Build, stage, and register</h2>
+        <p>
+          Rust is wired into Bazel via <code>rules_rust</code> (declared in
+          <code>MODULE.bazel</code>), so <code>task build</code> and <code>task ci</code> cover
+          it alongside Go and Python. BUILD files are hand-written
+          (<code>rust_binary</code> + <code>rust_test</code>); the example binaries are staged
+          to <code>examples/bin/</code> by <code>task modules:build</code>.
+        </p>
+<pre data-lang="examples/rust/mock_survey/BUILD.bazel"><code>rust_binary(
+    name = "mock-survey-rust",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = ["//sdk/rust/hovel"],
+)</code></pre>
+<pre data-lang="examples/hovel-modules.json"><code>{
+  "id": "mock-survey-rust",
+  "runtime": "jsonrpc-stdio",
+  "command": ["bin/mock-survey-rust"]
+}</code></pre>
+<pre data-lang="shell"><code>task modules:build   # compiles and stages examples/bin/mock-survey-rust
+task start
+hovel&gt; module list   # ... mock-survey-rust, mock-exploit-rust, mock-exploit-session-rust</code></pre>
+        <p>
+          That completes the trio: the same three modules in
+          <a href="module-python.html">Python</a>, <a href="module-go.html">Go</a>, and Rust,
+          all speaking the one <a href="module-protocol.html">wire protocol</a>.
+        </p>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="module-go.html">← Go Modules</a>
+        <span class="spacer"></span>
+        <a class="next" href="index.html">Spec Contents →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

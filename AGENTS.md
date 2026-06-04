@@ -30,6 +30,7 @@ Run `task --list` to see everything available.
 | `task check` (`task ci`) | Lint, build, and test — the full gate. |
 | `task start` (`cli`) / `task daemon` | Launch the interactive CLI / the daemon. |
 | `task status` / `task init` / `task reset` | Dev workspace: status, init, wipe-and-relaunch. |
+| `task modules:build` | Build the Go/Rust example modules and stage binaries to `examples/bin/`. |
 | `task docs` | Build the static spec site. |
 | `task hooks:install` | Install the Lefthook git hooks. |
 

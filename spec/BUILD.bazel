@@ -14,11 +14,15 @@ sh_test(
     args = [
         "$(rootpath :index.html)",
         "$(rootpath :introduction.html)",
+        "$(rootpath :module-development.html)",
+        "$(rootpath :module-protocol.html)",
         "$(rootpath :reference/descriptors.html)",
     ],
     data = [
         "index.html",
         "introduction.html",
+        "module-development.html",
+        "module-protocol.html",
         "reference/descriptors.html",
     ],
 )

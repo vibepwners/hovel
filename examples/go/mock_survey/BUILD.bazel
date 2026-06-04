@@ -1,0 +1,22 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "mock_survey_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/examples/go/mock_survey",
+    visibility = ["//visibility:private"],
+    deps = ["//sdk/go/hovel"],
+)
+
+go_binary(
+    name = "mock_survey",
+    embed = [":mock_survey_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "mock_survey_test",
+    srcs = ["main_test.go"],
+    embed = [":mock_survey_lib"],
+    deps = ["//sdk/go/hovel"],
+)

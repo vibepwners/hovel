@@ -52,6 +52,127 @@ func TestRunnerExecutesPythonMockModule(t *testing.T) {
 	}
 }
 
+func TestRunnerExecutesCommandModule(t *testing.T) {
+	python, err := (Runner{}).pythonPath()
+	if err != nil {
+		t.Skipf("python interpreter unavailable: %v", err)
+	}
+	// A command-based entry launches an arbitrary executable that speaks the
+	// stdio JSON-RPC protocol. We reuse the Python interpreter only as a generic
+	// program here; the runner itself knows nothing about the language.
+	script := filepath.Join(t.TempDir(), "command_module.py")
+	body := `import json, sys
+
+def read():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line in (b"\r\n", b"\n", b""):
+            break
+        name, value = line.decode().split(":", 1)
+        headers[name.lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(length) or b"{}")
+
+def send(message):
+    out = json.dumps(message).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(out))
+    sys.stdout.buffer.write(out)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read()
+    method = msg.get("method")
+    rid = msg.get("id")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "command-module", "version": "v0.0.0-test",
+            "moduleType": "survey", "summary": "command launcher test", "tags": []}})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "execute":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "status": "succeeded", "summary": "command module executed",
+            "findings": [{"title": "launched via command", "severity": "info", "detail": ""}],
+            "artifacts": [], "outputs": {}, "sessions": []}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`
+	if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config := ModuleConfig{Modules: []ModuleEntry{{
+		ID:      "command-module",
+		Runtime: "jsonrpc-stdio",
+		Command: []string{python, script},
+	}}}
+	configBody, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	request, err := run.NewRequest(run.RequestArgs{ID: "run-cmd", ModuleID: "command-module", Target: "mock://target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Runner{
+		ConfigPath: configPath,
+		Events:     &eventRecorder{},
+		IDs:        &sequenceIDs{values: []string{"event-1"}},
+		Clock:      fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+		Timeout:    10 * time.Second,
+	}.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != run.StateSucceeded {
+		t.Fatalf("state = %q, want succeeded", result.State)
+	}
+	if result.Summary != "command module executed" {
+		t.Fatalf("summary = %q", result.Summary)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Title != "launched via command" {
+		t.Fatalf("findings = %#v, want one launched-via-command finding", result.Findings)
+	}
+}
+
+func TestModuleEntriesResolvesCommandPaths(t *testing.T) {
+	root := t.TempDir()
+	config := ModuleConfig{Modules: []ModuleEntry{
+		{ID: "rel", Runtime: "jsonrpc-stdio", Command: []string{filepath.Join("bin", "mod-rel")}},
+		{ID: "bare", Runtime: "jsonrpc-stdio", Command: []string{"go", "run", "."}},
+	}}
+	configBody, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "modules.json")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := (Runner{ConfigPath: configPath}).moduleEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(entries))
+	}
+	// A relative path with a separator is resolved against the config directory.
+	if want := filepath.Join(root, "bin", "mod-rel"); entries[0].Command[0] != want {
+		t.Fatalf("rel command[0] = %q, want %q", entries[0].Command[0], want)
+	}
+	// A bare program name is left untouched for PATH lookup.
+	if entries[1].Command[0] != "go" {
+		t.Fatalf("bare command[0] = %q, want %q", entries[1].Command[0], "go")
+	}
+}
+
 func TestArtifactsFromRPCSupportsFileReferences(t *testing.T) {
 	artifacts := artifactsFromRPC([]any{
 		map[string]any{"name": "loot.txt", "kind": "text/plain", "path": "/tmp/loot.txt"},

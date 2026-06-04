@@ -1,5 +1,6 @@
 .hovel/
 .task/
+examples/bin/
 lefthook-local.yml
 bazel-*
 .worktrees/
