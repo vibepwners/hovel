@@ -41,6 +41,54 @@ fn line_shell_answers_commands() {
     assert_eq!(output, b"mock-operator\n");
 }
 
+#[test]
+fn line_shell_handles_backspace() {
+    let mut shell = LineShellSession::new("$ ", true, |command| format!("you said: {command}"));
+    shell.open().unwrap();
+    let _ = shell.read(0).unwrap(); // opening prompt
+
+    // Type "whoamx", press backspace (DEL) to erase the 'x', then "i" + Enter.
+    shell.write(b"whoamx").unwrap();
+    shell.write(&[0x7f]).unwrap();
+    shell.write(b"i\n").unwrap();
+
+    let mut out = Vec::new();
+    loop {
+        let chunk = shell.read(0).unwrap();
+        if chunk.is_empty() {
+            break;
+        }
+        out.extend(chunk);
+    }
+    let text = String::from_utf8_lossy(&out);
+    // The command the handler saw is "whoami", not "whoamxi" or "whoamx\x7fi".
+    assert!(text.contains("you said: whoami"), "command was mangled: {text:?}");
+    // The backspace emitted a visual erase sequence.
+    assert!(out.windows(3).any(|w| w == b"\x08 \x08"), "no erase sequence: {out:?}");
+}
+
+#[test]
+fn line_shell_honors_read_timeout() {
+    use std::time::{Duration, Instant};
+
+    let mut shell = LineShellSession::new("$ ", false, |_| String::new());
+    shell.open().unwrap();
+    assert_eq!(shell.read(0).unwrap(), b"$ "); // opening prompt, non-blocking
+
+    // An idle read with a positive wait blocks for roughly that long, then
+    // returns empty — rather than spinning by returning instantly.
+    let start = Instant::now();
+    let chunk = shell.read(20).unwrap();
+    let elapsed = start.elapsed();
+    assert!(chunk.is_empty());
+    assert!(elapsed >= Duration::from_millis(10), "idle read returned too fast: {elapsed:?}");
+
+    // wait == 0 stays a non-blocking poll.
+    let start = Instant::now();
+    assert!(shell.read(0).unwrap().is_empty());
+    assert!(start.elapsed() < Duration::from_millis(10));
+}
+
 /// A writer that appends to a shared buffer so tests can inspect module output.
 #[derive(Clone)]
 struct SharedBuf(Rc<RefCell<Vec<u8>>>);
