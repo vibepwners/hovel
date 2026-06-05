@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Python Modules — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+      <p class="sidebar-section">Module Development</p>
+      <ul>
+        <li><a href="module-development.html">Overview</a></li>
+        <li><a href="module-protocol.html">Wire Protocol</a></li>
+        <li><a href="module-python.html" aria-current="page">Python Modules</a></li>
+        <li><a href="module-go.html">Go Modules</a></li>
+        <li><a href="module-rust.html">Rust Modules</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Python Modules</h1>
+        <p>
+          Python is the quickest way to write a Hovel module: there is no build step, and the
+          daemon launches it straight from source through the interpreter. The SDK lives at
+          <code>sdk/python/hovel_sdk</code>; the worked examples are under
+          <code>examples/python/</code>.
+        </p>
+
+        <h2>The SDK in one import</h2>
+        <p>You subclass <code>HovelModule</code>, set a few class attributes, implement <code>run</code>, and hand an instance to <code>serve</code>.</p>
+<pre data-lang="python"><code>from hovel_sdk import (
+    Artifact, Context, Finding, HovelModule,
+    LineShellSession, Requirement, Result, serve,
+)</code></pre>
+        <ul>
+          <li><code>HovelModule</code> — base class; declares metadata and the <code>run</code> method.</li>
+          <li><code>Requirement</code> — one configuration field.</li>
+          <li><code>Context</code> — inputs, logging, and sessions for one execution.</li>
+          <li><code>Result</code>, <code>Finding</code>, <code>Artifact</code> — what <code>run</code> returns.</li>
+          <li><code>LineShellSession</code> — a base for interactive shell sessions.</li>
+          <li><code>serve</code> — runs the JSON-RPC loop on stdin/stdout.</li>
+        </ul>
+
+        <h2>A survey module</h2>
+        <p>
+          A survey gathers facts and returns them in <code>outputs</code>. Class attributes
+          become the <code>handshake</code> and <code>schema</code> responses; <code>run</code>
+          becomes <code>execute</code>.
+        </p>
+<pre data-lang="examples/python/mock_survey/.../module.py"><code>from hovel_sdk import Context, HovelModule, Requirement, Result
+
+
+class MockSurvey(HovelModule):
+    name = "mock-survey"
+    version = "v0.0.0-example"
+    module_type = "survey"
+    summary = "Collect example target facts."
+    tags = ("example", "survey", "python")
+    target_config = (
+        Requirement("target.host", "host", description="Target host name or IP address."),
+        Requirement("target.port", "port", description="Target TCP port."),
+    )
+
+    def run(self, ctx: Context) -> Result:
+        host = ctx.input("target.host", ctx.target)
+        port = ctx.input("target.port", "unknown")
+        ctx.log.info("connecting to target %s:%s", host, port)
+        return Result.ok(
+            {"facts": {"host": host, "port": port, "reachable": True}},
+            summary=f"example survey reached {host}:{port}",
+        )</code></pre>
+        <p>
+          <code>ctx.input(key, default)</code> resolves the value across run inputs, target
+          config, and chain config. <code>ctx.log</code> is a standard Python logger whose
+          records are forwarded to the daemon as <code>module/log</code> notifications.
+        </p>
+
+        <h2>Findings and artifacts</h2>
+        <p>An exploit reports <code>Finding</code>s and <code>Artifact</code>s, and can fail deliberately via an input.</p>
+<pre data-lang="python"><code>def run(self, ctx: Context) -> Result:
+    if ctx.input("failure_mode", "") == "execution":
+        return Result.failed("example exploit failed during execution")
+
+    return Result.ok(
+        {"target": ctx.target},
+        summary="example exploit completed without target interaction",
+        findings=[Finding(
+            title="example exploit path verified",
+            severity="info",
+            detail="exercised orchestration without touching a real target",
+        )],
+        artifacts=[Artifact.inline(
+            name="mock-exploit-transcript.txt",
+            kind="text/plain",
+            data="example module invoked through daemon RPC",
+        )],
+    )</code></pre>
+        <p><code>Artifact</code> also offers <code>text</code>, <code>json</code>, and <code>file</code> constructors for common cases.</p>
+
+        <h2>Interactive sessions</h2>
+        <p>
+          An exploit can open a session that outlives <code>run</code>. Subclass
+          <code>LineShellSession</code> and answer commands; <code>ctx.open_session</code>
+          registers it. The daemon keeps the process alive and lets the operator drive the
+          shell.
+        </p>
+<pre data-lang="python"><code>class MockShell(LineShellSession):
+    def __init__(self, target: str) -> None:
+        super().__init__(prompt="mock$ ", echo=True)
+        self._target = target
+
+    async def handle_command(self, command: str) -> str:
+        if command == "whoami":
+            return "mock-operator"
+        if command == "hostname":
+            return self._target.removeprefix("mock://") or "mock-target"
+        return f"mock-shell: command not found: {command}"
+
+
+class MockExploitSession(HovelModule):
+    name = "mock-exploit-session"
+    module_type = "exploit"
+    tags = ("example", "exploit", "python", "session")
+
+    async def run(self, ctx: Context) -> Result:
+        session = await ctx.open_session(
+            MockShell(ctx.target),
+            name=f"mock shell on {ctx.target}",
+            capabilities=("read", "write", "exec", "close"),
+        )
+        return Result.ok(
+            {"sessionId": session.id},
+            summary="mock exploit opened an interactive shell session",
+        )</code></pre>
+        <p>
+          <code>run</code> may be synchronous or <code>async</code>; the SDK awaits it either
+          way. <code>LineShellSession</code> handles line buffering, echo, the prompt, and the
+          built-in <code>exit</code>/<code>logout</code> commands for you.
+        </p>
+
+        <h2>Entry point</h2>
+        <p>Each module package has a <code>__main__.py</code> so the daemon can run <code>python -m &lt;module&gt;</code>.</p>
+<pre data-lang="examples/python/mock_survey/.../__main__.py"><code>from hovel_example_survey.module import MockSurvey
+from hovel_sdk import serve
+
+
+def main() -> None:
+    serve(MockSurvey())
+
+
+if __name__ == "__main__":
+    main()</code></pre>
+
+        <h2>Register and run</h2>
+        <p>Add the module to the config with <code>project_dir</code> and <code>module</code>; the daemon puts the SDK and project on <code>PYTHONPATH</code> automatically.</p>
+<pre data-lang="examples/hovel-modules.json"><code>{
+  "id": "mock-survey",
+  "runtime": "jsonrpc-stdio",
+  "project_dir": "python/mock_survey",
+  "module": "hovel_example_survey"
+}</code></pre>
+<pre data-lang="shell"><code>task start          # launch the CLI with the example catalog
+hovel&gt; module list  # mock-survey, mock-exploit, mock-exploit-session ...</code></pre>
+        <p>
+          Python modules need no <code>task modules:build</code> — they run from source. See
+          the <a href="module-go.html">Go</a> and <a href="module-rust.html">Rust</a> guides
+          for the same three modules as compiled binaries.
+        </p>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="module-protocol.html">← Wire Protocol</a>
+        <span class="spacer"></span>
+        <a class="next" href="module-go.html">Go Modules →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

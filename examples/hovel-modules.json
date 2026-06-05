@@ -1,0 +1,52 @@
+{
+  "modules": [
+    {
+      "id": "mock-survey",
+      "runtime": "jsonrpc-stdio",
+      "project_dir": "python/mock_survey",
+      "module": "hovel_example_survey"
+    },
+    {
+      "id": "mock-exploit",
+      "runtime": "jsonrpc-stdio",
+      "project_dir": "python/mock_exploit",
+      "module": "hovel_example_exploit"
+    },
+    {
+      "id": "mock-exploit-session",
+      "runtime": "jsonrpc-stdio",
+      "project_dir": "python/mock_exploit_session",
+      "module": "hovel_example_exploit_session"
+    },
+    {
+      "id": "mock-survey-go",
+      "runtime": "jsonrpc-stdio",
+      "command": ["bin/mock-survey-go"]
+    },
+    {
+      "id": "mock-exploit-go",
+      "runtime": "jsonrpc-stdio",
+      "command": ["bin/mock-exploit-go"]
+    },
+    {
+      "id": "mock-exploit-session-go",
+      "runtime": "jsonrpc-stdio",
+      "command": ["bin/mock-exploit-session-go"]
+    },
+    {
+      "id": "mock-survey-rust",
+      "runtime": "jsonrpc-stdio",
+      "command": ["bin/mock-survey-rust"]
+    },
+    {
+      "id": "mock-exploit-rust",
+      "runtime": "jsonrpc-stdio",
+      "command": ["bin/mock-exploit-rust"]
+    },
+    {
+      "id": "mock-exploit-session-rust",
+      "runtime": "jsonrpc-stdio",
+      "command": ["bin/mock-exploit-session-rust"]
+    }
+  ]
+}

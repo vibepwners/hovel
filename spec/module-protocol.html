@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Module Wire Protocol — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+      <p class="sidebar-section">Module Development</p>
+      <ul>
+        <li><a href="module-development.html">Overview</a></li>
+        <li><a href="module-protocol.html" aria-current="page">Wire Protocol</a></li>
+        <li><a href="module-python.html">Python Modules</a></li>
+        <li><a href="module-go.html">Go Modules</a></li>
+        <li><a href="module-rust.html">Rust Modules</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Module Wire Protocol</h1>
+        <p>
+          This is the contract between the Hovel daemon and a module process. The SDKs
+          implement it for you; you only need this page if you are writing an SDK, debugging
+          a module by hand, or porting Hovel modules to a new language. The runtime is
+          identified as <code>jsonrpc-stdio</code>.
+        </p>
+
+        <h2>Framing</h2>
+        <p>
+          Messages are <a href="https://www.jsonrpc.org/specification">JSON-RPC 2.0</a>
+          objects, each prefixed with an HTTP-style <code>Content-Length</code> header. This
+          framing (rather than newline-delimited JSON) lets session payloads carry arbitrary
+          bytes without escaping games.
+        </p>
+<pre data-lang="frame"><code>Content-Length: 58\r\n
+\r\n
+{"jsonrpc":"2.0","id":1,"method":"handshake","params":{}}</code></pre>
+        <ul>
+          <li>Header lines end with <code>\r\n</code>; a bare <code>\r\n</code> terminates the header block.</li>
+          <li>Header names are case-insensitive; only <code>Content-Length</code> is required.</li>
+          <li>The body is exactly <code>Content-Length</code> bytes of UTF-8 JSON.</li>
+        </ul>
+
+        <h2>Message kinds</h2>
+        <p>Three shapes travel over the wire:</p>
+        <ul>
+          <li><strong>Request</strong> (daemon → module): has an integer <code>id</code> and a <code>method</code>. Expects a response.</li>
+          <li><strong>Response</strong> (module → daemon): echoes the <code>id</code> with either <code>result</code> or <code>error</code>.</li>
+          <li><strong>Notification</strong> (module → daemon): has a <code>method</code> but no <code>id</code>. No response. Used for logs and session events.</li>
+        </ul>
+<pre data-lang="response"><code>{"jsonrpc":"2.0","id":1,"result":{ ... }}
+{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"boom"}}</code></pre>
+        <p>The daemon reads only <code>error.message</code>; the code is advisory.</p>
+
+        <h2>Methods (daemon → module)</h2>
+
+        <h3>handshake</h3>
+        <p>Reports module identity. Called while building the catalog and again before each throw.</p>
+<pre data-lang="result"><code>{
+  "name": "mock-survey",
+  "version": "v0.0.0-example",
+  "moduleType": "survey",            // survey | exploit | payload_provider
+  "summary": "Collect example target facts.",
+  "description": "Example survey module ...",
+  "tags": ["example", "survey", "python"]
+}</code></pre>
+
+        <h3>schema</h3>
+        <p>Reports the configuration the module requires, split into chain-level and target-level.</p>
+<pre data-lang="result"><code>{
+  "chainConfig":  [ Requirement, ... ],
+  "targetConfig": [ Requirement, ... ],
+  "outputs": {}
+}</code></pre>
+
+        <h3>execute</h3>
+        <p>Runs the module against one target. The daemon supplies the resolved configuration; the module returns its result.</p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "moduleId": "mock-survey@v0.0.0-example",
+  "target": "mock://host",
+  "inputs": { "failure_mode": "" },
+  "chainConfig":  { "operator.confirmed_lab": true },
+  "targetConfig": { "target.host": "example.test", "target.port": "443" }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "status": "succeeded",             // or "failed"
+  "summary": "example survey reached example.test:443",
+  "findings":  [ Finding, ... ],
+  "artifacts": [ Artifact, ... ],
+  "outputs":   { "facts": { "host": "example.test", "reachable": true } },
+  "sessions":  [ SessionRef, ... ]
+}</code></pre>
+        <p>
+          While <code>execute</code> runs, the module may stream <code>module/log</code> and
+          <code>module/session</code> notifications. The daemon resolves a configuration key
+          by preferring per-run <code>inputs</code>, then <code>targetConfig</code>, then
+          <code>chainConfig</code>.
+        </p>
+
+        <h3>session/write, session/read, session/close</h3>
+        <p>Drive a session the module opened during <code>execute</code>. Payloads are base64 so arbitrary bytes survive JSON.</p>
+<pre data-lang="session"><code>// write operator input
+→ {"method":"session/write","params":{"sessionId":"run-1-session-1","data":"d2hvYW1pCg=="}}
+← {"result":{"status":"ok"}}
+
+// read output (timeoutMs &lt; 0 blocks; the daemon usually passes a finite timeout)
+→ {"method":"session/read","params":{"sessionId":"run-1-session-1","timeoutMs":1000}}
+← {"result":{"sessionId":"run-1-session-1","data":"bW9jay1vcGVyYXRvcgo=","closed":false}}
+
+// close
+→ {"method":"session/close","params":{"sessionId":"run-1-session-1","reason":"done"}}
+← {"result":{"status":"ok"}}</code></pre>
+
+        <h3>shutdown</h3>
+        <p>Asks the module to close any sessions and exit. The module replies <code>{"status":"ok"}</code> and then terminates.</p>
+
+        <h2>Notifications (module → daemon)</h2>
+
+        <h3>module/log</h3>
+        <p>A structured log record. Appears in the throw transcript alongside the daemon's own logs.</p>
+<pre data-lang="params"><code>{
+  "level": "info",                   // debug | info | warning | error
+  "message": "connecting to target",
+  "logger": "mock-survey",
+  "fields": { "host": "example.test", "port": "443" },
+  "exception": ""
+}</code></pre>
+
+        <h3>module/session</h3>
+        <p>A session lifecycle event. The daemon's session broker tracks these.</p>
+<pre data-lang="params"><code>{
+  "event": "session.created",        // or "session.closed"
+  "session": SessionRef,
+  "fields": { "reason": "closed" }   // present on session.closed
+}</code></pre>
+
+        <h2>Data shapes</h2>
+
+        <h3>Requirement</h3>
+<pre data-lang="object"><code>{
+  "key": "target.host",
+  "type": "host",        // string | secret | bool | int | float | enum |
+                         // duration | url | host | port | cidr | path | list | map
+  "required": true,
+  "default": "",
+  "description": "Target host name or IP address.",
+  "allowed": [],         // enumerated values, when constrained
+  "secret": false        // hide the value in logs and transcripts
+}</code></pre>
+
+        <h3>Finding</h3>
+<pre data-lang="object"><code>{ "title": "example exploit path verified", "severity": "info", "detail": "..." }</code></pre>
+
+        <h3>Artifact</h3>
+        <p>Either inline <code>data</code> or a <code>path</code> on disk.</p>
+<pre data-lang="object"><code>{ "name": "transcript.txt", "kind": "text/plain", "data": "..." }
+{ "name": "loot.bin",       "kind": "application/octet-stream", "path": "/tmp/loot.bin" }</code></pre>
+
+        <h3>SessionRef</h3>
+<pre data-lang="object"><code>{
+  "id": "run-1-session-1",
+  "runId": "run-1",
+  "moduleId": "mock-exploit-session",
+  "target": "mock://host",
+  "name": "mock shell on mock://host",
+  "kind": "shell",
+  "state": "active",                 // active | closed
+  "transport": "stdio",
+  "capabilities": ["read", "write", "exec", "close"]
+}</code></pre>
+
+        <h2>Lifecycle summary</h2>
+<pre data-lang="sequence"><code>daemon                         module
+  │  handshake               →    │
+  │            ← {name,type,...}  │
+  │  schema                  →    │
+  │     ← {chainConfig,...}       │
+  │  execute(target)         →    │
+  │     ← module/log (n times)    │     notifications stream during execute
+  │     ← module/session          │     (only if a session is opened)
+  │            ← {status,...}     │
+  │  session/read|write|close →   │     (only if a session is opened)
+  │  shutdown                →    │
+  │            ← {status:ok}      │
+  │                          ✕ exit</code></pre>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="module-development.html">← Overview</a>
+        <span class="spacer"></span>
+        <a class="next" href="module-python.html">Python Modules →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

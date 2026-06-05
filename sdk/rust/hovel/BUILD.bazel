@@ -1,0 +1,17 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "hovel",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "hovel",
+    edition = "2021",
+)
+
+rust_test(
+    name = "hovel_test",
+    size = "small",
+    crate = ":hovel",
+    edition = "2021",
+)

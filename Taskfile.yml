@@ -20,7 +20,11 @@ version: '3'
 # The dev workspace defaults to ./.hovel; override with HOVEL_WORKSPACE.
 
 vars:
-  MODULE_CONFIG: examples/python/hovel-modules.json
+  # Absolute so the daemon resolves the config (and its relative project_dir /
+  # command paths) against the source tree rather than the bazel runfiles tree,
+  # where the staged example binaries (examples/bin/) do not exist.
+  MODULE_CONFIG:
+    sh: echo "$PWD/examples/hovel-modules.json"
   WORKSPACE:
     sh: echo "${HOVEL_WORKSPACE:-$PWD/.hovel}"
 
@@ -37,6 +41,7 @@ tasks:
     aliases: [dev, up, cli]
     desc: Build and launch the interactive Hovel CLI (auto-starts a daemon).
     interactive: true
+    deps: [modules:build]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
@@ -45,6 +50,7 @@ tasks:
   daemon:
     desc: Run hoveld in the foreground on the default Unix socket.
     interactive: true
+    deps: [modules:build]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
@@ -63,6 +69,7 @@ tasks:
 
   throw:
     desc: 'One-shot throw of a saved chain file: task throw -- path/to/chain.yaml.'
+    deps: [modules:build]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
@@ -98,6 +105,12 @@ tasks:
     desc: 'Run any Bazel target: task run -- //cmd/hovel -- daemon status.'
     cmds:
       - bazel run {{.CLI_ARGS}}
+
+  modules:build:
+    aliases: [modules]
+    desc: Build the Go and Rust example modules and stage their binaries to examples/bin/.
+    cmds:
+      - bash tools/modules/stage_examples.sh
 
   docs:
     desc: Build the static spec site.
