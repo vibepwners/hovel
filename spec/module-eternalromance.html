@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Case Study: EternalRomance — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+      <p class="sidebar-section">Module Development</p>
+      <ul>
+        <li><a href="module-development.html">Overview</a></li>
+        <li><a href="module-protocol.html">Wire Protocol</a></li>
+        <li><a href="module-python.html">Python Modules</a></li>
+        <li><a href="module-go.html">Go Modules</a></li>
+        <li><a href="module-rust.html">Rust Modules</a></li>
+        <li><a href="module-eternalromance.html" aria-current="page">Case Study: EternalRomance</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Case Study: EternalRomance (MS17-010)</h1>
+        <p>
+          The mock modules elsewhere in these guides show the shape of the SDK without touching a
+          real target. This page documents a pair of <em>real</em> modules — <code>etro-survey</code>
+          and <code>etro-exploit</code> — that fingerprint and exploit the MS17-010 SMBv1
+          vulnerability (CVE-2017-0143) in the Windows kernel driver <code>srv.sys</code>. It is the
+          reference example for a full, network-facing capability in Hovel: a survey that produces
+          facts, an exploit that consumes them, a real memory-corruption primitive, an interactive
+          payload, and the safety machinery that gates a dangerous action.
+        </p>
+        <p>
+          Both modules live under <code>examples/python/etro_survey/</code> and
+          <code>examples/python/etro_exploit/</code>. They are pure-Python and carry no third-party
+          dependencies — the SMB and DCE/RPC wire formats are assembled by hand with
+          <code>struct</code> — so they run straight from source through the daemon's interpreter,
+          exactly like the mock examples.
+        </p>
+
+        <blockquote>
+          <strong>Scope and safety.</strong> The implementation targets Windows XP SP3 (x86),
+          <code>srv.sys</code> build 5.1.2600.5512 — an operating system that has been
+          end-of-life since 2014. Every numeric constant below is specific to that build. The
+          exploit corrupts remote kernel memory and can crash the target; it is intended only for
+          an authorized lab host you control. The module enforces this with the controls described
+          in <a href="#integration">Integration with Hovel</a>.
+        </blockquote>
+
+        <h2 id="overview">What the example demonstrates</h2>
+        <ul>
+          <li><strong>A survey that feeds an exploit.</strong> <code>etro-survey</code> reports
+            whether a host is vulnerable and which named pipe to use; <code>etro-exploit</code>
+            takes those facts as configuration.</li>
+          <li><strong>A genuine kernel read/write primitive</strong> built entirely from
+            legitimate-looking SMB requests.</li>
+          <li><strong>A payload that does not require kernel shellcode.</strong> The primitive is
+            used to elevate the live SMB session to SYSTEM, after which an ordinary remote service
+            call runs a command.</li>
+          <li><strong>The dangerous-module path:</strong> the <code>dangerous</code> tag, an explicit
+            operator confirmation requirement, an audit record, and a clean restore step.</li>
+        </ul>
+
+        <h2 id="background">Background: SMB Transactions in one minute</h2>
+        <p>
+          SMBv1 lets a client send a request that is too large for one packet by splitting it into a
+          <em>primary</em> request followed by <em>secondary</em> writes. To track this, the server
+          allocates a <em>transaction object</em> in the kernel's paged pool with a data buffer
+          (here called <code>InData</code>) sized to the promised total. Each follow-up packet carries
+          three bookkeeping values:
+        </p>
+        <ul>
+          <li><code>TotalDataCount</code> — how big the whole payload will be, which is how big
+            <code>InData</code> was allocated.</li>
+          <li><code>DataCount</code> — how many bytes this packet carries.</li>
+          <li><code>DataDisplacement</code> — where in the buffer to place them: the server copies to
+            <code>InData + DataDisplacement</code>.</li>
+        </ul>
+        <p>
+          Transactions are reached over a <em>named pipe</em> opened on the <code>IPC$</code> share.
+          On a vulnerable, default Windows XP install that pipe can be opened with an
+          <em>anonymous (NULL) session</em> — no credentials — which is what makes the whole chain
+          remote and unauthenticated. A short, fixed set of pipes is usable this way:
+          <code>spoolss</code>, <code>browser</code>, <code>lsarpc</code>.
+        </p>
+
+        <h2 id="survey">The survey module</h2>
+        <p>
+          <code>etro-survey</code> is a <code>survey</code> module: it gathers facts and changes
+          nothing. It performs a real SMBv1 handshake — negotiate, anonymous session setup, tree
+          connect to <code>IPC$</code> — then probes the three candidate pipes and issues the
+          standard MS17-010 detection request (a <code>PeekNamedPipe</code> transaction against an
+          invalid file id). A vulnerable <code>srv.sys</code> answers that request with NT status
+          <code>STATUS_INSUFF_SERVER_RESOURCES</code> (<code>0xC0000205</code>); a patched one does
+          not. The verdict and the reachable pipes are returned as facts:
+        </p>
+<pre data-lang="outputs.facts"><code>{
+  "host": "10.0.0.42",
+  "port": 445,
+  "smb_reachable": true,
+  "null_session": true,
+  "verdict": "vulnerable",
+  "detection_status": "0xc0000205",
+  "reachable_pipes": ["spoolss", "browser", "lsarpc"],
+  "recommended_pipe": "spoolss",
+  "suggested_target_profile": "XP_SP2SP3_X86"
+}</code></pre>
+        <p>
+          A vulnerable result is also surfaced as a <code>critical</code> <code>Finding</code> and a
+          JSON <code>Artifact</code>. Because it is reconnaissance only, the survey carries no
+          <code>dangerous</code> tag and no confirmation gate. Its <code>recommended_pipe</code> and
+          <code>suggested_target_profile</code> are the inputs the exploit expects.
+        </p>
+
+        <h2 id="primitive">The exploitation primitive</h2>
+        <p>
+          The exploit builds an arbitrary kernel read/write from four observations about how
+          <code>srv.sys</code> handles transactions. Each step is driven by ordinary SMB packets.
+        </p>
+
+        <h3>1. The flaw: a shifted buffer, not a missing check</h3>
+        <p>
+          When a secondary write arrives, the server copies <code>DataCount</code> bytes to
+          <code>InData + DataDisplacement</code>, and it <em>does</em> bounds-check the destination
+          against <code>TotalDataCount</code>. The flaw is a type confusion between a raw
+          <code>WriteAndX</code> request and a Transaction: a raw <code>WriteAndX</code>
+          (<code>WriteMode</code> = write-raw-named-pipe) sent to an in-progress transaction's pipe
+          <em>advances that transaction's <code>InData</code> pointer</em> by the number of bytes
+          written, while leaving <code>TotalDataCount</code> unchanged. A following secondary write
+          with a large <code>DataDisplacement</code> still passes the bounds check — which is measured
+          against the unshifted total — but now lands <em>past</em> the real, shortened buffer, into
+          whatever sits next in the pool. The result is a controlled out-of-bounds kernel write.
+        </p>
+
+        <h3>2. Grooming: arrange two transactions side by side</h3>
+        <p>
+          A wild overflow just crashes the machine. To make it useful, the module first shapes the
+          paged pool so that the buffer it overflows from is immediately followed by a second
+          transaction it also controls. It does this by allocating a run of identically sized,
+          deliberately incomplete transactions; uniform same-size allocations pack back-to-back, so
+          two of them end up adjacent. One of the run reuses the open pipe's file id as its
+          identifier, which fixes it at a predictable position relative to its neighbour.
+        </p>
+
+        <h3>3. Leak: turn a peek into a kernel address</h3>
+        <p>
+          Kernel addresses are not guessable, so before corrupting anything the module reads pool
+          memory back. By completing a transaction whose counts it has quietly enlarged, it gets the
+          server to return bytes from beyond the transaction's own buffer — the adjacent chunk —
+          which contains a transaction header. From that header it recovers genuine kernel pointers,
+          including the <code>CONNECTION</code> and <code>SESSION</code> objects for the current SMB
+          session and the addresses of the two groomed transactions.
+        </p>
+
+        <h3>4. Takeover: one overflow becomes read/write anywhere</h3>
+        <p>
+          The module then performs the shifted-buffer write to overwrite the neighbouring
+          transaction's header — specifically the pointer to its data buffer and its count fields.
+          After that, the neighbour is a re-aimable window into kernel memory:
+        </p>
+        <ul>
+          <li><strong>Write:</strong> point the victim's data pointer at any kernel address and send
+            it a normal secondary write — the server copies your bytes there.</li>
+          <li><strong>Read:</strong> point it at any address and ask for its data back — the server
+            returns the bytes at that address.</li>
+        </ul>
+        <p>
+          A pair of helper transactions keeps the victim valid between operations, giving a stable,
+          reusable read/write primitive. The relevant field offsets for this build are kept in one
+          place, <code>offsets.py</code>: the transaction is <code>0x98</code> bytes, with
+          <code>InData</code> at <code>+0x44</code>, <code>TotalDataCount</code> at <code>+0x64</code>,
+          and the identifier used for the takeover oracle at <code>+0x7c</code>.
+        </p>
+
+        <h3>5. From read/write to a command</h3>
+        <p>
+          With kernel read/write in hand there are two well-known routes to execution. One overwrites
+          a function pointer in the SMBv1 transaction dispatch table and supplies kernel shellcode.
+          This module takes the other, which needs no shellcode and is markedly more stable: it edits
+          the current SMB session's own security context. It clears the session's
+          "anonymous" flag and rewrites the token's group list to include the SYSTEM and
+          Administrators groups. The very same TCP connection is now an administrative session — which
+          is confirmed simply by tree-connecting to the <code>C$</code> share, something an anonymous
+          session cannot do.
+        </p>
+        <p>
+          From an administrative session, running a command is a routine remote operation: the module
+          opens the Service Control Manager over DCE/RPC, creates a one-shot service whose binary is
+          the operator's command, and starts it. When finished it restores the modified token and
+          deletes the service, leaving the host as it found it.
+        </p>
+
+        <h2 id="module">The exploit module</h2>
+        <p>
+          <code>etro-exploit</code> is an <code>exploit</code> module. Its class attributes declare
+          the metadata, the <code>dangerous</code> tag, the chain-level confirmation requirement, and
+          the per-target configuration; <code>run</code> performs the chain. The shape will be
+          familiar from the <a href="module-python.html">Python guide</a>:
+        </p>
+<pre data-lang="examples/python/etro_exploit/.../module.py"><code>class EtroExploit(HovelModule):
+    name = "etro-exploit"
+    module_type = "exploit"
+    summary = "EternalRomance (MS17-010) SMBv1 srv.sys RCE — runs a command as SYSTEM."
+    tags = ("dangerous", "smb", "ms17-010", "eternalromance", "exploit", "python")
+
+    global_config = (
+        Requirement("operator.confirmed_lab", "bool",
+                    description="Operator confirmed this is an authorized lab target."),
+    )
+    target_config = (
+        Requirement("target.host", "host"),
+        Requirement("target.port", "port", default="445"),
+        Requirement("pipe", "enum", default="spoolss",
+                    allowed=["spoolss", "browser", "lsarpc"]),
+        Requirement("command", "string", required=False, default="calc.exe"),
+        Requirement("cleanup", "bool", required=False, default="true"),
+        Requirement("target_profile", "string", required=False, default="XP_SP2SP3_X86"),
+    )
+
+    def run(self, ctx: Context) -> Result:
+        ...</code></pre>
+        <p>
+          The package is split so that each concern is testable on its own:
+        </p>
+        <ul>
+          <li><code>offsets.py</code> — the build-specific structure offsets and pool constants.</li>
+          <li><code>smb.py</code> — the hand-rolled SMBv1 client: session bring-up, the transaction
+            primitives, raw <code>WriteAndX</code>, and a <code>TransactNamedPipe</code> helper for
+            DCE/RPC.</li>
+          <li><code>analysis.py</code> — pure parsing of the leaked pool chunk and construction of the
+            replacement token group list (no I/O, fully unit-tested).</li>
+          <li><code>exploit.py</code> — the chain itself: control, leak, the read/write primitive,
+            elevation, command execution, and restore.</li>
+          <li><code>svcctl.py</code> — the minimal Service Control Manager client used to run the
+            command.</li>
+          <li><code>errors.py</code> — a staged error enum so a failure reports exactly which phase
+            stopped (pipe, leak, takeover, walk, payload, and so on).</li>
+          <li><code>module.py</code> — the <code>HovelModule</code> that ties it together and maps the
+            outcome onto a <code>Result</code>.</li>
+        </ul>
+        <p>
+          On success the module returns a <code>critical</code> finding, a JSON artifact recording the
+          recovered <code>CONNECTION</code>/<code>SESSION</code> addresses and the service status, and
+          outputs marking <code>command_launched</code>. On failure it returns the staged error
+          identifier, so an operator can see whether, say, the groom missed (re-throw) or the host
+          blue-screened (reset the lab).
+        </p>
+
+        <h2 id="integration">Integration with Hovel</h2>
+
+        <h3>Module contract and runtime</h3>
+        <p>
+          Both modules are ordinary <code>jsonrpc-stdio</code> modules. They subclass
+          <code>HovelModule</code>, declare <code>survey</code> / <code>exploit</code> as their
+          <code>module_type</code>, and answer the three RPC methods the daemon calls —
+          <code>handshake</code>, <code>schema</code>, <code>execute</code> — through the SDK's
+          <code>serve</code> loop. Nothing about the wire protocol changes for a real module versus a
+          mock; see the <a href="module-protocol.html">Wire Protocol</a> reference.
+        </p>
+
+        <h3>The dangerous-module path</h3>
+        <p>
+          The exploit participates in Hovel's safety model (see <a href="safety.html">Safety and
+          Scope</a>) in three ways:
+        </p>
+        <ul>
+          <li>It is tagged <code>dangerous</code>, so a throw will not run it without
+            <code>--allow-dangerous</code>.</li>
+          <li>It declares a chain-level requirement <code>operator.confirmed_lab</code> and refuses to
+            proceed unless it is set — returning a clean <code>failed</code> result, not an
+            exception, when it is absent.</li>
+          <li>On an authorized throw it writes an audit log line recording the confirmed target,
+            command, and profile before any packet is sent.</li>
+        </ul>
+        <p>
+          The runtime fact that it corrupts kernel memory is therefore never reachable by accident: a
+          plan must exist, the operator must confirm the lab, and the dangerous flag must be present.
+        </p>
+
+        <h3>The survey-to-exploit handoff</h3>
+        <p>
+          The two modules are designed to chain. The survey's <code>recommended_pipe</code> becomes
+          the exploit's <code>pipe</code> input, and its <code>suggested_target_profile</code> becomes
+          <code>target_profile</code>. In a chain file the survey runs first; its facts are available
+          to the exploit's configuration, so an operator does not hand-pick a pipe — the touch chose
+          one that is anonymously reachable.
+        </p>
+
+        <h3>Configuration and registration</h3>
+        <p>
+          Each module is registered in the example catalog with its <code>project_dir</code> and
+          Python <code>module</code> name, exactly like the mock modules:
+        </p>
+<pre data-lang="examples/hovel-modules.json"><code>{ "id": "etro-survey",  "runtime": "jsonrpc-stdio",
+  "project_dir": "python/etro_survey",  "module": "hovel_etro_survey" },
+{ "id": "etro-exploit", "runtime": "jsonrpc-stdio",
+  "project_dir": "python/etro_exploit", "module": "hovel_etro_exploit" }</code></pre>
+        <p>A throw supplies the target configuration and the confirmation:</p>
+<pre data-lang="execute params"><code>{
+  "target": "10.0.0.42",
+  "chainConfig":  { "operator.confirmed_lab": "true" },
+  "targetConfig": { "target.host": "10.0.0.42", "pipe": "spoolss",
+                    "command": "calc.exe", "cleanup": "true" }
+}</code></pre>
+
+        <h3>Build and test</h3>
+        <p>
+          The modules are part of the standard gate. Each ships unit tests that exercise the pure
+          logic — the pool-chunk parser, the token-group builder, the packet builders, the wire
+          marshalling, the configuration schema, and the confirmation gate — without any network
+          access, so they run in CI offline. They are wired into the Bazel test suite and pass the
+          same <code>task ci</code> (formatting, lint, type check, and tests) as the rest of the
+          repository. The chain itself is exercised against a live lab host, not in CI.
+        </p>
+
+        <h2 id="files">Where to look</h2>
+        <ul>
+          <li><code>examples/python/etro_survey/</code> — the survey module and its SMB touch.</li>
+          <li><code>examples/python/etro_exploit/</code> — the exploit module, primitive, and SCM
+            client.</li>
+          <li><a href="module-python.html">Python Modules</a> — the SDK surface these are built on.</li>
+          <li><a href="safety.html">Safety and Scope</a> — the trust model the dangerous tag plugs
+            into.</li>
+          <li><a href="chains-runs.html">Operations, Chains, Throws</a> — how the survey and exploit
+            are chained and thrown.</li>
+        </ul>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="module-rust.html">← Rust Modules</a>
+        <span class="spacer"></span>
+        <a class="next" href="index.html">Spec Contents →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>
