@@ -42,6 +42,8 @@ test_suite(
         "//examples/go/mock_exploit:mock_exploit_test",
         "//examples/go/mock_exploit_session:mock_exploit_session_test",
         "//examples/go/mock_survey:mock_survey_test",
+        "//examples/python:etro_exploit_test",
+        "//examples/python:etro_survey_test",
         "//examples/python:mock_exploit_session_test",
         "//examples/python:mock_exploit_test",
         "//examples/python:mock_survey_test",

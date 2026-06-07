@@ -1,6 +1,18 @@
 {
   "modules": [
     {
+      "id": "etro-survey",
+      "runtime": "jsonrpc-stdio",
+      "project_dir": "python/etro_survey",
+      "module": "hovel_etro_survey"
+    },
+    {
+      "id": "etro-exploit",
+      "runtime": "jsonrpc-stdio",
+      "project_dir": "python/etro_exploit",
+      "module": "hovel_etro_exploit"
+    },
+    {
       "id": "mock-survey",
       "runtime": "jsonrpc-stdio",
       "project_dir": "python/mock_survey",
