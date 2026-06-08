@@ -67,6 +67,15 @@
         <p>The first chain thrower should be intentionally small. It should support sequential steps, literal inputs, <code>${inputs.*}</code> references, <code>${steps.&lt;id&gt;.output}</code> references, per-step events, cancellation, and artifact creation. It should not initially support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.</p>
         <p>Operator-facing chain records are CRUD resources. A chain can be created, selected with <code>chain use</code>, renamed, inspected, listed, deleted, and then thrown against the targets it owns. The active chain is client attachment state: it determines that client's prompt context, default targets for <code>throw</code>, and log topic subscription without changing another client's active chain.</p>
         <p>Targets are owned by chains in the operator workflow. A target added while <code>alpha</code> is active belongs to <code>alpha</code>; switching that same client to <code>beta</code> exposes <code>beta</code>'s target set instead. Chain logs follow the same boundary: <code>chain logs</code> renders the active chain's operation-scoped topic only, and multi-client front ends attached to the same operation and chain observe the same topic.</p>
+        <p>
+          Payload-consuming exploits require an explicit payload-provider step earlier in
+          the chain. Hovel validates provider-before-exploit ordering, checks provider
+          metadata against exploit payload requirements during planning, materializes
+          provider-returned payload bytes per target after confirmation, and passes typed
+          payload path metadata to the exploit's <code>execute</code> request. Squatter is
+          the first core provider following this model; see
+          <a href="squatter-payload-provider.html">Squatter Payload Provider</a>.
+        </p>
 
         <h2>Operation Attachments</h2>
         <p>Each CLI, TUI, REST, or MCP client attaches to exactly one operation at a time and keeps its own active chain selection.</p>
@@ -155,6 +164,14 @@ spec:
           <li>Per-target configuration values.</li>
           <li>Risk and confirmation metadata produced by planning.</li>
         </ol>
+        <p>
+          Payload plans include selected provider, selected payload query, target-scoped
+          provider configuration, expected format and platform, compatibility facts, and
+          whether pre-throw listener or post-throw connect hooks are required. They do not
+          include generated payload bytes, runtime session IDs, or provider-side handles;
+          those values are produced after confirmation and recorded as events and
+          artifacts.
+        </p>
 
         <h2>First Thrower Requirements</h2>
         <p>The first thrower must support:</p>

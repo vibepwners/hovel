@@ -220,6 +220,28 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
+    "//tools/windows_toolchain:repositories.bzl%windows_toolchains": {
+      "general": {
+        "bzlTransitiveDigest": "yvEhFJ1JSoHOb9v+sWE3swk+WQQ0Jv37ZS8qb/ZJpGk=",
+        "usagesDigest": "y5ZJ+UIdS68+Ysbyf+zN1RgIPLsIn9c3oAd83d4vhlg=",
+        "recordedInputs": [
+          "REPO_MAPPING:,bazel_tools bazel_tools"
+        ],
+        "generatedRepoSpecs": {
+          "mingw_w64_i686": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "build_file_content": "\npackage(default_visibility = [\"//visibility:public\"])\n\nexports_files(glob([\"**/*\"]))\n",
+              "sha256": "2eb51859f539890133f5d0419b1bd534fb7fb8b522018de838ff1f5c09abf3c2",
+              "strip_prefix": "mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64",
+              "urls": [
+                "https://github.com/Vibe-Pwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64.tar.xz"
+              ]
+            }
+          }
+        }
+      }
+    },
     "@@rules_kotlin+//src/main/starlark/core/repositories:bzlmod_setup.bzl%rules_kotlin_extensions": {
       "general": {
         "bzlTransitiveDigest": "ABI1D/sbS1ovwaW/kHDoj8nnXjQ0oKU9fzmzEG4iT8o=",

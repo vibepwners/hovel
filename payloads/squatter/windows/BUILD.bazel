@@ -1,0 +1,22 @@
+load("@rules_python//python:defs.bzl", "py_test")
+load("//tools/windows_toolchain:defs.bzl", "mingw_pe_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+mingw_pe_binary(
+    name = "squatter_x86_exe",
+    srcs = ["src/main.c"],
+    out = "squatter.exe",
+    entry = "_squatter_entry",
+    subsystem = "console",
+)
+
+py_test(
+    name = "squatter_x86_exe_pe_test",
+    size = "small",
+    srcs = ["pe_inspect_test.py"],
+    args = ["$(location :squatter_x86_exe)"],
+    data = [":squatter_x86_exe"],
+    main = "pe_inspect_test.py",
+    python_version = "PY3",
+)

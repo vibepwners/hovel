@@ -80,6 +80,14 @@
           <li>Throw plans should surface risk labels, external binds, file writes, credential use, network reachability, and cleanup behavior before execution.</li>
           <li>Modules should have maximum practical optionality to perform validation, survey, compatibility checks, and target-specific safety checks before performing work.</li>
         </ol>
+        <p>
+          Core payload providers with post-exploitation capabilities, including
+          <a href="squatter-payload-provider.html">Squatter</a>, must carry the
+          <code>dangerous</code> tag when they participate in throws. Their review output
+          should surface payload capabilities, transport, whether communication is
+          encrypted, listener or post-connect behavior, and produced payload artifact
+          hashes.
+        </p>
         <p><code>throw --now</code> is an explicit bypass of the typed confirmation prompt, not a bypass of planning, persistence, guardrails, logging, artifact handling, or audit records. The confirmation record for a <code>--now</code> throw must preserve that the bypass flag was used.</p>
         <p>Hovel should not impose corporate secret-management behavior on chain configuration. Passwords, tokens, keys, and other sensitive values are ordinary operator-controlled configuration values. Operators are responsible for securing their machines, workspaces, and data sources. Hovel may support config value types and validation, but it must not silently redact, omit, or special-case saved configuration values in a way that degrades offensive workflow ergonomics.</p>
 

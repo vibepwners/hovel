@@ -31,6 +31,7 @@ filegroup(
     srcs = [
         ":docs",
         "//cmd/hovel",
+        "//payloads/squatter:build",
         "//schemas:descriptor_schemas",
     ],
 )
@@ -76,6 +77,8 @@ test_suite(
         "//internal/infra/daemonruntime:daemonruntime_test",
         "//internal/modules/mockexploit:mockexploit_test",
         "//internal/modules/pythonrpc:pythonrpc_test",
+        "//payloads/squatter/provider:provider_test",
+        "//payloads/squatter/windows:squatter_x86_exe_pe_test",
         "//schemas:schema_smoke_test",
         "//sdk/go/hovel:hovel_test",
         "//sdk/python:hovel_sdk_test",

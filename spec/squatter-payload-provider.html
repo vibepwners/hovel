@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Squatter Payload Provider — Hovel spec</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// spec</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Spec</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
+        <li><a href="squatter-payload-provider.html" aria-current="page">Squatter Payload Provider</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+      </ul>
+      <p class="sidebar-section">Module Development</p>
+      <ul>
+        <li><a href="module-development.html">Overview</a></li>
+        <li><a href="module-protocol.html">Wire Protocol</a></li>
+        <li><a href="module-python.html">Python Modules</a></li>
+        <li><a href="module-go.html">Go Modules</a></li>
+        <li><a href="module-rust.html">Rust Modules</a></li>
+        <li><a href="module-eternalromance.html">Case Study: EternalRomance</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Squatter Payload Provider</h1>
+        <p>
+          Squatter is Hovel's first core payload provider. It is a lab and
+          demonstration payload system for authorized environments. The first target is
+          Windows XP SP3 x86. The provider is a normal Hovel
+          <code>payload_provider</code> module that speaks JSON-RPC over stdio; the
+          Windows payload binary is opaque payload code produced by that provider.
+        </p>
+        <p>
+          Hovel must not learn Squatter's implant wire protocol, command grammar, PE
+          internals, or Windows API strategy. Hovel learns payload identity,
+          compatibility, lifecycle requirements, artifacts, and session refs from the
+          provider over RPC. Hovel controls where received payload bytes are written,
+          records hashes and metadata, and passes paths to exploit modules.
+        </p>
+
+        <h2>Settled Decisions</h2>
+        <ol>
+          <li>Squatter is a payload capability, not a native Hovel execution path.</li>
+          <li>The Squatter provider is a first-class <code>payload_provider</code> module and appears as an explicit chain step.</li>
+          <li>The payload provider reports configuration through <code>schema()</code>, so options appear in normal interactive chain configuration.</li>
+          <li>Hovel discovers payloads, formats, capabilities, and session strategy from provider RPC calls, not static payload YAML.</li>
+          <li>Payload bytes are delivered from provider to Hovel over JSON-RPC. Initial responses may carry base64 bytes; the contract should allow chunked reads for larger payloads.</li>
+          <li>Hovel materializes provider bytes to controlled workspace artifact paths and passes local paths plus metadata to exploit modules.</li>
+          <li>Payload generation and materialization are always per target.</li>
+          <li>A provider may return multiple artifacts for one target, but one artifact must be marked primary.</li>
+          <li>Exploit modules receive a typed <code>payloads</code> field in <code>execute</code> requests rather than user-supplied chain config keys.</li>
+          <li>Provider compatibility is checked during planning from metadata only; actual bytes are generated after confirmation.</li>
+          <li>The provider is tagged <code>dangerous</code> because Squatter supports file transfer, process execution, DLL loading, task listing, and sessions.</li>
+          <li>Initial communication is unencrypted. Encryption is provider-reported metadata and appears in review/audit output, but it is not a separate operator config field.</li>
+        </ol>
+
+        <h2>Repository Shape</h2>
+<pre data-lang="tree"><code>payloads/
+  squatter/
+    README.md
+    BUILD.bazel
+    provider/
+      main.go
+      BUILD.bazel
+    windows/
+      BUILD.bazel
+      src/
+        main.c
+        command/
+        transport/
+        winapi/
+tools/
+  windows_toolchain/
+    repositories.bzl
+    defs.bzl
+</code></pre>
+        <p>
+          The provider is written in Go using Hovel's Go SDK. The Windows payload is C
+          code built with a pinned MinGW cross toolchain. The first implementation may
+          produce a nonfunctional minimal PE placeholder, but it must exercise the real
+          Windows build path.
+        </p>
+
+        <h2>Module Contract</h2>
+        <p>
+          A payload provider still participates in the common module lifecycle:
+          <code>handshake</code>, <code>schema</code>, provider-specific calls, and
+          <code>shutdown</code>. It must also expose provider methods through the same
+          Content-Length framed JSON-RPC channel.
+        </p>
+<pre data-lang="rpc"><code>list_payloads(query) -&gt; []PayloadInfo
+resolve_payload(query) -&gt; PayloadInfo
+prepare_listener(request) -&gt; ListenerRef | null
+generate_payload(request) -&gt; PayloadArtifactSet
+connect_session(request) -&gt; SessionRef | null
+cleanup_payload(request) -&gt; CleanupResult
+read_payload_chunk(request) -&gt; PayloadChunk
+</code></pre>
+        <p>
+          <code>execute</code> remains the normal module-run method, but Hovel should use
+          provider-specific methods for payload lifecycle orchestration. This keeps
+          payload generation distinct from survey or exploit execution.
+        </p>
+
+        <h2>Provider Configuration</h2>
+        <p>
+          Common options should use <code>payload.*</code> keys. Squatter-specific options
+          may use <code>squatter.*</code> keys when they are not portable across payload
+          providers.
+        </p>
+<pre data-lang="config"><code>payload.provider = squatter
+payload.format = pe-exe
+payload.transport = reverse-tcp | smb-named-pipe
+payload.lhost = 10.10.14.3
+payload.lport = 4444
+payload.pipe = hovel-squatter-&lt;target&gt;
+squatter.agent.max_chunk_size = 65536
+</code></pre>
+        <p>
+          <code>payload.transport</code> is required. The first Squatter provider supports
+          <code>reverse-tcp</code> and <code>smb-named-pipe</code>. Reverse TCP requires
+          listener host and port configuration. SMB named-pipe mode requires pipe
+          configuration and connects to the target after the exploit runs.
+        </p>
+
+        <h2>Payload Metadata</h2>
+        <p>
+          Payload metadata is returned by the provider over RPC. Hovel uses it for
+          planning, review, compatibility checks, artifact recording, and session
+          orchestration.
+        </p>
+<pre data-lang="json"><code>{
+  "id": "squatter/windows/x86/xp-sp3/reverse-tcp/pe-exe",
+  "name": "squatter",
+  "version": "0.1.0",
+  "platform": "windows",
+  "arch": "x86",
+  "minOS": "windows-xp-sp3",
+  "testedOS": ["windows-xp-sp3"],
+  "formats": ["pe-exe"],
+  "capabilities": [
+    "file.get",
+    "file.put",
+    "process.exec",
+    "process.tasklist",
+    "library.rundll"
+  ],
+  "transport": {
+    "kind": "reverse-tcp",
+    "encrypted": false
+  },
+  "session": {
+    "kind": "agent",
+    "acquisition": "callback",
+    "requiresPreThrowListener": true,
+    "requiresPostThrowConnect": false,
+    "owner": "payload_provider"
+  }
+}</code></pre>
+        <p>
+          DLL output is part of the contract, but the first build target should focus on a
+          PE EXE. DLL/rundll support adds export and loader semantics and should follow
+          once provider orchestration is stable.
+        </p>
+
+        <h2>Transports</h2>
+        <p>
+          Reverse TCP and SMB named-pipe comms are both required Squatter functionality.
+          They differ only in provider lifecycle from Hovel's point of view; the Squatter
+          provider owns the actual LP-to-payload protocol in both cases.
+        </p>
+        <p>Reverse TCP uses pre-throw listener acquisition:</p>
+<pre data-lang="flow"><code>resolve_payload
+prepare_listener
+generate_payload
+exploit execute with payload path
+payload callback
+provider-owned Hovel session</code></pre>
+        <p>SMB named-pipe mode uses post-throw connection acquisition:</p>
+<pre data-lang="flow"><code>resolve_payload
+generate_payload
+exploit execute with payload path
+connect_session
+provider-owned Hovel session</code></pre>
+        <p>
+          SMB mode should use a Windows named pipe for comms through SMB. Hovel does not
+          implement the SMB transport. The provider connects to the named pipe and exposes
+          the resulting session through Hovel's session abstraction.
+        </p>
+
+        <h2>Session Ownership</h2>
+        <p>
+          Squatter sessions are provider-managed and Hovel-brokered. Hovel sees a
+          <code>SessionRef</code> with kind, transport, state, and capabilities. The
+          provider owns framing, task IDs, file chunking, command/result mapping, retries,
+          and transport details.
+        </p>
+<pre data-lang="session"><code>session kind        agent
+session owner       payload_provider
+transport           squatter/reverse-tcp or squatter/smb-named-pipe
+capabilities        file.get, file.put, process.exec, process.tasklist, library.rundll</code></pre>
+        <p>
+          The provider may present a shell-like operator experience through Hovel's
+          session API, but the LP-to-payload protocol should be typed and robust. Hovel
+          should not treat a Squatter session as a raw <code>cmd.exe</code> terminal.
+        </p>
+
+        <h2>Throw Planning</h2>
+        <p>
+          The throw plan hash covers operator intent and deterministic configuration:
+          selected provider step, selected payload query, selected transport, provider
+          config, target config, expected format, expected platform, compatibility facts,
+          and whether pre/post actions are required.
+        </p>
+        <p>
+          The plan hash should not include generated payload bytes, runtime session IDs,
+          listener handles, or dynamically assigned connection details unless the operator
+          explicitly pinned them in config. Those values are produced after confirmation
+          and recorded as events and artifacts.
+        </p>
+        <p>
+          Chain validation must enforce provider-before-exploit ordering for exploits that
+          consume payloads. Validation should fail when an exploit declares a payload
+          requirement and no compatible payload provider step appears earlier in the chain.
+        </p>
+
+        <h2>Throw Execution</h2>
+        <p>
+          A provider step produces a normal Hovel run result plus artifacts and events.
+          Payload preparation failures, listener bind failures, generation failures, and
+          post-throw connection failures should be visible as provider-step failures.
+        </p>
+<pre data-lang="flow"><code>for each target:
+  run payload provider step
+  resolve payload metadata
+  prepare listener if required
+  generate per-target payload artifacts
+  materialize artifacts in workspace
+  run exploit with typed payload path metadata
+  connect session if required
+  keep provider alive while it owns active sessions
+  cleanup provider-side state after session/throw cleanup</code></pre>
+        <p>
+          Hovel records generated payloads in the normal artifact list. Operators should
+          see metadata such as name, kind, provider module, target, throw, SHA-256, size,
+          and controlled workspace path. Hovel should not render binary bytes in ordinary
+          terminal output.
+        </p>
+
+        <h2>Build Contract</h2>
+        <p>
+          Squatter is part of Hovel's default build graph. <code>task build</code> should
+          build the provider and the Windows payload target, and <code>task ci</code>
+          should eventually validate both through the root build and test suites.
+        </p>
+        <p>
+          The Windows payload uses a repo-local Bazel rule or macro over a pinned MinGW
+          archive:
+        </p>
+<pre data-lang="starlark"><code>url = "https://github.com/Vibe-Pwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64.tar.xz"
+sha256 = "&lt;recorded checksum&gt;"
+</code></pre>
+        <p>
+          The first build helper should be narrow, for example
+          <code>mingw_pe_binary(...)</code>, instead of introducing a broad C/C++
+          toolchain integration before multiple payloads need it.
+        </p>
+<pre data-lang="starlark"><code>mingw_pe_binary(
+    name = "squatter_x86_exe",
+    srcs = ["src/main.c"],
+    out = "squatter.exe",
+    entry = "squatter_entry",
+)</code></pre>
+        <p>
+          Defaults should encode the intended no-CRT/no-import posture:
+        </p>
+<pre data-lang="flags"><code>-ffreestanding
+-fno-stack-protector
+-fno-asynchronous-unwind-tables
+-nostdlib
+-nodefaultlibs
+-Wl,--entry,&lt;entry&gt;</code></pre>
+        <p>
+          A PE inspection test should verify the produced placeholder is i386, has the
+          expected subsystem and entry point, and has no unexpected import table. That test
+          protects the XP SP3 portability goal before the real PEB-based resolver exists.
+        </p>
+
+        <h2>Windows Payload Contract</h2>
+        <p>
+          The Windows payload is not cross-platform code. The first target is XP SP3 x86.
+          The implementation should eventually resolve Win32 APIs through the PEB rather
+          than relying on a normal import table or CRT startup. The provider should report
+          conservative compatibility until broader Windows versions are tested.
+        </p>
+        <p>Base Squatter payload capabilities:</p>
+        <ol>
+          <li>Get a file from the target.</li>
+          <li>Put a file onto the target.</li>
+          <li>Drop and run an EXE.</li>
+          <li>Drop and run a DLL through rundll-style semantics.</li>
+          <li>Return a task list.</li>
+        </ol>
+        <p>
+          IOCP/threading, the event loop, the agent command implementation, the LP
+          network protocol, and the PEB API resolver are intentionally deferred until the
+          provider interface and build system are documented and scaffolded.
+        </p>
+
+        <h2>First Implementation Slice</h2>
+        <p>The first code pass should include:</p>
+        <ol>
+          <li>Go SDK payload-provider types and JSON-RPC method dispatch.</li>
+          <li>A stub Squatter Go provider module.</li>
+          <li>Provider RPC contract tests.</li>
+          <li>A pinned repo-local MinGW Bazel helper.</li>
+          <li>A minimal Windows XP x86 PE placeholder target.</li>
+          <li>A PE inspection test for machine type, subsystem, entry point, and imports.</li>
+          <li>Root build wiring so Squatter participates in <code>task build</code>.</li>
+        </ol>
+        <p>The first code pass should not include:</p>
+        <ol>
+          <li>Full throw orchestration for provider lifecycle hooks.</li>
+          <li>Real Squatter IOCP/threading or command handlers.</li>
+          <li>Real reverse TCP listener implementation.</li>
+          <li>Real SMB named-pipe transport implementation.</li>
+          <li>PEB API lookup implementation.</li>
+        </ol>
+        <p>
+          The second pass wires provider-before-exploit validation, plan/review
+          compatibility, per-target generation and materialization, typed execute
+          payloads, pre-listener and post-connect lifecycle hooks, and provider-owned
+          sessions.
+        </p>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="testing-roadmap.html">← Testing &amp; Roadmap</a>
+        <span class="spacer"></span>
+        <a class="next" href="module-development.html">Module Development →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

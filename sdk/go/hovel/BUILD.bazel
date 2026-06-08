@@ -6,6 +6,7 @@ go_library(
         "context.go",
         "framing.go",
         "module.go",
+        "payload.go",
         "result.go",
         "server.go",
         "session.go",

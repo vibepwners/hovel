@@ -47,3 +47,6 @@ rust.toolchain(
 use_repo(rust, "rust_toolchains")
 
 register_toolchains("@rust_toolchains//:all")
+
+windows_toolchains = use_extension("//tools/windows_toolchain:repositories.bzl", "windows_toolchains")
+use_repo(windows_toolchains, "mingw_w64_i686")

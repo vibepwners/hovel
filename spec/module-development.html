@@ -78,6 +78,15 @@
           <li><code>exploit</code> — an offensive action that may open an interactive <em>session</em>.</li>
           <li><code>payload_provider</code> — generates payloads for delivery by other modules.</li>
         </ul>
+        <p>
+          Payload-provider modules use the same launch, handshake, schema, logging, and
+          session boundaries as survey and exploit modules. They may also expose
+          provider-specific JSON-RPC methods for listing payloads, resolving metadata,
+          preparing listeners, generating per-target payload artifacts, connecting
+          post-throw sessions, and cleanup. The
+          <a href="squatter-payload-provider.html">Squatter design</a> records the first
+          core provider contract.
+        </p>
 
         <h2>How a module runs</h2>
         <p>

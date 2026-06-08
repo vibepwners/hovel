@@ -56,6 +56,73 @@ func (m fakeModule) Run(ctx *Context) (Result, error) {
 	), nil
 }
 
+type fakePayloadProvider struct{}
+
+func (fakePayloadProvider) Info() Info {
+	return Info{
+		Name:    "fake-payload",
+		Version: "v0.0.0-test",
+		Type:    TypePayloadProvider,
+		Summary: "fake payload provider",
+		Tags:    []string{"test", "payload_provider"},
+	}
+}
+
+func (fakePayloadProvider) Schema() Schema {
+	return Schema{
+		ChainConfig: []Requirement{Req("payload.transport", "enum", "Payload transport.")},
+	}
+}
+
+func (fakePayloadProvider) Run(*Context) (Result, error) {
+	return Ok(map[string]any{"status": "not-used"}, WithSummary("payload provider execute placeholder")), nil
+}
+
+func (fakePayloadProvider) ListPayloads(PayloadQuery) ([]PayloadInfo, error) {
+	return []PayloadInfo{fakePayloadInfo()}, nil
+}
+
+func (fakePayloadProvider) ResolvePayload(PayloadQuery) (PayloadInfo, error) {
+	return fakePayloadInfo(), nil
+}
+
+func (fakePayloadProvider) PrepareListener(req PrepareListenerRequest) (ListenerRef, error) {
+	return ListenerRef{ID: "listener-1", RunID: req.RunID, Target: req.Target, Transport: "reverse-tcp", Host: "127.0.0.1", Port: 4444, State: "listening"}, nil
+}
+
+func (fakePayloadProvider) GeneratePayload(GeneratePayloadRequest) (PayloadArtifactSet, error) {
+	artifact := PayloadArtifact{Name: "fake.exe", Role: "primary", Format: "pe-exe", Encoding: "base64", Bytes: base64.StdEncoding.EncodeToString([]byte("fake"))}
+	return PayloadArtifactSet{Primary: artifact, Artifacts: []PayloadArtifact{artifact}}, nil
+}
+
+func (fakePayloadProvider) ConnectSession(req ConnectSessionRequest) (SessionRef, error) {
+	return SessionRef{ID: "session-1", RunID: req.RunID, Target: req.Target, Kind: "agent", State: "pending", Transport: "squatter/smb-named-pipe", Capabilities: []string{"read", "write"}}, nil
+}
+
+func (fakePayloadProvider) CleanupPayload(CleanupPayloadRequest) (CleanupResult, error) {
+	return CleanupResult{Status: "ok"}, nil
+}
+
+func (fakePayloadProvider) ReadPayloadChunk(req ReadPayloadChunkRequest) (PayloadChunk, error) {
+	return PayloadChunk{Handle: req.Handle, Offset: req.Offset, Data: base64.StdEncoding.EncodeToString([]byte("chunk")), EOF: true, Encoding: "base64"}, nil
+}
+
+func fakePayloadInfo() PayloadInfo {
+	return PayloadInfo{
+		ID:           "fake/windows/x86/reverse-tcp/pe-exe",
+		Name:         "fake",
+		Version:      "v0.0.0-test",
+		Platform:     "windows",
+		Arch:         "x86",
+		MinOS:        "windows-xp-sp3",
+		TestedOS:     []string{"windows-xp-sp3"},
+		Formats:      []string{"pe-exe"},
+		Capabilities: []string{"file.get"},
+		Transport:    PayloadTransport{Kind: "reverse-tcp"},
+		Session:      PayloadSession{Kind: "agent", Acquisition: "callback", RequiresPreThrowListener: true, Owner: "payload_provider"},
+	}
+}
+
 // rpcConn drives a serve() loop over in-memory pipes.
 type rpcConn struct {
 	t    *testing.T
@@ -134,6 +201,46 @@ func (c *rpcConn) close() {
 		c.t.Fatalf("serve returned error: %v", err)
 	}
 	c.in.Close()
+}
+
+func TestServePayloadProviderMethods(t *testing.T) {
+	conn := newRPCConn(t, fakePayloadProvider{})
+	defer conn.close()
+
+	info := conn.call("handshake", nil)
+	if info["moduleType"] != "payload_provider" {
+		t.Fatalf("handshake = %#v", info)
+	}
+
+	list := conn.call("list_payloads", map[string]any{"platform": "windows", "arch": "x86"})
+	payloads, _ := list["payloads"].([]any)
+	if payloads == nil {
+		// Method results that are arrays decode directly through rpcConn as nil
+		// because it expects object results. Exercise object-returning methods
+		// below and keep this call as a dispatch smoke check.
+	}
+
+	resolved := conn.call("resolve_payload", map[string]any{"format": "pe-exe"})
+	if resolved["id"] != "fake/windows/x86/reverse-tcp/pe-exe" {
+		t.Fatalf("resolve_payload = %#v", resolved)
+	}
+	listener := conn.call("prepare_listener", map[string]any{"runId": "run-1", "target": "target-1", "payloadId": resolved["id"]})
+	if listener["state"] != "listening" {
+		t.Fatalf("prepare_listener = %#v", listener)
+	}
+	generated := conn.call("generate_payload", map[string]any{"target": "target-1", "payloadId": resolved["id"], "format": "pe-exe"})
+	primary, _ := generated["primary"].(map[string]any)
+	if primary["format"] != "pe-exe" || primary["encoding"] != "base64" {
+		t.Fatalf("generate_payload primary = %#v", primary)
+	}
+	session := conn.call("connect_session", map[string]any{"runId": "run-1", "target": "target-1", "payloadId": resolved["id"]})
+	if session["transport"] != "squatter/smb-named-pipe" {
+		t.Fatalf("connect_session = %#v", session)
+	}
+	cleanup := conn.call("cleanup_payload", map[string]any{"reason": "test"})
+	if cleanup["status"] != "ok" {
+		t.Fatalf("cleanup_payload = %#v", cleanup)
+	}
 }
 
 func TestServeHandshakeSchemaExecute(t *testing.T) {

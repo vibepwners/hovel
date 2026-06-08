@@ -80,6 +80,20 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.handshake(), nil
 	case "schema":
 		return s.schema(), nil
+	case "list_payloads":
+		return s.listPayloads(params)
+	case "resolve_payload":
+		return s.resolvePayload(params)
+	case "prepare_listener":
+		return s.prepareListener(params)
+	case "generate_payload":
+		return s.generatePayload(params)
+	case "connect_session":
+		return s.connectSession(params)
+	case "cleanup_payload":
+		return s.cleanupPayload(params)
+	case "read_payload_chunk":
+		return s.readPayloadChunk(params)
 	case "execute":
 		return s.execute(params)
 	case "session/write":
@@ -123,6 +137,109 @@ func (s *server) schema() map[string]any {
 		"targetConfig": requirementsToRPC(schema.TargetConfig),
 		"outputs":      outputs,
 	}
+}
+
+func (s *server) payloadProvider() (PayloadProvider, error) {
+	provider, ok := s.module.(PayloadProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q is not a payload provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func decodeParams[T any](params json.RawMessage) (T, error) {
+	var p T
+	if len(params) == 0 {
+		return p, nil
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+func (s *server) listPayloads(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	query, err := decodeParams[PayloadQuery](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ListPayloads(query)
+}
+
+func (s *server) resolvePayload(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	query, err := decodeParams[PayloadQuery](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ResolvePayload(query)
+}
+
+func (s *server) prepareListener(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[PrepareListenerRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.PrepareListener(req)
+}
+
+func (s *server) generatePayload(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[GeneratePayloadRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.GeneratePayload(req)
+}
+
+func (s *server) connectSession(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[ConnectSessionRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ConnectSession(req)
+}
+
+func (s *server) cleanupPayload(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[CleanupPayloadRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.CleanupPayload(req)
+}
+
+func (s *server) readPayloadChunk(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[ReadPayloadChunkRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ReadPayloadChunk(req)
 }
 
 func requirementsToRPC(requirements []Requirement) []map[string]any {

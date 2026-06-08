@@ -110,6 +110,18 @@ capabilities:
           <li>Persist or hash-track the bytes for audit.</li>
           <li>Pass the bytes to the next module without parsing or proving the payload format.</li>
         </ol>
+        <p>
+          For core payload-provider modules such as <a href="squatter-payload-provider.html">Squatter</a>,
+          Hovel materializes provider-returned bytes into controlled workspace artifact paths
+          before exploit execution. Exploit modules receive typed payload metadata and local
+          paths, not raw bytes. This keeps storage location, deduplication, hashing, audit
+          metadata, and cleanup under Hovel's control while leaving payload internals opaque.
+        </p>
+        <p>
+          Payload generation is per target. A provider may return multiple artifacts for one
+          target, but one artifact must be marked primary so consuming exploits can identify
+          the deliverable path.
+        </p>
 
         <h2>PIC Payloads</h2>
         <p>PIC payloads are ordinary payload resources with specific metadata. Hovel should not implement PIC generation in core; external providers can generate or supply bytes.</p>

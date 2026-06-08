@@ -10,15 +10,28 @@ import (
 
 // SessionRef identifies an interactive session to the daemon and the operator.
 type SessionRef struct {
-	ID           string
-	RunID        string
-	ModuleID     string
-	Target       string
-	Name         string
-	Kind         string
-	State        string
-	Transport    string
-	Capabilities []string
+	ID           string   `json:"id"`
+	RunID        string   `json:"runId"`
+	ModuleID     string   `json:"moduleId"`
+	Target       string   `json:"target"`
+	Name         string   `json:"name"`
+	Kind         string   `json:"kind"`
+	State        string   `json:"state"`
+	Transport    string   `json:"transport"`
+	Capabilities []string `json:"capabilities"`
+}
+
+// ListenerRef describes a provider-managed listener used to acquire sessions.
+type ListenerRef struct {
+	ID        string            `json:"id"`
+	RunID     string            `json:"runId,omitempty"`
+	Target    string            `json:"target,omitempty"`
+	Transport string            `json:"transport"`
+	Host      string            `json:"host,omitempty"`
+	Port      int               `json:"port,omitempty"`
+	Pipe      string            `json:"pipe,omitempty"`
+	State     string            `json:"state"`
+	Fields    map[string]string `json:"fields,omitempty"`
 }
 
 func (s SessionRef) toRPC() map[string]any {
