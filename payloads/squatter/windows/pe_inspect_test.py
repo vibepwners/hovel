@@ -6,10 +6,13 @@ import unittest
 IMAGE_FILE_MACHINE_I386 = 0x014C
 IMAGE_NT_OPTIONAL_HDR32_MAGIC = 0x10B
 IMAGE_SUBSYSTEM_WINDOWS_CUI = 3
+SQUATTER_VERSION = 0x00010000
+SQUATTER_CAPABILITIES = 0x0000001F
+SQUATTER_TRANSPORTS = 0x00000003
 
 
 class PETest(unittest.TestCase):
-    def test_placeholder_is_i386_console_pe_without_imports(self):
+    def test_payload_is_i386_console_pe_without_imports(self):
         with open(sys.argv[1], "rb") as handle:
             data = handle.read()
 
@@ -40,6 +43,18 @@ class PETest(unittest.TestCase):
             import_bytes = data[import_offset : import_offset + import_table_size]
             self.assertTrue(import_bytes)
             self.assertEqual(set(import_bytes), {0})
+
+        marker = data.find(b"SQUAT001")
+        self.assertNotEqual(marker, -1)
+        self.assertEqual(u32(data, marker + 8), SQUATTER_VERSION)
+        self.assertEqual(u32(data, marker + 12), SQUATTER_CAPABILITIES)
+        self.assertEqual(u32(data, marker + 16), SQUATTER_TRANSPORTS)
+
+        self.assertIn(b"noop", data)
+
+        config_marker = data.find(b"SQCFG001")
+        self.assertNotEqual(config_marker, -1)
+        self.assertIn(b"squatter", data)
 
 
 def u16(data, offset):

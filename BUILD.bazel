@@ -78,6 +78,7 @@ test_suite(
         "//internal/modules/mockexploit:mockexploit_test",
         "//internal/modules/pythonrpc:pythonrpc_test",
         "//payloads/squatter/provider:provider_test",
+        "//payloads/squatter/windows:source_contract_test",
         "//payloads/squatter/windows:squatter_x86_exe_pe_test",
         "//schemas:schema_smoke_test",
         "//sdk/go/hovel:hovel_test",

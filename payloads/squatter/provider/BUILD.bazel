@@ -15,12 +15,14 @@ go_library(
 
 go_binary(
     name = "squatter-provider",
+    data = ["//payloads/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
 )
 
 go_test(
     name = "provider_test",
     srcs = ["main_test.go"],
+    data = ["//payloads/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
     deps = [
         "//sdk/go/hovel",
