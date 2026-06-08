@@ -25,7 +25,20 @@ const (
 )
 
 // Provider implements Hovel's payload_provider contract for Squatter.
-type Provider struct{}
+type Provider struct {
+	lp listeningPost
+}
+
+func newProvider() Provider {
+	return Provider{lp: newPlaceholderLP()}
+}
+
+func (p Provider) listeningPost() listeningPost {
+	if p.lp == nil {
+		return newPlaceholderLP()
+	}
+	return p.lp
+}
 
 func (Provider) Info() hovel.Info {
 	return hovel.Info{
@@ -86,18 +99,8 @@ func (Provider) ResolvePayload(query hovel.PayloadQuery) (hovel.PayloadInfo, err
 	return payloadInfo(transport), nil
 }
 
-func (Provider) PrepareListener(req hovel.PrepareListenerRequest) (hovel.ListenerRef, error) {
-	return hovel.ListenerRef{
-		ID:        "squatter-listener-placeholder-" + req.Target,
-		RunID:     req.RunID,
-		Target:    req.Target,
-		Transport: "squatter/" + reverseTCP,
-		Host:      req.Config["payload.lhost"],
-		State:     "placeholder",
-		Fields: map[string]string{
-			"note": "reverse TCP listener is not implemented in this scaffold",
-		},
-	}, nil
+func (p Provider) PrepareListener(req hovel.PrepareListenerRequest) (hovel.ListenerRef, error) {
+	return p.listeningPost().PrepareListener(req)
 }
 
 func (Provider) GeneratePayload(req hovel.GeneratePayloadRequest) (hovel.PayloadArtifactSet, error) {
@@ -118,22 +121,12 @@ func (Provider) GeneratePayload(req hovel.GeneratePayloadRequest) (hovel.Payload
 	}, nil
 }
 
-func (Provider) ConnectSession(req hovel.ConnectSessionRequest) (hovel.SessionRef, error) {
-	return hovel.SessionRef{
-		ID:           "squatter-session-placeholder-" + req.Target,
-		RunID:        req.RunID,
-		ModuleID:     payloadName + "@" + version,
-		Target:       req.Target,
-		Name:         "Squatter placeholder session",
-		Kind:         "agent",
-		State:        "placeholder",
-		Transport:    "squatter/" + smbNamedPipe,
-		Capabilities: capabilities(),
-	}, nil
+func (p Provider) ConnectSession(req hovel.ConnectSessionRequest) (hovel.SessionRef, error) {
+	return p.listeningPost().ConnectSession(req)
 }
 
-func (Provider) CleanupPayload(hovel.CleanupPayloadRequest) (hovel.CleanupResult, error) {
-	return hovel.CleanupResult{Status: "ok"}, nil
+func (p Provider) CleanupPayload(req hovel.CleanupPayloadRequest) (hovel.CleanupResult, error) {
+	return p.listeningPost().Cleanup(req)
 }
 
 func (Provider) ReadPayloadChunk(req hovel.ReadPayloadChunkRequest) (hovel.PayloadChunk, error) {
@@ -188,5 +181,5 @@ func capabilities() []string {
 }
 
 func main() {
-	hovel.Serve(Provider{})
+	hovel.Serve(newProvider())
 }

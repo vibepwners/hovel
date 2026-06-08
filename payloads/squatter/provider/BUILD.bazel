@@ -4,7 +4,10 @@ package(default_visibility = ["//visibility:public"])
 
 go_library(
     name = "provider_lib",
-    srcs = ["main.go"],
+    srcs = [
+        "lp.go",
+        "main.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/provider",
     visibility = ["//visibility:private"],
     deps = ["//sdk/go/hovel"],
@@ -19,5 +22,8 @@ go_test(
     name = "provider_test",
     srcs = ["main_test.go"],
     embed = [":provider_lib"],
-    deps = ["//sdk/go/hovel"],
+    deps = [
+        "//sdk/go/hovel",
+        "//sdk/go/hoveltest",
+    ],
 )

@@ -81,6 +81,7 @@ test_suite(
         "//payloads/squatter/windows:squatter_x86_exe_pe_test",
         "//schemas:schema_smoke_test",
         "//sdk/go/hovel:hovel_test",
+        "//sdk/go/hoveltest:hoveltest_test",
         "//sdk/python:hovel_sdk_test",
         "//sdk/rust/hovel:hovel_test",
         "//spec:site_smoke_test",

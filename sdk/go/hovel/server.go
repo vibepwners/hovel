@@ -31,14 +31,15 @@ type server struct {
 //
 //	func main() { hovel.Serve(&MyModule{}) }
 func Serve(module Module) {
-	if err := serve(module, os.Stdin, os.Stdout); err != nil {
+	if err := ServeIO(module, os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "hovel sdk error: %v\n", err)
 		os.Exit(2)
 	}
 }
 
-// serve is the testable core of Serve.
-func serve(module Module, in io.Reader, out io.Writer) error {
+// ServeIO runs module over explicit streams. It is useful for contract tests
+// and embedded harnesses; production modules should normally call Serve.
+func ServeIO(module Module, in io.Reader, out io.Writer) error {
 	s := &server{
 		module: module,
 		reader: newFrameReader(in),

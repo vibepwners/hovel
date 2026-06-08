@@ -137,7 +137,7 @@ func newRPCConn(t *testing.T, module Module) *rpcConn {
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- serve(module, inR, outW); outW.Close() }()
+	go func() { done <- ServeIO(module, inR, outW); outW.Close() }()
 	return &rpcConn{t: t, in: inW, out: bufio.NewReader(outR), done: done}
 }
 
