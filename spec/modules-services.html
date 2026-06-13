@@ -100,20 +100,18 @@ cancel(request: CancelRequest) -&gt; CancelResult
 stream() -&gt; EventStream
 </code></pre>
         <p>
-          Payload-provider modules share this lifecycle and may expose additional
-          provider-specific methods over the same JSON-RPC stdio channel. Hovel uses
-          those methods to learn payload metadata, prepare provider-owned listeners,
-          generate per-target payload artifacts, connect post-throw sessions, and clean
-          up provider-side state. The first core design is
-          <a href="squatter-payload-provider.html">Squatter Payload Provider</a>.
+          Payload-provider modules share this lifecycle and expose their orchestration
+          surface through generic step methods over the same JSON-RPC stdio channel.
+          Hovel uses those methods to learn live step contracts, prepare pure local
+          values, generate per-target payload artifacts after confirmation, connect
+          sessions through declared connector steps, and clean up durable handles. The
+          first core design is <a href="squatter-payload-provider.html">Squatter Payload
+          Provider</a>.
         </p>
-<pre data-lang="rpc"><code>list_payloads(query) -&gt; []PayloadInfo
-resolve_payload(query) -&gt; PayloadInfo
-prepare_listener(request) -&gt; ListenerRef | null
-generate_payload(request) -&gt; PayloadArtifactSet
-connect_session(request) -&gt; SessionRef | null
-cleanup_payload(request) -&gt; CleanupResult
-read_payload_chunk(request) -&gt; PayloadChunk
+<pre data-lang="rpc"><code>step.describe() -&gt; StepContractSet
+step.prepare(request) -&gt; StepPrepareResult
+step.execute(request) -&gt; StepExecuteResult
+step.cleanup(request) -&gt; StepCleanupResult
 </code></pre>
 
         <h2>Service Runtime</h2>
@@ -166,11 +164,12 @@ start(request: StartRequest) -&gt; StartResult
 health() -&gt; HealthResult
 stop(request: StopRequest) -&gt; StopResult
 </code></pre>
-        <p>Provider services additionally implement provider-specific methods.</p>
-        <p>Payload provider service methods:</p>
-<pre data-lang="rpc"><code>list_payloads(query) -&gt; []PayloadRef
-resolve_payload(query) -&gt; PayloadRef
-generate_payload(request) -&gt; PayloadRef
+        <p>Provider services additionally implement typed operations for their resource kind.</p>
+        <p>Payload provider service operations:</p>
+<pre data-lang="rpc"><code>describe_steps() -&gt; StepContractSet
+prepare_step(request) -&gt; StepPrepareResult
+execute_step(request) -&gt; StepExecuteResult
+cleanup_step(request) -&gt; StepCleanupResult
 </code></pre>
         <p>Listener service methods:</p>
 <pre data-lang="rpc"><code>start_listener(request) -&gt; ListenerRef

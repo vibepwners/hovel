@@ -10,6 +10,7 @@ go_library(
         "result.go",
         "server.go",
         "session.go",
+        "step.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/sdk/go/hovel",
     visibility = ["//visibility:public"],

@@ -62,18 +62,61 @@ type Requirement struct {
 }
 
 type Module struct {
+	ID            string
+	Name          string
+	Type          ModuleType
+	Version       string
+	Summary       string
+	Description   string
+	Tags          []string
+	RuntimeKind   string
+	Author        string
+	Enabled       bool
+	ChainConfig   []Requirement
+	TargetConfig  []Requirement
+	StepContracts StepContractSet
+}
+
+type CapabilityType string
+
+const (
+	CapabilityRemoteExecution CapabilityType = "RemoteExecutionCapability"
+	CapabilityCredential      CapabilityType = "CredentialCapability"
+	CapabilityPayloadArtifact CapabilityType = "PayloadArtifact"
+	CapabilityPayloadInstance CapabilityType = "PayloadInstance"
+	CapabilityTransport       CapabilityType = "TransportEndpoint"
+	CapabilitySessionRef      CapabilityType = "SessionRef"
+	CapabilityCleanupHandle   CapabilityType = "CleanupHandle"
+)
+
+type StepContractSet struct {
+	Version string
+	Steps   []StepContract
+}
+
+type StepContract struct {
 	ID           string
-	Name         string
-	Type         ModuleType
-	Version      string
-	Summary      string
-	Description  string
-	Tags         []string
-	RuntimeKind  string
-	Author       string
-	Enabled      bool
-	ChainConfig  []Requirement
-	TargetConfig []Requirement
+	Kind         string
+	ConfigSchema map[string]any
+	Requires     []CapabilityRequirement
+	Produces     []CapabilityRequirement
+	Prepare      StepPrepareContract
+	Cleanup      *StepCleanupContract
+}
+
+type CapabilityRequirement struct {
+	Type          CapabilityType
+	SchemaVersion string
+	Attributes    map[string]any
+	States        []string
+}
+
+type StepPrepareContract struct {
+	Materializes []string
+}
+
+type StepCleanupContract struct {
+	StepID string
 }
 
 // DangerTag marks a module that may perform destructive or otherwise dangerous
@@ -222,6 +265,7 @@ func normalizeModule(module Module) Module {
 	module.Tags = append([]string(nil), module.Tags...)
 	module.ChainConfig = cloneRequirements(module.ChainConfig)
 	module.TargetConfig = cloneRequirements(module.TargetConfig)
+	module.StepContracts = cloneStepContractSet(module.StepContracts)
 	return module
 }
 
@@ -420,6 +464,7 @@ func cloneModule(module Module) Module {
 	module.Tags = append([]string(nil), module.Tags...)
 	module.ChainConfig = cloneRequirements(module.ChainConfig)
 	module.TargetConfig = cloneRequirements(module.TargetConfig)
+	module.StepContracts = cloneStepContractSet(module.StepContracts)
 	return module
 }
 
@@ -428,6 +473,48 @@ func cloneRequirements(requirements []Requirement) []Requirement {
 	for _, requirement := range requirements {
 		requirement.Allowed = append([]string(nil), requirement.Allowed...)
 		out = append(out, requirement)
+	}
+	return out
+}
+
+func cloneStepContractSet(set StepContractSet) StepContractSet {
+	set.Steps = cloneStepContracts(set.Steps)
+	return set
+}
+
+func cloneStepContracts(steps []StepContract) []StepContract {
+	out := make([]StepContract, 0, len(steps))
+	for _, step := range steps {
+		step.ConfigSchema = cloneAnyMap(step.ConfigSchema)
+		step.Requires = cloneCapabilityRequirements(step.Requires)
+		step.Produces = cloneCapabilityRequirements(step.Produces)
+		step.Prepare.Materializes = append([]string(nil), step.Prepare.Materializes...)
+		if step.Cleanup != nil {
+			cleanup := *step.Cleanup
+			step.Cleanup = &cleanup
+		}
+		out = append(out, step)
+	}
+	return out
+}
+
+func cloneCapabilityRequirements(requirements []CapabilityRequirement) []CapabilityRequirement {
+	out := make([]CapabilityRequirement, 0, len(requirements))
+	for _, requirement := range requirements {
+		requirement.Attributes = cloneAnyMap(requirement.Attributes)
+		requirement.States = append([]string(nil), requirement.States...)
+		out = append(out, requirement)
+	}
+	return out
+}
+
+func cloneAnyMap(values map[string]any) map[string]any {
+	if values == nil {
+		return nil
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
 	}
 	return out
 }

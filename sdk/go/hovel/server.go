@@ -95,6 +95,14 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.cleanupPayload(params)
 	case "read_payload_chunk":
 		return s.readPayloadChunk(params)
+	case "step.describe":
+		return s.describeSteps()
+	case "step.prepare":
+		return s.prepareStep(params)
+	case "step.execute":
+		return s.executeStep(params)
+	case "step.cleanup":
+		return s.cleanupStep(params)
 	case "execute":
 		return s.execute(params)
 	case "session/write":
@@ -148,6 +156,14 @@ func (s *server) payloadProvider() (PayloadProvider, error) {
 	return provider, nil
 }
 
+func (s *server) stepProvider() (StepProvider, error) {
+	provider, ok := s.module.(StepProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q is not a step provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
 func decodeParams[T any](params json.RawMessage) (T, error) {
 	var p T
 	if len(params) == 0 {
@@ -157,6 +173,50 @@ func decodeParams[T any](params json.RawMessage) (T, error) {
 		return p, err
 	}
 	return p, nil
+}
+
+func (s *server) describeSteps() (any, error) {
+	provider, err := s.stepProvider()
+	if err != nil {
+		return nil, err
+	}
+	return provider.DescribeSteps()
+}
+
+func (s *server) prepareStep(params json.RawMessage) (any, error) {
+	provider, err := s.stepProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[StepPrepareRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.PrepareStep(req)
+}
+
+func (s *server) executeStep(params json.RawMessage) (any, error) {
+	provider, err := s.stepProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[StepExecuteRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ExecuteStep(req)
+}
+
+func (s *server) cleanupStep(params json.RawMessage) (any, error) {
+	provider, err := s.stepProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[StepCleanupRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.CleanupStep(req)
 }
 
 func (s *server) listPayloads(params json.RawMessage) (any, error) {

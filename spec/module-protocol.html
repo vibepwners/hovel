@@ -110,6 +110,139 @@
   "outputs": {}
 }</code></pre>
 
+        <h3>step.describe</h3>
+        <p>
+          Reports the module's current chain-step contracts. Hovel calls this dynamically
+          while planning and persists the exact returned snapshot when the operator
+          confirms. Execution is blocked if a referenced step contract changes after
+          confirmation.
+        </p>
+<pre data-lang="result"><code>{
+  "steps": [
+    {
+      "id": "squatter.connect_smb",
+      "kind": "session.connector",
+      "configSchema": { "type": "object", "properties": {} },
+      "requires": [
+        {
+          "type": "PayloadInstance",
+          "schemaVersion": "v1",
+          "attributes": {
+            "provider": "squatter",
+            "transport": "smb-named-pipe"
+          },
+          "states": ["installed", "disconnected", "installed_unconnected"]
+        },
+        {
+          "type": "CredentialCapability",
+          "schemaVersion": "v1",
+          "attributes": { "protocol": "smb" },
+          "states": ["active"]
+        }
+      ],
+      "produces": [
+        {
+          "type": "SessionRef",
+          "schemaVersion": "v1",
+          "attributes": {
+            "provider": "squatter",
+            "transport": "smb-named-pipe"
+          }
+        }
+      ],
+      "prepare": { "materializes": [] },
+      "cleanup": null
+    }
+  ]
+}</code></pre>
+
+        <h3>step.prepare</h3>
+        <p>
+          Validates step config and materializes planned values. This method is pure and
+          local: it may generate random names, credentials, paths, endpoints, and planned
+          cleanup handles, but it must not connect to a target, authenticate, stage files,
+          start listeners that accept target traffic, or produce final payload bytes.
+          Repeated prepare for an existing prepared plan preserves materialized values
+          unless the operator explicitly regenerates or edits them.
+        </p>
+<pre data-lang="params"><code>{
+  "preparedPlanId": "prep-1",
+  "stepId": "windows.credential.create_local_admin",
+  "config": { "usernamePolicy": "random", "passwordLength": 24 },
+  "inputs": [
+    { "capabilityId": "cap_remote_execution_f8a21b", "type": "RemoteExecutionCapability" }
+  ],
+  "existingPreparedValues": {}
+}</code></pre>
+<pre data-lang="result"><code>{
+  "plannedOutputs": [
+    {
+      "id": "cap_credential_6mb8pq",
+      "type": "CredentialCapability",
+      "schemaVersion": "v1",
+      "state": "planned",
+      "attributes": {
+        "protocol": "smb",
+        "username": "m7q4z92d",
+        "password": "plain-high-entropy-password",
+        "sensitive": true
+      }
+    }
+  ],
+  "preparedValues": {
+    "username": { "value": "m7q4z92d", "editable": true },
+    "password": { "value": "plain-high-entropy-password", "editable": true }
+  },
+  "operatorSummary": {
+    "warnings": [],
+    "targetSideArtifacts": ["local admin user m7q4z92d"]
+  }
+}</code></pre>
+
+        <h3>step.execute</h3>
+        <p>
+          Executes a confirmed step. The daemon supplies only the capabilities declared
+          by the step contract plus minimal run metadata. A step should be idempotent
+          where possible and must use confirmed prepared values exactly; confirmed
+          collisions fail rather than silently changing target-side names.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "stepId": "squatter.install_smb",
+  "confirmedPreparedValues": {
+    "stagedPath": "C:\\Windows\\Temp\\n4x9q2.exe",
+    "serviceName": "q7mcz91a",
+    "pipeName": "\\\\.\\pipe\\a8kq27mf"
+  },
+  "inputs": [
+    { "capabilityId": "cap_remote_execution_f8a21b", "type": "RemoteExecutionCapability" },
+    { "capabilityId": "cap_credential_6mb8pq", "type": "CredentialCapability" },
+    { "capabilityId": "cap_payload_artifact_vc9s31", "type": "PayloadArtifact" }
+  ]
+}</code></pre>
+<pre data-lang="result"><code>{
+  "status": "succeeded",
+  "capabilities": [ Capability, ... ],
+  "stateTransitions": [ CapabilityTransition, ... ],
+  "evidence": [ Evidence, ... ]
+}</code></pre>
+
+        <h3>step.cleanup</h3>
+        <p>
+          Executes or verifies cleanup for a durable <code>CleanupHandle</code>. Cleanup
+          defaults to the module that created the handle. Another module may consume a
+          cleanup handle only when both modules explicitly declare compatibility. Cleanup
+          is retriable until the handle reaches <code>removed</code>,
+          <code>cleanup_verified</code>, or the operator marks it
+          <code>abandoned</code>.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "stepId": "squatter.cleanup_smb",
+  "cleanupHandleId": "cap_cleanup_74m2wq",
+  "mode": "execute"                  // execute | verify
+}</code></pre>
+
         <h3>execute</h3>
         <p>Runs the module against one target. The daemon supplies the resolved configuration; the module returns its result.</p>
 <pre data-lang="params"><code>{
@@ -205,6 +338,84 @@
   "state": "active",                 // active | closed
   "transport": "stdio",
   "capabilities": ["read", "write", "exec", "close"]
+}</code></pre>
+
+        <h3>Capability</h3>
+        <p>
+          Capabilities are typed chain state. Core capability schemas are owned by Hovel
+          and versioned; modules may add namespaced extension attributes. Capability ids
+          are readable structured identifiers with random entropy, and run/step linkage is
+          carried as fields rather than encoded as the only source of truth.
+        </p>
+<pre data-lang="object"><code>{
+  "id": "cap_payload_instance_q8m2v4",
+  "type": "PayloadInstance",
+  "schemaVersion": "v1",
+  "state": "installed_unconnected",
+  "producerStepId": "squatter.install_smb",
+  "attributes": {
+    "provider": "squatter",
+    "transport": "smb-named-pipe",
+    "endpointId": "cap_endpoint_smb_pipe_c4a7nx"
+  },
+  "extensions": {
+    "squatter": {
+      "artifactSha256": "abc123",
+      "reconnectStrategy": "active_connect"
+    }
+  }
+}</code></pre>
+        <p>
+          Core capability types for the Squatter chain are
+          <code>RemoteExecutionCapability</code>, <code>CredentialCapability</code>,
+          <code>PayloadArtifact</code>, <code>PayloadInstance</code>,
+          <code>TransportEndpoint</code>, <code>SessionRef</code>, and
+          <code>CleanupHandle</code>. A failed step may still emit partial capabilities
+          with explicit states, such as <code>installed_unconnected</code> or
+          <code>cleanup_failed</code>.
+        </p>
+
+        <h3>CredentialCapability</h3>
+        <p>
+          Created credentials are assessment evidence. They are stored and displayed in
+          plaintext in normal operator CLI output so the operator can remediate manually
+          if automated cleanup fails. The <code>sensitive</code> marker labels the field
+          for evidence exports and downstream handling; it is not a CLI redaction request.
+        </p>
+<pre data-lang="object"><code>{
+  "id": "cap_credential_6mb8pq",
+  "type": "CredentialCapability",
+  "schemaVersion": "v1",
+  "state": "active",
+  "attributes": {
+    "protocol": "smb",
+    "principal": "local",
+    "username": "m7q4z92d",
+    "password": "plain-high-entropy-password",
+    "secretType": "password",
+    "targetScope": "10.0.0.42",
+    "sensitive": true,
+    "durability": "until_cleanup"
+  }
+}</code></pre>
+
+        <h3>Evidence</h3>
+        <p>
+          Evidence is operator and audit material, not chain input. It uses a common
+          envelope with flexible module-specific details so modules can report rich
+          diagnostics without forcing core schema churn.
+        </p>
+<pre data-lang="object"><code>{
+  "id": "ev_squatter_connect_warning_2m7kq9",
+  "level": "warning",
+  "kind": "payload.installed_unconnected",
+  "sourceStepId": "squatter.connect_smb",
+  "message": "Squatter installed but no session was established.",
+  "details": {
+    "target": "10.0.0.42",
+    "endpoint": "\\\\10.0.0.42\\pipe\\a8kq27mf",
+    "error": "NT_STATUS_ACCESS_DENIED"
+  }
 }</code></pre>
 
         <h2>Lifecycle summary</h2>

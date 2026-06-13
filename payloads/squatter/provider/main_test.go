@@ -38,6 +38,52 @@ func TestProviderReportsSquatterPayloads(t *testing.T) {
 	}
 }
 
+func TestProviderReportsStepContracts(t *testing.T) {
+	contracts, err := newProvider().DescribeSteps()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]hovel.StepContract{}
+	for _, step := range contracts.Steps {
+		byID[step.ID] = step
+	}
+	for _, id := range []string{
+		"squatter.generate",
+		"squatter.install_smb",
+		"squatter.connect_smb",
+		"squatter.install_tcp_bind",
+		"squatter.connect_tcp_bind",
+		"squatter.listen_tcp_callback",
+		"squatter.install_tcp_callback",
+	} {
+		if _, ok := byID[id]; !ok {
+			t.Fatalf("missing step contract %s in %#v", id, contracts.Steps)
+		}
+	}
+
+	connect := byID["squatter.connect_smb"]
+	if connect.Kind != "session.connector" {
+		t.Fatalf("connect_smb kind = %q", connect.Kind)
+	}
+	if len(connect.Requires) != 3 {
+		t.Fatalf("connect_smb requires = %#v", connect.Requires)
+	}
+	if connect.Requires[0].Type != hovel.CapabilityPayloadInstance || connect.Requires[0].Attributes["transport"] != smbNamedPipe {
+		t.Fatalf("payload instance requirement = %#v", connect.Requires[0])
+	}
+	if connect.Requires[2].Type != hovel.CapabilityCredential || connect.Requires[2].Attributes["protocol"] != "smb" {
+		t.Fatalf("credential requirement = %#v", connect.Requires[2])
+	}
+	if len(connect.Produces) != 1 || connect.Produces[0].Type != hovel.CapabilitySessionRef {
+		t.Fatalf("connect_smb produces = %#v", connect.Produces)
+	}
+
+	install := byID["squatter.install_smb"]
+	if got := install.Prepare.Materializes; len(got) != 3 || got[0] != "staged_path" || got[1] != "service_name" || got[2] != "pipe_name" {
+		t.Fatalf("install_smb materializes = %#v", got)
+	}
+}
+
 func TestProviderGeneratesWindowsPEArtifactSet(t *testing.T) {
 	generated, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
 		Target:    "target-1",

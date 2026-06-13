@@ -61,8 +61,9 @@
           and <code>etro-exploit</code> — that fingerprint and exploit the MS17-010 SMBv1
           vulnerability (CVE-2017-0143) in the Windows kernel driver <code>srv.sys</code>. It is the
           reference example for a full, network-facing capability in Hovel: a survey that produces
-          facts, an exploit that consumes them, a real memory-corruption primitive, an interactive
-          payload, and the safety machinery that gates a dangerous action.
+          facts, an exploit that consumes them, a real memory-corruption primitive, typed
+          capabilities for later payload steps, and the safety machinery that gates a
+          dangerous action.
         </p>
         <p>
           Both modules live under <code>examples/python/etro_survey/</code> and
@@ -88,9 +89,10 @@
             takes those facts as configuration.</li>
           <li><strong>A genuine kernel read/write primitive</strong> built entirely from
             legitimate-looking SMB requests.</li>
-          <li><strong>A payload that does not require kernel shellcode.</strong> The primitive is
-            used to elevate the live SMB session to SYSTEM, after which an ordinary remote service
-            call runs a command.</li>
+          <li><strong>Execution without kernel shellcode.</strong> The primitive is used to elevate
+            the live SMB session to SYSTEM, after which ordinary administrative operations can
+            create accounts, upload files, manage services, or run a command when those
+            sub-capabilities are implemented.</li>
           <li><strong>The dangerous-module path:</strong> the <code>dangerous</code> tag, an explicit
             operator confirmation requirement, an audit record, and a clean restore step.</li>
         </ul>
@@ -206,7 +208,7 @@
           and the identifier used for the takeover oracle at <code>+0x7c</code>.
         </p>
 
-        <h3>5. From read/write to a command</h3>
+        <h3>5. From read/write to reusable access</h3>
         <p>
           With kernel read/write in hand there are two well-known routes to execution. One overwrites
           a function pointer in the SMBv1 transaction dispatch table and supplies kernel shellcode.
@@ -218,10 +220,13 @@
           session cannot do.
         </p>
         <p>
-          From an administrative session, running a command is a routine remote operation: the module
-          opens the Service Control Manager over DCE/RPC, creates a one-shot service whose binary is
-          the operator's command, and starts it. When finished it restores the modified token and
-          deletes the service, leaving the host as it found it.
+          From an administrative session, remote operations become routine. The current
+          example can open the Service Control Manager over DCE/RPC, create a one-shot
+          service, and start it. The modular chain model generalizes that result into a
+          <code>RemoteExecutionCapability</code> with explicit sub-capabilities such as
+          <code>exec_command</code>, <code>upload_file</code>, and
+          <code>service_control</code>. Etro must only report sub-capabilities it
+          actually implements and can keep valid.
         </p>
 
         <h2 id="module">The exploit module</h2>
@@ -273,10 +278,11 @@
             outcome onto a <code>Result</code>.</li>
         </ul>
         <p>
-          On success the module returns a <code>critical</code> finding, a JSON artifact recording the
-          recovered <code>CONNECTION</code>/<code>SESSION</code> addresses and the service status, and
-          outputs marking <code>command_launched</code>. On failure it returns the staged error
-          identifier, so an operator can see whether, say, the groom missed (re-throw) or the host
+          On success the module returns a <code>critical</code> finding, a JSON artifact
+          recording the recovered <code>CONNECTION</code>/<code>SESSION</code> addresses
+          and the access status, and capability outputs describing what later steps may
+          safely consume. On failure it returns the staged error identifier, so an
+          operator can see whether, say, the groom missed (re-throw) or the host
           blue-screened (reset the lab).
         </p>
 
@@ -285,11 +291,13 @@
         <h3>Module contract and runtime</h3>
         <p>
           Both modules are ordinary <code>jsonrpc-stdio</code> modules. They subclass
-          <code>HovelModule</code>, declare <code>survey</code> / <code>exploit</code> as their
-          <code>module_type</code>, and answer the three RPC methods the daemon calls —
-          <code>handshake</code>, <code>schema</code>, <code>execute</code> — through the SDK's
-          <code>serve</code> loop. Nothing about the wire protocol changes for a real module versus a
-          mock; see the <a href="module-protocol.html">Wire Protocol</a> reference.
+          <code>HovelModule</code>, declare <code>survey</code> / <code>exploit</code> as
+          their <code>module_type</code>, and answer the common RPC methods through the
+          SDK's <code>serve</code> loop. In the chain-step model, Etro also reports live
+          step contracts through <code>step.describe</code> and executes confirmed steps
+          through <code>step.execute</code>. Nothing about the framing changes for a real
+          module versus a mock; see the <a href="module-protocol.html">Wire Protocol</a>
+          reference.
         </p>
 
         <h3>The dangerous-module path</h3>
@@ -318,6 +326,33 @@
           <code>target_profile</code>. In a chain file the survey runs first; its facts are available
           to the exploit's configuration, so an operator does not hand-pick a pipe — the touch chose
           one that is anonymously reachable.
+        </p>
+
+        <h3>The Etro to Squatter handoff</h3>
+        <p>
+          Etro does not own Squatter sessions. In the representative Squatter chain, Etro
+          produces a connection-bound <code>RemoteExecutionCapability</code>. A separate
+          Windows credential step consumes that capability to create a temporary local SMB
+          credential with neutral random username and high-entropy random password. The
+          Squatter SMB installer consumes the remote execution capability, the SMB
+          credential, and a Squatter payload artifact to stage and start Squatter. The
+          Squatter connector then uses the SMB credential to connect to
+          <code>\\target\pipe\name</code> and produce the <code>SessionRef</code>.
+        </p>
+<pre data-lang="chain"><code>etro.exploit
+  -&gt; RemoteExecutionCapability(connection_bound)
+windows.credential.create_local_admin
+  -&gt; CredentialCapability(protocol=smb), CleanupHandle
+squatter.generate
+  -&gt; PayloadArtifact
+squatter.install_smb
+  -&gt; PayloadInstance, SmbPipeEndpoint, CleanupHandle
+squatter.connect_smb
+  -&gt; SessionRef</code></pre>
+        <p>
+          This is intentionally a representative chain, not a bespoke Etro product. Etro
+          establishes access; credential, install, connect, session, and cleanup behavior
+          are owned by their respective modules and provider steps.
         </p>
 
         <h3>Configuration and registration</h3>

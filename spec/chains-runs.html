@@ -68,13 +68,114 @@
         <p>Operator-facing chain records are CRUD resources. A chain can be created, selected with <code>chain use</code>, renamed, inspected, listed, deleted, and then thrown against the targets it owns. The active chain is client attachment state: it determines that client's prompt context, default targets for <code>throw</code>, and log topic subscription without changing another client's active chain.</p>
         <p>Targets are owned by chains in the operator workflow. A target added while <code>alpha</code> is active belongs to <code>alpha</code>; switching that same client to <code>beta</code> exposes <code>beta</code>'s target set instead. Chain logs follow the same boundary: <code>chain logs</code> renders the active chain's operation-scoped topic only, and multi-client front ends attached to the same operation and chain observe the same topic.</p>
         <p>
-          Payload-consuming exploits require an explicit payload-provider step earlier in
-          the chain. Hovel validates provider-before-exploit ordering, checks provider
-          metadata against exploit payload requirements during planning, materializes
-          provider-returned payload bytes per target after confirmation, and passes typed
-          payload path metadata to the exploit's <code>execute</code> request. Squatter is
-          the first core provider following this model; see
+          Payload-consuming chains are composed from typed capability steps rather than
+          provider-before-exploit ordering alone. A module reports, over JSON-RPC, which
+          step contracts it supports, what each step requires, what it produces, which
+          configuration schema applies, and which prepare-time values it materializes.
+          Hovel queries those live contracts while planning, validates that producer
+          outputs satisfy consumer requirements, prepares local values, freezes the
+          confirmed contract snapshot, and executes the same snapshot after confirmation.
+          Squatter is the first core provider following this model; see
           <a href="squatter-payload-provider.html">Squatter Payload Provider</a>.
+        </p>
+
+        <h2>Capability-Based Chain Runtime</h2>
+        <p>
+          Chain edges are typed capability matches, not arbitrary JSON handoffs. A step
+          requirement is satisfied by a producer output when the capability type,
+          required attributes, and allowed state match. Hovel owns the core schemas and
+          validates module outputs before accepting them. Modules may add namespaced
+          extension attributes, and a consumer may match on an extension only when it
+          explicitly declares that namespace.
+        </p>
+<pre data-lang="capabilities"><code>RemoteExecutionCapability
+CredentialCapability
+PayloadArtifact
+PayloadInstance
+TransportEndpoint
+SessionRef
+CleanupHandle</code></pre>
+        <p>
+          Every capability has a stable id, schema version, current state, producer step,
+          and event history. Capabilities keep mutable current state for operator
+          ergonomics and append-only history for audit. Diagnostic evidence is separate:
+          evidence explains what happened, while capabilities are machine-consumable chain
+          state. Modules may not emit undeclared capability outputs by default; undeclared
+          material must be recorded as diagnostic evidence.
+        </p>
+        <p>
+          The lifecycle is explicit:
+        </p>
+<pre data-lang="lifecycle"><code>describe
+prepare
+confirm
+execute
+operate
+cleanup</code></pre>
+        <ol>
+          <li><code>describe</code> queries live module contracts over JSON-RPC.</li>
+          <li><code>prepare</code> is pure and local: it validates config and generates planned values, but it does not touch the target or produce final payload bytes.</li>
+          <li><code>confirm</code> freezes the contract snapshot and prepared values.</li>
+          <li><code>execute</code> materializes final artifacts, mutates targets, and records exact hashes and state transitions.</li>
+          <li><code>operate</code> keeps sessions attachable, detachable, and reconnectable while payload instances remain active.</li>
+          <li><code>cleanup</code> executes durable cleanup handles, records verification where possible, and remains retriable until removed, verified, or abandoned.</li>
+        </ol>
+        <p>
+          If any module reports a different contract after confirmation, execution is
+          blocked. The operator must review the contract diff, re-prepare if needed, and
+          re-confirm. Confirmed prepared values are immutable; before confirmation they
+          may be edited through generic plan editing and revalidated by the owning module.
+        </p>
+
+        <h2>Representative Etro to Squatter Chain</h2>
+        <p>
+          The EternalRomance chain is the representative example for payload and session
+          orchestration. Etro demonstrates exploitation and access establishment; it does
+          not speak Squatter's protocol and does not own Squatter sessions.
+        </p>
+<pre data-lang="chain"><code>etro.exploit
+  produces: RemoteExecutionCapability(connection_bound)
+
+windows.credential.create_local_admin
+  requires: RemoteExecutionCapability
+  produces: CredentialCapability(protocol=smb, durable), CleanupHandle
+
+squatter.generate
+  produces: PayloadArtifact(provider=squatter)
+
+squatter.install_smb
+  requires: RemoteExecutionCapability, CredentialCapability(protocol=smb), PayloadArtifact
+  produces: PayloadInstance(provider=squatter, transport=smb-named-pipe),
+            SmbPipeEndpoint, CleanupHandle
+
+squatter.connect_smb
+  requires: PayloadInstance(provider=squatter, transport=smb-named-pipe),
+            SmbPipeEndpoint,
+            CredentialCapability(protocol=smb)
+  produces: SessionRef(provider=squatter, transport=smb-named-pipe)</code></pre>
+        <p>
+          The same Squatter provider also supports TCP bind and TCP callback branches.
+          SMB mode requires a credential capability. TCP bind requires a target endpoint.
+          TCP callback requires a listener step and may produce
+          <code>installed_waiting_callback</code> if the payload started but no callback
+          has arrived.
+        </p>
+        <p>
+          Prepared Squatter SMB plans allocate neutral random identifiers before
+          confirmation: credential username and password, service name, staged filename,
+          pipe name, transport config, and planned cleanup handles. These identifiers do
+          not include Hovel, Squatter, run ids, or other tool-identifying strings. Hovel
+          evidence stores the full mapping plainly for remediation, including plaintext
+          credentials.
+        </p>
+        <p>
+          Install success with session connection failure is not a generic failed chain.
+          It becomes <code>installed_unconnected</code> with warning severity. The CLI
+          must show exactly what happened: target, staged path, service name, pipe,
+          plaintext credential, connection endpoint, exact error, active cleanup handles,
+          and reconnect/cleanup commands. Downstream steps are blocked only when their
+          declared requirements need a live <code>SessionRef</code>; steps that require
+          only a <code>PayloadInstance</code> may continue.
         </p>
 
         <h2>Operation Attachments</h2>

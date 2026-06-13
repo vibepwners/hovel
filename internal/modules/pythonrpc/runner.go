@@ -118,11 +118,19 @@ func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Mod
 	if err != nil {
 		return modulecatalog.Module{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderr.String())
 	}
+	stepContracts, err := process.client.call(ctx, "step.describe", nil)
+	if err != nil {
+		if strings.Contains(err.Error(), "unknown method step.describe") {
+			stepContracts = map[string]any{"steps": []any{}}
+		} else {
+			return modulecatalog.Module{}, moduleFailure("module failed while reporting step contracts", "module step describe failed", err, process.stderr.String())
+		}
+	}
 	_, _ = process.client.call(context.Background(), "shutdown", nil)
 	if err := process.wait(); err != nil {
 		return modulecatalog.Module{}, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
 	}
-	module, err := moduleFromRPC(moduleID, info, schema)
+	module, err := moduleFromRPC(moduleID, info, schema, stepContracts)
 	if err != nil {
 		return modulecatalog.Module{}, err
 	}
@@ -857,7 +865,7 @@ func logsFromRPC(request run.Request, logs []rpcLog) []run.LogEntry {
 	return out
 }
 
-func moduleFromRPC(moduleID string, info, schema map[string]any) (modulecatalog.Module, error) {
+func moduleFromRPC(moduleID string, info, schema map[string]any, stepContractValues ...map[string]any) (modulecatalog.Module, error) {
 	name := strings.TrimSpace(stringValue(info["name"]))
 	configName, configVersion, configHasVersion := modulecatalog.SplitID(moduleID)
 	if name == "" {
@@ -881,7 +889,7 @@ func moduleFromRPC(moduleID string, info, schema map[string]any) (modulecatalog.
 	if display == "" {
 		display = displayName(name)
 	}
-	return modulecatalog.Module{
+	module := modulecatalog.Module{
 		ID:           modulecatalog.CanonicalID(name, version),
 		Name:         display,
 		Type:         moduleType,
@@ -894,7 +902,89 @@ func moduleFromRPC(moduleID string, info, schema map[string]any) (modulecatalog.
 		Enabled:      true,
 		ChainConfig:  requirementsFromRPC(schema["chainConfig"]),
 		TargetConfig: requirementsFromRPC(schema["targetConfig"]),
-	}, nil
+	}
+	if len(stepContractValues) > 0 {
+		module.StepContracts = stepContractsFromRPC(stepContractValues[0])
+	}
+	return module, nil
+}
+
+func stepContractsFromRPC(value map[string]any) modulecatalog.StepContractSet {
+	set := modulecatalog.StepContractSet{
+		Version: strings.TrimSpace(stringValue(value["version"])),
+	}
+	items, ok := value["steps"].([]any)
+	if !ok {
+		return set
+	}
+	set.Steps = make([]modulecatalog.StepContract, 0, len(items))
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		set.Steps = append(set.Steps, modulecatalog.StepContract{
+			ID:           strings.TrimSpace(stringValue(object["id"])),
+			Kind:         strings.TrimSpace(stringValue(object["kind"])),
+			ConfigSchema: anyMap(object["configSchema"]),
+			Requires:     capabilityRequirementsFromRPC(object["requires"]),
+			Produces:     capabilityRequirementsFromRPC(object["produces"]),
+			Prepare: modulecatalog.StepPrepareContract{
+				Materializes: stringSliceFromAny(object["prepare"], "materializes"),
+			},
+			Cleanup: cleanupContractFromRPC(object["cleanup"]),
+		})
+	}
+	return set
+}
+
+func capabilityRequirementsFromRPC(value any) []modulecatalog.CapabilityRequirement {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	requirements := make([]modulecatalog.CapabilityRequirement, 0, len(items))
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		requirements = append(requirements, modulecatalog.CapabilityRequirement{
+			Type:          modulecatalog.CapabilityType(strings.TrimSpace(stringValue(object["type"]))),
+			SchemaVersion: strings.TrimSpace(stringValue(object["schemaVersion"])),
+			Attributes:    anyMap(object["attributes"]),
+			States:        stringSlice(object["states"]),
+		})
+	}
+	return requirements
+}
+
+func cleanupContractFromRPC(value any) *modulecatalog.StepCleanupContract {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return &modulecatalog.StepCleanupContract{StepID: strings.TrimSpace(stringValue(object["stepId"]))}
+}
+
+func stringSliceFromAny(value any, key string) []string {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return stringSlice(object[key])
+}
+
+func anyMap(value any) map[string]any {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]any, len(object))
+	for key, item := range object {
+		out[key] = item
+	}
+	return out
 }
 
 func requirementsFromRPC(value any) []modulecatalog.Requirement {

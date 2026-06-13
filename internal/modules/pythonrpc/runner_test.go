@@ -204,6 +204,63 @@ func TestRunnerInspectsPythonModuleDeclaredSchema(t *testing.T) {
 	}
 }
 
+func TestRunnerInspectsPythonModuleStepContracts(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "stepper",
+            "version": "v0.0.0-test",
+            "moduleType": "payload_provider"
+        }})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"version": "contracts-v1", "steps": [{
+            "id": "squatter.connect_smb",
+            "kind": "session.connector",
+            "requires": [
+                {"type": "PayloadInstance", "schemaVersion": "v1", "attributes": {"provider": "squatter", "transport": "smb-named-pipe"}, "states": ["installed", "installed_unconnected"]},
+                {"type": "CredentialCapability", "schemaVersion": "v1", "attributes": {"protocol": "smb"}, "states": ["active"]}
+            ],
+            "produces": [
+                {"type": "SessionRef", "schemaVersion": "v1", "attributes": {"provider": "squatter", "transport": "smb-named-pipe"}}
+            ],
+            "prepare": {"materializes": []}
+        }]}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+
+	module, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if module.ID != "stepper@v0.0.0-test" {
+		t.Fatalf("id = %q, want stepper@v0.0.0-test", module.ID)
+	}
+	if module.StepContracts.Version != "contracts-v1" {
+		t.Fatalf("contract version = %q", module.StepContracts.Version)
+	}
+	if len(module.StepContracts.Steps) != 1 {
+		t.Fatalf("steps = %#v, want one", module.StepContracts.Steps)
+	}
+	step := module.StepContracts.Steps[0]
+	if step.ID != "squatter.connect_smb" || len(step.Requires) != 2 || len(step.Produces) != 1 {
+		t.Fatalf("step contract = %#v", step)
+	}
+	if step.Requires[1].Attributes["protocol"] != "smb" {
+		t.Fatalf("credential requirement = %#v", step.Requires[1])
+	}
+}
+
 func TestRunnerLaunchesEveryBuiltInMockModule(t *testing.T) {
 	for _, moduleID := range []string{"mock-survey", "mock-exploit", "mock-exploit-session"} {
 		t.Run(moduleID, func(t *testing.T) {

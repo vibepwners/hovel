@@ -73,7 +73,50 @@
           <li><code>PayloadProvider</code> resolves tagged bytes and records hashes or artifact refs before execution.</li>
           <li>The structured logging rail reports provider resolution and artifact creation, but is not itself a provider.</li>
         </ol>
-        <p><code>FactProvider</code>, <code>CredentialProvider</code>, <code>ListenerProvider</code>, and <code>SessionProvider</code> remain part of the domain model, but should not block the first useful execution loop. Facts can start as module outputs, credentials can start as explicit run inputs, and listeners/sessions can arrive with the managed-service milestone.</p>
+        <p><code>FactProvider</code>, <code>CredentialProvider</code>, <code>ListenerProvider</code>, and <code>SessionProvider</code> remain part of the domain model, but should not block the first useful execution loop. Facts can start as module outputs, credentials can start as explicit run inputs or module-produced capabilities, and listeners/sessions can arrive with the managed-service milestone.</p>
+
+        <h2>Capability Records</h2>
+        <p>
+          Chain steps communicate reusable state through capabilities. The daemon owns
+          the core schemas, validates module outputs, persists current state, and appends
+          state-transition history. Modules own observed transitions and provide evidence
+          explaining what happened.
+        </p>
+<pre data-lang="capabilities"><code>RemoteExecutionCapability
+CredentialCapability
+PayloadArtifact
+PayloadInstance
+TransportEndpoint
+SessionRef
+CleanupHandle</code></pre>
+        <p>
+          Capabilities are distinct from evidence. A capability may be consumed by later
+          steps; evidence is displayed and audited. Failed steps may still produce partial
+          capabilities with explicit states, for example a Squatter
+          <code>PayloadInstance</code> in <code>installed_unconnected</code> state plus a
+          warning evidence record.
+        </p>
+
+        <h2>Credentials as Evidence</h2>
+        <p>
+          Created credentials are assessment evidence and remediation material. Hovel
+          stores generated credentials in plaintext and shows them plainly in normal CLI
+          output. The <code>sensitive</code> field marks the material for evidence export
+          and downstream handling; it does not cause operator CLI redaction.
+        </p>
+<pre data-lang="credential"><code>CredentialCapability:
+  protocol: smb
+  principal: local
+  username: m7q4z92d
+  password: plain-high-entropy-password
+  sensitive: true
+  state: active
+  cleanup: registered</code></pre>
+        <p>
+          Target-side generated names should be neutral random strings by default. They
+          should not include Hovel, Squatter, run ids, or tool-identifying markers.
+          Evidence stores the mapping needed for remediation.
+        </p>
 
         <h2>Payload Provider</h2>
         <p>Payload query:</p>
@@ -218,6 +261,12 @@ capabilities:
   - write
   - close
 </code></pre>
+        <p>
+          Long-lived payloads should also have a durable <code>PayloadInstance</code>.
+          A <code>SessionRef</code> is an attachable view over that instance, not the only
+          record that the payload exists. This lets operators detach, reconnect, and
+          clean up after daemon restarts or transient transport failures.
+        </p>
         <p>Session events:</p>
 <pre data-lang="events"><code>session.created
 session.input

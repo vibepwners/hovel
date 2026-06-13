@@ -29,6 +29,8 @@ const (
 	formatPEEXE  = "pe-exe"
 	reverseTCP   = "reverse-tcp"
 	smbNamedPipe = "smb-named-pipe"
+	tcpBind      = "tcp-bind"
+	tcpCallback  = "tcp-callback"
 
 	payloadEnvPath = "SQUATTER_PAYLOAD_PATH"
 	payloadRunfile = "payloads/squatter/windows/squatter.exe"
@@ -97,6 +99,154 @@ func (Provider) Run(ctx *hovel.Context) (hovel.Result, error) {
 		map[string]any{"status": "provider lifecycle is not wired into throws yet"},
 		hovel.WithSummary("squatter provider placeholder completed"),
 	), nil
+}
+
+func (Provider) DescribeSteps() (hovel.StepContractSet, error) {
+	return hovel.StepContractSet{
+		Version: "squatter-provider/v1",
+		Steps: []hovel.StepContract{
+			{
+				ID:   "squatter.generate",
+				Kind: "payload.generate",
+				ConfigSchema: map[string]any{
+					"type": "object",
+				},
+				Produces: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilityPayloadArtifact, map[string]any{"provider": payloadName}),
+				},
+			},
+			{
+				ID:   "squatter.install_smb",
+				Kind: "payload.install",
+				Requires: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilityRemoteExecution, nil),
+					capability(hovel.CapabilityCredential, map[string]any{"protocol": "smb"}),
+					capability(hovel.CapabilityPayloadArtifact, map[string]any{"provider": payloadName}),
+				},
+				Produces: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": smbNamedPipe}),
+					capability(hovel.CapabilityTransport, map[string]any{"kind": "smb-pipe"}),
+					capability(hovel.CapabilityCleanupHandle, map[string]any{"owner": payloadName}),
+				},
+				Prepare: hovel.StepPrepareContract{Materializes: []string{"staged_path", "service_name", "pipe_name"}},
+			},
+			{
+				ID:   "squatter.connect_smb",
+				Kind: "session.connector",
+				Requires: []hovel.CapabilityRequirement{
+					capabilityWithStates(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": smbNamedPipe}, "installed", "disconnected", "installed_unconnected"),
+					capability(hovel.CapabilityTransport, map[string]any{"kind": "smb-pipe"}),
+					capabilityWithStates(hovel.CapabilityCredential, map[string]any{"protocol": "smb"}, "active"),
+				},
+				Produces: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilitySessionRef, map[string]any{"provider": payloadName, "transport": smbNamedPipe}),
+				},
+			},
+			{
+				ID:   "squatter.install_tcp_bind",
+				Kind: "payload.install",
+				Requires: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilityRemoteExecution, nil),
+					capability(hovel.CapabilityPayloadArtifact, map[string]any{"provider": payloadName}),
+				},
+				Produces: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": tcpBind}),
+					capability(hovel.CapabilityTransport, map[string]any{"kind": "tcp-endpoint"}),
+					capability(hovel.CapabilityCleanupHandle, map[string]any{"owner": payloadName}),
+				},
+				Prepare: hovel.StepPrepareContract{Materializes: []string{"staged_path", "service_name", "bind_host", "bind_port"}},
+			},
+			{
+				ID:   "squatter.connect_tcp_bind",
+				Kind: "session.connector",
+				Requires: []hovel.CapabilityRequirement{
+					capabilityWithStates(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": tcpBind}, "installed", "disconnected", "installed_unconnected"),
+					capability(hovel.CapabilityTransport, map[string]any{"kind": "tcp-endpoint"}),
+				},
+				Produces: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilitySessionRef, map[string]any{"provider": payloadName, "transport": tcpBind}),
+				},
+			},
+			{
+				ID:   "squatter.listen_tcp_callback",
+				Kind: "listener.start",
+				Produces: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilityTransport, map[string]any{"kind": "tcp-listener"}),
+					capability(hovel.CapabilityCleanupHandle, map[string]any{"owner": payloadName}),
+				},
+				Prepare: hovel.StepPrepareContract{Materializes: []string{"listen_host", "listen_port"}},
+			},
+			{
+				ID:   "squatter.install_tcp_callback",
+				Kind: "payload.install",
+				Requires: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilityRemoteExecution, nil),
+					capability(hovel.CapabilityPayloadArtifact, map[string]any{"provider": payloadName}),
+					capability(hovel.CapabilityTransport, map[string]any{"kind": "tcp-listener"}),
+				},
+				Produces: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": tcpCallback}),
+					capability(hovel.CapabilityCleanupHandle, map[string]any{"owner": payloadName}),
+				},
+				Prepare: hovel.StepPrepareContract{Materializes: []string{"staged_path", "service_name"}},
+			},
+		},
+	}, nil
+}
+
+func capability(capabilityType hovel.CapabilityType, attributes map[string]any) hovel.CapabilityRequirement {
+	return capabilityWithStates(capabilityType, attributes)
+}
+
+func capabilityWithStates(capabilityType hovel.CapabilityType, attributes map[string]any, states ...string) hovel.CapabilityRequirement {
+	return hovel.CapabilityRequirement{
+		Type:          capabilityType,
+		SchemaVersion: "v1",
+		Attributes:    attributes,
+		States:        states,
+	}
+}
+
+func (Provider) PrepareStep(req hovel.StepPrepareRequest) (hovel.StepPrepareResult, error) {
+	return hovel.StepPrepareResult{
+		PreparedValues: map[string]hovel.PreparedValue{},
+		OperatorSummary: hovel.OperatorSummary{
+			Warnings: []string{"squatter step preparation is not implemented yet"},
+		},
+		Evidence: []hovel.Evidence{{
+			ID:           "ev_squatter_prepare_not_implemented",
+			Level:        "warning",
+			Kind:         "step.prepare.not_implemented",
+			SourceStepID: req.StepID,
+			Message:      "squatter step preparation is not implemented yet",
+		}},
+	}, nil
+}
+
+func (Provider) ExecuteStep(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {
+	return hovel.StepExecuteResult{
+		Status: "failed",
+		Evidence: []hovel.Evidence{{
+			ID:           "ev_squatter_execute_not_implemented",
+			Level:        "warning",
+			Kind:         "step.execute.not_implemented",
+			SourceStepID: req.StepID,
+			Message:      "squatter step execution is not implemented yet",
+		}},
+	}, nil
+}
+
+func (Provider) CleanupStep(req hovel.StepCleanupRequest) (hovel.StepCleanupResult, error) {
+	return hovel.StepCleanupResult{
+		Status: "cleanup_attempted_unverified",
+		Evidence: []hovel.Evidence{{
+			ID:           "ev_squatter_cleanup_not_implemented",
+			Level:        "warning",
+			Kind:         "step.cleanup.not_implemented",
+			SourceStepID: req.StepID,
+			Message:      "squatter step cleanup is not implemented yet",
+		}},
+	}, nil
 }
 
 func (Provider) ListPayloads(query hovel.PayloadQuery) ([]hovel.PayloadInfo, error) {

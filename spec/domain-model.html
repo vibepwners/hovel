@@ -77,6 +77,8 @@ Transport
 Session
 Listener
 Credential
+Capability
+CleanupHandle
 </code></pre>
 
         <h2>Workspace</h2>
@@ -183,6 +185,7 @@ shellcode
 library
 executable
 </code></pre>
+
         <p>Payload metadata:</p>
 <pre data-lang="yaml"><code>id: payload-uuid
 name: sshplant-x86_64-linux
@@ -201,6 +204,52 @@ constraints:
   writesDisk: false
 requiresPython: false
 </code></pre>
+
+        <h2>Capability</h2>
+        <p>
+          A capability is typed, durable chain state that one step produces and later
+          steps may consume. Hovel owns the core capability schemas and validates module
+          outputs against them. Module contracts match by concrete type, required
+          attributes, and allowed states.
+        </p>
+<pre data-lang="types"><code>RemoteExecutionCapability
+CredentialCapability
+PayloadArtifact
+PayloadInstance
+TransportEndpoint
+SessionRef
+CleanupHandle</code></pre>
+        <p>
+          Capabilities have stable ids, schema versions, producer step ids, current
+          state, attributes, optional namespaced extensions, and append-only event
+          history. Evidence remains separate from capability state.
+        </p>
+
+        <h2>Payload Instance</h2>
+        <p>
+          A payload instance is a durable record of a payload that was installed,
+          started, or otherwise made active on a target. It outlives any one session and
+          is the object operators reconnect to or clean up.
+        </p>
+<pre data-lang="yaml"><code>id: cap_payload_instance_q8m2v4
+provider: squatter
+target: 10.0.0.42
+transport: smb-named-pipe
+endpoint: cap_endpoint_smb_pipe_c4a7nx
+state: installed_unconnected
+cleanupHandles:
+  - cap_cleanup_74m2wq
+</code></pre>
+
+        <h2>Cleanup Handle</h2>
+        <p>
+          A cleanup handle is a first-class capability for target or provider-side state
+          that can be removed or verified later. It records the owner module, cleanup
+          step id, required inputs, current cleanup state, and evidence for each attempt.
+          Cleanup is retriable until it reaches <code>removed</code>,
+          <code>cleanup_verified</code>, or the operator marks it
+          <code>abandoned</code>.
+        </p>
 
         <h2>Listener</h2>
         <p>A listener or listening post is a managed service that receives callbacks, brokers sessions, serves staged payloads, or controls post-execution sessions.</p>

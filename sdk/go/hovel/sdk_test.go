@@ -107,6 +107,88 @@ func (fakePayloadProvider) ReadPayloadChunk(req ReadPayloadChunkRequest) (Payloa
 	return PayloadChunk{Handle: req.Handle, Offset: req.Offset, Data: base64.StdEncoding.EncodeToString([]byte("chunk")), EOF: true, Encoding: "base64"}, nil
 }
 
+type fakeStepModule struct{}
+
+func (fakeStepModule) Info() Info {
+	return Info{Name: "fake-step", Version: "v0.0.0-test", Type: TypePayloadProvider}
+}
+
+func (fakeStepModule) Schema() Schema { return Schema{} }
+
+func (fakeStepModule) Run(*Context) (Result, error) {
+	return Ok(nil, WithSummary("not used")), nil
+}
+
+func (fakeStepModule) DescribeSteps() (StepContractSet, error) {
+	return StepContractSet{Steps: []StepContract{{
+		ID:           "squatter.connect_smb",
+		Kind:         "session.connector",
+		ConfigSchema: map[string]any{"type": "object"},
+		Requires: []CapabilityRequirement{
+			{
+				Type:          CapabilityPayloadInstance,
+				SchemaVersion: "v1",
+				Attributes:    map[string]any{"provider": "squatter", "transport": "smb-named-pipe"},
+				States:        []string{"installed", "disconnected", "installed_unconnected"},
+			},
+			{
+				Type:          CapabilityCredential,
+				SchemaVersion: "v1",
+				Attributes:    map[string]any{"protocol": "smb"},
+				States:        []string{"active"},
+			},
+		},
+		Produces: []CapabilityRequirement{{
+			Type:          CapabilitySessionRef,
+			SchemaVersion: "v1",
+			Attributes:    map[string]any{"provider": "squatter", "transport": "smb-named-pipe"},
+		}},
+		Prepare: StepPrepareContract{Materializes: []string{}},
+	}}, Version: "contracts-v1"}, nil
+}
+
+func (fakeStepModule) PrepareStep(req StepPrepareRequest) (StepPrepareResult, error) {
+	return StepPrepareResult{
+		PlannedOutputs: []Capability{{
+			ID:             "cap_credential_6mb8pq",
+			Type:           CapabilityCredential,
+			SchemaVersion:  "v1",
+			State:          "planned",
+			ProducerStepID: req.StepID,
+			Attributes: map[string]any{
+				"protocol":  "smb",
+				"username":  "m7q4z92d",
+				"password":  "plain-high-entropy-password",
+				"sensitive": true,
+			},
+		}},
+		PreparedValues: map[string]PreparedValue{
+			"username": {Value: "m7q4z92d", Editable: true},
+			"password": {Value: "plain-high-entropy-password", Editable: true},
+		},
+		OperatorSummary: OperatorSummary{TargetSideArtifacts: []string{"local admin user m7q4z92d"}},
+	}, nil
+}
+
+func (fakeStepModule) ExecuteStep(req StepExecuteRequest) (StepExecuteResult, error) {
+	return StepExecuteResult{
+		Status: "succeeded",
+		Capabilities: []Capability{{
+			ID:             "cap_session_q8m2v4",
+			Type:           CapabilitySessionRef,
+			SchemaVersion:  "v1",
+			State:          "connected",
+			ProducerStepID: req.StepID,
+			Attributes:     map[string]any{"provider": "squatter", "transport": "smb-named-pipe"},
+		}},
+		Evidence: []Evidence{{ID: "ev_connected", Level: "info", Kind: "session.connected", SourceStepID: req.StepID, Message: "connected"}},
+	}, nil
+}
+
+func (fakeStepModule) CleanupStep(StepCleanupRequest) (StepCleanupResult, error) {
+	return StepCleanupResult{Status: "cleanup_verified"}, nil
+}
+
 func fakePayloadInfo() PayloadInfo {
 	return PayloadInfo{
 		ID:           "fake/windows/x86/reverse-tcp/pe-exe",
@@ -120,6 +202,45 @@ func fakePayloadInfo() PayloadInfo {
 		Capabilities: []string{"file.get"},
 		Transport:    PayloadTransport{Kind: "reverse-tcp"},
 		Session:      PayloadSession{Kind: "agent", Acquisition: "callback", RequiresPreThrowListener: true, Owner: "payload_provider"},
+	}
+}
+
+func TestServeStepContractMethods(t *testing.T) {
+	conn := newRPCConn(t, fakeStepModule{})
+	defer conn.close()
+
+	describe := conn.call("step.describe", nil)
+	steps, _ := describe["steps"].([]any)
+	if len(steps) != 1 {
+		t.Fatalf("steps = %#v, want one step", describe["steps"])
+	}
+	step, _ := steps[0].(map[string]any)
+	if step["id"] != "squatter.connect_smb" {
+		t.Fatalf("step id = %#v", step["id"])
+	}
+	requires, _ := step["requires"].([]any)
+	if len(requires) != 2 {
+		t.Fatalf("requires = %#v, want two requirements", step["requires"])
+	}
+
+	prepared := conn.call("step.prepare", map[string]any{
+		"preparedPlanId": "prep-1",
+		"stepId":         "windows.credential.create_local_admin",
+	})
+	values, _ := prepared["preparedValues"].(map[string]any)
+	password, _ := values["password"].(map[string]any)
+	if password["value"] != "plain-high-entropy-password" {
+		t.Fatalf("prepared password = %#v", password["value"])
+	}
+
+	executed := conn.call("step.execute", map[string]any{"runId": "run-1", "stepId": "squatter.connect_smb"})
+	if executed["status"] != "succeeded" {
+		t.Fatalf("execute status = %#v", executed["status"])
+	}
+
+	cleanup := conn.call("step.cleanup", map[string]any{"runId": "run-1", "stepId": "squatter.cleanup_smb", "cleanupHandleId": "cap_cleanup_74m2wq"})
+	if cleanup["status"] != "cleanup_verified" {
+		t.Fatalf("cleanup status = %#v", cleanup["status"])
 	}
 }
 
