@@ -112,6 +112,8 @@ tasks:
 
   run:
     desc: 'Run any Bazel target: task run -- //cmd/hovel -- daemon status.'
+    env:
+      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
       - bazel run {{.CLI_ARGS}}
 

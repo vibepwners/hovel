@@ -128,6 +128,32 @@ func TestRunCommandUsesDaemonSessionContextForThrow(t *testing.T) {
 	}
 }
 
+func TestRunCommandPersistsSquatterAddAliasAsChainStep(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
+	ctx := context.Background()
+	run := func(args ...string) string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		full := append([]string{"run", "--workspace", fixture.WorkspacePath, "--op", "o1", "--chain", "etro"}, args...)
+		code := Run(ctx, full, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("hovel %s exit code = %d, stderr = %s", strings.Join(full, " "), code, stderr.String())
+		}
+		return stdout.String()
+	}
+
+	run("add", "etro-survey@v0.1.0")
+	run("add", "etro-exploit@v1.0.0")
+	run("add", "squatter@v0.1.0")
+	output := run("chain", "inspect")
+
+	for _, want := range []string{"etro-survey@v0.1.0", "etro-exploit@v1.0.0", "squatter", "squatter.bind"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("chain inspect missing %q:\n%s", want, output)
+		}
+	}
+}
+
 func TestDaemonServeStopsOnContextCancellationAndClearsWorkspaceState(t *testing.T) {
 	workspacePath := testsupport.TempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())

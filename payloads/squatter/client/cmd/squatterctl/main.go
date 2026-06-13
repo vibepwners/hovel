@@ -32,6 +32,6 @@ func main() {
 	case shell.ModeStreams:
 		client.RunStreams(os.Stdout, opts.Streams)
 	default:
-		client.Run(os.Stdin, os.Stdout)
+		client.RunPrompt(net.JoinHostPort(opts.Host, opts.Port))
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/wire"
+	prompt "github.com/c-bata/go-prompt"
 )
 
 func TestClientRunDrivesEchoOverWire(t *testing.T) {
@@ -40,4 +41,28 @@ func TestClientRunDrivesEchoOverWire(t *testing.T) {
 			t.Fatalf("shell output missing %q:\n%s", want, text)
 		}
 	}
+}
+
+func TestSuggestionsCoverTopLevelAndActiveModule(t *testing.T) {
+	top := Suggestions("", "")
+	if !hasSuggestion(top, "echo") || !hasSuggestion(top, "getfile") || !hasSuggestion(top, "putfile") {
+		t.Fatalf("top suggestions = %#v", top)
+	}
+	filtered := Suggestions("", "pu")
+	if len(filtered) != 1 || filtered[0].Text != "putfile" {
+		t.Fatalf("filtered suggestions = %#v, want putfile", filtered)
+	}
+	active := Suggestions("echo", "")
+	if !hasSuggestion(active, "END") || !hasSuggestion(active, "detach") {
+		t.Fatalf("active suggestions = %#v", active)
+	}
+}
+
+func hasSuggestion(suggestions []prompt.Suggest, text string) bool {
+	for _, suggestion := range suggestions {
+		if suggestion.Text == text {
+			return true
+		}
+	}
+	return false
 }

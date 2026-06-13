@@ -8,6 +8,8 @@ go_library(
     deps = [
         "//payloads/squatter/client/wire",
         "//payloads/squatter/client/xfer",
+        "@com_github_c_bata_go_prompt//:go-prompt",
+        "@com_github_charmbracelet_lipgloss//:lipgloss",
     ],
 )
 
@@ -15,5 +17,8 @@ go_test(
     name = "shell_test",
     srcs = ["shell_test.go"],
     embed = [":shell"],
-    deps = ["//payloads/squatter/client/wire"],
+    deps = [
+        "//payloads/squatter/client/wire",
+        "@com_github_c_bata_go_prompt//:go-prompt",
+    ],
 )

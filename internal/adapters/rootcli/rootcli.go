@@ -174,7 +174,7 @@ func runDaemonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 			return 1
 		}
 	}
-	commandArgs := injectWorkspaceForDaemonCommand(parsed.Command, parsed.Workspace)
+	commandArgs := injectWorkspaceForDaemonCommand(normalizeRunCommand(parsed.Command), parsed.Workspace)
 	app := commandmode.NewAppWithSessionAndModules(operatorSession, pythonrpc.MustConfiguredCatalog())
 	return app.Run(ctx, commandArgs, stdout, stderr)
 }
@@ -265,6 +265,21 @@ func injectWorkspaceForDaemonCommand(args []string, workspace string) []string {
 	}
 	out := append([]string(nil), args...)
 	return append(out, "--workspace", workspace)
+}
+
+func normalizeRunCommand(args []string) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	switch args[0] {
+	case "add", "config", "inspect", "logs", "validate":
+		out := make([]string, 0, len(args)+1)
+		out = append(out, "chain")
+		out = append(out, args...)
+		return out
+	default:
+		return append([]string(nil), args...)
+	}
 }
 
 func hasWorkspaceArg(args []string) bool {

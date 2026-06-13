@@ -109,6 +109,19 @@ func TestRunCommandInjectsWorkspaceForDaemonCommands(t *testing.T) {
 	}
 }
 
+func TestRunCommandNormalizesActiveChainAliases(t *testing.T) {
+	args := normalizeRunCommand([]string{"add", "squatter@v0.1.0"})
+	want := []string{"chain", "add", "squatter@v0.1.0"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+	args = normalizeRunCommand([]string{"target", "add", "t1"})
+	want = []string{"target", "add", "t1"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
 func TestDaemonServeHelpShowsOptions(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
