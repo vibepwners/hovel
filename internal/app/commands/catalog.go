@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -95,8 +96,12 @@ type OperatorSession interface {
 	RenameChain(string, string) error
 	DeleteChain(string) error
 	AddModule(string) (operatorsession.Step, error)
+	AddStep(string, string) (operatorsession.Step, error)
 	AddTarget(string) error
 	ClearTargets()
+	CreateTargetSet(string) error
+	AddTargetToSet(string, string) error
+	RemoveTargetFromSet(string, string) error
 	SetChainConfig(string, string) error
 	UnsetChainConfig(string) error
 	SetTargetConfig(string, string, string) error
@@ -646,7 +651,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		Definition{
 			Path:    []string{"target", "config", "set"},
 			Aliases: [][]string{{"targets", "config", "set"}},
-			Summary: "Set target configuration on the active chain.",
+			Summary: "Set operation target configuration.",
 			Positionals: []Positional{
 				{Name: "target", Help: "Target identifier", Required: true},
 				{Name: "key", Help: "Configuration key", Required: true},
@@ -657,7 +662,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		Definition{
 			Path:    []string{"target", "config", "unset"},
 			Aliases: [][]string{{"targets", "config", "unset"}},
-			Summary: "Unset target configuration on the active chain.",
+			Summary: "Unset operation target configuration.",
 			Positionals: []Positional{
 				{Name: "target", Help: "Target identifier", Required: true},
 				{Name: "key", Help: "Configuration key", Required: true},
@@ -667,11 +672,55 @@ func HovelRegistry(runtime Runtime) Registry {
 		Definition{
 			Path:    []string{"target", "config", "list"},
 			Aliases: [][]string{{"targets", "config", "list"}},
-			Summary: "List target configuration on the active chain.",
+			Summary: "List operation target configuration.",
 			Positionals: []Positional{
 				{Name: "target", Help: "Target identifier", Required: true},
 			},
 			Handler: targetsConfigListHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "set", "create"},
+			Aliases: [][]string{{"targets", "set", "create"}},
+			Summary: "Create an operation target set.",
+			Positionals: []Positional{
+				{Name: "name", Help: "Target set name", Required: true},
+			},
+			Handler: targetSetCreateHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "set", "add"},
+			Aliases: [][]string{{"targets", "set", "add"}},
+			Summary: "Add an operation target to a target set.",
+			Positionals: []Positional{
+				{Name: "name", Help: "Target set name", Required: true},
+				{Name: "target", Help: "Target identifier", Required: true},
+			},
+			Handler: targetSetAddHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "set", "remove"},
+			Aliases: [][]string{{"targets", "set", "remove"}},
+			Summary: "Remove an operation target from a target set.",
+			Positionals: []Positional{
+				{Name: "name", Help: "Target set name", Required: true},
+				{Name: "target", Help: "Target identifier", Required: true},
+			},
+			Handler: targetSetRemoveHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "set", "list"},
+			Aliases: [][]string{{"targets", "set", "list"}},
+			Summary: "List operation target sets.",
+			Handler: targetSetListHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "set", "inspect"},
+			Aliases: [][]string{{"targets", "set", "inspect"}},
+			Summary: "Inspect an operation target set.",
+			Positionals: []Positional{
+				{Name: "name", Help: "Target set name", Required: true},
+			},
+			Handler: targetSetInspectHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"module", "list"},
@@ -737,6 +786,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("workspace", "w", "Workspace path"),
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
+				stringOption("target-set", "", "Target set name"),
 				boolOption("now", "", "Bypass typed confirmation prompt"),
 				boolOption("allow-dangerous", "", "Permit modules tagged dangerous"),
 				boolOption("json", "j", "Emit JSON output"),
@@ -753,6 +803,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("workspace", "w", "Workspace path"),
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
+				stringOption("target-set", "", "Target set name"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: confirmHandler(runtime),
@@ -767,6 +818,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("workspace", "w", "Workspace path"),
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
+				stringOption("target-set", "", "Target set name"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: reviewHandler(runtime),
@@ -1005,14 +1057,14 @@ func operationInspectHandler(runtime Runtime) Handler {
 		}
 		state := runtime.Session.Snapshot()
 		lines := []string{
-			fmt.Sprintf("Operation %s chains=%d active_chain=%s", state.ActiveOperation, len(state.Chains), displayValue(state.ActiveChain, "none")),
+			fmt.Sprintf("Operation %s chains=%d targets=%d target_sets=%d active_chain=%s", state.ActiveOperation, len(state.Chains), len(state.Targets), len(state.TargetSets), displayValue(state.ActiveChain, "none")),
 		}
 		for _, chain := range state.Chains {
 			prefix := " "
 			if chain.Name == state.ActiveChain {
 				prefix = "*"
 			}
-			lines = append(lines, fmt.Sprintf("%s %s steps=%d targets=%d topic=%s", prefix, chain.Name, len(chain.Steps), len(chain.Targets), chain.LogTopic))
+			lines = append(lines, fmt.Sprintf("%s %s steps=%d topic=%s", prefix, chain.Name, len(chain.Steps), chain.LogTopic))
 		}
 		return Result{Human: strings.Join(lines, "\n")}, nil
 	}
@@ -1085,6 +1137,19 @@ func chainAddHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		moduleID := invocation.Positional("module")
+		if isSquatterBindRef(moduleID, moduleDB(runtime)) {
+			if runtime.Session == nil {
+				return Result{}, operatorSessionRequiredError("chain add")
+			}
+			step, err := runtime.Session.AddStep("squatter", "squatter.bind")
+			if err != nil {
+				return Result{}, withActiveChainHelp(err)
+			}
+			if feedbackPublished(runtime.Session) {
+				return Result{}, nil
+			}
+			return Result{Human: fmt.Sprintf("Step added: squatter.bind as %s", step.ID)}, nil
+		}
 		module, ok := moduleDB(runtime).Find(moduleID)
 		if !ok {
 			return Result{}, fmt.Errorf("module %s does not exist", moduleID)
@@ -1101,6 +1166,62 @@ func chainAddHandler(runtime Runtime) Handler {
 		}
 		return Result{Human: fmt.Sprintf("Module added: %s as %s", module.ID, step.ID)}, nil
 	}
+}
+
+func isSquatterBindRef(value string, db ModuleDatabase) bool {
+	ref := strings.ToLower(strings.TrimSpace(value))
+	switch ref {
+	case "squatter", "squatter.bind", "squatter-bind", "squatter/tcp-bind", "squatter.tcp_bind":
+		return true
+	}
+	if db != nil {
+		if module, ok := db.Find(value); ok && isSquatterProviderModule(module) {
+			return true
+		}
+	}
+	if base, _, ok := strings.Cut(ref, "@"); ok {
+		return base == "squatter"
+	}
+	return false
+}
+
+func isSquatterProviderModule(module modulecatalog.Module) bool {
+	return module.Name == "squatter" && module.Type == modulecatalog.TypePayloadProvider
+}
+
+func squatterProviderModuleID(db ModuleDatabase) string {
+	if db != nil {
+		if module, ok := db.Find("squatter@v0.1.0"); ok {
+			return module.ID
+		}
+		for _, module := range db.Search("squatter") {
+			if isSquatterProviderModule(module) {
+				return module.ID
+			}
+		}
+	}
+	return "squatter@v0.1.0"
+}
+
+func legacyExecutionModuleIDs(db ModuleDatabase, modules []string) []string {
+	out := make([]string, 0, len(modules))
+	for _, moduleID := range modules {
+		if moduleID == "squatter.bind" {
+			out = append(out, squatterProviderModuleID(db))
+			continue
+		}
+		out = append(out, moduleID)
+	}
+	return out
+}
+
+func hasSquatterBindModule(modules []string) bool {
+	for _, moduleID := range modules {
+		if moduleID == "squatter.bind" {
+			return true
+		}
+	}
+	return false
 }
 
 func chainValidateHandler(runtime Runtime) Handler {
@@ -1247,11 +1368,11 @@ func chainConfigListHandler(runtime Runtime) Handler {
 		if err != nil {
 			return Result{}, err
 		}
-		if len(state.Config) == 0 {
+		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeChain)
+		if len(state.Config) == 0 && len(requirements) == 0 {
 			return Result{Human: "No chain config set\n\nNext: config interactive"}, nil
 		}
-		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeChain)
-		return Result{Human: "Chain config\n" + configLines(state.Config, requirements)}, nil
+		return Result{Human: "Chain config\n" + availableConfigLines(state.Config, requirements)}, nil
 	}
 }
 
@@ -1273,7 +1394,7 @@ func chainListHandler(runtime Runtime) Handler {
 			if chain.Name == state.ActiveChain {
 				prefix = "*"
 			}
-			lines = append(lines, fmt.Sprintf("%s %s steps=%d targets=%d topic=%s", prefix, chain.Name, len(chain.Steps), len(chain.Targets), chain.LogTopic))
+			lines = append(lines, fmt.Sprintf("%s %s steps=%d topic=%s", prefix, chain.Name, len(chain.Steps), chain.LogTopic))
 		}
 		return Result{Human: strings.Join(lines, "\n")}, nil
 	}
@@ -1344,7 +1465,7 @@ func targetsAddHandler(runtime Runtime) Handler {
 			return Result{}, operatorSessionRequiredError("target add")
 		}
 		if err := runtime.Session.AddTarget(target); err != nil {
-			return Result{}, withActiveChainHelp(err)
+			return Result{}, err
 		}
 		if feedbackPublished(runtime.Session) {
 			return Result{}, nil
@@ -1375,13 +1496,13 @@ func targetsConfigSetHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, activeChainRequiredError()
+			return Result{}, operatorSessionRequiredError("target config set")
 		}
 		target := invocation.Positional("target")
 		key := invocation.Positional("key")
 		value := invocation.Positional("value")
 		if err := runtime.Session.SetTargetConfig(target, key, value); err != nil {
-			return Result{}, withActiveChainHelp(err)
+			return Result{}, err
 		}
 		if feedbackPublished(runtime.Session) {
 			return Result{}, nil
@@ -1396,12 +1517,12 @@ func targetsConfigUnsetHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, activeChainRequiredError()
+			return Result{}, operatorSessionRequiredError("target config unset")
 		}
 		target := invocation.Positional("target")
 		key := invocation.Positional("key")
 		if err := runtime.Session.UnsetTargetConfig(target, key); err != nil {
-			return Result{}, withActiveChainHelp(err)
+			return Result{}, err
 		}
 		if feedbackPublished(runtime.Session) {
 			return Result{}, nil
@@ -1421,11 +1542,112 @@ func targetsConfigListHandler(runtime Runtime) Handler {
 		}
 		target := invocation.Positional("target")
 		config, ok := state.TargetConfigs[target]
-		if !ok || len(config) == 0 {
+		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeTarget)
+		if (!ok || len(config) == 0) && len(requirements) == 0 {
 			return Result{Human: fmt.Sprintf("No target config for %s\n\nNext: target config set %s <key> <value>", target, target)}, nil
 		}
-		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeTarget)
-		return Result{Human: fmt.Sprintf("Target config %s\n%s", target, configLines(config, requirements))}, nil
+		return Result{Human: fmt.Sprintf("Target config %s\n%s", target, availableConfigLines(config, requirements))}, nil
+	}
+}
+
+func targetSetCreateHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target set create")
+		}
+		name := invocation.Positional("name")
+		if err := runtime.Session.CreateTargetSet(name); err != nil {
+			return Result{}, err
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
+		return Result{Human: fmt.Sprintf("Target set created: %s", name)}, nil
+	}
+}
+
+func targetSetAddHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target set add")
+		}
+		name := invocation.Positional("name")
+		target := invocation.Positional("target")
+		if err := runtime.Session.AddTargetToSet(name, target); err != nil {
+			return Result{}, err
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
+		return Result{Human: fmt.Sprintf("Target set updated: %s added %s", name, target)}, nil
+	}
+}
+
+func targetSetRemoveHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target set remove")
+		}
+		name := invocation.Positional("name")
+		target := invocation.Positional("target")
+		if err := runtime.Session.RemoveTargetFromSet(name, target); err != nil {
+			return Result{}, err
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
+		return Result{Human: fmt.Sprintf("Target set updated: %s removed %s", name, target)}, nil
+	}
+}
+
+func targetSetListHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target set list")
+		}
+		state := runtime.Session.Snapshot()
+		if len(state.TargetSets) == 0 {
+			return Result{Human: "No target sets"}, nil
+		}
+		lines := make([]string, 0, len(state.TargetSets))
+		for _, set := range state.TargetSets {
+			lines = append(lines, fmt.Sprintf("%s targets=%d", set.Name, len(set.Targets)))
+		}
+		return Result{Human: strings.Join(lines, "\n")}, nil
+	}
+}
+
+func targetSetInspectHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target set inspect")
+		}
+		name := invocation.Positional("name")
+		state := runtime.Session.Snapshot()
+		for _, set := range state.TargetSets {
+			if set.Name != name {
+				continue
+			}
+			lines := []string{fmt.Sprintf("Target set %s targets=%d", set.Name, len(set.Targets))}
+			lines = append(lines, set.Targets...)
+			return Result{Human: strings.Join(lines, "\n"), JSON: set}, nil
+		}
+		return Result{}, fmt.Errorf("target set does not exist")
 	}
 }
 
@@ -1683,11 +1905,12 @@ func throwHandler(runtime Runtime) Handler {
 }
 
 func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, workspacePath string, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time) error {
+	modules := legacyExecutionModuleIDs(moduleDB(runtime), throw.Modules)
 	for _, target := range throw.Targets {
-		for _, moduleID := range throw.Modules {
+		for _, moduleID := range modules {
 			runIndex := len(payload.Results) + 1
 			if runtime.Session != nil && feedbackPublished(runtime.Session) {
-				_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunStartEntries(throw.Chain, target, moduleID, runIndex, len(throw.Targets)*len(throw.Modules), throwStarted)...)
+				_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunStartEntries(throw.Chain, target, moduleID, runIndex, len(throw.Targets)*len(modules), throwStarted)...)
 			}
 			result, err := client.RunMockExploit(ctx, RunMockExploitRequest{
 				Operation:    planOperation(plan),
@@ -1706,7 +1929,7 @@ func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, 
 				return err
 			}
 			if runtime.Session != nil && feedbackPublished(runtime.Session) {
-				_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(throw.Modules), throwStarted)...)
+				_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(modules), throwStarted)...)
 			}
 		}
 	}
@@ -2326,13 +2549,19 @@ func stableIDComponent(value string) string {
 }
 
 type throwExecution struct {
-	Operation     string
-	Chain         string
-	Targets       []string
-	Modules       []string
-	Steps         []CapabilityChainStepRef
-	ChainConfig   map[string]string
-	TargetConfigs map[string]map[string]string
+	Operation      string
+	Chain          string
+	Targets        []string
+	Modules        []string
+	Steps          []CapabilityChainStepRef
+	ChainConfig    map[string]string
+	TargetConfigs  map[string]map[string]string
+	SkippedTargets []SkippedTarget
+}
+
+type SkippedTarget struct {
+	Target string
+	Reason string
 }
 
 type throwStepRef = CapabilityChainStepRef
@@ -2349,6 +2578,10 @@ func guardDangerousModules(runtime Runtime, modules []string, allow bool) error 
 	db := moduleDB(runtime)
 	var blocked []string
 	for _, moduleID := range modules {
+		if moduleID == "squatter.bind" {
+			blocked = append(blocked, moduleID)
+			continue
+		}
 		module, ok := db.Find(moduleID)
 		if ok && module.Dangerous() {
 			blocked = append(blocked, module.ID)
@@ -2366,13 +2599,20 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 	}
 	operation := operatorsession.DefaultOperation
 	chain := invocation.Option("chain")
+	explicitTarget := invocation.Option("target")
+	targetSet := invocation.Option("target-set")
+	if explicitTarget != "" && targetSet != "" {
+		return throwExecution{}, fmt.Errorf("--target and --target-set cannot be used together")
+	}
 	var targets []string
-	if target := invocation.Option("target"); target != "" {
-		targets = append(targets, target)
+	if explicitTarget != "" {
+		targets = append(targets, explicitTarget)
 	}
 	chainConfig := map[string]string{}
 	targetConfigs := map[string]map[string]string{}
 	var modules []string
+	var steps []CapabilityChainStepRef
+	validateTargetCompatibility := false
 	if runtime.Session != nil {
 		state := runtime.Session.Snapshot()
 		if state.ActiveOperation != "" {
@@ -2385,14 +2625,38 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 		if !ok {
 			return throwExecution{}, fmt.Errorf("chain %s does not exist", chain)
 		}
+		hasSquatterBind := false
 		for _, step := range selected.Steps {
+			if step.StepID == "squatter.bind" {
+				hasSquatterBind = true
+				modules = append(modules, "squatter.bind")
+				continue
+			}
 			modules = append(modules, step.ModuleID)
+			steps = append(steps, CapabilityChainStepRef{ID: step.ID, ModuleID: step.ModuleID, StepID: step.StepID})
 		}
 		chainConfig = cloneStringMap(selected.Config)
-		targetConfigs = cloneTargetConfigs(selected.TargetConfigs)
-		if len(targets) == 0 {
-			targets = append(targets, targetsForChain(state, chain)...)
+		targetConfigs = cloneTargetConfigs(state.TargetConfigs)
+		if explicitTarget != "" && hasString(state.Targets, explicitTarget) {
+			validateTargetCompatibility = true
 		}
+		if len(targets) == 0 {
+			if targetSet != "" {
+				set, ok := targetSetByName(state.TargetSets, targetSet)
+				if !ok {
+					return throwExecution{}, fmt.Errorf("target set %s does not exist", targetSet)
+				}
+				targets = append(targets, set.Targets...)
+				validateTargetCompatibility = true
+			} else {
+				targets = append(targets, state.Targets...)
+			}
+		}
+		if hasSquatterBind {
+			targetConfigs = applySquatterBindTargetConfig(targets, targetConfigs, chainConfig)
+		}
+	} else if targetSet != "" {
+		return throwExecution{}, fmt.Errorf("--target-set requires an operator session")
 	}
 	if strings.TrimSpace(chain) == "" {
 		return throwExecution{}, fmt.Errorf("chain is required; set one with chain use <chain> or pass --chain")
@@ -2410,15 +2674,76 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 		}
 		modules = append(modules, moduleRef)
 	}
+	if len(steps) == 0 {
+		for i, moduleID := range modules {
+			steps = append(steps, CapabilityChainStepRef{
+				ID:       fmt.Sprintf("step-%d", i+1),
+				ModuleID: moduleID,
+			})
+		}
+	}
 	targetConfigs = targetConfigsForTargets(targets, targetConfigs)
+	var skipped []SkippedTarget
+	if validateTargetCompatibility {
+		var err error
+		targets, targetConfigs, skipped, err = compatibleThrowTargets(moduleDB(runtime), steps, chainConfig, targetConfigs, targets, explicitTarget != "")
+		if err != nil {
+			return throwExecution{}, err
+		}
+	}
 	return throwExecution{
-		Operation:     operation,
-		Chain:         chain,
-		Targets:       targets,
-		Modules:       modules,
-		ChainConfig:   chainConfig,
-		TargetConfigs: targetConfigs,
+		Operation:      operation,
+		Chain:          chain,
+		Targets:        targets,
+		Modules:        modules,
+		ChainConfig:    chainConfig,
+		TargetConfigs:  targetConfigs,
+		SkippedTargets: skipped,
 	}, nil
+}
+
+func applySquatterBindTargetConfig(targets []string, configs map[string]map[string]string, chainConfig map[string]string) map[string]map[string]string {
+	if configs == nil {
+		configs = map[string]map[string]string{}
+	}
+	bindPort := strings.TrimSpace(chainConfig["squatter.bind_port"])
+	if bindPort == "" {
+		bindPort = strings.TrimSpace(chainConfig["payload.bind_port"])
+	}
+	if bindPort == "" {
+		bindPort = "9101"
+	}
+	remotePath := strings.TrimSpace(chainConfig["squatter.remote_path"])
+	if remotePath == "" {
+		remotePath = `C:\Windows\Temp\winupd32.exe`
+	}
+	localPath := squatterPayloadPath()
+	for _, target := range targets {
+		config := cloneStringMap(configs[target])
+		if config == nil {
+			config = map[string]string{}
+		}
+		switch strings.TrimSpace(config["target.port"]) {
+		case "139", "445":
+		default:
+			config["target.port"] = "445"
+		}
+		config["payload.local_path"] = localPath
+		config["payload.remote_path"] = remotePath
+		config["payload.bind_port"] = bindPort
+		configs[target] = config
+	}
+	return configs
+}
+
+func squatterPayloadPath() string {
+	if env := strings.TrimSpace(os.Getenv("SQUATTER_PAYLOAD_PATH")); env != "" {
+		return env
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		return filepath.Join(cwd, "examples", "bin", "squatter.exe")
+	}
+	return filepath.Join("examples", "bin", "squatter.exe")
 }
 
 func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation Invocation, path string) (throwExecution, error) {
@@ -2457,17 +2782,26 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 		if moduleID == "" {
 			return throwExecution{}, fmt.Errorf("chain file step %s module reference is required", step.ID)
 		}
-		modules = append(modules, moduleID)
-		if strings.TrimSpace(step.Step) != "" {
+		stepID := strings.TrimSpace(step.Step)
+		if stepID == "squatter.bind" {
+			modules = append(modules, "squatter.bind")
+			continue
+		} else {
+			modules = append(modules, moduleID)
+		}
+		if stepID != "" {
 			steps = append(steps, throwStepRef{
 				ID:       step.ID,
 				ModuleID: moduleID,
-				StepID:   strings.TrimSpace(step.Step),
+				StepID:   stepID,
 			})
 		}
 	}
 	if len(targets) == 0 {
 		return throwExecution{}, fmt.Errorf("target is required; configured chain files must include targets or pass --target")
+	}
+	if hasSquatterBindModule(modules) {
+		targetConfigs = applySquatterBindTargetConfig(targets, targetConfigs, file.Spec.Config)
 	}
 	return throwExecution{
 		Operation:     operatorsession.DefaultOperation,
@@ -2498,6 +2832,95 @@ func targetConfigsForTargets(targets []string, configs map[string]map[string]str
 	return scoped
 }
 
+func compatibleThrowTargets(db ModuleDatabase, steps []CapabilityChainStepRef, chainConfig map[string]string, targetConfigs map[string]map[string]string, targets []string, strict bool) ([]string, map[string]map[string]string, []SkippedTarget, error) {
+	var kept []string
+	var skipped []SkippedTarget
+	for _, target := range targets {
+		view := modulecatalog.ConfigView{
+			Steps:         validationStepRefs(steps),
+			Targets:       []string{target},
+			ChainConfig:   cloneStringMap(chainConfig),
+			TargetConfigs: targetConfigsForTargets([]string{target}, targetConfigs),
+		}
+		validation := db.Validate(view)
+		if validation.Valid {
+			kept = append(kept, target)
+			continue
+		}
+		targetIssues := targetIssuesFor(validation.Issues, target)
+		if len(targetIssues) == 0 {
+			kept = append(kept, target)
+			continue
+		}
+		if strict {
+			return nil, nil, nil, fmt.Errorf("target %s incompatible: %s", target, issueMessages(targetIssues))
+		}
+		skipped = append(skipped, SkippedTarget{Target: target, Reason: issueMessages(targetIssues)})
+	}
+	if len(kept) == 0 {
+		if len(skipped) != 0 {
+			return nil, nil, nil, fmt.Errorf("no compatible targets: %s", skippedTargetMessages(skipped))
+		}
+		return nil, nil, nil, fmt.Errorf("target is required; add one with target add <target> or pass --target")
+	}
+	return kept, targetConfigsForTargets(kept, targetConfigs), skipped, nil
+}
+
+func validationStepRefs(steps []CapabilityChainStepRef) []modulecatalog.StepRef {
+	refs := make([]modulecatalog.StepRef, 0, len(steps))
+	for _, step := range steps {
+		refs = append(refs, modulecatalog.StepRef{ID: step.ID, ModuleID: step.ModuleID})
+	}
+	return refs
+}
+
+func targetIssuesFor(issues []modulecatalog.Issue, target string) []modulecatalog.Issue {
+	var out []modulecatalog.Issue
+	for _, issue := range issues {
+		if issue.Scope == modulecatalog.ScopeTarget && issue.Target == target {
+			out = append(out, issue)
+		}
+	}
+	return out
+}
+
+func issueMessages(issues []modulecatalog.Issue) string {
+	if len(issues) == 0 {
+		return "unknown incompatibility"
+	}
+	messages := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		messages = append(messages, issue.Message)
+	}
+	return strings.Join(messages, "; ")
+}
+
+func skippedTargetMessages(skipped []SkippedTarget) string {
+	messages := make([]string, 0, len(skipped))
+	for _, target := range skipped {
+		messages = append(messages, fmt.Sprintf("%s (%s)", target.Target, target.Reason))
+	}
+	return strings.Join(messages, "; ")
+}
+
+func targetSetByName(sets []operatorsession.TargetSet, name string) (operatorsession.TargetSet, bool) {
+	for _, set := range sets {
+		if set.Name == name {
+			return set, true
+		}
+	}
+	return operatorsession.TargetSet{}, false
+}
+
+func hasString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func validateChainFileForThrow(file ChainFile) error {
 	if err := validateChainFileShape(file); err != nil {
 		return err
@@ -2509,12 +2932,18 @@ func validateChainFileForThrow(file ChainFile) error {
 		return fmt.Errorf("chain file must include targets for throw")
 	}
 	capabilitySteps := 0
+	bridgeSteps := 0
 	for _, step := range file.Spec.Steps {
-		if strings.TrimSpace(step.Step) != "" {
+		stepID := strings.TrimSpace(step.Step)
+		if stepID == "squatter.bind" {
+			bridgeSteps++
+			continue
+		}
+		if stepID != "" {
 			capabilitySteps++
 		}
 	}
-	if capabilitySteps != 0 && capabilitySteps != len(file.Spec.Steps) {
+	if capabilitySteps != 0 && capabilitySteps+bridgeSteps != len(file.Spec.Steps) {
 		return fmt.Errorf("chain file capability-step execution: all steps must declare step")
 	}
 	return nil
@@ -2553,12 +2982,10 @@ func validateChainFileShape(file ChainFile) error {
 func selectedChainState(state operatorsession.State, chain string) (operatorsession.Chain, bool) {
 	if chain == "" || chain == state.ActiveChain {
 		return operatorsession.Chain{
-			Name:          state.Chain,
-			Targets:       append([]string(nil), state.Targets...),
-			Steps:         append([]operatorsession.Step(nil), state.Steps...),
-			Config:        cloneStringMap(state.Config),
-			TargetConfigs: cloneTargetConfigs(state.TargetConfigs),
-			LogTopic:      state.LogTopic,
+			Name:     state.Chain,
+			Steps:    append([]operatorsession.Step(nil), state.Steps...),
+			Config:   cloneStringMap(state.Config),
+			LogTopic: state.LogTopic,
 		}, true
 	}
 	for _, candidate := range state.Chains {
@@ -2599,10 +3026,12 @@ func chainFileFromState(state operatorsession.State, template bool) ChainFile {
 func chainFileSteps(steps []operatorsession.Step) []ChainFileStep {
 	out := make([]ChainFileStep, 0, len(steps))
 	for _, step := range steps {
-		out = append(out, ChainFileStep{
+		fileStep := ChainFileStep{
 			ID:   step.ID,
 			Uses: "module:" + step.ModuleID,
-		})
+			Step: step.StepID,
+		}
+		out = append(out, fileStep)
 	}
 	return out
 }
@@ -2625,6 +3054,12 @@ func loadChainFile(session OperatorSession, file ChainFile) error {
 		moduleID := strings.TrimPrefix(strings.TrimSpace(step.Uses), "module:")
 		if moduleID == "" {
 			return fmt.Errorf("chain file step %s module reference is required", step.ID)
+		}
+		if strings.TrimSpace(step.Step) != "" {
+			if _, err := session.AddStep(moduleID, strings.TrimSpace(step.Step)); err != nil {
+				return err
+			}
+			continue
 		}
 		if _, err := session.AddModule(moduleID); err != nil {
 			return err
@@ -2650,18 +3085,6 @@ func loadChainFile(session OperatorSession, file ChainFile) error {
 			if err := session.SetTargetConfig(target.ID, key, value); err != nil {
 				return err
 			}
-		}
-	}
-	return nil
-}
-
-func targetsForChain(state operatorsession.State, chain string) []string {
-	if chain == "" || chain == state.ActiveChain {
-		return append([]string(nil), state.Targets...)
-	}
-	for _, candidate := range state.Chains {
-		if candidate.Name == chain {
-			return append([]string(nil), candidate.Targets...)
 		}
 	}
 	return nil
@@ -2729,6 +3152,12 @@ func validationView(state operatorsession.State) modulecatalog.ConfigView {
 func requirementsByKey(db ModuleDatabase, state operatorsession.State, scope modulecatalog.Scope) map[string]modulecatalog.Requirement {
 	requirements := map[string]modulecatalog.Requirement{}
 	for _, step := range state.Steps {
+		if step.StepID == "squatter.bind" {
+			for _, requirement := range squatterBindRequirements(scope) {
+				requirements[requirement.Key] = requirement
+			}
+			continue
+		}
 		module, ok := db.Find(step.ModuleID)
 		if !ok {
 			continue
@@ -2744,6 +3173,28 @@ func requirementsByKey(db ModuleDatabase, state operatorsession.State, scope mod
 		}
 	}
 	return requirements
+}
+
+func squatterBindRequirements(scope modulecatalog.Scope) []modulecatalog.Requirement {
+	if scope == modulecatalog.ScopeTarget {
+		return nil
+	}
+	return []modulecatalog.Requirement{
+		{
+			Key:         "squatter.bind_port",
+			Type:        modulecatalog.ValuePort,
+			Required:    false,
+			Default:     "9101",
+			Description: "TCP bind port opened by the Squatter agent on the target.",
+		},
+		{
+			Key:         "squatter.remote_path",
+			Type:        modulecatalog.ValueString,
+			Required:    false,
+			Default:     `C:\Windows\Temp\winupd32.exe`,
+			Description: "Target path used when ETRO installs the Squatter agent.",
+		},
+	}
 }
 
 func configLines(config map[string]string, requirements map[string]modulecatalog.Requirement) string {
@@ -2763,6 +3214,63 @@ func configLines(config map[string]string, requirements map[string]modulecatalog
 		lines = append(lines, fmt.Sprintf("  %-28s %-18s %s", key, typeName, value))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func availableConfigLines(config map[string]string, requirements map[string]modulecatalog.Requirement) string {
+	seen := map[string]bool{}
+	var lines []string
+	for _, key := range sortedRequirementKeys(requirements) {
+		requirement := requirements[key]
+		seen[key] = true
+		status := "optional"
+		if requirement.Required {
+			status = "required"
+		}
+		value := config[key]
+		if value == "" && requirement.Default != "" {
+			status = "default"
+			value = requirement.Default
+		} else if value != "" {
+			status = "set"
+		}
+		typeName := string(requirement.Type)
+		if typeName == "" {
+			typeName = "string"
+		}
+		display := ""
+		if value != "" {
+			display = modulecatalog.DisplayValue(requirement, value)
+		}
+		lines = append(lines, fmt.Sprintf("  %-28s %-18s %-8s %s", key, typeName, status, display))
+	}
+	for _, key := range sortedConfigKeys(config) {
+		if seen[key] {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("  %-28s %-18s %-8s %s", key, "string", "set", config[key]))
+	}
+	if len(lines) == 0 {
+		return "  none"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func sortedRequirementKeys(values map[string]modulecatalog.Requirement) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedConfigKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func moduleLines(modules []modulecatalog.Module) string {
@@ -2901,7 +3409,7 @@ func requirementLine(requirement modulecatalog.Requirement) string {
 
 func chainInspect(state operatorsession.State) string {
 	lines := []string{
-		fmt.Sprintf("Chain %s steps=%d targets=%d config=%d topic=%s", state.ActiveChain, len(state.Steps), len(state.Targets), len(state.Config), state.LogTopic),
+		fmt.Sprintf("Chain %s steps=%d config=%d topic=%s", state.ActiveChain, len(state.Steps), len(state.Config), state.LogTopic),
 		"",
 		"steps",
 	}
@@ -2909,7 +3417,11 @@ func chainInspect(state operatorsession.State) string {
 		lines = append(lines, "  none")
 	} else {
 		for _, step := range state.Steps {
-			lines = append(lines, fmt.Sprintf("  %-10s %s", step.ID, step.ModuleID))
+			label := step.ModuleID
+			if step.StepID != "" {
+				label = step.StepID
+			}
+			lines = append(lines, fmt.Sprintf("  %-10s %s", step.ID, label))
 		}
 	}
 	lines = append(lines, "", "targets")

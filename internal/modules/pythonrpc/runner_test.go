@@ -3,6 +3,7 @@ package pythonrpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -260,6 +261,75 @@ while True:
 	}
 	if step.Requires[1].Attributes["protocol"] != "smb" {
 		t.Fatalf("credential requirement = %#v", step.Requires[1])
+	}
+}
+
+func TestRunnerTreatsNonStepProviderAsLegacyModule(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "legacy-module",
+            "version": "v0.0.0-test",
+            "moduleType": "survey"
+        }})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "module \"legacy-module\" is not a step provider"}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+
+	module, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if module.ID != "legacy-module@v0.0.0-test" {
+		t.Fatalf("id = %q, want legacy-module@v0.0.0-test", module.ID)
+	}
+	if len(module.StepContracts.Steps) != 0 {
+		t.Fatalf("step contracts = %#v, want none", module.StepContracts)
+	}
+}
+
+func TestIsMissingStepProviderRecognizesLegacyResponses(t *testing.T) {
+	for _, message := range []string{
+		"unknown method step.describe",
+		`unknown method "step.describe"`,
+		`module "mock-survey-go" is not a step provider`,
+	} {
+		if !isMissingStepProvider(errors.New(message)) {
+			t.Fatalf("isMissingStepProvider(%q) = false, want true", message)
+		}
+	}
+	if isMissingStepProvider(errors.New("step.describe exploded")) {
+		t.Fatal("isMissingStepProvider accepted unrelated error")
+	}
+}
+
+func TestNormalizeModuleLogLevel(t *testing.T) {
+	cases := map[string]event.Level{
+		"debug":    event.LevelDebug,
+		"info":     event.LevelInfo,
+		"":         event.LevelInfo,
+		"warn":     event.LevelWarn,
+		"warning":  event.LevelWarn,
+		"error":    event.LevelError,
+		"critical": event.LevelError,
+		"noisy":    event.LevelInfo,
+	}
+	for input, want := range cases {
+		if got := normalizeModuleLogLevel(input); got != want {
+			t.Fatalf("normalizeModuleLogLevel(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
 

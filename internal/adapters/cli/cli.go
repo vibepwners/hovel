@@ -431,7 +431,7 @@ func (a App) contextualChildren(path []string, children []commands.Definition) [
 	}
 	if !a.inOperationContext() {
 		switch strings.Join(path, " ") {
-		case "chain", "chains", "chain config", "chains config", "module", "modules", "target", "target config", "targets", "targets config":
+		case "chain", "chains", "chain config", "chains config", "module", "modules", "target", "target config", "target set", "targets", "targets config", "targets set":
 			return nil
 		default:
 			return children
@@ -446,7 +446,7 @@ func (a App) contextualChildren(path []string, children []commands.Definition) [
 			"rename": true,
 			"use":    true,
 		})
-	case "chain config", "chains config", "module", "modules", "target", "target config", "targets", "targets config":
+	case "chain config", "chains config", "module", "modules":
 		return nil
 	default:
 		return children
@@ -496,7 +496,7 @@ func chainContextRequired(path string) bool {
 		return false
 	}
 	switch fields[0] {
-	case "module", "modules", "target", "targets":
+	case "module", "modules":
 		return true
 	case "throw":
 		return len(fields) == 1
@@ -519,17 +519,7 @@ func activeChainDefinition(path string) bool {
 		"chains config unset",
 		"chains inspect",
 		"chains logs",
-		"chains validate",
-		"target add",
-		"target clear",
-		"target config list",
-		"target config set",
-		"target config unset",
-		"targets add",
-		"targets clear",
-		"targets config list",
-		"targets config set",
-		"targets config unset":
+		"chains validate":
 		return true
 	default:
 		return false
@@ -660,6 +650,16 @@ func (a App) positionalSuggestions(definition commands.Definition, commandWordCo
 			return a.targetConfigKeySuggestions(prefix), true
 		}
 		return nil, true
+	case "target set inspect", "targets set inspect", "target set add", "targets set add", "target set remove", "targets set remove":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.targetSetSuggestions(prefix), true
+		}
+		if strings.Contains(definition.PathString(), " add") || strings.Contains(definition.PathString(), " remove") {
+			if provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace {
+				return a.targetSuggestions(prefix), true
+			}
+		}
+		return nil, true
 	case "session connect", "sessions connect", "session close", "sessions close":
 		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.sessionSuggestions), true
 	default:
@@ -697,7 +697,7 @@ func (a App) chainSuggestions(prefix string) []prompt.Suggest {
 	state := a.session.Snapshot()
 	suggestions := make([]prompt.Suggest, 0, len(state.Chains))
 	for _, chain := range state.Chains {
-		description := fmt.Sprintf("%d step(s), %d target(s)", len(chain.Steps), len(chain.Targets))
+		description := fmt.Sprintf("%d step(s)", len(chain.Steps))
 		if chain.Name == state.ActiveChain {
 			description = "active chain"
 		}
@@ -718,6 +718,18 @@ func (a App) targetSuggestions(prefix string) []prompt.Suggest {
 			description = fmt.Sprintf("%d config value(s)", len(config))
 		}
 		suggestions = append(suggestions, prompt.Suggest{Text: target, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) targetSetSuggestions(prefix string) []prompt.Suggest {
+	if a.session == nil {
+		return nil
+	}
+	state := a.session.Snapshot()
+	suggestions := make([]prompt.Suggest, 0, len(state.TargetSets))
+	for _, set := range state.TargetSets {
+		suggestions = append(suggestions, prompt.Suggest{Text: set.Name, Description: fmt.Sprintf("%d target(s)", len(set.Targets))})
 	}
 	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
 }
@@ -832,6 +844,16 @@ type configItem struct {
 
 func (i configItem) Label() string {
 	value := modulecatalog.DisplayValue(i.Requirement, i.Value)
+	if i.Value == "" {
+		switch {
+		case i.Requirement.Default != "":
+			value = "default " + modulecatalog.DisplayValue(i.Requirement, i.Requirement.Default)
+		case i.Requirement.Required:
+			value = "required"
+		default:
+			value = "optional"
+		}
+	}
 	if i.Scope == modulecatalog.ScopeTarget {
 		return fmt.Sprintf("target %s %s=%s", i.Target, i.Key, value)
 	}
@@ -874,6 +896,35 @@ func currentConfigItems(catalog modulecatalog.Catalog, state operatorsession.Sta
 				Requirement: targetRequirements[key],
 			})
 		}
+	}
+	return items
+}
+
+func availableConfigItems(catalog modulecatalog.Catalog, state operatorsession.State) []configItem {
+	chainRequirements, targetRequirements := requirementMaps(catalog, state)
+	var items []configItem
+	for _, key := range sortedKeys(chainRequirements) {
+		items = append(items, configItem{
+			Scope:       modulecatalog.ScopeChain,
+			Key:         key,
+			Value:       state.Config[key],
+			Requirement: chainRequirements[key],
+		})
+	}
+	for _, target := range state.Targets {
+		config := state.TargetConfigs[target]
+		for _, key := range sortedKeys(targetRequirements) {
+			items = append(items, configItem{
+				Scope:       modulecatalog.ScopeTarget,
+				Target:      target,
+				Key:         key,
+				Value:       config[key],
+				Requirement: targetRequirements[key],
+			})
+		}
+	}
+	if len(items) == 0 {
+		return currentConfigItems(catalog, state)
 	}
 	return items
 }
@@ -922,6 +973,23 @@ func requirementMaps(catalog modulecatalog.Catalog, state operatorsession.State)
 	chainRequirements := map[string]modulecatalog.Requirement{}
 	targetRequirements := map[string]modulecatalog.Requirement{}
 	for _, step := range state.Steps {
+		if step.StepID == "squatter.bind" {
+			chainRequirements["squatter.bind_port"] = modulecatalog.Requirement{
+				Key:         "squatter.bind_port",
+				Type:        modulecatalog.ValuePort,
+				Required:    false,
+				Default:     "9101",
+				Description: "TCP bind port opened by the Squatter agent on the target.",
+			}
+			chainRequirements["squatter.remote_path"] = modulecatalog.Requirement{
+				Key:         "squatter.remote_path",
+				Type:        modulecatalog.ValueString,
+				Required:    false,
+				Default:     `C:\Windows\Temp\winupd32.exe`,
+				Description: "Target path used when ETRO installs the Squatter agent.",
+			}
+			continue
+		}
 		module, ok := catalog.Find(step.ModuleID)
 		if !ok {
 			continue

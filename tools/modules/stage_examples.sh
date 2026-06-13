@@ -21,6 +21,8 @@ targets=(
   "//examples/rust/mock_survey:mock-survey-rust"
   "//examples/rust/mock_exploit:mock-exploit-rust"
   "//examples/rust/mock_exploit_session:mock-exploit-session-rust"
+  "//payloads/squatter/provider:squatter-provider"
+  "//payloads/squatter/windows:squatter_x86_exe"
 )
 names=(
   "mock-survey-go"
@@ -29,6 +31,8 @@ names=(
   "mock-survey-rust"
   "mock-exploit-rust"
   "mock-exploit-session-rust"
+  "squatter-provider"
+  "squatter.exe"
 )
 
 bazel build "${targets[@]}"

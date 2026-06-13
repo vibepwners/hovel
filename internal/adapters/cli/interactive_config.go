@@ -228,13 +228,13 @@ func (w *interactiveConfigWizard) complete(stdout io.Writer) int {
 
 func (w *interactiveConfigWizard) renderCurrentMenu(stdout io.Writer) {
 	state := w.session.Snapshot()
-	w.items = currentConfigItems(w.modules, state)
+	w.items = availableConfigItems(w.modules, state)
 	w.selected = configItem{}
 	w.stage = interactiveConfigSelectCurrent
 
-	fmt.Fprintf(stdout, "Current configuration for chain %s\n", w.chain)
+	fmt.Fprintf(stdout, "Available configuration for chain %s\n", w.chain)
 	if len(w.items) == 0 {
-		fmt.Fprintln(stdout, "No current config values.")
+		fmt.Fprintln(stdout, "No configurable values.")
 	}
 	for i, item := range w.items {
 		fmt.Fprintf(stdout, "%d) %s\n", i+1, item.Label())

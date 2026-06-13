@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "shell",
+    srcs = ["shell.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//payloads/squatter/client/wire",
+        "//payloads/squatter/client/xfer",
+    ],
+)
+
+go_test(
+    name = "shell_test",
+    srcs = ["shell_test.go"],
+    embed = [":shell"],
+    deps = ["//payloads/squatter/client/wire"],
+)

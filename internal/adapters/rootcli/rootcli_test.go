@@ -77,10 +77,35 @@ func TestRootHelpShowsRoleMenu(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"hovel", "op", "chain", "module", "artifact", "target", "throw", "shell", "command", "cli", "daemon", "tui"} {
+	for _, want := range []string{"hovel", "op", "chain", "module", "artifact", "target", "throw", "shell", "command", "run", "cli", "daemon", "tui"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestRunCommandParserRequiresCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := Run(context.Background(), []string{"run", "--op", "o1"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "command is required") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunCommandInjectsWorkspaceForDaemonCommands(t *testing.T) {
+	args := injectWorkspaceForDaemonCommand([]string{"throw", "--now"}, "/tmp/hovel")
+	want := []string{"throw", "--now", "--workspace", "/tmp/hovel"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+	args = injectWorkspaceForDaemonCommand([]string{"module", "list"}, "/tmp/hovel")
+	want = []string{"module", "list"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
 	}
 }
 

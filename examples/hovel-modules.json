@@ -59,6 +59,11 @@
       "id": "mock-exploit-session-rust",
       "runtime": "jsonrpc-stdio",
       "command": ["bin/mock-exploit-session-rust"]
+    },
+    {
+      "id": "squatter",
+      "runtime": "jsonrpc-stdio",
+      "command": ["bin/squatter-provider"]
     }
   ]
 }

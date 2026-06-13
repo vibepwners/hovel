@@ -426,6 +426,13 @@ sha256 = "&lt;recorded checksum&gt;"
           chain participant with install, connect, operate, reconnect, and cleanup
           semantics.
         </p>
+        <p>
+          The current operator-facing bridge is <code>squatter.bind</code>. Adding that
+          step to a chain makes Squatter a real chain participant and moves bind-mode
+          payload configuration to chain scope. The planner derives ETRO's legacy
+          install inputs per selected target until ETRO and Squatter execute through a
+          fully capability-native provider chain.
+        </p>
         <p>The implementation pass should include:</p>
         <ol>
           <li>Implemented: core capability schema names for <code>RemoteExecutionCapability</code>, <code>CredentialCapability</code>, <code>PayloadArtifact</code>, <code>PayloadInstance</code>, <code>TransportEndpoint</code>, <code>SessionRef</code>, and <code>CleanupHandle</code>.</li>

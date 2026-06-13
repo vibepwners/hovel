@@ -356,6 +356,13 @@ func (lp *placeholderLP) session(target string) (hovel.SessionRef, bool) {
 	return ref, ok
 }
 
+func (lp *placeholderLP) tcpBindConn(target string) (net.Conn, bool) {
+	lp.mu.Lock()
+	defer lp.mu.Unlock()
+	conn, ok := lp.bindConns[target]
+	return conn, ok
+}
+
 func (listener *reverseTCPListener) acceptOne() {
 	conn, err := listener.listener.Accept()
 	if err != nil {

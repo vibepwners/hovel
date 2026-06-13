@@ -125,7 +125,7 @@ func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Mod
 	}
 	stepContracts, err := process.client.call(ctx, "step.describe", nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "unknown method step.describe") {
+		if isMissingStepProvider(err) {
 			stepContracts = map[string]any{"steps": []any{}}
 		} else {
 			return modulecatalog.Module{}, moduleFailure("module failed while reporting step contracts", "module step describe failed", err, process.stderr.String())
@@ -143,6 +143,16 @@ func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Mod
 		return modulecatalog.Module{}, fmt.Errorf("step contract invalid: %s", formatStepContractIssue(issues[0]))
 	}
 	return module, nil
+}
+
+func isMissingStepProvider(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "unknown method step.describe") ||
+		strings.Contains(message, `unknown method "step.describe"`) ||
+		strings.Contains(message, "not a step provider")
 }
 
 func (r Runner) PrepareStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
@@ -1367,8 +1377,9 @@ func (r Runner) appendLog(ctx context.Context, request run.Request, log rpcLog) 
 	if err != nil {
 		return err
 	}
+	level := normalizeModuleLogLevel(log.Level)
 	fields := map[string]string{
-		"level":   log.Level,
+		"level":   string(level),
 		"message": log.Message,
 		"logger":  log.Logger,
 	}
@@ -1381,7 +1392,7 @@ func (r Runner) appendLog(ctx context.Context, request run.Request, log rpcLog) 
 	evt, err := event.New(event.Args{
 		ID:        id,
 		Type:      eventType,
-		Level:     event.Level(log.Level),
+		Level:     level,
 		Message:   log.Message,
 		Timestamp: r.Clock.Now(),
 		Refs: event.Refs{
@@ -1397,6 +1408,21 @@ func (r Runner) appendLog(ctx context.Context, request run.Request, log rpcLog) 
 		return err
 	}
 	return r.Events.Append(ctx, evt)
+}
+
+func normalizeModuleLogLevel(level string) event.Level {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		return event.LevelDebug
+	case "", "info":
+		return event.LevelInfo
+	case "warn", "warning":
+		return event.LevelWarn
+	case "error", "exception", "critical", "fatal":
+		return event.LevelError
+	default:
+		return event.LevelInfo
+	}
 }
 
 func (r Runner) appendSessionCreated(ctx context.Context, request run.Request, session run.SessionRef) error {

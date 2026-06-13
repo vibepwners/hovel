@@ -464,3 +464,42 @@ func TestLineShellSessionExit(t *testing.T) {
 		t.Fatalf("unexpected data after close: %q", data)
 	}
 }
+
+func TestPTYSessionUsesTerminalLineDiscipline(t *testing.T) {
+	session := &PTYSession{Frontend: func(input io.Reader, output io.Writer) error {
+		line, err := bufio.NewReader(input).ReadString('\n')
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(output, "got:%s", line)
+		return err
+	}}
+	if err := session.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close("test")
+
+	if err := session.Write([]byte{'a', 'b', 0x7f, 'c', '\n'}); err != nil {
+		t.Fatal(err)
+	}
+	output := readPTYSession(t, session)
+	if !strings.Contains(output, "got:ac") {
+		t.Fatalf("pty output = %q, want frontend line ac", output)
+	}
+}
+
+func readPTYSession(t *testing.T, session *PTYSession) string {
+	t.Helper()
+	var builder strings.Builder
+	for i := 0; i < 10; i++ {
+		chunk, err := session.Read(100 * time.Millisecond)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chunk) == 0 {
+			break
+		}
+		builder.Write(chunk)
+	}
+	return builder.String()
+}

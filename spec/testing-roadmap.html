@@ -100,9 +100,9 @@
           <li><code>throw --now</code> persists an auditable bypass confirmation record.</li>
           <li>If <code>cli</code> or <code>tui</code> starts a managed daemon, it stops that daemon on exit.</li>
           <li>If <code>cli</code> or <code>tui</code> attaches to an existing daemon, it leaves that daemon running on exit.</li>
-          <li>A <code>cli</code> session can select an operation and chain, add targets, and issue <code>throw</code> using attachment state.</li>
+          <li>A <code>cli</code> session can select an operation and chain, add operation targets, and issue <code>throw</code> using attachment state.</li>
           <li><code>chain save &lt;file&gt;</code> and <code>chain load &lt;file&gt;</code> preserve both targetless chain templates and configured chains with target config.</li>
-          <li>Two daemon clients attached to the same operation can use different active chains concurrently without leaking targets, logs, or prompt context.</li>
+          <li>Two daemon clients attached to the same operation share operation target inventory while keeping active chains, logs, and prompt context separate.</li>
           <li>One-shot execution of a saved chain file does not mutate another client's active chain.</li>
         </ol>
         <p>Follow-on integration tests:</p>

@@ -75,6 +75,15 @@ tasks:
     cmds:
       - bazel run //cmd/hovel -- throw {{.CLI_ARGS}} --workspace "{{.WORKSPACE}}"
 
+  lab:etro-squatter-bind:
+    desc: Throw the representative Etro -> Squatter TCP bind lab chain against HOVEL_LAB_TARGET_HOST.
+    deps: [modules:build]
+    env:
+      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
+      HOVEL_WORKSPACE: '{{.WORKSPACE}}'
+    cmds:
+      - bash tools/lab/etro_squatter_bind.sh
+
   clean:
     desc: Remove local dev state (./.hovel workspace and .task cache). Leaves the Bazel cache alone.
     cmds:

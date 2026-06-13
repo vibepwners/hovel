@@ -182,13 +182,21 @@ chain delete &lt;chain&gt;
 chain logs
 target add &lt;target&gt;
 target clear
+target config set &lt;target&gt; &lt;key&gt; &lt;value&gt;
+target config unset &lt;target&gt; &lt;key&gt;
+target config list &lt;target&gt;
+target set create &lt;name&gt;
+target set add &lt;name&gt; &lt;target&gt;
+target set remove &lt;name&gt; &lt;target&gt;
+target set list
+target set inspect &lt;name&gt;
 confirm
 review
 throw
 throw list
 throw inspect &lt;throw&gt;
 </code></pre>
-        <p>Operations and chains are durable operator resources, not just transient prompt variables. The selected operation owns chains; each client attachment owns its active chain selection. Target commands mutate only the caller's active chain. Saved chain files are the portable representation for shell one-shot execution.</p>
+        <p>Operations and chains are durable operator resources, not just transient prompt variables. The selected operation owns chains, target inventory, target configuration, and target sets; each client attachment owns its active chain selection. Target commands mutate the caller's active operation. Saved chain files are the portable representation for shell one-shot execution.</p>
         <p>The one-shot shell form is:</p>
 <pre data-lang="shell"><code>hovel throw &lt;chain-file&gt;
 hovel throw &lt;chain-file&gt; --now

@@ -60,13 +60,14 @@
         <p>Chains have three related forms:</p>
         <ol>
           <li>An interactive chain record owned by an operation and edited through <code>hovel cli</code>.</li>
-          <li>A chain template, which is a targetless reusable chain definition with steps and configuration schema but without target assignments.</li>
-          <li>A configured chain file, which fully represents a chain, its steps, configuration schema, configured values, target assignments, and target config for review, sharing, and one-shot execution.</li>
+          <li>A chain template, which is a reusable chain definition with steps and configuration schema but without target bindings.</li>
+          <li>A configured chain file, which fully represents a chain, its steps, configuration schema, configured values, selected target bindings, and target config for review, sharing, and one-shot execution.</li>
         </ol>
         <p>Interactive editing and persistent representation are separate concerns. <code>chain add &lt;module&gt;</code> remains the fast CLI workflow for building a chain. <code>chain save &lt;file&gt;</code> writes the active chain to a YAML file, and <code>chain load &lt;file&gt;</code> imports or updates a chain from that file. One-shot shell execution throws a configured chain file rather than relying on prompt session state. Target config is essential to configured chain files because it is part of what the operator reviews and confirms before throwing.</p>
         <p>The first chain thrower should be intentionally small. It should support sequential steps, literal inputs, <code>${inputs.*}</code> references, <code>${steps.&lt;id&gt;.output}</code> references, per-step events, cancellation, and artifact creation. It should not initially support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.</p>
-        <p>Operator-facing chain records are CRUD resources. A chain can be created, selected with <code>chain use</code>, renamed, inspected, listed, deleted, and then thrown against the targets it owns. The active chain is client attachment state: it determines that client's prompt context, default targets for <code>throw</code>, and log topic subscription without changing another client's active chain.</p>
-        <p>Targets are owned by chains in the operator workflow. A target added while <code>alpha</code> is active belongs to <code>alpha</code>; switching that same client to <code>beta</code> exposes <code>beta</code>'s target set instead. Chain logs follow the same boundary: <code>chain logs</code> renders the active chain's operation-scoped topic only, and multi-client front ends attached to the same operation and chain observe the same topic.</p>
+        <p>Operator-facing chain records are CRUD resources. A chain can be created, selected with <code>chain use</code>, renamed, inspected, listed, deleted, and then thrown against targets selected from the active operation. The active chain is client attachment state: it determines that client's prompt context, default chain for <code>throw</code>, and log topic subscription without changing another client's active chain.</p>
+        <p>Targets are owned by operations in the operator workflow. A target added while <code>alpha</code> is active is still available when the same operation switches to <code>beta</code>; target config follows the target, not the chain. Target sets are named operation-owned groups used only to select targets conveniently at plan time. Chain logs remain chain-scoped: <code>chain logs</code> renders the active chain's operation-scoped topic only, and multi-client front ends attached to the same operation and chain observe the same topic.</p>
+        <p>A throw binds a chain to a target source when planning. <code>throw --target &lt;id&gt;</code> is strict and blocks on an incompatible target. <code>throw --target-set &lt;name&gt;</code> and default operation-inventory throws filter out incompatible targets, report each skipped target, and proceed when at least one compatible target remains.</p>
         <p>
           Payload-consuming chains are composed from typed capability steps rather than
           provider-before-exploit ordering alone. A module reports, over JSON-RPC, which
@@ -228,7 +229,8 @@ squatter.connect_smb
         <ol>
           <li><code>op use &lt;operation&gt;</code> changes only the caller's attached operation.</li>
           <li><code>chain use &lt;chain&gt;</code> changes only the caller's active chain inside the attached operation.</li>
-          <li><code>chain add</code>, <code>target add</code>, <code>chain config</code>, <code>target config</code>, <code>chain validate</code>, and <code>throw</code> without <code>--chain</code> use the caller's active chain.</li>
+          <li><code>chain add</code>, <code>chain config</code>, <code>chain validate</code>, and <code>throw</code> without <code>--chain</code> use the caller's active chain.</li>
+          <li><code>target add</code>, <code>target clear</code>, <code>target config</code>, and <code>target set</code> mutate the caller's active operation inventory, not the active chain.</li>
           <li>Saved chain-file throws import or execute the file without moving another client's active chain.</li>
           <li>Mutations to one shared chain are serialized by the daemon and broadcast to subscribers of <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>.</li>
           <li>Different clients may work different chains in the same operation concurrently.</li>

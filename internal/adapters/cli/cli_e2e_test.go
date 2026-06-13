@@ -390,7 +390,7 @@ func TestE2EChainFileSaveLoadRoundTripThenThrows(t *testing.T) {
 	if code := app.ExecuteLine(context.Background(), "chain inspect", &stdout, &stderr); code != 0 {
 		t.Fatalf("chain inspect exit code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, want := range []string{"Chain roundtrip", "steps=1", "targets=1", "config=1"} {
+	for _, want := range []string{"Chain roundtrip", "steps=1", "config=1", "mock://router-01"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("round-tripped chain inspect missing %q:\n%s", want, stdout.String())
 		}
@@ -530,6 +530,7 @@ func TestE2ESessionCloseRemovesSessionAndDaemonStillThrows(t *testing.T) {
 	executeLines(t, app, &stdout, &stderr,
 		"chain use post-close",
 		"chain add mock-exploit",
+		"target clear",
 		"target add mock://target",
 		"chain config set operator.confirmed_lab true",
 		"target config set mock://target target.host target",
@@ -629,7 +630,7 @@ func TestDaemonRestartRestoresRemoteChainAndCanThrow(t *testing.T) {
 	if code := app.ExecuteLine(context.Background(), "chain inspect", &stdout, &stderr); code != 0 {
 		t.Fatalf("chain inspect exit code = %d, stderr = %s", code, stderr.String())
 	}
-	for _, want := range []string{"Chain persisted", "steps=1", "targets=1", "config=1"} {
+	for _, want := range []string{"Chain persisted", "steps=1", "config=1", "mock://router-01"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("restored chain inspect missing %q:\n%s", want, stdout.String())
 		}

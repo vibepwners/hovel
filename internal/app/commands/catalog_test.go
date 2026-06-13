@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -57,6 +58,11 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"target", "config", "list"},
 		{"target", "config", "set"},
 		{"target", "config", "unset"},
+		{"target", "set", "add"},
+		{"target", "set", "create"},
+		{"target", "set", "inspect"},
+		{"target", "set", "list"},
+		{"target", "set", "remove"},
 		{"confirm"},
 		{"throw"},
 		{"throw", "inspect"},
@@ -74,6 +80,7 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"chains", "save"},
 		{"modules", "list"},
 		{"targets", "add"},
+		{"targets", "set", "create"},
 		{"throws", "list"},
 	} {
 		if _, ok := registry.Find(alias...); !ok {
@@ -99,7 +106,7 @@ func TestThrowDefinitionRequiresDaemonAndCentralOptions(t *testing.T) {
 	if got, want := definition.Positionals, []Positional{{Name: "file", Help: "Configured chain YAML file", Required: false}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("positionals = %#v, want %#v", got, want)
 	}
-	for _, name := range []string{"workspace", "chain", "target", "now", "json", "no-color", "verbose", "debug"} {
+	for _, name := range []string{"workspace", "chain", "target", "target-set", "now", "json", "no-color", "verbose", "debug"} {
 		if !hasOption(definition, name) {
 			t.Fatalf("throw definition missing %q option", name)
 		}
@@ -1147,7 +1154,13 @@ func TestThrowTargetOverrideScopesTargetConfigs(t *testing.T) {
 	if err := session.SetTargetConfig("mock://one", "target.host", "one.local"); err != nil {
 		t.Fatal(err)
 	}
+	if err := session.SetTargetConfig("mock://one", "target.port", "22"); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.SetTargetConfig("mock://two", "target.host", "two.local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://two", "target.port", "22"); err != nil {
 		t.Fatal(err)
 	}
 	runtime := Runtime{Session: session, Modules: exampleCatalog()}
@@ -1157,18 +1170,255 @@ func TestThrowTargetOverrideScopesTargetConfigs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantConfigs := map[string]map[string]string{"mock://one": {"target.host": "one.local"}}
+	wantConfigs := map[string]map[string]string{"mock://one": {"target.host": "one.local", "target.port": "22"}}
 	if !reflect.DeepEqual(throw.TargetConfigs, wantConfigs) {
 		t.Fatalf("target configs = %#v, want %#v", throw.TargetConfigs, wantConfigs)
 	}
 	baseHash := planHashForExecution(throw)
 	changed := throw
 	changed.TargetConfigs = map[string]map[string]string{
-		"mock://one": {"target.host": "one.local"},
-		"mock://two": {"target.host": "changed.local"},
+		"mock://one": {"target.host": "one.local", "target.port": "22"},
+		"mock://two": {"target.host": "changed.local", "target.port": "22"},
 	}
 	if baseHash == planHashForExecution(changed) {
 		t.Fatal("test setup invalid: unscoped target config should affect hash")
+	}
+}
+
+func TestThrowInputsSquatterBindDerivesEtroInstallConfig(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("etro-exploit@v1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddStep("squatter", "squatter.bind"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("operator.confirmed_lab", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("squatter.bind_port", "9101"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("t1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("t1", "target.host", "192.168.122.142"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("t1", "target.port", "1337"); err != nil {
+		t.Fatal(err)
+	}
+
+	throw, err := throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := throw.Modules, []string{"etro-exploit@v1.0.0", "squatter.bind"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("modules = %#v, want %#v", got, want)
+	}
+	if len(throw.Steps) != 0 {
+		t.Fatalf("steps = %#v, want legacy Squatter bridge execution", throw.Steps)
+	}
+	config := throw.TargetConfigs["t1"]
+	if config["target.port"] != "445" {
+		t.Fatalf("target.port = %q, want 445", config["target.port"])
+	}
+	if config["payload.bind_port"] != "9101" {
+		t.Fatalf("payload.bind_port = %q, want 9101", config["payload.bind_port"])
+	}
+	if config["payload.remote_path"] != `C:\Windows\Temp\winupd32.exe` {
+		t.Fatalf("payload.remote_path = %q", config["payload.remote_path"])
+	}
+	if !strings.HasSuffix(config["payload.local_path"], filepath.Join("examples", "bin", "squatter.exe")) {
+		t.Fatalf("payload.local_path = %q, want staged squatter.exe", config["payload.local_path"])
+	}
+}
+
+func TestThrowInputsFromChainFileSquatterBindDerivesInstallConfig(t *testing.T) {
+	store := &fakeChainFileStore{
+		reads: map[string]ChainFile{
+			"etro-squatter.chain.yaml": {
+				APIVersion: "hovel.dev/v1alpha1",
+				Kind:       "Chain",
+				Metadata:   ChainFileMetadata{Name: "etro-squatter"},
+				Spec: ChainFileSpec{
+					Mode: "configured",
+					Steps: []ChainFileStep{
+						{ID: "exploit", Uses: "module:etro-exploit@v1.0.0"},
+						{ID: "squatter-bind", Uses: "module:squatter@v0.1.0", Step: "squatter.bind"},
+					},
+					Config: map[string]string{"operator.confirmed_lab": "true", "squatter.bind_port": "9101"},
+					Targets: []ChainFileTarget{{
+						ID: "t1",
+						Config: map[string]string{
+							"target.host": "192.168.122.142",
+							"target.port": "1337",
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	throw, err := throwInputs(context.Background(), Runtime{ChainFiles: store}, Invocation{
+		Positionals: map[string]string{"file": "etro-squatter.chain.yaml"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := throw.Modules, []string{"etro-exploit@v1.0.0", "squatter.bind"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("modules = %#v, want %#v", got, want)
+	}
+	config := throw.TargetConfigs["t1"]
+	if config["target.port"] != "445" || config["payload.bind_port"] != "9101" || config["payload.local_path"] == "" {
+		t.Fatalf("target config = %#v, want derived Squatter install config", config)
+	}
+}
+
+func TestChainAddVersionedSquatterAddsBindStep(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := chainAddHandler(Runtime{Session: session, Modules: squatterCatalog()})(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "squatter@v0.1.0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "squatter.bind") {
+		t.Fatalf("human = %q, want squatter.bind", result.Human)
+	}
+	state := session.Snapshot()
+	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "squatter" || state.Steps[0].StepID != "squatter.bind" {
+		t.Fatalf("steps = %#v, want squatter.bind step", state.Steps)
+	}
+}
+
+func TestExecuteLegacyThrowRunsSquatterProviderAfterEtroInstall(t *testing.T) {
+	recorder := &fakeRunRecorder{}
+	client := fakeRunClient{recorder: recorder}
+	throw := throwExecution{
+		Operation: "op1",
+		Chain:     "alpha",
+		Targets:   []string{"t1"},
+		Modules:   []string{"etro-exploit@v1.0.0", "squatter.bind"},
+		TargetConfigs: map[string]map[string]string{
+			"t1": {
+				"target.host":         "192.168.122.142",
+				"target.port":         "445",
+				"payload.local_path":  "/tmp/squatter.exe",
+				"payload.remote_path": `C:\Windows\Temp\winupd32.exe`,
+				"payload.bind_port":   "9101",
+			},
+		},
+	}
+	payload := ThrowPayload{ThrowID: "throw-1", Chain: "alpha", Targets: []string{"t1"}}
+	err := executeLegacyThrow(context.Background(), Runtime{Modules: squatterCatalog()}, client, "", ThrowPlanRecord{Operation: "op1", Chain: "alpha"}, throw, &payload, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.requests) != 2 {
+		t.Fatalf("requests = %#v, want etro and squatter provider", recorder.requests)
+	}
+	if recorder.requests[0].ModuleID != "etro-exploit@v1.0.0" {
+		t.Fatalf("first module = %q", recorder.requests[0].ModuleID)
+	}
+	if recorder.requests[1].ModuleID != "squatter@v0.1.0" {
+		t.Fatalf("second module = %q, want squatter provider", recorder.requests[1].ModuleID)
+	}
+	if recorder.requests[1].TargetConfig["payload.bind_port"] != "9101" {
+		t.Fatalf("squatter target config = %#v", recorder.requests[1].TargetConfig)
+	}
+}
+
+func TestThrowTargetSetFiltersIncompatibleTargets(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-exploit@v0.0.0-example"); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"mock://ready", "mock://missing-port"} {
+		if err := session.AddTarget(target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := session.SetTargetConfig("mock://ready", "target.host", "ready.local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://ready", "target.port", "22"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://missing-port", "target.host", "missing.local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.CreateTargetSet("mixed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTargetToSet("mixed", "mock://ready"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTargetToSet("mixed", "mock://missing-port"); err != nil {
+		t.Fatal(err)
+	}
+
+	throw, err := throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{
+		Options: map[string]string{"target-set": "mixed"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := throw.Targets, []string{"mock://ready"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("targets = %#v, want %#v", got, want)
+	}
+	if _, ok := throw.TargetConfigs["mock://missing-port"]; ok {
+		t.Fatalf("incompatible target config leaked into throw: %#v", throw.TargetConfigs)
+	}
+	if len(throw.SkippedTargets) != 1 || throw.SkippedTargets[0].Target != "mock://missing-port" {
+		t.Fatalf("skipped targets = %#v", throw.SkippedTargets)
+	}
+	if !strings.Contains(throw.SkippedTargets[0].Reason, "target.port") {
+		t.Fatalf("skip reason = %q, want missing target.port", throw.SkippedTargets[0].Reason)
+	}
+}
+
+func TestThrowExplicitTargetFailsWhenIncompatible(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-exploit@v0.0.0-example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://missing-port"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://missing-port", "target.host", "missing.local"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{
+		Options: map[string]string{"target": "mock://missing-port"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "target.port") {
+		t.Fatalf("error = %v, want target.port validation failure", err)
 	}
 }
 
@@ -1229,6 +1479,9 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	createDefinition, _ := registry.Find("chain", "create")
 	useDefinition, _ := registry.Find("chain", "use")
 	targetDefinition, _ := registry.Find("target", "add")
+	targetSetCreateDefinition, _ := registry.Find("target", "set", "create")
+	targetSetAddDefinition, _ := registry.Find("target", "set", "add")
+	targetSetInspectDefinition, _ := registry.Find("target", "set", "inspect")
 	listDefinition, _ := registry.Find("chain", "list")
 	inspectDefinition, _ := registry.Find("chain", "inspect")
 	renameDefinition, _ := registry.Find("chain", "rename")
@@ -1267,8 +1520,34 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	if state.ActiveChain != "beta" {
 		t.Fatalf("active chain = %q, want beta", state.ActiveChain)
 	}
-	if len(state.Targets) != 1 || state.Targets[0] != "mock://beta" {
-		t.Fatalf("beta target = %#v", state.Targets)
+	if got, want := state.Targets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("targets = %#v, want %#v", got, want)
+	}
+	if _, err := targetSetCreateDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "xp-lab"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetSetAddDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "xp-lab", "target": "mock://alpha"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetSetAddDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "xp-lab", "target": "mock://beta"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targetSetResult, err := targetSetInspectDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "xp-lab"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Target set xp-lab", "mock://alpha", "mock://beta"} {
+		if !strings.Contains(targetSetResult.Human, want) {
+			t.Fatalf("target set inspect missing %q:\n%s", want, targetSetResult.Human)
+		}
 	}
 
 	listResult, err := listDefinition.Execute(context.Background(), Invocation{})
@@ -1276,8 +1555,8 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"  alpha steps=0 targets=1 topic=operation/default/chain/alpha/logs",
-		"* beta steps=0 targets=1 topic=operation/default/chain/beta/logs",
+		"  alpha steps=0 topic=operation/default/chain/alpha/logs",
+		"* beta steps=0 topic=operation/default/chain/beta/logs",
 	} {
 		if !strings.Contains(listResult.Human, want) {
 			t.Fatalf("chain list missing %q:\n%s", want, listResult.Human)
@@ -1288,7 +1567,7 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(inspectResult.Human, "Chain beta steps=0 targets=1 config=0 topic=operation/default/chain/beta/logs") {
+	if !strings.Contains(inspectResult.Human, "Chain beta steps=0 config=0 topic=operation/default/chain/beta/logs") {
 		t.Fatalf("inspect result = %q", inspectResult.Human)
 	}
 
@@ -1301,7 +1580,7 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	if state.ActiveChain != "renamed" {
 		t.Fatalf("active chain = %q, want renamed", state.ActiveChain)
 	}
-	if len(state.Targets) != 1 || state.Targets[0] != "mock://beta" {
+	if got, want := state.Targets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("renamed target = %#v", state.Targets)
 	}
 	if state.LogTopic != "operation/default/chain/renamed/logs" {
@@ -1372,7 +1651,7 @@ func TestOperationHandlersSegmentChainState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(inspectResult.Human, "Operation afterparty chains=1 active_chain=beta") {
+	if !strings.Contains(inspectResult.Human, "Operation afterparty chains=1 targets=1 target_sets=0 active_chain=beta") {
 		t.Fatalf("op inspect = %q", inspectResult.Human)
 	}
 }
@@ -1760,7 +2039,7 @@ func TestThrowInputsFromChainFileKeepsCapabilityStepRefs(t *testing.T) {
 	}
 }
 
-func TestTargetHandlerRequiresActiveChain(t *testing.T) {
+func TestTargetHandlerRequiresActiveOperation(t *testing.T) {
 	session := operatorsession.New()
 	registry := HovelRegistry(Runtime{
 		Workspaces: fakeWorkspaceService{},
@@ -1774,8 +2053,16 @@ func TestTargetHandlerRequiresActiveChain(t *testing.T) {
 	_, err := targetDefinition.Execute(context.Background(), Invocation{
 		Positionals: map[string]string{"target": "mock://target"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "active chain is required") {
-		t.Fatalf("error = %v, want active chain required", err)
+	if err == nil || !strings.Contains(err.Error(), "active operation is required") {
+		t.Fatalf("error = %v, want active operation required", err)
+	}
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "mock://target"},
+	}); err != nil {
+		t.Fatalf("target add with active operation failed: %v", err)
 	}
 }
 
@@ -1987,6 +2274,25 @@ func exampleCatalog() modulecatalog.Catalog {
 			TargetConfig: []modulecatalog.Requirement{
 				{Key: "target.host", Type: modulecatalog.ValueHost, Required: true, Description: "Target host name or IP address."},
 				{Key: "target.port", Type: modulecatalog.ValuePort, Required: true, Description: "Target TCP port."},
+			},
+		},
+	)
+}
+
+func squatterCatalog() modulecatalog.Catalog {
+	return modulecatalog.New(
+		modulecatalog.Module{
+			ID:          "squatter@v0.1.0",
+			Name:        "squatter",
+			Type:        modulecatalog.TypePayloadProvider,
+			Version:     "v0.1.0",
+			Summary:     "Build Squatter Windows payload artifacts.",
+			RuntimeKind: "jsonrpc-stdio",
+			Enabled:     true,
+			Tags:        []string{"dangerous", "payload_provider"},
+			ChainConfig: []modulecatalog.Requirement{
+				{Key: "payload.transport", Type: modulecatalog.ValueEnum, Required: true, Allowed: []string{"tcp-bind"}},
+				{Key: "payload.bind_port", Type: modulecatalog.ValuePort, Required: true},
 			},
 		},
 	)

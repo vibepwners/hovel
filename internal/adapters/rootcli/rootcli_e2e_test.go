@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 )
 
@@ -79,6 +81,50 @@ func TestMonoBinaryDaemonAndCommandRunMockExploitFlow(t *testing.T) {
 	}
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifact count = %d, want 1", len(result.Artifacts))
+	}
+}
+
+func TestRunCommandUsesDaemonSessionContextForThrow(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
+	ctx := context.Background()
+	run := func(args ...string) string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		full := append([]string{"run", "--workspace", fixture.WorkspacePath, "--op", "o1", "--chain", "mock"}, args...)
+		code := Run(ctx, full, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("hovel %s exit code = %d, stderr = %s", strings.Join(full, " "), code, stderr.String())
+		}
+		return stdout.String()
+	}
+
+	run("chain", "add", "mock-exploit@v0.0.0-example")
+	run("chain", "config", "set", "operator.confirmed_lab", "true")
+	run("target", "add", "mock://target")
+	run("target", "config", "set", "mock://target", "target.host", "mock.local")
+	run("target", "config", "set", "mock://target", "target.port", "22")
+	output := run("throw", "--now", "--json")
+
+	var payload struct {
+		Chain   string   `json:"chain"`
+		Targets []string `json:"targets"`
+		Results []struct {
+			ModuleID string `json:"moduleId"`
+			Target   string `json:"target"`
+			State    string `json:"state"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatalf("invalid JSON %q: %v", output, err)
+	}
+	if payload.Chain != "mock" {
+		t.Fatalf("chain = %q, want mock", payload.Chain)
+	}
+	if len(payload.Targets) != 1 || payload.Targets[0] != "mock://target" {
+		t.Fatalf("targets = %#v", payload.Targets)
+	}
+	if len(payload.Results) != 1 || payload.Results[0].ModuleID != "mock-exploit@v0.0.0-example" || payload.Results[0].State != "succeeded" {
+		t.Fatalf("results = %#v", payload.Results)
 	}
 }
 

@@ -130,6 +130,8 @@ h0v3l&gt; op use redteam-lab
 h0v3l [redteam-lab]&gt; chain create mock-exploit
 h0v3l [redteam-lab/mock-exploit] &gt; target add mock://target-1
 h0v3l [redteam-lab/mock-exploit] &gt; target add mock://target-2
+h0v3l [redteam-lab/mock-exploit] &gt; target set create lab
+h0v3l [redteam-lab/mock-exploit] &gt; target set add lab mock://target-1
 h0v3l [redteam-lab/mock-exploit] &gt; throw
 h0v3l [redteam-lab/mock-exploit] &gt; logs
 </code></pre>
@@ -158,7 +160,13 @@ logs
 target add
 target clear
 target config set
+target config unset
 target config list
+target set create
+target set add
+target set remove
+target set list
+target set inspect
 throw
 search
 info
@@ -187,13 +195,13 @@ exit
           <li>Create or enter an operation with <code>op create &lt;operation&gt;</code> or <code>op use &lt;operation&gt;</code>.</li>
           <li>Create and immediately enter a chain with <code>chain create &lt;chain&gt;</code>, or enter an existing chain with <code>chain use &lt;chain&gt;</code>.</li>
           <li>Add chain steps with <code>add &lt;module&gt;</code>.</li>
-          <li>Add one or more targets owned by the active chain with <code>target add &lt;target&gt;</code>.</li>
+          <li>Add one or more operation-owned targets with <code>target add &lt;target&gt;</code>.</li>
           <li>Configure and validate the chain with <code>config ...</code> and <code>validate</code>.</li>
           <li>Optionally pre-confirm with <code>confirm</code>, or rerun an explicit typed review with <code>review</code>.</li>
-          <li>Execute the active chain against its owned targets with <code>throw</code>.</li>
+          <li>Execute the active chain against selected operation targets with <code>throw</code>.</li>
           <li>Persist the chain definition with <code>chain save &lt;file&gt;</code> when it should be shared or used from one-shot mode.</li>
         </ol>
-        <p>Targets belong to chains. <code>target add</code> and <code>target clear</code> operate on the caller's active chain only, and interactive <code>throw</code> uses that active chain and that chain's target set. A targetless chain template can be reused and configured later; a configured chain includes target assignments and per-target config and is ready to review and throw.</p>
+        <p>Targets belong to operations. <code>target add</code>, <code>target clear</code>, and <code>target config</code> operate on the active operation inventory and persist across chains. <code>target set</code> groups operation targets for convenience. Interactive <code>throw</code> binds the active chain to targets from <code>--target</code>, <code>--target-set</code>, or the operation inventory before planning and review.</p>
         <p><code>review</code> and <code>throw</code> share the same review rendering. <code>confirm</code> records a pre-confirmation and stops. <code>review</code> always displays the current plan, requires the operator to type <code>yes</code>, records or refreshes the confirmation, and stops. <code>throw</code> starts execution if the current plan hash already has a matching confirmation; otherwise it shows the review, asks the operator to type <code>yes</code>, records the confirmation, and starts execution. Confirmations do not expire by time. They become invalid when the reviewed plan hash changes. <code>throw --now</code> skips the prompt but records the bypass in the confirmation record.</p>
         <p>Chains own their operation-scoped log topic. A chain topic is addressable as <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>, and <code>chain logs</code> shows only the logs for the active chain. In multi-client sessions, a <code>cli</code>, <code>tui</code>, or MCP client attached to an operation and chain subscribes to that chain topic; clients attached to the same operation and chain see the same logs, while clients attached to other chains do not see them by default.</p>
         <p>Operational setup commands such as workspace initialization and daemon inspection must be grouped under <code>control</code> in the registry exposed to <code>cli</code>. The old top-level <code>run</code> command should not be the durable operator contract; <code>throw</code> is the execution verb for the selected chain and target set.</p>

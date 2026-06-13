@@ -11,6 +11,7 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/provider",
     visibility = ["//visibility:private"],
     deps = [
+        "//payloads/squatter/client/shell",
         "//payloads/squatter/client/smbpipe",
         "//sdk/go/hovel",
     ],

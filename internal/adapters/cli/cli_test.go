@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -144,10 +145,38 @@ func TestOptionSuggestionsComeFromCommandRegistry(t *testing.T) {
 	for _, suggestion := range suggestions {
 		names = append(names, suggestion.Text)
 	}
-	for _, want := range []string{"--workspace", "--chain", "--target", "--json"} {
+	for _, want := range []string{"--workspace", "--chain", "--target", "--target-set", "--json"} {
 		if !contains(names, want) {
 			t.Fatalf("suggestions = %#v, missing %s", names, want)
 		}
+	}
+}
+
+func TestTargetCommandsWorkInOperationContextWithoutActiveChain(t *testing.T) {
+	app := newTestApp()
+	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(context.Background(), "op use engagement", &stdout, &stderr); code != 0 {
+		t.Fatalf("op use exit code = %d, stderr = %s", code, stderr.String())
+	}
+	for _, line := range []string{
+		"target add mock://router-01",
+		"target config set mock://router-01 target.host router-01",
+		"target set create lab",
+		"target set add lab mock://router-01",
+	} {
+		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q exit code = %d, stderr = %s", line, code, stderr.String())
+		}
+	}
+	state := app.session.Snapshot()
+	if got, want := state.Targets, []string{"mock://router-01"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("targets = %#v, want %#v", got, want)
+	}
+	if len(state.TargetSets) != 1 || state.TargetSets[0].Name != "lab" {
+		t.Fatalf("target sets = %#v", state.TargetSets)
+	}
+	if code := app.ExecuteLine(context.Background(), "chain add mock-exploit", &stdout, &stderr); code == 0 || !strings.Contains(stderr.String(), "select a chain first") {
+		t.Fatalf("chain add exit code = %d, stderr = %s", code, stderr.String())
 	}
 }
 
@@ -352,7 +381,7 @@ func TestInteractiveConfigWizardEditsCurrentThenFillsRemainingConfig(t *testing.
 		}
 	}
 	for _, want := range []string{
-		"Current configuration for chain lab",
+		"Available configuration for chain lab",
 		"1) chain operator.confirmed_lab=false",
 		"Remaining configuration for chain lab",
 		"Chain lab configuration complete",
@@ -394,7 +423,10 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	for _, want := range []string{
-		"No current config values.",
+		"Available configuration for chain lab",
+		"chain operator.confirmed_lab=required",
+		"target mock://router-01 target.host=required",
+		"target mock://router-01 target.port=required",
 		"select config to edit or c to continue",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -447,6 +479,7 @@ func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndRedactsSe
 		},
 		TargetConfig: []modulecatalog.Requirement{
 			{Key: "target.port", Type: modulecatalog.ValuePort, Required: true},
+			{Key: "payload.bind_port", Type: modulecatalog.ValuePort, Required: false, Default: "9101"},
 		},
 	})
 	app := App{
@@ -463,6 +496,9 @@ func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndRedactsSe
 	}
 	if strings.Contains(stdout.String(), "hunter2") || !strings.Contains(stdout.String(), "chain api.token=********") {
 		t.Fatalf("current config should redact secret:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "target mock://router-01 payload.bind_port=default 9101") {
+		t.Fatalf("available config should show optional default:\n%s", stdout.String())
 	}
 	if suggestions := app.Suggestions(""); containsSuggestion(suggestions, "hunter2") || containsSuggestionDescription(suggestions, "hunter2") {
 		t.Fatalf("secret current value leaked into suggestions: %#v", suggestions)
