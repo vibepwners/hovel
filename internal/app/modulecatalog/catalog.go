@@ -122,6 +122,32 @@ type Capability struct {
 	Extensions     map[string]any
 }
 
+type StepInputResolution struct {
+	StepID   string
+	Ready    bool
+	Bindings []CapabilityBinding
+	Missing  []MissingCapability
+}
+
+type CapabilityBinding struct {
+	RequirementIndex int
+	CapabilityID     string
+}
+
+type MissingCapability struct {
+	RequirementIndex int
+	Type             CapabilityType
+	SchemaVersion    string
+	Attributes       map[string]any
+	States           []string
+}
+
+type StepAvailability struct {
+	ModuleID   string
+	Step       StepContract
+	Resolution StepInputResolution
+}
+
 type StepPrepareContract struct {
 	Materializes []string
 }
@@ -227,6 +253,29 @@ func (c Catalog) Find(id string) (Module, bool) {
 		return Module{}, false
 	}
 	return cloneModule(module), true
+}
+
+func (c Catalog) ResolveStepAvailability(capabilities []Capability) []StepAvailability {
+	var availability []StepAvailability
+	for _, module := range c.List() {
+		if !module.Enabled {
+			continue
+		}
+		for _, step := range module.StepContracts.Steps {
+			availability = append(availability, StepAvailability{
+				ModuleID:   module.ID,
+				Step:       cloneStepContract(step),
+				Resolution: ResolveStepInputs(step, capabilities),
+			})
+		}
+	}
+	sort.Slice(availability, func(i, j int) bool {
+		if availability[i].ModuleID != availability[j].ModuleID {
+			return availability[i].ModuleID < availability[j].ModuleID
+		}
+		return availability[i].Step.ID < availability[j].Step.ID
+	})
+	return availability
 }
 
 func NewModuleType(value string) (ModuleType, error) {
@@ -526,6 +575,33 @@ func FindSatisfyingCapability(requirement CapabilityRequirement, capabilities []
 	return Capability{}, false
 }
 
+func ResolveStepInputs(step StepContract, capabilities []Capability) StepInputResolution {
+	resolution := StepInputResolution{
+		StepID:   step.ID,
+		Ready:    true,
+		Bindings: make([]CapabilityBinding, 0, len(step.Requires)),
+	}
+	for index, requirement := range step.Requires {
+		capability, ok := FindSatisfyingCapability(requirement, capabilities)
+		if ok {
+			resolution.Bindings = append(resolution.Bindings, CapabilityBinding{
+				RequirementIndex: index,
+				CapabilityID:     capability.ID,
+			})
+			continue
+		}
+		resolution.Ready = false
+		resolution.Missing = append(resolution.Missing, MissingCapability{
+			RequirementIndex: index,
+			Type:             requirement.Type,
+			SchemaVersion:    requirement.SchemaVersion,
+			Attributes:       cloneAnyMap(requirement.Attributes),
+			States:           append([]string(nil), requirement.States...),
+		})
+	}
+	return resolution
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -581,17 +657,21 @@ func cloneStepContractSet(set StepContractSet) StepContractSet {
 func cloneStepContracts(steps []StepContract) []StepContract {
 	out := make([]StepContract, 0, len(steps))
 	for _, step := range steps {
-		step.ConfigSchema = cloneAnyMap(step.ConfigSchema)
-		step.Requires = cloneCapabilityRequirements(step.Requires)
-		step.Produces = cloneCapabilityRequirements(step.Produces)
-		step.Prepare.Materializes = append([]string(nil), step.Prepare.Materializes...)
-		if step.Cleanup != nil {
-			cleanup := *step.Cleanup
-			step.Cleanup = &cleanup
-		}
-		out = append(out, step)
+		out = append(out, cloneStepContract(step))
 	}
 	return out
+}
+
+func cloneStepContract(step StepContract) StepContract {
+	step.ConfigSchema = cloneAnyMap(step.ConfigSchema)
+	step.Requires = cloneCapabilityRequirements(step.Requires)
+	step.Produces = cloneCapabilityRequirements(step.Produces)
+	step.Prepare.Materializes = append([]string(nil), step.Prepare.Materializes...)
+	if step.Cleanup != nil {
+		cleanup := *step.Cleanup
+		step.Cleanup = &cleanup
+	}
+	return step
 }
 
 func cloneCapabilityRequirements(requirements []CapabilityRequirement) []CapabilityRequirement {

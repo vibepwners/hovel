@@ -10,6 +10,7 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 )
@@ -163,6 +164,49 @@ func TestDaemonStatusJSONRunning(t *testing.T) {
 	}
 	if payload.Health != "healthy" {
 		t.Fatalf("health = %q, want healthy", payload.Health)
+	}
+}
+
+func TestModuleInspectJSONIncludesStepAvailability(t *testing.T) {
+	modules := modulecatalog.New(modulecatalog.Module{
+		ID:      "squatter-provider@v1",
+		Type:    modulecatalog.TypePayloadProvider,
+		Version: "v1",
+		Enabled: true,
+		StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{{
+			ID:   "squatter.connect_smb",
+			Kind: "session.connector",
+			Requires: []modulecatalog.CapabilityRequirement{{
+				Type:       modulecatalog.CapabilityTransport,
+				Attributes: map[string]any{"kind": "smb-pipe"},
+				States:     []string{"active"},
+			}},
+		}}},
+	})
+	var stdout, stderr bytes.Buffer
+
+	code := NewAppWithSessionAndModules(nil, modules).Run(context.Background(), []string{"module", "inspect", "squatter-provider", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var payload struct {
+		ID    string `json:"id"`
+		Steps []struct {
+			ID      string `json:"id"`
+			Ready   bool   `json:"ready"`
+			Missing []struct {
+				Type string `json:"type"`
+			} `json:"missing"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid JSON %q: %v", stdout.String(), err)
+	}
+	if payload.ID != "squatter-provider@v1" || len(payload.Steps) != 1 {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if payload.Steps[0].ID != "squatter.connect_smb" || payload.Steps[0].Ready || len(payload.Steps[0].Missing) != 1 {
+		t.Fatalf("step payload = %#v", payload.Steps[0])
 	}
 }
 

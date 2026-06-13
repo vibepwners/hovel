@@ -131,6 +131,7 @@ type ModuleDatabase interface {
 	Search(string) []modulecatalog.Module
 	Find(string) (modulecatalog.Module, bool)
 	Validate(modulecatalog.ConfigView) modulecatalog.Validation
+	ResolveStepAvailability([]modulecatalog.Capability) []modulecatalog.StepAvailability
 }
 
 type RunMockExploitRequest struct {
@@ -338,6 +339,31 @@ func (r ThrowPlanRecord) Payload() ThrowPlanPayload {
 type ValidationPayload struct {
 	Valid  bool                  `json:"valid"`
 	Issues []modulecatalog.Issue `json:"issues"`
+}
+
+type ModuleInspectPayload struct {
+	ID           string                      `json:"id"`
+	Name         string                      `json:"name,omitempty"`
+	Type         modulecatalog.ModuleType    `json:"type"`
+	Version      string                      `json:"version,omitempty"`
+	Summary      string                      `json:"summary,omitempty"`
+	Description  string                      `json:"description,omitempty"`
+	Tags         []string                    `json:"tags,omitempty"`
+	RuntimeKind  string                      `json:"runtimeKind,omitempty"`
+	Author       string                      `json:"author,omitempty"`
+	Enabled      bool                        `json:"enabled"`
+	ChainConfig  []modulecatalog.Requirement `json:"chainConfig,omitempty"`
+	TargetConfig []modulecatalog.Requirement `json:"targetConfig,omitempty"`
+	Steps        []ModuleStepPayload         `json:"steps,omitempty"`
+}
+
+type ModuleStepPayload struct {
+	ID       string                                `json:"id"`
+	Kind     string                                `json:"kind"`
+	Ready    bool                                  `json:"ready"`
+	Requires []modulecatalog.CapabilityRequirement `json:"requires,omitempty"`
+	Produces []modulecatalog.CapabilityRequirement `json:"produces,omitempty"`
+	Missing  []modulecatalog.MissingCapability     `json:"missing,omitempty"`
 }
 
 type ChainFile struct {
@@ -603,6 +629,9 @@ func HovelRegistry(runtime Runtime) Registry {
 			Summary: "Inspect a module in the module database.",
 			Positionals: []Positional{
 				{Name: "module", Help: "Module reference", Required: true},
+			},
+			Options: []Option{
+				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: modulesInspectHandler(runtime),
 		},
@@ -1366,11 +1395,17 @@ func modulesInspectHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		moduleID := invocation.Positional("module")
-		module, ok := moduleDB(runtime).Find(moduleID)
+		db := moduleDB(runtime)
+		module, ok := db.Find(moduleID)
 		if !ok {
 			return Result{}, fmt.Errorf("module %s does not exist", moduleID)
 		}
-		return Result{Human: moduleInspect(module)}, nil
+		steps := moduleStepPayloads(module.ID, db.ResolveStepAvailability(nil))
+		payload := moduleInspectPayload(module, steps)
+		return Result{
+			Human: moduleInspect(payload),
+			JSON:  payload,
+		}, nil
 	}
 }
 
@@ -2603,39 +2638,108 @@ func moduleLines(modules []modulecatalog.Module) string {
 	return strings.Join(lines, "\n")
 }
 
-func moduleInspect(module modulecatalog.Module) string {
+func moduleInspect(payload ModuleInspectPayload) string {
 	lines := []string{
-		fmt.Sprintf("%s %s", module.ID, module.Type),
+		fmt.Sprintf("%s %s", payload.ID, payload.Type),
 		"",
-		module.Summary,
+		payload.Summary,
 	}
-	if module.Description != "" {
-		lines = append(lines, module.Description)
+	if payload.Description != "" {
+		lines = append(lines, payload.Description)
 	}
 	lines = append(lines,
 		"",
-		fmt.Sprintf("version      %s", module.Version),
-		fmt.Sprintf("runtime      %s", module.RuntimeKind),
-		fmt.Sprintf("author       %s", module.Author),
-		fmt.Sprintf("enabled      %t", module.Enabled),
+		fmt.Sprintf("version      %s", payload.Version),
+		fmt.Sprintf("runtime      %s", payload.RuntimeKind),
+		fmt.Sprintf("author       %s", payload.Author),
+		fmt.Sprintf("enabled      %t", payload.Enabled),
 	)
-	if len(module.Tags) > 0 {
-		lines = append(lines, "tags         "+strings.Join(module.Tags, ", "))
+	if len(payload.Tags) > 0 {
+		lines = append(lines, "tags         "+strings.Join(payload.Tags, ", "))
 	}
-	if len(module.ChainConfig) > 0 {
+	if len(payload.ChainConfig) > 0 {
 		lines = append(lines, "", "chain config")
-		for _, requirement := range module.ChainConfig {
+		for _, requirement := range payload.ChainConfig {
 			lines = append(lines, requirementLine(requirement))
 		}
 	}
-	if len(module.TargetConfig) > 0 {
+	if len(payload.TargetConfig) > 0 {
 		lines = append(lines, "", "target config")
-		for _, requirement := range module.TargetConfig {
+		for _, requirement := range payload.TargetConfig {
 			lines = append(lines, requirementLine(requirement))
 		}
 	}
-	lines = append(lines, "", "Next: chain add "+module.ID)
+	if len(payload.Steps) > 0 {
+		lines = append(lines, "", "steps")
+		for _, step := range payload.Steps {
+			state := "ready"
+			if !step.Ready {
+				state = "blocked"
+			}
+			line := fmt.Sprintf("  %-28s %-20s %s", step.ID, step.Kind, state)
+			if len(step.Missing) > 0 {
+				line += " missing " + missingCapabilitySummary(step.Missing[0])
+				if len(step.Missing) > 1 {
+					line += fmt.Sprintf(" (+%d more)", len(step.Missing)-1)
+				}
+			}
+			lines = append(lines, line)
+		}
+	}
+	lines = append(lines, "", "Next: chain add "+payload.ID)
 	return strings.Join(lines, "\n")
+}
+
+func moduleInspectPayload(module modulecatalog.Module, steps []ModuleStepPayload) ModuleInspectPayload {
+	return ModuleInspectPayload{
+		ID:           module.ID,
+		Name:         module.Name,
+		Type:         module.Type,
+		Version:      module.Version,
+		Summary:      module.Summary,
+		Description:  module.Description,
+		Tags:         append([]string(nil), module.Tags...),
+		RuntimeKind:  module.RuntimeKind,
+		Author:       module.Author,
+		Enabled:      module.Enabled,
+		ChainConfig:  append([]modulecatalog.Requirement(nil), module.ChainConfig...),
+		TargetConfig: append([]modulecatalog.Requirement(nil), module.TargetConfig...),
+		Steps:        steps,
+	}
+}
+
+func moduleStepPayloads(moduleID string, availability []modulecatalog.StepAvailability) []ModuleStepPayload {
+	steps := []ModuleStepPayload{}
+	for _, item := range availability {
+		if item.ModuleID != moduleID {
+			continue
+		}
+		steps = append(steps, ModuleStepPayload{
+			ID:       item.Step.ID,
+			Kind:     item.Step.Kind,
+			Ready:    item.Resolution.Ready,
+			Requires: append([]modulecatalog.CapabilityRequirement(nil), item.Step.Requires...),
+			Produces: append([]modulecatalog.CapabilityRequirement(nil), item.Step.Produces...),
+			Missing:  append([]modulecatalog.MissingCapability(nil), item.Resolution.Missing...),
+		})
+	}
+	return steps
+}
+
+func missingCapabilitySummary(missing modulecatalog.MissingCapability) string {
+	parts := []string{string(missing.Type)}
+	keys := make([]string, 0, len(missing.Attributes))
+	for key := range missing.Attributes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", key, missing.Attributes[key]))
+	}
+	if len(missing.States) > 0 {
+		parts = append(parts, "state="+strings.Join(missing.States, "|"))
+	}
+	return strings.Join(parts, " ")
 }
 
 func requirementLine(requirement modulecatalog.Requirement) string {

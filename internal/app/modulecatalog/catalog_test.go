@@ -308,6 +308,135 @@ func TestFindSatisfyingCapabilityReturnsFirstMatch(t *testing.T) {
 	}
 }
 
+func TestResolveStepInputsBindsRequirementsToCapabilities(t *testing.T) {
+	step := StepContract{
+		ID: "squatter.install_smb",
+		Requires: []CapabilityRequirement{
+			{
+				Type:       CapabilityPayloadArtifact,
+				Attributes: map[string]any{"runtime": "windows-x86"},
+				States:     []string{"built"},
+			},
+			{
+				Type:       CapabilityCredential,
+				Attributes: map[string]any{"protocol": "smb"},
+				States:     []string{"active"},
+			},
+		},
+	}
+	capabilities := []Capability{
+		{ID: "artifact-1", Type: CapabilityPayloadArtifact, State: "built", Attributes: map[string]any{"runtime": "windows-x86"}},
+		{ID: "credential-1", Type: CapabilityCredential, State: "active", Attributes: map[string]any{"protocol": "smb"}},
+	}
+
+	resolution := ResolveStepInputs(step, capabilities)
+	if !resolution.Ready {
+		t.Fatalf("resolution ready = false, missing %#v", resolution.Missing)
+	}
+	want := []CapabilityBinding{
+		{RequirementIndex: 0, CapabilityID: "artifact-1"},
+		{RequirementIndex: 1, CapabilityID: "credential-1"},
+	}
+	if !reflect.DeepEqual(resolution.Bindings, want) {
+		t.Fatalf("bindings = %#v, want %#v", resolution.Bindings, want)
+	}
+}
+
+func TestResolveStepInputsReportsMissingRequirements(t *testing.T) {
+	step := StepContract{
+		ID: "squatter.connect_smb",
+		Requires: []CapabilityRequirement{
+			{
+				Type:       CapabilityTransport,
+				Attributes: map[string]any{"kind": "smb-pipe"},
+				States:     []string{"active"},
+			},
+			{
+				Type:       CapabilityCredential,
+				Attributes: map[string]any{"protocol": "smb"},
+				States:     []string{"active"},
+			},
+		},
+	}
+	capabilities := []Capability{
+		{ID: "transport-1", Type: CapabilityTransport, State: "planned", Attributes: map[string]any{"kind": "smb-pipe"}},
+	}
+
+	resolution := ResolveStepInputs(step, capabilities)
+	if resolution.Ready {
+		t.Fatal("resolution ready = true, want false")
+	}
+	want := []MissingCapability{
+		{
+			RequirementIndex: 0,
+			Type:             CapabilityTransport,
+			Attributes:       map[string]any{"kind": "smb-pipe"},
+			States:           []string{"active"},
+		},
+		{
+			RequirementIndex: 1,
+			Type:             CapabilityCredential,
+			Attributes:       map[string]any{"protocol": "smb"},
+			States:           []string{"active"},
+		},
+	}
+	if !reflect.DeepEqual(resolution.Missing, want) {
+		t.Fatalf("missing = %#v, want %#v", resolution.Missing, want)
+	}
+}
+
+func TestCatalogResolveStepAvailabilityUsesEnabledModuleContracts(t *testing.T) {
+	catalog := New(
+		Module{
+			ID:      "squatter-provider@v1",
+			Enabled: true,
+			StepContracts: StepContractSet{Steps: []StepContract{
+				{
+					ID:   "squatter.connect_smb",
+					Kind: "session.connector",
+					Requires: []CapabilityRequirement{{
+						Type:       CapabilityTransport,
+						Attributes: map[string]any{"kind": "smb-pipe"},
+						States:     []string{"active"},
+					}},
+				},
+				{
+					ID:   "squatter.generate",
+					Kind: "payload.generate",
+				},
+			}},
+		},
+		Module{
+			ID:      "disabled-provider@v1",
+			Enabled: false,
+			StepContracts: StepContractSet{Steps: []StepContract{{
+				ID:   "disabled.step",
+				Kind: "payload.generate",
+			}}},
+		},
+	)
+
+	availability := catalog.ResolveStepAvailability([]Capability{{
+		ID:         "transport-1",
+		Type:       CapabilityTransport,
+		State:      "active",
+		Attributes: map[string]any{"kind": "smb-pipe"},
+	}})
+
+	if len(availability) != 2 {
+		t.Fatalf("availability count = %d, want 2", len(availability))
+	}
+	if availability[0].ModuleID != "squatter-provider@v1" || availability[0].Step.ID != "squatter.connect_smb" {
+		t.Fatalf("first availability = %#v", availability[0])
+	}
+	if !availability[0].Resolution.Ready {
+		t.Fatalf("connect resolution = %#v, want ready", availability[0].Resolution)
+	}
+	if availability[1].Step.ID != "squatter.generate" || !availability[1].Resolution.Ready {
+		t.Fatalf("generate availability = %#v, want ready without inputs", availability[1])
+	}
+}
+
 func exampleCatalog() Catalog {
 	return New(
 		Module{

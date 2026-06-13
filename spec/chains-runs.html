@@ -126,6 +126,14 @@ cleanup</code></pre>
           re-confirm. Confirmed prepared values are immutable; before confirmation they
           may be edited through generic plan editing and revalidated by the owning module.
         </p>
+        <p>
+          The catalog owns the first planning primitive: it can resolve every enabled
+          module step against the current capability set and report deterministic
+          bindings plus typed missing requirements. The same projection is exposed
+          through <code>module inspect --json</code> so operators and front ends can see
+          which live JSON-RPC step contracts are ready and which capabilities still need
+          to be produced.
+        </p>
 
         <h2>Representative Etro to Squatter Chain</h2>
         <p>

@@ -1275,6 +1275,62 @@ func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 	}
 }
 
+func TestModuleInspectReportsStepAvailability(t *testing.T) {
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules: modulecatalog.New(modulecatalog.Module{
+			ID:      "squatter-provider@v1",
+			Name:    "Squatter Provider",
+			Type:    modulecatalog.TypePayloadProvider,
+			Version: "v1",
+			Enabled: true,
+			StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{
+				{
+					ID:   "squatter.connect_smb",
+					Kind: "session.connector",
+					Requires: []modulecatalog.CapabilityRequirement{{
+						Type:       modulecatalog.CapabilityTransport,
+						Attributes: map[string]any{"kind": "smb-pipe"},
+						States:     []string{"active"},
+					}},
+					Produces: []modulecatalog.CapabilityRequirement{{
+						Type: modulecatalog.CapabilitySessionRef,
+					}},
+				},
+			}},
+		}),
+	})
+	inspectDefinition, _ := registry.Find("module", "inspect")
+
+	result, err := inspectDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "squatter-provider"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"steps", "squatter.connect_smb", "session.connector", "missing TransportEndpoint kind=smb-pipe state=active"} {
+		if !strings.Contains(result.Human, want) {
+			t.Fatalf("inspect missing %q:\n%s", want, result.Human)
+		}
+	}
+	payload, ok := result.JSON.(ModuleInspectPayload)
+	if !ok {
+		t.Fatalf("json payload type = %T, want ModuleInspectPayload", result.JSON)
+	}
+	if payload.ID != "squatter-provider@v1" || len(payload.Steps) != 1 {
+		t.Fatalf("payload = %#v", payload)
+	}
+	step := payload.Steps[0]
+	if step.ID != "squatter.connect_smb" || step.Ready || len(step.Missing) != 1 {
+		t.Fatalf("step payload = %#v", step)
+	}
+	if step.Missing[0].Type != modulecatalog.CapabilityTransport {
+		t.Fatalf("missing type = %q", step.Missing[0].Type)
+	}
+}
+
 func TestSessionCommandsRejectOneShotMode(t *testing.T) {
 	registry := HovelRegistry(Runtime{
 		Workspaces: fakeWorkspaceService{},

@@ -117,6 +117,13 @@
           confirms. Execution is blocked if a referenced step contract changes after
           confirmation.
         </p>
+        <p>
+          Planning treats the returned requirements as typed capability predicates.
+          Hovel compares requirement type, attributes, and allowed states against the
+          current capability set, then records either a deterministic capability binding
+          or a typed missing requirement. <code>module inspect --json</code> exposes that
+          same resolved view for operator tooling.
+        </p>
 <pre data-lang="result"><code>{
   "steps": [
     {

@@ -403,10 +403,10 @@ sha256 = "&lt;recorded checksum&gt;"
         </p>
         <p>The implementation pass should include:</p>
         <ol>
-          <li>Core capability schemas for <code>RemoteExecutionCapability</code>, <code>CredentialCapability</code>, <code>PayloadArtifact</code>, <code>PayloadInstance</code>, <code>TransportEndpoint</code>, <code>SessionRef</code>, and <code>CleanupHandle</code>.</li>
-          <li>Generic step JSON-RPC dispatch: <code>step.describe</code>, <code>step.prepare</code>, <code>step.execute</code>, and <code>step.cleanup</code>.</li>
-          <li>Live contract planning, contract snapshot persistence, and post-confirmation contract drift blocking.</li>
-          <li>Pure prepare support for random neutral credentials, service names, staged filenames, pipe names, endpoint config, and planned cleanup handles.</li>
+          <li>Implemented: core capability schema names for <code>RemoteExecutionCapability</code>, <code>CredentialCapability</code>, <code>PayloadArtifact</code>, <code>PayloadInstance</code>, <code>TransportEndpoint</code>, <code>SessionRef</code>, and <code>CleanupHandle</code>.</li>
+          <li>Implemented: generic step JSON-RPC dispatch: <code>step.describe</code>, <code>step.prepare</code>, <code>step.execute</code>, and <code>step.cleanup</code>.</li>
+          <li>Partially implemented: live contract planning now resolves enabled module steps to capability bindings or typed missing requirements; contract snapshot persistence and post-confirmation drift blocking remain pending.</li>
+          <li>Partially implemented: Squatter SMB install prepare materializes random neutral service names, staged filenames, pipe names, endpoint config, and planned cleanup handles. Credential creation remains a separate module step.</li>
           <li>Final Squatter artifact generation during execute, with hash and artifact evidence.</li>
           <li>SMB named-pipe Squatter install and connect steps using explicit SMB credentials.</li>
           <li>A module for connecting to an already-installed Squatter over SMB with operator-supplied credentials.</li>
