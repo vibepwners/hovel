@@ -132,6 +132,7 @@ squatter.install_tcp_bind
 squatter.connect_tcp_bind
 squatter.listen_tcp_callback
 squatter.install_tcp_callback
+squatter.connect_tcp_callback
 squatter.cleanup_smb
 squatter.cleanup_tcp_bind
 squatter.cleanup_tcp_callback</code></pre>
@@ -153,6 +154,7 @@ payload.format = pe-exe
 payload.transport = smb-named-pipe | tcp-bind | tcp-callback
 payload.lhost = 10.10.14.3
 payload.lport = 4444
+payload.bind_port = 9100
 payload.pipe = random-neutral
 squatter.agent.max_chunk_size = 65536
 </code></pre>
@@ -226,6 +228,7 @@ provider-owned Hovel session</code></pre>
 squatter.generate
 squatter.install_tcp_callback
 payload callback
+squatter.connect_tcp_callback
 provider-owned Hovel session</code></pre>
         <p>
           SMB mode uses a Windows named pipe exposed through SMB. The provider connects
@@ -233,6 +236,28 @@ provider-owned Hovel session</code></pre>
           <code>CredentialCapability</code> and exposes the resulting Squatter agent
           session through Hovel's session abstraction. The exploit module does not own or
           proxy that session.
+          The operator-side connector uses <code>github.com/jfjallid/go-smb</code> to
+          authenticate to <code>IPC$</code>, open the configured pipe, and run the same
+          Squatter mux protocol used by TCP transports over the resulting pipe handle.
+          The required configuration keys are <code>target.host</code> or
+          <code>smb.host</code>, <code>payload.pipe</code>, <code>smb.username</code>,
+          <code>smb.password</code>, optional <code>smb.domain</code>, and optional
+          <code>smb.port</code>.
+        </p>
+        <p>
+          The first SMB connector is SMB2/3 only because it is backed by
+          <code>github.com/jfjallid/go-smb</code>. Windows XP targets that only expose
+          SMBv1 should use <code>tcp-bind</code> or <code>tcp-callback</code> for the
+          representative Etro chain unless a separate SMBv1 pipe connector is added.
+        </p>
+        <p>
+          TCP bind mode patches the payload to listen on <code>payload.bind_port</code>
+          on the target. The provider connects to
+          <code>target.host:payload.bind_port</code> after installation and emits an
+          active <code>SessionRef</code> when the TCP connection opens. TCP callback mode
+          patches the payload with <code>payload.lhost</code> and
+          <code>payload.lport</code>, starts a provider listener, and adopts the accepted
+          connection as the Squatter session.
         </p>
 
         <h2>Prepared Target Footprint</h2>
@@ -407,10 +432,11 @@ sha256 = "&lt;recorded checksum&gt;"
           <li>Implemented: generic step JSON-RPC dispatch: <code>step.describe</code>, <code>step.prepare</code>, <code>step.execute</code>, and <code>step.cleanup</code>.</li>
           <li>Partially implemented: live contract planning now resolves enabled module steps to capability bindings or typed missing requirements; contract snapshot persistence and post-confirmation drift blocking remain pending.</li>
           <li>Partially implemented: Squatter SMB install prepare materializes random neutral service names, staged filenames, pipe names, endpoint config, and planned cleanup handles. Credential creation remains a separate module step.</li>
+          <li>Partially implemented: SMB named-pipe connect uses <code>go-smb</code> with explicit credentials and emits a <code>SessionRef</code> capability. Full Hovel interactive session brokering over that pipe remains pending.</li>
+          <li>Partially implemented: TCP bind payload generation patches an explicit bind port, the provider can actively connect to that endpoint, and <code>squatter.connect_tcp_bind</code> emits a <code>SessionRef</code> capability.</li>
+          <li>Partially implemented: TCP callback listener and connector steps start a provider listener, adopt an accepted payload connection, and emit a <code>SessionRef</code> capability.</li>
           <li>Final Squatter artifact generation during execute, with hash and artifact evidence.</li>
-          <li>SMB named-pipe Squatter install and connect steps using explicit SMB credentials.</li>
           <li>A module for connecting to an already-installed Squatter over SMB with operator-supplied credentials.</li>
-          <li>TCP bind and TCP callback contracts, with shared provider-side session code even if one transport lands before the others.</li>
           <li>Durable <code>PayloadInstance</code> state and detach/reconnect behavior.</li>
           <li>Warning-state reporting for <code>installed_unconnected</code> with exact CLI evidence.</li>
           <li>Cleanup handles for created credentials, staged files, services, listeners, and payload instances, with retry and verification where possible.</li>

@@ -25,6 +25,7 @@ enum {
     SQ_HOVEL_TRANSPORT_NONE = 0,
     SQ_HOVEL_TRANSPORT_REVERSE_TCP = 1,
     SQ_HOVEL_TRANSPORT_SMB_PIPE = 2,
+    SQ_HOVEL_TRANSPORT_TCP_BIND = 3,
 };
 
 typedef struct sq_hovel_build_info {
@@ -46,7 +47,7 @@ __attribute__((used)) const sq_hovel_build_info squatter_build_info = {
     {'S', 'Q', 'U', 'A', 'T', '0', '0', '1'},
     0x00010000u,
     0x0000001fu,
-    0x00000003u,
+    0x00000007u,
 };
 
 __attribute__((used)) const sq_hovel_config squatter_transport_config = {
@@ -238,7 +239,8 @@ static void run_named_pipe_server(const wchar_t *pipe_name,
 static const wchar_t *configured_port(const sq_hovel_config *config,
                                       wchar_t port_buffer[16])
 {
-    if (config->kind == SQ_HOVEL_TRANSPORT_REVERSE_TCP &&
+    if ((config->kind == SQ_HOVEL_TRANSPORT_REVERSE_TCP ||
+         config->kind == SQ_HOVEL_TRANSPORT_TCP_BIND) &&
         config->reverse_tcp_port != 0) {
         (void)wnsprintfW(port_buffer, 16, L"%u",
                          (unsigned)config->reverse_tcp_port);

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
+	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
@@ -45,6 +46,98 @@ func TestThrowHelpShowsChainTargetAndWorkspace(t *testing.T) {
 	}
 	if strings.Contains(output, "_positionalArg") {
 		t.Fatalf("help output leaked generated positional name:\n%s", output)
+	}
+}
+
+func TestDefaultRuntimeWiresCapabilityChainRunner(t *testing.T) {
+	runtime := defaultRuntime(nil)
+	if runtime.CapabilityChains == nil {
+		t.Fatal("CapabilityChains is nil, want command-mode capability chain runner")
+	}
+}
+
+func TestCapabilityChainExecutorRunsStepsThroughChainRuntime(t *testing.T) {
+	catalog := modulecatalog.New(
+		modulecatalog.Module{
+			ID:      "etro@v1",
+			Enabled: true,
+			StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{{
+				ID: "etro.exploit",
+				Produces: []modulecatalog.CapabilityRequirement{{
+					Type: modulecatalog.CapabilityRemoteExecution,
+				}},
+			}}},
+		},
+		modulecatalog.Module{
+			ID:      "squatter@v1",
+			Enabled: true,
+			StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{{
+				ID: "squatter.connect_smb",
+				Requires: []modulecatalog.CapabilityRequirement{{
+					Type:   modulecatalog.CapabilityRemoteExecution,
+					States: []string{"active"},
+				}},
+				Produces: []modulecatalog.CapabilityRequirement{{
+					Type: modulecatalog.CapabilitySessionRef,
+				}},
+			}}},
+		},
+	)
+	runner := &fakeStepRuntimeRunner{
+		execute: map[string]chainruntime.StepExecuteResult{
+			"etro@v1/etro.exploit": {
+				Status: "succeeded",
+				Capabilities: []modulecatalog.Capability{{
+					ID:    "remote-1",
+					Type:  modulecatalog.CapabilityRemoteExecution,
+					State: "active",
+				}},
+			},
+			"squatter@v1/squatter.connect_smb": {
+				Status: "succeeded",
+				Capabilities: []modulecatalog.Capability{{
+					ID:             "session-1",
+					Type:           modulecatalog.CapabilitySessionRef,
+					SchemaVersion:  "v1",
+					State:          "active",
+					ProducerStepID: "squatter.connect_smb",
+					Attributes:     map[string]any{"transport": "smb-named-pipe"},
+				}},
+				Evidence: []chainruntime.Evidence{{
+					ID:           "ev-1",
+					Level:        "info",
+					Kind:         "session",
+					SourceStepID: "squatter.connect_smb",
+					Message:      "session established",
+				}},
+			},
+		},
+	}
+	executor := capabilityChainExecutor{catalog: catalog, runner: runner}
+
+	result, err := executor.ExecuteCapabilityChain(context.Background(), commands.CapabilityChainRequest{
+		RunID:        "run-1",
+		ChainConfig:  map[string]string{"payload.transport": "smb-named-pipe"},
+		TargetConfig: map[string]string{"target.host": "192.0.2.10"},
+		Steps: []commands.CapabilityChainStepRef{
+			{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+			{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Capabilities) != 2 || result.Capabilities[1].ID != "session-1" {
+		t.Fatalf("capabilities = %#v, want remote and session", result.Capabilities)
+	}
+	if len(result.Evidence) != 1 || result.Evidence[0].SourceStepID != "squatter.connect_smb" {
+		t.Fatalf("evidence = %#v, want squatter evidence", result.Evidence)
+	}
+	if got := runner.prepareConfigs[0]["payload.transport"]; got != "smb-named-pipe" {
+		t.Fatalf("first prepare config payload.transport = %#v", got)
+	}
+	if got := runner.prepareConfigs[0]["target.host"]; got != "192.0.2.10" {
+		t.Fatalf("first prepare config target.host = %#v", got)
 	}
 }
 
@@ -455,4 +548,18 @@ func testConfirmationPrompt() commands.ConfirmationPrompt {
 			{Label: "plan hash", Value: plan.PlanHash, Muted: true},
 		},
 	}
+}
+
+type fakeStepRuntimeRunner struct {
+	prepareConfigs []map[string]any
+	execute        map[string]chainruntime.StepExecuteResult
+}
+
+func (r *fakeStepRuntimeRunner) PrepareStep(_ context.Context, req chainruntime.StepPrepareRequest) (chainruntime.StepPrepareResult, error) {
+	r.prepareConfigs = append(r.prepareConfigs, req.Config)
+	return chainruntime.StepPrepareResult{}, nil
+}
+
+func (r *fakeStepRuntimeRunner) ExecuteStep(_ context.Context, req chainruntime.StepExecuteRequest) (chainruntime.StepExecuteResult, error) {
+	return r.execute[req.ModuleID+"/"+req.StepID], nil
 }

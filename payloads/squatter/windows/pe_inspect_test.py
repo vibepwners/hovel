@@ -8,7 +8,7 @@ IMAGE_NT_OPTIONAL_HDR32_MAGIC = 0x10B
 IMAGE_SUBSYSTEM_WINDOWS_CUI = 3
 SQUATTER_VERSION = 0x00010000
 SQUATTER_CAPABILITIES = 0x0000001F
-SQUATTER_TRANSPORTS = 0x00000003
+SQUATTER_TRANSPORTS = 0x00000007
 
 
 class PETest(unittest.TestCase):
@@ -46,6 +46,21 @@ class PETest(unittest.TestCase):
         self.assertNotEqual(config_marker, -1)
         self.assertIn(b"squatter", data)
 
+        import_rva = u32(data, optional + 96 + 8)
+        if import_rva != 0:
+            import_offset = rva_to_offset(data, coff, import_rva)
+            first_descriptor = data[import_offset : import_offset + 20]
+            self.assertEqual(first_descriptor, b"\0" * 20)
+
+        forbidden_runtime_imports = [
+            b"api-ms-win-crt",
+            b"ucrtbase",
+            b"msvcrt",
+            b"GetTickCount64",
+        ]
+        for needle in forbidden_runtime_imports:
+            self.assertNotIn(needle, data)
+
 
 def u16(data, offset):
     return struct.unpack_from("<H", data, offset)[0]
@@ -53,6 +68,23 @@ def u16(data, offset):
 
 def u32(data, offset):
     return struct.unpack_from("<I", data, offset)[0]
+
+
+def rva_to_offset(data, coff, rva):
+    section_count = u16(data, coff + 2)
+    optional_size = u16(data, coff + 16)
+    section = coff + 20 + optional_size
+
+    for index in range(section_count):
+        offset = section + index * 40
+        virtual_size = u32(data, offset + 8)
+        virtual_address = u32(data, offset + 12)
+        raw_size = u32(data, offset + 16)
+        raw_pointer = u32(data, offset + 20)
+        span = max(virtual_size, raw_size)
+        if virtual_address <= rva < virtual_address + span:
+            return raw_pointer + (rva - virtual_address)
+    raise AssertionError(f"RVA 0x{rva:x} is not in any section")
 
 
 if __name__ == "__main__":

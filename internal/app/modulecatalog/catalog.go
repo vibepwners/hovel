@@ -122,6 +122,11 @@ type Capability struct {
 	Extensions     map[string]any
 }
 
+type CapabilityRef struct {
+	CapabilityID string
+	Type         CapabilityType
+}
+
 type StepInputResolution struct {
 	StepID   string
 	Ready    bool

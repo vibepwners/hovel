@@ -3,7 +3,7 @@
 /* Standalone WinAPI surface: this library needs windows.h + shlwapi only (no
  * winsock), so it pulls them in directly rather than via the server's shim. */
 #ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0601
+#define _WIN32_WINNT 0x0501
 #endif
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN 1
@@ -38,7 +38,7 @@ static struct {
     int console_is_tty; /* a real console: use WriteConsoleW + colour   */
 } g;
 
-static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
+static volatile LONG g_init_state = 0;
 
 /* Names kept narrow; the wide formatter prints them with %S. */
 static const char *const k_level_names[] = {
@@ -55,17 +55,13 @@ static const char *const k_sub_names[] = {
 /* Init                                                                      */
 /* ------------------------------------------------------------------------- */
 
-static BOOL CALLBACK init_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
+static void init_state(void)
 {
-    int i = 0;
-    CONSOLE_SCREEN_BUFFER_INFO csbi;
-    DWORD mode = 0;
+	int i = 0;
+	CONSOLE_SCREEN_BUFFER_INFO csbi;
+	DWORD mode = 0;
 
-    (void)once;
-    (void)param;
-    (void)ctx;
-
-    InitializeCriticalSection(&g.lock);
+	InitializeCriticalSection(&g.lock);
     g.global_level = (LONG)SQLOG_LEVEL_TRACE;
     for (i = 0; i < SQLOG_SUB__COUNT; i++) {
         g.sub_level[i] = -1;
@@ -91,17 +87,26 @@ static BOOL CALLBACK init_cb(PINIT_ONCE once, PVOID param, PVOID *ctx)
         g.console_attrs = csbi.wAttributes;
         g.console_is_tty = 1;
     }
-    return TRUE;
 }
 
 static void ensure_init(void)
 {
-    (void)InitOnceExecuteOnce(&g_once, init_cb, NULL, NULL);
+	if (InterlockedCompareExchange(&g_init_state, 1, 0) == 0) {
+		init_state();
+		InterlockedExchange(&g_init_state, 2);
+		return;
+	}
+	while (g_init_state != 2) {
+		Sleep(1);
+	}
 }
 
 void sqlog_init(void)
 {
     ensure_init();
+#if SQLOG_WINDOW
+    sqlog_window_start();
+#endif
 }
 
 /* ------------------------------------------------------------------------- */

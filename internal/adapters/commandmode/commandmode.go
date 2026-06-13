@@ -16,6 +16,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
+	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
@@ -52,11 +53,23 @@ func NewAppWithSession(session commands.OperatorSession) App {
 func NewAppWithSessionAndModules(session commands.OperatorSession, modules modulecatalog.Catalog) App {
 	runtime := defaultRuntime(session)
 	runtime.Modules = modules
+	if executor, ok := runtime.CapabilityChains.(capabilityChainExecutor); ok {
+		executor.catalog = modules
+		runtime.CapabilityChains = executor
+	}
 	return NewAppWithRuntime(runtime)
 }
 
 func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 	store := filesystem.NewWorkspaceStore()
+	catalog := pythonrpc.MustConfiguredCatalog()
+	pythonSessions := pythonrpc.NewSessionBroker()
+	stepRunner := pythonrpc.StepRuntimeRunner{Runner: pythonrpc.Runner{
+		Events:   discardEvents{},
+		IDs:      randomIDs{},
+		Clock:    systemClock{},
+		Sessions: pythonSessions,
+	}}
 	return commands.Runtime{
 		Workspaces: services.NewWorkspaceService(
 			store,
@@ -66,6 +79,7 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 		),
 		Daemons:            services.NewDaemonService(store),
 		Runs:               daemonRunClients{},
+		CapabilityChains:   capabilityChainExecutor{catalog: catalog, runner: stepRunner},
 		Plans:              store,
 		Throws:             store,
 		Confirmations:      store,
@@ -77,7 +91,7 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 		ThrowPlans:         store,
 		ChainFiles:         chainFileDiskStore{},
 		Session:            session,
-		Modules:            pythonrpc.MustConfiguredCatalog(),
+		Modules:            catalog,
 	}
 }
 
@@ -470,6 +484,103 @@ func commandPath(args []string) []string {
 }
 
 type daemonRunClients struct{}
+
+type capabilityChainExecutor struct {
+	catalog modulecatalog.Catalog
+	runner  chainruntime.StepRunner
+}
+
+func (e capabilityChainExecutor) ExecuteCapabilityChain(ctx context.Context, req commands.CapabilityChainRequest) (commands.CapabilityChainResponse, error) {
+	result, err := chainruntime.New(e.catalog, e.runner).Execute(ctx, chainruntime.Request{
+		RunID: req.RunID,
+		Steps: capabilityStepRefsFromCommand(req.Steps, mergeStepConfig(req.ChainConfig, req.TargetConfig)),
+	})
+	if err != nil {
+		return commands.CapabilityChainResponse{
+			RunID:        req.RunID,
+			Target:       req.Target,
+			State:        result.Status,
+			Capabilities: capabilitiesToCommand(result.Capabilities),
+			Evidence:     evidenceToCommand(result.Evidence),
+		}, err
+	}
+	return commands.CapabilityChainResponse{
+		RunID:        req.RunID,
+		Target:       req.Target,
+		State:        result.Status,
+		Summary:      "capability chain completed",
+		Capabilities: capabilitiesToCommand(result.Capabilities),
+		Evidence:     evidenceToCommand(result.Evidence),
+	}, nil
+}
+
+func capabilityStepRefsFromCommand(steps []commands.CapabilityChainStepRef, config map[string]any) []chainruntime.StepRef {
+	out := make([]chainruntime.StepRef, 0, len(steps))
+	for _, step := range steps {
+		out = append(out, chainruntime.StepRef{
+			ModuleID: step.ModuleID,
+			StepID:   step.StepID,
+			Config:   cloneAnyMap(config),
+		})
+	}
+	return out
+}
+
+func mergeStepConfig(chainConfig, targetConfig map[string]string) map[string]any {
+	if len(chainConfig) == 0 && len(targetConfig) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(chainConfig)+len(targetConfig))
+	for key, value := range chainConfig {
+		out[key] = value
+	}
+	for key, value := range targetConfig {
+		out[key] = value
+	}
+	return out
+}
+
+func capabilitiesToCommand(capabilities []modulecatalog.Capability) []commands.CapabilityPayload {
+	out := make([]commands.CapabilityPayload, 0, len(capabilities))
+	for _, capability := range capabilities {
+		out = append(out, commands.CapabilityPayload{
+			ID:             capability.ID,
+			Type:           string(capability.Type),
+			SchemaVersion:  capability.SchemaVersion,
+			State:          capability.State,
+			ProducerStepID: capability.ProducerStepID,
+			Attributes:     cloneAnyMap(capability.Attributes),
+			Extensions:     cloneAnyMap(capability.Extensions),
+		})
+	}
+	return out
+}
+
+func evidenceToCommand(evidence []chainruntime.Evidence) []commands.CapabilityEvidence {
+	out := make([]commands.CapabilityEvidence, 0, len(evidence))
+	for _, item := range evidence {
+		out = append(out, commands.CapabilityEvidence{
+			ID:           item.ID,
+			Level:        item.Level,
+			Kind:         item.Kind,
+			SourceStepID: item.SourceStepID,
+			Message:      item.Message,
+			Details:      cloneAnyMap(item.Details),
+		})
+	}
+	return out
+}
+
+func cloneAnyMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
 
 func (daemonRunClients) DialRunClient(socketPath string) (commands.RunClient, error) {
 	client, err := daemonrpc.Dial(socketPath)

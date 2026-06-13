@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
@@ -379,6 +381,105 @@ while True:
 	}
 	if cleanup["status"] != "cleanup_verified" {
 		t.Fatalf("cleanup result = %#v", cleanup)
+	}
+}
+
+func TestStepRuntimeRunnerExecutesCapabilityChain(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    params = request.get("params") or {}
+    step_id = params.get("stepId")
+    if method == "step.prepare":
+        if step_id == "etro.exploit":
+            send({"jsonrpc": "2.0", "id": rid, "result": {}})
+        elif step_id == "squatter.connect_smb":
+            if params.get("inputs", [])[0]["capabilityId"] != "remote-1":
+                send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "missing remote input"}})
+            else:
+                send({"jsonrpc": "2.0", "id": rid, "result": {}})
+        else:
+            send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "unknown step"}})
+    elif method == "step.execute":
+        if step_id == "etro.exploit":
+            send({"jsonrpc": "2.0", "id": rid, "result": {
+                "status": "succeeded",
+                "capabilities": [{
+                    "id": "remote-1",
+                    "type": "RemoteExecutionCapability",
+                    "schemaVersion": "v1",
+                    "state": "active",
+                    "producerStepId": step_id
+                }]
+            }})
+        elif step_id == "squatter.connect_smb":
+            send({"jsonrpc": "2.0", "id": rid, "result": {
+                "status": "succeeded",
+                "capabilities": [{
+                    "id": "session-1",
+                    "type": "SessionRef",
+                    "schemaVersion": "v1",
+                    "state": "active",
+                    "producerStepId": step_id,
+                    "attributes": {"transport": "smb-named-pipe"}
+                }],
+                "evidence": [{
+                    "id": "evidence-1",
+                    "level": "info",
+                    "kind": "session",
+                    "sourceStepId": step_id,
+                    "message": "session connected"
+                }]
+            }})
+        else:
+            send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "unknown step"}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	catalog := modulecatalog.New(modulecatalog.Module{
+		ID:      "broken@v1",
+		Enabled: true,
+		StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{
+			{
+				ID:   "etro.exploit",
+				Kind: "exploit.remote_execution",
+			},
+			{
+				ID:   "squatter.connect_smb",
+				Kind: "session.connector",
+				Requires: []modulecatalog.CapabilityRequirement{{
+					Type:   modulecatalog.CapabilityRemoteExecution,
+					States: []string{"active"},
+				}},
+			},
+		}},
+	})
+	runtime := chainruntime.New(catalog, StepRuntimeRunner{Runner: Runner{ConfigPath: configPath, Timeout: 2 * time.Second}})
+
+	result, err := runtime.Execute(context.Background(), chainruntime.Request{
+		RunID: "run-1",
+		Steps: []chainruntime.StepRef{
+			{ModuleID: "broken", StepID: "etro.exploit"},
+			{ModuleID: "broken", StepID: "squatter.connect_smb"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	if len(result.Capabilities) != 2 || result.Capabilities[1].ID != "session-1" {
+		t.Fatalf("capabilities = %#v", result.Capabilities)
+	}
+	if len(result.Evidence) != 1 || result.Evidence[0].Message != "session connected" {
+		t.Fatalf("evidence = %#v", result.Evidence)
 	}
 }
 

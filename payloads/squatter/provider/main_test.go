@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"io"
 	"net"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
 	"github.com/Vibe-Pwners/hovel/sdk/go/hoveltest"
@@ -23,7 +25,7 @@ func TestProviderReportsSquatterPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(payloads) != 2 {
+	if len(payloads) != 3 {
 		t.Fatalf("payload count = %d", len(payloads))
 	}
 	for _, payload := range payloads {
@@ -56,6 +58,7 @@ func TestProviderReportsStepContracts(t *testing.T) {
 		"squatter.connect_tcp_bind",
 		"squatter.listen_tcp_callback",
 		"squatter.install_tcp_callback",
+		"squatter.connect_tcp_callback",
 	} {
 		if _, ok := byID[id]; !ok {
 			t.Fatalf("missing step contract %s in %#v", id, contracts.Steps)
@@ -192,7 +195,7 @@ func TestProviderPatchesPayloadConfigFromListener(t *testing.T) {
 		Target:    "target-1",
 		PayloadID: "squatter/windows/x86/windows-7/reverse-tcp/pe-exe",
 		Format:    "pe-exe",
-		Config:    map[string]string{"payload.transport": reverseTCP, "payload.lhost": "10.1.2.3", "payload.lport": "1"},
+		Config:    map[string]string{"payload.transport": tcpCallback, "payload.lhost": "10.1.2.3", "payload.lport": "1"},
 		Listener:  &hovel.ListenerRef{Host: "127.0.0.1", Port: 31337},
 	})
 	if err != nil {
@@ -208,6 +211,32 @@ func TestProviderPatchesPayloadConfigFromListener(t *testing.T) {
 	}
 	if got := binary.LittleEndian.Uint16(body[configOffset+payloadConfigPortOffset:]); got != 31337 {
 		t.Fatalf("reverse port = %d", got)
+	}
+}
+
+func TestProviderPatchesTCPBindPayloadConfig(t *testing.T) {
+	generated, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
+		Target:    "target-1",
+		PayloadID: "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Format:    "pe-exe",
+		Config:    map[string]string{"payload.transport": tcpBind, "payload.bind_port": "19100"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := base64.StdEncoding.DecodeString(generated.Primary.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configOffset := bytes.Index(body, []byte("SQCFG001"))
+	if configOffset < 0 {
+		t.Fatal("generated payload is missing config marker")
+	}
+	if got := binary.LittleEndian.Uint32(body[configOffset+payloadConfigKindOffset:]); got != payloadConfigKindTCPBind {
+		t.Fatalf("transport kind = %d", got)
+	}
+	if got := binary.LittleEndian.Uint16(body[configOffset+payloadConfigPortOffset:]); got != 19100 {
+		t.Fatalf("bind port = %d", got)
 	}
 }
 
@@ -247,14 +276,14 @@ func TestProviderNormalizesRemoteSMBPipePathForPayload(t *testing.T) {
 func TestProviderSatisfiesPayloadProviderRPCContract(t *testing.T) {
 	hoveltest.AssertPayloadProviderContract(t, newProvider(), hoveltest.PayloadProviderContract{
 		Query: hovel.PayloadQuery{
-			Transport: reverseTCP,
+			Transport: tcpCallback,
 			Format:    formatPEEXE,
 		},
 		Target:        "target-1",
 		RunID:         "run-1",
 		Config:        map[string]string{"payload.transport": reverseTCP, "payload.lhost": "127.0.0.1", "payload.lport": "0"},
 		WantFormat:    formatPEEXE,
-		WantTransport: reverseTCP,
+		WantTransport: tcpCallback,
 		WantCapabilities: []string{
 			"file.get",
 			"file.put",
@@ -272,7 +301,7 @@ func TestPlaceholderLPReverseTCPPreparesListener(t *testing.T) {
 		RunID:     "run-1",
 		Target:    "target-1",
 		PayloadID: "squatter/windows/x86/windows-7/reverse-tcp/pe-exe",
-		Config:    map[string]string{"payload.lhost": "127.0.0.1", "payload.lport": "0"},
+		Config:    map[string]string{"payload.transport": tcpCallback, "payload.lhost": "127.0.0.1", "payload.lport": "0"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -280,7 +309,7 @@ func TestPlaceholderLPReverseTCPPreparesListener(t *testing.T) {
 	defer func() {
 		_, _ = provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "target-1", Reason: "test"})
 	}()
-	if listener.Transport != "squatter/reverse-tcp" || listener.Host != "127.0.0.1" || listener.Port == 0 {
+	if listener.Transport != "squatter/tcp-callback" || listener.Host != "127.0.0.1" || listener.Port == 0 {
 		t.Fatalf("listener = %#v", listener)
 	}
 	if _, ok := lp.listener("target-1"); !ok {
@@ -295,7 +324,7 @@ func TestPlaceholderLPReverseTCPAcceptsCallback(t *testing.T) {
 		RunID:     "run-1",
 		Target:    "target-1",
 		PayloadID: "squatter/windows/x86/windows-7/reverse-tcp/pe-exe",
-		Config:    map[string]string{"payload.lhost": "127.0.0.1", "payload.lport": "0"},
+		Config:    map[string]string{"payload.transport": tcpCallback, "payload.lhost": "127.0.0.1", "payload.lport": "0"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -316,31 +345,89 @@ func TestPlaceholderLPReverseTCPAcceptsCallback(t *testing.T) {
 	session, err := provider.ConnectSession(hovel.ConnectSessionRequest{
 		RunID:     "run-1",
 		Target:    "target-1",
-		PayloadID: "squatter/windows/x86/windows-7/reverse-tcp/pe-exe",
-		Config:    map[string]string{"payload.transport": reverseTCP},
+		PayloadID: "squatter/windows/x86/windows-7/tcp-callback/pe-exe",
+		Config:    map[string]string{"payload.transport": tcpCallback},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.Transport != "squatter/reverse-tcp" || session.State != "open" {
+	if session.Transport != "squatter/tcp-callback" || session.State != "open" {
 		t.Fatalf("session = %#v", session)
 	}
 }
 
-func TestPlaceholderLPSMBConnectsProviderOwnedSession(t *testing.T) {
+func TestPlaceholderLPTCPBindConnectsProviderOwnedSession(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn
+		}
+	}()
+
 	lp := newPlaceholderLP()
+	provider := Provider{lp: lp}
+	port := listener.Addr().(*net.TCPAddr).Port
+	session, err := provider.ConnectSession(hovel.ConnectSessionRequest{
+		RunID:     "run-1",
+		Target:    "127.0.0.1",
+		PayloadID: "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Config: map[string]string{
+			"payload.transport": tcpBind,
+			"payload.bind_port": strconv.Itoa(port),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "127.0.0.1", Reason: "test"})
+	}()
+	if session.Transport != "squatter/tcp-bind" || session.Kind != "agent" || session.State != "open" {
+		t.Fatalf("session = %#v", session)
+	}
+	select {
+	case conn := <-accepted:
+		conn.Close()
+	case <-time.After(time.Second):
+		t.Fatal("bind listener did not receive provider connection")
+	}
+}
+
+func TestPlaceholderLPSMBConnectsProviderOwnedSession(t *testing.T) {
+	connector := &fakeSMBConnector{conn: noopReadWriteCloser{}}
+	lp := newPlaceholderLP()
+	lp.smb = connector
 	provider := Provider{lp: lp}
 	session, err := provider.ConnectSession(hovel.ConnectSessionRequest{
 		RunID:     "run-1",
 		Target:    "target-1",
 		PayloadID: "squatter/windows/x86/windows-7/smb-named-pipe/pe-exe",
-		Config:    map[string]string{"payload.transport": smbNamedPipe, "payload.pipe": "hovel-squatter-target-1"},
+		Config: map[string]string{
+			"payload.transport": smbNamedPipe,
+			"payload.pipe":      "pipe123",
+			"smb.username":      "user123",
+			"smb.password":      "pass123",
+			"smb.domain":        "LAB",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.Transport != "squatter/smb-named-pipe" || session.Kind != "agent" || session.State != "pending_post_throw_connect" {
+	if session.Transport != "squatter/smb-named-pipe" || session.Kind != "agent" || session.State != "open" {
 		t.Fatalf("session = %#v", session)
+	}
+	if len(connector.requests) != 1 {
+		t.Fatalf("smb connector requests = %#v, want one", connector.requests)
+	}
+	request := connector.requests[0]
+	if request.Host != "target-1" || request.Pipe != "pipe123" || request.Username != "user123" || request.Password != "pass123" || request.Domain != "LAB" {
+		t.Fatalf("smb connector request = %#v", request)
 	}
 	if _, ok := lp.session("target-1"); !ok {
 		t.Fatal("session was not recorded in placeholder LP")
@@ -356,3 +443,164 @@ func TestPlaceholderLPSMBConnectsProviderOwnedSession(t *testing.T) {
 		t.Fatal("session was not removed during cleanup")
 	}
 }
+
+func TestProviderExecuteConnectTCPBindProducesSessionCapability(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn
+		}
+	}()
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	result, err := newProvider().ExecuteStep(hovel.StepExecuteRequest{
+		RunID:  "run-1",
+		StepID: "squatter.connect_tcp_bind",
+		RunMetadata: map[string]any{
+			"config": map[string]any{
+				"target.host":        "127.0.0.1",
+				"payload.transport":  tcpBind,
+				"payload.bind_port":  strconv.Itoa(port),
+				"session.connect_ms": "1000",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %q", result.Status)
+	}
+	if len(result.Capabilities) != 1 || result.Capabilities[0].Type != hovel.CapabilitySessionRef {
+		t.Fatalf("capabilities = %#v, want SessionRef", result.Capabilities)
+	}
+	if result.Capabilities[0].Attributes["transport"] != tcpBind {
+		t.Fatalf("session capability attributes = %#v", result.Capabilities[0].Attributes)
+	}
+	select {
+	case conn := <-accepted:
+		conn.Close()
+	case <-time.After(time.Second):
+		t.Fatal("bind listener did not receive provider connection")
+	}
+}
+
+func TestProviderExecuteTCPCallbackAdoptsAcceptedConnection(t *testing.T) {
+	provider := newProvider()
+	listen, err := provider.ExecuteStep(hovel.StepExecuteRequest{
+		RunID:  "run-1",
+		StepID: "squatter.listen_tcp_callback",
+		RunMetadata: map[string]any{
+			"config": map[string]any{
+				"target.host":       "target-1",
+				"payload.transport": tcpCallback,
+				"payload.lhost":     "127.0.0.1",
+				"payload.lport":     "0",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listen.Status != "succeeded" || len(listen.Capabilities) == 0 {
+		t.Fatalf("listen result = %#v", listen)
+	}
+	portText, ok := listen.Capabilities[0].Attributes["port"].(string)
+	if !ok || portText == "" {
+		t.Fatalf("listener capability = %#v", listen.Capabilities[0])
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte{'S', 'Q', 'U', 'A', 'T', 'T', 'E', 'R', 0x01, 0x00, 0x00, 0x00}); err != nil {
+		t.Fatal(err)
+	}
+
+	connect, err := provider.ExecuteStep(hovel.StepExecuteRequest{
+		RunID:  "run-1",
+		StepID: "squatter.connect_tcp_callback",
+		RunMetadata: map[string]any{
+			"config": map[string]any{
+				"target.host":       "target-1",
+				"payload.transport": tcpCallback,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connect.Status != "succeeded" {
+		t.Fatalf("connect result = %#v", connect)
+	}
+	if len(connect.Capabilities) != 1 || connect.Capabilities[0].Attributes["transport"] != tcpCallback {
+		t.Fatalf("session capability = %#v", connect.Capabilities)
+	}
+}
+
+func TestProviderExecuteConnectSMBProducesSessionCapability(t *testing.T) {
+	connector := &fakeSMBConnector{conn: noopReadWriteCloser{}}
+	lp := newPlaceholderLP()
+	lp.smb = connector
+	provider := Provider{lp: lp}
+
+	result, err := provider.ExecuteStep(hovel.StepExecuteRequest{
+		RunID:  "run-1",
+		StepID: "squatter.connect_smb",
+		RunMetadata: map[string]any{
+			"config": map[string]any{
+				"target.host":       "192.0.2.20",
+				"payload.transport": smbNamedPipe,
+				"payload.pipe":      "pipe123",
+				"smb.username":      "user123",
+				"smb.password":      "pass123",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %q", result.Status)
+	}
+	if len(result.Capabilities) != 1 || result.Capabilities[0].Type != hovel.CapabilitySessionRef {
+		t.Fatalf("capabilities = %#v, want SessionRef", result.Capabilities)
+	}
+	if result.Capabilities[0].Attributes["transport"] != smbNamedPipe {
+		t.Fatalf("session capability attributes = %#v", result.Capabilities[0].Attributes)
+	}
+	if len(connector.requests) != 1 || connector.requests[0].Host != "192.0.2.20" {
+		t.Fatalf("smb requests = %#v", connector.requests)
+	}
+}
+
+type fakeSMBConnector struct {
+	requests []smbConnectOptions
+	conn     io.ReadWriteCloser
+	err      error
+}
+
+func (c *fakeSMBConnector) ConnectSMB(_ hovel.ConnectSessionRequest, opts smbConnectOptions) (io.ReadWriteCloser, error) {
+	c.requests = append(c.requests, opts)
+	if c.err != nil {
+		return nil, c.err
+	}
+	return c.conn, nil
+}
+
+type noopReadWriteCloser struct{}
+
+func (noopReadWriteCloser) Read([]byte) (int, error)    { return 0, io.EOF }
+func (noopReadWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (noopReadWriteCloser) Close() error                { return nil }

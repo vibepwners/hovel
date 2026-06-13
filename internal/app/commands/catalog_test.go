@@ -780,6 +780,152 @@ func TestThrowChainFileUsesFileConfigWithoutSessionMutation(t *testing.T) {
 	}
 }
 
+func TestThrowChainFileCapabilityStepsUsesCapabilityRunner(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeChainFileStore{reads: map[string]ChainFile{
+		"alpha.chain.yaml": capabilityChainFileFixture("alpha", "mock://target"),
+	}}
+	runner := &fakeCapabilityChainRunner{
+		response: CapabilityChainResponse{
+			RunID:   "cap-run-1",
+			State:   "succeeded",
+			Summary: "capability chain completed",
+			Capabilities: []CapabilityPayload{{
+				ID:             "session-1",
+				Type:           string(modulecatalog.CapabilitySessionRef),
+				SchemaVersion:  "v1",
+				State:          "active",
+				ProducerStepID: "squatter.connect_smb",
+				Attributes:     map[string]any{"transport": "smb-named-pipe"},
+			}},
+			Evidence: []CapabilityEvidence{{
+				ID:           "ev-1",
+				Level:        "info",
+				Kind:         "session",
+				SourceStepID: "squatter.connect_smb",
+				Message:      "smb session established",
+			}},
+			Sessions: []SessionRef{{
+				ID:        "session-1",
+				RunID:     "cap-run-1",
+				ModuleID:  "squatter@v1",
+				Target:    "mock://target",
+				Kind:      "shell",
+				State:     "active",
+				Transport: "smb-named-pipe",
+			}},
+		},
+	}
+	registry := HovelRegistry(Runtime{
+		Workspaces:       fakeWorkspaceService{},
+		Daemons:          fakeDaemonService{status: daemon.Running(identity)},
+		CapabilityChains: runner,
+		Modules:          exampleCatalog(),
+		Plans:            &fakePlanRecorder{},
+		Confirmations:    &fakeConfirmationRecorder{},
+		ChainFiles:       store,
+	})
+	definition, _ := registry.Find("throw")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"file": "alpha.chain.yaml"},
+		Options:     map[string]string{"workspace": ".hovel"},
+		Flags:       map[string]bool{"now": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("capability chain requests = %#v, want one", runner.requests)
+	}
+	wantRequest := CapabilityChainRequest{
+		Operation:    operatorsession.DefaultOperation,
+		Chain:        "alpha",
+		Target:       "mock://target",
+		ChainConfig:  map[string]string{"operator.confirmed_lab": "true"},
+		TargetConfig: map[string]string{"target.host": "router-01", "target.port": "22"},
+		Steps: []CapabilityChainStepRef{
+			{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+			{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
+		},
+	}
+	runner.requests[0].ThrowStarted = ""
+	runner.requests[0].ThrowID = ""
+	runner.requests[0].RunID = ""
+	if !reflect.DeepEqual(runner.requests[0], wantRequest) {
+		t.Fatalf("capability chain request = %#v, want %#v", runner.requests[0], wantRequest)
+	}
+	payload := result.JSON.(ThrowPayload)
+	if len(payload.Results) != 1 {
+		t.Fatalf("results = %#v, want one aggregate result", payload.Results)
+	}
+	got := payload.Results[0]
+	if got.RunID != "cap-run-1" || got.ModuleID != "capability-chain" || got.Target != "mock://target" || got.State != "succeeded" {
+		t.Fatalf("aggregate run = %#v", got)
+	}
+	if len(got.Capabilities) != 1 || got.Capabilities[0].ID != "session-1" {
+		t.Fatalf("capabilities = %#v, want session capability", got.Capabilities)
+	}
+	if len(got.Evidence) != 1 || got.Evidence[0].SourceStepID != "squatter.connect_smb" {
+		t.Fatalf("evidence = %#v, want squatter evidence", got.Evidence)
+	}
+	if len(got.Sessions) != 1 || got.Sessions[0].Transport != "smb-named-pipe" {
+		t.Fatalf("sessions = %#v, want smb session", got.Sessions)
+	}
+	if !reflect.DeepEqual(payload.Plan.Steps, []CapabilityChainStepRef{
+		{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+		{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
+	}) {
+		t.Fatalf("plan steps = %#v", payload.Plan.Steps)
+	}
+}
+
+func TestThrowChainFileRejectsMixedCapabilityAndLegacySteps(t *testing.T) {
+	store := &fakeChainFileStore{reads: map[string]ChainFile{
+		"mixed.chain.yaml": {
+			APIVersion: "hovel.dev/v1alpha1",
+			Kind:       "Chain",
+			Metadata:   ChainFileMetadata{Name: "mixed"},
+			Spec: ChainFileSpec{
+				Mode: "configured",
+				Steps: []ChainFileStep{
+					{ID: "exploit", Uses: "module:etro@v1", Step: "etro.exploit"},
+					{ID: "connect", Uses: "module:squatter@v1"},
+				},
+				Targets: []ChainFileTarget{{ID: "mock://target"}},
+			},
+		},
+	}}
+	registry := HovelRegistry(Runtime{
+		Workspaces:       fakeWorkspaceService{},
+		Daemons:          fakeDaemonService{},
+		CapabilityChains: &fakeCapabilityChainRunner{},
+		Modules:          exampleCatalog(),
+		Plans:            &fakePlanRecorder{},
+		Confirmations:    &fakeConfirmationRecorder{},
+		ChainFiles:       store,
+	})
+	definition, _ := registry.Find("throw")
+
+	_, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"file": "mixed.chain.yaml"},
+		Options:     map[string]string{"workspace": ".hovel"},
+		Flags:       map[string]bool{"now": true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "all steps must declare step") {
+		t.Fatalf("err = %v, want mixed capability step error", err)
+	}
+}
+
 func TestThrowRecordsThrowAndMaterializesArtifacts(t *testing.T) {
 	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
 		WorkspacePath: ".hovel",
@@ -1582,6 +1728,38 @@ func TestChainLoadRestoresConfiguredChainFile(t *testing.T) {
 	}
 }
 
+func TestThrowInputsFromChainFileKeepsCapabilityStepRefs(t *testing.T) {
+	store := &fakeChainFileStore{
+		reads: map[string]ChainFile{
+			"etro-squatter.yaml": {
+				APIVersion: "hovel.dev/v1alpha1",
+				Kind:       "Chain",
+				Metadata:   ChainFileMetadata{Name: "etro-squatter"},
+				Spec: ChainFileSpec{
+					Mode: "configured",
+					Steps: []ChainFileStep{
+						{ID: "exploit", Uses: "module:etro@v1", Step: "etro.exploit"},
+						{ID: "connect", Uses: "module:squatter@v1", Step: "squatter.connect_smb"},
+					},
+					Targets: []ChainFileTarget{{ID: "smb://target"}},
+				},
+			},
+		},
+	}
+
+	throw, err := throwInputsFromChainFile(context.Background(), Runtime{ChainFiles: store}, Invocation{}, "etro-squatter.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []throwStepRef{
+		{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+		{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
+	}
+	if !reflect.DeepEqual(throw.Steps, want) {
+		t.Fatalf("steps = %#v, want %#v", throw.Steps, want)
+	}
+}
+
 func TestTargetHandlerRequiresActiveChain(t *testing.T) {
 	session := operatorsession.New()
 	registry := HovelRegistry(Runtime{
@@ -2054,6 +2232,35 @@ func configuredChainFileFixture(name, target string) ChainFile {
 			},
 		},
 	}
+}
+
+func capabilityChainFileFixture(name, target string) ChainFile {
+	return ChainFile{
+		APIVersion: "hovel.dev/v1alpha1",
+		Kind:       "Chain",
+		Metadata:   ChainFileMetadata{Name: name},
+		Spec: ChainFileSpec{
+			Mode: "configured",
+			Steps: []ChainFileStep{
+				{ID: "exploit", Uses: "module:etro@v1", Step: "etro.exploit"},
+				{ID: "connect", Uses: "module:squatter@v1", Step: "squatter.connect_smb"},
+			},
+			Config: map[string]string{"operator.confirmed_lab": "true"},
+			Targets: []ChainFileTarget{
+				{ID: target, Config: map[string]string{"target.host": "router-01", "target.port": "22"}},
+			},
+		},
+	}
+}
+
+type fakeCapabilityChainRunner struct {
+	requests []CapabilityChainRequest
+	response CapabilityChainResponse
+}
+
+func (r *fakeCapabilityChainRunner) ExecuteCapabilityChain(_ context.Context, req CapabilityChainRequest) (CapabilityChainResponse, error) {
+	r.requests = append(r.requests, req)
+	return r.response, nil
 }
 
 type fakeInput struct {

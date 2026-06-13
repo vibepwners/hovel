@@ -25,11 +25,6 @@ cc_library(
     name = "win",
     hdrs = ["base/win.h"],
     includes = ["."],
-    linkopts = [
-        "-lshlwapi",
-        "-lws2_32",
-        "-lmswsock",
-    ],
     target_compatible_with = ["@platforms//os:windows"],
 )
 
@@ -127,10 +122,7 @@ cc_library(
 # The window sink's presence is a compile-time choice (SQLOG_WINDOW), which must
 # match between the library and its consumer. Hence two variants: the default
 # (console/debugger sinks) and a windowed one used by //examples:logdemo_window.
-_SQLOG_SRCS = [
-    "sqlog/sqlog.c",
-    "sqlog/sqlog_window.c",
-]
+_SQLOG_SRCS = ["sqlog/sqlog.c"]
 
 _SQLOG_HDRS = [
     "sqlog/sqlog.h",
@@ -139,28 +131,44 @@ _SQLOG_HDRS = [
     "sqlog/sqlog_window.h",
 ]
 
-_SQLOG_LINKOPTS = [
-    "-lshlwapi",  # bounded wnsprintf formatters
-    "-luser32",  # the optional GUI window sink
-]
-
 cc_library(
     name = "sqlog",
     srcs = _SQLOG_SRCS,
     hdrs = _SQLOG_HDRS,
     copts = SQ_COPTS,
     includes = ["."],
-    linkopts = _SQLOG_LINKOPTS,
     target_compatible_with = ["@platforms//os:windows"],
 )
 
 cc_library(
     name = "sqlog_windowed",
-    srcs = _SQLOG_SRCS,
+    srcs = [
+        "sqlog/sqlog.c",
+        "sqlog/sqlog_window.c",
+    ],
     hdrs = _SQLOG_HDRS,
     copts = SQ_COPTS + ["-DSQLOG_WINDOW=1"],
     includes = ["."],
-    linkopts = _SQLOG_LINKOPTS,
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_library(
+    name = "nocrt",
+    srcs = [
+        "nocrt/api.c",
+        "nocrt/chkstk.S",
+        "nocrt/crt.c",
+        "nocrt/entry.c",
+        "nocrt/stubs.c",
+    ],
+    hdrs = ["nocrt/api.h"],
+    copts = SQ_COPTS + [
+        "-fno-asynchronous-unwind-tables",
+        "-fno-builtin",
+        "-fno-stack-protector",
+        "-fno-unwind-tables",
+    ],
+    includes = ["."],
     target_compatible_with = ["@platforms//os:windows"],
 )
 
@@ -202,14 +210,54 @@ cc_library(
 cc_binary(
     name = "squatter.exe",
     srcs = ["squatter.c"],
-    copts = SQ_COPTS,
+    copts = SQ_COPTS + [
+        "-fno-asynchronous-unwind-tables",
+        "-fno-builtin",
+        "-fno-stack-protector",
+        "-fno-unwind-tables",
+    ],
+    features = ["-static_runtime"],
     includes = ["."],
-    linkopts = ["-municode"],  # wmain (wide argv) entry point
+    linkopts = [
+        "-nostdlib",
+        "-Wl,-e,_sq_nocrt_entry",
+        "-Wl,--subsystem,console",
+    ],
     target_compatible_with = ["@platforms//os:windows"],
     deps = [
         ":modules",
+        ":nocrt",
         ":runtime",
         ":sqlog",
+        ":win",
+    ],
+)
+
+cc_binary(
+    name = "squatter_checked_gui.exe",
+    srcs = ["squatter.c"],
+    copts = SQ_COPTS + [
+        "-DSQLOG_GUI=1",
+        "-DSQLOG_WINDOW=1",
+        "-DSQLOG_WINDOW_MIN_LEVEL=0",
+        "-fno-asynchronous-unwind-tables",
+        "-fno-builtin",
+        "-fno-stack-protector",
+        "-fno-unwind-tables",
+    ],
+    features = ["-static_runtime"],
+    includes = ["."],
+    linkopts = [
+        "-nostdlib",
+        "-Wl,-e,_sq_nocrt_entry",
+        "-Wl,--subsystem,windows",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        ":modules",
+        ":nocrt",
+        ":runtime",
+        ":sqlog_windowed",
         ":win",
     ],
 )
@@ -218,4 +266,9 @@ cc_binary(
 windows_multiplatform(
     name = "squatter_all",
     binary = ":squatter.exe",
+)
+
+windows_multiplatform(
+    name = "squatter_checked_gui_all",
+    binary = ":squatter_checked_gui.exe",
 )

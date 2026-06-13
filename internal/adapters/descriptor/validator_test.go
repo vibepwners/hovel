@@ -242,7 +242,7 @@ func TestParseChainFileAcceptsConfiguredJSONAndYAML(t *testing.T) {
 		Spec: commands.ChainFileSpec{
 			Mode:   "configured",
 			Config: map[string]string{"operator.confirmed_lab": "true"},
-			Steps:  []commands.ChainFileStep{{ID: "step-1", Uses: "module:mock-exploit@v0.0.0-example"}},
+			Steps:  []commands.ChainFileStep{{ID: "step-1", Uses: "module:mock-exploit@v0.0.0-example", Step: "mock.exploit"}},
 			Targets: []commands.ChainFileTarget{{
 				ID:     "mock://target",
 				Config: map[string]string{"target.host": "router-01"},
@@ -257,7 +257,7 @@ func TestParseChainFileAcceptsConfiguredJSONAndYAML(t *testing.T) {
 		"spec": {
 			"mode": "configured",
 			"config": {"operator.confirmed_lab": "true"},
-			"steps": [{"id": "step-1", "uses": "module:mock-exploit@v0.0.0-example"}],
+			"steps": [{"id": "step-1", "uses": "module:mock-exploit@v0.0.0-example", "step": "mock.exploit"}],
 			"targets": [{"id": "mock://target", "config": {"target.host": "router-01"}}]
 		}
 	}`)
@@ -279,6 +279,7 @@ spec:
   steps:
     - id: "step-1"
       uses: "module:mock-exploit@v0.0.0-example"
+      step: "mock.exploit"
   config:
     "operator.confirmed_lab": "true"
   targets:

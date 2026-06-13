@@ -20,7 +20,12 @@ cc_binary(
     name = "iocp_echo_server.exe",
     srcs = ["iocp_echo_server.c"],
     copts = SQ_COPTS,
-    linkopts = ["-municode"],  # wmain (wide argv) entry point
+    linkopts = [
+        "-municode",  # wmain (wide argv) entry point
+        "-lmswsock",
+        "-lshlwapi",
+        "-lws2_32",
+    ],
     target_compatible_with = ["@platforms//os:windows"],
     deps = ["//payloads/squatter/windows/src:iocpserver"],
 )
@@ -30,7 +35,10 @@ cc_binary(
     name = "logdemo.exe",  # all levels compiled in; console + debugger sinks
     srcs = ["logdemo.c"],
     copts = SQ_COPTS,
-    linkopts = ["-municode"],  # wmain (wide argv) entry point
+    linkopts = [
+        "-municode",  # wmain (wide argv) entry point
+        "-lshlwapi",
+    ],
     target_compatible_with = ["@platforms//os:windows"],
     deps = ["//payloads/squatter/windows/src:sqlog"],
 )
@@ -39,7 +47,10 @@ cc_binary(
     name = "logdemo_release.exe",  # -DNDEBUG: every log macro compiles out
     srcs = ["logdemo.c"],
     copts = SQ_COPTS + ["-DNDEBUG"],
-    linkopts = ["-municode"],  # wmain (wide argv) entry point
+    linkopts = [
+        "-municode",  # wmain (wide argv) entry point
+        "-lshlwapi",
+    ],
     target_compatible_with = ["@platforms//os:windows"],
     deps = ["//payloads/squatter/windows/src:sqlog"],
 )
@@ -48,7 +59,11 @@ cc_binary(
     name = "logdemo_window.exe",  # control macro forces the GUI window sink on
     srcs = ["logdemo.c"],
     copts = SQ_COPTS + ["-DSQLOG_WINDOW=1"],
-    linkopts = ["-municode"],  # wmain (wide argv) entry point
+    linkopts = [
+        "-municode",  # wmain (wide argv) entry point
+        "-lshlwapi",
+        "-luser32",
+    ],
     target_compatible_with = ["@platforms//os:windows"],
     deps = ["//payloads/squatter/windows/src:sqlog_windowed"],  # built with the matching SQLOG_WINDOW=1
 )

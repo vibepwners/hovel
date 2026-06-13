@@ -2,10 +2,14 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "pythonrpc",
-    srcs = ["runner.go"],
+    srcs = [
+        "runner.go",
+        "step_runtime.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc",
     visibility = ["//visibility:public"],
     deps = [
+        "//internal/app/chainruntime",
         "//internal/app/modulecatalog",
         "//internal/app/services",
         "//internal/domain/event",
@@ -24,6 +28,8 @@ go_test(
     embed = [":pythonrpc"],
     tags = ["e2e"],
     deps = [
+        "//internal/app/chainruntime",
+        "//internal/app/modulecatalog",
         "//internal/domain/event",
         "//internal/domain/run",
     ],

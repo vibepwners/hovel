@@ -21,7 +21,7 @@
 #define SQ_WIN_H
 
 #ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0601 /* Windows 7 / Server 2008 R2: our support floor. */
+#define _WIN32_WINNT 0x0501 /* Windows XP SP3: lab support floor. */
 #endif
 
 #ifndef WIN32_LEAN_AND_MEAN

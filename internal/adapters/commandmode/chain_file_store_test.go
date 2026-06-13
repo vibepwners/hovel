@@ -20,8 +20,8 @@ func TestChainFileDiskStoreRoundTripsConfiguredChain(t *testing.T) {
 		Spec: commands.ChainFileSpec{
 			Mode: "configured",
 			Steps: []commands.ChainFileStep{
-				{ID: "step-1", Uses: "module:mock-exploit@v0.0.0-example"},
-				{ID: "step-2", Uses: "module:mock-survey@v0.0.0-example"},
+				{ID: "step-1", Uses: "module:mock-exploit@v0.0.0-example", Step: "mock.exploit"},
+				{ID: "step-2", Uses: "module:mock-survey@v0.0.0-example", Step: "mock.survey"},
 			},
 			Config: map[string]string{"operator.confirmed_lab": "true"},
 			Targets: []commands.ChainFileTarget{
@@ -50,7 +50,7 @@ func TestFormatChainFileOmitsConfiguredDataForTemplate(t *testing.T) {
 		Metadata:   commands.ChainFileMetadata{Name: "alpha"},
 		Spec: commands.ChainFileSpec{
 			Mode:    "template",
-			Steps:   []commands.ChainFileStep{{ID: "step-1", Uses: "module:mock-exploit@v0.0.0-example"}},
+			Steps:   []commands.ChainFileStep{{ID: "step-1", Uses: "module:mock-exploit@v0.0.0-example", Step: "mock.exploit"}},
 			Config:  map[string]string{"operator.confirmed_lab": "true"},
 			Targets: []commands.ChainFileTarget{{ID: "mock://alpha"}},
 		},

@@ -38,6 +38,7 @@ use_repo(
     "com_github_c_bata_go_prompt",
     "com_github_charmbracelet_lipgloss",
     "com_github_charmbracelet_x_term",
+    "com_github_jfjallid_go_smb",
     "com_github_pkg_term",
     "in_gopkg_yaml_v3",
     "org_golang_x_sys",

@@ -134,6 +134,42 @@ cleanup</code></pre>
           which live JSON-RPC step contracts are ready and which capabilities still need
           to be produced.
         </p>
+        <p>
+          The first execution primitive is a generic capability step runtime. It executes
+          an ordered set of module step references, resolves inputs before each step,
+          calls <code>step.prepare</code>, calls <code>step.execute</code>, records
+          produced capabilities, applies state transitions, and blocks at the first
+          missing requirement. This primitive is intentionally not Etro-specific; the
+          Etro-to-Squatter path is the representative chain used to prove the model.
+        </p>
+        <p>
+          Chain files identify both layers explicitly. <code>uses</code> locates the
+          module package, and optional <code>step</code> locates the JSON-RPC step
+          contract inside that module. Omitting <code>step</code> on every step
+          preserves the legacy single-module execution path. Setting <code>step</code>
+          opts the configured chain file into capability-step execution, and every step
+          in that file must then name a JSON-RPC step contract. The approved throw plan
+          records the module references and the callable step references so an operator
+          can see exactly which contracts were confirmed.
+        </p>
+        <p>
+          A capability-step throw executes the configured ordered steps through the
+          capability runtime rather than the legacy per-module daemon runner. It produces
+          one aggregate run per target. That aggregate run carries the final capability
+          set, diagnostic evidence, logs, and any opened sessions; step-level prepare and
+          execute detail remains available through capability evidence and structured
+          events.
+          Command-mode one-shot throws use the same primitive with the configured module
+          catalog and JSON-RPC step runner, so Etro-to-Squatter is not a special throw
+          path; it is one ordered capability-step chain.
+        </p>
+<pre data-lang="yaml"><code>steps:
+  - id: exploit
+    uses: module:etro@v1
+    step: etro.exploit
+  - id: install
+    uses: module:squatter-provider@v1
+    step: squatter.install_smb</code></pre>
 
         <h2>Representative Etro to Squatter Chain</h2>
         <p>
