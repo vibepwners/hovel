@@ -41,6 +41,10 @@ sq_session *sq_session_create(sq_channel *ch, const sq_module_table *modules);
  * threads, and free everything. Tolerates NULL. */
 void sq_session_destroy(sq_session *s);
 
+/* Nonblocking completion check. True once the peer disconnected or the reader
+ * hit a protocol/read error; the caller may then destroy the session. */
+int sq_session_done(sq_session *s);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

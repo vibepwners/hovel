@@ -105,6 +105,91 @@ static void free_argv(wchar_t **argv, int argc)
 }
 
 /* ------------------------------------------------------------------------- */
+/* Runtime-side named-pipe I/O                                               */
+/* ------------------------------------------------------------------------- */
+
+static BOOL wait_overlapped(HANDLE h, OVERLAPPED *ov, DWORD *transferred)
+{
+    if (WaitForSingleObject(ov->hEvent, INFINITE) != WAIT_OBJECT_0) {
+        return FALSE;
+    }
+    return GetOverlappedResult(h, ov, transferred, FALSE);
+}
+
+static BOOL pipe_read_message(HANDLE h, BYTE *buf, DWORD cap, DWORD *out)
+{
+    OVERLAPPED ov;
+    BOOL ok = FALSE;
+    DWORD err = 0;
+
+    ZeroMemory(&ov, sizeof ov);
+    ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (ov.hEvent == NULL) {
+        return FALSE;
+    }
+    ok = ReadFile(h, buf, cap, out, &ov);
+    if (!ok) {
+        err = GetLastError();
+        if (err == ERROR_IO_PENDING) {
+            ok = wait_overlapped(h, &ov, out);
+        }
+    }
+    (void)CloseHandle(ov.hEvent);
+    return ok;
+}
+
+static BOOL pipe_write_message(HANDLE h, const BYTE *buf, DWORD len)
+{
+    OVERLAPPED ov;
+    BOOL ok = FALSE;
+    DWORD wrote = 0;
+    DWORD err = 0;
+
+    if (len == 0) {
+        return TRUE;
+    }
+    ZeroMemory(&ov, sizeof ov);
+    ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (ov.hEvent == NULL) {
+        return FALSE;
+    }
+    ok = WriteFile(h, buf, len, &wrote, &ov);
+    if (!ok) {
+        err = GetLastError();
+        if (err == ERROR_IO_PENDING) {
+            ok = wait_overlapped(h, &ov, &wrote);
+        }
+    }
+    (void)CloseHandle(ov.hEvent);
+    return ok && wrote == len;
+}
+
+static BOOL pipe_connect_overlapped(HANDLE h)
+{
+    OVERLAPPED ov;
+    BOOL ok = FALSE;
+    DWORD transferred = 0;
+    DWORD err = 0;
+
+    ZeroMemory(&ov, sizeof ov);
+    ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (ov.hEvent == NULL) {
+        return FALSE;
+    }
+    ok = ConnectNamedPipe(h, &ov);
+    if (!ok) {
+        err = GetLastError();
+        if (err == ERROR_PIPE_CONNECTED) {
+            ok = TRUE;
+        } else if (err == ERROR_IO_PENDING) {
+            ok = wait_overlapped(h, &ov, &transferred);
+        }
+    }
+    (void)CloseHandle(ov.hEvent);
+    return ok;
+}
+
+/* ------------------------------------------------------------------------- */
 /* Channel writes (locked) and frame emission                               */
 /* ------------------------------------------------------------------------- */
 
@@ -151,7 +236,7 @@ static DWORD WINAPI pump_thread(LPVOID param)
         BYTE buf[SQ_SESSION_READ_BUF];
         DWORD n = 0;
 
-        if (ReadFile(st->session_end, buf, (DWORD)sizeof buf, &n, NULL) == FALSE) {
+        if (pipe_read_message(st->session_end, buf, (DWORD)sizeof buf, &n) == FALSE) {
             break;
         }
         if (n == 0) {
@@ -183,7 +268,7 @@ static BOOL make_message_pipe(sq_session *s, UINT64 id, HANDLE *server_end,
                      (unsigned __int64)id);
 
     server = CreateNamedPipeW(
-        name, PIPE_ACCESS_DUPLEX,
+        name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
         PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
         1, SQ_STREAM_PIPE_BUF, SQ_STREAM_PIPE_BUF, 0, NULL);
     if (server == INVALID_HANDLE_VALUE) {
@@ -200,13 +285,10 @@ static BOOL make_message_pipe(sq_session *s, UINT64 id, HANDLE *server_end,
         (void)CloseHandle(client);
         return FALSE;
     }
-    /* The CreateFile above already connected the client side. */
-    if (ConnectNamedPipe(server, NULL) == FALSE) {
-        if (GetLastError() != ERROR_PIPE_CONNECTED) {
-            (void)CloseHandle(server);
-            (void)CloseHandle(client);
-            return FALSE;
-        }
+    if (!pipe_connect_overlapped(server)) {
+        (void)CloseHandle(server);
+        (void)CloseHandle(client);
+        return FALSE;
     }
     *server_end = server;
     *client_end = client;
@@ -277,7 +359,8 @@ static void handle_data(sq_session *s, UINT64 id, const BYTE *payload, UINT32 le
         return;
     }
     /* Message-mode: this whole payload arrives at the module as one ReadFile. */
-    (void)WriteFile(st->session_end, payload, len, &wrote, NULL);
+    (void)wrote;
+    (void)pipe_write_message(st->session_end, payload, len);
 }
 
 static void handle_close(sq_session *s, UINT64 id)
@@ -372,6 +455,14 @@ sq_session *sq_session_create(sq_channel *ch, const sq_module_table *modules)
         return NULL;
     }
     return s;
+}
+
+int sq_session_done(sq_session *s)
+{
+    if (s == NULL || s->reader_thread == NULL) {
+        return 1;
+    }
+    return WaitForSingleObject(s->reader_thread, 0) == WAIT_OBJECT_0;
 }
 
 void sq_session_destroy(sq_session *s)

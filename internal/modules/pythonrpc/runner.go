@@ -24,7 +24,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
-const defaultTimeout = 5 * time.Second
+const defaultTimeout = 60 * time.Second
 
 const ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
 

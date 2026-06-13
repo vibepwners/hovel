@@ -115,7 +115,7 @@ func (c *client) cmdPutfile(sid uint64, args []string) bool {
 		fmt.Println("usage: putfile <local-path> <remote-path>")
 		return true
 	}
-	local, remote := args[0], args[1]
+	local, remote := args[0], strings.Join(args[1:], " ")
 	f, err := os.Open(local)
 	if err != nil {
 		fmt.Printf("[cannot open %s: %v]\n", local, err)
