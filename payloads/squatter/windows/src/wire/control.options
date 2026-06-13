@@ -1,0 +1,4 @@
+# nanopb field options: give the variable-length fields fixed bounds so nanopb
+# emits plain inline arrays (no heap, no callbacks) -- simplest to use from C.
+sqmux.OpenStream.module  max_size:64
+sqmux.OpenStream.args    max_count:16 max_size:256

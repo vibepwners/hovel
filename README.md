@@ -2,17 +2,18 @@
 
 ![Hovel](assets/hovel.png)
 
-Hovel is a Go-hosted framework for authorized security research, adversary
-emulation, lab exploitation, defensive validation, and operator workflow
-automation. It runs a local engine (`hoveld`) that owns a workspace database,
-module process lifecycle, a plan → confirm → throw safety pipeline, an artifact
-store, and a structured event/log rail. Operators drive it through an
+Hovel is a Go-hosted framework for authorized red-team emulation, controlled
+lab exercises, defensive validation, and operator workflow automation. It is
+designed for scoped, auditable assessments rather than general-purpose
+dual-use automation. A local engine (`hoveld`) owns the workspace database,
+module process lifecycle, a plan -> confirm -> throw safety pipeline, an
+artifact store, and a structured event/log rail. Operators drive it through an
 interactive CLI; the same application services are intended to back additional
 front ends (one-shot chain files, TUI, REST, MCP).
 
-> ⚠️ **Authorized use only.** Hovel orchestrates offensive primitives. Use it
-> only against systems you own or are explicitly authorized to test. See
-> [SECURITY.md](SECURITY.md).
+> **Authorized red-team emulation only.** Use Hovel only in environments you
+> own or are explicitly authorized to assess, with written scope and approvals.
+> See [SECURITY.md](SECURITY.md).
 
 ## Documentation
 

@@ -26,7 +26,7 @@ func TestProviderReportsSquatterPayloads(t *testing.T) {
 		t.Fatalf("payload count = %d", len(payloads))
 	}
 	for _, payload := range payloads {
-		if payload.Platform != "windows" || payload.Arch != "x86" || payload.MinOS != "windows-xp-sp3" {
+		if payload.Platform != "windows" || payload.Arch != "x86" || payload.MinOS != "windows-7" {
 			t.Fatalf("unexpected payload platform metadata: %#v", payload)
 		}
 		if len(payload.Formats) != 1 || payload.Formats[0] != "pe-exe" {
@@ -41,7 +41,7 @@ func TestProviderReportsSquatterPayloads(t *testing.T) {
 func TestProviderGeneratesWindowsPEArtifactSet(t *testing.T) {
 	generated, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
 		Target:    "target-1",
-		PayloadID: "squatter/windows/x86/windows-xp-sp3/reverse-tcp/pe-exe",
+		PayloadID: "squatter/windows/x86/windows-7/reverse-tcp/pe-exe",
 		Format:    "pe-exe",
 	})
 	if err != nil {
@@ -82,7 +82,7 @@ func TestProviderGeneratesWindowsPEArtifactSet(t *testing.T) {
 func TestProviderPatchesPayloadConfigFromListener(t *testing.T) {
 	generated, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
 		Target:    "target-1",
-		PayloadID: "squatter/windows/x86/windows-xp-sp3/reverse-tcp/pe-exe",
+		PayloadID: "squatter/windows/x86/windows-7/reverse-tcp/pe-exe",
 		Format:    "pe-exe",
 		Config:    map[string]string{"payload.transport": reverseTCP, "payload.lhost": "10.1.2.3", "payload.lport": "1"},
 		Listener:  &hovel.ListenerRef{Host: "127.0.0.1", Port: 31337},
@@ -106,7 +106,7 @@ func TestProviderPatchesPayloadConfigFromListener(t *testing.T) {
 func TestProviderPatchesSMBNamedPipePayloadConfig(t *testing.T) {
 	generated, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
 		Target:    "target-1",
-		PayloadID: "squatter/windows/x86/windows-xp-sp3/smb-named-pipe/pe-exe",
+		PayloadID: "squatter/windows/x86/windows-7/smb-named-pipe/pe-exe",
 		Format:    "pe-exe",
 		Config:    map[string]string{"payload.transport": smbNamedPipe, "payload.pipe": "hovel-squatter-target-1"},
 	})
@@ -126,6 +126,13 @@ func TestProviderPatchesSMBNamedPipePayloadConfig(t *testing.T) {
 	}
 	if !bytes.Contains(body[configOffset:], []byte{'h', 0, 'o', 0, 'v', 0, 'e', 0, 'l', 0}) {
 		t.Fatal("patched payload does not contain UTF-16LE pipe name")
+	}
+}
+
+func TestProviderNormalizesRemoteSMBPipePathForPayload(t *testing.T) {
+	got := normalizeNamedPipe(`\\target-1\pipe\hovel-squatter-target-1`)
+	if want := `\\.\pipe\hovel-squatter-target-1`; got != want {
+		t.Fatalf("pipe = %q, want %q", got, want)
 	}
 }
 
@@ -156,7 +163,7 @@ func TestPlaceholderLPReverseTCPPreparesListener(t *testing.T) {
 	listener, err := provider.PrepareListener(hovel.PrepareListenerRequest{
 		RunID:     "run-1",
 		Target:    "target-1",
-		PayloadID: "squatter/windows/x86/windows-xp-sp3/reverse-tcp/pe-exe",
+		PayloadID: "squatter/windows/x86/windows-7/reverse-tcp/pe-exe",
 		Config:    map[string]string{"payload.lhost": "127.0.0.1", "payload.lport": "0"},
 	})
 	if err != nil {
@@ -179,7 +186,7 @@ func TestPlaceholderLPReverseTCPAcceptsCallback(t *testing.T) {
 	listener, err := provider.PrepareListener(hovel.PrepareListenerRequest{
 		RunID:     "run-1",
 		Target:    "target-1",
-		PayloadID: "squatter/windows/x86/windows-xp-sp3/reverse-tcp/pe-exe",
+		PayloadID: "squatter/windows/x86/windows-7/reverse-tcp/pe-exe",
 		Config:    map[string]string{"payload.lhost": "127.0.0.1", "payload.lport": "0"},
 	})
 	if err != nil {
@@ -201,7 +208,7 @@ func TestPlaceholderLPReverseTCPAcceptsCallback(t *testing.T) {
 	session, err := provider.ConnectSession(hovel.ConnectSessionRequest{
 		RunID:     "run-1",
 		Target:    "target-1",
-		PayloadID: "squatter/windows/x86/windows-xp-sp3/reverse-tcp/pe-exe",
+		PayloadID: "squatter/windows/x86/windows-7/reverse-tcp/pe-exe",
 		Config:    map[string]string{"payload.transport": reverseTCP},
 	})
 	if err != nil {
@@ -218,7 +225,7 @@ func TestPlaceholderLPSMBConnectsProviderOwnedSession(t *testing.T) {
 	session, err := provider.ConnectSession(hovel.ConnectSessionRequest{
 		RunID:     "run-1",
 		Target:    "target-1",
-		PayloadID: "squatter/windows/x86/windows-xp-sp3/smb-named-pipe/pe-exe",
+		PayloadID: "squatter/windows/x86/windows-7/smb-named-pipe/pe-exe",
 		Config:    map[string]string{"payload.transport": smbNamedPipe, "payload.pipe": "hovel-squatter-target-1"},
 	})
 	if err != nil {

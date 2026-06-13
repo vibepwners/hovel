@@ -12,7 +12,7 @@ SQUATTER_TRANSPORTS = 0x00000003
 
 
 class PETest(unittest.TestCase):
-    def test_payload_is_i386_console_pe_without_imports(self):
+    def test_payload_is_i386_console_pe_with_hovel_markers(self):
         with open(sys.argv[1], "rb") as handle:
             data = handle.read()
 
@@ -36,21 +36,11 @@ class PETest(unittest.TestCase):
         subsystem = u16(data, optional + 68)
         self.assertEqual(subsystem, IMAGE_SUBSYSTEM_WINDOWS_CUI)
 
-        import_table_rva = u32(data, optional + 104)
-        import_table_size = u32(data, optional + 108)
-        if import_table_rva or import_table_size:
-            import_offset = rva_to_offset(data, coff, optional_size, import_table_rva)
-            import_bytes = data[import_offset : import_offset + import_table_size]
-            self.assertTrue(import_bytes)
-            self.assertEqual(set(import_bytes), {0})
-
         marker = data.find(b"SQUAT001")
         self.assertNotEqual(marker, -1)
         self.assertEqual(u32(data, marker + 8), SQUATTER_VERSION)
         self.assertEqual(u32(data, marker + 12), SQUATTER_CAPABILITIES)
         self.assertEqual(u32(data, marker + 16), SQUATTER_TRANSPORTS)
-
-        self.assertIn(b"noop", data)
 
         config_marker = data.find(b"SQCFG001")
         self.assertNotEqual(config_marker, -1)
@@ -63,21 +53,6 @@ def u16(data, offset):
 
 def u32(data, offset):
     return struct.unpack_from("<I", data, offset)[0]
-
-
-def rva_to_offset(data, coff, optional_size, rva):
-    section_count = u16(data, coff + 2)
-    section_table = coff + 20 + optional_size
-    for index in range(section_count):
-        section = section_table + index * 40
-        virtual_size = u32(data, section + 8)
-        virtual_address = u32(data, section + 12)
-        raw_size = u32(data, section + 16)
-        raw_pointer = u32(data, section + 20)
-        span = max(virtual_size, raw_size)
-        if virtual_address <= rva < virtual_address + span:
-            return raw_pointer + (rva - virtual_address)
-    raise AssertionError(f"RVA not mapped by a section: 0x{rva:x}")
 
 
 if __name__ == "__main__":

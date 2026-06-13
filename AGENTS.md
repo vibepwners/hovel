@@ -64,13 +64,15 @@ infra    -> app -> domain
 
 ## Safety-sensitive code
 
-Hovel is an authorized-security-testing tool. Changes to the throw planning,
-confirmation, guardrail, or audit-event path need extra care. Preserve:
+Hovel is an authorized red-team emulation and defensive validation tool for
+scoped, auditable assessments. Changes to the throw planning, confirmation,
+guardrail, or audit-event path need extra care. Preserve:
 
 - A throw cannot start without a persisted plan and a recorded confirmation.
 - `--now` skips the typed prompt but still records an auditable confirmation
   noting the bypass.
-- Modules tagged `dangerous` require `--allow-dangerous` to throw.
+- Higher-risk modules that use the existing explicit-risk metadata require the
+  matching allow flag before they can throw.
 - Never silently redact or drop operator-controlled configuration values.
 
 See `SECURITY.md` and `CONTRIBUTING.md` for the fuller picture.

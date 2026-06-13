@@ -1,31 +1,21 @@
 load("@rules_python//python:defs.bzl", "py_test")
-load("//tools/windows_toolchain:defs.bzl", "mingw_pe_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-mingw_pe_binary(
+genrule(
     name = "squatter_x86_exe",
-    srcs = [
-        "src/agent.c",
-        "src/main.c",
-        "src/sq_io.c",
-        "src/sq_io.h",
-        "src/sq_linker.c",
-        "src/sq_linker.h",
-        "src/sq_manager.c",
-        "src/sq_manager.h",
-        "src/sq_memory.c",
-        "src/sq_task.c",
-        "src/sq_task.h",
-        "src/sq_transport.c",
-        "src/sq_transport.h",
-        "src/sq_winapi.c",
-        "src/sq_winapi.h",
-        "src/squatter.h",
-    ],
-    out = "squatter.exe",
-    entry = "_squatter_entry",
-    subsystem = "console",
+    srcs = ["//payloads/squatter/windows/src:squatter_all"],
+    outs = ["squatter.exe"],
+    cmd = """
+set -euo pipefail
+for src in $(SRCS); do
+  case "$$src" in
+    *-i686.exe) cp "$$src" "$@"; exit 0 ;;
+  esac
+done
+echo "missing i686 squatter.exe in inputs: $(SRCS)" >&2
+exit 1
+""",
 )
 
 py_test(
@@ -42,25 +32,11 @@ py_test(
     name = "source_contract_test",
     size = "small",
     srcs = ["source_contract_test.py"],
-    args = [
-        "$(location src/agent.c)",
-        "$(location src/main.c)",
-        "$(location src/sq_io.c)",
-        "$(location src/sq_io.h)",
-        "$(location src/sq_linker.c)",
-        "$(location src/sq_linker.h)",
-        "$(location src/sq_manager.c)",
-        "$(location src/sq_manager.h)",
-        "$(location src/sq_memory.c)",
-        "$(location src/sq_task.c)",
-        "$(location src/sq_task.h)",
-        "$(location src/sq_transport.c)",
-        "$(location src/sq_transport.h)",
-        "$(location src/sq_winapi.c)",
-        "$(location src/sq_winapi.h)",
-        "$(location src/squatter.h)",
+    args = ["$(location //payloads/squatter/windows/src:squatter.c)"],
+    data = [
+        "//payloads/squatter/windows/src:source_files",
+        "//payloads/squatter/windows/src:squatter.c",
     ],
-    data = glob(["src/*"]),
     main = "source_contract_test.py",
     python_version = "PY3",
 )

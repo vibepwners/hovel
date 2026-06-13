@@ -4,12 +4,21 @@ module(
 )
 
 bazel_dep(name = "gazelle", version = "0.50.0")
+bazel_dep(name = "googletest", version = "1.17.0")
 bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "rules_go", version = "0.60.0")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
 bazel_dep(name = "rules_python", version = "1.8.4")
 bazel_dep(name = "rules_rust", version = "0.70.0")
 bazel_dep(name = "rules_shell", version = "0.8.0")
+bazel_dep(name = "windows_toolchains", version = "0.1.0")
+
+git_override(
+    module_name = "windows_toolchains",
+    remote = "https://github.com/Vibe-Pwners/windows-toolchains.git",
+    commit = "20f62d96d3d59709a58f2ec5b98d15919a9ac425",
+)
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.download(
@@ -48,5 +57,32 @@ use_repo(rust, "rust_toolchains")
 
 register_toolchains("@rust_toolchains//:all")
 
-windows_toolchains = use_extension("//tools/windows_toolchain:repositories.bzl", "windows_toolchains")
-use_repo(windows_toolchains, "mingw_w64_i686")
+hovel_windows_toolchains = use_extension("//tools/windows_toolchain:repositories.bzl", "windows_toolchains")
+use_repo(hovel_windows_toolchains, "mingw_w64_i686")
+
+_SQUATTER_MINGW_RELEASE = "https://github.com/Vibe-Pwners/windows-toolchains/releases/download/v0.0.1"
+
+squatter_mingw_toolchain_repo = use_repo_rule("//payloads/squatter/bazel:mingw.bzl", "mingw_toolchain_repo")
+
+squatter_mingw_toolchain_repo(
+    name = "mingw_x86_64",
+    urls = [_SQUATTER_MINGW_RELEASE + "/mingw-w64-gcc-15.2.0-ucrt-posix-seh-x86_64-w64-mingw32-linux-x86_64.tar.xz"],
+    sha256 = "c660219c7f6bd0597ea7984743bae65f82b37d8ec5e13155eb27cf11a4ee50f5",
+    strip_prefix = "mingw-w64-gcc-15.2.0-ucrt-posix-seh-x86_64-w64-mingw32-linux-x86_64",
+    target = "x86_64-w64-mingw32",
+    cpu = "x86_64",
+)
+
+squatter_mingw_toolchain_repo(
+    name = "mingw_i686",
+    urls = [_SQUATTER_MINGW_RELEASE + "/mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64.tar.xz"],
+    sha256 = "2eb51859f539890133f5d0419b1bd534fb7fb8b522018de838ff1f5c09abf3c2",
+    strip_prefix = "mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64",
+    target = "i686-w64-mingw32",
+    cpu = "x86_32",
+)
+
+register_toolchains(
+    "@mingw_x86_64//:toolchain",
+    "@mingw_i686//:toolchain",
+)

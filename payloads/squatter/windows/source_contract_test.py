@@ -3,101 +3,71 @@ import sys
 import unittest
 
 
-BANNED_INCLUDES = {
-    "stdio.h",
-    "stdlib.h",
-    "string.h",
-    "stdint.h",
-}
+REQUIRED_FILES = [
+    "base/win.h",
+    "iocpserver/server.c",
+    "modules/echo.c",
+    "modules/file_xfer.c",
+    "modules/getfile.c",
+    "modules/putfile.c",
+    "runtime/channel.c",
+    "runtime/module.c",
+    "runtime/session.c",
+    "sqlog/sqlog.c",
+    "wire/control.proto",
+    "wire/control_codec.c",
+    "wire/frame.c",
+    "wire/framing.c",
+    "squatter.c",
+]
+
 
 class SourceContractTest(unittest.TestCase):
-    def test_modular_runtime_files_exist(self):
-        for path in source_paths():
-            with self.subTest(path=path.name):
-                self.assertTrue(path.is_file())
+    def test_upstream_runtime_layout_is_present(self):
+        root = source_root()
+        for relative in REQUIRED_FILES:
+            with self.subTest(path=relative):
+                self.assertTrue((root / relative).is_file())
 
-    def test_no_crt_or_win32_headers(self):
-        for path in source_paths():
-            text = path.read_text()
-            lowered = text.lower()
-            for include in BANNED_INCLUDES:
-                with self.subTest(path=path.name, include=include):
-                    self.assertNotIn(f"#include <{include}>", lowered)
+    def test_windows_headers_are_centralized(self):
+        root = source_root()
+        win_header = (root / "base/win.h").read_text()
+        self.assertIn("#include <winsock2.h>", win_header)
+        self.assertIn("#include <windows.h>", win_header)
 
-    def test_windows_header_is_limited_to_linker_boundary(self):
-        for path in source_paths():
+        for path in root.rglob("*.[ch]"):
+            relative = path.relative_to(root).as_posix()
+            if relative == "base/win.h" or relative.startswith("sqlog/"):
+                continue
             text = path.read_text().lower()
-            if path.name == "sq_linker.h":
-                self.assertIn("#include <windows.h>", text)
-                continue
-            if path.name == "sq_winapi.h":
-                self.assertIn("#include <winsock2.h>", text)
-                continue
-            with self.subTest(path=path.name):
+            with self.subTest(path=relative):
                 self.assertNotIn("#include <windows.h>", text)
                 self.assertNotIn("#include <winsock2.h>", text)
 
-    def test_tasks_use_central_io_dispatcher(self):
-        task_text = file_named("sq_task.c").read_text()
-        self.assertIn("SqIoPost(", task_text)
-        self.assertIn("SqTaskNoopEntry", task_text)
+    def test_hovel_payload_config_bridge_is_embedded(self):
+        text = (source_root() / "squatter.c").read_text()
+        self.assertIn("'S', 'Q', 'U', 'A', 'T', '0', '0', '1'", text)
+        self.assertIn("'S', 'Q', 'C', 'F', 'G', '0', '0', '1'", text)
+        self.assertIn("squatter_transport_config", text)
+        self.assertIn("connect_reverse_tcp", text)
+        self.assertIn("CreateNamedPipeW", text)
+        self.assertIn("ConnectNamedPipe", text)
+        self.assertIn("sq_channel_from_handle", text)
+        self.assertIn("sq_session_create", text)
 
-    def test_linker_bootstraps_from_peb_and_exports(self):
-        linker_text = file_named("sq_linker.c").read_text()
-        self.assertIn("SqGetPeb", linker_text)
-        self.assertIn("fs:0x30", linker_text)
-        self.assertIn("LoadLibraryW", linker_text)
-        self.assertIn("GetProcAddress", linker_text)
-        self.assertIn("IMAGE_EXPORT_DIRECTORY", linker_text)
-
-    def test_winapi_table_uses_lazy_symbol_resolution(self):
-        api_header = file_named("sq_winapi.h").read_text()
-        api_text = file_named("sq_winapi.c").read_text()
-
-        for symbol in [
-            "CreateFileW",
-            "ReadFile",
-            "WriteFile",
-            "CloseHandle",
-            "WaitNamedPipeW",
-            "WSAStartup",
-            "socket",
-            "connect",
-            "send",
-            "recv",
-            "closesocket",
-        ]:
-            with self.subTest(symbol=symbol):
-                self.assertIn(symbol, api_header)
-                self.assertIn(f'"{symbol}"', api_text)
-
-        self.assertIn("SqLinkerResolve", api_text)
-        self.assertIn("api->CreateFileW == SQ_NULL", api_text)
-        self.assertIn("api->send == SQ_NULL", api_text)
-
-    def test_transport_supports_named_pipe_and_reverse_tcp(self):
-        transport_text = file_named("sq_transport.c").read_text()
-        main_text = file_named("main.c").read_text()
-
-        self.assertIn("SqTransportConnectNamedPipe", transport_text)
-        self.assertIn("SqTransportConnectReverseTcp", transport_text)
-        self.assertIn("SqWinApiCreateFileW", transport_text)
-        self.assertIn("SqWinApiConnect", transport_text)
-        self.assertIn("SqWinApiSend", transport_text)
-        self.assertIn("SqWinApiWriteFile", transport_text)
-        self.assertIn("squatter_transport_config", main_text)
-        self.assertIn("127u, 0u, 0u, 1u", main_text)
+    def test_mux_and_modules_are_wired(self):
+        text = (source_root() / "squatter.c").read_text()
+        for module in ["echo", "getfile", "putfile"]:
+            with self.subTest(module=module):
+                self.assertIn(f'"{module}"', text)
+        self.assertIn("sq_channel_from_socket", text)
+        self.assertIn("sq_session_create", text)
 
 
-def source_paths():
-    return [Path(path) for path in sys.argv[1:]]
-
-
-def file_named(name):
-    for path in source_paths():
-        if path.name == name:
-            return path
-    raise AssertionError(f"missing source file {name}")
+def source_root():
+    if len(sys.argv) != 2:
+        raise AssertionError("expected squatter.c argument")
+    return Path(sys.argv[1]).parent
 
 
 if __name__ == "__main__":

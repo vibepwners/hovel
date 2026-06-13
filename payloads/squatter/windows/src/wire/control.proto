@@ -1,0 +1,17 @@
+// Control-plane messages carried in OPEN/CLOSE frame payloads (see ../frame.h).
+// DATA frames do not use protobuf -- they carry a module's raw message bytes.
+syntax = "proto3";
+
+package sqmux;
+
+// Sent in an OPEN frame: asks the peer to start `module` for this stream,
+// handing it `args` as argv (argv[0] is the module name, supplied by the peer).
+message OpenStream {
+  string module = 1;
+  repeated string args = 2;
+}
+
+// Sent in a CLOSE frame: ends the stream. `code` is 0 for a normal close.
+message CloseStream {
+  uint32 code = 1;
+}

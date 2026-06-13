@@ -1,0 +1,1 @@
+# Marks //bazel as a package so `//bazel:mingw.bzl` is loadable.

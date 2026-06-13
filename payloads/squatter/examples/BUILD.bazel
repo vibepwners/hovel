@@ -1,0 +1,54 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//payloads/squatter/bazel:copts.bzl", "SQ_COPTS")
+
+# Demonstration binaries. The product itself is
+# //payloads/squatter/windows/src:squatter.exe; everything
+# here is illustrative. All run under wine, e.g.:
+#   bazel build --config=win64 //examples:logdemo.exe
+
+# Toolchain smoke test (just enough to prove the cross compiler links a PE).
+cc_binary(
+    name = "hello.exe",
+    srcs = ["hello.c"],
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+# The IOCP + thread-pool TCP echo server, demonstrating the
+# //payloads/squatter/windows/src:iocpserver library
+# (an alternative, single-protocol transport to the multiplexed squatter).
+cc_binary(
+    name = "iocp_echo_server.exe",
+    srcs = ["iocp_echo_server.c"],
+    copts = SQ_COPTS,
+    linkopts = ["-municode"],  # wmain (wide argv) entry point
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = ["//payloads/squatter/windows/src:iocpserver"],
+)
+
+# sqlog feature demo, in three flavors.
+cc_binary(
+    name = "logdemo.exe",  # all levels compiled in; console + debugger sinks
+    srcs = ["logdemo.c"],
+    copts = SQ_COPTS,
+    linkopts = ["-municode"],  # wmain (wide argv) entry point
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = ["//payloads/squatter/windows/src:sqlog"],
+)
+
+cc_binary(
+    name = "logdemo_release.exe",  # -DNDEBUG: every log macro compiles out
+    srcs = ["logdemo.c"],
+    copts = SQ_COPTS + ["-DNDEBUG"],
+    linkopts = ["-municode"],  # wmain (wide argv) entry point
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = ["//payloads/squatter/windows/src:sqlog"],
+)
+
+cc_binary(
+    name = "logdemo_window.exe",  # control macro forces the GUI window sink on
+    srcs = ["logdemo.c"],
+    copts = SQ_COPTS + ["-DSQLOG_WINDOW=1"],
+    linkopts = ["-municode"],  # wmain (wide argv) entry point
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = ["//payloads/squatter/windows/src:sqlog_windowed"],  # built with the matching SQLOG_WINDOW=1
+)
