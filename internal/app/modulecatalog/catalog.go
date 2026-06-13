@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,12 +112,28 @@ type CapabilityRequirement struct {
 	States        []string
 }
 
+type Capability struct {
+	ID             string
+	Type           CapabilityType
+	SchemaVersion  string
+	State          string
+	ProducerStepID string
+	Attributes     map[string]any
+	Extensions     map[string]any
+}
+
 type StepPrepareContract struct {
 	Materializes []string
 }
 
 type StepCleanupContract struct {
 	StepID string
+}
+
+type StepContractIssue struct {
+	ModuleID string
+	StepID   string
+	Message  string
 }
 
 // DangerTag marks a module that may perform destructive or otherwise dangerous
@@ -437,6 +454,85 @@ func DisplayValue(requirement Requirement, raw string) string {
 		return "********"
 	}
 	return raw
+}
+
+func ValidateStepContracts(module Module) []StepContractIssue {
+	var issues []StepContractIssue
+	for _, step := range module.StepContracts.Steps {
+		stepID := strings.TrimSpace(step.ID)
+		if stepID == "" {
+			issues = append(issues, StepContractIssue{
+				ModuleID: module.ID,
+				Message:  "step id is required",
+			})
+		}
+		if strings.TrimSpace(step.Kind) == "" {
+			issues = append(issues, StepContractIssue{
+				ModuleID: module.ID,
+				StepID:   stepID,
+				Message:  "step kind is required",
+			})
+		}
+		issues = append(issues, validateCapabilityRequirements(module.ID, stepID, "requirement", step.Requires)...)
+		issues = append(issues, validateCapabilityRequirements(module.ID, stepID, "produced capability", step.Produces)...)
+	}
+	return issues
+}
+
+func validateCapabilityRequirements(moduleID, stepID, label string, requirements []CapabilityRequirement) []StepContractIssue {
+	var issues []StepContractIssue
+	for index, requirement := range requirements {
+		position := index + 1
+		if strings.TrimSpace(string(requirement.Type)) == "" {
+			issues = append(issues, StepContractIssue{
+				ModuleID: moduleID,
+				StepID:   stepID,
+				Message:  fmt.Sprintf("%s %d type is required", label, position),
+			})
+		}
+		if strings.TrimSpace(requirement.SchemaVersion) == "" {
+			issues = append(issues, StepContractIssue{
+				ModuleID: moduleID,
+				StepID:   stepID,
+				Message:  fmt.Sprintf("%s %d schemaVersion is required", label, position),
+			})
+		}
+	}
+	return issues
+}
+
+func CapabilitySatisfiesRequirement(capability Capability, requirement CapabilityRequirement) bool {
+	if requirement.Type != "" && capability.Type != requirement.Type {
+		return false
+	}
+	if len(requirement.States) > 0 && !containsString(requirement.States, capability.State) {
+		return false
+	}
+	for key, want := range requirement.Attributes {
+		got, ok := capability.Attributes[key]
+		if !ok || !reflect.DeepEqual(got, want) {
+			return false
+		}
+	}
+	return true
+}
+
+func FindSatisfyingCapability(requirement CapabilityRequirement, capabilities []Capability) (Capability, bool) {
+	for _, capability := range capabilities {
+		if CapabilitySatisfiesRequirement(capability, requirement) {
+			return capability, true
+		}
+	}
+	return Capability{}, false
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func validateHost(raw string) error {

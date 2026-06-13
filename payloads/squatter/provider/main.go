@@ -5,6 +5,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -208,6 +209,9 @@ func capabilityWithStates(capabilityType hovel.CapabilityType, attributes map[st
 }
 
 func (Provider) PrepareStep(req hovel.StepPrepareRequest) (hovel.StepPrepareResult, error) {
+	if req.StepID == "squatter.install_smb" {
+		return prepareSMBInstall(req)
+	}
 	return hovel.StepPrepareResult{
 		PreparedValues: map[string]hovel.PreparedValue{},
 		OperatorSummary: hovel.OperatorSummary{
@@ -221,6 +225,103 @@ func (Provider) PrepareStep(req hovel.StepPrepareRequest) (hovel.StepPrepareResu
 			Message:      "squatter step preparation is not implemented yet",
 		}},
 	}, nil
+}
+
+func prepareSMBInstall(req hovel.StepPrepareRequest) (hovel.StepPrepareResult, error) {
+	stagedPath, err := preparedString(req.ExistingPreparedValues, "staged_path", func() (string, error) {
+		token, err := randomToken(6)
+		if err != nil {
+			return "", err
+		}
+		return `C:\Windows\Temp\` + token + ".exe", nil
+	})
+	if err != nil {
+		return hovel.StepPrepareResult{}, err
+	}
+	serviceName, err := preparedString(req.ExistingPreparedValues, "service_name", func() (string, error) {
+		return randomToken(5)
+	})
+	if err != nil {
+		return hovel.StepPrepareResult{}, err
+	}
+	pipeName, err := preparedString(req.ExistingPreparedValues, "pipe_name", func() (string, error) {
+		return randomToken(6)
+	})
+	if err != nil {
+		return hovel.StepPrepareResult{}, err
+	}
+
+	return hovel.StepPrepareResult{
+		PlannedOutputs: []hovel.Capability{
+			{
+				ID:             "cap_payload_instance_" + pipeName,
+				Type:           hovel.CapabilityPayloadInstance,
+				SchemaVersion:  "v1",
+				State:          "planned",
+				ProducerStepID: req.StepID,
+				Attributes: map[string]any{
+					"provider":     payloadName,
+					"transport":    smbNamedPipe,
+					"staged_path":  stagedPath,
+					"service_name": serviceName,
+				},
+			},
+			{
+				ID:             "cap_endpoint_smb_pipe_" + pipeName,
+				Type:           hovel.CapabilityTransport,
+				SchemaVersion:  "v1",
+				State:          "planned",
+				ProducerStepID: req.StepID,
+				Attributes: map[string]any{
+					"kind":      "smb-pipe",
+					"pipe_name": pipeName,
+				},
+			},
+			{
+				ID:             "cap_cleanup_" + serviceName,
+				Type:           hovel.CapabilityCleanupHandle,
+				SchemaVersion:  "v1",
+				State:          "planned",
+				ProducerStepID: req.StepID,
+				Attributes: map[string]any{
+					"owner":        payloadName,
+					"staged_path":  stagedPath,
+					"service_name": serviceName,
+				},
+			},
+		},
+		PreparedValues: map[string]hovel.PreparedValue{
+			"staged_path":  {Value: stagedPath, Editable: true},
+			"service_name": {Value: serviceName, Editable: true},
+			"pipe_name":    {Value: pipeName, Editable: true},
+		},
+		OperatorSummary: hovel.OperatorSummary{
+			TargetSideArtifacts: []string{
+				stagedPath,
+				"service " + serviceName,
+				`\\.\pipe\` + pipeName,
+			},
+		},
+	}, nil
+}
+
+func preparedString(values map[string]hovel.PreparedValue, key string, generate func() (string, error)) (string, error) {
+	if values != nil {
+		if existing, ok := values[key]; ok {
+			if text, ok := existing.Value.(string); ok && text != "" {
+				return text, nil
+			}
+		}
+	}
+	return generate()
+}
+
+func randomToken(byteCount int) (string, error) {
+	buf := make([]byte, byteCount)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 func (Provider) ExecuteStep(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {

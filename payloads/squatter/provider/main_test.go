@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
@@ -81,6 +82,67 @@ func TestProviderReportsStepContracts(t *testing.T) {
 	install := byID["squatter.install_smb"]
 	if got := install.Prepare.Materializes; len(got) != 3 || got[0] != "staged_path" || got[1] != "service_name" || got[2] != "pipe_name" {
 		t.Fatalf("install_smb materializes = %#v", got)
+	}
+}
+
+func TestProviderPrepareSMBInstallMaterializesNeutralValues(t *testing.T) {
+	prepared, err := newProvider().PrepareStep(hovel.StepPrepareRequest{
+		StepID: "squatter.install_smb",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"staged_path", "service_name", "pipe_name"} {
+		value, ok := prepared.PreparedValues[key]
+		if !ok {
+			t.Fatalf("missing prepared value %s in %#v", key, prepared.PreparedValues)
+		}
+		text, ok := value.Value.(string)
+		if !ok || text == "" {
+			t.Fatalf("prepared value %s = %#v, want string", key, value.Value)
+		}
+		if strings.Contains(strings.ToLower(text), "hovel") || strings.Contains(strings.ToLower(text), "squatter") {
+			t.Fatalf("prepared value %s contains tool marker: %q", key, text)
+		}
+	}
+	stagedPath := prepared.PreparedValues["staged_path"].Value.(string)
+	if !strings.HasPrefix(stagedPath, `C:\Windows\Temp\`) || !strings.HasSuffix(stagedPath, ".exe") {
+		t.Fatalf("staged path = %q", stagedPath)
+	}
+	if len(prepared.PlannedOutputs) != 3 {
+		t.Fatalf("planned outputs = %#v, want payload instance, endpoint, cleanup", prepared.PlannedOutputs)
+	}
+	if prepared.PlannedOutputs[0].Type != hovel.CapabilityPayloadInstance || prepared.PlannedOutputs[0].State != "planned" {
+		t.Fatalf("payload instance = %#v", prepared.PlannedOutputs[0])
+	}
+	if prepared.PlannedOutputs[1].Type != hovel.CapabilityTransport || prepared.PlannedOutputs[1].Attributes["kind"] != "smb-pipe" {
+		t.Fatalf("transport endpoint = %#v", prepared.PlannedOutputs[1])
+	}
+	if prepared.PlannedOutputs[2].Type != hovel.CapabilityCleanupHandle {
+		t.Fatalf("cleanup handle = %#v", prepared.PlannedOutputs[2])
+	}
+}
+
+func TestProviderPreparePreservesExistingPreparedValues(t *testing.T) {
+	prepared, err := newProvider().PrepareStep(hovel.StepPrepareRequest{
+		StepID: "squatter.install_smb",
+		ExistingPreparedValues: map[string]hovel.PreparedValue{
+			"staged_path":  {Value: `C:\Windows\Temp\abc123.exe`, Editable: true},
+			"service_name": {Value: "svc123", Editable: true},
+			"pipe_name":    {Value: "pipe123", Editable: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := prepared.PreparedValues["staged_path"].Value; got != `C:\Windows\Temp\abc123.exe` {
+		t.Fatalf("staged_path = %#v", got)
+	}
+	if got := prepared.PreparedValues["service_name"].Value; got != "svc123" {
+		t.Fatalf("service_name = %#v", got)
+	}
+	if got := prepared.PreparedValues["pipe_name"].Value; got != "pipe123" {
+		t.Fatalf("pipe_name = %#v", got)
 	}
 }
 

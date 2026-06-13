@@ -261,6 +261,127 @@ while True:
 	}
 }
 
+func TestRunnerRejectsMalformedStepContracts(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "bad-stepper",
+            "version": "v0.0.0-test",
+            "moduleType": "payload_provider"
+        }})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"steps": [{
+            "id": "squatter.connect_smb",
+            "kind": "session.connector",
+            "requires": [{"schemaVersion": "v1"}]
+        }]}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+
+	_, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+	if err == nil || !strings.Contains(err.Error(), "step contract invalid: squatter.connect_smb: requirement 1 type is required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunnerCallsStepLifecycleMethods(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    params = request.get("params") or {}
+    if method == "step.prepare":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "plannedOutputs": [{
+                "id": "cap_credential_6mb8pq",
+                "type": "CredentialCapability",
+                "schemaVersion": "v1",
+                "state": "planned",
+                "producerStepId": params["stepId"],
+                "attributes": {
+                    "protocol": "smb",
+                    "username": "m7q4z92d",
+                    "password": "plain-high-entropy-password",
+                    "sensitive": True
+                }
+            }],
+            "preparedValues": {
+                "password": {"value": "plain-high-entropy-password", "editable": True}
+            }
+        }})
+    elif method == "step.execute":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "status": "succeeded",
+            "capabilities": [{
+                "id": "cap_session_q8m2v4",
+                "type": "SessionRef",
+                "schemaVersion": "v1",
+                "state": "connected",
+                "producerStepId": params["stepId"]
+            }]
+        }})
+    elif method == "step.cleanup":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "cleanup_verified"}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	runner := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}
+
+	prepared, err := runner.PrepareStep(context.Background(), StepCallRequest{
+		ModuleID: "broken",
+		Params: map[string]any{
+			"preparedPlanId": "prep-1",
+			"stepId":         "windows.credential.create_local_admin",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := prepared["preparedValues"].(map[string]any)
+	password := values["password"].(map[string]any)
+	if password["value"] != "plain-high-entropy-password" {
+		t.Fatalf("prepared password = %#v", password)
+	}
+
+	executed, err := runner.ExecuteStep(context.Background(), StepCallRequest{
+		ModuleID: "broken",
+		Params:   map[string]any{"runId": "run-1", "stepId": "squatter.connect_smb"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executed["status"] != "succeeded" {
+		t.Fatalf("execute result = %#v", executed)
+	}
+
+	cleanup, err := runner.CleanupStep(context.Background(), StepCallRequest{
+		ModuleID: "broken",
+		Params:   map[string]any{"runId": "run-1", "stepId": "squatter.cleanup_smb", "cleanupHandleId": "cap_cleanup_74m2wq"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleanup["status"] != "cleanup_verified" {
+		t.Fatalf("cleanup result = %#v", cleanup)
+	}
+}
+
 func TestRunnerLaunchesEveryBuiltInMockModule(t *testing.T) {
 	for _, moduleID := range []string{"mock-survey", "mock-exploit", "mock-exploit-session"} {
 		t.Run(moduleID, func(t *testing.T) {

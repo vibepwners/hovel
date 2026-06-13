@@ -190,6 +190,124 @@ func TestCatalogValidationAcceptsCompleteConfig(t *testing.T) {
 	}
 }
 
+func TestValidateStepContractsReportsMalformedContracts(t *testing.T) {
+	module := Module{
+		ID:      "bad-provider",
+		Enabled: true,
+		StepContracts: StepContractSet{Steps: []StepContract{
+			{
+				Kind: "payload.install",
+				Requires: []CapabilityRequirement{{
+					Type:          CapabilityCredential,
+					SchemaVersion: "v1",
+				}},
+			},
+			{
+				ID:   "squatter.connect_smb",
+				Kind: "session.connector",
+				Requires: []CapabilityRequirement{{
+					SchemaVersion: "v1",
+				}},
+				Produces: []CapabilityRequirement{{
+					Type: CapabilitySessionRef,
+				}},
+			},
+		}},
+	}
+
+	issues := ValidateStepContracts(module)
+	want := []StepContractIssue{
+		{ModuleID: "bad-provider", StepID: "", Message: "step id is required"},
+		{ModuleID: "bad-provider", StepID: "squatter.connect_smb", Message: "requirement 1 type is required"},
+		{ModuleID: "bad-provider", StepID: "squatter.connect_smb", Message: "produced capability 1 schemaVersion is required"},
+	}
+	if !reflect.DeepEqual(issues, want) {
+		t.Fatalf("issues = %#v, want %#v", issues, want)
+	}
+}
+
+func TestValidateStepContractsAcceptsLegacyEmptyContracts(t *testing.T) {
+	if issues := ValidateStepContracts(Module{ID: "legacy"}); len(issues) != 0 {
+		t.Fatalf("legacy issues = %#v, want none", issues)
+	}
+}
+
+func TestCapabilitySatisfiesRequirementMatchesTypeAttributesAndState(t *testing.T) {
+	capability := Capability{
+		Type:  CapabilityCredential,
+		State: "active",
+		Attributes: map[string]any{
+			"protocol":  "smb",
+			"principal": "local",
+		},
+	}
+	requirement := CapabilityRequirement{
+		Type:       CapabilityCredential,
+		Attributes: map[string]any{"protocol": "smb"},
+		States:     []string{"active"},
+	}
+	if !CapabilitySatisfiesRequirement(capability, requirement) {
+		t.Fatal("capability should satisfy requirement")
+	}
+
+	requirement.Type = CapabilityPayloadInstance
+	if CapabilitySatisfiesRequirement(capability, requirement) {
+		t.Fatal("different type should not satisfy requirement")
+	}
+
+	requirement.Type = CapabilityCredential
+	requirement.Attributes = map[string]any{"protocol": "ssh"}
+	if CapabilitySatisfiesRequirement(capability, requirement) {
+		t.Fatal("different attribute should not satisfy requirement")
+	}
+
+	requirement.Attributes = map[string]any{"protocol": "smb"}
+	requirement.States = []string{"planned"}
+	if CapabilitySatisfiesRequirement(capability, requirement) {
+		t.Fatal("disallowed state should not satisfy requirement")
+	}
+}
+
+func TestCapabilitySatisfiesRequirementAllowsUnconstrainedState(t *testing.T) {
+	if !CapabilitySatisfiesRequirement(
+		Capability{Type: CapabilityTransport, State: "planned", Attributes: map[string]any{"kind": "smb-pipe"}},
+		CapabilityRequirement{Type: CapabilityTransport, Attributes: map[string]any{"kind": "smb-pipe"}},
+	) {
+		t.Fatal("missing state requirement should allow any state")
+	}
+}
+
+func TestFindSatisfyingCapabilityReturnsFirstMatch(t *testing.T) {
+	capabilities := []Capability{
+		{ID: "tcp", Type: CapabilityTransport, State: "planned", Attributes: map[string]any{"kind": "tcp-bind"}},
+		{ID: "smb-1", Type: CapabilityTransport, State: "planned", Attributes: map[string]any{"kind": "smb-pipe"}},
+		{ID: "smb-2", Type: CapabilityTransport, State: "active", Attributes: map[string]any{"kind": "smb-pipe"}},
+	}
+
+	capability, ok := FindSatisfyingCapability(
+		CapabilityRequirement{
+			Type:       CapabilityTransport,
+			Attributes: map[string]any{"kind": "smb-pipe"},
+			States:     []string{"planned"},
+		},
+		capabilities,
+	)
+	if !ok {
+		t.Fatal("expected matching capability")
+	}
+	if capability.ID != "smb-1" {
+		t.Fatalf("capability id = %q, want smb-1", capability.ID)
+	}
+
+	_, ok = FindSatisfyingCapability(
+		CapabilityRequirement{Type: CapabilityCredential, Attributes: map[string]any{"protocol": "smb"}},
+		capabilities,
+	)
+	if ok {
+		t.Fatal("unexpected credential match")
+	}
+}
+
 func exampleCatalog() Catalog {
 	return New(
 		Module{

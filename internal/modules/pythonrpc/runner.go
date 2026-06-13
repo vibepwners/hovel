@@ -58,6 +58,11 @@ type Runner struct {
 	Sessions   *SessionBroker
 }
 
+type StepCallRequest struct {
+	ModuleID string
+	Params   map[string]any
+}
+
 func ConfiguredCatalog(ctx context.Context) (modulecatalog.Catalog, error) {
 	return Runner{}.Catalog(ctx)
 }
@@ -134,7 +139,54 @@ func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Mod
 	if err != nil {
 		return modulecatalog.Module{}, err
 	}
+	if issues := modulecatalog.ValidateStepContracts(module); len(issues) > 0 {
+		return modulecatalog.Module{}, fmt.Errorf("step contract invalid: %s", formatStepContractIssue(issues[0]))
+	}
 	return module, nil
+}
+
+func (r Runner) PrepareStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
+	return r.callStep(ctx, request, "step.prepare", "module failed while preparing step", "module step prepare failed")
+}
+
+func (r Runner) ExecuteStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
+	return r.callStep(ctx, request, "step.execute", "module failed while executing step", "module step execute failed")
+}
+
+func (r Runner) CleanupStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
+	return r.callStep(ctx, request, "step.cleanup", "module failed while cleaning up step", "module step cleanup failed")
+}
+
+func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, summary, prefix string) (map[string]any, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	process, err := r.start(ctx, request.ModuleID)
+	if err != nil {
+		return nil, err
+	}
+	defer process.killAndWait()
+
+	result, err := process.client.call(ctx, method, request.Params)
+	if err != nil {
+		return nil, moduleFailure(summary, prefix, err, process.stderr.String())
+	}
+	_, _ = process.client.call(context.Background(), "shutdown", nil)
+	if err := process.wait(); err != nil {
+		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
+	}
+	return result, nil
+}
+
+func formatStepContractIssue(issue modulecatalog.StepContractIssue) string {
+	if issue.StepID == "" {
+		return issue.Message
+	}
+	return issue.StepID + ": " + issue.Message
 }
 
 func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error) {
