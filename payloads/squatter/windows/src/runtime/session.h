@@ -22,28 +22,29 @@
 #ifndef SQ_MUX_SESSION_H
 #define SQ_MUX_SESSION_H
 
+#include "base/win.h"
 #include "runtime/channel.h"
 #include "runtime/module.h"
-#include "base/win.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-typedef struct sq_session sq_session;
+        typedef struct sq_session sq_session;
 
-/* Start a session over `ch` (ownership transferred) dispatching to `modules`
- * (borrowed; must outlive the session). The reader thread starts immediately.
- * Returns NULL on failure (in which case the caller still owns `ch`). */
-sq_session *sq_session_create(sq_channel *ch, const sq_module_table *modules);
+        /* Start a session over `ch` (ownership transferred) dispatching to `modules`
+         * (borrowed; must outlive the session). The reader thread starts immediately.
+         * Returns NULL on failure (in which case the caller still owns `ch`). */
+        sq_session *sq_session_create(sq_channel *ch, const sq_module_table *modules);
 
-/* Stop the session: close the connection, end every module and stream, join all
- * threads, and free everything. Tolerates NULL. */
-void sq_session_destroy(sq_session *s);
+        /* Stop the session: close the connection, end every module and stream, join all
+         * threads, and free everything. Tolerates NULL. */
+        void sq_session_destroy(sq_session *s);
 
-/* Nonblocking completion check. True once the peer disconnected or the reader
- * hit a protocol/read error; the caller may then destroy the session. */
-int sq_session_done(sq_session *s);
+        /* Nonblocking completion check. True once the peer disconnected or the reader
+         * hit a protocol/read error; the caller may then destroy the session. */
+        int sq_session_done(sq_session *s);
 
 #ifdef __cplusplus
 } /* extern "C" */

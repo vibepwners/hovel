@@ -28,23 +28,25 @@
 #include "base/win.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-enum {
-    SQ_XFER_CHUNK = 32768,                 /* file bytes per message      */
-    SQ_XFER_MSG_MAX = 1 + SQ_XFER_CHUNK    /* tag byte + chunk            */
-};
+        enum
+        {
+                SQ_XFER_CHUNK = 32768,              /* file bytes per message      */
+                SQ_XFER_MSG_MAX = 1 + SQ_XFER_CHUNK /* tag byte + chunk            */
+        };
 
 #define SQ_XFER_STAT ((BYTE)'S')
 #define SQ_XFER_DATA ((BYTE)'D')
-#define SQ_XFER_EOF  ((BYTE)'E')
+#define SQ_XFER_EOF ((BYTE)'E')
 
-/* Send a one-line status message (the tag is prepended). */
-BOOL sq_xfer_send_stat(HANDLE pipe, const char *text);
+        /* Send a one-line status message (the tag is prepended). */
+        BOOL sq_xfer_send_stat(HANDLE pipe, const char *text);
 
-/* Send the end-of-data marker. */
-BOOL sq_xfer_send_eof(HANDLE pipe);
+        /* Send the end-of-data marker. */
+        BOOL sq_xfer_send_eof(HANDLE pipe);
 
 #ifdef __cplusplus
 } /* extern "C" */

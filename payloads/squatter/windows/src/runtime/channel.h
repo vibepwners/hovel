@@ -11,26 +11,27 @@
 #include "base/win.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-typedef struct sq_channel sq_channel; /* opaque */
+        typedef struct sq_channel sq_channel; /* opaque */
 
-/* Wrap a connected socket / pipe. The channel takes ownership and closes the
- * underlying handle in sq_channel_free. Returns NULL on allocation failure. */
-sq_channel *sq_channel_from_socket(SOCKET s);
-sq_channel *sq_channel_from_handle(HANDLE h);
+        /* Wrap a connected socket / pipe. The channel takes ownership and closes the
+         * underlying handle in sq_channel_free. Returns NULL on allocation failure. */
+        sq_channel *sq_channel_from_socket(SOCKET s);
+        sq_channel *sq_channel_from_handle(HANDLE h);
 
-/* Read up to `cap` bytes. Returns >0 bytes read, 0 on orderly EOF, -1 on error. */
-int sq_channel_read_some(sq_channel *ch, BYTE *buf, UINT32 cap);
+        /* Read up to `cap` bytes. Returns >0 bytes read, 0 on orderly EOF, -1 on error. */
+        int sq_channel_read_some(sq_channel *ch, BYTE *buf, UINT32 cap);
 
-/* Write exactly `len` bytes (looping as needed). Returns TRUE on success. */
-BOOL sq_channel_write_all(sq_channel *ch, const BYTE *buf, UINT32 len);
+        /* Write exactly `len` bytes (looping as needed). Returns TRUE on success. */
+        BOOL sq_channel_write_all(sq_channel *ch, const BYTE *buf, UINT32 len);
 
-/* Shut the channel down so a blocked reader unblocks (used to stop a session). */
-void sq_channel_close(sq_channel *ch);
+        /* Shut the channel down so a blocked reader unblocks (used to stop a session). */
+        void sq_channel_close(sq_channel *ch);
 
-void sq_channel_free(sq_channel *ch);
+        void sq_channel_free(sq_channel *ch);
 
 #ifdef __cplusplus
 } /* extern "C" */

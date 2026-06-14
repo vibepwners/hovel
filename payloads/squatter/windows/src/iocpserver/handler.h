@@ -23,13 +23,12 @@
 /* Distinct from any valid byte count (which is bounded by out_cap << SIZE_MAX). */
 #define SQ_HANDLER_CLOSE ((size_t)-1)
 
-typedef size_t (*sq_handler_fn)(void *user,
-                                const unsigned char *in, size_t in_len,
-                                unsigned char *out, size_t out_cap);
+typedef size_t (*sq_handler_fn)(void *user, const unsigned char *in, size_t in_len, unsigned char *out, size_t out_cap);
 
-typedef struct sq_handler {
-    sq_handler_fn on_recv;
-    void *user; /* opaque context passed back to on_recv; may be NULL */
+typedef struct sq_handler
+{
+        sq_handler_fn on_recv;
+        void *user; /* opaque context passed back to on_recv; may be NULL */
 } sq_handler;
 
 #endif /* SQ_HANDLER_H */

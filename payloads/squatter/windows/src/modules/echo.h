@@ -14,10 +14,11 @@
 #include "runtime/module.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-int sq_echo_module_main(HANDLE input, HANDLE output, int argc, wchar_t **argv);
+        int sq_echo_module_main(HANDLE input, HANDLE output, int argc, wchar_t **argv);
 
 #ifdef __cplusplus
 } /* extern "C" */

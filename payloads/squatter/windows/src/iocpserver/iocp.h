@@ -18,22 +18,24 @@
 #ifndef SQ_IOCP_H
 #define SQ_IOCP_H
 
-#include "iocpserver/result.h"
 #include "base/win.h"
+#include "iocpserver/result.h"
 
-typedef enum sq_iocp_outcome {
-    SQ_IOCP_COMPLETION = 0, /* a packet was dequeued (see op_failed)        */
-    SQ_IOCP_TIMEOUT,        /* no packet within the timeout                 */
-    SQ_IOCP_CLOSED          /* the port was closed; stop the worker         */
+typedef enum sq_iocp_outcome
+{
+        SQ_IOCP_COMPLETION = 0, /* a packet was dequeued (see op_failed)        */
+        SQ_IOCP_TIMEOUT,        /* no packet within the timeout                 */
+        SQ_IOCP_CLOSED          /* the port was closed; stop the worker         */
 } sq_iocp_outcome;
 
-typedef struct sq_iocp_event {
-    sq_iocp_outcome outcome;
-    OVERLAPPED *overlapped; /* the op's OVERLAPPED (valid iff COMPLETION)   */
-    ULONG_PTR   key;        /* the completion key set at association time   */
-    DWORD       bytes;      /* bytes transferred (valid iff COMPLETION)     */
-    int         op_failed;  /* nonzero if the dequeued op itself failed     */
-    DWORD       op_error;   /* the op's error (valid iff op_failed)         */
+typedef struct sq_iocp_event
+{
+        sq_iocp_outcome outcome;
+        OVERLAPPED *overlapped; /* the op's OVERLAPPED (valid iff COMPLETION)   */
+        ULONG_PTR key;          /* the completion key set at association time   */
+        DWORD bytes;            /* bytes transferred (valid iff COMPLETION)     */
+        int op_failed;          /* nonzero if the dequeued op itself failed     */
+        DWORD op_error;         /* the op's error (valid iff op_failed)         */
 } sq_iocp_event;
 
 /* Create a completion port. `concurrency` is the max number of threads the
@@ -45,8 +47,7 @@ sq_status sq_iocp_create(DWORD concurrency, HANDLE *out);
 sq_status sq_iocp_associate(HANDLE port, HANDLE device, ULONG_PTR key);
 
 /* Hand-post a packet, e.g. a wake-up for shutdown. */
-sq_status sq_iocp_post(HANDLE port, DWORD bytes, ULONG_PTR key,
-                       OVERLAPPED *overlapped);
+sq_status sq_iocp_post(HANDLE port, DWORD bytes, ULONG_PTR key, OVERLAPPED *overlapped);
 
 /* Dequeue one packet (or time out). Never returns a raw failure for the normal
  * I/O-failed case: that is reported as outcome==COMPLETION with op_failed set,

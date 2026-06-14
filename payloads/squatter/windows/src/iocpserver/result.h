@@ -13,13 +13,14 @@
 #ifndef SQ_RESULT_H
 #define SQ_RESULT_H
 
-typedef enum sq_status {
-    SQ_OK = 0,          /* operation succeeded                                 */
-    SQ_ERR_PARAM,       /* a precondition on an argument was violated          */
-    SQ_ERR_NOMEM,       /* allocation failed                                   */
-    SQ_ERR_SYSTEM,      /* an OS/Winsock primitive failed (detail in the log)  */
-    SQ_ERR_ADDRESS,     /* an address/port string could not be parsed          */
-    SQ_ERR_STATE        /* the object was used outside its valid lifecycle     */
+typedef enum sq_status
+{
+        SQ_OK = 0,      /* operation succeeded                                 */
+        SQ_ERR_PARAM,   /* a precondition on an argument was violated          */
+        SQ_ERR_NOMEM,   /* allocation failed                                   */
+        SQ_ERR_SYSTEM,  /* an OS/Winsock primitive failed (detail in the log)  */
+        SQ_ERR_ADDRESS, /* an address/port string could not be parsed          */
+        SQ_ERR_STATE    /* the object was used outside its valid lifecycle     */
 } sq_status;
 
 /* Human-readable name for a status, for logging. Never returns NULL and never

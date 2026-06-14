@@ -19,15 +19,15 @@
 #define SQLOG_SUBSYSTEMS_H
 
 #ifndef SQLOG_SUBSYSTEM_TABLE
-#define SQLOG_SUBSYSTEM_TABLE(X)  \
-    X(GENERAL, "general")         \
-    X(NET,     "net")             \
-    X(IOCP,    "iocp")            \
-    X(SERVER,  "server")          \
-    X(HANDLER, "handler")         \
-    X(UI,      "ui")              \
-    X(MUX,     "mux")             \
-    X(TEST,    "test")
+#define SQLOG_SUBSYSTEM_TABLE(X)                                                                                       \
+        X(GENERAL, "general")                                                                                          \
+        X(NET, "net")                                                                                                  \
+        X(IOCP, "iocp")                                                                                                \
+        X(SERVER, "server")                                                                                            \
+        X(HANDLER, "handler")                                                                                          \
+        X(UI, "ui")                                                                                                    \
+        X(MUX, "mux")                                                                                                  \
+        X(TEST, "test")
 #endif
 
 #endif /* SQLOG_SUBSYSTEMS_H */

@@ -35,14 +35,24 @@ void sqlog_window_write(int level, const wchar_t *line);
 
 #else /* !SQLOG_WINDOW: inline no-ops, zero footprint */
 
-static inline void sqlog_window_start(void) { }
-static inline void sqlog_window_stop(void) { }
-static inline void sqlog_window_set_level(int level) { (void)level; }
-static inline int  sqlog_window_active(void) { return 0; }
+static inline void sqlog_window_start(void)
+{
+}
+static inline void sqlog_window_stop(void)
+{
+}
+static inline void sqlog_window_set_level(int level)
+{
+        (void)level;
+}
+static inline int sqlog_window_active(void)
+{
+        return 0;
+}
 static inline void sqlog_window_write(int level, const wchar_t *line)
 {
-    (void)level;
-    (void)line;
+        (void)level;
+        (void)line;
 }
 
 #endif /* SQLOG_WINDOW */

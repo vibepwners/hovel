@@ -1,130 +1,256 @@
 #include "nocrt/api.h"
 
-#define API0(ret, dll, name) \
-	typedef ret (WINAPI *name##_fn)(void); \
-	ret WINAPI name(void); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(void) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(); \
-	}
+#define API0(ret, dll, name)                                                                                           \
+        typedef ret(WINAPI *name##_fn)(void);                                                                          \
+        ret WINAPI name(void);                                                                                         \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(void)                                                                                          \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr();                                                                                   \
+        }
 
-#define API0V(dll, name) \
-	typedef void (WINAPI *name##_fn)(void); \
-	void WINAPI name(void); \
-	static name##_fn name##_ptr; \
-	void WINAPI name(void) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		name##_ptr(); \
-	}
+#define API0V(dll, name)                                                                                               \
+        typedef void(WINAPI * name##_fn)(void);                                                                        \
+        void WINAPI name(void);                                                                                        \
+        static name##_fn name##_ptr;                                                                                   \
+        void WINAPI name(void)                                                                                         \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                name##_ptr();                                                                                          \
+        }
 
-#define API1(ret, dll, name, t1) \
-	typedef ret (WINAPI *name##_fn)(t1); \
-	ret WINAPI name(t1); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1); \
-	}
+#define API1(ret, dll, name, t1)                                                                                       \
+        typedef ret(WINAPI *name##_fn)(t1);                                                                            \
+        ret WINAPI name(t1);                                                                                           \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1)                                                                                         \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1);                                                                                 \
+        }
 
-#define API1V(dll, name, t1) \
-	typedef void (WINAPI *name##_fn)(t1); \
-	void WINAPI name(t1); \
-	static name##_fn name##_ptr; \
-	void WINAPI name(t1 a1) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		name##_ptr(a1); \
-	}
+#define API1V(dll, name, t1)                                                                                           \
+        typedef void(WINAPI * name##_fn)(t1);                                                                          \
+        void WINAPI name(t1);                                                                                          \
+        static name##_fn name##_ptr;                                                                                   \
+        void WINAPI name(t1 a1)                                                                                        \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                name##_ptr(a1);                                                                                        \
+        }
 
-#define API2(ret, dll, name, t1, t2) \
-	typedef ret (WINAPI *name##_fn)(t1, t2); \
-	ret WINAPI name(t1, t2); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1, t2 a2) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1, a2); \
-	}
+#define API2(ret, dll, name, t1, t2)                                                                                   \
+        typedef ret(WINAPI *name##_fn)(t1, t2);                                                                        \
+        ret WINAPI name(t1, t2);                                                                                       \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2)                                                                                  \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2);                                                                             \
+        }
 
-#define API3(ret, dll, name, t1, t2, t3) \
-	typedef ret (WINAPI *name##_fn)(t1, t2, t3); \
-	ret WINAPI name(t1, t2, t3); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1, t2 a2, t3 a3) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1, a2, a3); \
-	}
+#define API3(ret, dll, name, t1, t2, t3)                                                                               \
+        typedef ret(WINAPI *name##_fn)(t1, t2, t3);                                                                    \
+        ret WINAPI name(t1, t2, t3);                                                                                   \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2, t3 a3)                                                                           \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2, a3);                                                                         \
+        }
 
-#define API4(ret, dll, name, t1, t2, t3, t4) \
-	typedef ret (WINAPI *name##_fn)(t1, t2, t3, t4); \
-	ret WINAPI name(t1, t2, t3, t4); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1, a2, a3, a4); \
-	}
+#define API4(ret, dll, name, t1, t2, t3, t4)                                                                           \
+        typedef ret(WINAPI *name##_fn)(t1, t2, t3, t4);                                                                \
+        ret WINAPI name(t1, t2, t3, t4);                                                                               \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4)                                                                    \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2, a3, a4);                                                                     \
+        }
 
-#define API5(ret, dll, name, t1, t2, t3, t4, t5) \
-	typedef ret (WINAPI *name##_fn)(t1, t2, t3, t4, t5); \
-	ret WINAPI name(t1, t2, t3, t4, t5); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1, a2, a3, a4, a5); \
-	}
+#define API5(ret, dll, name, t1, t2, t3, t4, t5)                                                                       \
+        typedef ret(WINAPI *name##_fn)(t1, t2, t3, t4, t5);                                                            \
+        ret WINAPI name(t1, t2, t3, t4, t5);                                                                           \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5)                                                             \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2, a3, a4, a5);                                                                 \
+        }
 
-#define API6(ret, dll, name, t1, t2, t3, t4, t5, t6) \
-	typedef ret (WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6); \
-	ret WINAPI name(t1, t2, t3, t4, t5, t6); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1, a2, a3, a4, a5, a6); \
-	}
+#define API6(ret, dll, name, t1, t2, t3, t4, t5, t6)                                                                   \
+        typedef ret(WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6);                                                        \
+        ret WINAPI name(t1, t2, t3, t4, t5, t6);                                                                       \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6)                                                      \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2, a3, a4, a5, a6);                                                             \
+        }
 
-#define API7(ret, dll, name, t1, t2, t3, t4, t5, t6, t7) \
-	typedef ret (WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7); \
-	ret WINAPI name(t1, t2, t3, t4, t5, t6, t7); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1, a2, a3, a4, a5, a6, a7); \
-	}
+#define API7(ret, dll, name, t1, t2, t3, t4, t5, t6, t7)                                                               \
+        typedef ret(WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7);                                                    \
+        ret WINAPI name(t1, t2, t3, t4, t5, t6, t7);                                                                   \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7)                                               \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2, a3, a4, a5, a6, a7);                                                         \
+        }
 
-#define API8(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8) \
-	typedef ret (WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8); \
-	ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7, t8 a8) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8); \
-	}
+#define API8(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8)                                                           \
+        typedef ret(WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8);                                                \
+        ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8);                                                               \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7, t8 a8)                                        \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8);                                                     \
+        }
 
-#define API9(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8, t9) \
-	typedef ret (WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8, t9); \
-	ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8, t9); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7, t8 a8, t9 a9) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8, a9); \
-	}
+#define API9(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8, t9)                                                       \
+        typedef ret(WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8, t9);                                            \
+        ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8, t9);                                                           \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7, t8 a8, t9 a9)                                 \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8, a9);                                                 \
+        }
 
-#define API10(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) \
-	typedef ret (WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10); \
-	ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7, t8 a8, t9 a9, t10 a10) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10); \
-	}
+#define API10(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10)                                                 \
+        typedef ret(WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10);                                       \
+        ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10);                                                      \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7, t8 a8, t9 a9, t10 a10)                        \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);                                            \
+        }
 
-#define API12(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12) \
-	typedef ret (WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12); \
-	ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12); \
-	static name##_fn name##_ptr; \
-	ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7, t8 a8, t9 a9, t10 a10, t11 a11, t12 a12) { \
-		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
-		return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12); \
-	}
+#define API12(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12)                                       \
+        typedef ret(WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12);                             \
+        ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12);                                            \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7, t8 a8, t9 a9, t10 a10, t11 a11, t12 a12)      \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);                                  \
+        }
 
 API1(BOOL, "kernel32.dll", CloseHandle, HANDLE)
 API2(BOOL, "kernel32.dll", ConnectNamedPipe, HANDLE, LPOVERLAPPED)
@@ -132,8 +258,10 @@ API4(HANDLE, "kernel32.dll", CreateEventW, LPSECURITY_ATTRIBUTES, BOOL, BOOL, LP
 API7(HANDLE, "kernel32.dll", CreateFileW, LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE)
 API8(HANDLE, "kernel32.dll", CreateNamedPipeW, LPCWSTR, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD, LPSECURITY_ATTRIBUTES)
 API4(BOOL, "kernel32.dll", CreatePipe, HANDLE *, HANDLE *, LPSECURITY_ATTRIBUTES, DWORD)
-API10(BOOL, "kernel32.dll", CreateProcessW, LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD, LPVOID, LPCWSTR, STARTUPINFOW *, PROCESS_INFORMATION *)
-API6(HANDLE, "kernel32.dll", CreateThread, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD)
+API10(BOOL, "kernel32.dll", CreateProcessW, LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD,
+      LPVOID, LPCWSTR, STARTUPINFOW *, PROCESS_INFORMATION *)
+API6(HANDLE, "kernel32.dll", CreateThread, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD,
+     LPDWORD)
 API2(BOOL, "kernel32.dll", TerminateProcess, HANDLE, UINT)
 API0V("kernel32.dll", DebugBreak)
 API1V("kernel32.dll", DeleteCriticalSection, LPCRITICAL_SECTION)
@@ -197,26 +325,27 @@ API4(LRESULT, "user32.dll", SendMessageW, HWND, UINT, WPARAM, LPARAM)
 API2(BOOL, "user32.dll", SetWindowTextW, HWND, LPCWSTR)
 API1(BOOL, "user32.dll", DestroyWindow, HWND)
 API1(BOOL, "user32.dll", TranslateMessage, const MSG *)
-API12(HWND, "user32.dll", CreateWindowExW, DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE, LPVOID)
+API12(HWND, "user32.dll", CreateWindowExW, DWORD, LPCWSTR, LPCWSTR, DWORD, int, int, int, int, HWND, HMENU, HINSTANCE,
+      LPVOID)
 
 API4(int, "shlwapi.dll", wvnsprintfW, LPWSTR, int, LPCWSTR, va_list)
 int CDECL wnsprintfW(LPWSTR buf, int cap, LPCWSTR fmt, ...);
 int CDECL wnsprintfW(LPWSTR buf, int cap, LPCWSTR fmt, ...)
 {
-	va_list ap;
-	int written = 0;
+        va_list ap;
+        int written = 0;
 
-	va_start(ap, fmt);
-	written = wvnsprintfW(buf, cap, fmt, ap);
-	va_end(ap);
-	return written;
+        va_start(ap, fmt);
+        written = wvnsprintfW(buf, cap, fmt, ap);
+        va_end(ap);
+        return written;
 }
 
 API0(int, "ws2_32.dll", WSACleanup)
 API2(int, "ws2_32.dll", WSAStartup, WORD, WSADATA *)
 API0(int, "ws2_32.dll", WSAGetLastError)
-typedef void (WINAPI *FreeAddrInfoW_fn)(PADDRINFOW);
-typedef int (WINAPI *GetAddrInfoW_fn)(LPCWSTR, LPCWSTR, const ADDRINFOW *, PADDRINFOW *);
+typedef void(WINAPI *FreeAddrInfoW_fn)(PADDRINFOW);
+typedef int(WINAPI *GetAddrInfoW_fn)(LPCWSTR, LPCWSTR, const ADDRINFOW *, PADDRINFOW *);
 static FreeAddrInfoW_fn FreeAddrInfoW_ptr;
 static GetAddrInfoW_fn GetAddrInfoW_ptr;
 static ADDRINFOW fallback_addrinfo;
@@ -227,68 +356,84 @@ int WINAPI GetAddrInfoW(LPCWSTR node, LPCWSTR service, const ADDRINFOW *hints, P
 
 static int parse_port(LPCWSTR service, WORD *out)
 {
-	unsigned long value = 0;
+        unsigned long value = 0;
 
-	if (service == NULL || *service == L'\0') {
-		return 0;
-	}
-	while (*service != L'\0') {
-		if (*service < L'0' || *service > L'9') {
-			return 0;
-		}
-		value = value * 10u + (unsigned long)(*service - L'0');
-		if (value > 65535u) {
-			return 0;
-		}
-		service++;
-	}
-	*out = (WORD)value;
-	return 1;
+        if (service == NULL || *service == L'\0')
+        {
+                return 0;
+        }
+        while (*service != L'\0')
+        {
+                if (*service < L'0' || *service > L'9')
+                {
+                        return 0;
+                }
+                value = value * 10u + (unsigned long)(*service - L'0');
+                if (value > 65535u)
+                {
+                        return 0;
+                }
+                service++;
+        }
+        *out = (WORD)value;
+        return 1;
 }
 
 void WINAPI FreeAddrInfoW(PADDRINFOW result)
 {
-	if (result == &fallback_addrinfo) {
-		return;
-	}
-	if (FreeAddrInfoW_ptr == NULL) {
-		union { void *addr; FreeAddrInfoW_fn fn; } resolved;
-		resolved.addr = sq_try_resolve_api("ws2_32.dll", "FreeAddrInfoW");
-		FreeAddrInfoW_ptr = resolved.fn;
-	}
-	if (FreeAddrInfoW_ptr != NULL) {
-		FreeAddrInfoW_ptr(result);
-	}
+        if (result == &fallback_addrinfo)
+        {
+                return;
+        }
+        if (FreeAddrInfoW_ptr == NULL)
+        {
+                union {
+                        void *addr;
+                        FreeAddrInfoW_fn fn;
+                } resolved;
+                resolved.addr = sq_try_resolve_api("ws2_32.dll", "FreeAddrInfoW");
+                FreeAddrInfoW_ptr = resolved.fn;
+        }
+        if (FreeAddrInfoW_ptr != NULL)
+        {
+                FreeAddrInfoW_ptr(result);
+        }
 }
 
 int WINAPI GetAddrInfoW(LPCWSTR node, LPCWSTR service, const ADDRINFOW *hints, PADDRINFOW *result)
 {
-	WORD port = 0;
+        WORD port = 0;
 
-	if (GetAddrInfoW_ptr == NULL) {
-		union { void *addr; GetAddrInfoW_fn fn; } resolved;
-		resolved.addr = sq_try_resolve_api("ws2_32.dll", "GetAddrInfoW");
-		GetAddrInfoW_ptr = resolved.fn;
-	}
-	if (GetAddrInfoW_ptr != NULL) {
-		return GetAddrInfoW_ptr(node, service, hints, result);
-	}
-	if (node != NULL || result == NULL || !parse_port(service, &port)) {
-		return SQ_EAI_NONAME;
-	}
-	fallback_sockaddr.sin_family = SQ_AF_INET;
-	fallback_sockaddr.sin_port = (unsigned short)((port << 8) | (port >> 8));
-	fallback_sockaddr.sin_addr.S_un.S_addr = 0;
-	fallback_addrinfo.ai_flags = hints != NULL ? hints->ai_flags : 0;
-	fallback_addrinfo.ai_family = SQ_AF_INET;
-	fallback_addrinfo.ai_socktype = hints != NULL ? hints->ai_socktype : SQ_SOCK_STREAM;
-	fallback_addrinfo.ai_protocol = hints != NULL ? hints->ai_protocol : SQ_IPPROTO_TCP;
-	fallback_addrinfo.ai_addrlen = sizeof fallback_sockaddr;
-	fallback_addrinfo.ai_canonname = NULL;
-	fallback_addrinfo.ai_addr = (struct sockaddr *)&fallback_sockaddr;
-	fallback_addrinfo.ai_next = NULL;
-	*result = &fallback_addrinfo;
-	return 0;
+        if (GetAddrInfoW_ptr == NULL)
+        {
+                union {
+                        void *addr;
+                        GetAddrInfoW_fn fn;
+                } resolved;
+                resolved.addr = sq_try_resolve_api("ws2_32.dll", "GetAddrInfoW");
+                GetAddrInfoW_ptr = resolved.fn;
+        }
+        if (GetAddrInfoW_ptr != NULL)
+        {
+                return GetAddrInfoW_ptr(node, service, hints, result);
+        }
+        if (node != NULL || result == NULL || !parse_port(service, &port))
+        {
+                return SQ_EAI_NONAME;
+        }
+        fallback_sockaddr.sin_family = SQ_AF_INET;
+        fallback_sockaddr.sin_port = (unsigned short)((port << 8) | (port >> 8));
+        fallback_sockaddr.sin_addr.S_un.S_addr = 0;
+        fallback_addrinfo.ai_flags = hints != NULL ? hints->ai_flags : 0;
+        fallback_addrinfo.ai_family = SQ_AF_INET;
+        fallback_addrinfo.ai_socktype = hints != NULL ? hints->ai_socktype : SQ_SOCK_STREAM;
+        fallback_addrinfo.ai_protocol = hints != NULL ? hints->ai_protocol : SQ_IPPROTO_TCP;
+        fallback_addrinfo.ai_addrlen = sizeof fallback_sockaddr;
+        fallback_addrinfo.ai_canonname = NULL;
+        fallback_addrinfo.ai_addr = (struct sockaddr *)&fallback_sockaddr;
+        fallback_addrinfo.ai_next = NULL;
+        *result = &fallback_addrinfo;
+        return 0;
 }
 
 API3(SOCKET, "ws2_32.dll", accept, SOCKET, struct sockaddr *, int *)

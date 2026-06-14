@@ -149,10 +149,11 @@ tasks:
 
   fmt:
     aliases: [format]
-    desc: Auto-format the tree (Go source, Gazelle BUILD metadata).
+    desc: Auto-format the tree (Go source, Gazelle BUILD metadata, Squatter C).
     cmds:
       - task: gofmt
       - task: gazelle
+      - task: squatter:format
 
   # --- Individual quality steps (composed by lint/fmt above) --------------
 
@@ -184,9 +185,20 @@ tasks:
   squatter:check:
     desc: Run Squatter C static analysis.
     cmds:
+      - task: squatter:format:check
       - task: squatter:complexity
       - task: squatter:cppcheck
       - task: squatter:clang-tidy
+
+  squatter:format:
+    desc: Format Squatter C sources with clang-format.
+    cmds:
+      - bash tools/lint/format_squatter_c.sh
+
+  squatter:format:check:
+    desc: Check Squatter C formatting with clang-format.
+    cmds:
+      - bash tools/lint/check_squatter_format.sh
 
   squatter:complexity:
     desc: Check Squatter C cyclomatic complexity with lizard (CCN <= 10).

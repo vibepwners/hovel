@@ -19,26 +19,28 @@
 #include "base/win.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-/* argv[0] is the module name; argv[argc] is NULL. Return value is the module's
- * exit status (logged; 0 = success). */
-typedef int (*sq_module_fn)(HANDLE input, HANDLE output, int argc,
-                            wchar_t **argv);
+        /* argv[0] is the module name; argv[argc] is NULL. Return value is the module's
+         * exit status (logged; 0 = success). */
+        typedef int (*sq_module_fn)(HANDLE input, HANDLE output, int argc, wchar_t **argv);
 
-typedef struct sq_module {
-    const char *name;
-    sq_module_fn fn;
-} sq_module;
+        typedef struct sq_module
+        {
+                const char *name;
+                sq_module_fn fn;
+        } sq_module;
 
-typedef struct sq_module_table {
-    const sq_module *modules;
-    int count;
-} sq_module_table;
+        typedef struct sq_module_table
+        {
+                const sq_module *modules;
+                int count;
+        } sq_module_table;
 
-/* Return the function registered under `name`, or NULL if none. */
-sq_module_fn sq_module_lookup(const sq_module_table *table, const char *name);
+        /* Return the function registered under `name`, or NULL if none. */
+        sq_module_fn sq_module_lookup(const sq_module_table *table, const char *name);
 
 #ifdef __cplusplus
 } /* extern "C" */

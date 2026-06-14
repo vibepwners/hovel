@@ -37,23 +37,25 @@
 /* Subsystems: enum + count, generated from the X-macro table.               */
 /* ------------------------------------------------------------------------- */
 
-typedef enum sqlog_subsystem {
+typedef enum sqlog_subsystem
+{
 #define SQLOG__SUB_ENUM(suffix, name) SQLOG_SUB_##suffix,
-    SQLOG_SUBSYSTEM_TABLE(SQLOG__SUB_ENUM)
+        SQLOG_SUBSYSTEM_TABLE(SQLOG__SUB_ENUM)
 #undef SQLOG__SUB_ENUM
-    SQLOG_SUB__COUNT /* not a subsystem; the table size */
+        SQLOG_SUB__COUNT /* not a subsystem; the table size */
 } sqlog_subsystem;
 
 /* ------------------------------------------------------------------------- */
 /* Sinks (for the runtime enable/level API).                                 */
 /* ------------------------------------------------------------------------- */
 
-typedef enum sqlog_sink {
-    SQLOG_SINK_ID_DEBUGGER = 0,
-    SQLOG_SINK_ID_CONSOLE,
-    SQLOG_SINK_ID_FILE,
-    SQLOG_SINK_ID_WINDOW,
-    SQLOG_SINK__COUNT
+typedef enum sqlog_sink
+{
+        SQLOG_SINK_ID_DEBUGGER = 0,
+        SQLOG_SINK_ID_CONSOLE,
+        SQLOG_SINK_ID_FILE,
+        SQLOG_SINK_ID_WINDOW,
+        SQLOG_SINK__COUNT
 } sqlog_sink;
 
 /* ------------------------------------------------------------------------- */
@@ -66,8 +68,8 @@ typedef enum sqlog_sink {
 void sqlog_init(void);
 void sqlog_shutdown(void); /* flushes/closes file + window sinks */
 
-void sqlog_set_level(int level);     /* global runtime threshold (default TRACE) */
-int  sqlog_get_level(void);
+void sqlog_set_level(int level); /* global runtime threshold (default TRACE) */
+int sqlog_get_level(void);
 
 /* Per-subsystem override; pass SQLOG_LEVEL_OFF to silence one subsystem, or -1
  * to clear the override and inherit the global level. */
@@ -77,9 +79,9 @@ void sqlog_set_sink_enabled(sqlog_sink sink, int on);
 void sqlog_set_sink_level(sqlog_sink sink, int level);
 
 /* Enable the file sink, writing (appending) to `path`. Returns 1 on success. */
-int  sqlog_open_file(const char *path);
+int sqlog_open_file(const char *path);
 
-const char *sqlog_level_name(int level);          /* "INFO", clamped/totalized */
+const char *sqlog_level_name(int level); /* "INFO", clamped/totalized */
 const char *sqlog_subsystem_name(sqlog_subsystem sub);
 
 /* The runtime pre-check the macros use; also callable directly. Nonzero if a
@@ -89,12 +91,10 @@ int sqlog_should(int sub, int level);
 /* The emit primitives. Call sites never invoke these directly -- the macros do,
  * injecting file/line/func. `fmt`/`label` are WIDE (L"..."); file/func come from
  * __FILE__/__func__ and stay narrow (printed with %S). */
-void sqlog_emit(int sub, int level, const char *file, int line,
-                const char *func, const wchar_t *fmt, ...);
-void sqlog_emit_sys(int sub, int level, unsigned long err, const char *file,
-                    int line, const char *func, const wchar_t *fmt, ...);
-void sqlog_hexdump(int sub, int level, const char *file, int line,
-                   const char *func, const wchar_t *label,
+void sqlog_emit(int sub, int level, const char *file, int line, const char *func, const wchar_t *fmt, ...);
+void sqlog_emit_sys(int sub, int level, unsigned long err, const char *file, int line, const char *func,
+                    const wchar_t *fmt, ...);
+void sqlog_hexdump(int sub, int level, const char *file, int line, const char *func, const wchar_t *label,
                    const void *data, size_t len);
 
 /* Terminate the process after a FATAL/CHECK. Breaks into an attached debugger
@@ -110,13 +110,14 @@ void sqlog_fatal_abort(void);
 
 /* Active form: runtime-gate, then emit with injected context. The do/while(0)
  * makes it a single statement usable after a bare `if`. */
-#define SQLOG__EMIT(sub, level, ...)                                           \
-    do {                                                                       \
-        if (sqlog_should((int)(sub), (level))) {                               \
-            sqlog_emit((int)(sub), (level), __FILE__, __LINE__, __func__,      \
-                       __VA_ARGS__);                                           \
-        }                                                                      \
-    } while (0)
+#define SQLOG__EMIT(sub, level, ...)                                                                                   \
+        do                                                                                                             \
+        {                                                                                                              \
+                if (sqlog_should((int)(sub), (level)))                                                                 \
+                {                                                                                                      \
+                        sqlog_emit((int)(sub), (level), __FILE__, __LINE__, __func__, __VA_ARGS__);                    \
+                }                                                                                                      \
+        } while (0)
 
 /* Compiled-out form: expands to a statement, evaluates nothing. Arguments are
  * discarded by the preprocessor, so disabled sites cost exactly zero and never
@@ -128,62 +129,64 @@ void sqlog_fatal_abort(void);
  * SQLOG_COMPILED(level), so the gate is the preprocessor, not dead-code
  * elimination -- the strongest form of "compile it out". */
 #if SQLOG_COMPILED(SQLOG_LEVEL_TRACE)
-#  define SQLOG_TRACE(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_TRACE, __VA_ARGS__)
+#define SQLOG_TRACE(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_TRACE, __VA_ARGS__)
 #else
-#  define SQLOG_TRACE(sub, ...) SQLOG__VOID(__VA_ARGS__)
+#define SQLOG_TRACE(sub, ...) SQLOG__VOID(__VA_ARGS__)
 #endif
 
 #if SQLOG_COMPILED(SQLOG_LEVEL_VERBOSE)
-#  define SQLOG_VERBOSE(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_VERBOSE, __VA_ARGS__)
+#define SQLOG_VERBOSE(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_VERBOSE, __VA_ARGS__)
 #else
-#  define SQLOG_VERBOSE(sub, ...) SQLOG__VOID(__VA_ARGS__)
+#define SQLOG_VERBOSE(sub, ...) SQLOG__VOID(__VA_ARGS__)
 #endif
 
 #if SQLOG_COMPILED(SQLOG_LEVEL_DEBUG)
-#  define SQLOG_DEBUG(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_DEBUG, __VA_ARGS__)
+#define SQLOG_DEBUG(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_DEBUG, __VA_ARGS__)
 #else
-#  define SQLOG_DEBUG(sub, ...) SQLOG__VOID(__VA_ARGS__)
+#define SQLOG_DEBUG(sub, ...) SQLOG__VOID(__VA_ARGS__)
 #endif
 
 #if SQLOG_COMPILED(SQLOG_LEVEL_INFO)
-#  define SQLOG_INFO(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_INFO, __VA_ARGS__)
+#define SQLOG_INFO(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_INFO, __VA_ARGS__)
 #else
-#  define SQLOG_INFO(sub, ...) SQLOG__VOID(__VA_ARGS__)
+#define SQLOG_INFO(sub, ...) SQLOG__VOID(__VA_ARGS__)
 #endif
 
 #if SQLOG_COMPILED(SQLOG_LEVEL_WARN)
-#  define SQLOG_WARN(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_WARN, __VA_ARGS__)
+#define SQLOG_WARN(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_WARN, __VA_ARGS__)
 #else
-#  define SQLOG_WARN(sub, ...) SQLOG__VOID(__VA_ARGS__)
+#define SQLOG_WARN(sub, ...) SQLOG__VOID(__VA_ARGS__)
 #endif
 
 #if SQLOG_COMPILED(SQLOG_LEVEL_ERROR)
-#  define SQLOG_ERROR(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_ERROR, __VA_ARGS__)
+#define SQLOG_ERROR(sub, ...) SQLOG__EMIT((sub), SQLOG_LEVEL_ERROR, __VA_ARGS__)
 #else
-#  define SQLOG_ERROR(sub, ...) SQLOG__VOID(__VA_ARGS__)
+#define SQLOG_ERROR(sub, ...) SQLOG__VOID(__VA_ARGS__)
 #endif
 
 /* FATAL: log (if compiled in), then abort. The abort survives even when the
  * message is compiled out, because a fatal condition must still stop the
  * program (toggle with SQLOG_FATAL_ABORTS). */
 #if SQLOG_FATAL_ABORTS
-#  define SQLOG__FATAL_TAIL() sqlog_fatal_abort()
+#define SQLOG__FATAL_TAIL() sqlog_fatal_abort()
 #else
-#  define SQLOG__FATAL_TAIL() ((void)0)
+#define SQLOG__FATAL_TAIL() ((void)0)
 #endif
 
 #if SQLOG_COMPILED(SQLOG_LEVEL_FATAL)
-#  define SQLOG_FATAL(sub, ...)                                                 \
-    do {                                                                       \
-        SQLOG__EMIT((sub), SQLOG_LEVEL_FATAL, __VA_ARGS__);                     \
-        SQLOG__FATAL_TAIL();                                                    \
-    } while (0)
+#define SQLOG_FATAL(sub, ...)                                                                                          \
+        do                                                                                                             \
+        {                                                                                                              \
+                SQLOG__EMIT((sub), SQLOG_LEVEL_FATAL, __VA_ARGS__);                                                    \
+                SQLOG__FATAL_TAIL();                                                                                   \
+        } while (0)
 #else
-#  define SQLOG_FATAL(sub, ...)                                                 \
-    do {                                                                       \
-        SQLOG__VOID(__VA_ARGS__);                                              \
-        SQLOG__FATAL_TAIL();                                                    \
-    } while (0)
+#define SQLOG_FATAL(sub, ...)                                                                                          \
+        do                                                                                                             \
+        {                                                                                                              \
+                SQLOG__VOID(__VA_ARGS__);                                                                              \
+                SQLOG__FATAL_TAIL();                                                                                   \
+        } while (0)
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -196,26 +199,26 @@ void sqlog_fatal_abort(void);
 
 /* Log `fmt ...` at `level_name`, appending the decoded system error `err`.
  * Example: SQLOG_WINERR(SQLOG_SUB_NET, ERROR, WSAGetLastError(), "bind"). */
-#define SQLOG_WINERR(sub, level_name, err, ...)                                \
-    do {                                                                       \
-        if (SQLOG_COMPILED(SQLOG_LEVEL_##level_name) &&                        \
-            sqlog_should((int)(sub), SQLOG_LEVEL_##level_name)) {              \
-            sqlog_emit_sys((int)(sub), SQLOG_LEVEL_##level_name,               \
-                           (unsigned long)(err), __FILE__, __LINE__, __func__, \
-                           __VA_ARGS__);                                       \
-        }                                                                      \
-    } while (0)
+#define SQLOG_WINERR(sub, level_name, err, ...)                                                                        \
+        do                                                                                                             \
+        {                                                                                                              \
+                if (SQLOG_COMPILED(SQLOG_LEVEL_##level_name) && sqlog_should((int)(sub), SQLOG_LEVEL_##level_name))    \
+                {                                                                                                      \
+                        sqlog_emit_sys((int)(sub), SQLOG_LEVEL_##level_name, (unsigned long)(err), __FILE__, __LINE__, \
+                                       __func__, __VA_ARGS__);                                                         \
+                }                                                                                                      \
+        } while (0)
 
 /* Hex+ASCII dump of a buffer at `level_name`. */
-#define SQLOG_HEXDUMP(sub, level_name, label, data, len)                       \
-    do {                                                                       \
-        if (SQLOG_COMPILED(SQLOG_LEVEL_##level_name) &&                        \
-            sqlog_should((int)(sub), SQLOG_LEVEL_##level_name)) {              \
-            sqlog_hexdump((int)(sub), SQLOG_LEVEL_##level_name,                \
-                          __FILE__, __LINE__, __func__, (label), (data),       \
-                          (size_t)(len));                                      \
-        }                                                                      \
-    } while (0)
+#define SQLOG_HEXDUMP(sub, level_name, label, data, len)                                                               \
+        do                                                                                                             \
+        {                                                                                                              \
+                if (SQLOG_COMPILED(SQLOG_LEVEL_##level_name) && sqlog_should((int)(sub), SQLOG_LEVEL_##level_name))    \
+                {                                                                                                      \
+                        sqlog_hexdump((int)(sub), SQLOG_LEVEL_##level_name, __FILE__, __LINE__, __func__, (label),     \
+                                      (data), (size_t)(len));                                                          \
+                }                                                                                                      \
+        } while (0)
 
 /* ------------------------------------------------------------------------- */
 /* Rate limiting: ONCE and EVERY_N. `level_name` is a bare TRACE..ERROR.      */
@@ -228,27 +231,32 @@ void sqlog_fatal_abort(void);
 /* Emit at most once for the lifetime of the process. The whole construct is
  * wrapped in `if (SQLOG_COMPILED(...))`, a compile-time constant, so when the
  * level is gated out the static counter and the interlocked op fold away. */
-#define SQLOG_ONCE(level_name, sub, ...)                                       \
-    do {                                                                       \
-        if (SQLOG_COMPILED(SQLOG_LEVEL_##level_name)) {                        \
-            static volatile long SQLOG__CAT(sqlog_once_, __LINE__) = 0;         \
-            if (sqlog__claim_once(&SQLOG__CAT(sqlog_once_, __LINE__))) {        \
-                SQLOG_##level_name((sub), __VA_ARGS__);                         \
-            }                                                                  \
-        }                                                                      \
-    } while (0)
+#define SQLOG_ONCE(level_name, sub, ...)                                                                               \
+        do                                                                                                             \
+        {                                                                                                              \
+                if (SQLOG_COMPILED(SQLOG_LEVEL_##level_name))                                                          \
+                {                                                                                                      \
+                        static volatile long SQLOG__CAT(sqlog_once_, __LINE__) = 0;                                    \
+                        if (sqlog__claim_once(&SQLOG__CAT(sqlog_once_, __LINE__)))                                     \
+                        {                                                                                              \
+                                SQLOG_##level_name((sub), __VA_ARGS__);                                                \
+                        }                                                                                              \
+                }                                                                                                      \
+        } while (0)
 
 /* Emit on the 1st, (n+1)th, (2n+1)th ... occurrence. */
-#define SQLOG_EVERY_N(level_name, sub, n, ...)                                  \
-    do {                                                                       \
-        if (SQLOG_COMPILED(SQLOG_LEVEL_##level_name)) {                        \
-            static volatile long SQLOG__CAT(sqlog_count_, __LINE__) = 0;        \
-            if (sqlog__tick_every(&SQLOG__CAT(sqlog_count_, __LINE__),          \
-                                  (long)(n))) {                                 \
-                SQLOG_##level_name((sub), __VA_ARGS__);                         \
-            }                                                                  \
-        }                                                                      \
-    } while (0)
+#define SQLOG_EVERY_N(level_name, sub, n, ...)                                                                         \
+        do                                                                                                             \
+        {                                                                                                              \
+                if (SQLOG_COMPILED(SQLOG_LEVEL_##level_name))                                                          \
+                {                                                                                                      \
+                        static volatile long SQLOG__CAT(sqlog_count_, __LINE__) = 0;                                   \
+                        if (sqlog__tick_every(&SQLOG__CAT(sqlog_count_, __LINE__), (long)(n)))                         \
+                        {                                                                                              \
+                                SQLOG_##level_name((sub), __VA_ARGS__);                                                \
+                        }                                                                                              \
+                }                                                                                                      \
+        } while (0)
 
 /* Interlocked helpers behind ONCE/EVERY_N (defined in sqlog.c). */
 int sqlog__claim_once(volatile long *flag);
@@ -264,21 +272,23 @@ int sqlog__tick_every(volatile long *counter, long n);
 
 /* CHECK always evaluates `cond`. On failure it logs FATAL and aborts even in a
  * release build, so it is safe for invariants that must hold in production. */
-#define SQLOG_CHECK(cond, sub, ...)                                            \
-    do {                                                                       \
-        if (!(cond)) {                                                         \
-            sqlog_emit((int)(sub), SQLOG_LEVEL_FATAL, __FILE__, __LINE__,       \
-                       __func__, L"CHECK failed: " SQLOG__WIDEN(#cond));        \
-            SQLOG_FATAL((sub), __VA_ARGS__);                                    \
-        }                                                                      \
-    } while (0)
+#define SQLOG_CHECK(cond, sub, ...)                                                                                    \
+        do                                                                                                             \
+        {                                                                                                              \
+                if (!(cond))                                                                                           \
+                {                                                                                                      \
+                        sqlog_emit((int)(sub), SQLOG_LEVEL_FATAL, __FILE__, __LINE__, __func__,                        \
+                                   L"CHECK failed: " SQLOG__WIDEN(#cond));                                             \
+                        SQLOG_FATAL((sub), __VA_ARGS__);                                                               \
+                }                                                                                                      \
+        } while (0)
 
 /* DCHECK compiles to nothing when logging is disabled (NDEBUG by default), so
  * `cond` is not even evaluated -- the standard debug-only assertion. */
 #if SQLOG_ENABLED
-#  define SQLOG_DCHECK(cond, sub, ...) SQLOG_CHECK((cond), sub, __VA_ARGS__)
+#define SQLOG_DCHECK(cond, sub, ...) SQLOG_CHECK((cond), sub, __VA_ARGS__)
 #else
-#  define SQLOG_DCHECK(cond, sub, ...) SQLOG__VOID(__VA_ARGS__)
+#define SQLOG_DCHECK(cond, sub, ...) SQLOG__VOID(__VA_ARGS__)
 #endif
 
 /* ------------------------------------------------------------------------- */
@@ -287,25 +297,25 @@ int sqlog__tick_every(volatile long *counter, long n);
 
 #if SQLOG_COMPILED(SQLOG_LEVEL_TRACE) && defined(__GNUC__)
 
-typedef struct sqlog_scope {
-    int sub;
-    const char *func;
-    const char *file;
-    int line;
+typedef struct sqlog_scope
+{
+        int sub;
+        const char *func;
+        const char *file;
+        int line;
 } sqlog_scope;
 
 void sqlog__scope_enter(const sqlog_scope *s);
 void sqlog__scope_leave(sqlog_scope *s);
 
 /* Place SQLOG_SCOPE(NET); at the top of a function body. */
-#  define SQLOG_SCOPE(sub)                                                      \
-    sqlog_scope SQLOG__CAT(sqlog_scope_, __LINE__)                              \
-        __attribute__((cleanup(sqlog__scope_leave))) =                         \
-        { (int)(SQLOG_SUB_##sub), __func__, __FILE__, __LINE__ };               \
-    sqlog__scope_enter(&SQLOG__CAT(sqlog_scope_, __LINE__))
+#define SQLOG_SCOPE(sub)                                                                                               \
+        sqlog_scope SQLOG__CAT(sqlog_scope_, __LINE__)                                                                 \
+            __attribute__((cleanup(sqlog__scope_leave))) = {(int)(SQLOG_SUB_##sub), __func__, __FILE__, __LINE__};     \
+        sqlog__scope_enter(&SQLOG__CAT(sqlog_scope_, __LINE__))
 
 #else
-#  define SQLOG_SCOPE(sub) ((void)0)
+#define SQLOG_SCOPE(sub) ((void)0)
 #endif
 
 #endif /* SQLOG_SQLOG_H */

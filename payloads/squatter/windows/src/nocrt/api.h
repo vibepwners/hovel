@@ -65,30 +65,34 @@ typedef LONG *LPLONG;
 typedef ULONG_PTR SIZE_T;
 typedef LONG_PTR SSIZE_T;
 
-typedef struct _FILETIME {
-	DWORD dwLowDateTime;
-	DWORD dwHighDateTime;
+typedef struct _FILETIME
+{
+        DWORD dwLowDateTime;
+        DWORD dwHighDateTime;
 } FILETIME;
 
-typedef struct _SYSTEMTIME {
-	WORD wYear;
-	WORD wMonth;
-	WORD wDayOfWeek;
-	WORD wDay;
-	WORD wHour;
-	WORD wMinute;
-	WORD wSecond;
-	WORD wMilliseconds;
+typedef struct _SYSTEMTIME
+{
+        WORD wYear;
+        WORD wMonth;
+        WORD wDayOfWeek;
+        WORD wDay;
+        WORD wHour;
+        WORD wMinute;
+        WORD wSecond;
+        WORD wMilliseconds;
 } SYSTEMTIME;
 
-typedef struct _LARGE_INTEGER {
-	union {
-		struct {
-			DWORD LowPart;
-			LONG HighPart;
-		};
-		long long QuadPart;
-	};
+typedef struct _LARGE_INTEGER
+{
+        union {
+                struct
+                {
+                        DWORD LowPart;
+                        LONG HighPart;
+                };
+                long long QuadPart;
+        };
 } LARGE_INTEGER;
 
 typedef struct _SECURITY_ATTRIBUTES SECURITY_ATTRIBUTES;
@@ -101,61 +105,68 @@ typedef OVERLAPPED *LPOVERLAPPED;
 typedef struct _STARTUPINFOW STARTUPINFOW;
 typedef struct _PROCESS_INFORMATION PROCESS_INFORMATION;
 typedef struct _EXCEPTION_POINTERS EXCEPTION_POINTERS;
-typedef long (WINAPI *PTOP_LEVEL_EXCEPTION_FILTER)(EXCEPTION_POINTERS *);
-typedef BOOL (WINAPI *PHANDLER_ROUTINE)(DWORD);
-typedef DWORD (WINAPI *LPTHREAD_START_ROUTINE)(LPVOID);
-typedef DWORD (WINAPI *LPHANDLER_FUNCTION_EX)(DWORD, DWORD, LPVOID, LPVOID);
+typedef long(WINAPI *PTOP_LEVEL_EXCEPTION_FILTER)(EXCEPTION_POINTERS *);
+typedef BOOL(WINAPI *PHANDLER_ROUTINE)(DWORD);
+typedef DWORD(WINAPI *LPTHREAD_START_ROUTINE)(LPVOID);
+typedef DWORD(WINAPI *LPHANDLER_FUNCTION_EX)(DWORD, DWORD, LPVOID, LPVOID);
 
-typedef struct _SERVICE_STATUS {
-	DWORD dwServiceType;
-	DWORD dwCurrentState;
-	DWORD dwControlsAccepted;
-	DWORD dwWin32ExitCode;
-	DWORD dwServiceSpecificExitCode;
-	DWORD dwCheckPoint;
-	DWORD dwWaitHint;
+typedef struct _SERVICE_STATUS
+{
+        DWORD dwServiceType;
+        DWORD dwCurrentState;
+        DWORD dwControlsAccepted;
+        DWORD dwWin32ExitCode;
+        DWORD dwServiceSpecificExitCode;
+        DWORD dwCheckPoint;
+        DWORD dwWaitHint;
 } SERVICE_STATUS;
 typedef SERVICE_STATUS *LPSERVICE_STATUS;
-typedef void (WINAPI *LPSERVICE_MAIN_FUNCTIONW)(DWORD, LPWSTR *);
-typedef struct _SERVICE_TABLE_ENTRYW {
-	LPWSTR lpServiceName;
-	LPSERVICE_MAIN_FUNCTIONW lpServiceProc;
+typedef void(WINAPI *LPSERVICE_MAIN_FUNCTIONW)(DWORD, LPWSTR *);
+typedef struct _SERVICE_TABLE_ENTRYW
+{
+        LPWSTR lpServiceName;
+        LPSERVICE_MAIN_FUNCTIONW lpServiceProc;
 } SERVICE_TABLE_ENTRYW;
 typedef SERVICE_TABLE_ENTRYW *LPSERVICE_TABLE_ENTRYW;
 
-struct sockaddr {
-	unsigned short sa_family;
-	char sa_data[14];
+struct sockaddr
+{
+        unsigned short sa_family;
+        char sa_data[14];
 };
 
-struct in_addr {
-	union {
-		struct {
-			BYTE s_b1;
-			BYTE s_b2;
-			BYTE s_b3;
-			BYTE s_b4;
-		} S_un_b;
-		DWORD S_addr;
-	} S_un;
+struct in_addr
+{
+        union {
+                struct
+                {
+                        BYTE s_b1;
+                        BYTE s_b2;
+                        BYTE s_b3;
+                        BYTE s_b4;
+                } S_un_b;
+                DWORD S_addr;
+        } S_un;
 };
 
-struct sockaddr_in {
-	short sin_family;
-	unsigned short sin_port;
-	struct in_addr sin_addr;
-	char sin_zero[8];
+struct sockaddr_in
+{
+        short sin_family;
+        unsigned short sin_port;
+        struct in_addr sin_addr;
+        char sin_zero[8];
 };
 
-struct addrinfoW {
-	int ai_flags;
-	int ai_family;
-	int ai_socktype;
-	int ai_protocol;
-	SIZE_T ai_addrlen;
-	WCHAR *ai_canonname;
-	struct sockaddr *ai_addr;
-	struct addrinfoW *ai_next;
+struct addrinfoW
+{
+        int ai_flags;
+        int ai_family;
+        int ai_socktype;
+        int ai_protocol;
+        SIZE_T ai_addrlen;
+        WCHAR *ai_canonname;
+        struct sockaddr *ai_addr;
+        struct addrinfoW *ai_next;
 };
 
 typedef struct sockaddr SOCKADDR;
@@ -175,24 +186,25 @@ typedef struct _WSAPROTOCOL_INFOW WSAPROTOCOL_INFOW;
 typedef struct _MSG MSG;
 typedef struct _RECT RECT;
 typedef struct _WNDCLASSEXW WNDCLASSEXW;
-typedef LRESULT (CALLBACK *WNDPROC)(HWND, UINT, WPARAM, LPARAM);
+typedef LRESULT(CALLBACK *WNDPROC)(HWND, UINT, WPARAM, LPARAM);
 
-enum {
-	SQ_AF_INET = 2,
-	SQ_SOCK_STREAM = 1,
-	SQ_IPPROTO_TCP = 6,
-	SQ_EAI_NONAME = 11001,
-	SQ_NO_ERROR = 0,
-	SQ_ERROR_SERVICE_SPECIFIC_ERROR = 1066,
-	SQ_SERVICE_WIN32_OWN_PROCESS = 0x00000010,
-	SQ_SERVICE_STOPPED = 0x00000001,
-	SQ_SERVICE_START_PENDING = 0x00000002,
-	SQ_SERVICE_STOP_PENDING = 0x00000003,
-	SQ_SERVICE_RUNNING = 0x00000004,
-	SQ_SERVICE_ACCEPT_STOP = 0x00000001,
-	SQ_SERVICE_ACCEPT_SHUTDOWN = 0x00000004,
-	SQ_SERVICE_CONTROL_STOP = 0x00000001,
-	SQ_SERVICE_CONTROL_SHUTDOWN = 0x00000005,
+enum
+{
+        SQ_AF_INET = 2,
+        SQ_SOCK_STREAM = 1,
+        SQ_IPPROTO_TCP = 6,
+        SQ_EAI_NONAME = 11001,
+        SQ_NO_ERROR = 0,
+        SQ_ERROR_SERVICE_SPECIFIC_ERROR = 1066,
+        SQ_SERVICE_WIN32_OWN_PROCESS = 0x00000010,
+        SQ_SERVICE_STOPPED = 0x00000001,
+        SQ_SERVICE_START_PENDING = 0x00000002,
+        SQ_SERVICE_STOP_PENDING = 0x00000003,
+        SQ_SERVICE_RUNNING = 0x00000004,
+        SQ_SERVICE_ACCEPT_STOP = 0x00000001,
+        SQ_SERVICE_ACCEPT_SHUTDOWN = 0x00000004,
+        SQ_SERVICE_CONTROL_STOP = 0x00000001,
+        SQ_SERVICE_CONTROL_SHUTDOWN = 0x00000005,
 };
 
 void *sq_resolve_api(const char *dll_name, const char *api_name);

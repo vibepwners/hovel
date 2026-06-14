@@ -28,10 +28,10 @@
 #define WIN32_LEAN_AND_MEAN 1 /* Drop GDI/OLE/etc. we never touch. */
 #endif
 
-#include <winsock2.h>  /* must be first */
-#include <ws2tcpip.h>  /* getaddrinfo, getnameinfo, IPv6 sockaddr */
-#include <mswsock.h>   /* AcceptEx, GetAcceptExSockaddrs, the WSAID_* GUIDs */
-#include <windows.h>   /* CreateIoCompletionPort, threads, handles */
-#include <shlwapi.h>   /* wnsprintf/wvnsprintf: bounded, CRT-free formatting */
+#include <mswsock.h>  /* AcceptEx, GetAcceptExSockaddrs, the WSAID_* GUIDs */
+#include <shlwapi.h>  /* wnsprintf/wvnsprintf: bounded, CRT-free formatting */
+#include <windows.h>  /* CreateIoCompletionPort, threads, handles */
+#include <winsock2.h> /* must be first */
+#include <ws2tcpip.h> /* getaddrinfo, getnameinfo, IPv6 sockaddr */
 
 #endif /* SQ_WIN_H */

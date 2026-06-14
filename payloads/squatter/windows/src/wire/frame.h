@@ -27,37 +27,41 @@
 #include "base/win.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
-enum {
-    SQ_FRAME_HEADER_SIZE = 16,
-    /* Largest payload a single frame may carry. A frame is one whole message;
-     * this bounds per-message memory. Tune as needed; it is not a connection or
-     * stream-count limit. */
-    SQ_FRAME_MAX_PAYLOAD = 1 << 20 /* 1 MiB */
-};
+        enum
+        {
+                SQ_FRAME_HEADER_SIZE = 16,
+                /* Largest payload a single frame may carry. A frame is one whole message;
+                 * this bounds per-message memory. Tune as needed; it is not a connection or
+                 * stream-count limit. */
+                SQ_FRAME_MAX_PAYLOAD = 1 << 20 /* 1 MiB */
+        };
 
-typedef enum sq_frame_kind {
-    SQ_FRAME_DATA = 0,  /* payload: module message bytes                    */
-    SQ_FRAME_OPEN = 1,  /* payload: control.proto OpenStream                */
-    SQ_FRAME_CLOSE = 2  /* payload: control.proto CloseStream (may be empty) */
-} sq_frame_kind;
+        typedef enum sq_frame_kind
+        {
+                SQ_FRAME_DATA = 0, /* payload: module message bytes                    */
+                SQ_FRAME_OPEN = 1, /* payload: control.proto OpenStream                */
+                SQ_FRAME_CLOSE = 2 /* payload: control.proto CloseStream (may be empty) */
+        } sq_frame_kind;
 
-typedef struct sq_frame_header {
-    UINT32 length;
-    UINT16 kind;
-    UINT16 flags;
-    UINT64 stream_id;
-} sq_frame_header;
+        typedef struct sq_frame_header
+        {
+                UINT32 length;
+                UINT16 kind;
+                UINT16 flags;
+                UINT64 stream_id;
+        } sq_frame_header;
 
-/* Serialize `h` into 16 little-endian bytes. Never fails. */
-void sq_frame_header_encode(const sq_frame_header *h, BYTE out[SQ_FRAME_HEADER_SIZE]);
+        /* Serialize `h` into 16 little-endian bytes. Never fails. */
+        void sq_frame_header_encode(const sq_frame_header *h, BYTE out[SQ_FRAME_HEADER_SIZE]);
 
-/* Parse 16 little-endian bytes into `out`. Returns FALSE (and leaves *out
- * zeroed) if the encoded length exceeds SQ_FRAME_MAX_PAYLOAD or the kind is not
- * a known sq_frame_kind -- both are signs of a corrupt or hostile peer. */
-BOOL sq_frame_header_decode(const BYTE in[SQ_FRAME_HEADER_SIZE], sq_frame_header *out);
+        /* Parse 16 little-endian bytes into `out`. Returns FALSE (and leaves *out
+         * zeroed) if the encoded length exceeds SQ_FRAME_MAX_PAYLOAD or the kind is not
+         * a known sq_frame_kind -- both are signs of a corrupt or hostile peer. */
+        BOOL sq_frame_header_decode(const BYTE in[SQ_FRAME_HEADER_SIZE], sq_frame_header *out);
 
 #ifdef __cplusplus
 } /* extern "C" */

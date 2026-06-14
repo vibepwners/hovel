@@ -20,13 +20,14 @@
 
 typedef struct sq_server sq_server; /* opaque */
 
-typedef struct sq_server_config {
-    const wchar_t *host;     /* bind address; NULL = wildcard (all interfaces) */
-    const wchar_t *port;     /* service/port string, required (e.g. L"9000")   */
-    int         backlog;     /* listen() backlog; <= 0 => SOMAXCONN            */
-    unsigned    worker_count;/* worker threads; 0 => 2 x logical processors    */
-    unsigned    accept_count;/* outstanding AcceptEx ops; 0 => a sane default  */
-    sq_handler  handler;     /* protocol callback; on_recv must be non-NULL    */
+typedef struct sq_server_config
+{
+        const wchar_t *host;   /* bind address; NULL = wildcard (all interfaces) */
+        const wchar_t *port;   /* service/port string, required (e.g. L"9000")   */
+        int backlog;           /* listen() backlog; <= 0 => SOMAXCONN            */
+        unsigned worker_count; /* worker threads; 0 => 2 x logical processors    */
+        unsigned accept_count; /* outstanding AcceptEx ops; 0 => a sane default  */
+        sq_handler handler;    /* protocol callback; on_recv must be non-NULL    */
 } sq_server_config;
 
 /* Create and start serving. On success *out is a running server (workers
