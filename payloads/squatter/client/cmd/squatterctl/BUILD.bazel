@@ -5,7 +5,10 @@ go_library(
     srcs = ["main.go"],
     importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/cmd/squatterctl",
     visibility = ["//visibility:private"],
-    deps = ["//payloads/squatter/client/shell"],
+    deps = [
+        "//payloads/squatter/client/shell",
+        "//payloads/squatter/client/smbpipe",
+    ],
 )
 
 go_binary(

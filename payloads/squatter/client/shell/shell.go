@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,12 +18,12 @@ import (
 )
 
 type Client struct {
-	conn net.Conn
+	conn io.ReadWriteCloser
 	r    *bufio.Reader
 	sid  uint64
 }
 
-func New(conn net.Conn) *Client {
+func New(conn io.ReadWriteCloser) *Client {
 	return &Client{conn: conn, r: bufio.NewReader(conn)}
 }
 
@@ -122,16 +121,37 @@ func (c *Client) RunPrompt(title string) {
 
 // RunDemo executes the scripted echo walkthrough used by squatterctl.
 func (c *Client) RunDemo(out io.Writer) {
-	_ = c.openStream(1, "echo", []string{"alpha", "beta", "gamma"})
-	_, _, p, _ := wire.ReadFrame(c.r)
+	if err := c.openStream(1, "echo", []string{"alpha", "beta", "gamma"}); err != nil {
+		fmt.Fprintf(out, "[open failed: %v]\n", err)
+		return
+	}
+	_, _, p, err := wire.ReadFrame(c.r)
+	if err != nil {
+		fmt.Fprintf(out, "[read failed: %v]\n", err)
+		return
+	}
 	emit(out, p)
 	for _, msg := range []string{"hello", "world", "the quick brown fox"} {
-		_ = wire.WriteFrame(c.conn, wire.KindData, 1, []byte(msg))
-		_, _, p, _ = wire.ReadFrame(c.r)
+		if err := wire.WriteFrame(c.conn, wire.KindData, 1, []byte(msg)); err != nil {
+			fmt.Fprintf(out, "[write failed: %v]\n", err)
+			return
+		}
+		_, _, p, err = wire.ReadFrame(c.r)
+		if err != nil {
+			fmt.Fprintf(out, "[read failed: %v]\n", err)
+			return
+		}
 		emit(out, p)
 	}
-	_ = wire.WriteFrame(c.conn, wire.KindData, 1, []byte("END"))
-	k, _, _, _ := wire.ReadFrame(c.r)
+	if err := wire.WriteFrame(c.conn, wire.KindData, 1, []byte("END")); err != nil {
+		fmt.Fprintf(out, "[write failed: %v]\n", err)
+		return
+	}
+	k, _, _, err := wire.ReadFrame(c.r)
+	if err != nil {
+		fmt.Fprintf(out, "[read failed: %v]\n", err)
+		return
+	}
 	if k == wire.KindClose {
 		fmt.Fprintln(out, "[closed]")
 	}
@@ -527,26 +547,67 @@ const (
 )
 
 type CLIOptions struct {
-	Mode    Mode
-	Streams int
-	Host    string
-	Port    string
+	Mode     Mode
+	Streams  int
+	Host     string
+	Port     string
+	SMB      bool
+	Domain   string
+	Username string
+	Password string
+	Pipe     string
+	SMBPort  int
 }
 
 func ParseCLI(args []string) CLIOptions {
 	opts := CLIOptions{Mode: ModeShell, Streams: 3, Host: "127.0.0.1", Port: "9100"}
-	if len(args) > 0 && args[0] == "--demo" {
-		opts.Mode, args = ModeDemo, args[1:]
-	} else if len(args) > 1 && args[0] == "--streams" {
-		opts.Mode = ModeStreams
-		opts.Streams, _ = strconv.Atoi(args[1])
-		args = args[2:]
+	positionals := make([]string, 0, 2)
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--demo":
+			opts.Mode = ModeDemo
+		case "--streams":
+			opts.Mode = ModeStreams
+			i++
+			if i < len(args) {
+				opts.Streams, _ = strconv.Atoi(args[i])
+			}
+		case "--smb":
+			opts.SMB = true
+		case "--domain":
+			i++
+			if i < len(args) {
+				opts.Domain = args[i]
+			}
+		case "--user", "--username":
+			i++
+			if i < len(args) {
+				opts.Username = args[i]
+			}
+		case "--password":
+			i++
+			if i < len(args) {
+				opts.Password = args[i]
+			}
+		case "--pipe":
+			i++
+			if i < len(args) {
+				opts.Pipe = args[i]
+			}
+		case "--smb-port":
+			i++
+			if i < len(args) {
+				opts.SMBPort, _ = strconv.Atoi(args[i])
+			}
+		default:
+			positionals = append(positionals, args[i])
+		}
 	}
-	if len(args) > 0 {
-		opts.Host = args[0]
+	if len(positionals) > 0 {
+		opts.Host = positionals[0]
 	}
-	if len(args) > 1 {
-		opts.Port = args[1]
+	if len(positionals) > 1 {
+		opts.Port = positionals[1]
 	}
 	return opts
 }

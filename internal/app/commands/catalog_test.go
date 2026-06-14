@@ -1401,6 +1401,57 @@ func TestThrowInputsFromChainFileSquatterTypeDerivesInstallConfig(t *testing.T) 
 	}
 }
 
+func TestThrowInputsFromChainFileSquatterSMBTransportKeepsExplicitInstallConfig(t *testing.T) {
+	store := &fakeChainFileStore{
+		reads: map[string]ChainFile{
+			"etro-squatter-smb.chain.yaml": {
+				APIVersion: "hovel.dev/v1alpha1",
+				Kind:       "Chain",
+				Metadata:   ChainFileMetadata{Name: "etro-squatter-smb"},
+				Spec: ChainFileSpec{
+					Mode: "configured",
+					Steps: []ChainFileStep{
+						{ID: "exploit", Uses: "module:etro-exploit@v1.0.0"},
+						{ID: "squatter-smb", Uses: "module:squatter@v0.1.0"},
+					},
+					Config: map[string]string{
+						"operator.confirmed_lab": "true",
+						"payload.transport":      "smb-named-pipe",
+						"payload.pipe":           "squatter",
+					},
+					Targets: []ChainFileTarget{{
+						ID: "t1",
+						Config: map[string]string{
+							"target.host":         "192.168.122.142",
+							"target.port":         "445",
+							"payload.local_path":  "/tmp/squatter-smb.exe",
+							"payload.remote_path": `C:\Windows\Temp\hovelsmb.exe`,
+							"payload.bind_port":   "",
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	throw, err := throwInputs(context.Background(), Runtime{ChainFiles: store}, Invocation{
+		Positionals: map[string]string{"file": "etro-squatter-smb.chain.yaml"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := throw.TargetConfigs["t1"]
+	if config["payload.local_path"] != "/tmp/squatter-smb.exe" {
+		t.Fatalf("payload.local_path = %q, want explicit SMB payload", config["payload.local_path"])
+	}
+	if config["payload.remote_path"] != `C:\Windows\Temp\hovelsmb.exe` {
+		t.Fatalf("payload.remote_path = %q, want explicit SMB remote path", config["payload.remote_path"])
+	}
+	if config["payload.bind_port"] != "" {
+		t.Fatalf("payload.bind_port = %q, want no TCP bind arg for SMB payload", config["payload.bind_port"])
+	}
+}
+
 func TestChainAddVersionedSquatterSetsTypeConfig(t *testing.T) {
 	session := operatorsession.New()
 	if err := session.UseOperation("op1"); err != nil {

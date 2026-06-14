@@ -7,7 +7,6 @@ import (
 	"bufio"
 	"errors"
 	"io"
-	"net"
 	"strings"
 
 	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/wire"
@@ -23,7 +22,7 @@ const (
 
 // GetFile opens a getfile stream for remote and writes the file's bytes to dst,
 // returning the number of bytes received. The stream id must be unused.
-func GetFile(conn net.Conn, r *bufio.Reader, streamID uint64, remote string, dst io.Writer) (int64, error) {
+func GetFile(conn io.Writer, r *bufio.Reader, streamID uint64, remote string, dst io.Writer) (int64, error) {
 	if err := wire.WriteFrame(conn, wire.KindOpen, streamID, wire.EncodeOpen("getfile", []string{remote})); err != nil {
 		return 0, err
 	}
@@ -67,7 +66,7 @@ func GetFile(conn net.Conn, r *bufio.Reader, streamID uint64, remote string, dst
 
 // PutFile opens a putfile stream for remote and streams src to it, returning the
 // number of bytes sent and the server's final status line ("OK <bytes>").
-func PutFile(conn net.Conn, r *bufio.Reader, streamID uint64, src io.Reader, remote string) (sent int64, ack string, err error) {
+func PutFile(conn io.Writer, r *bufio.Reader, streamID uint64, src io.Reader, remote string) (sent int64, ack string, err error) {
 	if err = wire.WriteFrame(conn, wire.KindOpen, streamID, wire.EncodeOpen("putfile", []string{remote})); err != nil {
 		return
 	}

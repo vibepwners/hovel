@@ -859,7 +859,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		Definition{
 			Path:           []string{"session", "list"},
 			Aliases:        [][]string{{"sessions"}},
-			Summary:        "List active post-exploitation sessions.",
+			Summary:        "List post-exploitation sessions.",
 			RequiresDaemon: true,
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
@@ -1232,6 +1232,7 @@ func chainAddHandler(runtime Runtime) Handler {
 const (
 	squatterTypeConfigKey = "squatter.type"
 	squatterTypeTCPBind   = "tcp-bind"
+	squatterTypeSMBPipe   = "smb-named-pipe"
 )
 
 func isSquatterBindAlias(value string) bool {
@@ -1291,6 +1292,10 @@ func isSquatterTCPBindModule(db ModuleDatabase, moduleID string, config map[stri
 	module, ok := db.Find(moduleID)
 	if (!ok || !isSquatterProviderModule(module)) && !isSquatterProviderRef(moduleID) {
 		return false
+	}
+	transport := strings.TrimSpace(config["payload.transport"])
+	if transport != "" {
+		return transport == squatterTypeTCPBind
 	}
 	mode := strings.TrimSpace(config[squatterTypeConfigKey])
 	return mode == "" || mode == squatterTypeTCPBind
@@ -2411,7 +2416,7 @@ func sessionsListHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if len(sessions) == 0 {
-			return Result{Human: "No active sessions", JSON: sessions}, nil
+			return Result{Human: "No sessions", JSON: sessions}, nil
 		}
 		lines := []string{"ID                         KIND      STATE    TARGET        NAME"}
 		for _, session := range sessions {

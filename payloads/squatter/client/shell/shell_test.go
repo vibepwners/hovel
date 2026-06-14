@@ -131,6 +131,35 @@ func TestSuggestionsCoverTopLevelAndActiveModule(t *testing.T) {
 	}
 }
 
+func TestParseCLISupportsSMBNamedPipe(t *testing.T) {
+	opts := ParseCLI([]string{
+		"192.0.2.10",
+		"--smb",
+		"--pipe", `\pipe\squatter`,
+		"--domain", "LAB",
+		"--user", "alice",
+		"--password", "secret",
+		"--smb-port", "445",
+		"--demo",
+	})
+
+	if !opts.SMB {
+		t.Fatal("SMB = false, want true")
+	}
+	if opts.Host != "192.0.2.10" || opts.Pipe != `\pipe\squatter` {
+		t.Fatalf("host/pipe = %q/%q", opts.Host, opts.Pipe)
+	}
+	if opts.Domain != "LAB" || opts.Username != "alice" || opts.Password != "secret" {
+		t.Fatalf("credentials = %#v", opts)
+	}
+	if opts.SMBPort != 445 {
+		t.Fatalf("SMBPort = %d, want 445", opts.SMBPort)
+	}
+	if opts.Mode != ModeDemo {
+		t.Fatalf("Mode = %q, want demo", opts.Mode)
+	}
+}
+
 func hasSuggestion(suggestions []prompt.Suggest, text string) bool {
 	for _, suggestion := range suggestions {
 		if suggestion.Text == text {

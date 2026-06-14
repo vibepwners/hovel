@@ -128,6 +128,64 @@ func TestRunCommandUsesDaemonSessionContextForThrow(t *testing.T) {
 	}
 }
 
+func TestRunCommandCanListReadAndSendSessions(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
+	ctx := context.Background()
+	run := func(args ...string) string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		full := append([]string{"run", "--workspace", fixture.WorkspacePath, "--op", "o1", "--chain", "session"}, args...)
+		code := Run(ctx, full, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("hovel %s exit code = %d, stderr = %s", strings.Join(full, " "), code, stderr.String())
+		}
+		return stdout.String()
+	}
+
+	run("chain", "add", "mock-exploit-session@v0.0.0-example")
+	run("chain", "config", "set", "operator.confirmed_lab", "true")
+	run("target", "add", "mock://router-01")
+	run("target", "config", "set", "mock://router-01", "target.host", "router-01")
+	run("target", "config", "set", "mock://router-01", "target.port", "22")
+	output := run("throw", "--now", "--json")
+
+	var payload struct {
+		Results []struct {
+			Sessions []struct {
+				ID string `json:"id"`
+			} `json:"sessions"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatalf("invalid JSON %q: %v", output, err)
+	}
+	if len(payload.Results) != 1 || len(payload.Results[0].Sessions) != 1 {
+		t.Fatalf("results = %#v, want one session", payload.Results)
+	}
+	sessionID := payload.Results[0].Sessions[0].ID
+
+	listOutput := run("session", "list")
+	if !strings.Contains(listOutput, sessionID) || !strings.Contains(listOutput, "mock shell on mock://router-01") {
+		t.Fatalf("session list output = %q", listOutput)
+	}
+	readOutput := run("session", "read", sessionID)
+	if !strings.Contains(readOutput, "mock$") {
+		t.Fatalf("initial session read output = %q", readOutput)
+	}
+
+	run("session", "send", sessionID, "whoami")
+	echoOutput := run("session", "read", sessionID)
+	if !strings.Contains(echoOutput, "whoami") || !strings.Contains(echoOutput, "mock-operator") {
+		t.Fatalf("session read after send output = %q", echoOutput)
+	}
+
+	run("session", "send", sessionID, "pwd", "--end", "\\r\\n")
+	pwdOutput := run("session", "read", sessionID)
+	if !strings.Contains(pwdOutput, "pwd") || !strings.Contains(pwdOutput, "/mock/session") {
+		t.Fatalf("session read after custom terminator output = %q", pwdOutput)
+	}
+}
+
 func TestRunCommandPersistsSquatterAsModuleWithTypeConfig(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
 	ctx := context.Background()

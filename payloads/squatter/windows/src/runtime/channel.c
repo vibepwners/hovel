@@ -59,14 +59,60 @@ static int socket_read_some(SOCKET s, BYTE *buf, UINT32 cap)
 
 static int handle_read_some(HANDLE h, BYTE *buf, UINT32 cap)
 {
+        OVERLAPPED ov;
         DWORD got = 0;
+        BOOL ok = FALSE;
+        DWORD err = 0;
 
-        if (ReadFile(h, buf, cap, &got, NULL) == FALSE)
+        ZeroMemory(&ov, sizeof ov);
+        ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+        if (ov.hEvent == NULL)
         {
-                DWORD const err = GetLastError();
-                return (err == ERROR_BROKEN_PIPE || err == ERROR_HANDLE_EOF) ? 0 : -1;
+                return -1;
+        }
+        ok = ReadFile(h, buf, cap, &got, &ov);
+        if (ok == FALSE)
+        {
+                err = GetLastError();
+                if (err == ERROR_IO_PENDING)
+                {
+                        ok = GetOverlappedResult(h, &ov, &got, TRUE);
+                        err = ok ? 0 : GetLastError();
+                }
+        }
+        (void)CloseHandle(ov.hEvent);
+        if (ok == FALSE)
+        {
+                return (err == ERROR_BROKEN_PIPE || err == ERROR_HANDLE_EOF || err == ERROR_OPERATION_ABORTED) ? 0 : -1;
         }
         return (got == 0) ? 0 : (int)got;
+}
+
+static BOOL handle_write_some(HANDLE h, const BYTE *buf, UINT32 len, DWORD *put)
+{
+        OVERLAPPED ov;
+        BOOL ok = FALSE;
+        DWORD err = 0;
+
+        ZeroMemory(&ov, sizeof ov);
+        ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+        if (ov.hEvent == NULL)
+        {
+                return FALSE;
+        }
+        ok = WriteFile(h, buf, len, put, &ov);
+        if (ok == FALSE)
+        {
+                err = GetLastError();
+                if (err == ERROR_IO_PENDING)
+                {
+                        ok = GetOverlappedResult(h, &ov, put, TRUE);
+                        err = ok ? 0 : GetLastError();
+                }
+        }
+        (void)CloseHandle(ov.hEvent);
+        (void)err;
+        return ok;
 }
 
 int sq_channel_read_some(sq_channel *ch, BYTE *buf, UINT32 cap)
@@ -105,7 +151,7 @@ BOOL sq_channel_write_all(sq_channel *ch, const BYTE *buf, UINT32 len)
                 else
                 {
                         DWORD put = 0;
-                        if (WriteFile(ch->handle, buf + off, remaining, &put, NULL) == FALSE)
+                        if (handle_write_some(ch->handle, buf + off, remaining, &put) == FALSE)
                         {
                                 return FALSE;
                         }

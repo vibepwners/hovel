@@ -521,7 +521,7 @@ func TestE2ESessionCloseRemovesSessionAndDaemonStillThrows(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("session list exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "No active sessions") || strings.Contains(stdout.String(), sessionID) {
+	if !strings.Contains(stdout.String(), "No sessions") || strings.Contains(stdout.String(), sessionID) {
 		t.Fatalf("session list after close = %q", stdout.String())
 	}
 

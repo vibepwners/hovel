@@ -6,7 +6,8 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_github_jfjallid_go_smb//smb",
+        "@com_github_jfjallid_go_smb//gss",
+        "@com_github_jfjallid_go_smb//ntlmssp",
         "@com_github_jfjallid_go_smb//spnego",
     ],
 )
