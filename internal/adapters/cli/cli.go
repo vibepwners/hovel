@@ -660,7 +660,7 @@ func (a App) positionalSuggestions(definition commands.Definition, commandWordCo
 			}
 		}
 		return nil, true
-	case "session connect", "sessions connect", "session close", "sessions close":
+	case "session connect", "sessions connect", "session read", "sessions read", "session send", "sessions send", "session write", "sessions write", "session close", "sessions close":
 		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.sessionSuggestions), true
 	default:
 		return nil, false
@@ -973,20 +973,9 @@ func requirementMaps(catalog modulecatalog.Catalog, state operatorsession.State)
 	chainRequirements := map[string]modulecatalog.Requirement{}
 	targetRequirements := map[string]modulecatalog.Requirement{}
 	for _, step := range state.Steps {
-		if step.StepID == "squatter.bind" {
-			chainRequirements["squatter.bind_port"] = modulecatalog.Requirement{
-				Key:         "squatter.bind_port",
-				Type:        modulecatalog.ValuePort,
-				Required:    false,
-				Default:     "9101",
-				Description: "TCP bind port opened by the Squatter agent on the target.",
-			}
-			chainRequirements["squatter.remote_path"] = modulecatalog.Requirement{
-				Key:         "squatter.remote_path",
-				Type:        modulecatalog.ValueString,
-				Required:    false,
-				Default:     `C:\Windows\Temp\winupd32.exe`,
-				Description: "Target path used when ETRO installs the Squatter agent.",
+		if step.StepID == "squatter.bind" || (step.StepID == "" && isSquatterTCPBindStep(catalog, step, state.Config)) {
+			for _, requirement := range squatterTCPBindRequirements() {
+				chainRequirements[requirement.Key] = requirement
 			}
 			continue
 		}
@@ -1002,6 +991,47 @@ func requirementMaps(catalog modulecatalog.Catalog, state operatorsession.State)
 		}
 	}
 	return chainRequirements, targetRequirements
+}
+
+func isSquatterTCPBindStep(catalog modulecatalog.Catalog, step operatorsession.Step, config map[string]string) bool {
+	module, ok := catalog.Find(step.ModuleID)
+	if (!ok || !strings.EqualFold(module.Name, "squatter") || module.Type != modulecatalog.TypePayloadProvider) && !isSquatterProviderRef(step.ModuleID) {
+		return false
+	}
+	mode := strings.TrimSpace(config["squatter.type"])
+	return mode == "" || mode == "tcp-bind"
+}
+
+func isSquatterProviderRef(moduleID string) bool {
+	ref := strings.ToLower(strings.TrimSpace(moduleID))
+	return ref == "squatter" || ref == "squatter@v0.1.0"
+}
+
+func squatterTCPBindRequirements() []modulecatalog.Requirement {
+	return []modulecatalog.Requirement{
+		{
+			Key:         "squatter.type",
+			Type:        modulecatalog.ValueEnum,
+			Required:    false,
+			Default:     "tcp-bind",
+			Allowed:     []string{"tcp-bind"},
+			Description: "Squatter install/session mode.",
+		},
+		{
+			Key:         "squatter.bind_port",
+			Type:        modulecatalog.ValuePort,
+			Required:    false,
+			Default:     "9101",
+			Description: "TCP bind port opened by the Squatter agent on the target.",
+		},
+		{
+			Key:         "squatter.remote_path",
+			Type:        modulecatalog.ValueString,
+			Required:    false,
+			Default:     `C:\Windows\Temp\winupd32.exe`,
+			Description: "Target path used when ETRO installs the Squatter agent.",
+		},
+	}
 }
 
 func configView(state operatorsession.State) modulecatalog.ConfigView {

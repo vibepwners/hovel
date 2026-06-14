@@ -40,6 +40,7 @@ func (c *Client) Run(in io.Reader, out io.Writer) {
 	input := bufio.NewReader(in)
 	fmt.Fprintln(out, "squatter shell -- run a module: <name> [args...]   (e.g. 'echo a b')")
 	fmt.Fprintln(out, "  echo <args...>                  open the echo module (interactive)")
+	fmt.Fprintln(out, "  cmd [command...]                open cmd.exe, or run one command through cmd.exe /c")
 	fmt.Fprintln(out, "  getfile <remote> [local]        download a file (fixed memory)")
 	fmt.Fprintln(out, "  putfile <local> <remote>        upload a file (fixed memory)")
 	fmt.Fprintln(out, "  quit                            exit; inside a module, Ctrl-D detaches")
@@ -61,6 +62,16 @@ func (c *Client) Run(in io.Reader, out io.Writer) {
 		sid := c.nextSID()
 		var alive bool
 		switch parts[0] {
+		case "cmd":
+			if cmdInteractive(parts[1:]) {
+				if err := c.openStream(sid, "cmd", nil); err != nil {
+					fmt.Fprintln(out, "[disconnected]")
+					return
+				}
+				alive = c.runModule(out, sid, "cmd", input)
+			} else {
+				alive = c.cmdRun(out, sid, parts[1:])
+			}
 		case "getfile":
 			alive = c.cmdGetfile(out, sid, parts[1:])
 		case "putfile":
@@ -176,7 +187,11 @@ func (c *Client) runModule(out io.Writer, sid uint64, module string, in *bufio.R
 		if line == "" {
 			continue
 		}
-		if err := wire.WriteFrame(c.conn, wire.KindData, sid, []byte(line)); err != nil {
+		payload := []byte(line)
+		if module == "cmd" {
+			payload = append(payload, '\n')
+		}
+		if err := wire.WriteFrame(c.conn, wire.KindData, sid, payload); err != nil {
 			fmt.Fprintln(out, "[disconnected]")
 			return false
 		}
@@ -190,6 +205,28 @@ func (c *Client) runModule(out io.Writer, sid uint64, module string, in *bufio.R
 		}
 		emit(out, payload)
 	}
+}
+
+func (c *Client) cmdRun(out io.Writer, sid uint64, args []string) bool {
+	if err := c.openStream(sid, "cmd", args); err != nil {
+		fmt.Fprintln(out, "[disconnected]")
+		return false
+	}
+	for {
+		kind, _, payload, err := wire.ReadFrame(c.r)
+		if err != nil {
+			fmt.Fprintln(out, "[disconnected]")
+			return false
+		}
+		if kind == wire.KindClose {
+			return true
+		}
+		emit(out, payload)
+	}
+}
+
+func cmdInteractive(args []string) bool {
+	return len(args) == 0 || len(args) == 1 && (args[0] == "-i" || args[0] == "--interactive")
 }
 
 func (c *Client) cmdGetfile(out io.Writer, sid uint64, args []string) bool {
@@ -302,6 +339,20 @@ func (s *interactiveShell) execute(line string) {
 	}
 	sid := s.client.nextSID()
 	switch parts[0] {
+	case "cmd":
+		if cmdInteractive(parts[1:]) {
+			if err := s.client.openStream(sid, "cmd", nil); err != nil {
+				fmt.Println(errorStyle().Render("[disconnected]"))
+				s.done = true
+				return
+			}
+			if s.openActive(sid, "cmd") {
+				s.active = "cmd"
+				s.activeID = sid
+			}
+			return
+		}
+		_ = s.client.cmdRun(os.Stdout, sid, parts[1:])
 	case "getfile":
 		_ = s.client.cmdGetfile(os.Stdout, sid, parts[1:])
 	case "putfile":
@@ -346,7 +397,11 @@ func (s *interactiveShell) executeActive(line string) {
 		s.done = true
 		return
 	}
-	if err := wire.WriteFrame(s.client.conn, wire.KindData, s.activeID, []byte(line)); err != nil {
+	payload := []byte(line)
+	if s.active == "cmd" {
+		payload = append(payload, '\n')
+	}
+	if err := wire.WriteFrame(s.client.conn, wire.KindData, s.activeID, payload); err != nil {
 		fmt.Println(errorStyle().Render("[disconnected]"))
 		s.done = true
 		return
@@ -373,6 +428,7 @@ func (s *interactiveShell) printHelp() {
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Bold(true)
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	fmt.Println(style.Render("commands"))
+	fmt.Println("  cmd [command...]          " + muted.Render("open cmd.exe, or run through cmd.exe /c"))
 	fmt.Println("  echo <args...>            " + muted.Render("open the echo module"))
 	fmt.Println("  getfile <remote> [local]  " + muted.Render("download from target"))
 	fmt.Println("  putfile <local> <remote>  " + muted.Render("upload to target"))
@@ -418,6 +474,13 @@ func Suggestions(activeModule, line string) []prompt.Suggest {
 			{Text: "hello", Description: "demo argument"},
 			{Text: "operator", Description: "demo argument"},
 		}, prefix)
+	case "cmd":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: "--interactive", Description: "open an interactive cmd.exe stream"},
+			{Text: "whoami", Description: "print current security context"},
+			{Text: "hostname", Description: "print target host name"},
+			{Text: "echo hello", Description: "small output smoke test"},
+		}, prefix)
 	default:
 		return nil
 	}
@@ -425,6 +488,7 @@ func Suggestions(activeModule, line string) []prompt.Suggest {
 
 func topLevelSuggestions() []prompt.Suggest {
 	return []prompt.Suggest{
+		{Text: "cmd", Description: "open cmd.exe or run one command through cmd.exe /c"},
 		{Text: "echo", Description: "open the echo module"},
 		{Text: "getfile", Description: "download a file from target"},
 		{Text: "putfile", Description: "upload a file to target"},

@@ -2,9 +2,9 @@
  *
  * A session owns a channel (a TCP or pipe connection) and demultiplexes the
  * frame stream on it into independent streams. Each OPEN frame starts a module
- * on its own thread, bridged to the stream by a message-mode named pipe:
+ * on its own thread, bridged to the stream by two message-mode named pipes:
  *
- *     peer <--frames--> [session] <--message-mode pipe--> [module thread]
+ *     peer <--frames--> [session] <--input/output pipes--> [module thread]
  *
  *   - inbound DATA frame  -> written as one pipe message -> module ReadFile
  *   - module WriteFile    -> read as one pipe message    -> outbound DATA frame

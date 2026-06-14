@@ -79,6 +79,7 @@ test_suite(
         "//internal/modules/pythonrpc:pythonrpc_test",
         "//payloads/squatter/client/functest:functest_test",
         "//payloads/squatter/provider:provider_test",
+        "//payloads/squatter/tests:cmd_integration_test.exe",
         "//payloads/squatter/tests:echo_integration_test.exe",
         "//payloads/squatter/tests:file_xfer_test.exe",
         "//payloads/squatter/tests:frame_test.exe",

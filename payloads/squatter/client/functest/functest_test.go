@@ -194,6 +194,120 @@ func TestEchoUnicode(t *testing.T) {
 	}
 }
 
+func TestCmdInteractiveEcho(t *testing.T) {
+	conn, r := dial(t)
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		t.Cleanup(func() { _ = tcp.SetDeadline(time.Time{}) })
+	}
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := wire.WriteFrame(conn, wire.KindOpen, 1, wire.EncodeOpen("cmd", nil)); err != nil {
+		t.Fatal(err)
+	}
+
+	sawStart := false
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
+		kind, _, p, err := wire.ReadFrame(r)
+		if err != nil {
+			t.Fatalf("read cmd startup: %v", err)
+		}
+		if kind != wire.KindData {
+			t.Fatalf("startup frame kind = %d, want DATA", kind)
+		}
+		if bytes.Contains(p, []byte("interactive cmd.exe started")) ||
+			bytes.Contains(p, []byte(">")) ||
+			bytes.Contains(p, []byte("Microsoft")) {
+			sawStart = true
+			break
+		}
+	}
+	if !sawStart {
+		t.Fatal("cmd did not emit startup marker or prompt")
+	}
+
+	if err := wire.WriteFrame(conn, wire.KindData, 1, []byte("echo squatter-interactive-wine-ok\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	sawEcho := false
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		kind, _, p, err := wire.ReadFrame(r)
+		if err != nil {
+			t.Fatalf("read cmd echo: %v", err)
+		}
+		if kind == wire.KindClose {
+			break
+		}
+		if kind != wire.KindData {
+			t.Fatalf("echo frame kind = %d, want DATA", kind)
+		}
+		if bytes.Contains(p, []byte("squatter-interactive-wine-ok")) {
+			sawEcho = true
+			break
+		}
+	}
+	if !sawEcho {
+		t.Fatal("cmd did not return interactive echo output")
+	}
+
+	_ = wire.WriteFrame(conn, wire.KindData, 1, []byte("exit\r\n"))
+}
+
+func TestCmdInteractiveDebug(t *testing.T) {
+	conn, r := dial(t)
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := wire.WriteFrame(conn, wire.KindOpen, 1, wire.EncodeOpen("cmd", []string{"--debug"})); err != nil {
+		t.Fatal(err)
+	}
+
+	sawDebug := false
+	sawStart := false
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && (!sawDebug || !sawStart); {
+		kind, _, p, err := wire.ReadFrame(r)
+		if err != nil {
+			t.Fatalf("read debug startup: %v", err)
+		}
+		if kind != wire.KindData {
+			t.Fatalf("debug startup frame kind = %d, want DATA", kind)
+		}
+		sawDebug = sawDebug || bytes.Contains(p, []byte("[sqcmd]"))
+		sawStart = sawStart || bytes.Contains(p, []byte("interactive cmd.exe started"))
+	}
+	if !sawDebug {
+		t.Fatal("cmd --debug did not emit diagnostic frames")
+	}
+	if !sawStart {
+		t.Fatal("cmd --debug did not start interactive shell")
+	}
+
+	if err := wire.WriteFrame(conn, wire.KindData, 1, []byte("echo squatter-debug-ok\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	sawEcho := false
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		kind, _, p, err := wire.ReadFrame(r)
+		if err != nil {
+			t.Fatalf("read debug echo: %v", err)
+		}
+		if kind == wire.KindClose {
+			break
+		}
+		if bytes.Contains(p, []byte("squatter-debug-ok")) {
+			sawEcho = true
+			break
+		}
+	}
+	if !sawEcho {
+		t.Fatal("cmd --debug did not return echo output")
+	}
+
+	_ = wire.WriteFrame(conn, wire.KindData, 1, []byte("exit\r\n"))
+}
+
 // TestFileTransferUnicodeName proves CreateFileW path handling: a file named
 // with non-ASCII code points round-trips through put/get and lands on disk under
 // that exact name.

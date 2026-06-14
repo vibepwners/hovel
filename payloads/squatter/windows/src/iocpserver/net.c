@@ -63,15 +63,81 @@ void sq_net_close(SOCKET s)
     }
 }
 
+static void init_addr_hints(ADDRINFOW *hints)
+{
+    ZeroMemory(hints, sizeof *hints);
+    hints->ai_family = AF_UNSPEC;
+    hints->ai_socktype = SOCK_STREAM;
+    hints->ai_protocol = IPPROTO_TCP;
+    hints->ai_flags = AI_PASSIVE;
+}
+
+static BOOL listen_candidate(ADDRINFOW *addr, int backlog, SOCKET *listener)
+{
+    DWORD const on = 1;
+
+    if (sq_net_tcp_socket(addr->ai_family, listener) != SQ_OK) {
+        return FALSE;
+    }
+    if (setsockopt(*listener, SOL_SOCKET, SO_REUSEADDR, (const char *)&on,
+                   (int)sizeof on) != 0) {
+        SQLOG_WINERR(SQLOG_SUB_NET, ERROR, (unsigned long)WSAGetLastError(),
+                     L"setsockopt(SO_REUSEADDR) failed");
+        sq_net_close(*listener);
+        *listener = INVALID_SOCKET;
+        return FALSE;
+    }
+    if (bind(*listener, addr->ai_addr, (int)addr->ai_addrlen) == 0 &&
+        listen(*listener, backlog) == 0) {
+        return TRUE;
+    }
+    SQLOG_WINERR(SQLOG_SUB_NET, ERROR, (unsigned long)WSAGetLastError(),
+                 L"bind/listen on candidate failed");
+    sq_net_close(*listener);
+    *listener = INVALID_SOCKET;
+    return FALSE;
+}
+
+static sq_status resolve_listen_addresses(const wchar_t *host,
+                                          const wchar_t *port,
+                                          ADDRINFOW **resolved)
+{
+    ADDRINFOW hints = {0};
+    int gai = 0;
+
+    init_addr_hints(&hints);
+    gai = GetAddrInfoW(host, port, &hints, resolved);
+    if (gai == 0) {
+        return SQ_OK;
+    }
+    SQLOG_WINERR(SQLOG_SUB_NET, ERROR, (unsigned long)gai,
+                 L"getaddrinfo(%s:%s) failed", (host != NULL) ? host : L"*",
+                 port);
+    return SQ_ERR_ADDRESS;
+}
+
+static BOOL choose_listener(ADDRINFOW *resolved, int backlog,
+                            SOCKET *out_listener, int *out_family)
+{
+    ADDRINFOW *cur = NULL;
+    SOCKET listener = INVALID_SOCKET;
+
+    for (cur = resolved; cur != NULL; cur = cur->ai_next) {
+        if (listen_candidate(cur, backlog, &listener)) {
+            *out_listener = listener;
+            *out_family = cur->ai_family;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 sq_status sq_net_listen(const wchar_t *host, const wchar_t *port, int backlog,
                         SOCKET *out_listener, int *out_family)
 {
-    ADDRINFOW hints = {0};
     ADDRINFOW *resolved = NULL;
-    ADDRINFOW *cur = NULL;
-    SOCKET listener = INVALID_SOCKET;
-    int gai = 0;
     int effective_backlog = (backlog > 0) ? backlog : SOMAXCONN;
+    sq_status st = SQ_OK;
 
     if (port == NULL || out_listener == NULL || out_family == NULL) {
         return SQ_ERR_PARAM;
@@ -79,56 +145,12 @@ sq_status sq_net_listen(const wchar_t *host, const wchar_t *port, int backlog,
     *out_listener = INVALID_SOCKET;
     *out_family = AF_UNSPEC;
 
-    hints.ai_family = AF_UNSPEC;        /* accept IPv4 or IPv6 */
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
-    hints.ai_flags = AI_PASSIVE;        /* wildcard bind when host == NULL */
-
-    gai = GetAddrInfoW(host, port, &hints, &resolved);
-    if (gai != 0) {
-        /* getaddrinfo returns the WSA error code directly. */
-        SQLOG_WINERR(SQLOG_SUB_NET, ERROR, (unsigned long)gai,
-                     L"getaddrinfo(%s:%s) failed",
-                     (host != NULL) ? host : L"*", port);
-        return SQ_ERR_ADDRESS;
+    st = resolve_listen_addresses(host, port, &resolved);
+    if (st != SQ_OK) {
+        return st;
     }
-
-    for (cur = resolved; cur != NULL; cur = cur->ai_next) {
-        sq_status st = SQ_OK;
-        BOOL reuse_failed = FALSE;
-        DWORD const on = 1;
-
-        st = sq_net_tcp_socket(cur->ai_family, &listener);
-        if (st != SQ_OK) {
-            continue;
-        }
-
-        /* Allow fast restart over a socket in TIME_WAIT. Treat failure as fatal
-         * for this candidate rather than silently binding without it. */
-        if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR,
-                       (const char *)&on, (int)sizeof on) != 0) {
-            SQLOG_WINERR(SQLOG_SUB_NET, ERROR, (unsigned long)WSAGetLastError(),
-                       L"setsockopt(SO_REUSEADDR) failed");
-            reuse_failed = TRUE;
-        }
-
-        if (!reuse_failed &&
-            bind(listener, cur->ai_addr, (int)cur->ai_addrlen) == 0 &&
-            listen(listener, effective_backlog) == 0) {
-            *out_listener = listener;
-            *out_family = cur->ai_family;
-            listener = INVALID_SOCKET; /* ownership transferred to caller */
-            break;
-        }
-
-        if (!reuse_failed) {
-            SQLOG_WINERR(SQLOG_SUB_NET, ERROR, (unsigned long)WSAGetLastError(),
-                       L"bind/listen on candidate failed");
-        }
-        sq_net_close(listener);
-        listener = INVALID_SOCKET;
-    }
-
+    (void)choose_listener(resolved, effective_backlog, out_listener,
+                          out_family);
     FreeAddrInfoW(resolved);
 
     if (*out_listener == INVALID_SOCKET) {

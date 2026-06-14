@@ -93,10 +93,51 @@ static BYTE *write_string(BYTE *cursor, UINT32 field, const char *value)
     return cursor;
 }
 
+static int clamp_args_count(int n_args)
+{
+    if (n_args < 0) {
+        return 0;
+    }
+    if (n_args > SQMUX_OPEN_ARGS_MAX) {
+        return SQMUX_OPEN_ARGS_MAX;
+    }
+    return n_args;
+}
+
+static BOOL arg_present(const char *const *args, int i)
+{
+    return args != NULL && args[i] != NULL && args[i][0] != '\0';
+}
+
+static UINT32 open_encoded_size(const char *module, const char *const *args,
+                                int count)
+{
+    UINT32 total = encoded_string_size(1u, module);
+    int i = 0;
+
+    for (i = 0; i < count; i++) {
+        if (arg_present(args, i)) {
+            total += encoded_string_size(2u, args[i]);
+        }
+    }
+    return total;
+}
+
+static BYTE *write_open_args(BYTE *cursor, const char *const *args, int count)
+{
+    int i = 0;
+
+    for (i = 0; i < count; i++) {
+        if (arg_present(args, i)) {
+            cursor = write_string(cursor, 2u, args[i]);
+        }
+    }
+    return cursor;
+}
+
 BOOL sq_control_encode_open(const char *module, const char *const *args,
                             int n_args, BYTE **out, UINT32 *out_len)
 {
-    int i = 0;
     int count = 0;
     UINT32 total = 0;
     BYTE *buf = NULL;
@@ -108,32 +149,33 @@ BOOL sq_control_encode_open(const char *module, const char *const *args,
     *out = NULL;
     *out_len = 0;
 
-    count = n_args;
-    if (count < 0) {
-        count = 0;
-    }
-    if (count > SQMUX_OPEN_ARGS_MAX) {
-        count = SQMUX_OPEN_ARGS_MAX;
-    }
-    total = encoded_string_size(1u, module);
-    for (i = 0; i < count; i++) {
-        if (args != NULL && args[i] != NULL && args[i][0] != '\0') {
-            total += encoded_string_size(2u, args[i]);
-        }
-    }
+    count = clamp_args_count(n_args);
+    total = open_encoded_size(module, args, count);
 
     buf = HeapAlloc(GetProcessHeap(), 0, (total == 0) ? 1u : (SIZE_T)total);
     if (buf == NULL) {
         return FALSE;
     }
     cursor = write_string(buf, 1u, module);
-    for (i = 0; i < count; i++) {
-        if (args != NULL && args[i] != NULL && args[i][0] != '\0') {
-            cursor = write_string(cursor, 2u, args[i]);
-        }
-    }
+    cursor = write_open_args(cursor, args, count);
     *out = buf;
     *out_len = (UINT32)(cursor - buf);
+    return TRUE;
+}
+
+static BOOL decode_open_field(sqmux_OpenStream *out, UINT32 field,
+                              const BYTE *cursor, UINT32 value_len)
+{
+    if (field == 1u) {
+        copy_bounded_len(out->module, cursor, value_len,
+                         (int)sizeof out->module);
+        return TRUE;
+    }
+    if (field == 2u && out->args_count < SQMUX_OPEN_ARGS_MAX) {
+        copy_bounded_len(out->args[out->args_count], cursor, value_len,
+                         (int)sizeof out->args[out->args_count]);
+        out->args_count++;
+    }
     return TRUE;
 }
 
@@ -168,14 +210,7 @@ BOOL sq_control_decode_open(const BYTE *payload, UINT32 len,
         if ((UINT32)(end - cursor) < value_len) {
             return FALSE;
         }
-        if (field == 1u) {
-            copy_bounded_len(out->module, cursor, value_len,
-                             (int)sizeof out->module);
-        } else if (field == 2u && out->args_count < SQMUX_OPEN_ARGS_MAX) {
-            copy_bounded_len(out->args[out->args_count], cursor, value_len,
-                             (int)sizeof out->args[out->args_count]);
-            out->args_count++;
-        }
+        (void)decode_open_field(out, field, cursor, value_len);
         cursor += value_len;
     }
     return out->module[0] != '\0' ? TRUE : FALSE;

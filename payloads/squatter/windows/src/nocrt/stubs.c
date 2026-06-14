@@ -108,6 +108,15 @@
 		return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8, a9); \
 	}
 
+#define API10(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10) \
+	typedef ret (WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10); \
+	ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10); \
+	static name##_fn name##_ptr; \
+	ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7, t8 a8, t9 a9, t10 a10) { \
+		if (name##_ptr == NULL) { union { void *addr; name##_fn fn; } resolved; resolved.addr = sq_resolve_api(dll, #name); name##_ptr = resolved.fn; } \
+		return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10); \
+	}
+
 #define API12(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12) \
 	typedef ret (WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12); \
 	ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12); \
@@ -122,7 +131,10 @@ API2(BOOL, "kernel32.dll", ConnectNamedPipe, HANDLE, LPOVERLAPPED)
 API4(HANDLE, "kernel32.dll", CreateEventW, LPSECURITY_ATTRIBUTES, BOOL, BOOL, LPCWSTR)
 API7(HANDLE, "kernel32.dll", CreateFileW, LPCWSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, DWORD, DWORD, HANDLE)
 API8(HANDLE, "kernel32.dll", CreateNamedPipeW, LPCWSTR, DWORD, DWORD, DWORD, DWORD, DWORD, DWORD, LPSECURITY_ATTRIBUTES)
+API4(BOOL, "kernel32.dll", CreatePipe, HANDLE *, HANDLE *, LPSECURITY_ATTRIBUTES, DWORD)
+API10(BOOL, "kernel32.dll", CreateProcessW, LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD, LPVOID, LPCWSTR, STARTUPINFOW *, PROCESS_INFORMATION *)
 API6(HANDLE, "kernel32.dll", CreateThread, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD)
+API2(BOOL, "kernel32.dll", TerminateProcess, HANDLE, UINT)
 API0V("kernel32.dll", DebugBreak)
 API1V("kernel32.dll", DeleteCriticalSection, LPCRITICAL_SECTION)
 API1V("kernel32.dll", EnterCriticalSection, LPCRITICAL_SECTION)
@@ -131,12 +143,14 @@ API1(BOOL, "kernel32.dll", FlushFileBuffers, HANDLE)
 API7(DWORD, "kernel32.dll", FormatMessageW, DWORD, LPCVOID, DWORD, DWORD, LPWSTR, DWORD, va_list *)
 API2(BOOL, "kernel32.dll", GetConsoleMode, HANDLE, LPDWORD)
 API2(BOOL, "kernel32.dll", GetConsoleScreenBufferInfo, HANDLE, CONSOLE_SCREEN_BUFFER_INFO *)
+API0(HANDLE, "kernel32.dll", GetCurrentProcess)
 API0(DWORD, "kernel32.dll", GetCurrentProcessId)
 API0(DWORD, "kernel32.dll", GetCurrentThreadId)
 API2(BOOL, "kernel32.dll", GetFileSizeEx, HANDLE, LARGE_INTEGER *)
 API0(DWORD, "kernel32.dll", GetLastError)
 API1V("kernel32.dll", GetLocalTime, SYSTEMTIME *)
 API4(BOOL, "kernel32.dll", GetOverlappedResult, HANDLE, LPOVERLAPPED, LPDWORD, BOOL)
+API2(BOOL, "kernel32.dll", GetExitCodeProcess, HANDLE, LPDWORD)
 API0(HANDLE, "kernel32.dll", GetProcessHeap)
 API1(HANDLE, "kernel32.dll", GetStdHandle, DWORD)
 API3(LPVOID, "kernel32.dll", HeapAlloc, HANDLE, DWORD, SIZE_T)
@@ -149,10 +163,12 @@ API3(LPWSTR, "kernel32.dll", lstrcpynW, LPWSTR, LPCWSTR, int)
 API1(HMODULE, "kernel32.dll", GetModuleHandleW, LPCWSTR)
 API6(int, "kernel32.dll", MultiByteToWideChar, UINT, DWORD, LPCSTR, int, LPWSTR, int)
 API1V("kernel32.dll", OutputDebugStringW, LPCWSTR)
+API7(BOOL, "kernel32.dll", DuplicateHandle, HANDLE, HANDLE, HANDLE, HANDLE *, DWORD, BOOL, DWORD)
 API1(BOOL, "kernel32.dll", SetEvent, HANDLE)
 API5(BOOL, "kernel32.dll", ReadFile, HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED)
 API2(BOOL, "kernel32.dll", SetConsoleCtrlHandler, PHANDLER_ROUTINE, BOOL)
 API2(BOOL, "kernel32.dll", SetConsoleTextAttribute, HANDLE, WORD)
+API3(BOOL, "kernel32.dll", SetHandleInformation, HANDLE, DWORD, DWORD)
 API4(BOOL, "kernel32.dll", SetNamedPipeHandleState, HANDLE, LPDWORD, LPDWORD, LPDWORD)
 API1V("kernel32.dll", Sleep, DWORD)
 API2(LONG, "kernel32.dll", InterlockedExchange, LPLONG, LONG)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -62,6 +63,7 @@ type Invocation struct {
 	Options        map[string]string
 	Flags          map[string]bool
 	Input          Input
+	Output         io.Writer
 	NonInteractive bool
 }
 
@@ -88,6 +90,7 @@ func (i Invocation) Flag(name string) bool {
 
 type Result struct {
 	Human string
+	Raw   []byte
 	JSON  any
 	Log   operatorlog.Log
 }

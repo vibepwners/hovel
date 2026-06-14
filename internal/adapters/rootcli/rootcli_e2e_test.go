@@ -128,7 +128,7 @@ func TestRunCommandUsesDaemonSessionContextForThrow(t *testing.T) {
 	}
 }
 
-func TestRunCommandPersistsSquatterAddAliasAsChainStep(t *testing.T) {
+func TestRunCommandPersistsSquatterAsModuleWithTypeConfig(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
 	ctx := context.Background()
 	run := func(args ...string) string {
@@ -147,10 +147,18 @@ func TestRunCommandPersistsSquatterAddAliasAsChainStep(t *testing.T) {
 	run("add", "squatter@v0.1.0")
 	output := run("chain", "inspect")
 
-	for _, want := range []string{"etro-survey@v0.1.0", "etro-exploit@v1.0.0", "squatter", "squatter.bind"} {
+	for _, want := range []string{"etro-survey@v0.1.0", "etro-exploit@v1.0.0", "squatter@v0.1.0"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("chain inspect missing %q:\n%s", want, output)
 		}
+	}
+	if strings.Contains(output, "squatter.bind") {
+		t.Fatalf("chain inspect contains legacy Squatter step:\n%s", output)
+	}
+
+	configOutput := run("chain", "config", "list")
+	if !strings.Contains(configOutput, "squatter.type") || !strings.Contains(configOutput, "tcp-bind") {
+		t.Fatalf("chain config list missing Squatter type config:\n%s", configOutput)
 	}
 }
 

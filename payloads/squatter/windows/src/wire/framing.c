@@ -50,6 +50,67 @@ static void reader_reset(sq_frame_reader *r)
     r->in_payload = FALSE;
 }
 
+static int reader_emit(sq_frame_reader *r, sq_frame_sink sink, void *ctx,
+                       const BYTE *payload, UINT32 length)
+{
+    int rc = sink(ctx, r->hdr.kind, r->hdr.stream_id, payload, length);
+
+    reader_reset(r);
+    return rc;
+}
+
+static int reader_take_header(sq_frame_reader *r, const BYTE *data,
+                              UINT32 len, UINT32 *off, sq_frame_sink sink,
+                              void *ctx)
+{
+    UINT32 need = (UINT32)SQ_FRAME_HEADER_SIZE - r->header_have;
+    UINT32 avail = len - *off;
+    UINT32 take = (avail < need) ? avail : need;
+
+    CopyMemory(r->header + r->header_have, data + *off, take);
+    r->header_have += take;
+    *off += take;
+
+    if (r->header_have < (UINT32)SQ_FRAME_HEADER_SIZE) {
+        return 0;
+    }
+    if (!sq_frame_header_decode(r->header, &r->hdr)) {
+        r->broken = TRUE;
+        return -1;
+    }
+    r->in_payload = TRUE;
+    r->payload_have = 0;
+    r->payload = NULL;
+    if (r->hdr.length == 0) {
+        return reader_emit(r, sink, ctx, NULL, 0);
+    }
+    r->payload = heap_alloc(r->hdr.length);
+    if (r->payload == NULL) {
+        r->broken = TRUE;
+        return -1;
+    }
+    return 0;
+}
+
+static int reader_take_payload(sq_frame_reader *r, const BYTE *data,
+                               UINT32 len, UINT32 *off, sq_frame_sink sink,
+                               void *ctx)
+{
+    UINT32 need = r->hdr.length - r->payload_have;
+    UINT32 avail = len - *off;
+    UINT32 take = (avail < need) ? avail : need;
+
+    if (take > 0) {
+        CopyMemory(r->payload + r->payload_have, data + *off, take);
+        r->payload_have += take;
+        *off += take;
+    }
+    if (r->payload_have < r->hdr.length) {
+        return 0;
+    }
+    return reader_emit(r, sink, ctx, r->payload, r->hdr.length);
+}
+
 int sq_frame_reader_push(sq_frame_reader *r, const BYTE *data, UINT32 len,
                          sq_frame_sink sink, void *ctx)
 {
@@ -64,65 +125,14 @@ int sq_frame_reader_push(sq_frame_reader *r, const BYTE *data, UINT32 len,
 
     while (off < len) {
         if (!r->in_payload) {
-            /* Accumulate header bytes. */
-            UINT32 need = (UINT32)SQ_FRAME_HEADER_SIZE - r->header_have;
-            UINT32 avail = len - off;
-            UINT32 take = (avail < need) ? avail : need;
-
-            CopyMemory(r->header + r->header_have, data + off, take);
-            r->header_have += take;
-            off += take;
-
-            if (r->header_have < (UINT32)SQ_FRAME_HEADER_SIZE) {
-                break; /* need more bytes for the header */
-            }
-            if (!sq_frame_header_decode(r->header, &r->hdr)) {
-                r->broken = TRUE;
-                return -1;
-            }
-            r->in_payload = TRUE;
-            r->payload_have = 0;
-            r->payload = NULL;
-            if (r->hdr.length == 0) {
-                /* Empty payload: the frame is already complete. Emit it now
-                 * rather than waiting for more input (which may never come if
-                 * this frame is the last bytes pushed). */
-                int rc = sink(ctx, r->hdr.kind, r->hdr.stream_id, NULL, 0);
-                reader_reset(r);
-                if (rc != 0) {
-                    return rc;
-                }
-            } else {
-                r->payload = heap_alloc(r->hdr.length);
-                if (r->payload == NULL) {
-                    r->broken = TRUE;
-                    return -1;
-                }
+            int rc = reader_take_header(r, data, len, &off, sink, ctx);
+            if (rc != 0) {
+                return rc;
             }
         } else {
-            /* Accumulate payload bytes. */
-            UINT32 need = r->hdr.length - r->payload_have;
-            UINT32 avail = len - off;
-            UINT32 take = (avail < need) ? avail : need;
-
-            if (take > 0) {
-                CopyMemory(r->payload + r->payload_have, data + off, take);
-                r->payload_have += take;
-                off += take;
-            }
-
-            if (r->payload_have < r->hdr.length) {
-                break; /* need more payload bytes */
-            }
-
-            /* Frame complete: surface it, then rearm for the next header. */
-            {
-                int rc = sink(ctx, r->hdr.kind, r->hdr.stream_id, r->payload,
-                              r->hdr.length);
-                reader_reset(r);
-                if (rc != 0) {
-                    return rc;
-                }
+            int rc = reader_take_payload(r, data, len, &off, sink, ctx);
+            if (rc != 0) {
+                return rc;
             }
         }
     }

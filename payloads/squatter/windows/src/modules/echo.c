@@ -35,7 +35,7 @@ static BOOL is_end(const BYTE *buf, DWORD n)
     return (n == 3 && buf[0] == 'E' && buf[1] == 'N' && buf[2] == 'D');
 }
 
-int sq_echo_module_main(HANDLE pipe, int argc, wchar_t **argv)
+int sq_echo_module_main(HANDLE input, HANDLE output, int argc, wchar_t **argv)
 {
     char argv_msg[SQ_ECHO_ARGV_MSG_MAX];
     int argv_len = 0;
@@ -44,7 +44,7 @@ int sq_echo_module_main(HANDLE pipe, int argc, wchar_t **argv)
     /* 1. Echo argc/argv back as one message. */
     argv_len = format_argv(argc, argv, argv_msg, (int)sizeof argv_msg);
     if (argv_len > 0) {
-        if (WriteFile(pipe, argv_msg, (DWORD)argv_len, &wrote, NULL) == FALSE) {
+        if (WriteFile(output, argv_msg, (DWORD)argv_len, &wrote, NULL) == FALSE) {
             return 1;
         }
     }
@@ -54,7 +54,7 @@ int sq_echo_module_main(HANDLE pipe, int argc, wchar_t **argv)
         BYTE buf[SQ_ECHO_IO_BUF];
         DWORD n = 0;
 
-        if (ReadFile(pipe, buf, (DWORD)sizeof buf, &n, NULL) == FALSE) {
+        if (ReadFile(input, buf, (DWORD)sizeof buf, &n, NULL) == FALSE) {
             break; /* pipe closed by the runtime (peer CLOSE) */
         }
         if (n == 0) {
@@ -63,7 +63,7 @@ int sq_echo_module_main(HANDLE pipe, int argc, wchar_t **argv)
         if (is_end(buf, n)) {
             break; /* 3. graceful close */
         }
-        if (WriteFile(pipe, buf, n, &wrote, NULL) == FALSE) {
+        if (WriteFile(output, buf, n, &wrote, NULL) == FALSE) {
             break;
         }
     }

@@ -26,9 +26,9 @@ spec:
       uses: module:etro-exploit@v1.0.0
     - id: squatter-bind
       uses: module:squatter@v0.1.0
-      step: squatter.bind
   config:
     operator.confirmed_lab: "true"
+    squatter.type: "tcp-bind"
     squatter.bind_port: "$bind_port"
     squatter.remote_path: '$remote_path'
   targets:

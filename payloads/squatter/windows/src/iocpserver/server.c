@@ -385,6 +385,35 @@ static void wake_all_workers(sq_server *s)
     }
 }
 
+static BOOL should_exit_worker(sq_server *s, const sq_iocp_event *ev,
+                               sq_status st)
+{
+    if (st != SQ_OK || ev->outcome == SQ_IOCP_CLOSED) {
+        return TRUE;
+    }
+    if (ev->outcome == SQ_IOCP_TIMEOUT) {
+        return FALSE;
+    }
+    return ev->overlapped == NULL && s->stopping != 0 && s->outstanding == 0;
+}
+
+static void dispatch_iocp_event(sq_server *s, const sq_iocp_event *ev)
+{
+    sq_conn *c = CONTAINING_RECORD(ev->overlapped, sq_conn, overlapped);
+
+    switch (c->kind) {
+    case SQ_OP_ACCEPT:
+        on_accept_complete(s, c, ev->op_failed);
+        break;
+    case SQ_OP_RECV:
+        on_recv_complete(s, c, ev->bytes, ev->op_failed);
+        break;
+    case SQ_OP_SEND:
+        on_send_complete(s, c, ev->bytes, ev->op_failed);
+        break;
+    }
+}
+
 static DWORD WINAPI worker_main(LPVOID param)
 {
     sq_server *s = (sq_server *)param;
@@ -392,35 +421,14 @@ static DWORD WINAPI worker_main(LPVOID param)
     for (;;) {
         sq_iocp_event ev; /* fully zeroed by sq_iocp_wait */
         sq_status st = sq_iocp_wait(s->iocp, INFINITE, &ev);
-        sq_conn *c = NULL;
 
-        if (st != SQ_OK || ev.outcome == SQ_IOCP_CLOSED) {
+        if (should_exit_worker(s, &ev, st)) {
             break;
-        }
-        if (ev.outcome == SQ_IOCP_TIMEOUT) {
-            continue; /* cannot happen with INFINITE, but handled for totality */
         }
         if (ev.overlapped == NULL) {
-            /* A hand-posted wake-up. Exit only once every connection has been
-             * drained, so no completion is left unhandled. */
-            if (s->stopping != 0 && s->outstanding == 0) {
-                break;
-            }
             continue;
         }
-
-        c = CONTAINING_RECORD(ev.overlapped, sq_conn, overlapped);
-        switch (c->kind) {
-        case SQ_OP_ACCEPT:
-            on_accept_complete(s, c, ev.op_failed);
-            break;
-        case SQ_OP_RECV:
-            on_recv_complete(s, c, ev.bytes, ev.op_failed);
-            break;
-        case SQ_OP_SEND:
-            on_send_complete(s, c, ev.bytes, ev.op_failed);
-            break;
-        }
+        dispatch_iocp_event(s, &ev);
     }
     return 0;
 }
@@ -446,45 +454,33 @@ static unsigned default_worker_count(void)
     return n;
 }
 
-sq_status sq_server_create(const sq_server_config *cfg, sq_server **out)
+static sq_server *server_alloc(const sq_server_config *cfg)
 {
-    sq_server *s = NULL;
-    sq_status st = SQ_OK;
-    unsigned i = 0;
+    sq_server *s = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof *s);
 
-    if (out == NULL) {
-        return SQ_ERR_PARAM;
-    }
-    *out = NULL;
-    if (cfg == NULL || cfg->port == NULL || cfg->handler.on_recv == NULL) {
-        SQLOG_ERROR(SQLOG_SUB_SERVER,
-                    L"sq_server_create: invalid configuration");
-        return SQ_ERR_PARAM;
-    }
-
-    s = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof *s);
     if (s == NULL) {
-        return SQ_ERR_NOMEM;
+        return NULL;
     }
     s->listener = INVALID_SOCKET;
     s->iocp = NULL;
     s->handler = cfg->handler;
     InitializeCriticalSection(&s->list_lock);
+    return s;
+}
 
-    s->stop_event = CreateEventW(NULL, TRUE /* manual reset */, FALSE, NULL);
-    if (s->stop_event == NULL) {
-        SQLOG_WINERR(SQLOG_SUB_SERVER, ERROR, (unsigned long)GetLastError(),
-                     L"CreateEvent failed");
-        st = SQ_ERR_SYSTEM;
-        goto fail;
+static sq_status create_stop_event(sq_server *s)
+{
+    s->stop_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (s->stop_event != NULL) {
+        return SQ_OK;
     }
+    SQLOG_WINERR(SQLOG_SUB_SERVER, ERROR, (unsigned long)GetLastError(),
+                 L"CreateEvent failed");
+    return SQ_ERR_SYSTEM;
+}
 
-    st = sq_net_startup();
-    if (st != SQ_OK) {
-        goto fail;
-    }
-    s->net_started = 1;
-
+static sq_status configure_counts(sq_server *s, const sq_server_config *cfg)
+{
     s->worker_count = (cfg->worker_count > 0) ? cfg->worker_count
                                               : default_worker_count();
     if (s->worker_count > SQ_MAX_WORKERS) {
@@ -492,50 +488,111 @@ sq_status sq_server_create(const sq_server_config *cfg, sq_server **out)
     }
     s->accept_count = (cfg->accept_count > 0) ? cfg->accept_count
                                               : SQ_DEFAULT_ACCEPTS;
-
     s->workers = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
                            (SIZE_T)s->worker_count * sizeof *s->workers);
-    if (s->workers == NULL) {
-        st = SQ_ERR_NOMEM;
-        goto fail;
-    }
+    return (s->workers != NULL) ? SQ_OK : SQ_ERR_NOMEM;
+}
 
-    st = sq_net_listen(cfg->host, cfg->port, cfg->backlog,
-                       &s->listener, &s->family);
+static sq_status open_listener_and_iocp(sq_server *s,
+                                        const sq_server_config *cfg)
+{
+    sq_status st = sq_net_listen(cfg->host, cfg->port, cfg->backlog,
+                                 &s->listener, &s->family);
+
     if (st != SQ_OK) {
-        goto fail;
+        return st;
     }
-    st = sq_iocp_create(0 /* one schedulable thread per processor */, &s->iocp);
+    st = sq_iocp_create(0, &s->iocp);
     if (st != SQ_OK) {
-        goto fail;
+        return st;
     }
     st = sq_iocp_associate(s->iocp, (HANDLE)s->listener, SQ_KEY_IO);
     if (st != SQ_OK) {
-        goto fail;
+        return st;
     }
-    st = sq_net_load_ext(s->listener, &s->ext);
-    if (st != SQ_OK) {
-        goto fail;
-    }
+    return sq_net_load_ext(s->listener, &s->ext);
+}
 
-    /* Spawn workers. They block on the port immediately; no work flows until we
-     * post the first accepts below. */
+static sq_status start_workers(sq_server *s)
+{
+    unsigned i = 0;
+
     for (i = 0; i < s->worker_count; i++) {
         HANDLE h = CreateThread(NULL, 0, worker_main, s, 0, NULL);
         if (h == NULL) {
             SQLOG_WINERR(SQLOG_SUB_SERVER, ERROR, (unsigned long)GetLastError(),
                          L"CreateThread failed");
-            st = SQ_ERR_SYSTEM;
-            goto fail;
+            return SQ_ERR_SYSTEM;
         }
         s->workers[i] = h;
     }
+    return SQ_OK;
+}
+
+static sq_status post_initial_accepts(sq_server *s)
+{
+    unsigned i = 0;
 
     for (i = 0; i < s->accept_count; i++) {
-        st = post_accept(s);
+        sq_status st = post_accept(s);
         if (st != SQ_OK) {
-            goto fail;
+            return st;
         }
+    }
+    return SQ_OK;
+}
+
+static BOOL valid_server_config(const sq_server_config *cfg)
+{
+    return cfg != NULL && cfg->port != NULL && cfg->handler.on_recv != NULL;
+}
+
+static sq_status setup_server(sq_server *s, const sq_server_config *cfg)
+{
+    sq_status st = create_stop_event(s);
+
+    if (st == SQ_OK) {
+        st = sq_net_startup();
+    }
+    if (st == SQ_OK) {
+        s->net_started = 1;
+        st = configure_counts(s, cfg);
+    }
+    if (st == SQ_OK) {
+        st = open_listener_and_iocp(s, cfg);
+    }
+    if (st == SQ_OK) {
+        st = start_workers(s);
+    }
+    if (st == SQ_OK) {
+        st = post_initial_accepts(s);
+    }
+    return st;
+}
+
+sq_status sq_server_create(const sq_server_config *cfg, sq_server **out)
+{
+    sq_server *s = NULL;
+    sq_status st = SQ_OK;
+
+    if (out == NULL) {
+        return SQ_ERR_PARAM;
+    }
+    *out = NULL;
+    if (!valid_server_config(cfg)) {
+        SQLOG_ERROR(SQLOG_SUB_SERVER,
+                    L"sq_server_create: invalid configuration");
+        return SQ_ERR_PARAM;
+    }
+
+    s = server_alloc(cfg);
+    if (s == NULL) {
+        return SQ_ERR_NOMEM;
+    }
+
+    st = setup_server(s, cfg);
+    if (st != SQ_OK) {
+        goto fail;
     }
 
     SQLOG_INFO(SQLOG_SUB_SERVER, L"listening on %s:%s (%u workers, %u accepts)",

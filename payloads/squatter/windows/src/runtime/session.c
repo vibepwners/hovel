@@ -14,8 +14,10 @@ typedef struct sq_stream {
     sq_session *session;
     sq_module_fn fn;
 
-    HANDLE session_end; /* server end: session reads/writes this              */
-    HANDLE module_end;  /* client end: handed to the module; closed on return */
+    HANDLE input_session_end;  /* session writes inbound DATA here */
+    HANDLE input_module_end;   /* module reads operator input here */
+    HANDLE output_session_end; /* session pump reads module output here */
+    HANDLE output_module_end;  /* module writes outbound DATA here */
     HANDLE module_thread;
     HANDLE pump_thread;
 
@@ -217,10 +219,17 @@ static DWORD WINAPI module_trampoline(LPVOID param)
 {
     sq_stream *st = (sq_stream *)param;
 
-    (void)st->fn(st->module_end, st->argc, st->argv);
-    if (st->module_end != INVALID_HANDLE_VALUE && st->module_end != NULL) {
-        (void)CloseHandle(st->module_end);
-        st->module_end = INVALID_HANDLE_VALUE;
+    (void)st->fn(st->input_module_end, st->output_module_end, st->argc,
+                 st->argv);
+    if (st->input_module_end != INVALID_HANDLE_VALUE &&
+        st->input_module_end != NULL) {
+        (void)CloseHandle(st->input_module_end);
+        st->input_module_end = INVALID_HANDLE_VALUE;
+    }
+    if (st->output_module_end != INVALID_HANDLE_VALUE &&
+        st->output_module_end != NULL) {
+        (void)CloseHandle(st->output_module_end);
+        st->output_module_end = INVALID_HANDLE_VALUE;
     }
     return 0;
 }
@@ -236,7 +245,8 @@ static DWORD WINAPI pump_thread(LPVOID param)
         BYTE buf[SQ_SESSION_READ_BUF];
         DWORD n = 0;
 
-        if (pipe_read_message(st->session_end, buf, (DWORD)sizeof buf, &n) == FALSE) {
+        if (pipe_read_message(st->output_session_end, buf, (DWORD)sizeof buf,
+                              &n) == FALSE) {
             break;
         }
         if (n == 0) {
@@ -252,8 +262,8 @@ static DWORD WINAPI pump_thread(LPVOID param)
 /* Stream creation                                                           */
 /* ------------------------------------------------------------------------- */
 
-static BOOL make_message_pipe(sq_session *s, UINT64 id, HANDLE *server_end,
-                              HANDLE *client_end)
+static BOOL make_message_pipe(sq_session *s, UINT64 id, const wchar_t *role,
+                              HANDLE *server_end, HANDLE *client_end)
 {
     wchar_t name[160];
     HANDLE server = INVALID_HANDLE_VALUE;
@@ -263,9 +273,9 @@ static BOOL make_message_pipe(sq_session *s, UINT64 id, HANDLE *server_end,
     /* Unique per (process, session, stream): the session pointer disambiguates
      * the same stream id used on different connections. */
     (void)wnsprintfW(name, (int)(sizeof name / sizeof name[0]),
-                     L"\\\\.\\pipe\\sqmux-%lu-%p-%I64u",
+                     L"\\\\.\\pipe\\sqmux-%lu-%p-%I64u-%s",
                      (unsigned long)GetCurrentProcessId(), (void *)s,
-                     (unsigned __int64)id);
+                     (unsigned __int64)id, role);
 
     server = CreateNamedPipeW(
         name, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
@@ -295,6 +305,49 @@ static BOOL make_message_pipe(sq_session *s, UINT64 id, HANDLE *server_end,
     return TRUE;
 }
 
+static void close_stream_handles(sq_stream *st)
+{
+    if (st == NULL) {
+        return;
+    }
+    if (st->input_session_end != INVALID_HANDLE_VALUE) {
+        (void)CloseHandle(st->input_session_end);
+        st->input_session_end = INVALID_HANDLE_VALUE;
+    }
+    if (st->output_session_end != INVALID_HANDLE_VALUE) {
+        (void)CloseHandle(st->output_session_end);
+        st->output_session_end = INVALID_HANDLE_VALUE;
+    }
+}
+
+static void wait_stream_threads(sq_stream *st)
+{
+    if (st == NULL) {
+        return;
+    }
+    if (st->module_thread != NULL) {
+        (void)WaitForSingleObject(st->module_thread, INFINITE);
+        (void)CloseHandle(st->module_thread);
+        st->module_thread = NULL;
+    }
+    if (st->pump_thread != NULL) {
+        (void)WaitForSingleObject(st->pump_thread, INFINITE);
+        (void)CloseHandle(st->pump_thread);
+        st->pump_thread = NULL;
+    }
+}
+
+static void destroy_stream(sq_stream *st)
+{
+    if (st == NULL) {
+        return;
+    }
+    close_stream_handles(st);
+    wait_stream_threads(st);
+    free_argv(st->argv, st->argc);
+    xfree(st);
+}
+
 static void handle_open(sq_session *s, UINT64 id, const BYTE *payload, UINT32 len)
 {
     sqmux_OpenStream open;
@@ -319,22 +372,48 @@ static void handle_open(sq_session *s, UINT64 id, const BYTE *payload, UINT32 le
     st->id = id;
     st->session = s;
     st->fn = fn;
-    st->session_end = INVALID_HANDLE_VALUE;
-    st->module_end = INVALID_HANDLE_VALUE;
+    st->input_session_end = INVALID_HANDLE_VALUE;
+    st->input_module_end = INVALID_HANDLE_VALUE;
+    st->output_session_end = INVALID_HANDLE_VALUE;
+    st->output_module_end = INVALID_HANDLE_VALUE;
 
-    if (!make_message_pipe(s, id, &st->session_end, &st->module_end)) {
+    if (!make_message_pipe(s, id, L"in", &st->input_session_end,
+                           &st->input_module_end)) {
+        xfree(st);
+        session_write_frame(s, (UINT16)SQ_FRAME_CLOSE, id, NULL, 0);
+        return;
+    }
+    if (!make_message_pipe(s, id, L"out", &st->output_session_end,
+                           &st->output_module_end)) {
+        (void)CloseHandle(st->input_session_end);
+        (void)CloseHandle(st->input_module_end);
         xfree(st);
         session_write_frame(s, (UINT16)SQ_FRAME_CLOSE, id, NULL, 0);
         return;
     }
     st->argv = build_argv(open.module, &open, &st->argc);
-
-    /* Link first, so the stream is findable for DATA that races the threads. */
-    st->next = s->streams;
-    s->streams = st;
+    if (st->argv == NULL) {
+        destroy_stream(st);
+        session_write_frame(s, (UINT16)SQ_FRAME_CLOSE, id, NULL, 0);
+        return;
+    }
 
     st->module_thread = CreateThread(NULL, 0, module_trampoline, st, 0, NULL);
+    if (st->module_thread == NULL) {
+        destroy_stream(st);
+        session_write_frame(s, (UINT16)SQ_FRAME_CLOSE, id, NULL, 0);
+        return;
+    }
     st->pump_thread = CreateThread(NULL, 0, pump_thread, st, 0, NULL);
+    if (st->pump_thread == NULL) {
+        destroy_stream(st);
+        session_write_frame(s, (UINT16)SQ_FRAME_CLOSE, id, NULL, 0);
+        return;
+    }
+
+    /* Link before returning so DATA queued behind this OPEN can find it. */
+    st->next = s->streams;
+    s->streams = st;
 }
 
 static sq_stream *find_stream(sq_session *s, UINT64 id)
@@ -355,12 +434,12 @@ static void handle_data(sq_session *s, UINT64 id, const BYTE *payload, UINT32 le
     sq_stream *st = find_stream(s, id);
     DWORD wrote = 0;
 
-    if (st == NULL || st->session_end == INVALID_HANDLE_VALUE) {
+    if (st == NULL || st->input_session_end == INVALID_HANDLE_VALUE) {
         return;
     }
     /* Message-mode: this whole payload arrives at the module as one ReadFile. */
     (void)wrote;
-    (void)pipe_write_message(st->session_end, payload, len);
+    (void)pipe_write_message(st->input_session_end, payload, len);
 }
 
 static void handle_close(sq_session *s, UINT64 id)
@@ -370,11 +449,11 @@ static void handle_close(sq_session *s, UINT64 id)
     if (st == NULL) {
         return;
     }
-    /* Closing the session end makes the module's ReadFile return: it ends
+    /* Closing the input session end makes the module's ReadFile return: it ends
      * gracefully, the trampoline closes the module end, the pump emits CLOSE. */
-    if (st->session_end != INVALID_HANDLE_VALUE) {
-        (void)CloseHandle(st->session_end);
-        st->session_end = INVALID_HANDLE_VALUE;
+    if (st->input_session_end != INVALID_HANDLE_VALUE) {
+        (void)CloseHandle(st->input_session_end);
+        st->input_session_end = INVALID_HANDLE_VALUE;
     }
 }
 
@@ -482,26 +561,13 @@ void sq_session_destroy(sq_session *s)
     }
 
     /* The reader is joined, so the stream list is now ours alone. Tear down
-     * each stream: closing the session end unblocks both module and pump. */
+     * each stream: closing the session ends unblocks both module and pump. */
     st = s->streams;
     s->streams = NULL;
     while (st != NULL) {
         sq_stream *next = st->next;
 
-        if (st->session_end != INVALID_HANDLE_VALUE) {
-            (void)CloseHandle(st->session_end);
-            st->session_end = INVALID_HANDLE_VALUE;
-        }
-        if (st->module_thread != NULL) {
-            (void)WaitForSingleObject(st->module_thread, INFINITE);
-            (void)CloseHandle(st->module_thread);
-        }
-        if (st->pump_thread != NULL) {
-            (void)WaitForSingleObject(st->pump_thread, INFINITE);
-            (void)CloseHandle(st->pump_thread);
-        }
-        free_argv(st->argv, st->argc);
-        xfree(st);
+        destroy_stream(st);
         st = next;
     }
 

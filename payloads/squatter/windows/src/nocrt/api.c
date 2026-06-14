@@ -189,40 +189,63 @@ static void *find_loaded_module(const char *dll_name)
 	return NULL;
 }
 
-static void *resolve_forwarder(const char *forwarder)
+static unsigned int forwarder_dot(const char *forwarder)
 {
-	char dll[96];
-	char api[128];
-	unsigned int i = 0;
 	unsigned int dot = 0;
-	unsigned int dll_len = 0;
-	unsigned int api_len = 0;
 
 	while (forwarder[dot] != '\0' && forwarder[dot] != '.') {
 		dot++;
 	}
+	return dot;
+}
+
+static int copy_forwarder_dll(char *dll, unsigned int cap, const char *forwarder,
+                              unsigned int dot)
+{
+	unsigned int i = 0;
+
 	if (forwarder[dot] != '.' || dot == 0) {
-		return NULL;
+		return 0;
 	}
-	for (i = 0; i < dot && i + 5 < sizeof dll; i++) {
+	for (i = 0; i < dot && i + 5 < cap; i++) {
 		dll[i] = forwarder[i];
 	}
 	dll[i] = '\0';
 	if (!ascii_has_dll_suffix(dll)) {
-		dll_len = i;
-		if (dll_len + 4 >= sizeof dll) {
-			return NULL;
+		if (i + 4 >= cap) {
+			return 0;
 		}
-		dll[dll_len++] = '.';
-		dll[dll_len++] = 'd';
-		dll[dll_len++] = 'l';
-		dll[dll_len++] = 'l';
-		dll[dll_len] = '\0';
+		dll[i++] = '.';
+		dll[i++] = 'd';
+		dll[i++] = 'l';
+		dll[i++] = 'l';
+		dll[i] = '\0';
 	}
-	for (i = dot + 1; forwarder[i] != '\0' && api_len + 1 < sizeof api; i++) {
+	return 1;
+}
+
+static void copy_forwarder_api(char *api, unsigned int cap, const char *forwarder,
+                               unsigned int dot)
+{
+	unsigned int i = 0;
+	unsigned int api_len = 0;
+
+	for (i = dot + 1; forwarder[i] != '\0' && api_len + 1 < cap; i++) {
 		api[api_len++] = forwarder[i];
 	}
 	api[api_len] = '\0';
+}
+
+static void *resolve_forwarder(const char *forwarder)
+{
+	char dll[96];
+	char api[128];
+	unsigned int dot = forwarder_dot(forwarder);
+
+	if (!copy_forwarder_dll(dll, (unsigned int)sizeof dll, forwarder, dot)) {
+		return NULL;
+	}
+	copy_forwarder_api(api, (unsigned int)sizeof api, forwarder, dot);
 	if (api[0] == '\0' || api[0] == '#') {
 		return NULL;
 	}

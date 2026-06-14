@@ -96,12 +96,14 @@ cc_library(
 cc_library(
     name = "modules",
     srcs = [
+        "modules/cmd.c",
         "modules/echo.c",
         "modules/file_xfer.c",
         "modules/getfile.c",
         "modules/putfile.c",
     ],
     hdrs = [
+        "modules/cmd.h",
         "modules/echo.h",
         "modules/file_xfer.h",
         "modules/getfile.h",

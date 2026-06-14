@@ -140,11 +140,12 @@ tasks:
 
   lint:
     aliases: [l]
-    desc: Run all lint checks (Go formatting, Gazelle, Python).
+    desc: Run all lint checks (Go formatting, Gazelle, Python, Squatter C).
     cmds:
       - task: gofmt:check
       - task: gazelle:check
       - task: python:check
+      - task: squatter:check
 
   fmt:
     aliases: [format]
@@ -179,6 +180,28 @@ tasks:
     desc: Run Python lint, type, and doc checks.
     cmds:
       - bash tools/lint/check_python.sh
+
+  squatter:check:
+    desc: Run Squatter C static analysis.
+    cmds:
+      - task: squatter:complexity
+      - task: squatter:cppcheck
+      - task: squatter:clang-tidy
+
+  squatter:complexity:
+    desc: Check Squatter C cyclomatic complexity with lizard (CCN <= 10).
+    cmds:
+      - bash tools/lint/check_squatter_complexity.sh
+
+  squatter:cppcheck:
+    desc: Run cppcheck over Squatter C sources.
+    cmds:
+      - bash tools/lint/check_squatter_cppcheck.sh
+
+  squatter:clang-tidy:
+    desc: Run clang-tidy over Squatter C sources.
+    cmds:
+      - bash tools/lint/check_squatter_clang_tidy.sh
 
   # --- Git hooks ----------------------------------------------------------
 

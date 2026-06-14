@@ -47,35 +47,53 @@ static int is_space(wchar_t c)
 	return c == L' ' || c == L'\t' || c == L'\r' || c == L'\n';
 }
 
+static wchar_t *skip_spaces(wchar_t *p)
+{
+	while (is_space(*p)) {
+		p++;
+	}
+	return p;
+}
+
+static wchar_t *parse_quoted_arg(wchar_t *p, wchar_t **out)
+{
+	p++;
+	*out = p;
+	while (*p != L'\0' && *p != L'"') {
+		p++;
+	}
+	if (*p == L'"') {
+		*p++ = L'\0';
+	}
+	return p;
+}
+
+static wchar_t *parse_bare_arg(wchar_t *p, wchar_t **out)
+{
+	*out = p;
+	while (*p != L'\0' && !is_space(*p)) {
+		p++;
+	}
+	if (*p != L'\0') {
+		*p++ = L'\0';
+	}
+	return p;
+}
+
 static int parse_args(wchar_t *cmd, wchar_t **argv, int cap)
 {
 	int argc = 0;
 	wchar_t *p = cmd;
 
 	while (*p != L'\0' && argc < cap) {
-		while (is_space(*p)) {
-			p++;
-		}
+		p = skip_spaces(p);
 		if (*p == L'\0') {
 			break;
 		}
 		if (*p == L'"') {
-			p++;
-			argv[argc++] = p;
-			while (*p != L'\0' && *p != L'"') {
-				p++;
-			}
-			if (*p == L'"') {
-				*p++ = L'\0';
-			}
+			p = parse_quoted_arg(p, &argv[argc++]);
 		} else {
-			argv[argc++] = p;
-			while (*p != L'\0' && !is_space(*p)) {
-				p++;
-			}
-			if (*p != L'\0') {
-				*p++ = L'\0';
-			}
+			p = parse_bare_arg(p, &argv[argc++]);
 		}
 	}
 	return argc;

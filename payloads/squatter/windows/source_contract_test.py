@@ -6,6 +6,7 @@ import unittest
 REQUIRED_FILES = [
     "base/win.h",
     "iocpserver/server.c",
+    "modules/cmd.c",
     "modules/echo.c",
     "modules/file_xfer.c",
     "modules/getfile.c",
@@ -57,7 +58,7 @@ class SourceContractTest(unittest.TestCase):
 
     def test_mux_and_modules_are_wired(self):
         text = (source_root() / "squatter.c").read_text()
-        for module in ["echo", "getfile", "putfile"]:
+        for module in ["cmd", "echo", "getfile", "putfile"]:
             with self.subTest(module=module):
                 self.assertIn(f'"{module}"', text)
         self.assertIn("sq_channel_from_socket", text)

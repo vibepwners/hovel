@@ -64,6 +64,7 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"target", "set", "list"},
 		{"target", "set", "remove"},
 		{"confirm"},
+		{"run"},
 		{"throw"},
 		{"throw", "inspect"},
 		{"throw", "list"},
@@ -79,6 +80,7 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"chains", "load"},
 		{"chains", "save"},
 		{"modules", "list"},
+		{"run"},
 		{"targets", "add"},
 		{"targets", "set", "create"},
 		{"throws", "list"},
@@ -121,7 +123,7 @@ func TestRegistryHasRootUsesDefinitions(t *testing.T) {
 		Modules:    exampleCatalog(),
 	})
 
-	for _, root := range []string{"op", "chain", "chains", "confirm", "control", "module", "modules", "target", "targets", "throw", "throws"} {
+	for _, root := range []string{"op", "chain", "chains", "confirm", "control", "module", "modules", "run", "target", "targets", "throw", "throws"} {
 		if !registry.HasRoot(root) {
 			t.Fatalf("HasRoot(%q) = false, want true", root)
 		}
@@ -896,6 +898,121 @@ func TestThrowChainFileCapabilityStepsUsesCapabilityRunner(t *testing.T) {
 	}
 }
 
+func TestThrowActiveChainCapabilityStepsUseCapabilityRunnerWithPayloadConfig(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := operatorsession.New()
+	if err := session.UseChain("payload-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddStep("etro@v1", "etro.exploit"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddStep("squatter@v1", "squatter.connect_smb"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("payload.transport", "smb-named-pipe"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("payload.pipe", `\\.\pipe\hovel-test`); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("smb://target"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("smb://target", "target.host", "192.0.2.10"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("smb://target", "target.port", "445"); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeCapabilityChainRunner{
+		response: CapabilityChainResponse{
+			State:   "succeeded",
+			Summary: "capability chain completed",
+			Capabilities: []CapabilityPayload{{
+				ID:             "session-1",
+				Type:           string(modulecatalog.CapabilitySessionRef),
+				State:          "active",
+				ProducerStepID: "squatter.connect_smb",
+				Attributes:     map[string]any{"transport": "smb-named-pipe"},
+			}},
+		},
+	}
+	registry := HovelRegistry(Runtime{
+		Workspaces:       fakeWorkspaceService{},
+		Daemons:          fakeDaemonService{status: daemon.Running(identity)},
+		CapabilityChains: runner,
+		Modules: modulecatalog.New(
+			modulecatalog.Module{ID: "etro@v1", Type: modulecatalog.TypeExploit, Enabled: true},
+			modulecatalog.Module{
+				ID:      "squatter@v1",
+				Type:    modulecatalog.TypePayloadProvider,
+				Enabled: true,
+				ChainConfig: []modulecatalog.Requirement{
+					{Key: "payload.transport", Type: modulecatalog.ValueEnum, Required: true, Allowed: []string{"smb-named-pipe", "tcp-bind"}},
+					{Key: "payload.pipe", Type: modulecatalog.ValueString, Required: true},
+				},
+				TargetConfig: []modulecatalog.Requirement{
+					{Key: "target.host", Type: modulecatalog.ValueHost, Required: true},
+					{Key: "target.port", Type: modulecatalog.ValuePort, Required: true},
+				},
+			},
+		),
+		Session:       session,
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+	})
+	definition, _ := registry.Find("run")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": ".hovel"},
+		Flags:   map[string]bool{"now": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("capability chain requests = %#v, want one", runner.requests)
+	}
+	request := runner.requests[0]
+	request.ThrowID = ""
+	request.RunID = ""
+	request.ThrowStarted = ""
+	want := CapabilityChainRequest{
+		Operation:   operatorsession.DefaultOperation,
+		Chain:       "payload-lab",
+		Target:      "smb://target",
+		ChainConfig: map[string]string{"payload.transport": "smb-named-pipe", "payload.pipe": `\\.\pipe\hovel-test`},
+		TargetConfig: map[string]string{
+			"target.host": "192.0.2.10",
+			"target.port": "445",
+		},
+		Steps: []CapabilityChainStepRef{
+			{ID: "step-1", ModuleID: "etro@v1", StepID: "etro.exploit"},
+			{ID: "step-2", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
+		},
+	}
+	if !reflect.DeepEqual(request, want) {
+		t.Fatalf("capability chain request = %#v, want %#v", request, want)
+	}
+	payload := result.JSON.(ThrowPayload)
+	if len(payload.Results) != 1 || payload.Results[0].ModuleID != "capability-chain" {
+		t.Fatalf("payload results = %#v, want one capability-chain result", payload.Results)
+	}
+	if !reflect.DeepEqual(payload.Plan.Steps, want.Steps) {
+		t.Fatalf("plan steps = %#v, want %#v", payload.Plan.Steps, want.Steps)
+	}
+}
+
 func TestThrowChainFileRejectsMixedCapabilityAndLegacySteps(t *testing.T) {
 	store := &fakeChainFileStore{reads: map[string]ChainFile{
 		"mixed.chain.yaml": {
@@ -1185,7 +1302,7 @@ func TestThrowTargetOverrideScopesTargetConfigs(t *testing.T) {
 	}
 }
 
-func TestThrowInputsSquatterBindDerivesEtroInstallConfig(t *testing.T) {
+func TestThrowInputsSquatterTypeDerivesEtroInstallConfig(t *testing.T) {
 	session := operatorsession.New()
 	if err := session.UseOperation("op1"); err != nil {
 		t.Fatal(err)
@@ -1196,10 +1313,13 @@ func TestThrowInputsSquatterBindDerivesEtroInstallConfig(t *testing.T) {
 	if _, err := session.AddModule("etro-exploit@v1.0.0"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.AddStep("squatter", "squatter.bind"); err != nil {
+	if _, err := session.AddModule("squatter@v0.1.0"); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.SetChainConfig("operator.confirmed_lab", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("squatter.type", "tcp-bind"); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.SetChainConfig("squatter.bind_port", "9101"); err != nil {
@@ -1219,11 +1339,11 @@ func TestThrowInputsSquatterBindDerivesEtroInstallConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := throw.Modules, []string{"etro-exploit@v1.0.0", "squatter.bind"}; !reflect.DeepEqual(got, want) {
+	if got, want := throw.Modules, []string{"etro-exploit@v1.0.0", "squatter@v0.1.0"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("modules = %#v, want %#v", got, want)
 	}
 	if len(throw.Steps) != 0 {
-		t.Fatalf("steps = %#v, want legacy Squatter bridge execution", throw.Steps)
+		t.Fatalf("steps = %#v, want module-only execution", throw.Steps)
 	}
 	config := throw.TargetConfigs["t1"]
 	if config["target.port"] != "445" {
@@ -1240,7 +1360,7 @@ func TestThrowInputsSquatterBindDerivesEtroInstallConfig(t *testing.T) {
 	}
 }
 
-func TestThrowInputsFromChainFileSquatterBindDerivesInstallConfig(t *testing.T) {
+func TestThrowInputsFromChainFileSquatterTypeDerivesInstallConfig(t *testing.T) {
 	store := &fakeChainFileStore{
 		reads: map[string]ChainFile{
 			"etro-squatter.chain.yaml": {
@@ -1251,9 +1371,9 @@ func TestThrowInputsFromChainFileSquatterBindDerivesInstallConfig(t *testing.T) 
 					Mode: "configured",
 					Steps: []ChainFileStep{
 						{ID: "exploit", Uses: "module:etro-exploit@v1.0.0"},
-						{ID: "squatter-bind", Uses: "module:squatter@v0.1.0", Step: "squatter.bind"},
+						{ID: "squatter-bind", Uses: "module:squatter@v0.1.0"},
 					},
-					Config: map[string]string{"operator.confirmed_lab": "true", "squatter.bind_port": "9101"},
+					Config: map[string]string{"operator.confirmed_lab": "true", "squatter.type": "tcp-bind", "squatter.bind_port": "9101"},
 					Targets: []ChainFileTarget{{
 						ID: "t1",
 						Config: map[string]string{
@@ -1272,7 +1392,7 @@ func TestThrowInputsFromChainFileSquatterBindDerivesInstallConfig(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := throw.Modules, []string{"etro-exploit@v1.0.0", "squatter.bind"}; !reflect.DeepEqual(got, want) {
+	if got, want := throw.Modules, []string{"etro-exploit@v1.0.0", "squatter@v0.1.0"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("modules = %#v, want %#v", got, want)
 	}
 	config := throw.TargetConfigs["t1"]
@@ -1281,7 +1401,7 @@ func TestThrowInputsFromChainFileSquatterBindDerivesInstallConfig(t *testing.T) 
 	}
 }
 
-func TestChainAddVersionedSquatterAddsBindStep(t *testing.T) {
+func TestChainAddVersionedSquatterSetsTypeConfig(t *testing.T) {
 	session := operatorsession.New()
 	if err := session.UseOperation("op1"); err != nil {
 		t.Fatal(err)
@@ -1295,12 +1415,15 @@ func TestChainAddVersionedSquatterAddsBindStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Human, "squatter.bind") {
-		t.Fatalf("human = %q, want squatter.bind", result.Human)
+	if !strings.Contains(result.Human, "squatter.type=tcp-bind") {
+		t.Fatalf("human = %q, want squatter.type=tcp-bind", result.Human)
 	}
 	state := session.Snapshot()
-	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "squatter" || state.Steps[0].StepID != "squatter.bind" {
-		t.Fatalf("steps = %#v, want squatter.bind step", state.Steps)
+	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "squatter@v0.1.0" || state.Steps[0].StepID != "" {
+		t.Fatalf("steps = %#v, want Squatter provider module", state.Steps)
+	}
+	if got := state.Config["squatter.type"]; got != "tcp-bind" {
+		t.Fatalf("squatter.type = %q, want tcp-bind", got)
 	}
 }
 
@@ -1773,6 +1896,76 @@ func TestSessionCommandsRejectOneShotMode(t *testing.T) {
 	}
 }
 
+func TestSessionReadDrainsBufferedOutput(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{reads: []SessionChunk{
+		{SessionID: "session-1", Data: []byte("first")},
+		{SessionID: "session-1", Data: []byte(" second")},
+		{SessionID: "session-1"},
+	}}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+	definition, _ := registry.Find("session", "read")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(result.Raw); got != "first second" {
+		t.Fatalf("raw output = %q, want buffered session output", got)
+	}
+}
+
+func TestSessionSendAppendsDefaultAndCustomTerminators(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+	definition, _ := registry.Find("session", "send")
+
+	_, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1", "data": "cmd /c whoami"},
+		Options:     map[string]string{},
+		Flags:       map[string]bool{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1", "data": "raw"},
+		Options:     map[string]string{"end": "\\r\\n"},
+		Flags:       map[string]bool{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1", "data": "none"},
+		Options:     map[string]string{},
+		Flags:       map[string]bool{"no-newline": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := len(recorder.writes), 3; got != want {
+		t.Fatalf("writes = %d, want %d", got, want)
+	}
+	for i, want := range []string{"cmd /c whoami\n", "raw\r\n", "none"} {
+		if got := string(recorder.writes[i].data); got != want {
+			t.Fatalf("write[%d] = %q, want %q", i, got, want)
+		}
+	}
+}
+
 func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 	session := operatorsession.New()
 	registry := HovelRegistry(Runtime{
@@ -1877,6 +2070,55 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 	payload, ok := validResult.JSON.(ValidationPayload)
 	if !ok || !payload.Valid {
 		t.Fatalf("validation payload = %#v", validResult.JSON)
+	}
+}
+
+func TestChainValidateSquatterBindUsesBridgeConfig(t *testing.T) {
+	session := operatorsession.New()
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules:    squatterCatalog(),
+		Session:    session,
+	})
+	useDefinition, _ := registry.Find("chain", "use")
+	addDefinition, _ := registry.Find("chain", "add")
+	chainConfigSetDefinition, _ := registry.Find("chain", "config", "set")
+	targetDefinition, _ := registry.Find("target", "add")
+	validateDefinition, _ := registry.Find("chain", "validate")
+
+	if _, err := useDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"chain": "squatter-lab"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := addDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "squatter@v0.1.0"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chainConfigSetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"key": "squatter.bind_port", "value": "9444"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "smb://192.0.2.10"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := validateDefinition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Human != "Chain squatter-lab valid" {
+		t.Fatalf("validation result = %q", result.Human)
+	}
+	payload, ok := result.JSON.(ValidationPayload)
+	if !ok || !payload.Valid {
+		t.Fatalf("validation payload = %#v", result.JSON)
 	}
 }
 
@@ -2331,6 +2573,13 @@ type fakeRunRecorder struct {
 	socketPath string
 	requests   []RunMockExploitRequest
 	artifacts  []Artifact
+	reads      []SessionChunk
+	writes     []fakeSessionWrite
+}
+
+type fakeSessionWrite struct {
+	sessionID string
+	data      []byte
 }
 
 type fakePlanRecorder struct {
@@ -2639,6 +2888,26 @@ func (fakeRunClient) ListSessions(context.Context) ([]SessionRef, error) {
 		Transport:    "stdio",
 		Capabilities: []string{"read", "write", "exec", "close"},
 	}}, nil
+}
+
+func (c fakeRunClient) ReadSession(context.Context, string, time.Duration) (SessionChunk, error) {
+	if c.recorder == nil || len(c.recorder.reads) == 0 {
+		return SessionChunk{SessionID: "session-1"}, nil
+	}
+	chunk := c.recorder.reads[0]
+	c.recorder.reads = c.recorder.reads[1:]
+	chunk.Data = append([]byte(nil), chunk.Data...)
+	return chunk, nil
+}
+
+func (c fakeRunClient) WriteSession(_ context.Context, sessionID string, data []byte) error {
+	if c.recorder != nil {
+		c.recorder.writes = append(c.recorder.writes, fakeSessionWrite{
+			sessionID: sessionID,
+			data:      append([]byte(nil), data...),
+		})
+	}
+	return nil
 }
 
 func (fakeRunClient) CloseSession(context.Context, string) error {

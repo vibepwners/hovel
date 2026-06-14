@@ -28,7 +28,8 @@ BOOL sq_xfer_send_stat(HANDLE pipe, const char *text)
     if (n > 0) {
         CopyMemory(buf + 1, text, (SIZE_T)n);
     }
-    return WriteFile(pipe, buf, (DWORD)(1 + n), &wrote, NULL);
+    return WriteFile(pipe, buf, (DWORD)(1 + n), &wrote, NULL) != FALSE &&
+           wrote == (DWORD)(1 + n);
 }
 
 BOOL sq_xfer_send_eof(HANDLE pipe)
@@ -36,5 +37,5 @@ BOOL sq_xfer_send_eof(HANDLE pipe)
     BYTE tag = SQ_XFER_EOF;
     DWORD wrote = 0;
 
-    return WriteFile(pipe, &tag, 1, &wrote, NULL);
+    return WriteFile(pipe, &tag, 1, &wrote, NULL) != FALSE && wrote == 1;
 }

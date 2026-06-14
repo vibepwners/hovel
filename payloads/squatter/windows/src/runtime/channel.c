@@ -41,26 +41,36 @@ sq_channel *sq_channel_from_handle(HANDLE h)
     return ch;
 }
 
+static int socket_read_some(SOCKET s, BYTE *buf, UINT32 cap)
+{
+    int n = recv(s, (char *)buf, (int)cap, 0);
+
+    if (n > 0) {
+        return n;
+    }
+    return (n == 0) ? 0 : -1;
+}
+
+static int handle_read_some(HANDLE h, BYTE *buf, UINT32 cap)
+{
+    DWORD got = 0;
+
+    if (ReadFile(h, buf, cap, &got, NULL) == FALSE) {
+        DWORD const err = GetLastError();
+        return (err == ERROR_BROKEN_PIPE || err == ERROR_HANDLE_EOF) ? 0 : -1;
+    }
+    return (got == 0) ? 0 : (int)got;
+}
+
 int sq_channel_read_some(sq_channel *ch, BYTE *buf, UINT32 cap)
 {
     if (ch == NULL || buf == NULL || cap == 0) {
         return -1;
     }
     if (ch->kind == CHANNEL_SOCKET) {
-        int n = recv(ch->sock, (char *)buf, (int)cap, 0);
-        if (n > 0) {
-            return n;
-        }
-        return (n == 0) ? 0 : -1;
-    } else {
-        DWORD got = 0;
-        if (ReadFile(ch->handle, buf, cap, &got, NULL) == FALSE) {
-            /* A closed pipe reads as a clean EOF, not an error. */
-            DWORD const err = GetLastError();
-            return (err == ERROR_BROKEN_PIPE || err == ERROR_HANDLE_EOF) ? 0 : -1;
-        }
-        return (got == 0) ? 0 : (int)got;
+        return socket_read_some(ch->sock, buf, cap);
     }
+    return handle_read_some(ch->handle, buf, cap);
 }
 
 BOOL sq_channel_write_all(sq_channel *ch, const BYTE *buf, UINT32 len)
@@ -81,6 +91,9 @@ BOOL sq_channel_write_all(sq_channel *ch, const BYTE *buf, UINT32 len)
         } else {
             DWORD put = 0;
             if (WriteFile(ch->handle, buf + off, remaining, &put, NULL) == FALSE) {
+                return FALSE;
+            }
+            if (put == 0) {
                 return FALSE;
             }
             off += put;

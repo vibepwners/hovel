@@ -81,9 +81,26 @@ size_t wcslen(const wchar_t *s)
 }
 
 void __main(void) {}
-void abort(void) { ExitProcess(3); }
-void exit(int code) { ExitProcess((UINT)code); }
-void _exit(int code) { ExitProcess((UINT)code); }
+void abort(void)
+{
+	ExitProcess(3);
+	for (;;) {
+	}
+}
+
+void exit(int code)
+{
+	ExitProcess((UINT)code);
+	for (;;) {
+	}
+}
+
+void _exit(int code)
+{
+	ExitProcess((UINT)code);
+	for (;;) {
+	}
+}
 int __mingw_vsnwprintf(wchar_t *buf, size_t cap, const wchar_t *fmt, va_list ap)
 {
 	return wvnsprintfW(buf, (int)cap, fmt, ap);

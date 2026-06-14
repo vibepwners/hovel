@@ -201,6 +201,7 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		return code
 	}
 	parsed.Input = terminalInput{in: os.Stdin, out: stdout, echoAnswer: echoConfirmationAnswer}
+	parsed.Output = stdout
 	parsed.NonInteractive = stdinNonInteractive()
 	result, err := definition.Execute(ctx, parsed)
 	if err != nil {
@@ -220,6 +221,13 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 			renderer = terminallog.NewPlainRenderer()
 		}
 		fmt.Fprintln(stdout, renderer.Render(result.Log))
+		return 0
+	}
+	if len(result.Raw) > 0 {
+		if _, err := stdout.Write(result.Raw); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
 		return 0
 	}
 	if result.Human != "" {
@@ -631,6 +639,22 @@ func (c daemonRunClient) ListSessions(ctx context.Context) ([]commands.SessionRe
 		return nil, err
 	}
 	return sessionsFromRPC(sessions), nil
+}
+
+func (c daemonRunClient) ReadSession(ctx context.Context, sessionID string, timeout time.Duration) (commands.SessionChunk, error) {
+	chunk, err := c.client.ReadSession(ctx, sessionID, timeout)
+	if err != nil {
+		return commands.SessionChunk{}, err
+	}
+	return commands.SessionChunk{
+		SessionID: chunk.SessionID,
+		Data:      append([]byte(nil), chunk.Data...),
+		Closed:    chunk.Closed,
+	}, nil
+}
+
+func (c daemonRunClient) WriteSession(ctx context.Context, sessionID string, data []byte) error {
+	return c.client.WriteSession(ctx, sessionID, data)
 }
 
 func (c daemonRunClient) CloseSession(ctx context.Context, sessionID string) error {
