@@ -104,9 +104,12 @@ stream() -&gt; EventStream
           surface through generic step methods over the same JSON-RPC stdio channel.
           Hovel uses those methods to learn live step contracts, prepare pure local
           values, generate per-target payload artifacts after confirmation, connect
-          sessions through declared connector steps, and clean up durable handles. The
-          first core design is <a href="squatter-payload-provider.html">Squatter Payload
-          Provider</a>.
+          sessions through declared connector steps, and clean up durable handles. Install
+          steps and legacy execute paths may return explicit installed-payload
+          descriptors. Hovel core validates those descriptors and persists workspace
+          inventory; the provider owns only payload-specific reconnect and cleanup
+          metadata. The first core design is
+          <a href="squatter-payload-provider.html">Squatter Payload Provider</a>.
         </p>
 <pre data-lang="rpc"><code>step.describe() -&gt; StepContractSet
 step.prepare(request) -&gt; StepPrepareResult
@@ -170,6 +173,10 @@ stop(request: StopRequest) -&gt; StopResult
 prepare_step(request) -&gt; StepPrepareResult
 execute_step(request) -&gt; StepExecuteResult
 cleanup_step(request) -&gt; StepCleanupResult
+list_payloads(query) -&gt; []PayloadInfo
+resolve_payload(query) -&gt; PayloadInfo
+connect_session(request) -&gt; SessionRef
+cleanup_payload(request) -&gt; CleanupResult
 </code></pre>
         <p>Listener service methods:</p>
 <pre data-lang="rpc"><code>start_listener(request) -&gt; ListenerRef

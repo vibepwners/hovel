@@ -87,6 +87,13 @@
           <a href="squatter-payload-provider.html">Squatter design</a> records the first
           core provider contract.
         </p>
+        <p>
+          Payload providers and installer modules do not write Hovel state directly. When
+          they install a target-side payload that should be tracked, they return an
+          explicit installed-payload descriptor. Hovel core validates it, assigns the
+          operator-facing handle, persists it in SQLite, and later passes the provider's
+          reconnect descriptor back for <code>payloads connect</code>.
+        </p>
 
         <h2>How a module runs</h2>
         <p>

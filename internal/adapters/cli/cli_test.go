@@ -594,6 +594,63 @@ func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndRedactsSe
 	}
 }
 
+func TestInteractiveConfigWizardUsesEffectiveValidationForSquatterBind(t *testing.T) {
+	session := operatorsession.New()
+	modules := modulecatalog.New(
+		modulecatalog.Module{
+			ID:      "etro-exploit@v1.0.0",
+			Name:    "etro-exploit",
+			Type:    modulecatalog.TypeExploit,
+			Enabled: true,
+			ChainConfig: []modulecatalog.Requirement{
+				{Key: "operator.confirmed_lab", Type: modulecatalog.ValueBool, Required: true},
+			},
+			TargetConfig: []modulecatalog.Requirement{
+				{Key: "target.host", Type: modulecatalog.ValueHost, Required: true},
+				{Key: "target.port", Type: modulecatalog.ValuePort, Required: true},
+			},
+		},
+		modulecatalog.Module{
+			ID:      "squatter@v0.1.0",
+			Name:    "squatter",
+			Type:    modulecatalog.TypePayloadProvider,
+			Enabled: true,
+			ChainConfig: []modulecatalog.Requirement{
+				{Key: "payload.transport", Type: modulecatalog.ValueEnum, Required: true, Allowed: []string{"tcp-bind", "smb-named-pipe"}},
+				{Key: "payload.bind_port", Type: modulecatalog.ValuePort, Required: true},
+				{Key: "payload.pipe", Type: modulecatalog.ValueString, Required: true},
+				{Key: "smb.username", Type: modulecatalog.ValueString, Required: true},
+			},
+		},
+	)
+	app := newAppWithSessionAndModules(session, modules)
+	var stdout, stderr bytes.Buffer
+	for _, line := range []string{
+		"op use test-op",
+		"chain use lab",
+		"chain add etro-exploit@v1.0.0",
+		"chain add squatter@v0.1.0",
+		"target add t1",
+		"chain config interactive",
+		"c",
+		"true",
+		"192.168.122.142",
+		"445",
+	} {
+		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q exit code = %d, stderr = %s, stdout = %s", line, code, stderr.String(), stdout.String())
+		}
+	}
+	if !strings.Contains(stdout.String(), "Chain lab configuration complete") {
+		t.Fatalf("interactive output missing completion:\n%s", stdout.String())
+	}
+	for _, unexpected := range []string{"payload.transport", "payload.pipe", "smb.username"} {
+		if strings.Contains(stdout.String(), "missing chain config "+unexpected) {
+			t.Fatalf("interactive output surfaced raw Squatter provider requirement %s:\n%s", unexpected, stdout.String())
+		}
+	}
+}
+
 func TestRunRejectsOneShotCommandArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 

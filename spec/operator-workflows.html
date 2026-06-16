@@ -77,6 +77,7 @@
           <li>Chain records, steps, and chain config.</li>
           <li>Operation target inventory, target config, and target sets.</li>
           <li>Throw records.</li>
+          <li>Installed payload records and state-change history.</li>
           <li>Structured events, rendered logs, artifacts, and findings.</li>
         </ol>
         <p>Required chain log events:</p>
@@ -90,6 +91,7 @@
           <li>Throw planned, started, progressed, completed, or failed.</li>
           <li>Survey facts discovered.</li>
           <li>Payload provider output selected.</li>
+          <li>Installed payload created, connected, marked unreachable, cleaned up, or manually removed.</li>
           <li>Exploit step started, completed, or failed.</li>
           <li>Finding, artifact, structured event, or throw result emitted.</li>
         </ol>
@@ -176,7 +178,7 @@ chain move &lt;step-id&gt; --before &lt;step-id&gt;
 chain inspect
 </code></pre>
         <p>Adding a module logs to the chain topic. Removing or reordering a step also logs to the chain topic. Step IDs must be stable so validation errors, logs, and UI selection can point at a specific item.</p>
-        <p>Payload providers must also be visible as chain steps. Operators should add Squatter explicitly with <code>chain add squatter.bind</code> rather than configuring low-level payload file paths on every target. For the current Etro-to-Squatter TCP bind slice, that step contributes chain-scoped Squatter settings such as <code>squatter.bind_port</code> and <code>squatter.remote_path</code>. During planning Hovel derives the ETRO install inputs for each selected target from that step, including the staged local payload path, remote path, bind port, and SMB transport port.</p>
+        <p>Payload providers must also be visible as chain steps. Operators should add Squatter explicitly with <code>chain add squatter.bind</code> rather than configuring low-level payload file paths on every target. For the current Etro-to-Squatter TCP bind slice, that step contributes chain-scoped Squatter settings such as <code>squatter.bind_port</code> and optional <code>squatter.remote_path</code>. During planning Hovel derives the ETRO install inputs for each selected target from that step, including the staged local payload path, optional fixed remote path, bind port, and SMB transport port. When no fixed remote path is configured, Etro generates a fresh target path during execution and records it in the result artifact.</p>
 
         <h2>Configuration</h2>
         <p>Configuration is a typed key-value dictionary.</p>
@@ -254,6 +256,60 @@ target set inspect &lt;name&gt;
         <p>Validation output must be human-first and scriptable with <code>--json</code>.</p>
         <p>Targets are operation assets, not chain assets. Existing commands such as <code>target add</code> and <code>target config set</code> continue to work in the active operation, but the resulting inventory is reusable by every chain in that operation. A throw binds a chain to targets at plan time from one of three sources: an explicit <code>--target</code>, an explicit <code>--target-set</code>, or the operation's full target inventory. Target sets are convenience views over the same target records; they do not duplicate target config.</p>
         <p>When a target set contains mixed readiness, Hovel plans and throws against the compatible targets and reports skipped targets with the validation issues that made them incompatible. If no compatible targets remain, planning fails. Explicit <code>--target</code> remains strict: an incompatible explicit target blocks the throw so a typo or missing config is not silently ignored.</p>
+
+        <h2>Payload Commands</h2>
+        <p>
+          The <code>payloads</code> command suite is the operator surface for payload
+          discovery, stamped generated artifacts, installed payload inventory, reconnect,
+          refresh, and cleanup. It is intentionally separate from <code>session</code>:
+          payload commands answer what is available or installed; session commands answer
+          what is connected now.
+        </p>
+        <p>Initial commands:</p>
+<pre data-lang="commands"><code>payloads available
+payloads available --json
+payloads installed
+payloads installed --all
+payloads installed --state installed|connected|unreachable|removed
+payloads inspect &lt;payload-id&gt;
+payloads connect &lt;payload-id&gt;
+payloads refresh &lt;payload-id&gt;
+payloads cleanup &lt;payload-id&gt;
+payloads mark-removed &lt;payload-id&gt;
+</code></pre>
+        <p>
+          Installed payload IDs use short operator-facing handles such as
+          <code>p1</code> and <code>p2</code>, backed by stable internal ids. The
+          inventory is global to the workspace and stores operation, chain, target, throw,
+          run, stamp, and artifact provenance; switching chains must not hide an
+          installed payload. <code>payloads installed</code> shows active operational
+          inventory by default: <code>installed</code>, <code>connected</code>, and
+          <code>unreachable</code>. Removed records appear only with <code>--all</code> or
+          an explicit removed-state filter.
+        </p>
+        <p>
+          <code>payloads available</code> uses live provider discovery in v1. It does not
+          cache provider metadata in SQLite. <code>payloads installed</code> is a local
+          database read and does not probe targets by default. <code>payloads refresh</code>
+          and <code>payloads connect</code> ask the current provider to validate and use
+          the stored reconnect descriptor; if the provider is missing or incompatible,
+          the record remains visible with reconnect marked unavailable.
+        </p>
+        <p>
+          <code>payloads connect &lt;payload-id&gt;</code> creates a normal Hovel session when
+          reconnect succeeds. The session appears in <code>session list</code> and links
+          back to the installed payload id. Providers may support multiple active
+          sessions per installed payload; when they do not, the provider should reject a
+          second connection with a clear error and Hovel should preserve the installed
+          record.
+        </p>
+        <p>
+          Cleanup has two explicit paths. <code>payloads cleanup &lt;payload-id&gt;</code>
+          asks the provider to remove target-side state and marks the record
+          <code>removed</code> only on success. <code>payloads mark-removed
+          &lt;payload-id&gt;</code> records operator bookkeeping when the payload is already
+          gone or the target was rebuilt.
+        </p>
 
         <h2>Post-Exploitation Sessions (MSF-Style)</h2>
         <p>Hovel should treat post-exploitation access as a first-class operation object, not an ad-hoc log line. A successful exploit step may open zero, one, or many sessions. Sessions should be stable, interactive, resumable, and automatable across CLI, TUI, and MCP.</p>

@@ -96,6 +96,9 @@
           <li><code>hovel</code> starts or attaches to <code>hoveld</code>.</li>
           <li>One-shot chain-file execution crosses the daemon boundary.</li>
           <li>Throw plan, confirmation record, events, artifacts, and final throw state are persisted.</li>
+          <li>Explicit installed-payload descriptors persist current-state rows and append-only state events.</li>
+          <li><code>payloads installed</code> reads SQLite inventory without probing targets.</li>
+          <li><code>payloads connect &lt;id&gt;</code> uses the provider reconnect descriptor and creates a normal Hovel session on success.</li>
           <li>Interactive <code>throw</code>, <code>review</code>, <code>confirm</code>, and one-shot chain-file execution share the same planning path, while <code>review</code> and prompted <code>throw</code> share the same typed review path.</li>
           <li><code>throw --now</code> persists an auditable bypass confirmation record.</li>
           <li>If <code>cli</code> or <code>tui</code> starts a managed daemon, it stops that daemon on exit.</li>
@@ -112,6 +115,7 @@
           <li>Service handshakes.</li>
           <li>Service health check passes.</li>
           <li>Service provides payload or listener resource.</li>
+          <li>Provider version or reconnect-schema incompatibility keeps installed payload records visible while marking reconnect unavailable.</li>
           <li>MCP can inspect and plan the same throw as one-shot execution and <code>cli</code> through shared guardrails.</li>
           <li>MCP can execute only through the shared confirmation path.</li>
           <li>TUI consumes the structured logging rail.</li>
@@ -172,6 +176,8 @@ Python SDK: 85%+
           <li>Resolve tagged bytes from local or stub providers.</li>
           <li>Persist payload metadata and hashes before execution when practical.</li>
           <li>Return payload refs to Python modules.</li>
+          <li>Implement stamped payload artifact records and explicit installed-payload descriptor persistence.</li>
+          <li>Add <code>payloads available</code>, <code>payloads installed</code>, <code>payloads inspect</code>, <code>payloads connect</code>, <code>payloads cleanup</code>, and <code>payloads mark-removed</code>.</li>
           <li>Add the Squatter stub provider, provider RPC contract tests, pinned Windows PE build target, and PE inspection test before wiring full throw orchestration.</li>
         </ol>
 
@@ -223,7 +229,7 @@ Python SDK: 85%+
         <h2>Hard Rules</h2>
         <ol>
           <li><code>cli</code> and one-shot chain-file execution first, TUI second.</li>
-          <li><code>hoveld</code> is mandatory and owns operations, chains, throws, services, modules, structured events, providers, artifacts, and sessions.</li>
+          <li><code>hoveld</code> is mandatory and owns operations, chains, throws, services, modules, structured events, providers, installed payload inventory, artifacts, and sessions.</li>
           <li>TUI calls application services only.</li>
           <li>MCP calls application services only.</li>
           <li>REST calls application services only.</li>
@@ -236,6 +242,7 @@ Python SDK: 85%+
           <li>Providers are typed.</li>
           <li>First-slice providers are artifact and payload only.</li>
           <li>Payload provider outputs are tagged bytes with minimal framework validation.</li>
+          <li>Installed payload records are created only from explicit descriptors and persisted by Hovel core.</li>
           <li>Services are lifecycle-managed.</li>
           <li>Payloads are content-addressed or hash-tracked.</li>
           <li>Chain throws are replay-inspectable.</li>

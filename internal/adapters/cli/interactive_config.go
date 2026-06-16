@@ -213,7 +213,7 @@ func (w *interactiveConfigWizard) promptNextMissing(stdout, stderr io.Writer) in
 
 func (w *interactiveConfigWizard) complete(stdout io.Writer) int {
 	state := w.session.Snapshot()
-	validation := w.modules.Validate(configView(state))
+	validation := commands.ValidateState(w.modules, state)
 	w.reset()
 	if !validation.Valid {
 		fmt.Fprintf(stdout, "Chain %s still needs attention\n", state.ActiveChain)

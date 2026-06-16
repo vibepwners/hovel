@@ -1161,7 +1161,7 @@ func Suggestions(activeModule, line string) []prompt.Suggest {
 	switch command {
 	case "getfile":
 		return filterPromptSuggestions([]prompt.Suggest{
-			{Text: `C:\Windows\Temp\winupd32.exe`, Description: "default Squatter install path"},
+			{Text: `C:\Windows\Temp\hovel-squatter.exe`, Description: "example Squatter install path"},
 			{Text: `C:\boot.ini`, Description: "small XP-era smoke-test file"},
 		}, prefix)
 	case "putfile":

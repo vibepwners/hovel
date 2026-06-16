@@ -6,10 +6,10 @@ Hovel is a Go-hosted framework for authorized red-team emulation, controlled
 lab exercises, defensive validation, and operator workflow automation. It is
 designed for scoped, auditable assessments rather than general-purpose
 dual-use automation. A local engine (`hoveld`) owns the workspace database,
-module process lifecycle, a plan -> confirm -> throw safety pipeline, an
-artifact store, and a structured event/log rail. Operators drive it through an
-interactive CLI; the same application services are intended to back additional
-front ends (one-shot chain files, TUI, REST, MCP).
+module process lifecycle, a plan -> confirm -> throw safety pipeline, installed
+payload inventory, an artifact store, and a structured event/log rail. Operators
+drive it through an interactive CLI; the same application services are intended
+to back additional front ends (one-shot chain files, TUI, REST, MCP).
 
 > **Authorized red-team emulation only.** Use Hovel only in environments you
 > own or are explicitly authorized to assess, with written scope and approvals.

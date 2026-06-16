@@ -1350,7 +1350,7 @@ func chainValidateHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		_ = runtime.Session.AppendLog(operatorlog.Info("validate", "validation started"))
-		validation := validateState(moduleDB(runtime), state)
+		validation := ValidateState(moduleDB(runtime), state)
 		payload := ValidationPayload{Valid: validation.Valid, Issues: validation.Issues}
 		if validation.Valid {
 			_ = runtime.Session.AppendLog(operatorlog.Success("validate", "validation completed"))
@@ -3042,9 +3042,6 @@ func applySquatterBindTargetConfig(targets []string, configs map[string]map[stri
 		bindPort = "9101"
 	}
 	remotePath := strings.TrimSpace(chainConfig["squatter.remote_path"])
-	if remotePath == "" {
-		remotePath = `C:\Windows\Temp\winupd32.exe`
-	}
 	localPath := squatterPayloadPath()
 	for _, target := range targets {
 		config := cloneStringMap(configs[target])
@@ -3057,7 +3054,9 @@ func applySquatterBindTargetConfig(targets []string, configs map[string]map[stri
 			config["target.port"] = "445"
 		}
 		config["payload.local_path"] = localPath
-		config["payload.remote_path"] = remotePath
+		if remotePath != "" {
+			config["payload.remote_path"] = remotePath
+		}
 		config["payload.bind_port"] = bindPort
 		configs[target] = config
 	}
@@ -3068,10 +3067,45 @@ func squatterPayloadPath() string {
 	if env := strings.TrimSpace(os.Getenv("SQUATTER_PAYLOAD_PATH")); env != "" {
 		return env
 	}
-	if cwd, err := os.Getwd(); err == nil {
-		return filepath.Join(cwd, "examples", "bin", "squatter.exe")
+	candidates := squatterPayloadPathCandidates()
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	if len(candidates) != 0 {
+		return candidates[0]
 	}
 	return filepath.Join("examples", "bin", "squatter.exe")
+}
+
+func squatterPayloadPathCandidates() []string {
+	var candidates []string
+	add := func(path string) {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == path {
+				return
+			}
+		}
+		candidates = append(candidates, path)
+	}
+
+	if configPath := strings.TrimSpace(os.Getenv("HOVEL_MODULE_CONFIG")); configPath != "" {
+		configDir := filepath.Dir(configPath)
+		add(filepath.Join(configDir, "bin", "squatter.exe"))
+		add(filepath.Join(filepath.Dir(configDir), "bin", "squatter.exe"))
+	}
+	if workspace := strings.TrimSpace(os.Getenv("BUILD_WORKSPACE_DIRECTORY")); workspace != "" {
+		add(filepath.Join(workspace, "examples", "bin", "squatter.exe"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		add(filepath.Join(cwd, "examples", "bin", "squatter.exe"))
+	}
+	return candidates
 }
 
 func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation Invocation, path string) (throwExecution, error) {
@@ -3477,7 +3511,7 @@ func validationView(state operatorsession.State) modulecatalog.ConfigView {
 	}
 }
 
-func validateState(db ModuleDatabase, state operatorsession.State) modulecatalog.Validation {
+func ValidateState(db ModuleDatabase, state operatorsession.State) modulecatalog.Validation {
 	var issues []modulecatalog.Issue
 	if len(state.Steps) == 0 {
 		issues = append(issues, modulecatalog.Issue{Scope: modulecatalog.ScopeChain, Message: "chain has no modules"})
@@ -3608,8 +3642,7 @@ func squatterBindRequirements(scope modulecatalog.Scope) []modulecatalog.Require
 			Key:         "squatter.remote_path",
 			Type:        modulecatalog.ValueString,
 			Required:    false,
-			Default:     `C:\Windows\Temp\winupd32.exe`,
-			Description: "Target path used when ETRO installs the Squatter agent.",
+			Description: "Optional fixed target path used when ETRO installs the Squatter agent; unset auto-generates a fresh path.",
 		},
 	}
 }

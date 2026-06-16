@@ -1028,22 +1028,8 @@ func squatterTCPBindRequirements() []modulecatalog.Requirement {
 			Key:         "squatter.remote_path",
 			Type:        modulecatalog.ValueString,
 			Required:    false,
-			Default:     `C:\Windows\Temp\winupd32.exe`,
-			Description: "Target path used when ETRO installs the Squatter agent.",
+			Description: "Optional fixed target path used when ETRO installs the Squatter agent; unset auto-generates a fresh path.",
 		},
-	}
-}
-
-func configView(state operatorsession.State) modulecatalog.ConfigView {
-	steps := make([]modulecatalog.StepRef, 0, len(state.Steps))
-	for _, step := range state.Steps {
-		steps = append(steps, modulecatalog.StepRef{ID: step.ID, ModuleID: step.ModuleID})
-	}
-	return modulecatalog.ConfigView{
-		Steps:         steps,
-		Targets:       append([]string(nil), state.Targets...),
-		ChainConfig:   cloneStringMap(state.Config),
-		TargetConfigs: cloneTargetConfigs(state.TargetConfigs),
 	}
 }
 
@@ -1070,14 +1056,6 @@ func cloneStringMap(values map[string]string) map[string]string {
 	out := make(map[string]string, len(values))
 	for key, value := range values {
 		out[key] = value
-	}
-	return out
-}
-
-func cloneTargetConfigs(values map[string]map[string]string) map[string]map[string]string {
-	out := make(map[string]map[string]string, len(values))
-	for target, config := range values {
-		out[target] = cloneStringMap(config)
 	}
 	return out
 }

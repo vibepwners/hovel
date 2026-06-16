@@ -64,6 +64,8 @@ Provider
 Service
 Module
 Payload
+PayloadStamp
+InstalledPayload
 Artifact
 Chain
 Phase
@@ -82,7 +84,7 @@ CleanupHandle
 </code></pre>
 
         <h2>Workspace</h2>
-        <p>A workspace is the local project/database context for operations, targets, throws, modules, services, structured events, artifacts, and provider state.</p>
+        <p>A workspace is the local project/database context for operations, targets, throws, modules, services, structured events, artifacts, installed payload inventory, and provider state.</p>
         <p>MVP storage may be SQLite.</p>
         <p>Workspace data:</p>
         <ol>
@@ -92,6 +94,7 @@ CleanupHandle
           <li>Target inventory.</li>
           <li>Facts.</li>
           <li>Artifacts.</li>
+          <li>Installed payload records and state-change history.</li>
           <li>Structured events.</li>
           <li>Provider cache.</li>
           <li>Logs rendered from structured events.</li>
@@ -176,10 +179,10 @@ SessionProvider
 </code></pre>
         <p>The first provider implementation should only require <code>PayloadProvider</code> and <code>ArtifactProvider</code>. Facts may be plain module outputs at first, and credential, listener, and session providers should wait until service lifecycle, policy review, and artifact/event capture are stable.</p>
         <p>Future providers may include build, encoder, shellcode, stager, and implant providers.</p>
-        <p>Payload generation is outside the Hovel core. Hovel resolves payload bytes through provider interfaces, tags them with declared metadata, records hashes and artifacts, then passes the bytes to the next module in the chain.</p>
+        <p>Payload generation is outside the Hovel core. Hovel resolves payload bytes through provider interfaces, tags them with declared metadata, records hashes and artifacts, then passes the bytes to the next module in the chain. When a payload provider or installing module reports a successful install, Hovel core validates the explicit install descriptor and persists the installed payload record in the workspace database.</p>
 
         <h2>Payload</h2>
-        <p>A payload is tagged bytes returned by a provider.</p>
+        <p>A payload is provider-described capability that can produce tagged bytes. The list of available payloads is discovered live from provider contracts in v1, not cached as durable workspace state.</p>
         <p>Initial payload kinds:</p>
 <pre data-lang="kinds"><code>shell
 shellcode
@@ -205,6 +208,66 @@ constraints:
   writesDisk: false
 requiresPython: false
 </code></pre>
+        <p>
+          Generated payload bytes become stamped payload artifacts. A stamp is Hovel's
+          durable handle for a generated artifact set: it links provider identity, payload
+          metadata, generation inputs, target, transport, artifact hashes, and later
+          install records. A stamped artifact is not an installed payload until a provider
+          or installing module explicitly reports a successful target-side install.
+        </p>
+
+        <h2>Installed Payload</h2>
+        <p>
+          An installed payload is a durable workspace record for one target-side deployed
+          payload agent, executable, service, or listener-capable instance. It is the
+          object operators inspect, reconnect to, refresh, clean up, or manually mark
+          removed. It is distinct from generated payload artifacts and from live sessions.
+        </p>
+<pre data-lang="yaml"><code>handle: p1
+id: installed-payload-uuid
+provider: squatter
+payloadId: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
+payloadVersion: 0.1.0
+state: installed
+target:
+  id: t1
+  address: 10.0.0.42
+transport: tcp-bind
+endpointSummary: 10.0.0.42:9101
+stampId: payload-stamp-uuid
+provenance:
+  operationId: op-uuid
+  chainId: c1
+  targetId: t1
+  throwId: throw-uuid
+  runId: run-uuid
+  artifactIds: [artifact-uuid]
+reconnect:
+  providerId: squatter
+  schema: squatter.reconnect.tcp_bind
+  schemaVersion: 1
+  descriptor: { "host": "10.0.0.42", "port": 9101 }
+</code></pre>
+        <p>
+          Operator-facing handles use short names such as <code>p1</code> and
+          <code>p2</code>, backed by stable internal identifiers. Records are global
+          workspace inventory with operation, chain, target, throw, run, and artifact
+          provenance. They remain discoverable after switching chains or restarting
+          Hovel.
+        </p>
+        <p>Installed payload states for v1:</p>
+<pre data-lang="states"><code>installed
+connected
+unreachable
+removed
+</code></pre>
+        <p>
+          Listing installed payloads reads last-known state from SQLite and does not probe
+          targets by default. Reconnect or refresh actions ask the current provider to
+          validate the stored reconnect descriptor and may update state. If the provider is
+          missing or rejects the descriptor version, the record remains visible with
+          reconnect marked unavailable.
+        </p>
 
         <h2>Capability</h2>
         <p>
@@ -226,18 +289,21 @@ CleanupHandle</code></pre>
           history. Evidence remains separate from capability state.
         </p>
 
-        <h2>Payload Instance</h2>
+        <h2>Payload Instance Capability</h2>
         <p>
-          A payload instance is a durable record of a payload that was installed,
-          started, or otherwise made active on a target. It outlives any one session and
-          is the object operators reconnect to or clean up.
+          A <code>PayloadInstance</code> capability is runtime chain state produced by an
+          install step. When it contains an explicit installed-payload descriptor, Hovel
+          may persist or update an <code>InstalledPayload</code> inventory record. The
+          capability itself is still scoped to the throw and capability graph; the
+          installed payload record is the durable cross-chain inventory object.
         </p>
 <pre data-lang="yaml"><code>id: cap_payload_instance_q8m2v4
 provider: squatter
 target: 10.0.0.42
 transport: smb-named-pipe
 endpoint: cap_endpoint_smb_pipe_c4a7nx
-state: installed_unconnected
+state: installed
+installedPayload: p1
 cleanupHandles:
   - cap_cleanup_74m2wq
 </code></pre>

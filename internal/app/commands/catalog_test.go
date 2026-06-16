@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -1352,11 +1353,55 @@ func TestThrowInputsSquatterTypeDerivesEtroInstallConfig(t *testing.T) {
 	if config["payload.bind_port"] != "9101" {
 		t.Fatalf("payload.bind_port = %q, want 9101", config["payload.bind_port"])
 	}
-	if config["payload.remote_path"] != `C:\Windows\Temp\winupd32.exe` {
-		t.Fatalf("payload.remote_path = %q", config["payload.remote_path"])
+	if _, ok := config["payload.remote_path"]; ok {
+		t.Fatalf("payload.remote_path = %q, want ETRO to auto-generate an unlocked path", config["payload.remote_path"])
 	}
 	if !strings.HasSuffix(config["payload.local_path"], filepath.Join("examples", "bin", "squatter.exe")) {
 		t.Fatalf("payload.local_path = %q, want staged squatter.exe", config["payload.local_path"])
+	}
+
+	if err := session.SetChainConfig("squatter.remote_path", `C:\Windows\Temp\hovel-fixed.exe`); err != nil {
+		t.Fatal(err)
+	}
+	throw, err = throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config = throw.TargetConfigs["t1"]
+	if config["payload.remote_path"] != `C:\Windows\Temp\hovel-fixed.exe` {
+		t.Fatalf("payload.remote_path = %q, want explicit Squatter remote path", config["payload.remote_path"])
+	}
+}
+
+func TestSquatterPayloadPathPrefersModuleConfigStagedBinary(t *testing.T) {
+	t.Setenv("SQUATTER_PAYLOAD_PATH", "")
+	t.Setenv("BUILD_WORKSPACE_DIRECTORY", "")
+
+	root := t.TempDir()
+	payloadPath := filepath.Join(root, "examples", "bin", "squatter.exe")
+	if err := os.MkdirAll(filepath.Dir(payloadPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(payloadPath, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, configPath := range []string{
+		filepath.Join(root, "examples", "hovel-modules.json"),
+		filepath.Join(root, "examples", "python", "hovel-modules.json"),
+	} {
+		t.Run(configPath, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(configPath, []byte("{}"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOVEL_MODULE_CONFIG", configPath)
+			if got := squatterPayloadPath(); got != payloadPath {
+				t.Fatalf("squatterPayloadPath() = %q, want %q", got, payloadPath)
+			}
+		})
 	}
 }
 
@@ -1491,7 +1536,7 @@ func TestExecuteLegacyThrowRunsSquatterProviderAfterEtroInstall(t *testing.T) {
 				"target.host":         "192.168.122.142",
 				"target.port":         "445",
 				"payload.local_path":  "/tmp/squatter.exe",
-				"payload.remote_path": `C:\Windows\Temp\winupd32.exe`,
+				"payload.remote_path": `C:\Windows\Temp\hovel-squatter.exe`,
 				"payload.bind_port":   "9101",
 			},
 		},

@@ -112,7 +112,7 @@ hovel tui ...
           <li>Module and service inspection.</li>
           <li>Operation and chain selection, target setup, and throw execution.</li>
           <li>Service lifecycle control.</li>
-          <li>Artifact, listener, and session listing.</li>
+          <li>Artifact, payload, installed payload, listener, and session listing.</li>
           <li>Command history, contextual help, and a status-aware prompt.</li>
           <li>Lip Gloss styling for tables, transcript logs, findings, throw status, and prompt output.</li>
           <li>A shared theme package with the TUI.</li>
@@ -177,6 +177,7 @@ confirm
 cancel
 events
 artifacts
+payloads
 job
 session
 listener
@@ -230,6 +231,7 @@ Live Throw View
 Target Matrix
 Provider Browser
 Payload Browser
+Installed Payloads
 Listener Panel
 Session Panel
 Artifact Viewer
@@ -243,6 +245,7 @@ Settings / Theme Selector
           <li>Module logs.</li>
           <li>Service logs.</li>
           <li>Listener state.</li>
+          <li>Installed payload state.</li>
           <li>Session state.</li>
           <li>Current step details.</li>
           <li>Artifact count.</li>
@@ -301,7 +304,8 @@ Settings / Theme Selector
 <pre data-lang="api"><code>/api/v1/modules
 /api/v1/services
 /api/v1/providers
-/api/v1/payloads
+/api/v1/payloads/available
+/api/v1/payloads/installed
 /api/v1/listeners
 /api/v1/sessions
 /api/v1/targets
@@ -327,12 +331,18 @@ hovel_list_artifacts
 hovel_get_artifact
 hovel_list_targets
 hovel_resolve_payload
+hovel_list_available_payloads
+hovel_list_installed_payloads
+hovel_inspect_installed_payload
 hovel_list_listeners
 hovel_list_sessions
 </code></pre>
         <p>Execution tools should be added only after confirmation records and guardrail checks are shared with CLI and REST:</p>
 <pre data-lang="tools"><code>hovel_confirm_action
 hovel_start_throw
+hovel_connect_installed_payload
+hovel_cleanup_installed_payload
+hovel_mark_payload_removed
 hovel_start_service
 hovel_stop_service
 hovel_stream_throw_events

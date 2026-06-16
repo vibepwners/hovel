@@ -80,12 +80,15 @@ infra    -> app -> domain
 
 ## Safety-sensitive changes
 
-Changes that touch the throw planning, confirmation, guardrail, or audit-event
-path deserve extra scrutiny. Preserve these invariants:
+Changes that touch the throw planning, confirmation, guardrail, installed
+payload inventory, or audit-event path deserve extra scrutiny. Preserve these
+invariants:
 
 - A throw cannot start without a persisted plan and a recorded confirmation.
 - `--now` bypasses the typed prompt but still records an auditable confirmation
   noting the bypass.
+- Installed payload records are created or updated only from explicit provider
+  or module descriptors, and every state change is auditable.
 - Do not silently redact or drop operator-controlled configuration values.
 
 See [SECURITY.md](SECURITY.md) for the broader model and how to report

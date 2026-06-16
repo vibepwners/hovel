@@ -56,14 +56,15 @@
     <p>
       Hovel is a platform for wrapping and operating third-party proofs of concept,
       not a catalog of first-party exploits. The project provides the engine, SDKs,
-      descriptors, providers, guardrails, examples, and operator experience that
-      make third-party modules acceptable to run and inspect.
+      descriptors, providers, guardrails, examples, installed-payload inventory,
+      and operator experience that make third-party modules acceptable to run and inspect.
     </p>
     <p>
-      The central runtime is a local engine, <code>hoveld</code>, which owns runs,
-      module processes, managed services, provider state, events, artifacts, and
-      workspace storage. <code>command</code> mode, interactive <code>cli</code>
-      mode, the TUI, REST, and MCP are clients over the same application services.
+      The central runtime is a local engine, <code>hoveld</code>, which owns throws,
+      module processes, managed services, provider state, installed payload records,
+      sessions, events, artifacts, and workspace storage. Interactive
+      <code>cli</code> mode, one-shot chain-file execution, the TUI, REST, and MCP
+      are clients over the same application services.
     </p>
 
     <h2>Start here</h2>

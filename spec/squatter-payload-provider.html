@@ -83,6 +83,8 @@
           <li>Hovel materializes provider bytes to controlled workspace artifact paths and passes typed payload artifacts to installer steps.</li>
           <li>Payload generation and materialization are per target and per transport.</li>
           <li>A provider may return multiple artifacts for one target, but one artifact must be marked primary.</li>
+          <li>Installed Squatter agents are tracked as durable Hovel installed payload records, separate from generated artifacts and live sessions.</li>
+          <li>Squatter returns provider-owned reconnect and cleanup descriptors; Hovel validates and persists the installed payload record in SQLite.</li>
           <li>Exploit modules do not receive Squatter protocol details. They produce execution capabilities that Squatter install steps consume.</li>
           <li>Provider compatibility is checked during planning from contracts and metadata; actual bytes are generated after confirmation.</li>
           <li>The provider is tagged <code>dangerous</code> because Squatter supports file transfer, process execution, DLL loading, task listing, and sessions.</li>
@@ -139,8 +141,9 @@ squatter.cleanup_tcp_callback</code></pre>
         <p>
           Only connector and listener steps produce <code>SessionRef</code>. Generate and
           install steps may produce <code>PayloadArtifact</code>,
-          <code>PayloadInstance</code>, <code>TransportEndpoint</code>, and
-          <code>CleanupHandle</code>, but they do not open operator sessions.
+          <code>PayloadInstance</code>, <code>TransportEndpoint</code>,
+          <code>CleanupHandle</code>, and explicit installed-payload descriptors, but they
+          do not open operator sessions.
         </p>
 
         <h2>Provider Configuration</h2>
@@ -163,8 +166,10 @@ squatter.agent.max_chunk_size = 65536
           <code>smb-named-pipe</code>, <code>tcp-bind</code>, and
           <code>tcp-callback</code>. SMB named-pipe mode requires an SMB
           <code>CredentialCapability</code>. TCP bind mode requires a target endpoint.
-          TCP callback mode requires a listener step and may remain in
-          <code>installed_waiting_callback</code> until the agent connects back.
+          TCP callback mode requires a listener step. If the agent has not connected back,
+          the installed payload remains <code>installed</code> with provider-owned
+          callback status in its reconnect metadata until a refresh or connection attempt
+          proves it unreachable.
         </p>
 
         <h2>Payload Metadata</h2>
@@ -284,10 +289,10 @@ collision strategy: fail after confirmation</code></pre>
         <h2>Session Ownership</h2>
         <p>
           Squatter sessions are provider-managed and Hovel-brokered. A live install is a
-          durable <code>PayloadInstance</code>; a session is an attachable view over that
-          instance. Hovel sees a <code>SessionRef</code> with kind, transport, state,
-          payload instance id, and capabilities. The provider owns framing, task IDs,
-          file chunking, command/result mapping, retries, and transport details.
+          durable installed payload record; a session is an attachable view over that
+          target-side instance. Hovel sees a <code>SessionRef</code> with kind, transport,
+          state, installed payload id, and capabilities. The provider owns framing, task
+          IDs, file chunking, command/result mapping, retries, and transport details.
         </p>
 <pre data-lang="session"><code>session kind        agent
 session owner       payload_provider
@@ -302,9 +307,47 @@ capabilities        file.get, file.put, process.exec, process.tasklist, library.
           Operators may detach from a live Squatter session and reconnect later when the
           transport supports it. SMB named-pipe and TCP bind reconnect with an
           active-connect strategy. TCP callback sessions attach to an accepted listener
-          connection; if no callback is present, the instance remains
-          <code>installed_waiting_callback</code> or disconnected according to provider
-          observation.
+          connection; if no callback is present, the installed payload remains
+          <code>installed</code> or <code>unreachable</code> according to the provider's
+          explicit observation.
+        </p>
+
+        <h2>Installed Payload Tracking</h2>
+        <p>
+          Squatter install steps return an explicit installed-payload descriptor when the
+          target-side agent is staged and started. Hovel persists that descriptor as
+          workspace inventory with a short handle such as <code>p1</code>. The record
+          stores normalized fields for listing and filtering, plus Squatter-owned
+          reconnect and cleanup JSON with schema names and versions.
+        </p>
+<pre data-lang="json"><code>{
+  "provider": "squatter",
+  "payloadId": "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+  "payloadVersion": "0.1.0",
+  "instanceKey": "stamp-or-agent-id-when-known",
+  "transport": "tcp-bind",
+  "endpointSummary": "10.0.0.42:9101",
+  "state": "installed",
+  "supportsReconnect": true,
+  "supportsMultipleSessions": false,
+  "reconnect": {
+    "schema": "squatter.reconnect.tcp_bind",
+    "schemaVersion": 1,
+    "descriptor": { "host": "10.0.0.42", "port": 9101 }
+  }
+}</code></pre>
+        <p>
+          <code>payloads connect p1</code> passes the stored reconnect descriptor back to
+          Squatter through the provider <code>connect_session</code> operation. On success,
+          Hovel creates a normal session visible in <code>session list</code> and links it
+          to the installed payload. On failure, Hovel records the exact provider error and
+          marks the installed payload <code>unreachable</code>; it does not delete the
+          record.
+        </p>
+        <p>
+          Squatter may support more than one reconnect endpoint for a deployed agent later.
+          The v1 descriptor may contain one endpoint, but the storage and provider JSON
+          should allow endpoint lists without changing the core installed-payload table.
         </p>
 
         <h2>Throw Planning</h2>
@@ -352,12 +395,12 @@ capabilities        file.get, file.put, process.exec, process.tasklist, library.
           terminal output.
         </p>
         <p>
-          If install succeeds but session connection fails, Squatter returns a
-          <code>PayloadInstance</code> in <code>installed_unconnected</code> state and a
-          warning evidence record. The CLI must print the exact target, staged path,
-          service name, pipe or port, plaintext SMB credential when one was created,
-          connection endpoint, exact error, active cleanup handles, and the reconnect and
-          cleanup commands.
+          If install succeeds but session connection fails, Squatter returns the
+          installed-payload descriptor plus a warning evidence record. Hovel persists the
+          installed payload and marks it <code>unreachable</code>. The CLI must print the
+          exact target, staged path, service name, pipe or port, plaintext SMB credential
+          when one was created, connection endpoint, exact error, active cleanup handles,
+          and the reconnect and cleanup commands.
         </p>
 
         <h2>Build Contract</h2>
@@ -444,8 +487,8 @@ sha256 = "&lt;recorded checksum&gt;"
           <li>Partially implemented: TCP callback listener and connector steps start a provider listener, adopt an accepted payload connection, and emit a <code>SessionRef</code> capability.</li>
           <li>Final Squatter artifact generation during execute, with hash and artifact evidence.</li>
           <li>A module for connecting to an already-installed Squatter over SMB with operator-supplied credentials.</li>
-          <li>Durable <code>PayloadInstance</code> state and detach/reconnect behavior.</li>
-          <li>Warning-state reporting for <code>installed_unconnected</code> with exact CLI evidence.</li>
+          <li>Durable installed payload inventory with <code>p1</code>-style handles, provider-owned reconnect descriptors, and detach/reconnect behavior.</li>
+          <li>Warning-state reporting for installed-but-unreachable Squatter agents with exact CLI evidence.</li>
           <li>Cleanup handles for created credentials, staged files, services, listeners, and payload instances, with retry and verification where possible.</li>
         </ol>
         <p>The implementation pass should not include:</p>

@@ -29,7 +29,8 @@ Key safety properties (see `spec/safety.html` for the full model):
   (typed `yes`, or a deliberate `throw --now`, which still records that the
   bypass flag was used).
 - Throws record operator intent, inputs, target IDs, timestamps, module
-  versions, artifacts, structured events, and errors.
+  versions, payload hashes, installed payload descriptors, artifacts,
+  structured events, and errors.
 - Public modules should avoid destructive behavior by default.
 - Artifacts are hash-tracked.
 

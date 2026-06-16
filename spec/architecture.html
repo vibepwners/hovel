@@ -72,6 +72,7 @@ infra    -&gt; app -&gt; domain
           <li>Module process lifecycle.</li>
           <li>Service lifecycle.</li>
           <li>Provider registry.</li>
+          <li>Installed payload inventory.</li>
           <li>Artifact store.</li>
           <li>Event bus.</li>
           <li>Logging pipeline.</li>
@@ -131,6 +132,7 @@ EventService
 WorkspaceService
 ListenerService
 SessionService
+PayloadService
 GuardrailService
 </code></pre>
         <p>Representative methods:</p>
@@ -146,10 +148,23 @@ StreamEvents(ctx, ThrowID) (&lt;-chan Event, error)
 CancelThrow(ctx, ThrowID) error
 ResolvePayload(ctx, PayloadQuery) (PayloadRef, error)
 ResolvePayloadBytes(ctx, PayloadQuery) (PayloadBytes, error)
+ListAvailablePayloads(ctx, PayloadQuery) ([]PayloadInfo, error)
+ListInstalledPayloads(ctx, InstalledPayloadFilter) ([]InstalledPayload, error)
+InspectInstalledPayload(ctx, PayloadHandle) (InstalledPayload, error)
+ConnectInstalledPayload(ctx, PayloadHandle) (SessionRef, error)
+CleanupInstalledPayload(ctx, PayloadHandle) (CleanupResult, error)
+MarkPayloadRemoved(ctx, PayloadHandle, Reason) error
 StartListener(ctx, ListenerRequest) (ListenerRef, error)
 ListSessions(ctx, ThrowID) ([]SessionRef, error)
 CheckGuardrails(ctx, ActionRequest) (GuardrailResult, error)
 </code></pre>
+        <p>
+          <code>PayloadService</code> is the application-service owner for payload discovery,
+          stamped artifact lookup, installed payload inventory, reconnect, refresh, cleanup,
+          and manual removal bookkeeping. Payload providers supply metadata and
+          provider-owned reconnect descriptors, but Hovel core validates and persists
+          installed payload records through this service.
+        </p>
         <p><code>StartThrow</code> must not accept a raw <code>ThrowRequest</code>. A caller first asks for a plan, reviews the exact configuration that will be executed, records the explicit confirmation, and then starts the confirmed throw. This keeps CLI, TUI, REST, MCP, and one-shot chain-file execution on the same safety path.</p>
         <p>Interactive <code>throw</code> behavior:</p>
         <ol>
@@ -195,6 +210,13 @@ review
 throw
 throw list
 throw inspect &lt;throw&gt;
+payloads available
+payloads installed
+payloads inspect &lt;payload&gt;
+payloads connect &lt;payload&gt;
+payloads cleanup &lt;payload&gt;
+payloads mark-removed &lt;payload&gt;
+payloads refresh &lt;payload&gt;
 </code></pre>
         <p>Operations and chains are durable operator resources, not just transient prompt variables. The selected operation owns chains, target inventory, target configuration, and target sets; each client attachment owns its active chain selection. Target commands mutate the caller's active operation. Saved chain files are the portable representation for shell one-shot execution.</p>
         <p>The one-shot shell form is:</p>
@@ -281,7 +303,14 @@ hovel throw &lt;chain-file&gt; --now
         </ol>
 
         <h2>Workspace Database</h2>
-        <p>Every workspace owns a SQLite database at <code>&lt;workspace&gt;/workspace.db</code>. The database is the durable state store for operator session state, operations, chains, targets, steps, config, throw plans, confirmation records, throw records, events, artifact metadata, and final throw state. File directories under the workspace remain for artifacts, logs, modules, services, and other file-shaped data.</p>
+        <p>Every workspace owns a SQLite database at <code>&lt;workspace&gt;/workspace.db</code>. The database is the durable state store for operator session state, operations, chains, targets, steps, config, throw plans, confirmation records, throw records, installed payload records, installed payload state-change history, events, artifact metadata, and final throw state. File directories under the workspace remain for artifacts, logs, modules, services, payload bytes, and other file-shaped data.</p>
+        <p>
+          Installed payload records are global workspace inventory with chain, target,
+          throw, run, and artifact provenance. They are not owned by the active chain
+          selection. Listing installed payloads is a local database read by default; any
+          target probing or provider reconnect attempt must be an explicit refresh,
+          connect, or cleanup action.
+        </p>
         <p>Schema changes must go through the formal migration system. Each migration has a contiguous integer version, a stable name, and a checksum recorded in <code>schema_migrations</code>. Startup and workspace initialization must apply pending migrations idempotently and reject unknown, renamed, or modified applied migrations.</p>
 
         <h2>Test Harness</h2>

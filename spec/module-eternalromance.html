@@ -335,9 +335,11 @@
           Windows credential step consumes that capability to create a temporary local SMB
           credential with neutral random username and high-entropy random password. The
           Squatter SMB installer consumes the remote execution capability, the SMB
-          credential, and a Squatter payload artifact to stage and start Squatter. The
-          Squatter connector then uses the SMB credential to connect to
-          <code>\\target\pipe\name</code> and produce the <code>SessionRef</code>.
+          credential, and a Squatter payload artifact to stage and start Squatter. It
+          returns an explicit installed-payload descriptor that Hovel validates against
+          the Squatter provider and persists in SQLite. The Squatter connector then uses
+          the SMB credential to connect to <code>\\target\pipe\name</code> and produce the
+          <code>SessionRef</code>.
         </p>
 <pre data-lang="chain"><code>etro.exploit
   -&gt; RemoteExecutionCapability(connection_bound)
@@ -346,13 +348,16 @@ windows.credential.create_local_admin
 squatter.generate
   -&gt; PayloadArtifact
 squatter.install_smb
-  -&gt; PayloadInstance, SmbPipeEndpoint, CleanupHandle
+  -&gt; PayloadInstance, SmbPipeEndpoint, CleanupHandle, InstalledPayloadDescriptor
 squatter.connect_smb
   -&gt; SessionRef</code></pre>
         <p>
           This is intentionally a representative chain, not a bespoke Etro product. Etro
-          establishes access; credential, install, connect, session, and cleanup behavior
-          are owned by their respective modules and provider steps.
+          establishes access; credential, install, installed payload tracking, connect,
+          session, and cleanup behavior are owned by their respective modules and provider
+          steps. Etro may report that it installed Squatter only by returning a typed
+          installed-payload descriptor naming the Squatter provider and payload id; Hovel
+          still validates that descriptor before persistence.
         </p>
 
         <h3>Configuration and registration</h3>

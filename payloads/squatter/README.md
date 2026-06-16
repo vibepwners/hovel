@@ -4,6 +4,13 @@ Squatter is Hovel's first core payload provider. The provider is a Go
 `payload_provider` module that speaks Hovel JSON-RPC over stdio. The Windows
 payload is a separate C payload target built for Windows XP SP3 x86.
 
+Squatter installs are intended to become durable Hovel installed payload
+records. Install steps return explicit descriptors naming the Squatter provider,
+payload ID, target, transport endpoint, reconnect schema, and cleanup schema.
+Hovel core owns SQLite persistence and assigns operator-facing handles such as
+`p1`; Squatter owns reconnect and cleanup semantics. Successful reconnects create
+normal Hovel sessions.
+
 The current payload includes the multiplexed runtime, TCP bind/reverse TCP/SMB
 named-pipe transports, and a small module table:
 

@@ -138,7 +138,7 @@
             "provider": "squatter",
             "transport": "smb-named-pipe"
           },
-          "states": ["installed", "disconnected", "installed_unconnected"]
+          "states": ["installed", "connected", "unreachable"]
         },
         {
           "type": "CredentialCapability",
@@ -230,9 +230,17 @@
 <pre data-lang="result"><code>{
   "status": "succeeded",
   "capabilities": [ Capability, ... ],
+  "installedPayloads": [ InstalledPayloadDescriptor, ... ],
   "stateTransitions": [ CapabilityTransition, ... ],
   "evidence": [ Evidence, ... ]
 }</code></pre>
+        <p>
+          <code>installedPayloads</code> is optional and is the only way a module or
+          provider can ask Hovel to create or update installed payload inventory. Hovel
+          validates each descriptor against the named payload provider before persistence.
+          Logs, artifacts, and generic evidence are never promoted into installed payload
+          records by inference.
+        </p>
 
         <h3>step.cleanup</h3>
         <p>
@@ -248,6 +256,84 @@
   "stepId": "squatter.cleanup_smb",
   "cleanupHandleId": "cap_cleanup_74m2wq",
   "mode": "execute"                  // execute | verify
+}</code></pre>
+
+        <h3>payload/list</h3>
+        <p>
+          Lists provider-supported payloads for live discovery. Hovel does not cache this
+          response as durable workspace inventory in v1.
+        </p>
+<pre data-lang="params"><code>{
+  "query": {
+    "provider": "squatter",
+    "platform": "windows",
+    "arch": "x86",
+    "transport": "tcp-bind"
+  }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "payloads": [ PayloadInfo, ... ]
+}</code></pre>
+
+        <h3>payload/resolve</h3>
+        <p>
+          Resolves one provider-supported payload from a query. Planning uses this for
+          compatibility and review metadata; final bytes are still generated or
+          materialized after confirmation.
+        </p>
+<pre data-lang="params"><code>{
+  "query": {
+    "provider": "squatter",
+    "payloadId": "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+    "platform": "windows",
+    "arch": "x86",
+    "transport": "tcp-bind"
+  }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "payload": PayloadInfo
+}</code></pre>
+
+        <h3>payload/connect_session</h3>
+        <p>
+          Reconnects to an installed payload from a Hovel-persisted descriptor and returns
+          a normal <code>SessionRef</code>. The provider owns compatibility checks for its
+          reconnect schema. Hovel owns session registration and installed-payload state
+          persistence.
+        </p>
+<pre data-lang="params"><code>{
+  "installedPayloadId": "installed-payload-uuid",
+  "provider": "squatter",
+  "payloadId": "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+  "target": { "id": "t1", "address": "10.0.0.42" },
+  "transport": "tcp-bind",
+  "reconnect": {
+    "schema": "squatter.reconnect.tcp_bind",
+    "schemaVersion": 1,
+    "descriptor": { "host": "10.0.0.42", "port": 9101 }
+  }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "session": SessionRef
+}</code></pre>
+
+        <h3>payload/cleanup</h3>
+        <p>
+          Attempts provider-executed cleanup for an installed payload. A successful
+          provider result lets Hovel mark the installed payload <code>removed</code>;
+          failures are recorded as cleanup-attempt events and leave the record active.
+        </p>
+<pre data-lang="params"><code>{
+  "installedPayloadId": "installed-payload-uuid",
+  "cleanup": {
+    "schema": "squatter.cleanup.tcp_bind",
+    "schemaVersion": 1,
+    "descriptor": { "remotePath": "C:\\Windows\\Temp\\n4x9q2.exe" }
+  }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "status": "removed",
+  "evidence": [ Evidence, ... ]
 }</code></pre>
 
         <h3>execute</h3>
@@ -266,6 +352,7 @@
   "findings":  [ Finding, ... ],
   "artifacts": [ Artifact, ... ],
   "outputs":   { "facts": { "host": "example.test", "reachable": true } },
+  "installedPayloads": [ InstalledPayloadDescriptor, ... ],
   "sessions":  [ SessionRef, ... ]
 }</code></pre>
         <p>
@@ -344,6 +431,7 @@
   "kind": "shell",
   "state": "active",                 // active | closed
   "transport": "stdio",
+  "installedPayloadId": "installed-payload-uuid",
   "capabilities": ["read", "write", "exec", "close"]
 }</code></pre>
 
@@ -358,7 +446,7 @@
   "id": "cap_payload_instance_q8m2v4",
   "type": "PayloadInstance",
   "schemaVersion": "v1",
-  "state": "installed_unconnected",
+  "state": "installed",
   "producerStepId": "squatter.install_smb",
   "attributes": {
     "provider": "squatter",
@@ -377,9 +465,51 @@
           <code>RemoteExecutionCapability</code>, <code>CredentialCapability</code>,
           <code>PayloadArtifact</code>, <code>PayloadInstance</code>,
           <code>TransportEndpoint</code>, <code>SessionRef</code>, and
-          <code>CleanupHandle</code>. A failed step may still emit partial capabilities
-          with explicit states, such as <code>installed_unconnected</code> or
+          <code>CleanupHandle</code>. A step may still emit partial capabilities with
+          explicit states and warning evidence, such as an installed payload record that
+          reaches <code>unreachable</code> when reconnect fails, or a cleanup handle in
           <code>cleanup_failed</code>.
+        </p>
+
+        <h3>InstalledPayloadDescriptor</h3>
+        <p>
+          An installed payload descriptor is an explicit module/provider claim that a
+          target-side payload instance exists and may be tracked. Hovel core validates and
+          persists it; modules and providers never write installed payload rows directly.
+        </p>
+<pre data-lang="object"><code>{
+  "provider": "squatter",
+  "payloadId": "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+  "payloadVersion": "0.1.0",
+  "instanceKey": "provider-stable-key-or-empty",
+  "stampId": "payload-stamp-uuid",
+  "target": {
+    "id": "t1",
+    "address": "10.0.0.42"
+  },
+  "transport": "tcp-bind",
+  "endpointSummary": "10.0.0.42:9101",
+  "state": "installed",
+  "supportsReconnect": true,
+  "supportsMultipleSessions": false,
+  "reconnect": {
+    "schema": "squatter.reconnect.tcp_bind",
+    "schemaVersion": 1,
+    "descriptor": { "host": "10.0.0.42", "port": 9101 }
+  },
+  "cleanup": {
+    "schema": "squatter.cleanup.tcp_bind",
+    "schemaVersion": 1,
+    "descriptor": { "remotePath": "C:\\Windows\\Temp\\n4x9q2.exe" }
+  }
+}</code></pre>
+        <p>
+          The accepted current states are <code>installed</code>,
+          <code>connected</code>, <code>unreachable</code>, and <code>removed</code>.
+          Failed installs are reported as step failure evidence, not installed payload
+          descriptors. When a provider can prove a repeated report is the same deployed
+          instance using <code>instanceKey</code> or <code>stampId</code>, Hovel may upsert
+          the existing record; otherwise it creates a new operator-facing handle.
         </p>
 
         <h3>CredentialCapability</h3>
@@ -415,7 +545,7 @@
 <pre data-lang="object"><code>{
   "id": "ev_squatter_connect_warning_2m7kq9",
   "level": "warning",
-  "kind": "payload.installed_unconnected",
+  "kind": "payload.unreachable",
   "sourceStepId": "squatter.connect_smb",
   "message": "Squatter installed but no session was established.",
   "details": {

@@ -62,9 +62,9 @@
         <p>Hovel is a platform for wrapping and operating third-party proofs of concept, not a catalog of first-party exploits. The project should provide the engine, SDKs, descriptors, providers, guardrails, examples, and operator experience that make third-party modules acceptable to run and inspect.</p>
         <p>The main product goal is straightforward:</p>
         <blockquote>
-          <p>Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every throw.</p>
+          <p>Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every throw, installed payload, and session.</p>
         </blockquote>
-        <p>The central runtime is a local engine, <code>hoveld</code>, which owns operations, chains, throws, module processes, managed services, provider state, structured events, artifacts, and workspace storage. Interactive <code>cli</code> mode, one-shot chain-file execution, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.</p>
+        <p>The central runtime is a local engine, <code>hoveld</code>, which owns operations, chains, throws, module processes, managed services, provider state, installed payload inventory, sessions, structured events, artifacts, and workspace storage. Interactive <code>cli</code> mode, one-shot chain-file execution, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.</p>
 
         <h2>Core Decisions</h2>
         <ol>
@@ -74,7 +74,8 @@
           <li>Modules run as bounded processes through normal module runtime contracts.</li>
           <li>Long-lived capabilities are managed as services.</li>
           <li>Providers expose typed resources such as payloads, artifacts, facts, credentials, listeners, and sessions.</li>
-          <li>Payload providers return tagged bytes with minimal framework validation.</li>
+          <li>Payload providers return tagged bytes with minimal framework validation, and return explicit installed-payload descriptors when they install or reconnect target-side payloads.</li>
+          <li>Hovel core owns installed-payload persistence in SQLite; providers own reconnect and cleanup semantics.</li>
           <li>Throws emit structured events onto a shared logging rail consumed by every front end and persistence sink.</li>
           <li>The first implementation is local-first and alpha-friendly.</li>
         </ol>
@@ -128,11 +129,11 @@
           <li>Launch one Python module through the SDK path.</li>
           <li>Complete handshake, execution, logging, and shutdown.</li>
           <li>Emit structured events through the shared logging rail.</li>
-          <li>Persist the throw plan, confirmation record, event records, artifacts, and replayable throw record.</li>
+          <li>Persist the throw plan, confirmation record, event records, artifacts, any explicit installed-payload records, and replayable throw record.</li>
           <li>Inspect the throw from the CLI.</li>
           <li>Save and load targetless chain templates and configured chain YAML files for reuse and one-shot execution.</li>
         </ol>
-        <p>The alpha can then add managed services, provider-backed payload resolution, richer chains, MCP execution parity, and the TUI. Those features should attach to the proven loop rather than expanding the platform surface before the core path works.</p>
+        <p>The alpha can then add managed services, provider-backed payload resolution, installed-payload reconnect, richer chains, MCP execution parity, and the TUI. Those features should attach to the proven loop rather than expanding the platform surface before the core path works.</p>
 
         <h2>Alpha Deferrals</h2>
         <p>The following decisions should remain open until the core loop has contract tests and at least one replayable throw:</p>
@@ -140,7 +141,7 @@
           <li>Whether chains are only declarative YAML or also authorable in Python or Go.</li>
           <li>Whether REST ships in the first alpha or follows the CLI and TUI.</li>
           <li>Whether service processes and module processes share one protocol.</li>
-          <li>How much provider state is persisted versus run-scoped.</li>
+          <li>Whether reusable payload configuration profiles need first-class persistence beyond installed payload records.</li>
           <li>Which isolation mechanisms are required beyond process supervision and Python dependency isolation.</li>
         </ol>
       </article>
