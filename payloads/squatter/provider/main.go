@@ -298,7 +298,7 @@ func (Provider) DescribeSteps() (hovel.StepContractSet, error) {
 				ID:   "squatter.connect_smb",
 				Kind: "session.connector",
 				Requires: []hovel.CapabilityRequirement{
-					capabilityWithStates(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": smbNamedPipe}, "installed", "disconnected", "installed_unconnected"),
+					capabilityWithStates(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": smbNamedPipe}, "installed", "disconnected", "unreachable"),
 					capability(hovel.CapabilityTransport, map[string]any{"kind": "smb-pipe"}),
 				},
 				Produces: []hovel.CapabilityRequirement{
@@ -323,7 +323,7 @@ func (Provider) DescribeSteps() (hovel.StepContractSet, error) {
 				ID:   "squatter.connect_tcp_bind",
 				Kind: "session.connector",
 				Requires: []hovel.CapabilityRequirement{
-					capabilityWithStates(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": tcpBind}, "installed", "disconnected", "installed_unconnected"),
+					capabilityWithStates(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": tcpBind}, "installed", "disconnected", "unreachable"),
 					capability(hovel.CapabilityTransport, map[string]any{"kind": "tcp-endpoint"}),
 				},
 				Produces: []hovel.CapabilityRequirement{
@@ -357,7 +357,7 @@ func (Provider) DescribeSteps() (hovel.StepContractSet, error) {
 				ID:   "squatter.connect_tcp_callback",
 				Kind: "session.connector",
 				Requires: []hovel.CapabilityRequirement{
-					capabilityWithStates(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": tcpCallback}, "installed", "disconnected", "installed_unconnected"),
+					capabilityWithStates(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": tcpCallback}, "installed", "disconnected", "unreachable"),
 					capability(hovel.CapabilityTransport, map[string]any{"kind": "tcp-listener"}),
 				},
 				Produces: []hovel.CapabilityRequirement{
@@ -815,7 +815,75 @@ func (p Provider) executeSMBInstall(req hovel.StepExecuteRequest) (hovel.StepExe
 				"pipe_name":      pipeName,
 			},
 		}},
+		InstalledPayloads: []hovel.InstalledPayloadDescriptor{
+			installedSMBPayloadDescriptor(target, config, install, pipeName),
+		},
 	}, nil
+}
+
+func installedSMBPayloadDescriptor(target string, config map[string]string, install smbInstallResult, pipeName string) hovel.InstalledPayloadDescriptor {
+	pipePath := `\\.\pipe\` + smbpipe.NormalizePipePath(pipeName)
+	endpoint := `\\` + target + `\pipe\` + smbpipe.NormalizePipePath(pipeName)
+	return hovel.InstalledPayloadDescriptor{
+		Provider:                 payloadName,
+		PayloadID:                "squatter/windows/x86/windows-7/" + smbNamedPipe + "/" + formatPEEXE,
+		PayloadVersion:           version,
+		Target:                   target,
+		TargetID:                 target,
+		State:                    "installed",
+		Transport:                smbNamedPipe,
+		Endpoint:                 endpoint,
+		InstanceKey:              strings.Join([]string{payloadName, smbNamedPipe, target, pipeName}, ":"),
+		StampID:                  install.ServiceName,
+		SupportsReconnect:        true,
+		SupportsMultipleSessions: true,
+		Reconnect: &hovel.PayloadProviderRecord{
+			ProviderID:    payloadName,
+			Schema:        "squatter.smb_named_pipe.reconnect",
+			SchemaVersion: "v1",
+			Descriptor: map[string]any{
+				"transport":     smbNamedPipe,
+				"target.host":   target,
+				"smb.host":      firstNonEmpty(config["smb.host"], target),
+				"smb.port":      config["smb.port"],
+				"smb.domain":    config["smb.domain"],
+				"smb.username":  config["smb.username"],
+				"smb.password":  config["smb.password"],
+				"payload.pipe":  pipePath,
+				"pipe":          pipeName,
+				"remotePath":    install.RemotePath,
+				"serviceName":   install.ServiceName,
+				"binaryPath":    install.BinaryPath,
+				"launchMethod":  install.LaunchMethod,
+				"bytesWritten":  install.BytesWritten,
+				"serviceStatus": fmt.Sprintf("0x%08x", install.ServiceStatus),
+				"serviceState":  fmt.Sprintf("0x%08x", install.ServiceState),
+				"win32Exit":     fmt.Sprintf("0x%08x", install.Win32ExitCode),
+				"queryError":    install.QueryError,
+				"atsvcStatus":   fmt.Sprintf("0x%08x", install.ATStatus),
+				"atsvcJobId":    install.ATJobID,
+			},
+		},
+		Cleanup: &hovel.PayloadProviderRecord{
+			ProviderID:    payloadName,
+			Schema:        "squatter.smb_named_pipe.cleanup",
+			SchemaVersion: "v1",
+			Descriptor: map[string]any{
+				"target.host":  target,
+				"smb.host":     firstNonEmpty(config["smb.host"], target),
+				"smb.port":     config["smb.port"],
+				"smb.domain":   config["smb.domain"],
+				"smb.username": config["smb.username"],
+				"smb.password": config["smb.password"],
+				"remotePath":   install.RemotePath,
+				"serviceName":  install.ServiceName,
+			},
+		},
+		Metadata: map[string]string{
+			"launch_method": install.LaunchMethod,
+			"bytes_written": strconv.Itoa(install.BytesWritten),
+		},
+	}
 }
 
 func smbInstallOptionsFromConfig(config map[string]string, target, remotePath, serviceName, pipeName string, payload []byte) (smbInstallOptions, error) {
@@ -921,7 +989,7 @@ func (p Provider) executeTCPConnect(req hovel.StepExecuteRequest, transport stri
 	})
 	if err != nil {
 		return hovel.StepExecuteResult{
-			Status: "installed_unconnected",
+			Status: "unreachable",
 			Evidence: []hovel.Evidence{{
 				ID:           "ev_squatter_" + strings.ReplaceAll(transport, "-", "_") + "_connect_failed",
 				Level:        "warning",
@@ -977,7 +1045,7 @@ func (p Provider) executeSMBConnect(req hovel.StepExecuteRequest) (hovel.StepExe
 	})
 	if err != nil {
 		return hovel.StepExecuteResult{
-			Status: "installed_unconnected",
+			Status: "unreachable",
 			Evidence: []hovel.Evidence{{
 				ID:           "ev_squatter_connect_smb_failed",
 				Level:        "warning",

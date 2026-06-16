@@ -412,16 +412,20 @@ func (a App) contextualRootDefinitions() []commands.Definition {
 	}
 	if a.inOperationContext() {
 		return filterDefinitions(firstSegments, map[string]bool{
-			"chain":   true,
-			"control": true,
-			"op":      true,
-			"session": true,
+			"chain":    true,
+			"control":  true,
+			"op":       true,
+			"payload":  true,
+			"payloads": true,
+			"session":  true,
 		})
 	}
 	return filterDefinitions(firstSegments, map[string]bool{
-		"control": true,
-		"op":      true,
-		"session": true,
+		"control":  true,
+		"op":       true,
+		"payload":  true,
+		"payloads": true,
+		"session":  true,
 	})
 }
 

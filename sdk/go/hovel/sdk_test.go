@@ -98,7 +98,7 @@ func (fakePayloadProvider) GeneratePayload(GeneratePayloadRequest) (PayloadArtif
 }
 
 func (fakePayloadProvider) ConnectSession(req ConnectSessionRequest) (SessionRef, error) {
-	return SessionRef{ID: "session-1", RunID: req.RunID, Target: req.Target, Kind: "agent", State: "pending", Transport: "squatter/smb-named-pipe", Capabilities: []string{"read", "write"}}, nil
+	return SessionRef{ID: "session-1", RunID: req.RunID, Target: req.Target, Kind: "agent", State: "pending", Transport: "squatter/smb-named-pipe", InstalledPayloadID: req.InstalledPayloadID, Capabilities: []string{"read", "write"}}, nil
 }
 
 func (fakePayloadProvider) CleanupPayload(CleanupPayloadRequest) (CleanupResult, error) {
@@ -131,7 +131,7 @@ func (fakeStepModule) DescribeSteps() (StepContractSet, error) {
 				Type:          CapabilityPayloadInstance,
 				SchemaVersion: "v1",
 				Attributes:    map[string]any{"provider": "squatter", "transport": "smb-named-pipe"},
-				States:        []string{"installed", "disconnected", "installed_unconnected"},
+				States:        []string{"installed", "disconnected", "unreachable"},
 			},
 			{
 				Type:          CapabilityCredential,
@@ -184,6 +184,24 @@ func (fakeStepModule) ExecuteStep(req StepExecuteRequest) (StepExecuteResult, er
 			Attributes:     map[string]any{"provider": "squatter", "transport": "smb-named-pipe"},
 		}},
 		Evidence: []Evidence{{ID: "ev_connected", Level: "info", Kind: "session.connected", SourceStepID: req.StepID, Message: "connected"}},
+		InstalledPayloads: []InstalledPayloadDescriptor{{
+			Provider:                 "fake-step",
+			PayloadID:                "fake/windows/x86/tcp-bind/pe-exe",
+			PayloadVersion:           "v0.0.0-test",
+			Target:                   "target-1",
+			State:                    "installed",
+			Transport:                "tcp-bind",
+			Endpoint:                 "target-1:9101",
+			InstanceKey:              "fake-step:target-1:9101",
+			SupportsReconnect:        true,
+			SupportsMultipleSessions: true,
+			Reconnect: &PayloadProviderRecord{
+				ProviderID:    "fake-step",
+				Schema:        "fake.reconnect",
+				SchemaVersion: "v1",
+				Descriptor:    map[string]any{"host": "target-1", "port": float64(9101)},
+			},
+		}},
 	}, nil
 }
 
@@ -238,6 +256,14 @@ func TestServeStepContractMethods(t *testing.T) {
 	executed := conn.call("step.execute", map[string]any{"runId": "run-1", "stepId": "squatter.connect_smb"})
 	if executed["status"] != "succeeded" {
 		t.Fatalf("execute status = %#v", executed["status"])
+	}
+	installedPayloads, _ := executed["installedPayloads"].([]any)
+	if len(installedPayloads) != 1 {
+		t.Fatalf("installedPayloads = %#v, want one descriptor", executed["installedPayloads"])
+	}
+	installed, _ := installedPayloads[0].(map[string]any)
+	if installed["provider"] != "fake-step" || installed["instanceKey"] != "fake-step:target-1:9101" {
+		t.Fatalf("installed payload descriptor = %#v", installed)
 	}
 
 	cleanup := conn.call("step.cleanup", map[string]any{"runId": "run-1", "stepId": "squatter.cleanup_smb", "cleanupHandleId": "cap_cleanup_74m2wq"})
@@ -361,9 +387,23 @@ func TestServePayloadProviderMethods(t *testing.T) {
 	if primary["format"] != "pe-exe" || primary["encoding"] != "base64" {
 		t.Fatalf("generate_payload primary = %#v", primary)
 	}
-	session := conn.call("connect_session", map[string]any{"runId": "run-1", "target": "target-1", "payloadId": resolved["id"]})
+	session := conn.call("connect_session", map[string]any{
+		"runId":              "run-1",
+		"target":             "target-1",
+		"payloadId":          resolved["id"],
+		"installedPayloadId": "p1",
+		"reconnect": map[string]any{
+			"providerId":    "fake-payload",
+			"schema":        "fake.reconnect",
+			"schemaVersion": "v1",
+			"descriptor":    map[string]any{"target": "target-1"},
+		},
+	})
 	if session["transport"] != "squatter/smb-named-pipe" {
 		t.Fatalf("connect_session = %#v", session)
+	}
+	if session["installedPayloadId"] != "p1" {
+		t.Fatalf("connect_session installedPayloadId = %#v, want p1", session["installedPayloadId"])
 	}
 	cleanup := conn.call("cleanup_payload", map[string]any{"reason": "test"})
 	if cleanup["status"] != "ok" {

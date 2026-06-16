@@ -10,15 +10,16 @@ import (
 
 // SessionRef identifies an interactive session to the daemon and the operator.
 type SessionRef struct {
-	ID           string   `json:"id"`
-	RunID        string   `json:"runId"`
-	ModuleID     string   `json:"moduleId"`
-	Target       string   `json:"target"`
-	Name         string   `json:"name"`
-	Kind         string   `json:"kind"`
-	State        string   `json:"state"`
-	Transport    string   `json:"transport"`
-	Capabilities []string `json:"capabilities"`
+	ID                 string   `json:"id"`
+	RunID              string   `json:"runId"`
+	ModuleID           string   `json:"moduleId"`
+	Target             string   `json:"target"`
+	Name               string   `json:"name"`
+	Kind               string   `json:"kind"`
+	State              string   `json:"state"`
+	Transport          string   `json:"transport"`
+	InstalledPayloadID string   `json:"installedPayloadId,omitempty"`
+	Capabilities       []string `json:"capabilities"`
 }
 
 // CapabilityTerminalPTY marks sessions backed by a local pseudoterminal.
@@ -43,15 +44,16 @@ func (s SessionRef) toRPC() map[string]any {
 		capabilities = []string{}
 	}
 	return map[string]any{
-		"id":           s.ID,
-		"runId":        s.RunID,
-		"moduleId":     s.ModuleID,
-		"target":       s.Target,
-		"name":         s.Name,
-		"kind":         s.Kind,
-		"state":        s.State,
-		"transport":    s.Transport,
-		"capabilities": capabilities,
+		"id":                 s.ID,
+		"runId":              s.RunID,
+		"moduleId":           s.ModuleID,
+		"target":             s.Target,
+		"name":               s.Name,
+		"kind":               s.Kind,
+		"state":              s.State,
+		"transport":          s.Transport,
+		"installedPayloadId": s.InstalledPayloadID,
+		"capabilities":       capabilities,
 	}
 }
 

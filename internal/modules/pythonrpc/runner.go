@@ -795,15 +795,16 @@ type rpcSessionEvent struct {
 }
 
 type rpcSessionRef struct {
-	ID           string `json:"id"`
-	RunID        string `json:"runId"`
-	ModuleID     string `json:"moduleId"`
-	Target       string `json:"target"`
-	Name         string `json:"name"`
-	Kind         string `json:"kind"`
-	State        string `json:"state"`
-	Transport    string `json:"transport"`
-	Capabilities []any  `json:"capabilities"`
+	ID                 string `json:"id"`
+	RunID              string `json:"runId"`
+	ModuleID           string `json:"moduleId"`
+	Target             string `json:"target"`
+	Name               string `json:"name"`
+	Kind               string `json:"kind"`
+	State              string `json:"state"`
+	Transport          string `json:"transport"`
+	InstalledPayloadID string `json:"installedPayloadId"`
+	Capabilities       []any  `json:"capabilities"`
 }
 
 type frameDecoder struct {
@@ -889,11 +890,12 @@ func writeFrame(writer io.Writer, message map[string]any) error {
 
 func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (run.Result, error) {
 	args := run.ResultArgs{
-		Summary:   stringValue(values["summary"]),
-		Findings:  findingsFromRPC(values["findings"]),
-		Artifacts: artifactsFromRPC(values["artifacts"]),
-		Logs:      logsFromRPC(request, logs),
-		Sessions:  sessionsFromRPC(request, values["sessions"]),
+		Summary:           stringValue(values["summary"]),
+		Findings:          findingsFromRPC(values["findings"]),
+		Artifacts:         artifactsFromRPC(values["artifacts"]),
+		Logs:              logsFromRPC(request, logs),
+		Sessions:          sessionsFromRPC(request, values["sessions"]),
+		InstalledPayloads: installedPayloadsFromRPC(values["installedPayloads"]),
 	}
 	if stringValue(values["status"]) == string(run.StateFailed) {
 		return run.Failed(request, args)
@@ -1313,21 +1315,83 @@ func sessionsFromRPC(request run.Request, value any) []run.SessionRef {
 			continue
 		}
 		session := run.SessionRef{
-			ID:           stringValue(object["id"]),
-			RunID:        defaultString(stringValue(object["runId"]), request.ID),
-			ModuleID:     defaultString(stringValue(object["moduleId"]), request.ModuleID),
-			Target:       defaultString(stringValue(object["target"]), request.Target),
-			Name:         stringValue(object["name"]),
-			Kind:         defaultString(stringValue(object["kind"]), "shell"),
-			State:        defaultString(stringValue(object["state"]), "active"),
-			Transport:    defaultString(stringValue(object["transport"]), "stdio"),
-			Capabilities: stringSlice(object["capabilities"]),
+			ID:                 stringValue(object["id"]),
+			RunID:              defaultString(stringValue(object["runId"]), request.ID),
+			ModuleID:           defaultString(stringValue(object["moduleId"]), request.ModuleID),
+			Target:             defaultString(stringValue(object["target"]), request.Target),
+			Name:               stringValue(object["name"]),
+			Kind:               defaultString(stringValue(object["kind"]), "shell"),
+			State:              defaultString(stringValue(object["state"]), "active"),
+			Transport:          defaultString(stringValue(object["transport"]), "stdio"),
+			InstalledPayloadID: stringValue(object["installedPayloadId"]),
+			Capabilities:       stringSlice(object["capabilities"]),
 		}
 		if session.ID != "" {
 			sessions = append(sessions, session)
 		}
 	}
 	return sessions
+}
+
+func installedPayloadsFromRPC(value any) []run.InstalledPayloadDescriptor {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	payloads := make([]run.InstalledPayloadDescriptor, 0, len(items))
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		payload := run.InstalledPayloadDescriptor{
+			Provider:                 stringValue(object["provider"]),
+			PayloadID:                stringValue(object["payloadId"]),
+			PayloadVersion:           stringValue(object["payloadVersion"]),
+			Target:                   stringValue(object["target"]),
+			TargetID:                 stringValue(object["targetId"]),
+			State:                    stringValue(object["state"]),
+			Transport:                stringValue(object["transport"]),
+			Endpoint:                 stringValue(object["endpoint"]),
+			InstanceKey:              stringValue(object["instanceKey"]),
+			StampID:                  stringValue(object["stampId"]),
+			ArtifactIDs:              stringSlice(object["artifactIds"]),
+			SupportsReconnect:        boolValue(object["supportsReconnect"]),
+			SupportsMultipleSessions: boolValue(object["supportsMultipleSessions"]),
+			Reconnect:                payloadProviderRecordFromRPC(object["reconnect"]),
+			Cleanup:                  payloadProviderRecordFromRPC(object["cleanup"]),
+			Metadata:                 stringMapFromRPC(object["metadata"]),
+		}
+		if payload.Provider != "" && payload.PayloadID != "" {
+			payloads = append(payloads, payload)
+		}
+	}
+	return payloads
+}
+
+func payloadProviderRecordFromRPC(value any) *run.PayloadProviderRecord {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return &run.PayloadProviderRecord{
+		ProviderID:    stringValue(object["providerId"]),
+		Schema:        stringValue(object["schema"]),
+		SchemaVersion: stringValue(object["schemaVersion"]),
+		Descriptor:    anyMap(object["descriptor"]),
+	}
+}
+
+func stringMapFromRPC(value any) map[string]string {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(object))
+	for key, item := range object {
+		out[key] = stringValue(item)
+	}
+	return out
 }
 
 func defaultString(value, fallback string) string {

@@ -103,10 +103,11 @@ type StepExecuteRequest struct {
 }
 
 type StepExecuteResult struct {
-	Status           string                 `json:"status"`
-	Capabilities     []Capability           `json:"capabilities,omitempty"`
-	StateTransitions []CapabilityTransition `json:"stateTransitions,omitempty"`
-	Evidence         []Evidence             `json:"evidence,omitempty"`
+	Status            string                       `json:"status"`
+	Capabilities      []Capability                 `json:"capabilities,omitempty"`
+	StateTransitions  []CapabilityTransition       `json:"stateTransitions,omitempty"`
+	Evidence          []Evidence                   `json:"evidence,omitempty"`
+	InstalledPayloads []InstalledPayloadDescriptor `json:"installedPayloads,omitempty"`
 }
 
 type StepCleanupRequest struct {

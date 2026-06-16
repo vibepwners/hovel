@@ -51,7 +51,7 @@ func (fakeProvider) GeneratePayload(hovel.GeneratePayloadRequest) (hovel.Payload
 }
 
 func (fakeProvider) ConnectSession(req hovel.ConnectSessionRequest) (hovel.SessionRef, error) {
-	return hovel.SessionRef{ID: "session-1", RunID: req.RunID, Target: req.Target, Kind: "agent", State: "placeholder", Transport: "fake/reverse-tcp"}, nil
+	return hovel.SessionRef{ID: "session-1", RunID: req.RunID, Target: req.Target, Kind: "agent", State: "placeholder", Transport: "fake/reverse-tcp", InstalledPayloadID: req.InstalledPayloadID}, nil
 }
 
 func (fakeProvider) CleanupPayload(hovel.CleanupPayloadRequest) (hovel.CleanupResult, error) {

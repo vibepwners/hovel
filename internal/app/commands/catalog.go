@@ -136,6 +136,8 @@ type Runtime struct {
 	ChainFiles         ChainFileStore
 	Session            OperatorSession
 	Modules            ModuleDatabase
+	Payloads           PayloadRepository
+	PayloadProviders   PayloadProviderService
 }
 
 type ModuleDatabase interface {
@@ -197,15 +199,16 @@ type ArtifactMaterialization struct {
 }
 
 type SessionRef struct {
-	ID           string   `json:"id"`
-	RunID        string   `json:"runId"`
-	ModuleID     string   `json:"moduleId"`
-	Target       string   `json:"target"`
-	Name         string   `json:"name,omitempty"`
-	Kind         string   `json:"kind"`
-	State        string   `json:"state"`
-	Transport    string   `json:"transport"`
-	Capabilities []string `json:"capabilities"`
+	ID                 string   `json:"id"`
+	RunID              string   `json:"runId"`
+	ModuleID           string   `json:"moduleId"`
+	Target             string   `json:"target"`
+	Name               string   `json:"name,omitempty"`
+	Kind               string   `json:"kind"`
+	State              string   `json:"state"`
+	Transport          string   `json:"transport"`
+	InstalledPayloadID string   `json:"installedPayloadId,omitempty"`
+	Capabilities       []string `json:"capabilities"`
 }
 
 type SessionChunk struct {
@@ -240,15 +243,16 @@ type LogEntry struct {
 }
 
 type RunMockExploitResponse struct {
-	RunID     string
-	ModuleID  string
-	Target    string
-	State     string
-	Summary   string
-	Findings  []Finding
-	Artifacts []Artifact
-	Logs      []LogEntry
-	Sessions  []SessionRef
+	RunID             string
+	ModuleID          string
+	Target            string
+	State             string
+	Summary           string
+	Findings          []Finding
+	Artifacts         []Artifact
+	Logs              []LogEntry
+	Sessions          []SessionRef
+	InstalledPayloads []InstalledPayloadDescriptor
 }
 
 type CapabilityChainRequest struct {
@@ -270,14 +274,15 @@ type CapabilityChainStepRef struct {
 }
 
 type CapabilityChainResponse struct {
-	RunID        string
-	Target       string
-	State        string
-	Summary      string
-	Capabilities []CapabilityPayload
-	Evidence     []CapabilityEvidence
-	Logs         []LogEntry
-	Sessions     []SessionRef
+	RunID             string
+	Target            string
+	State             string
+	Summary           string
+	Capabilities      []CapabilityPayload
+	Evidence          []CapabilityEvidence
+	Logs              []LogEntry
+	Sessions          []SessionRef
+	InstalledPayloads []InstalledPayloadDescriptor
 }
 
 type CapabilityPayload struct {
@@ -317,17 +322,18 @@ type DaemonStatusPayload struct {
 }
 
 type RunPayload struct {
-	RunID        string               `json:"runId"`
-	ModuleID     string               `json:"moduleId"`
-	Target       string               `json:"target"`
-	State        string               `json:"state"`
-	Summary      string               `json:"summary"`
-	Findings     []Finding            `json:"findings"`
-	Artifacts    []Artifact           `json:"artifacts"`
-	Capabilities []CapabilityPayload  `json:"capabilities,omitempty"`
-	Evidence     []CapabilityEvidence `json:"evidence,omitempty"`
-	Logs         []LogEntry           `json:"logs"`
-	Sessions     []SessionRef         `json:"sessions"`
+	RunID             string                       `json:"runId"`
+	ModuleID          string                       `json:"moduleId"`
+	Target            string                       `json:"target"`
+	State             string                       `json:"state"`
+	Summary           string                       `json:"summary"`
+	Findings          []Finding                    `json:"findings"`
+	Artifacts         []Artifact                   `json:"artifacts"`
+	Capabilities      []CapabilityPayload          `json:"capabilities,omitempty"`
+	Evidence          []CapabilityEvidence         `json:"evidence,omitempty"`
+	Logs              []LogEntry                   `json:"logs"`
+	Sessions          []SessionRef                 `json:"sessions"`
+	InstalledPayloads []InstalledPayloadDescriptor `json:"installedPayloads,omitempty"`
 }
 
 type ThrowPayload struct {
@@ -766,6 +772,95 @@ func HovelRegistry(runtime Runtime) Registry {
 				{Name: "query", Help: "Search query", Required: true},
 			},
 			Handler: modulesSearchHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "available"},
+			Aliases: [][]string{{"payload", "available"}},
+			Summary: "List payloads available from configured providers.",
+			Options: []Option{
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsAvailableHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "installed"},
+			Aliases: [][]string{{"payload", "installed"}, {"payloads", "list"}, {"payload", "list"}},
+			Summary: "List installed payload records.",
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("state", "", "Payload state filter"),
+				boolOption("all", "a", "Include removed payloads"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsInstalledHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "inspect"},
+			Aliases: [][]string{{"payload", "inspect"}},
+			Summary: "Inspect an installed payload record.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("events", "", "Include payload inventory events"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsInspectHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "connect"},
+			Aliases: [][]string{{"payload", "connect"}},
+			Summary: "Reconnect to an installed payload when the provider supports it.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsConnectHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "cleanup"},
+			Aliases: [][]string{{"payload", "cleanup"}},
+			Summary: "Ask the payload provider to clean up an installed payload.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("reason", "", "Cleanup reason"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsCleanupHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "mark-removed"},
+			Aliases: [][]string{{"payload", "mark-removed"}},
+			Summary: "Mark an installed payload record as removed without probing the target.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("reason", "", "Removal reason"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsMarkRemovedHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "refresh"},
+			Aliases: [][]string{{"payload", "refresh"}},
+			Summary: "Refresh an installed payload record through its provider.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsRefreshHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"artifact", "list"},
@@ -2044,6 +2139,9 @@ func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, 
 			if err := materializeRunArtifacts(ctx, runtime, workspacePath, plan, payload, moduleID, target, result.RunID); err != nil {
 				return err
 			}
+			if err := recordInstalledPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1); err != nil {
+				return err
+			}
 			if runtime.Session != nil && feedbackPublished(runtime.Session) {
 				_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(modules), throwStarted)...)
 			}
@@ -2075,6 +2173,9 @@ func executeCapabilityThrow(ctx context.Context, runtime Runtime, workspacePath 
 		}
 		payload.Results = append(payload.Results, capabilityChainRunPayload(target, runID, result))
 		if err := materializeRunArtifacts(ctx, runtime, workspacePath, plan, payload, "capability-chain", target, payload.Results[len(payload.Results)-1].RunID); err != nil {
+			return err
+		}
+		if err := recordInstalledPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1); err != nil {
 			return err
 		}
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
@@ -2115,6 +2216,74 @@ func materializeRunArtifacts(ctx context.Context, runtime Runtime, workspacePath
 		payload.Results[resultIndex].Artifacts[artifactIndex].Name = record.Name
 	}
 	return nil
+}
+
+func recordInstalledPayloadsForRun(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, payload *ThrowPayload, resultIndex int) error {
+	if runtime.Payloads == nil || resultIndex < 0 || resultIndex >= len(payload.Results) {
+		return nil
+	}
+	result := payload.Results[resultIndex]
+	for descriptorIndex, descriptor := range result.InstalledPayloads {
+		record := installedPayloadRecordFromDescriptor(workspacePath, plan, payload.ThrowID, result, descriptor)
+		recorded, err := runtime.Payloads.RecordInstalledPayload(ctx, record)
+		if err != nil {
+			return err
+		}
+		payload.Results[resultIndex].InstalledPayloads[descriptorIndex].State = recorded.State
+		if err := recordStructuredEvent(ctx, runtime, workspacePath, "hovel.payload.installed", "installed payload recorded", plan, payload.ThrowID, result.RunID, event.LevelInfo, map[string]string{
+			"payloadHandle": recorded.Handle,
+			"payloadId":     recorded.PayloadID,
+			"provider":      recorded.Provider,
+			"state":         recorded.State,
+			"target":        recorded.Target,
+			"transport":     recorded.Transport,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func installedPayloadRecordFromDescriptor(workspacePath string, plan ThrowPlanRecord, throwID string, result RunPayload, descriptor InstalledPayloadDescriptor) InstalledPayloadRecord {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	state := descriptor.State
+	if state == "" {
+		state = PayloadStateInstalled
+	}
+	target := descriptor.Target
+	if target == "" {
+		target = result.Target
+	}
+	targetID := descriptor.TargetID
+	if targetID == "" {
+		targetID = result.Target
+	}
+	return InstalledPayloadRecord{
+		Workspace:                workspacePath,
+		Provider:                 descriptor.Provider,
+		PayloadID:                descriptor.PayloadID,
+		PayloadVersion:           descriptor.PayloadVersion,
+		Target:                   target,
+		TargetID:                 targetID,
+		State:                    state,
+		Transport:                descriptor.Transport,
+		Endpoint:                 descriptor.Endpoint,
+		InstanceKey:              descriptor.InstanceKey,
+		StampID:                  descriptor.StampID,
+		ArtifactIDs:              append([]string(nil), descriptor.ArtifactIDs...),
+		SupportsReconnect:        descriptor.SupportsReconnect,
+		SupportsMultipleSessions: descriptor.SupportsMultipleSessions,
+		Reconnect:                clonePayloadProviderRecord(descriptor.Reconnect),
+		Cleanup:                  clonePayloadProviderRecord(descriptor.Cleanup),
+		Operation:                planOperation(plan),
+		Chain:                    plan.Chain,
+		ThrowID:                  throwID,
+		RunID:                    result.RunID,
+		CreatedAt:                now,
+		UpdatedAt:                now,
+		LastSeenAt:               now,
+		Metadata:                 cloneStringMap(descriptor.Metadata),
+	}
 }
 
 func confirmHandler(runtime Runtime) Handler {
@@ -3935,15 +4104,16 @@ func daemonStatusPayload(status daemon.Status) DaemonStatusPayload {
 
 func runPayload(result RunMockExploitResponse) RunPayload {
 	return RunPayload{
-		RunID:     result.RunID,
-		ModuleID:  result.ModuleID,
-		Target:    result.Target,
-		State:     result.State,
-		Summary:   result.Summary,
-		Findings:  result.Findings,
-		Artifacts: result.Artifacts,
-		Logs:      result.Logs,
-		Sessions:  result.Sessions,
+		RunID:             result.RunID,
+		ModuleID:          result.ModuleID,
+		Target:            result.Target,
+		State:             result.State,
+		Summary:           result.Summary,
+		Findings:          result.Findings,
+		Artifacts:         result.Artifacts,
+		Logs:              result.Logs,
+		Sessions:          result.Sessions,
+		InstalledPayloads: cloneInstalledPayloadDescriptors(result.InstalledPayloads),
 	}
 }
 
@@ -3955,15 +4125,16 @@ func capabilityChainRunPayload(target, runID string, result CapabilityChainRespo
 		target = result.Target
 	}
 	return RunPayload{
-		RunID:        runID,
-		ModuleID:     "capability-chain",
-		Target:       target,
-		State:        result.State,
-		Summary:      result.Summary,
-		Capabilities: cloneCapabilityPayloads(result.Capabilities),
-		Evidence:     cloneCapabilityEvidence(result.Evidence),
-		Logs:         append([]LogEntry(nil), result.Logs...),
-		Sessions:     append([]SessionRef(nil), result.Sessions...),
+		RunID:             runID,
+		ModuleID:          "capability-chain",
+		Target:            target,
+		State:             result.State,
+		Summary:           result.Summary,
+		Capabilities:      cloneCapabilityPayloads(result.Capabilities),
+		Evidence:          cloneCapabilityEvidence(result.Evidence),
+		Logs:              append([]LogEntry(nil), result.Logs...),
+		Sessions:          append([]SessionRef(nil), result.Sessions...),
+		InstalledPayloads: cloneInstalledPayloadDescriptors(result.InstalledPayloads),
 	}
 }
 

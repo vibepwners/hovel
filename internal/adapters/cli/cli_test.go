@@ -31,16 +31,28 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 			t.Fatalf("root suggestions = %#v, should hide %s outside chain context", root, hidden)
 		}
 	}
+	if !containsSuggestion(root, "payloads") {
+		t.Fatalf("root suggestions = %#v, want payloads before operation context", root)
+	}
 
 	controlChildren := app.Suggestions("control ")
 	if len(controlChildren) != 2 || controlChildren[0].Text != "daemon" || controlChildren[1].Text != "init" {
 		t.Fatalf("control suggestions = %#v, want daemon and init", controlChildren)
+	}
+	payloadChildren := app.Suggestions("payloads ")
+	for _, want := range []string{"available", "installed", "inspect", "connect", "cleanup", "mark-removed", "refresh"} {
+		if !containsSuggestion(payloadChildren, want) {
+			t.Fatalf("payload suggestions = %#v, missing %s", payloadChildren, want)
+		}
 	}
 
 	enterTestOperation(t, app)
 	root = app.Suggestions("ch")
 	if len(root) != 1 || root[0].Text != "chain" {
 		t.Fatalf("root suggestions = %#v, want chain after operation", root)
+	}
+	if root = app.Suggestions("pay"); !containsSuggestion(root, "payloads") {
+		t.Fatalf("root suggestions = %#v, want payloads after operation", root)
 	}
 
 	chainChildren := app.Suggestions("chain ")

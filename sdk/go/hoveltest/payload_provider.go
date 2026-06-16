@@ -106,13 +106,14 @@ func (c *RPCConn) readFrame() map[string]json.RawMessage {
 // PayloadProviderContract describes the minimum lifecycle a payload-provider
 // module must satisfy over JSON-RPC.
 type PayloadProviderContract struct {
-	Query            hovel.PayloadQuery
-	Target           string
-	RunID            string
-	Config           map[string]string
-	WantFormat       string
-	WantTransport    string
-	WantCapabilities []string
+	Query                  hovel.PayloadQuery
+	Target                 string
+	RunID                  string
+	Config                 map[string]string
+	WantFormat             string
+	WantTransport          string
+	WantCapabilities       []string
+	WantInstalledPayloadID string
 }
 
 func AssertPayloadProviderContract(t testing.TB, module hovel.PayloadProvider, contract PayloadProviderContract) {
@@ -184,22 +185,43 @@ func AssertPayloadProviderContract(t testing.TB, module hovel.PayloadProvider, c
 	}
 
 	var session hovel.SessionRef
+	installedPayloadID := contract.WantInstalledPayloadID
+	if installedPayloadID == "" {
+		installedPayloadID = "p-contract"
+	}
 	conn.Call("connect_session", hovel.ConnectSessionRequest{
-		RunID:     contract.RunID,
-		Target:    contract.Target,
-		PayloadID: resolved.ID,
-		Config:    contract.Config,
+		RunID:              contract.RunID,
+		Target:             contract.Target,
+		PayloadID:          resolved.ID,
+		InstalledPayloadID: installedPayloadID,
+		Config:             contract.Config,
+		Reconnect: &hovel.PayloadProviderRecord{
+			ProviderID:    info.Name,
+			Schema:        "hoveltest.reconnect",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"target": contract.Target},
+		},
 	}, &session)
 	if session.ID == "" {
 		t.Fatalf("connect_session returned missing session id: %#v", session)
 	}
+	if session.InstalledPayloadID != installedPayloadID {
+		t.Fatalf("connect_session installed payload id = %q, want %q", session.InstalledPayloadID, installedPayloadID)
+	}
 
 	var cleanup hovel.CleanupResult
 	conn.Call("cleanup_payload", hovel.CleanupPayloadRequest{
-		RunID:     contract.RunID,
-		Target:    contract.Target,
-		PayloadID: resolved.ID,
-		Reason:    "contract test",
+		RunID:              contract.RunID,
+		Target:             contract.Target,
+		PayloadID:          resolved.ID,
+		InstalledPayloadID: installedPayloadID,
+		Reason:             "contract test",
+		Cleanup: &hovel.PayloadProviderRecord{
+			ProviderID:    info.Name,
+			Schema:        "hoveltest.cleanup",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"target": contract.Target},
+		},
 	}, &cleanup)
 	if cleanup.Status != "ok" {
 		t.Fatalf("cleanup status = %q", cleanup.Status)

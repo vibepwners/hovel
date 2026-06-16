@@ -85,18 +85,55 @@ type PayloadArtifact struct {
 	SHA256   string `json:"sha256,omitempty"`
 }
 
+// InstalledPayloadDescriptor is the explicit provider-owned record Hovel stores
+// when a payload has been installed on a target. The provider owns the opaque
+// reconnect and cleanup blobs; Hovel stores and returns them without probing the
+// target or interpreting provider internals.
+type InstalledPayloadDescriptor struct {
+	Provider                 string                 `json:"provider"`
+	PayloadID                string                 `json:"payloadId"`
+	PayloadVersion           string                 `json:"payloadVersion,omitempty"`
+	Target                   string                 `json:"target"`
+	TargetID                 string                 `json:"targetId,omitempty"`
+	State                    string                 `json:"state,omitempty"`
+	Transport                string                 `json:"transport,omitempty"`
+	Endpoint                 string                 `json:"endpoint,omitempty"`
+	InstanceKey              string                 `json:"instanceKey,omitempty"`
+	StampID                  string                 `json:"stampId,omitempty"`
+	ArtifactIDs              []string               `json:"artifactIds,omitempty"`
+	SupportsReconnect        bool                   `json:"supportsReconnect,omitempty"`
+	SupportsMultipleSessions bool                   `json:"supportsMultipleSessions,omitempty"`
+	Reconnect                *PayloadProviderRecord `json:"reconnect,omitempty"`
+	Cleanup                  *PayloadProviderRecord `json:"cleanup,omitempty"`
+	Metadata                 map[string]string      `json:"metadata,omitempty"`
+}
+
+// PayloadProviderRecord is an opaque JSON payload owned by the provider that
+// produced it. Hovel persists the record so future explicit payload operations
+// can call back into that provider.
+type PayloadProviderRecord struct {
+	ProviderID    string         `json:"providerId,omitempty"`
+	Schema        string         `json:"schema,omitempty"`
+	SchemaVersion string         `json:"schemaVersion,omitempty"`
+	Descriptor    map[string]any `json:"descriptor,omitempty"`
+}
+
 type ConnectSessionRequest struct {
-	RunID     string            `json:"runId,omitempty"`
-	Target    string            `json:"target"`
-	PayloadID string            `json:"payloadId"`
-	Config    map[string]string `json:"config,omitempty"`
+	RunID              string                 `json:"runId,omitempty"`
+	Target             string                 `json:"target"`
+	PayloadID          string                 `json:"payloadId"`
+	InstalledPayloadID string                 `json:"installedPayloadId,omitempty"`
+	Config             map[string]string      `json:"config,omitempty"`
+	Reconnect          *PayloadProviderRecord `json:"reconnect,omitempty"`
 }
 
 type CleanupPayloadRequest struct {
-	RunID     string `json:"runId,omitempty"`
-	Target    string `json:"target,omitempty"`
-	PayloadID string `json:"payloadId,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	RunID              string                 `json:"runId,omitempty"`
+	Target             string                 `json:"target,omitempty"`
+	PayloadID          string                 `json:"payloadId,omitempty"`
+	InstalledPayloadID string                 `json:"installedPayloadId,omitempty"`
+	Reason             string                 `json:"reason,omitempty"`
+	Cleanup            *PayloadProviderRecord `json:"cleanup,omitempty"`
 }
 
 type CleanupResult struct {

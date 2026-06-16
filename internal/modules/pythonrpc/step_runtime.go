@@ -55,10 +55,11 @@ func stepPrepareResultFromRPC(result map[string]any) chainruntime.StepPrepareRes
 
 func stepExecuteResultFromRPC(result map[string]any) chainruntime.StepExecuteResult {
 	return chainruntime.StepExecuteResult{
-		Status:           stringValue(result["status"]),
-		Capabilities:     capabilitiesFromRPC(result["capabilities"]),
-		StateTransitions: transitionsFromRPC(result["stateTransitions"]),
-		Evidence:         evidenceFromRPC(result["evidence"]),
+		Status:            stringValue(result["status"]),
+		Capabilities:      capabilitiesFromRPC(result["capabilities"]),
+		StateTransitions:  transitionsFromRPC(result["stateTransitions"]),
+		Evidence:          evidenceFromRPC(result["evidence"]),
+		InstalledPayloads: stepInstalledPayloadsFromRPC(result["installedPayloads"]),
 	}
 }
 
@@ -147,6 +148,67 @@ func evidenceFromRPC(value any) []chainruntime.Evidence {
 		})
 	}
 	return evidence
+}
+
+func stepInstalledPayloadsFromRPC(value any) []chainruntime.InstalledPayloadDescriptor {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	payloads := make([]chainruntime.InstalledPayloadDescriptor, 0, len(items))
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		payload := chainruntime.InstalledPayloadDescriptor{
+			Provider:                 stringValue(object["provider"]),
+			PayloadID:                stringValue(object["payloadId"]),
+			PayloadVersion:           stringValue(object["payloadVersion"]),
+			Target:                   stringValue(object["target"]),
+			TargetID:                 stringValue(object["targetId"]),
+			State:                    stringValue(object["state"]),
+			Transport:                stringValue(object["transport"]),
+			Endpoint:                 stringValue(object["endpoint"]),
+			InstanceKey:              stringValue(object["instanceKey"]),
+			StampID:                  stringValue(object["stampId"]),
+			ArtifactIDs:              stringSlice(object["artifactIds"]),
+			SupportsReconnect:        boolValue(object["supportsReconnect"]),
+			SupportsMultipleSessions: boolValue(object["supportsMultipleSessions"]),
+			Reconnect:                stepPayloadProviderRecordFromRPC(object["reconnect"]),
+			Cleanup:                  stepPayloadProviderRecordFromRPC(object["cleanup"]),
+			Metadata:                 stepStringMapFromRPC(object["metadata"]),
+		}
+		if payload.Provider != "" && payload.PayloadID != "" {
+			payloads = append(payloads, payload)
+		}
+	}
+	return payloads
+}
+
+func stepPayloadProviderRecordFromRPC(value any) *chainruntime.PayloadProviderRecord {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return &chainruntime.PayloadProviderRecord{
+		ProviderID:    stringValue(object["providerId"]),
+		Schema:        stringValue(object["schema"]),
+		SchemaVersion: stringValue(object["schemaVersion"]),
+		Descriptor:    anyMap(object["descriptor"]),
+	}
+}
+
+func stepStringMapFromRPC(value any) map[string]string {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(object))
+	for key, item := range object {
+		out[key] = stringValue(item)
+	}
+	return out
 }
 
 func capabilityRefsToRPC(refs []modulecatalog.CapabilityRef) []map[string]any {

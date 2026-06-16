@@ -24,7 +24,7 @@ func TestHelpShowsCommandMenu(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"hovel command", "control", "chain", "target", "throw"} {
+	for _, want := range []string{"hovel command", "control", "chain", "payloads", "target", "throw"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}
@@ -53,6 +53,12 @@ func TestDefaultRuntimeWiresCapabilityChainRunner(t *testing.T) {
 	runtime := defaultRuntime(nil)
 	if runtime.CapabilityChains == nil {
 		t.Fatal("CapabilityChains is nil, want command-mode capability chain runner")
+	}
+	if runtime.Payloads == nil {
+		t.Fatal("Payloads is nil, want command-mode installed payload repository")
+	}
+	if runtime.PayloadProviders == nil {
+		t.Fatal("PayloadProviders is nil, want command-mode payload provider service")
 	}
 }
 

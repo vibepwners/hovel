@@ -6,7 +6,17 @@ import unittest
 from pathlib import Path
 from typing import Any, ClassVar
 
-from hovel_sdk import Artifact, Context, HovelModule, LineShellSession, Requirement, Result, setup_logging
+from hovel_sdk import (
+    Artifact,
+    Context,
+    HovelModule,
+    InstalledPayload,
+    LineShellSession,
+    PayloadProviderRecord,
+    Requirement,
+    Result,
+    setup_logging,
+)
 from hovel_sdk.framing import encode_message, read_message, write_message
 from hovel_sdk.server import JSONRPCServer
 
@@ -245,6 +255,41 @@ class SDKTest(unittest.TestCase):
             {"name": "summary.json", "kind": "application/json", "data": '{"count":2,"ok":true}'},
         )
         self.assertEqual(artifacts[3], {"name": "loot.txt", "kind": "text/plain", "path": str(path)})
+
+    def test_result_serializes_installed_payload_descriptors(self) -> None:
+        result = Result.ok(summary="installed").with_installed_payloads(
+            InstalledPayload(
+                provider="squatter",
+                payload_id="squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+                payload_version="v0.1.0",
+                target="192.168.122.142",
+                state="installed",
+                transport="tcp-bind",
+                endpoint="192.168.122.142:9101",
+                instance_key="squatter:tcp-bind:192.168.122.142:9101",
+                stamp_id="svc123",
+                supports_reconnect=True,
+                supports_multiple_sessions=True,
+                reconnect=PayloadProviderRecord(
+                    schema="squatter.tcp_bind.reconnect",
+                    descriptor={"transport": "tcp-bind", "host": "192.168.122.142", "port": 9101},
+                ),
+                cleanup=PayloadProviderRecord(
+                    schema="etro.smb_service.cleanup",
+                    descriptor={
+                        "remotePath": r"C:\Windows\Temp\svc123.exe",
+                        "serviceName": "svc123",
+                    },
+                ),
+                metadata={"launch_method": "etro-smb-service"},
+            )
+        )
+
+        installed = result.to_rpc()["installedPayloads"][0]
+        self.assertEqual(installed["provider"], "squatter")
+        self.assertEqual(installed["payloadId"], "squatter/windows/x86/windows-7/tcp-bind/pe-exe")
+        self.assertEqual(installed["reconnect"]["descriptor"]["port"], 9101)
+        self.assertEqual(installed["cleanup"]["descriptor"]["serviceName"], "svc123")
 
     def test_async_module_can_open_and_drive_shell_session(self) -> None:
         stdin = io.BytesIO(

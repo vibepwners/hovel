@@ -229,7 +229,7 @@ while True:
             "id": "squatter.connect_smb",
             "kind": "session.connector",
             "requires": [
-                {"type": "PayloadInstance", "schemaVersion": "v1", "attributes": {"provider": "squatter", "transport": "smb-named-pipe"}, "states": ["installed", "installed_unconnected"]},
+                {"type": "PayloadInstance", "schemaVersion": "v1", "attributes": {"provider": "squatter", "transport": "smb-named-pipe"}, "states": ["installed", "unreachable"]},
                 {"type": "CredentialCapability", "schemaVersion": "v1", "attributes": {"protocol": "smb"}, "states": ["active"]}
             ],
             "produces": [

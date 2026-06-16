@@ -20,6 +20,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
+	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
@@ -93,6 +94,8 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 		ChainFiles:         chainFileDiskStore{},
 		Session:            session,
 		Modules:            catalog,
+		Payloads:           store,
+		PayloadProviders:   payloadProviderService{daemons: services.NewDaemonService(store), runs: daemonRunClients{}, modules: catalog},
 	}
 }
 
@@ -506,20 +509,22 @@ func (e capabilityChainExecutor) ExecuteCapabilityChain(ctx context.Context, req
 	})
 	if err != nil {
 		return commands.CapabilityChainResponse{
-			RunID:        req.RunID,
-			Target:       req.Target,
-			State:        result.Status,
-			Capabilities: capabilitiesToCommand(result.Capabilities),
-			Evidence:     evidenceToCommand(result.Evidence),
+			RunID:             req.RunID,
+			Target:            req.Target,
+			State:             result.Status,
+			Capabilities:      capabilitiesToCommand(result.Capabilities),
+			Evidence:          evidenceToCommand(result.Evidence),
+			InstalledPayloads: installedPayloadsFromChainRuntime(result.InstalledPayloads),
 		}, err
 	}
 	return commands.CapabilityChainResponse{
-		RunID:        req.RunID,
-		Target:       req.Target,
-		State:        result.Status,
-		Summary:      "capability chain completed",
-		Capabilities: capabilitiesToCommand(result.Capabilities),
-		Evidence:     evidenceToCommand(result.Evidence),
+		RunID:             req.RunID,
+		Target:            req.Target,
+		State:             result.Status,
+		Summary:           "capability chain completed",
+		Capabilities:      capabilitiesToCommand(result.Capabilities),
+		Evidence:          evidenceToCommand(result.Evidence),
+		InstalledPayloads: installedPayloadsFromChainRuntime(result.InstalledPayloads),
 	}, nil
 }
 
@@ -580,6 +585,43 @@ func evidenceToCommand(evidence []chainruntime.Evidence) []commands.CapabilityEv
 	return out
 }
 
+func installedPayloadsFromChainRuntime(payloads []chainruntime.InstalledPayloadDescriptor) []commands.InstalledPayloadDescriptor {
+	out := make([]commands.InstalledPayloadDescriptor, 0, len(payloads))
+	for _, payload := range payloads {
+		out = append(out, commands.InstalledPayloadDescriptor{
+			Provider:                 payload.Provider,
+			PayloadID:                payload.PayloadID,
+			PayloadVersion:           payload.PayloadVersion,
+			Target:                   payload.Target,
+			TargetID:                 payload.TargetID,
+			State:                    payload.State,
+			Transport:                payload.Transport,
+			Endpoint:                 payload.Endpoint,
+			InstanceKey:              payload.InstanceKey,
+			StampID:                  payload.StampID,
+			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
+			SupportsReconnect:        payload.SupportsReconnect,
+			SupportsMultipleSessions: payload.SupportsMultipleSessions,
+			Reconnect:                payloadProviderRecordFromChainRuntime(payload.Reconnect),
+			Cleanup:                  payloadProviderRecordFromChainRuntime(payload.Cleanup),
+			Metadata:                 cloneStringMap(payload.Metadata),
+		})
+	}
+	return out
+}
+
+func payloadProviderRecordFromChainRuntime(record *chainruntime.PayloadProviderRecord) *commands.PayloadProviderRecord {
+	if record == nil {
+		return nil
+	}
+	return &commands.PayloadProviderRecord{
+		ProviderID:    record.ProviderID,
+		Schema:        record.Schema,
+		SchemaVersion: record.SchemaVersion,
+		Descriptor:    cloneAnyMap(record.Descriptor),
+	}
+}
+
 func cloneAnyMap(values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -597,6 +639,121 @@ func (daemonRunClients) DialRunClient(socketPath string) (commands.RunClient, er
 		return nil, err
 	}
 	return daemonRunClient{client: client}, nil
+}
+
+type payloadProviderService struct {
+	daemons commands.DaemonStatusProvider
+	runs    commands.RunClientFactory
+	modules modulecatalog.Catalog
+}
+
+func (s payloadProviderService) ListAvailablePayloads(ctx context.Context) ([]commands.AvailablePayload, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var payloads []commands.AvailablePayload
+	for _, module := range s.modules.ByType(modulecatalog.TypePayloadProvider) {
+		payloads = append(payloads, commands.AvailablePayload{
+			Provider:  module.Name,
+			PayloadID: module.ID,
+			Name:      module.Name,
+			Version:   module.Version,
+		})
+	}
+	return payloads, nil
+}
+
+func (s payloadProviderService) ConnectInstalledPayload(ctx context.Context, record commands.InstalledPayloadRecord) (commands.SessionRef, error) {
+	if s.daemons == nil || s.runs == nil {
+		return commands.SessionRef{}, fmt.Errorf("daemon run service is not configured")
+	}
+	moduleID := payloadProviderModuleID(s.modules, record.Provider)
+	if moduleID == "" {
+		return commands.SessionRef{}, fmt.Errorf("payload provider %s is not configured", record.Provider)
+	}
+	status, err := s.daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: record.Workspace})
+	if err != nil {
+		return commands.SessionRef{}, err
+	}
+	if status.State != daemon.StateRunning {
+		return commands.SessionRef{}, fmt.Errorf("daemon is not running for workspace %s", status.WorkspacePath)
+	}
+	client, err := s.runs.DialRunClient(status.Identity.SocketPath)
+	if err != nil {
+		return commands.SessionRef{}, err
+	}
+	defer client.Close()
+	config := installedPayloadReconnectConfig(record)
+	result, err := client.RunMockExploit(ctx, commands.RunMockExploitRequest{
+		Operation:    record.Operation,
+		Chain:        record.Chain,
+		ModuleID:     moduleID,
+		Target:       firstNonEmpty(record.TargetID, record.Target),
+		ChainConfig:  config,
+		TargetConfig: map[string]string{"target.host": record.Target},
+	})
+	if err != nil {
+		return commands.SessionRef{}, err
+	}
+	if result.State != "succeeded" {
+		return commands.SessionRef{}, fmt.Errorf("payload reconnect failed: %s", result.Summary)
+	}
+	if len(result.Sessions) == 0 {
+		return commands.SessionRef{}, fmt.Errorf("payload reconnect returned no session")
+	}
+	session := result.Sessions[0]
+	if session.InstalledPayloadID == "" {
+		session.InstalledPayloadID = record.Handle
+	}
+	return session, nil
+}
+
+func (s payloadProviderService) CleanupInstalledPayload(context.Context, commands.InstalledPayloadRecord, string) error {
+	return fmt.Errorf("provider cleanup is not wired for commandmode yet; use payloads mark-removed after manual cleanup")
+}
+
+func (s payloadProviderService) RefreshInstalledPayload(_ context.Context, record commands.InstalledPayloadRecord) (commands.InstalledPayloadRecord, error) {
+	return record, nil
+}
+
+func payloadProviderModuleID(modules modulecatalog.Catalog, provider string) string {
+	if module, ok := modules.Find(provider); ok && module.Type == modulecatalog.TypePayloadProvider {
+		return module.ID
+	}
+	for _, module := range modules.ByType(modulecatalog.TypePayloadProvider) {
+		if strings.EqualFold(module.Name, provider) || strings.EqualFold(module.ID, provider) {
+			return module.ID
+		}
+	}
+	return ""
+}
+
+func installedPayloadReconnectConfig(record commands.InstalledPayloadRecord) map[string]string {
+	config := map[string]string{}
+	if record.Reconnect != nil {
+		for key, value := range record.Reconnect.Descriptor {
+			text := fmt.Sprint(value)
+			if text != "" {
+				config[key] = text
+			}
+		}
+	}
+	if record.Transport != "" {
+		config["payload.transport"] = record.Transport
+	}
+	if record.Target != "" {
+		config["target.host"] = record.Target
+	}
+	return config
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type daemonRunClient struct {
@@ -622,15 +779,16 @@ func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMoc
 		return commands.RunMockExploitResponse{}, err
 	}
 	return commands.RunMockExploitResponse{
-		RunID:     result.RunID,
-		ModuleID:  result.ModuleID,
-		Target:    result.Target,
-		State:     result.State,
-		Summary:   result.Summary,
-		Findings:  findingsFromRPC(result.Findings),
-		Artifacts: artifactsFromRPC(result.Artifacts),
-		Logs:      logsFromRPC(result.Logs),
-		Sessions:  sessionsFromRPC(result.Sessions),
+		RunID:             result.RunID,
+		ModuleID:          result.ModuleID,
+		Target:            result.Target,
+		State:             result.State,
+		Summary:           result.Summary,
+		Findings:          findingsFromRPC(result.Findings),
+		Artifacts:         artifactsFromRPC(result.Artifacts),
+		Logs:              logsFromRPC(result.Logs),
+		Sessions:          sessionsFromRPC(result.Sessions),
+		InstalledPayloads: installedPayloadsFromRPC(result.InstalledPayloads),
 	}, nil
 }
 
@@ -694,18 +852,56 @@ func sessionsFromRPC(sessions []daemonrpc.SessionRef) []commands.SessionRef {
 	out := make([]commands.SessionRef, 0, len(sessions))
 	for _, session := range sessions {
 		out = append(out, commands.SessionRef{
-			ID:           session.ID,
-			RunID:        session.RunID,
-			ModuleID:     session.ModuleID,
-			Target:       session.Target,
-			Name:         session.Name,
-			Kind:         session.Kind,
-			State:        session.State,
-			Transport:    session.Transport,
-			Capabilities: append([]string(nil), session.Capabilities...),
+			ID:                 session.ID,
+			RunID:              session.RunID,
+			ModuleID:           session.ModuleID,
+			Target:             session.Target,
+			Name:               session.Name,
+			Kind:               session.Kind,
+			State:              session.State,
+			Transport:          session.Transport,
+			InstalledPayloadID: session.InstalledPayloadID,
+			Capabilities:       append([]string(nil), session.Capabilities...),
 		})
 	}
 	return out
+}
+
+func installedPayloadsFromRPC(payloads []daemonrpc.InstalledPayloadDescriptor) []commands.InstalledPayloadDescriptor {
+	out := make([]commands.InstalledPayloadDescriptor, 0, len(payloads))
+	for _, payload := range payloads {
+		out = append(out, commands.InstalledPayloadDescriptor{
+			Provider:                 payload.Provider,
+			PayloadID:                payload.PayloadID,
+			PayloadVersion:           payload.PayloadVersion,
+			Target:                   payload.Target,
+			TargetID:                 payload.TargetID,
+			State:                    payload.State,
+			Transport:                payload.Transport,
+			Endpoint:                 payload.Endpoint,
+			InstanceKey:              payload.InstanceKey,
+			StampID:                  payload.StampID,
+			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
+			SupportsReconnect:        payload.SupportsReconnect,
+			SupportsMultipleSessions: payload.SupportsMultipleSessions,
+			Reconnect:                payloadProviderRecordFromRPC(payload.Reconnect),
+			Cleanup:                  payloadProviderRecordFromRPC(payload.Cleanup),
+			Metadata:                 cloneStringMap(payload.Metadata),
+		})
+	}
+	return out
+}
+
+func payloadProviderRecordFromRPC(record *daemonrpc.PayloadProviderRecord) *commands.PayloadProviderRecord {
+	if record == nil {
+		return nil
+	}
+	return &commands.PayloadProviderRecord{
+		ProviderID:    record.ProviderID,
+		Schema:        record.Schema,
+		SchemaVersion: record.SchemaVersion,
+		Descriptor:    cloneAnyMap(record.Descriptor),
+	}
 }
 
 func logsFromRPC(logs []daemonrpc.LogEntry) []commands.LogEntry {

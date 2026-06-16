@@ -19,7 +19,7 @@ func TestApplyMigrationsCreatesSchemaAndRecordsChecksums(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, table := range []string{"schema_migrations", "operator_sessions", "throw_plans", "throw_confirmations", "throw_records", "artifacts", "events"} {
+	for _, table := range []string{"schema_migrations", "operator_sessions", "throw_plans", "throw_confirmations", "throw_records", "artifacts", "events", "installed_payloads", "installed_payload_events"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("table %s was not created", table)
 		}

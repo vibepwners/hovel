@@ -130,6 +130,7 @@ func (lp *placeholderLP) PrepareListener(req hovel.PrepareListenerRequest) (hove
 }
 
 func (lp *placeholderLP) ConnectSession(req hovel.ConnectSessionRequest) (hovel.SessionRef, error) {
+	req = requestWithReconnectRecord(req)
 	if req.Target == "" {
 		return hovel.SessionRef{}, fmt.Errorf("target is required")
 	}
@@ -172,20 +173,78 @@ func (lp *placeholderLP) ConnectSession(req hovel.ConnectSessionRequest) (hovel.
 		lp.mu.Unlock()
 	}
 	ref := hovel.SessionRef{
-		ID:           "squatter-session-" + req.Target,
-		RunID:        req.RunID,
-		ModuleID:     payloadName + "@" + version,
-		Target:       req.Target,
-		Name:         "Squatter session",
-		Kind:         "agent",
-		State:        state,
-		Transport:    transport,
-		Capabilities: capabilities(),
+		ID:                 "squatter-session-" + req.Target,
+		RunID:              req.RunID,
+		ModuleID:           payloadName + "@" + version,
+		Target:             req.Target,
+		Name:               "Squatter session",
+		Kind:               "agent",
+		State:              state,
+		Transport:          transport,
+		InstalledPayloadID: req.InstalledPayloadID,
+		Capabilities:       capabilities(),
 	}
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
 	lp.sessions[req.Target] = ref
 	return ref, nil
+}
+
+func requestWithReconnectRecord(req hovel.ConnectSessionRequest) hovel.ConnectSessionRequest {
+	if req.Reconnect == nil || len(req.Reconnect.Descriptor) == 0 {
+		return req
+	}
+	config := make(map[string]string, len(req.Config)+len(req.Reconnect.Descriptor))
+	for key, value := range req.Config {
+		config[key] = value
+	}
+	descriptor := req.Reconnect.Descriptor
+	copyDescriptorString(config, descriptor, "transport", "payload.transport")
+	copyDescriptorString(config, descriptor, "target.host", "target.host")
+	copyDescriptorString(config, descriptor, "smb.host", "smb.host")
+	copyDescriptorString(config, descriptor, "smb.port", "smb.port")
+	copyDescriptorString(config, descriptor, "smb.domain", "smb.domain")
+	copyDescriptorString(config, descriptor, "smb.username", "smb.username")
+	copyDescriptorString(config, descriptor, "smb.password", "smb.password")
+	copyDescriptorString(config, descriptor, "payload.pipe", "payload.pipe")
+	copyDescriptorString(config, descriptor, "pipe", "payload.pipe")
+	copyDescriptorString(config, descriptor, "host", "target.host")
+	copyDescriptorString(config, descriptor, "port", "payload.bind_port")
+	if req.Target == "" {
+		req.Target = firstNonEmpty(descriptorString(descriptor["target"]), descriptorString(descriptor["target.host"]), descriptorString(descriptor["host"]), config["target.host"], config["smb.host"])
+	}
+	req.Config = config
+	return req
+}
+
+func copyDescriptorString(config map[string]string, descriptor map[string]any, from, to string) {
+	if config[to] != "" {
+		return
+	}
+	value := descriptorString(descriptor[from])
+	if value != "" {
+		config[to] = value
+	}
+}
+
+func descriptorString(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case float64:
+		if typed == float64(int(typed)) {
+			return strconv.Itoa(int(typed))
+		}
+		return fmt.Sprint(typed)
+	default:
+		return fmt.Sprint(typed)
+	}
 }
 
 func (lp *placeholderLP) Cleanup(req hovel.CleanupPayloadRequest) (hovel.CleanupResult, error) {

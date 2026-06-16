@@ -438,6 +438,51 @@ func TestPlaceholderLPTCPBindConnectsProviderOwnedSession(t *testing.T) {
 	}
 }
 
+func TestPlaceholderLPTCPBindReconnectUsesProviderRecord(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn
+		}
+	}()
+
+	lp := newPlaceholderLP()
+	provider := Provider{lp: lp}
+	port := listener.Addr().(*net.TCPAddr).Port
+	session, err := provider.ConnectSession(hovel.ConnectSessionRequest{
+		RunID:              "run-1",
+		InstalledPayloadID: "p1",
+		PayloadID:          "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Reconnect: &hovel.PayloadProviderRecord{
+			ProviderID:    payloadName,
+			Schema:        "squatter.tcp_bind.reconnect",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"transport": tcpBind, "host": "127.0.0.1", "port": float64(port)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "127.0.0.1", Reason: "test"})
+	}()
+	if session.InstalledPayloadID != "p1" || session.Transport != "squatter/tcp-bind" || session.State != "open" {
+		t.Fatalf("session = %#v", session)
+	}
+	select {
+	case conn := <-accepted:
+		conn.Close()
+	case <-time.After(time.Second):
+		t.Fatal("bind listener did not receive provider connection")
+	}
+}
+
 func TestPlaceholderLPSMBConnectsProviderOwnedSession(t *testing.T) {
 	connector := &fakeSMBConnector{conn: noopReadWriteCloser{}}
 	lp := newPlaceholderLP()
@@ -480,6 +525,44 @@ func TestPlaceholderLPSMBConnectsProviderOwnedSession(t *testing.T) {
 	}
 	if _, ok := lp.session("target-1"); ok {
 		t.Fatal("session was not removed during cleanup")
+	}
+}
+
+func TestPlaceholderLPSMBReconnectUsesProviderRecord(t *testing.T) {
+	connector := &fakeSMBConnector{conn: noopReadWriteCloser{}}
+	lp := newPlaceholderLP()
+	lp.smb = connector
+	provider := Provider{lp: lp}
+	session, err := provider.ConnectSession(hovel.ConnectSessionRequest{
+		RunID:              "run-1",
+		InstalledPayloadID: "p1",
+		PayloadID:          "squatter/windows/x86/windows-7/smb-named-pipe/pe-exe",
+		Reconnect: &hovel.PayloadProviderRecord{
+			ProviderID:    payloadName,
+			Schema:        "squatter.smb_named_pipe.reconnect",
+			SchemaVersion: "v1",
+			Descriptor: map[string]any{
+				"transport":    smbNamedPipe,
+				"target.host":  "target-1",
+				"payload.pipe": "pipe123",
+				"smb.username": "user123",
+				"smb.password": "pass123",
+				"smb.domain":   "LAB",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.InstalledPayloadID != "p1" || session.Transport != "squatter/smb-named-pipe" || session.State != "open" {
+		t.Fatalf("session = %#v", session)
+	}
+	if len(connector.requests) != 1 {
+		t.Fatalf("smb connector requests = %#v, want one", connector.requests)
+	}
+	request := connector.requests[0]
+	if request.Host != "target-1" || request.Pipe != "pipe123" || request.Username != "user123" || request.Password != "pass123" || request.Domain != "LAB" {
+		t.Fatalf("smb connector request = %#v", request)
 	}
 }
 
@@ -739,6 +822,19 @@ func TestProviderExecuteInstallSMBUploadsAndStartsWithCredentials(t *testing.T) 
 	}
 	if result.Capabilities[0].State != "installed" || result.Capabilities[1].State != "active" {
 		t.Fatalf("capability states = %#v", result.Capabilities)
+	}
+	if len(result.InstalledPayloads) != 1 {
+		t.Fatalf("installed payloads = %#v, want one descriptor", result.InstalledPayloads)
+	}
+	installed := result.InstalledPayloads[0]
+	if installed.Provider != payloadName || installed.PayloadID != "squatter/windows/x86/windows-7/smb-named-pipe/pe-exe" || installed.State != "installed" {
+		t.Fatalf("installed descriptor = %#v", installed)
+	}
+	if !installed.SupportsReconnect || !installed.SupportsMultipleSessions || installed.Reconnect == nil || installed.Cleanup == nil {
+		t.Fatalf("installed descriptor reconnect/cleanup = %#v", installed)
+	}
+	if installed.Reconnect.Descriptor["payload.pipe"] != `\\.\pipe\pipe123` {
+		t.Fatalf("reconnect descriptor = %#v", installed.Reconnect.Descriptor)
 	}
 }
 

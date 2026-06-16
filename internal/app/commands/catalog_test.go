@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,13 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"module", "inspect"},
 		{"module", "list"},
 		{"module", "search"},
+		{"payloads", "available"},
+		{"payloads", "cleanup"},
+		{"payloads", "connect"},
+		{"payloads", "inspect"},
+		{"payloads", "installed"},
+		{"payloads", "mark-removed"},
+		{"payloads", "refresh"},
 		{"chain", "use"},
 		{"target", "add"},
 		{"target", "clear"},
@@ -124,7 +132,7 @@ func TestRegistryHasRootUsesDefinitions(t *testing.T) {
 		Modules:    exampleCatalog(),
 	})
 
-	for _, root := range []string{"op", "chain", "chains", "confirm", "control", "module", "modules", "run", "target", "targets", "throw", "throws"} {
+	for _, root := range []string{"op", "chain", "chains", "confirm", "control", "module", "modules", "payload", "payloads", "run", "target", "targets", "throw", "throws"} {
 		if !registry.HasRoot(root) {
 			t.Fatalf("HasRoot(%q) = false, want true", root)
 		}
@@ -635,6 +643,166 @@ func TestArtifactListAndInspectHandlersUseRepository(t *testing.T) {
 	}
 }
 
+func TestPayloadsAvailableUsesProviderService(t *testing.T) {
+	providers := &fakePayloadProviderService{available: []AvailablePayload{{
+		Provider:     "squatter",
+		PayloadID:    "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Name:         "squatter",
+		Version:      "v0.1.0",
+		Platform:     "windows",
+		Arch:         "x86",
+		Formats:      []string{"pe-exe"},
+		Capabilities: []string{"file.get", "exec"},
+		Transport:    "tcp-bind",
+	}}}
+	registry := HovelRegistry(Runtime{
+		Modules:          exampleCatalog(),
+		PayloadProviders: providers,
+	})
+	definition, _ := registry.Find("payloads", "available")
+
+	result, err := definition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "squatter") || !strings.Contains(result.Human, "tcp-bind") {
+		t.Fatalf("available output = %q", result.Human)
+	}
+	if !reflect.DeepEqual(result.JSON, providers.available) {
+		t.Fatalf("available json = %#v, want %#v", result.JSON, providers.available)
+	}
+}
+
+func TestPayloadsInstalledInspectAndMarkRemovedUseRepository(t *testing.T) {
+	repository := newFakePayloadRepository([]InstalledPayloadRecord{
+		payloadRecordFixture("p1", PayloadStateInstalled),
+		payloadRecordFixture("p2", PayloadStateRemoved),
+	})
+	registry := HovelRegistry(Runtime{
+		Modules:  exampleCatalog(),
+		Payloads: repository,
+	})
+	installedDefinition, _ := registry.Find("payloads", "installed")
+	inspectDefinition, _ := registry.Find("payloads", "inspect")
+	removeDefinition, _ := registry.Find("payloads", "mark-removed")
+
+	installed, err := installedDefinition.Execute(context.Background(), Invocation{Options: map[string]string{"workspace": ".hovel"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(installed.Human, "p2") || !strings.Contains(installed.Human, "p1") {
+		t.Fatalf("installed output = %q", installed.Human)
+	}
+	installedJSON, ok := installed.JSON.([]InstalledPayloadRecord)
+	if !ok || len(installedJSON) != 1 || installedJSON[0].Handle != "p1" {
+		t.Fatalf("installed json = %#v", installed.JSON)
+	}
+
+	inspected, err := inspectDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel"},
+		Flags:       map[string]bool{"events": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inspected.Human, "Payload p1") || !strings.Contains(inspected.Human, "endpoint   192.168.122.142:9101") {
+		t.Fatalf("inspect output = %q", inspected.Human)
+	}
+	if payload, ok := inspected.JSON.(PayloadInspectPayload); !ok || payload.Record.Handle != "p1" || len(payload.Events) != 1 {
+		t.Fatalf("inspect json = %#v", inspected.JSON)
+	}
+
+	removed, err := removeDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel", "reason": "operator verified cleanup"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(removed.Human, "Payload marked removed: p1") {
+		t.Fatalf("mark-removed output = %q", removed.Human)
+	}
+	if repository.records["p1"].State != PayloadStateRemoved {
+		t.Fatalf("payload state = %q, want removed", repository.records["p1"].State)
+	}
+}
+
+func TestPayloadsConnectCleanupAndRefreshUseProviderService(t *testing.T) {
+	record := payloadRecordFixture("p1", PayloadStateInstalled)
+	repository := newFakePayloadRepository([]InstalledPayloadRecord{record})
+	providers := &fakePayloadProviderService{
+		session: SessionRef{
+			ID:                 "session-1",
+			RunID:              "run-1",
+			ModuleID:           "squatter@v0.1.0",
+			Target:             record.Target,
+			Kind:               "agent",
+			State:              "open",
+			Transport:          "squatter/tcp-bind",
+			InstalledPayloadID: "p1",
+		},
+		refresh: func(record InstalledPayloadRecord) InstalledPayloadRecord {
+			record.State = PayloadStateUnreachable
+			record.UpdatedAt = "2026-05-03T12:02:00Z"
+			return record
+		},
+	}
+	registry := HovelRegistry(Runtime{
+		Modules:          exampleCatalog(),
+		Payloads:         repository,
+		PayloadProviders: providers,
+	})
+	connectDefinition, _ := registry.Find("payloads", "connect")
+	cleanupDefinition, _ := registry.Find("payloads", "cleanup")
+	refreshDefinition, _ := registry.Find("payloads", "refresh")
+
+	connected, err := connectDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(connected.Human, "Session opened: session-1") {
+		t.Fatalf("connect output = %q", connected.Human)
+	}
+	if repository.records["p1"].State != PayloadStateConnected {
+		t.Fatalf("state after connect = %q", repository.records["p1"].State)
+	}
+	if providers.connected.Handle != "p1" {
+		t.Fatalf("provider connected record = %#v", providers.connected)
+	}
+
+	refreshed, err := refreshDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(refreshed.Human, "Payload refreshed: p1 unreachable") {
+		t.Fatalf("refresh output = %q", refreshed.Human)
+	}
+	if repository.records["p1"].State != PayloadStateUnreachable {
+		t.Fatalf("state after refresh = %q", repository.records["p1"].State)
+	}
+
+	cleaned, err := cleanupDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel", "reason": "operator cleanup"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cleaned.Human, "Payload cleaned up: p1") {
+		t.Fatalf("cleanup output = %q", cleaned.Human)
+	}
+	if repository.records["p1"].State != PayloadStateRemoved || providers.cleaned.Handle != "p1" {
+		t.Fatalf("cleanup state/provider = %#v %#v", repository.records["p1"], providers.cleaned)
+	}
+}
+
 func TestThrowInspectCanIncludeStructuredEvents(t *testing.T) {
 	plan := newThrowPlanForExecution(".hovel", throwExecution{Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
 	evt := testEvent(t, "event-1", "hovel.throw.started", "throw started", event.Refs{WorkspaceID: ".hovel", Operation: "default", Chain: plan.Chain, ThrowID: "throw-1"})
@@ -721,6 +889,56 @@ func TestThrowUsesExistingConfirmationWithoutRecordingTypedYes(t *testing.T) {
 	}
 	if len(recorder.requests) != 1 {
 		t.Fatalf("run requests = %#v, want one", recorder.requests)
+	}
+}
+
+func TestThrowRecordsInstalledPayloadsFromLegacyRun(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloads := newFakePayloadRepository(nil)
+	events := &fakeEventRecorder{}
+	recorder := &fakeRunRecorder{installedPayloads: []InstalledPayloadDescriptor{installedPayloadDescriptorFixture()}}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+		Payloads:      payloads,
+		Events:        events,
+	})
+	definition, _ := registry.Find("throw")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "t1",
+		},
+		Flags: map[string]bool{"now": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := payloads.records["p1"]
+	if record.Provider != "squatter" || record.Target != "192.168.122.142" || record.Chain != "mock-exploit" {
+		t.Fatalf("installed payload record = %#v", record)
+	}
+	if !hasStructuredEvent(events.events, "hovel.payload.installed") {
+		t.Fatalf("events = %#v, want hovel.payload.installed", events.events)
+	}
+	throwPayload := result.JSON.(ThrowPayload)
+	if len(throwPayload.Results) != 1 || len(throwPayload.Results[0].InstalledPayloads) != 1 {
+		t.Fatalf("throw payload installed descriptors = %#v", throwPayload.Results)
 	}
 }
 
@@ -825,16 +1043,20 @@ func TestThrowChainFileCapabilityStepsUsesCapabilityRunner(t *testing.T) {
 				Message:      "smb session established",
 			}},
 			Sessions: []SessionRef{{
-				ID:        "session-1",
-				RunID:     "cap-run-1",
-				ModuleID:  "squatter@v1",
-				Target:    "mock://target",
-				Kind:      "shell",
-				State:     "active",
-				Transport: "smb-named-pipe",
+				ID:                 "session-1",
+				RunID:              "cap-run-1",
+				ModuleID:           "squatter@v1",
+				Target:             "mock://target",
+				Kind:               "shell",
+				State:              "active",
+				Transport:          "smb-named-pipe",
+				InstalledPayloadID: "p1",
 			}},
+			InstalledPayloads: []InstalledPayloadDescriptor{installedPayloadDescriptorFixture()},
 		},
 	}
+	payloads := newFakePayloadRepository(nil)
+	events := &fakeEventRecorder{}
 	registry := HovelRegistry(Runtime{
 		Workspaces:       fakeWorkspaceService{},
 		Daemons:          fakeDaemonService{status: daemon.Running(identity)},
@@ -843,6 +1065,8 @@ func TestThrowChainFileCapabilityStepsUsesCapabilityRunner(t *testing.T) {
 		Plans:            &fakePlanRecorder{},
 		Confirmations:    &fakeConfirmationRecorder{},
 		ChainFiles:       store,
+		Payloads:         payloads,
+		Events:           events,
 	})
 	definition, _ := registry.Find("throw")
 
@@ -890,6 +1114,15 @@ func TestThrowChainFileCapabilityStepsUsesCapabilityRunner(t *testing.T) {
 	}
 	if len(got.Sessions) != 1 || got.Sessions[0].Transport != "smb-named-pipe" {
 		t.Fatalf("sessions = %#v, want smb session", got.Sessions)
+	}
+	if len(got.InstalledPayloads) != 1 {
+		t.Fatalf("installed payloads = %#v, want one descriptor", got.InstalledPayloads)
+	}
+	if record := payloads.records["p1"]; record.Provider != "squatter" || record.RunID != "cap-run-1" {
+		t.Fatalf("persisted payload = %#v", record)
+	}
+	if !hasStructuredEvent(events.events, "hovel.payload.installed") {
+		t.Fatalf("events = %#v, want hovel.payload.installed", events.events)
 	}
 	if !reflect.DeepEqual(payload.Plan.Steps, []CapabilityChainStepRef{
 		{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
@@ -2712,13 +2945,14 @@ func (s fakeDaemonService) Status(context.Context, services.DaemonStatusRequest)
 }
 
 type fakeRunRecorder struct {
-	socketPath string
-	requests   []RunMockExploitRequest
-	artifacts  []Artifact
-	reads      []SessionChunk
-	tail       SessionChunk
-	tails      []fakeSessionTail
-	writes     []fakeSessionWrite
+	socketPath        string
+	requests          []RunMockExploitRequest
+	artifacts         []Artifact
+	installedPayloads []InstalledPayloadDescriptor
+	reads             []SessionChunk
+	tail              SessionChunk
+	tails             []fakeSessionTail
+	writes            []fakeSessionWrite
 }
 
 type fakeSessionTail struct {
@@ -2822,6 +3056,199 @@ type fakeArtifactRepository struct {
 
 func (r *fakeArtifactRepository) ListArtifacts(_ context.Context, _ string) ([]ArtifactRecord, error) {
 	return append([]ArtifactRecord(nil), r.records...), nil
+}
+
+type fakePayloadRepository struct {
+	records map[string]InstalledPayloadRecord
+	events  map[string][]InstalledPayloadEvent
+}
+
+func newFakePayloadRepository(records []InstalledPayloadRecord) *fakePayloadRepository {
+	repo := &fakePayloadRepository{
+		records: map[string]InstalledPayloadRecord{},
+		events:  map[string][]InstalledPayloadEvent{},
+	}
+	for _, record := range records {
+		repo.records[record.Handle] = record
+		repo.events[record.Handle] = []InstalledPayloadEvent{{
+			ID:        "payload-event-" + record.Handle,
+			PayloadID: record.ID,
+			Handle:    record.Handle,
+			Workspace: record.Workspace,
+			Type:      "installed",
+			To:        record.State,
+			CreatedAt: record.CreatedAt,
+		}}
+	}
+	return repo
+}
+
+func (r *fakePayloadRepository) RecordInstalledPayload(_ context.Context, record InstalledPayloadRecord) (InstalledPayloadRecord, error) {
+	if record.Handle == "" {
+		record.Handle = fmt.Sprintf("p%d", len(r.records)+1)
+	}
+	if record.ID == "" {
+		record.ID = "payload-" + record.Handle
+	}
+	if record.State == "" {
+		record.State = PayloadStateInstalled
+	}
+	r.records[record.Handle] = record
+	return record, nil
+}
+
+func (r *fakePayloadRepository) ListInstalledPayloads(_ context.Context, _ string, filter InstalledPayloadFilter) ([]InstalledPayloadRecord, error) {
+	var records []InstalledPayloadRecord
+	for _, record := range r.records {
+		if !filter.IncludeRemoved && record.State == PayloadStateRemoved {
+			continue
+		}
+		if filter.State != "" && record.State != filter.State {
+			continue
+		}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Handle < records[j].Handle })
+	return records, nil
+}
+
+func (r *fakePayloadRepository) GetInstalledPayload(_ context.Context, _ string, ref string) (InstalledPayloadRecord, error) {
+	if record, ok := r.records[ref]; ok {
+		return record, nil
+	}
+	for _, record := range r.records {
+		if record.ID == ref {
+			return record, nil
+		}
+	}
+	return InstalledPayloadRecord{}, fmt.Errorf("payload %s not found", ref)
+}
+
+func (r *fakePayloadRepository) UpdateInstalledPayloadState(_ context.Context, _ string, ref, state, reason string) (InstalledPayloadRecord, error) {
+	record, err := r.GetInstalledPayload(context.Background(), "", ref)
+	if err != nil {
+		return InstalledPayloadRecord{}, err
+	}
+	from := record.State
+	record.State = state
+	r.records[record.Handle] = record
+	r.events[record.Handle] = append(r.events[record.Handle], InstalledPayloadEvent{
+		ID:        fmt.Sprintf("payload-event-%s-%d", record.Handle, len(r.events[record.Handle])+1),
+		PayloadID: record.ID,
+		Handle:    record.Handle,
+		Workspace: record.Workspace,
+		Type:      "state_changed",
+		From:      from,
+		To:        state,
+		Reason:    reason,
+		CreatedAt: "2026-05-03T12:01:00Z",
+	})
+	return record, nil
+}
+
+func (r *fakePayloadRepository) ListInstalledPayloadEvents(_ context.Context, _ string, ref string) ([]InstalledPayloadEvent, error) {
+	return append([]InstalledPayloadEvent(nil), r.events[ref]...), nil
+}
+
+type fakePayloadProviderService struct {
+	available []AvailablePayload
+	session   SessionRef
+	connected InstalledPayloadRecord
+	cleaned   InstalledPayloadRecord
+	refresh   func(InstalledPayloadRecord) InstalledPayloadRecord
+}
+
+func (s *fakePayloadProviderService) ListAvailablePayloads(context.Context) ([]AvailablePayload, error) {
+	return append([]AvailablePayload(nil), s.available...), nil
+}
+
+func (s *fakePayloadProviderService) ConnectInstalledPayload(_ context.Context, record InstalledPayloadRecord) (SessionRef, error) {
+	s.connected = record
+	session := s.session
+	if session.ID == "" {
+		session = SessionRef{ID: "session-1", Target: record.Target, Kind: "agent", State: "open", Transport: record.Transport, InstalledPayloadID: record.Handle}
+	}
+	return session, nil
+}
+
+func (s *fakePayloadProviderService) CleanupInstalledPayload(_ context.Context, record InstalledPayloadRecord, _ string) error {
+	s.cleaned = record
+	return nil
+}
+
+func (s *fakePayloadProviderService) RefreshInstalledPayload(_ context.Context, record InstalledPayloadRecord) (InstalledPayloadRecord, error) {
+	if s.refresh != nil {
+		return s.refresh(record), nil
+	}
+	return record, nil
+}
+
+func payloadRecordFixture(handle, state string) InstalledPayloadRecord {
+	return InstalledPayloadRecord{
+		ID:                       "payload-" + handle,
+		Handle:                   handle,
+		Workspace:                ".hovel",
+		Provider:                 "squatter",
+		PayloadID:                "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		PayloadVersion:           "v0.1.0",
+		Target:                   "192.168.122.142",
+		TargetID:                 "t1",
+		State:                    state,
+		Transport:                "tcp-bind",
+		Endpoint:                 "192.168.122.142:9101",
+		InstanceKey:              "squatter:192.168.122.142:9101",
+		SupportsReconnect:        true,
+		SupportsMultipleSessions: true,
+		Reconnect: &PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.tcp_bind.reconnect",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"host": "192.168.122.142", "port": float64(9101)},
+		},
+		Cleanup: &PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.cleanup",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"remotePath": `C:\Windows\Temp\hovel.exe`},
+		},
+		Operation:  "default",
+		Chain:      "c1",
+		ThrowID:    "throw-1",
+		RunID:      "run-1",
+		CreatedAt:  "2026-05-03T12:00:00Z",
+		UpdatedAt:  "2026-05-03T12:00:00Z",
+		LastSeenAt: "2026-05-03T12:00:00Z",
+	}
+}
+
+func installedPayloadDescriptorFixture() InstalledPayloadDescriptor {
+	return InstalledPayloadDescriptor{
+		Provider:                 "squatter",
+		PayloadID:                "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		PayloadVersion:           "v0.1.0",
+		Target:                   "192.168.122.142",
+		TargetID:                 "t1",
+		State:                    PayloadStateInstalled,
+		Transport:                "tcp-bind",
+		Endpoint:                 "192.168.122.142:9101",
+		InstanceKey:              "squatter:192.168.122.142:9101",
+		StampID:                  "stamp-squatter-9101",
+		SupportsReconnect:        true,
+		SupportsMultipleSessions: true,
+		Reconnect: &PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.tcp_bind.reconnect",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"host": "192.168.122.142", "port": float64(9101)},
+		},
+		Cleanup: &PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.cleanup",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"remotePath": `C:\Windows\Temp\hovel.exe`},
+		},
+		Metadata: map[string]string{"profile": "XP_SP2SP3_X86"},
+	}
 }
 
 type fakeEventRecorder struct {
@@ -3008,12 +3435,17 @@ func (c fakeRunClient) RunMockExploit(_ context.Context, req RunMockExploitReque
 	if c.recorder != nil && c.recorder.artifacts != nil {
 		artifacts = append([]Artifact(nil), c.recorder.artifacts...)
 	}
+	var installedPayloads []InstalledPayloadDescriptor
+	if c.recorder != nil {
+		installedPayloads = cloneInstalledPayloadDescriptors(c.recorder.installedPayloads)
+	}
 	return RunMockExploitResponse{
-		RunID:    "run-1",
-		ModuleID: req.ModuleID,
-		Target:   req.Target,
-		State:    "succeeded",
-		Summary:  "mock exploit completed",
+		RunID:             "run-1",
+		ModuleID:          req.ModuleID,
+		Target:            req.Target,
+		State:             "succeeded",
+		Summary:           "mock exploit completed",
+		InstalledPayloads: installedPayloads,
 		Logs: []LogEntry{{
 			Level:   "info",
 			Logger:  req.ModuleID,

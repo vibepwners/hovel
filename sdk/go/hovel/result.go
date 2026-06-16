@@ -44,12 +44,13 @@ func FileArtifact(name, kind, path string) Artifact {
 
 // Result is what a module returns from Run. Build it with [Ok] or [Failed].
 type Result struct {
-	Status    string
-	Summary   string
-	Findings  []Finding
-	Artifacts []Artifact
-	Outputs   map[string]any
-	Sessions  []SessionRef
+	Status            string
+	Summary           string
+	Findings          []Finding
+	Artifacts         []Artifact
+	Outputs           map[string]any
+	Sessions          []SessionRef
+	InstalledPayloads []InstalledPayloadDescriptor
 }
 
 // ResultOption customizes a Result built by [Ok] or [Failed].
@@ -68,6 +69,12 @@ func WithFindings(findings ...Finding) ResultOption {
 // WithArtifacts appends artifacts to the result.
 func WithArtifacts(artifacts ...Artifact) ResultOption {
 	return func(r *Result) { r.Artifacts = append(r.Artifacts, artifacts...) }
+}
+
+// WithInstalledPayloads appends explicit installed-payload descriptors to the
+// module result. Hovel persists these records only when a module returns them.
+func WithInstalledPayloads(payloads ...InstalledPayloadDescriptor) ResultOption {
+	return func(r *Result) { r.InstalledPayloads = append(r.InstalledPayloads, payloads...) }
 }
 
 // Ok builds a succeeded result carrying the given outputs.
@@ -139,11 +146,12 @@ func (r Result) toRPC(sessions []SessionRef) map[string]any {
 		status = "succeeded"
 	}
 	return map[string]any{
-		"status":    status,
-		"summary":   r.Summary,
-		"findings":  findings,
-		"artifacts": artifacts,
-		"outputs":   outputs,
-		"sessions":  refs,
+		"status":            status,
+		"summary":           r.Summary,
+		"findings":          findings,
+		"artifacts":         artifacts,
+		"outputs":           outputs,
+		"sessions":          refs,
+		"installedPayloads": r.InstalledPayloads,
 	}
 }

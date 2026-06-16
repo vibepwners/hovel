@@ -30,10 +30,11 @@ type StepRef struct {
 }
 
 type Result struct {
-	Status       string
-	Capabilities []modulecatalog.Capability
-	Missing      []MissingStepRequirement
-	Evidence     []Evidence
+	Status            string
+	Capabilities      []modulecatalog.Capability
+	Missing           []MissingStepRequirement
+	Evidence          []Evidence
+	InstalledPayloads []InstalledPayloadDescriptor
 }
 
 type MissingStepRequirement struct {
@@ -68,10 +69,37 @@ type StepExecuteRequest struct {
 }
 
 type StepExecuteResult struct {
-	Status           string
-	Capabilities     []modulecatalog.Capability
-	StateTransitions []CapabilityTransition
-	Evidence         []Evidence
+	Status            string
+	Capabilities      []modulecatalog.Capability
+	StateTransitions  []CapabilityTransition
+	Evidence          []Evidence
+	InstalledPayloads []InstalledPayloadDescriptor
+}
+
+type PayloadProviderRecord struct {
+	ProviderID    string
+	Schema        string
+	SchemaVersion string
+	Descriptor    map[string]any
+}
+
+type InstalledPayloadDescriptor struct {
+	Provider                 string
+	PayloadID                string
+	PayloadVersion           string
+	Target                   string
+	TargetID                 string
+	State                    string
+	Transport                string
+	Endpoint                 string
+	InstanceKey              string
+	StampID                  string
+	ArtifactIDs              []string
+	SupportsReconnect        bool
+	SupportsMultipleSessions bool
+	Reconnect                *PayloadProviderRecord
+	Cleanup                  *PayloadProviderRecord
+	Metadata                 map[string]string
 }
 
 type PreparedValue struct {
@@ -107,15 +135,16 @@ func New(catalog modulecatalog.Catalog, runner StepRunner) Runtime {
 func (r Runtime) Execute(ctx context.Context, req Request) (Result, error) {
 	capabilities := append([]modulecatalog.Capability(nil), req.Capabilities...)
 	var evidence []Evidence
+	var installedPayloads []InstalledPayloadDescriptor
 	for _, stepRef := range req.Steps {
 		module, step, err := r.resolveStep(stepRef)
 		if err != nil {
-			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence}, err
+			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, InstalledPayloads: installedPayloads}, err
 		}
 		resolution := modulecatalog.ResolveStepInputs(step, capabilities)
 		if !resolution.Ready {
 			missing := missingStepRequirements(module.ID, step.ID, resolution.Missing)
-			return Result{Status: "blocked", Capabilities: capabilities, Missing: missing, Evidence: evidence}, fmt.Errorf("step %s missing %d requirement(s)", step.ID, len(missing))
+			return Result{Status: "blocked", Capabilities: capabilities, Missing: missing, Evidence: evidence, InstalledPayloads: installedPayloads}, fmt.Errorf("step %s missing %d requirement(s)", step.ID, len(missing))
 		}
 		inputs := capabilityRefs(resolution.Bindings, capabilities)
 		prepared, err := r.runner.PrepareStep(ctx, StepPrepareRequest{
@@ -126,7 +155,7 @@ func (r Runtime) Execute(ctx context.Context, req Request) (Result, error) {
 			Inputs:   inputs,
 		})
 		if err != nil {
-			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence}, err
+			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, InstalledPayloads: installedPayloads}, err
 		}
 		evidence = append(evidence, prepared.Evidence...)
 		capabilities = upsertCapabilities(capabilities, prepared.PlannedOutputs)
@@ -142,16 +171,17 @@ func (r Runtime) Execute(ctx context.Context, req Request) (Result, error) {
 			},
 		})
 		if err != nil {
-			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence}, err
+			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, InstalledPayloads: installedPayloads}, err
 		}
 		evidence = append(evidence, executed.Evidence...)
+		installedPayloads = append(installedPayloads, cloneInstalledPayloads(executed.InstalledPayloads)...)
 		capabilities = upsertCapabilities(capabilities, executed.Capabilities)
 		capabilities = applyTransitions(capabilities, executed.StateTransitions)
 		if executed.Status != "" && executed.Status != "succeeded" {
-			return Result{Status: executed.Status, Capabilities: capabilities, Evidence: evidence}, nil
+			return Result{Status: executed.Status, Capabilities: capabilities, Evidence: evidence, InstalledPayloads: installedPayloads}, nil
 		}
 	}
-	return Result{Status: "succeeded", Capabilities: capabilities, Evidence: evidence}, nil
+	return Result{Status: "succeeded", Capabilities: capabilities, Evidence: evidence, InstalledPayloads: installedPayloads}, nil
 }
 
 func (r Runtime) resolveStep(ref StepRef) (modulecatalog.Module, modulecatalog.StepContract, error) {
@@ -240,11 +270,59 @@ func confirmedPreparedValues(values map[string]PreparedValue) map[string]any {
 	return out
 }
 
+func cloneInstalledPayloads(payloads []InstalledPayloadDescriptor) []InstalledPayloadDescriptor {
+	out := make([]InstalledPayloadDescriptor, 0, len(payloads))
+	for _, payload := range payloads {
+		out = append(out, InstalledPayloadDescriptor{
+			Provider:                 payload.Provider,
+			PayloadID:                payload.PayloadID,
+			PayloadVersion:           payload.PayloadVersion,
+			Target:                   payload.Target,
+			TargetID:                 payload.TargetID,
+			State:                    payload.State,
+			Transport:                payload.Transport,
+			Endpoint:                 payload.Endpoint,
+			InstanceKey:              payload.InstanceKey,
+			StampID:                  payload.StampID,
+			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
+			SupportsReconnect:        payload.SupportsReconnect,
+			SupportsMultipleSessions: payload.SupportsMultipleSessions,
+			Reconnect:                clonePayloadProviderRecord(payload.Reconnect),
+			Cleanup:                  clonePayloadProviderRecord(payload.Cleanup),
+			Metadata:                 cloneStringMap(payload.Metadata),
+		})
+	}
+	return out
+}
+
+func clonePayloadProviderRecord(record *PayloadProviderRecord) *PayloadProviderRecord {
+	if record == nil {
+		return nil
+	}
+	return &PayloadProviderRecord{
+		ProviderID:    record.ProviderID,
+		Schema:        record.Schema,
+		SchemaVersion: record.SchemaVersion,
+		Descriptor:    cloneAnyMap(record.Descriptor),
+	}
+}
+
 func cloneAnyMap(values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return nil
 	}
 	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
 	for key, value := range values {
 		out[key] = value
 	}

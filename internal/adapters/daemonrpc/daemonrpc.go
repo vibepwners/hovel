@@ -50,15 +50,16 @@ type Artifact struct {
 }
 
 type SessionRef struct {
-	ID           string
-	RunID        string
-	ModuleID     string
-	Target       string
-	Name         string
-	Kind         string
-	State        string
-	Transport    string
-	Capabilities []string
+	ID                 string
+	RunID              string
+	ModuleID           string
+	Target             string
+	Name               string
+	Kind               string
+	State              string
+	Transport          string
+	InstalledPayloadID string
+	Capabilities       []string
 }
 
 type SessionChunk struct {
@@ -123,18 +124,45 @@ type PollLogsResponse struct {
 }
 
 type RunMockExploitResponse struct {
-	RunID     string
-	ModuleID  string
-	Target    string
-	State     string
-	Summary   string
-	Findings  []Finding
-	Artifacts []Artifact
-	Logs      []LogEntry
-	Sessions  []SessionRef
+	RunID             string
+	ModuleID          string
+	Target            string
+	State             string
+	Summary           string
+	Findings          []Finding
+	Artifacts         []Artifact
+	Logs              []LogEntry
+	Sessions          []SessionRef
+	InstalledPayloads []InstalledPayloadDescriptor
 }
 
 type ExecuteModuleResponse = RunMockExploitResponse
+
+type PayloadProviderRecord struct {
+	ProviderID    string
+	Schema        string
+	SchemaVersion string
+	Descriptor    map[string]any
+}
+
+type InstalledPayloadDescriptor struct {
+	Provider                 string
+	PayloadID                string
+	PayloadVersion           string
+	Target                   string
+	TargetID                 string
+	State                    string
+	Transport                string
+	Endpoint                 string
+	InstanceKey              string
+	StampID                  string
+	ArtifactIDs              []string
+	SupportsReconnect        bool
+	SupportsMultipleSessions bool
+	Reconnect                *PayloadProviderRecord
+	Cleanup                  *PayloadProviderRecord
+	Metadata                 map[string]string
+}
 
 type Server struct {
 	runs           services.RunService
@@ -1450,6 +1478,7 @@ func responseFromResult(result run.Result) RunMockExploitResponse {
 		})
 	}
 	resp.Sessions = sessionRefsFromRun(result.Sessions)
+	resp.InstalledPayloads = installedPayloadsFromRun(result.InstalledPayloads)
 	for _, log := range result.Logs {
 		resp.Logs = append(resp.Logs, LogEntry{
 			ID:             log.ID,
@@ -1477,18 +1506,56 @@ func sessionRefsFromRun(sessions []run.SessionRef) []SessionRef {
 	out := make([]SessionRef, 0, len(sessions))
 	for _, session := range sessions {
 		out = append(out, SessionRef{
-			ID:           session.ID,
-			RunID:        session.RunID,
-			ModuleID:     session.ModuleID,
-			Target:       session.Target,
-			Name:         session.Name,
-			Kind:         session.Kind,
-			State:        session.State,
-			Transport:    session.Transport,
-			Capabilities: append([]string(nil), session.Capabilities...),
+			ID:                 session.ID,
+			RunID:              session.RunID,
+			ModuleID:           session.ModuleID,
+			Target:             session.Target,
+			Name:               session.Name,
+			Kind:               session.Kind,
+			State:              session.State,
+			Transport:          session.Transport,
+			InstalledPayloadID: session.InstalledPayloadID,
+			Capabilities:       append([]string(nil), session.Capabilities...),
 		})
 	}
 	return out
+}
+
+func installedPayloadsFromRun(payloads []run.InstalledPayloadDescriptor) []InstalledPayloadDescriptor {
+	out := make([]InstalledPayloadDescriptor, 0, len(payloads))
+	for _, payload := range payloads {
+		out = append(out, InstalledPayloadDescriptor{
+			Provider:                 payload.Provider,
+			PayloadID:                payload.PayloadID,
+			PayloadVersion:           payload.PayloadVersion,
+			Target:                   payload.Target,
+			TargetID:                 payload.TargetID,
+			State:                    payload.State,
+			Transport:                payload.Transport,
+			Endpoint:                 payload.Endpoint,
+			InstanceKey:              payload.InstanceKey,
+			StampID:                  payload.StampID,
+			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
+			SupportsReconnect:        payload.SupportsReconnect,
+			SupportsMultipleSessions: payload.SupportsMultipleSessions,
+			Reconnect:                payloadProviderRecordFromRun(payload.Reconnect),
+			Cleanup:                  payloadProviderRecordFromRun(payload.Cleanup),
+			Metadata:                 cloneStringMap(payload.Metadata),
+		})
+	}
+	return out
+}
+
+func payloadProviderRecordFromRun(record *run.PayloadProviderRecord) *PayloadProviderRecord {
+	if record == nil {
+		return nil
+	}
+	return &PayloadProviderRecord{
+		ProviderID:    record.ProviderID,
+		Schema:        record.Schema,
+		SchemaVersion: record.SchemaVersion,
+		Descriptor:    cloneAnyMap(record.Descriptor),
+	}
 }
 
 func sourceOrDefault(value, fallback string) string {
@@ -1575,6 +1642,17 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneAnyMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(values))
 	for key, value := range values {
 		out[key] = value
 	}

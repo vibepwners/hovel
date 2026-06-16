@@ -2,12 +2,17 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -133,6 +138,46 @@ func (s Store) GetArtifact(ctx context.Context, id string) (commands.ArtifactRec
 		return commands.ArtifactRecord{}, err
 	}
 	return GetArtifact(ctx, db, id)
+}
+
+func (s Store) RecordInstalledPayload(ctx context.Context, record commands.InstalledPayloadRecord) (commands.InstalledPayloadRecord, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	return RecordInstalledPayload(ctx, db, record)
+}
+
+func (s Store) ListInstalledPayloads(ctx context.Context, workspacePath string, filter commands.InstalledPayloadFilter) ([]commands.InstalledPayloadRecord, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ListInstalledPayloads(ctx, db, workspacePath, filter)
+}
+
+func (s Store) GetInstalledPayload(ctx context.Context, workspacePath, ref string) (commands.InstalledPayloadRecord, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	return GetInstalledPayload(ctx, db, workspacePath, ref)
+}
+
+func (s Store) UpdateInstalledPayloadState(ctx context.Context, workspacePath, ref, state, reason string) (commands.InstalledPayloadRecord, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	return UpdateInstalledPayloadState(ctx, db, workspacePath, ref, state, reason)
+}
+
+func (s Store) ListInstalledPayloadEvents(ctx context.Context, workspacePath, ref string) ([]commands.InstalledPayloadEvent, error) {
+	db, err := s.open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ListInstalledPayloadEvents(ctx, db, workspacePath, ref)
 }
 
 func (s Store) ListEvents(ctx context.Context, filter event.Filter) ([]event.Event, error) {
@@ -559,6 +604,429 @@ func GetArtifact(ctx context.Context, db *sql.DB, id string) (commands.ArtifactR
 		return commands.ArtifactRecord{}, err
 	}
 	return record, nil
+}
+
+func RecordInstalledPayload(ctx context.Context, db *sql.DB, record commands.InstalledPayloadRecord) (commands.InstalledPayloadRecord, error) {
+	if record.Workspace == "" {
+		return commands.InstalledPayloadRecord{}, errors.New("installed payload workspace is required")
+	}
+	if record.Provider == "" {
+		return commands.InstalledPayloadRecord{}, errors.New("installed payload provider is required")
+	}
+	if record.PayloadID == "" {
+		return commands.InstalledPayloadRecord{}, errors.New("installed payload id is required")
+	}
+	if record.Target == "" {
+		return commands.InstalledPayloadRecord{}, errors.New("installed payload target is required")
+	}
+	if record.State == "" {
+		record.State = commands.PayloadStateInstalled
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if record.CreatedAt == "" {
+		record.CreatedAt = now
+	}
+	if record.UpdatedAt == "" {
+		record.UpdatedAt = record.CreatedAt
+	}
+	if record.LastSeenAt == "" && record.State != commands.PayloadStateRemoved {
+		record.LastSeenAt = record.UpdatedAt
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	defer tx.Rollback()
+
+	existing, found, err := findInstalledPayloadIdentity(ctx, tx, record)
+	if err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	if found {
+		record.ID = existing.ID
+		record.Handle = existing.Handle
+		record.CreatedAt = existing.CreatedAt
+		if record.LastSeenAt == "" {
+			record.LastSeenAt = existing.LastSeenAt
+		}
+	} else {
+		if record.ID == "" {
+			record.ID = installedPayloadID(record)
+		}
+		if record.Handle == "" {
+			record.Handle, err = nextInstalledPayloadHandle(ctx, tx, record.Workspace)
+			if err != nil {
+				return commands.InstalledPayloadRecord{}, err
+			}
+		}
+	}
+	if err := putInstalledPayload(ctx, tx, record); err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	if !found {
+		if err := insertInstalledPayloadEvent(ctx, tx, commands.InstalledPayloadEvent{
+			ID:        installedPayloadEventID(record, "installed", "", record.State, record.UpdatedAt),
+			PayloadID: record.ID,
+			Handle:    record.Handle,
+			Workspace: record.Workspace,
+			Type:      "installed",
+			To:        record.State,
+			Message:   "installed payload recorded",
+			CreatedAt: record.UpdatedAt,
+		}); err != nil {
+			return commands.InstalledPayloadRecord{}, err
+		}
+	} else if existing.State != record.State {
+		if err := insertInstalledPayloadEvent(ctx, tx, commands.InstalledPayloadEvent{
+			ID:        installedPayloadEventID(record, "state_changed", existing.State, record.State, record.UpdatedAt),
+			PayloadID: record.ID,
+			Handle:    record.Handle,
+			Workspace: record.Workspace,
+			Type:      "state_changed",
+			From:      existing.State,
+			To:        record.State,
+			Message:   "installed payload state changed",
+			CreatedAt: record.UpdatedAt,
+		}); err != nil {
+			return commands.InstalledPayloadRecord{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	return record, nil
+}
+
+func ListInstalledPayloads(ctx context.Context, db *sql.DB, workspacePath string, filter commands.InstalledPayloadFilter) ([]commands.InstalledPayloadRecord, error) {
+	if workspacePath == "" {
+		return nil, errors.New("workspace path is required")
+	}
+	rows, err := db.QueryContext(ctx, `SELECT record_json FROM installed_payloads WHERE workspace = ? ORDER BY created_at, handle`, workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []commands.InstalledPayloadRecord
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var record commands.InstalledPayloadRecord
+		if err := json.Unmarshal([]byte(data), &record); err != nil {
+			return nil, err
+		}
+		if !filter.IncludeRemoved && record.State == commands.PayloadStateRemoved {
+			continue
+		}
+		if filter.State != "" && record.State != filter.State {
+			continue
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func GetInstalledPayload(ctx context.Context, db *sql.DB, workspacePath, ref string) (commands.InstalledPayloadRecord, error) {
+	if workspacePath == "" {
+		return commands.InstalledPayloadRecord{}, errors.New("workspace path is required")
+	}
+	if ref == "" {
+		return commands.InstalledPayloadRecord{}, errors.New("installed payload reference is required")
+	}
+	var data string
+	err := db.QueryRowContext(ctx, `
+SELECT record_json
+FROM installed_payloads
+WHERE workspace = ? AND (id = ? OR handle = ?)
+LIMIT 1`, workspacePath, ref, ref).Scan(&data)
+	if err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	var record commands.InstalledPayloadRecord
+	if err := json.Unmarshal([]byte(data), &record); err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	return record, nil
+}
+
+func UpdateInstalledPayloadState(ctx context.Context, db *sql.DB, workspacePath, ref, state, reason string) (commands.InstalledPayloadRecord, error) {
+	if state == "" {
+		return commands.InstalledPayloadRecord{}, errors.New("installed payload state is required")
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	defer tx.Rollback()
+
+	record, err := getInstalledPayloadTx(ctx, tx, workspacePath, ref)
+	if err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	from := record.State
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	record.State = state
+	record.UpdatedAt = now
+	if state == commands.PayloadStateInstalled || state == commands.PayloadStateConnected {
+		record.LastSeenAt = now
+	}
+	if err := putInstalledPayload(ctx, tx, record); err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	if err := insertInstalledPayloadEvent(ctx, tx, commands.InstalledPayloadEvent{
+		ID:        installedPayloadEventID(record, "state_changed", from, state, now),
+		PayloadID: record.ID,
+		Handle:    record.Handle,
+		Workspace: record.Workspace,
+		Type:      "state_changed",
+		From:      from,
+		To:        state,
+		Reason:    reason,
+		Message:   "installed payload state changed",
+		CreatedAt: now,
+	}); err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	return record, nil
+}
+
+func ListInstalledPayloadEvents(ctx context.Context, db *sql.DB, workspacePath, ref string) ([]commands.InstalledPayloadEvent, error) {
+	if workspacePath == "" {
+		return nil, errors.New("workspace path is required")
+	}
+	query := `SELECT event_json FROM installed_payload_events WHERE workspace = ?`
+	args := []any{workspacePath}
+	if ref != "" {
+		query += ` AND (payload_id = ? OR handle = ?)`
+		args = append(args, ref, ref)
+	}
+	query += ` ORDER BY created_at, id`
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []commands.InstalledPayloadEvent
+	for rows.Next() {
+		var data string
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var evt commands.InstalledPayloadEvent
+		if err := json.Unmarshal([]byte(data), &evt); err != nil {
+			return nil, err
+		}
+		events = append(events, evt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func findInstalledPayloadIdentity(ctx context.Context, tx *sql.Tx, record commands.InstalledPayloadRecord) (commands.InstalledPayloadRecord, bool, error) {
+	switch {
+	case record.InstanceKey != "":
+		return findInstalledPayloadByColumn(ctx, tx, record, "instance_key", record.InstanceKey)
+	case record.StampID != "":
+		return findInstalledPayloadByColumn(ctx, tx, record, "stamp_id", record.StampID)
+	default:
+		return commands.InstalledPayloadRecord{}, false, nil
+	}
+}
+
+func findInstalledPayloadByColumn(ctx context.Context, tx *sql.Tx, record commands.InstalledPayloadRecord, column, value string) (commands.InstalledPayloadRecord, bool, error) {
+	var data string
+	query := fmt.Sprintf(`
+SELECT record_json
+FROM installed_payloads
+WHERE workspace = ? AND provider = ? AND payload_id = ? AND target = ? AND %s = ?
+LIMIT 1`, column)
+	err := tx.QueryRowContext(ctx, query, record.Workspace, record.Provider, record.PayloadID, record.Target, value).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return commands.InstalledPayloadRecord{}, false, nil
+	}
+	if err != nil {
+		return commands.InstalledPayloadRecord{}, false, err
+	}
+	var existing commands.InstalledPayloadRecord
+	if err := json.Unmarshal([]byte(data), &existing); err != nil {
+		return commands.InstalledPayloadRecord{}, false, err
+	}
+	return existing, true, nil
+}
+
+func nextInstalledPayloadHandle(ctx context.Context, tx *sql.Tx, workspacePath string) (string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT handle FROM installed_payloads WHERE workspace = ?`, workspacePath)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	maxHandle := 0
+	for rows.Next() {
+		var handle string
+		if err := rows.Scan(&handle); err != nil {
+			return "", err
+		}
+		number, err := strconv.Atoi(strings.TrimPrefix(handle, "p"))
+		if err == nil && strings.HasPrefix(handle, "p") && number > maxHandle {
+			maxHandle = number
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("p%d", maxHandle+1), nil
+}
+
+func putInstalledPayload(ctx context.Context, tx *sql.Tx, record commands.InstalledPayloadRecord) error {
+	recordJSON, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO installed_payloads(
+	id,
+	workspace,
+	handle,
+	provider,
+	payload_id,
+	target,
+	state,
+	instance_key,
+	stamp_id,
+	transport,
+	endpoint,
+	record_json,
+	created_at,
+	updated_at,
+	last_seen_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+	workspace = excluded.workspace,
+	handle = excluded.handle,
+	provider = excluded.provider,
+	payload_id = excluded.payload_id,
+	target = excluded.target,
+	state = excluded.state,
+	instance_key = excluded.instance_key,
+	stamp_id = excluded.stamp_id,
+	transport = excluded.transport,
+	endpoint = excluded.endpoint,
+	record_json = excluded.record_json,
+	updated_at = excluded.updated_at,
+	last_seen_at = excluded.last_seen_at`,
+		record.ID,
+		record.Workspace,
+		record.Handle,
+		record.Provider,
+		record.PayloadID,
+		record.Target,
+		record.State,
+		record.InstanceKey,
+		record.StampID,
+		record.Transport,
+		record.Endpoint,
+		string(recordJSON),
+		record.CreatedAt,
+		record.UpdatedAt,
+		record.LastSeenAt,
+	)
+	return err
+}
+
+func getInstalledPayloadTx(ctx context.Context, tx *sql.Tx, workspacePath, ref string) (commands.InstalledPayloadRecord, error) {
+	var data string
+	err := tx.QueryRowContext(ctx, `
+SELECT record_json
+FROM installed_payloads
+WHERE workspace = ? AND (id = ? OR handle = ?)
+LIMIT 1`, workspacePath, ref, ref).Scan(&data)
+	if err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	var record commands.InstalledPayloadRecord
+	if err := json.Unmarshal([]byte(data), &record); err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	return record, nil
+}
+
+func insertInstalledPayloadEvent(ctx context.Context, tx *sql.Tx, evt commands.InstalledPayloadEvent) error {
+	if evt.ID == "" {
+		return errors.New("installed payload event id is required")
+	}
+	if evt.CreatedAt == "" {
+		evt.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	eventJSON, err := json.Marshal(evt)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+INSERT INTO installed_payload_events(
+	id,
+	payload_id,
+	handle,
+	workspace,
+	type,
+	from_state,
+	to_state,
+	reason,
+	message,
+	event_json,
+	created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO NOTHING`,
+		evt.ID,
+		evt.PayloadID,
+		evt.Handle,
+		evt.Workspace,
+		evt.Type,
+		evt.From,
+		evt.To,
+		evt.Reason,
+		evt.Message,
+		string(eventJSON),
+		evt.CreatedAt,
+	)
+	return err
+}
+
+func installedPayloadID(record commands.InstalledPayloadRecord) string {
+	identity := strings.Join([]string{
+		record.Workspace,
+		record.Provider,
+		record.PayloadID,
+		record.Target,
+		record.InstanceKey,
+		record.StampID,
+		record.Endpoint,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(identity))
+	return "payload-" + hex.EncodeToString(sum[:12])
+}
+
+func installedPayloadEventID(record commands.InstalledPayloadRecord, typ, from, to, at string) string {
+	identity := strings.Join([]string{
+		record.ID,
+		record.Handle,
+		typ,
+		from,
+		to,
+		at,
+		strconv.FormatInt(time.Now().UnixNano(), 10),
+	}, "\x00")
+	sum := sha256.Sum256([]byte(identity))
+	return "payload-event-" + hex.EncodeToString(sum[:12])
 }
 
 func RecordEvent(ctx context.Context, db *sql.DB, evt event.Event) error {
