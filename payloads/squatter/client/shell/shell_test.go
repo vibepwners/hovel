@@ -21,6 +21,7 @@ func TestClientRunDrivesEchoOverWire(t *testing.T) {
 			return
 		}
 		_ = wire.WriteFrame(serverConn, wire.KindData, sid, []byte("argc=2 echo hello"))
+		_ = wire.WriteFrame(serverConn, wire.KindControl, sid, wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventInteractive}))
 		kind, sid, payload, err := wire.ReadFrame(serverConn)
 		if err != nil || kind != wire.KindData {
 			return
@@ -53,8 +54,8 @@ func TestClientRunDrivesCmdAsOneShot(t *testing.T) {
 		if err != nil || kind != wire.KindOpen {
 			return
 		}
-		_ = wire.WriteFrame(serverConn, wire.KindData, sid, []byte("hello from cmd"))
-		_ = wire.WriteFrame(serverConn, wire.KindData, sid, []byte("exit=0"))
+		_ = wire.WriteFrame(serverConn, wire.KindData, sid, []byte("hello from cmd\n"))
+		_ = wire.WriteFrame(serverConn, wire.KindControl, sid, wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventExited}))
 		_ = wire.WriteFrame(serverConn, wire.KindClose, sid, nil)
 	}()
 
@@ -64,10 +65,13 @@ func TestClientRunDrivesCmdAsOneShot(t *testing.T) {
 	<-done
 
 	text := output.String()
-	for _, want := range []string{"hello from cmd", "exit=0", "squatter> "} {
+	for _, want := range []string{"hello from cmd", "squatter> "} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("shell output missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "exit=0") {
+		t.Fatalf("cmd exit status should not be emitted as DATA:\n%s", text)
 	}
 	if strings.Contains(text, "cmd> ") {
 		t.Fatalf("cmd should be one-shot, got active prompt:\n%s", text)
@@ -84,7 +88,8 @@ func TestClientRunDrivesCmdInteractive(t *testing.T) {
 		if err != nil || kind != wire.KindOpen {
 			return
 		}
-		_ = wire.WriteFrame(serverConn, wire.KindData, sid, []byte("cmd ready"))
+		_ = wire.WriteFrame(serverConn, wire.KindControl, sid,
+			wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventInteractive, Code: streamInteractiveRaw}))
 		kind, sid, payload, err := wire.ReadFrame(serverConn)
 		if err != nil || kind != wire.KindData {
 			return
@@ -109,11 +114,86 @@ func TestClientRunDrivesCmdInteractive(t *testing.T) {
 	<-done
 
 	text := output.String()
-	for _, want := range []string{"cmd ready", "cmd> ", "hello"} {
+	for _, want := range []string{"hello"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("shell output missing %q:\n%s", want, text)
 		}
 	}
+	if strings.Contains(text, "cmd> ") {
+		t.Fatalf("interactive cmd should attach without a frontend prompt:\n%s", text)
+	}
+	if strings.Contains(text, "cmd ready") {
+		t.Fatalf("cmd startup marker should not be emitted as DATA:\n%s", text)
+	}
+}
+
+func TestClientRunRendersOpenStreamError(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		kind, sid, _, err := wire.ReadFrame(serverConn)
+		if err != nil || kind != wire.KindOpen {
+			return
+		}
+		_ = wire.WriteFrame(serverConn, wire.KindControl, sid,
+			wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventError, Message: "no such module: dir"}))
+		_ = wire.WriteFrame(serverConn, wire.KindClose, sid, nil)
+	}()
+
+	input := strings.NewReader("dir\nquit\n")
+	var output bytes.Buffer
+	New(clientConn).Run(input, &output)
+	<-done
+
+	if got := output.String(); !strings.Contains(got, "[dir error: no such module: dir]") {
+		t.Fatalf("shell output missing open error:\n%s", got)
+	}
+}
+
+func TestCmdArgsFromLinePreservesRawRemainder(t *testing.T) {
+	got := cmdArgsFromLine(`cmd echo "hello there" && cd`)
+	if len(got) != 1 || got[0] != `echo "hello there" && cd` {
+		t.Fatalf("cmd args = %#v", got)
+	}
+
+	got = cmdArgsFromLine(`cmd --interactive echo "hello there" && cd`)
+	if len(got) != 2 || got[0] != "--interactive" || got[1] != `echo "hello there" && cd` {
+		t.Fatalf("interactive cmd args = %#v", got)
+	}
+}
+
+func TestEchoAttachInputEchoesPrintableEditingBytes(t *testing.T) {
+	var output bytes.Buffer
+	if err := echoAttachInput(&output, []byte{'d', 'i', 'r', '\r', 0x7f, 'x', '\t', 0x03}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "dir\r\n\b \bx\t"; got != want {
+		t.Fatalf("echo output = %q, want %q", got, want)
+	}
+}
+
+func TestWriteFullyHandlesPartialWrites(t *testing.T) {
+	writer := &partialWriter{limit: 2}
+	if err := writeFully(writer, []byte("abcdef")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := writer.String(), "abcdef"; got != want {
+		t.Fatalf("written = %q, want %q", got, want)
+	}
+}
+
+type partialWriter struct {
+	bytes.Buffer
+	limit int
+}
+
+func (w *partialWriter) Write(payload []byte) (int, error) {
+	if len(payload) > w.limit {
+		payload = payload[:w.limit]
+	}
+	return w.Buffer.Write(payload)
 }
 
 func TestSuggestionsCoverTopLevelAndActiveModule(t *testing.T) {

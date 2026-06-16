@@ -1,5 +1,6 @@
 #include "runtime/session.h"
 
+#include "runtime/module_wire.h"
 #include "wire/control_codec.h"
 #include "wire/frame.h"
 #include "wire/framing.h"
@@ -25,17 +26,31 @@ typedef struct sq_stream
 
         int argc;
         wchar_t **argv; /* owned; argv[argc] == NULL */
+        volatile LONG exit_code;
+        volatile LONG done;
 
         struct sq_stream *next;
 } sq_stream;
+
+typedef struct sq_outbound_frame
+{
+        BYTE *bytes;
+        UINT32 length;
+        struct sq_outbound_frame *next;
+} sq_outbound_frame;
 
 struct sq_session
 {
         sq_channel *channel;
         const sq_module_table *modules;
-        CRITICAL_SECTION write_lock; /* serializes channel writes across pumps */
+        CRITICAL_SECTION write_lock;
+        HANDLE write_sem;
+        HANDLE writer_thread;
+        sq_outbound_frame *write_head;
+        sq_outbound_frame *write_tail;
+        volatile LONG stopping;
         sq_frame_reader *reader;
-        sq_stream *streams; /* owned by the reader thread only */
+        sq_stream *streams; /* linked/unlinked by the reader thread */
         HANDLE reader_thread;
 };
 
@@ -215,22 +230,272 @@ static BOOL pipe_connect_overlapped(HANDLE h)
 }
 
 /* ------------------------------------------------------------------------- */
-/* Channel writes (locked) and frame emission                               */
+/* Single-writer frame queue                                                 */
 /* ------------------------------------------------------------------------- */
+
+static void free_outbound_frame(sq_outbound_frame *frame)
+{
+        if (frame == NULL)
+        {
+                return;
+        }
+        sq_frame_buffer_free(frame->bytes);
+        xfree(frame);
+}
+
+static sq_outbound_frame *pop_outbound_frame(sq_session *s)
+{
+        sq_outbound_frame *frame = NULL;
+
+        EnterCriticalSection(&s->write_lock);
+        frame = s->write_head;
+        if (frame != NULL)
+        {
+                s->write_head = frame->next;
+                if (s->write_head == NULL)
+                {
+                        s->write_tail = NULL;
+                }
+                frame->next = NULL;
+        }
+        LeaveCriticalSection(&s->write_lock);
+        return frame;
+}
+
+static BOOL enqueue_outbound_frame(sq_session *s, sq_outbound_frame *frame)
+{
+        if (s == NULL || frame == NULL || InterlockedCompareExchange(&s->stopping, 0, 0) != 0)
+        {
+                return FALSE;
+        }
+
+        EnterCriticalSection(&s->write_lock);
+        if (s->write_tail == NULL)
+        {
+                s->write_head = frame;
+        }
+        else
+        {
+                s->write_tail->next = frame;
+        }
+        s->write_tail = frame;
+        LeaveCriticalSection(&s->write_lock);
+        (void)ReleaseSemaphore(s->write_sem, 1, NULL);
+        return TRUE;
+}
+
+static DWORD WINAPI writer_main(LPVOID param)
+{
+        sq_session *s = (sq_session *)param;
+
+        for (;;)
+        {
+                sq_outbound_frame *frame = NULL;
+
+                if (WaitForSingleObject(s->write_sem, INFINITE) != WAIT_OBJECT_0)
+                {
+                        break;
+                }
+                frame = pop_outbound_frame(s);
+                if (frame == NULL)
+                {
+                        if (InterlockedCompareExchange(&s->stopping, 0, 0) != 0)
+                        {
+                                break;
+                        }
+                        continue;
+                }
+                if (!sq_channel_write_all(s->channel, frame->bytes, frame->length))
+                {
+                        free_outbound_frame(frame);
+                        (void)InterlockedExchange(&s->stopping, 1);
+                        sq_channel_close(s->channel);
+                        break;
+                }
+                free_outbound_frame(frame);
+        }
+        return 0;
+}
+
+static void drain_outbound_queue(sq_session *s)
+{
+        for (;;)
+        {
+                sq_outbound_frame *frame = pop_outbound_frame(s);
+
+                if (frame == NULL)
+                {
+                        return;
+                }
+                free_outbound_frame(frame);
+        }
+}
+
+static void stop_writer(sq_session *s)
+{
+        if (s == NULL)
+        {
+                return;
+        }
+        (void)InterlockedExchange(&s->stopping, 1);
+        if (s->write_sem != NULL)
+        {
+                (void)ReleaseSemaphore(s->write_sem, 1, NULL);
+        }
+        if (s->writer_thread != NULL)
+        {
+                (void)WaitForSingleObject(s->writer_thread, INFINITE);
+                (void)CloseHandle(s->writer_thread);
+                s->writer_thread = NULL;
+        }
+        drain_outbound_queue(s);
+        if (s->write_sem != NULL)
+        {
+                (void)CloseHandle(s->write_sem);
+                s->write_sem = NULL;
+        }
+}
 
 static void session_write_frame(sq_session *s, UINT16 kind, UINT64 stream_id, const BYTE *payload, UINT32 length)
 {
         BYTE *frame = NULL;
         UINT32 frame_len = 0;
+        sq_outbound_frame *queued = NULL;
 
         if (!sq_frame_encode(kind, stream_id, payload, length, &frame, &frame_len))
         {
                 return;
         }
-        EnterCriticalSection(&s->write_lock);
-        (void)sq_channel_write_all(s->channel, frame, frame_len);
-        LeaveCriticalSection(&s->write_lock);
-        sq_frame_buffer_free(frame);
+        queued = xalloc(sizeof *queued);
+        if (queued == NULL)
+        {
+                sq_frame_buffer_free(frame);
+                return;
+        }
+        queued->bytes = frame;
+        queued->length = frame_len;
+        if (!enqueue_outbound_frame(s, queued))
+        {
+                free_outbound_frame(queued);
+        }
+}
+
+static void append_text(char *dst, int cap, int *pos, const char *src)
+{
+        if (dst == NULL || src == NULL || pos == NULL || cap <= 0)
+        {
+                return;
+        }
+        while (*pos < cap - 1 && *src != '\0')
+        {
+                dst[*pos] = *src;
+                (*pos)++;
+                src++;
+        }
+        dst[*pos] = '\0';
+}
+
+static void session_write_control(sq_session *s, UINT64 id, UINT32 kind, UINT32 code, const char *message)
+{
+        BYTE *payload = NULL;
+        UINT32 length = 0;
+
+        if (!sq_control_encode_event(kind, code, message, &payload, &length))
+        {
+                return;
+        }
+        session_write_frame(s, (UINT16)SQ_FRAME_CONTROL, id, payload, length);
+        sq_control_buffer_free(payload);
+}
+
+static void session_write_unknown_module(sq_session *s, UINT64 id, const char *module)
+{
+        char message[SQMUX_EVENT_MESSAGE_MAX];
+        int pos = 0;
+
+        ZeroMemory(message, sizeof message);
+        append_text(message, (int)sizeof message, &pos, "no such module: ");
+        append_text(message, (int)sizeof message, &pos, module);
+        session_write_control(s, id, SQMUX_EVENT_ERROR, 0, message);
+}
+
+static void stream_write_close(sq_stream *st)
+{
+        BYTE *payload = NULL;
+        UINT32 length = 0;
+        UINT32 code = (UINT32)InterlockedCompareExchange(&st->exit_code, 0, 0);
+
+        if (sq_control_encode_close(code, &payload, &length))
+        {
+                session_write_frame(st->session, (UINT16)SQ_FRAME_CLOSE, st->id, payload, length);
+                sq_control_buffer_free(payload);
+                return;
+        }
+        session_write_frame(st->session, (UINT16)SQ_FRAME_CLOSE, st->id, NULL, 0);
+}
+
+static void stream_write_control(sq_stream *st, UINT32 kind, UINT32 code, const BYTE *message, DWORD message_len)
+{
+        char text[SQMUX_EVENT_MESSAGE_MAX];
+        BYTE *payload = NULL;
+        UINT32 length = 0;
+        DWORD n = 0;
+
+        ZeroMemory(text, sizeof text);
+        if (message != NULL && message_len > 0)
+        {
+                n = message_len;
+                if (n >= (DWORD)sizeof text)
+                {
+                        n = (DWORD)sizeof text - 1u;
+                }
+                CopyMemory(text, message, n);
+        }
+        if (!sq_control_encode_event(kind, code, text, &payload, &length))
+        {
+                return;
+        }
+        session_write_frame(st->session, (UINT16)SQ_FRAME_CONTROL, st->id, payload, length);
+        sq_control_buffer_free(payload);
+}
+
+static BOOL stream_write_module_packet(sq_stream *st, sq_module_packet_kind kind, UINT32 control_kind, UINT32 code,
+                                       const BYTE *payload, DWORD length)
+{
+        BYTE *packet = NULL;
+        DWORD packet_len = 0;
+        BOOL ok = FALSE;
+
+        if (st == NULL || st->input_session_end == INVALID_HANDLE_VALUE)
+        {
+                return FALSE;
+        }
+        if (!sq_module_packet_encode(kind, control_kind, code, payload, length, &packet, &packet_len))
+        {
+                return FALSE;
+        }
+        ok = pipe_write_message(st->input_session_end, packet, packet_len);
+        sq_module_packet_free(packet);
+        return ok;
+}
+
+static void pump_module_message(sq_stream *st, const BYTE *buf, DWORD n)
+{
+        sq_module_packet packet;
+
+        if (!sq_module_packet_decode(buf, n, &packet))
+        {
+                session_write_frame(st->session, (UINT16)SQ_FRAME_DATA, st->id, buf, (UINT32)n);
+                return;
+        }
+        if (packet.kind == SQ_MODULE_PACKET_DATA)
+        {
+                session_write_frame(st->session, (UINT16)SQ_FRAME_DATA, st->id, packet.payload, (UINT32)packet.length);
+        }
+        else if (packet.kind == SQ_MODULE_PACKET_CONTROL)
+        {
+                stream_write_control(st, packet.control_kind, packet.code, packet.payload, packet.length);
+        }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -241,8 +506,10 @@ static void session_write_frame(sq_session *s, UINT16 kind, UINT64 stream_id, co
 static DWORD WINAPI module_trampoline(LPVOID param)
 {
         sq_stream *st = (sq_stream *)param;
+        int code = 0;
 
-        (void)st->fn(st->input_module_end, st->output_module_end, st->argc, st->argv);
+        code = st->fn(st->input_module_end, st->output_module_end, st->argc, st->argv);
+        (void)InterlockedExchange(&st->exit_code, (LONG)code);
         if (st->input_module_end != INVALID_HANDLE_VALUE && st->input_module_end != NULL)
         {
                 (void)CloseHandle(st->input_module_end);
@@ -261,7 +528,6 @@ static DWORD WINAPI module_trampoline(LPVOID param)
 static DWORD WINAPI pump_thread(LPVOID param)
 {
         sq_stream *st = (sq_stream *)param;
-        sq_session *s = st->session;
 
         for (;;)
         {
@@ -276,9 +542,10 @@ static DWORD WINAPI pump_thread(LPVOID param)
                 {
                         break;
                 }
-                session_write_frame(s, (UINT16)SQ_FRAME_DATA, st->id, buf, (UINT32)n);
+                pump_module_message(st, buf, n);
         }
-        session_write_frame(s, (UINT16)SQ_FRAME_CLOSE, st->id, NULL, 0);
+        stream_write_close(st);
+        (void)InterlockedExchange(&st->done, 1);
         return 0;
 }
 
@@ -286,11 +553,13 @@ static DWORD WINAPI pump_thread(LPVOID param)
 /* Stream creation                                                           */
 /* ------------------------------------------------------------------------- */
 
-static BOOL make_message_pipe(sq_session *s, UINT64 id, const wchar_t *role, HANDLE *server_end, HANDLE *client_end)
+static BOOL make_message_pipe(sq_session *s, UINT64 id, const wchar_t *role, BOOL client_overlapped, HANDLE *server_end,
+                              HANDLE *client_end)
 {
         wchar_t name[160];
         HANDLE server = INVALID_HANDLE_VALUE;
         HANDLE client = INVALID_HANDLE_VALUE;
+        DWORD client_flags = client_overlapped ? FILE_FLAG_OVERLAPPED : 0;
         DWORD read_mode = PIPE_READMODE_MESSAGE;
 
         /* Unique per (process, session, stream): the session pointer disambiguates
@@ -305,7 +574,7 @@ static BOOL make_message_pipe(sq_session *s, UINT64 id, const wchar_t *role, HAN
         {
                 return FALSE;
         }
-        client = CreateFileW(name, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+        client = CreateFileW(name, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, client_flags, NULL);
         if (client == INVALID_HANDLE_VALUE)
         {
                 (void)CloseHandle(server);
@@ -392,6 +661,7 @@ static void handle_open(sq_session *s, UINT64 id, const BYTE *payload, UINT32 le
         fn = sq_module_lookup(s->modules, open.module);
         if (fn == NULL)
         {
+                session_write_unknown_module(s, id, open.module);
                 session_write_frame(s, (UINT16)SQ_FRAME_CLOSE, id, NULL, 0);
                 return;
         }
@@ -409,14 +679,16 @@ static void handle_open(sq_session *s, UINT64 id, const BYTE *payload, UINT32 le
         st->input_module_end = INVALID_HANDLE_VALUE;
         st->output_session_end = INVALID_HANDLE_VALUE;
         st->output_module_end = INVALID_HANDLE_VALUE;
+        st->exit_code = 0;
+        st->done = 0;
 
-        if (!make_message_pipe(s, id, L"in", &st->input_session_end, &st->input_module_end))
+        if (!make_message_pipe(s, id, L"in", TRUE, &st->input_session_end, &st->input_module_end))
         {
                 xfree(st);
                 session_write_frame(s, (UINT16)SQ_FRAME_CLOSE, id, NULL, 0);
                 return;
         }
-        if (!make_message_pipe(s, id, L"out", &st->output_session_end, &st->output_module_end))
+        if (!make_message_pipe(s, id, L"out", FALSE, &st->output_session_end, &st->output_module_end))
         {
                 (void)CloseHandle(st->input_session_end);
                 (void)CloseHandle(st->input_module_end);
@@ -467,18 +739,39 @@ static sq_stream *find_stream(sq_session *s, UINT64 id)
         return NULL;
 }
 
+static void sweep_done_streams(sq_session *s)
+{
+        sq_stream **link = NULL;
+
+        if (s == NULL)
+        {
+                return;
+        }
+        link = &s->streams;
+        while (*link != NULL)
+        {
+                sq_stream *st = *link;
+
+                if (InterlockedCompareExchange(&st->done, 0, 0) == 0)
+                {
+                        link = &st->next;
+                        continue;
+                }
+                *link = st->next;
+                st->next = NULL;
+                destroy_stream(st);
+        }
+}
+
 static void handle_data(sq_session *s, UINT64 id, const BYTE *payload, UINT32 len)
 {
         sq_stream *st = find_stream(s, id);
-        DWORD wrote = 0;
 
         if (st == NULL || st->input_session_end == INVALID_HANDLE_VALUE)
         {
                 return;
         }
-        /* Message-mode: this whole payload arrives at the module as one ReadFile. */
-        (void)wrote;
-        (void)pipe_write_message(st->input_session_end, payload, len);
+        (void)stream_write_module_packet(st, SQ_MODULE_PACKET_DATA, 0, 0, payload, len);
 }
 
 static void handle_close(sq_session *s, UINT64 id)
@@ -489,8 +782,7 @@ static void handle_close(sq_session *s, UINT64 id)
         {
                 return;
         }
-        /* Closing the input session end makes the module's ReadFile return: it ends
-         * gracefully, the trampoline closes the module end, the pump emits CLOSE. */
+        (void)stream_write_module_packet(st, SQ_MODULE_PACKET_CONTROL, SQ_MODULE_CONTROL_CLOSE, 0, NULL, 0);
         if (st->input_session_end != INVALID_HANDLE_VALUE)
         {
                 (void)CloseHandle(st->input_session_end);
@@ -506,6 +798,7 @@ static int on_frame(void *ctx, UINT16 kind, UINT64 stream_id, const BYTE *payloa
 {
         sq_session *s = (sq_session *)ctx;
 
+        sweep_done_streams(s);
         switch (kind)
         {
         case SQ_FRAME_OPEN:
@@ -520,6 +813,7 @@ static int on_frame(void *ctx, UINT16 kind, UINT64 stream_id, const BYTE *payloa
         default:
                 break;
         }
+        sweep_done_streams(s);
         return 0;
 }
 
@@ -564,6 +858,9 @@ sq_session *sq_session_create(sq_channel *ch, const sq_module_table *modules)
         s->channel = ch;
         s->modules = modules;
         s->streams = NULL;
+        s->write_head = NULL;
+        s->write_tail = NULL;
+        s->stopping = 0;
         InitializeCriticalSection(&s->write_lock);
 
         s->reader = sq_frame_reader_new();
@@ -573,9 +870,27 @@ sq_session *sq_session_create(sq_channel *ch, const sq_module_table *modules)
                 xfree(s);
                 return NULL;
         }
+        s->write_sem = CreateSemaphoreW(NULL, 0, 0x7fffffff, NULL);
+        if (s->write_sem == NULL)
+        {
+                sq_frame_reader_free(s->reader);
+                DeleteCriticalSection(&s->write_lock);
+                xfree(s);
+                return NULL;
+        }
+        s->writer_thread = CreateThread(NULL, 0, writer_main, s, 0, NULL);
+        if (s->writer_thread == NULL)
+        {
+                stop_writer(s);
+                sq_frame_reader_free(s->reader);
+                DeleteCriticalSection(&s->write_lock);
+                xfree(s);
+                return NULL;
+        }
         s->reader_thread = CreateThread(NULL, 0, reader_main, s, 0, NULL);
         if (s->reader_thread == NULL)
         {
+                stop_writer(s);
                 sq_frame_reader_free(s->reader);
                 DeleteCriticalSection(&s->write_lock);
                 xfree(s);
@@ -603,6 +918,7 @@ void sq_session_destroy(sq_session *s)
         }
 
         /* Stop the reader: closing the channel makes its blocking read return. */
+        (void)InterlockedExchange(&s->stopping, 1);
         sq_channel_close(s->channel);
         if (s->reader_thread != NULL)
         {
@@ -622,6 +938,7 @@ void sq_session_destroy(sq_session *s)
                 destroy_stream(st);
                 st = next;
         }
+        stop_writer(s);
 
         sq_frame_reader_free(s->reader);
         sq_channel_free(s->channel);

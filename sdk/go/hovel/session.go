@@ -21,6 +21,9 @@ type SessionRef struct {
 	Capabilities []string `json:"capabilities"`
 }
 
+// CapabilityTerminalPTY marks sessions backed by a local pseudoterminal.
+const CapabilityTerminalPTY = "terminal.pty"
+
 // ListenerRef describes a provider-managed listener used to acquire sessions.
 type ListenerRef struct {
 	ID        string            `json:"id"`
@@ -304,6 +307,10 @@ func (m *sessionManager) open(scope sessionScope, session Session, opts ...sessi
 	if len(opts) > 0 {
 		options = opts[0]
 	}
+	capabilities := append([]string(nil), options.capabilities...)
+	if _, ok := session.(*PTYSession); ok {
+		capabilities = appendSessionCapability(capabilities, CapabilityTerminalPTY)
+	}
 	m.mu.Lock()
 	m.counter++
 	id := fmt.Sprintf("%s-session-%d", scope.runID, m.counter)
@@ -316,7 +323,7 @@ func (m *sessionManager) open(scope sessionScope, session Session, opts ...sessi
 		Kind:         options.kind,
 		State:        "active",
 		Transport:    options.transport,
-		Capabilities: options.capabilities,
+		Capabilities: capabilities,
 	}
 	m.sessions[id] = &managedSession{ref: ref, session: session}
 	m.mu.Unlock()
@@ -325,6 +332,15 @@ func (m *sessionManager) open(scope sessionScope, session Session, opts ...sessi
 	}
 	m.fire("session.created", ref, nil)
 	return ref, nil
+}
+
+func appendSessionCapability(capabilities []string, capability string) []string {
+	for _, existing := range capabilities {
+		if existing == capability {
+			return capabilities
+		}
+	}
+	return append(capabilities, capability)
 }
 
 func (m *sessionManager) lookup(id string) (*managedSession, error) {

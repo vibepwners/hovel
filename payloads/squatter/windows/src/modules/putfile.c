@@ -2,6 +2,7 @@
 
 #include "base/win.h"
 #include "modules/file_xfer.h"
+#include "runtime/module_wire.h"
 
 static BOOL write_file_chunk(HANDLE file, const BYTE *buf, DWORD got, unsigned long long *total)
 {
@@ -74,7 +75,7 @@ int sq_putfile_module_main(HANDLE input, HANDLE output, int argc, wchar_t **argv
 
         for (;;)
         {
-                if (ReadFile(input, buf, (DWORD)sizeof buf, &got, NULL) == FALSE)
+                if (!sq_module_read_data(input, buf, (DWORD)sizeof buf, &got))
                 {
                         break; /* peer closed the stream before EOF: treat as aborted */
                 }

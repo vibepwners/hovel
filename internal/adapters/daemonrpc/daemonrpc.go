@@ -160,6 +160,7 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[ExecuteModuleRequest, ExecuteModuleResponse](mux, "ExecuteModule", rpcServer.executeModuleRPC)
 	registerUnary[EmptyRequest, ListSessionsResponse](mux, "ListSessions", rpcServer.listSessionsRPC)
 	registerUnary[SessionReadRequest, SessionChunk](mux, "ReadSession", rpcServer.readSessionRPC)
+	registerUnary[SessionTailRequest, SessionChunk](mux, "TailSession", rpcServer.tailSessionRPC)
 	registerUnary[SessionWriteRequest, EmptyResponse](mux, "WriteSession", rpcServer.writeSessionRPC)
 	registerUnary[SessionCloseRequest, EmptyResponse](mux, "CloseSession", rpcServer.closeSessionRPC)
 	registerUnary[OperationRequest, EmptyResponse](mux, "CreateOperation", rpcServer.createOperationRPC)
@@ -293,6 +294,13 @@ type SessionReadRequest struct {
 	TimeoutMs int
 }
 
+type SessionTailRequest struct {
+	SessionID string
+	MaxBytes  int
+	MaxLines  int
+	Consume   bool
+}
+
 type SessionWriteRequest struct {
 	SessionID string
 	Data      []byte
@@ -356,6 +364,47 @@ func (s *Server) readSessionRPC(ctx context.Context, req SessionReadRequest) (Se
 	}
 	timeout := time.Duration(req.TimeoutMs) * time.Millisecond
 	chunk, err := s.moduleSessions.ReadSession(ctx, req.SessionID, timeout)
+	if err != nil {
+		return resp, err
+	}
+	resp = SessionChunk{
+		SessionID: chunk.SessionID,
+		Data:      append([]byte(nil), chunk.Data...),
+		Closed:    chunk.Closed,
+	}
+	return resp, nil
+}
+
+func (s Server) TailSession(req SessionTailRequest, resp *SessionChunk) error {
+	if s.moduleSessions == nil {
+		return errors.New("session broker is not configured")
+	}
+	chunk, err := s.moduleSessions.TailSession(context.Background(), req.SessionID, run.SessionTailOptions{
+		MaxBytes: req.MaxBytes,
+		MaxLines: req.MaxLines,
+		Consume:  req.Consume,
+	})
+	if err != nil {
+		return err
+	}
+	*resp = SessionChunk{
+		SessionID: chunk.SessionID,
+		Data:      append([]byte(nil), chunk.Data...),
+		Closed:    chunk.Closed,
+	}
+	return nil
+}
+
+func (s *Server) tailSessionRPC(ctx context.Context, req SessionTailRequest) (SessionChunk, error) {
+	var resp SessionChunk
+	if s.moduleSessions == nil {
+		return resp, errors.New("session broker is not configured")
+	}
+	chunk, err := s.moduleSessions.TailSession(ctx, req.SessionID, run.SessionTailOptions{
+		MaxBytes: req.MaxBytes,
+		MaxLines: req.MaxLines,
+		Consume:  req.Consume,
+	})
 	if err != nil {
 		return resp, err
 	}
@@ -969,6 +1018,15 @@ func (c *Client) ReadSession(ctx context.Context, sessionID string, timeout time
 	return invoke[SessionReadRequest, SessionChunk](c, ctx, "ReadSession", SessionReadRequest{
 		SessionID: sessionID,
 		TimeoutMs: int(timeout / time.Millisecond),
+	})
+}
+
+func (c *Client) TailSession(ctx context.Context, sessionID string, options run.SessionTailOptions) (SessionChunk, error) {
+	return invoke[SessionTailRequest, SessionChunk](c, ctx, "TailSession", SessionTailRequest{
+		SessionID: sessionID,
+		MaxBytes:  options.MaxBytes,
+		MaxLines:  options.MaxLines,
+		Consume:   options.Consume,
 	})
 }
 

@@ -1115,17 +1115,16 @@ func artifactsFromRPC(value any) []run.Artifact {
 }
 
 type SessionBroker struct {
-	mu       sync.Mutex
-	sessions map[string]*brokerSession
-}
-
-type brokerSession struct {
-	ref     run.SessionRef
-	process *moduleProcess
+	mu           sync.Mutex
+	sessions     map[string]*brokerSession
+	historyLimit int
 }
 
 func NewSessionBroker() *SessionBroker {
-	return &SessionBroker{sessions: map[string]*brokerSession{}}
+	return &SessionBroker{
+		sessions:     map[string]*brokerSession{},
+		historyLimit: defaultSessionHistoryBytes,
+	}
 }
 
 func (b *SessionBroker) ListSessions(context.Context) ([]run.SessionRef, error) {
@@ -1161,30 +1160,27 @@ func (b *SessionBroker) ReadSession(ctx context.Context, sessionID string, timeo
 	if err != nil {
 		return run.SessionChunk{}, err
 	}
-	timeoutMs := int(timeout / time.Millisecond)
-	if timeoutMs < 0 {
-		timeoutMs = -1
+	return session.read(ctx, sessionID, timeout)
+}
+
+func (b *SessionBroker) TailSession(ctx context.Context, sessionID string, options run.SessionTailOptions) (run.SessionChunk, error) {
+	if err := ctx.Err(); err != nil {
+		return run.SessionChunk{}, err
 	}
-	values, err := session.process.client.call(ctx, "session/read", map[string]any{
-		"sessionId": sessionID,
-		"timeoutMs": timeoutMs,
-	})
+	if options.MaxBytes < 0 {
+		return run.SessionChunk{}, errors.New("tail byte count cannot be negative")
+	}
+	if options.MaxLines < 0 {
+		return run.SessionChunk{}, errors.New("tail line count cannot be negative")
+	}
+	if options.MaxBytes > 0 && options.MaxLines > 0 {
+		return run.SessionChunk{}, errors.New("tail byte and line limits are mutually exclusive")
+	}
+	session, err := b.lookup(sessionID)
 	if err != nil {
 		return run.SessionChunk{}, err
 	}
-	data, err := base64.StdEncoding.DecodeString(stringValue(values["data"]))
-	if err != nil {
-		return run.SessionChunk{}, err
-	}
-	chunk := run.SessionChunk{
-		SessionID: defaultString(stringValue(values["sessionId"]), sessionID),
-		Data:      data,
-		Closed:    boolValue(values["closed"]),
-	}
-	if chunk.Closed {
-		b.markClosed(sessionID)
-	}
-	return chunk, nil
+	return session.tail(sessionID, options), nil
 }
 
 func (b *SessionBroker) CloseSession(ctx context.Context, sessionID string) error {
@@ -1208,15 +1204,21 @@ func (b *SessionBroker) CloseSession(ctx context.Context, sessionID string) erro
 
 func (b *SessionBroker) adopt(process *moduleProcess, sessions []run.SessionRef) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if b.sessions == nil {
 		b.sessions = map[string]*brokerSession{}
 	}
+	var adopted []*brokerSession
 	for _, session := range sessions {
 		if session.ID == "" {
 			continue
 		}
-		b.sessions[session.ID] = &brokerSession{ref: cloneSessionRef(session), process: process}
+		brokerSession := newBrokerSession(session, process, b.historyLimit)
+		b.sessions[session.ID] = brokerSession
+		adopted = append(adopted, brokerSession)
+	}
+	b.mu.Unlock()
+	for _, session := range adopted {
+		go b.pumpSession(session.ref.ID, session)
 	}
 }
 
@@ -1235,16 +1237,26 @@ func (b *SessionBroker) lookup(sessionID string) (*brokerSession, error) {
 
 func (b *SessionBroker) markClosed(sessionID string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if session, ok := b.sessions[sessionID]; ok {
+	session, ok := b.sessions[sessionID]
+	if ok {
 		session.ref.State = "closed"
+	}
+	b.mu.Unlock()
+	if ok {
+		session.closeLocal()
 	}
 }
 
 func (b *SessionBroker) remove(sessionID string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	delete(b.sessions, sessionID)
+	session, ok := b.sessions[sessionID]
+	if ok {
+		delete(b.sessions, sessionID)
+	}
+	b.mu.Unlock()
+	if ok {
+		session.closeLocal()
+	}
 }
 
 func (b *SessionBroker) hasProcess(process *moduleProcess) bool {
@@ -1256,6 +1268,32 @@ func (b *SessionBroker) hasProcess(process *moduleProcess) bool {
 		}
 	}
 	return false
+}
+
+func (b *SessionBroker) pumpSession(sessionID string, session *brokerSession) {
+	for {
+		if session.isClosed() {
+			return
+		}
+		values, err := session.process.client.call(context.Background(), "session/read", map[string]any{
+			"sessionId": sessionID,
+			"timeoutMs": 250,
+		})
+		if err != nil {
+			b.markClosed(sessionID)
+			return
+		}
+		data, err := base64.StdEncoding.DecodeString(stringValue(values["data"]))
+		if err != nil {
+			b.markClosed(sessionID)
+			return
+		}
+		session.appendData(data)
+		if boolValue(values["closed"]) {
+			b.markClosed(sessionID)
+			return
+		}
+	}
 }
 
 func cloneSessionRef(session run.SessionRef) run.SessionRef {

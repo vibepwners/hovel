@@ -72,11 +72,13 @@ cc_library(
     srcs = [
         "runtime/channel.c",
         "runtime/module.c",
+        "runtime/module_wire.c",
         "runtime/session.c",
     ],
     hdrs = [
         "runtime/channel.h",
         "runtime/module.h",
+        "runtime/module_wire.h",
         "runtime/session.h",
     ],
     copts = SQ_COPTS,
@@ -100,6 +102,7 @@ cc_library(
         "modules/echo.c",
         "modules/file_xfer.c",
         "modules/getfile.c",
+        "modules/process_io.c",
         "modules/putfile.c",
     ],
     hdrs = [
@@ -107,12 +110,14 @@ cc_library(
         "modules/echo.h",
         "modules/file_xfer.h",
         "modules/getfile.h",
+        "modules/process_io.h",
         "modules/putfile.h",
     ],
     copts = SQ_COPTS,
     includes = ["."],
     target_compatible_with = ["@platforms//os:windows"],
     deps = [
+        ":control_codec",
         ":runtime",
         ":win",
     ],

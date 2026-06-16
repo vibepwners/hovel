@@ -14,8 +14,8 @@
  * intersplicing": frames belonging to different streams interleave only at
  * frame boundaries, never inside a message.
  *
- * DATA frames carry a module's raw message bytes as payload. OPEN/CLOSE frames
- * carry a nanopb-encoded control message (see proto/control.proto). The header
+ * DATA frames carry a module's raw bytes as payload. OPEN/CLOSE/CONTROL frames
+ * carry a protobuf-shaped control message (see proto/control.proto). The header
  * is hand-serialized little-endian so the format is independent of struct
  * padding and host endianness.
  *
@@ -42,9 +42,10 @@ extern "C"
 
         typedef enum sq_frame_kind
         {
-                SQ_FRAME_DATA = 0, /* payload: module message bytes                    */
-                SQ_FRAME_OPEN = 1, /* payload: control.proto OpenStream                */
-                SQ_FRAME_CLOSE = 2 /* payload: control.proto CloseStream (may be empty) */
+                SQ_FRAME_DATA = 0,    /* payload: module raw bytes                         */
+                SQ_FRAME_OPEN = 1,    /* payload: control.proto OpenStream                 */
+                SQ_FRAME_CLOSE = 2,   /* payload: control.proto CloseStream (may be empty) */
+                SQ_FRAME_CONTROL = 3, /* payload: control.proto StreamEvent                */
         } sq_frame_kind;
 
         typedef struct sq_frame_header

@@ -9,27 +9,33 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func openPTY() (*os.File, *os.File, error) {
+func openPTY() (*os.File, *os.File, *os.File, error) {
 	masterFD, err := unix.Open("/dev/ptmx", unix.O_RDWR|unix.O_NOCTTY, 0)
 	if err != nil {
-		return nil, nil, fmt.Errorf("open pty master: %w", err)
+		return nil, nil, nil, fmt.Errorf("open pty master: %w", err)
 	}
 	master := os.NewFile(uintptr(masterFD), "/dev/ptmx")
 	if err := unlockPTY(masterFD); err != nil {
 		_ = master.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	slaveName, err := ptsName(masterFD)
 	if err != nil {
 		_ = master.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	slaveFD, err := unix.Open(slaveName, unix.O_RDWR|unix.O_NOCTTY, 0)
+	inputFD, err := unix.Open(slaveName, unix.O_RDWR|unix.O_NOCTTY, 0)
 	if err != nil {
 		_ = master.Close()
-		return nil, nil, fmt.Errorf("open pty slave: %w", err)
+		return nil, nil, nil, fmt.Errorf("open pty input slave: %w", err)
 	}
-	return master, os.NewFile(uintptr(slaveFD), slaveName), nil
+	outputFD, err := unix.Open(slaveName, unix.O_RDWR|unix.O_NOCTTY, 0)
+	if err != nil {
+		_ = master.Close()
+		_ = unix.Close(inputFD)
+		return nil, nil, nil, fmt.Errorf("open pty output slave: %w", err)
+	}
+	return master, os.NewFile(uintptr(inputFD), slaveName), os.NewFile(uintptr(outputFD), slaveName), nil
 }
 
 func unlockPTY(fd int) error {

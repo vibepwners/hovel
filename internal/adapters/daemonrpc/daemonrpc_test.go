@@ -581,6 +581,9 @@ func TestSessionRPCPropagatesRequestContext(t *testing.T) {
 	if _, err := server.readSessionRPC(ctx, SessionReadRequest{SessionID: "s1"}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("read session error = %v, want context canceled", err)
 	}
+	if _, err := server.tailSessionRPC(ctx, SessionTailRequest{SessionID: "s1", MaxLines: 20}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("tail session error = %v, want context canceled", err)
+	}
 	if _, err := server.writeSessionRPC(ctx, SessionWriteRequest{SessionID: "s1", Data: []byte("x")}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("write session error = %v, want context canceled", err)
 	}
@@ -604,6 +607,10 @@ func (contextCheckingSessionBroker) WriteSession(ctx context.Context, _ string, 
 }
 
 func (contextCheckingSessionBroker) ReadSession(ctx context.Context, _ string, _ time.Duration) (run.SessionChunk, error) {
+	return run.SessionChunk{}, contextOrMissing(ctx)
+}
+
+func (contextCheckingSessionBroker) TailSession(ctx context.Context, _ string, _ run.SessionTailOptions) (run.SessionChunk, error) {
 	return run.SessionChunk{}, contextOrMissing(ctx)
 }
 

@@ -20,6 +20,7 @@ go_library(
         "//internal/app/modulecatalog",
         "//internal/app/services",
         "//internal/domain/event",
+        "//internal/domain/run",
         "//internal/modules/pythonrpc",
         "@com_github_akamensky_argparse//:argparse",
         "@com_github_charmbracelet_lipgloss//:lipgloss",

@@ -252,25 +252,82 @@ static void add_session_or_drop(sq_session **sessions, int *session_count, sq_se
         sq_session_destroy(s);
 }
 
-static BOOL connect_pipe_client(HANDLE pipe)
+static BOOL finish_pending_pipe_connect(HANDLE pipe, OVERLAPPED *ov, DWORD *err)
 {
-        BOOL connected = ConnectNamedPipe(pipe, NULL);
+        DWORD transferred = 0;
+        DWORD wait_result = WaitForSingleObject(ov->hEvent, INFINITE);
 
-        if (connected == FALSE)
+        if (wait_result != WAIT_OBJECT_0)
         {
-                DWORD const err = GetLastError();
-                if (err == ERROR_PIPE_CONNECTED)
-                {
-                        return TRUE;
-                }
-                (void)CloseHandle(pipe);
-                if (!g_stop && err != ERROR_OPERATION_ABORTED && err != ERROR_INVALID_HANDLE)
-                {
-                        SQLOG_WINERR(SQLOG_SUB_MUX, ERROR, err, L"ConnectNamedPipe failed");
-                }
+                *err = wait_result == WAIT_FAILED ? GetLastError() : wait_result;
                 return FALSE;
         }
+        if (GetOverlappedResult(pipe, ov, &transferred, FALSE) == FALSE)
+        {
+                *err = GetLastError();
+                return FALSE;
+        }
+        *err = 0;
         return TRUE;
+}
+
+static BOOL start_pipe_connect(HANDLE pipe, OVERLAPPED *ov, DWORD *err)
+{
+        if (ConnectNamedPipe(pipe, ov) != FALSE)
+        {
+                *err = 0;
+                return TRUE;
+        }
+
+        *err = GetLastError();
+        if (*err == ERROR_PIPE_CONNECTED)
+        {
+                *err = 0;
+                return TRUE;
+        }
+        if (*err == ERROR_IO_PENDING)
+        {
+                return finish_pending_pipe_connect(pipe, ov, err);
+        }
+        return FALSE;
+}
+
+static BOOL should_log_pipe_connect_error(DWORD err)
+{
+        if (g_stop)
+        {
+                return FALSE;
+        }
+        return err != ERROR_OPERATION_ABORTED && err != ERROR_INVALID_HANDLE;
+}
+
+static BOOL connect_pipe_client(HANDLE pipe)
+{
+        OVERLAPPED ov;
+        BOOL connected = FALSE;
+        DWORD err = 0;
+
+        ZeroMemory(&ov, sizeof ov);
+        ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+        if (ov.hEvent == NULL)
+        {
+                (void)CloseHandle(pipe);
+                return FALSE;
+        }
+
+        connected = start_pipe_connect(pipe, &ov, &err);
+        (void)CloseHandle(ov.hEvent);
+        if (connected)
+        {
+                return TRUE;
+        }
+
+        (void)CloseHandle(pipe);
+        if (should_log_pipe_connect_error(err))
+        {
+                SQLOG_WINERR(SQLOG_SUB_MUX, ERROR, err, L"ConnectNamedPipe failed");
+        }
+        return FALSE;
 }
 
 static sq_session *session_from_pipe(HANDLE pipe, const sq_module_table *table)

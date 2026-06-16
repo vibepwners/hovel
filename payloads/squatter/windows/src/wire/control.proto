@@ -1,5 +1,6 @@
-// Control-plane messages carried in OPEN/CLOSE frame payloads (see ../frame.h).
-// DATA frames do not use protobuf -- they carry a module's raw message bytes.
+// Control-plane messages carried in OPEN/CLOSE/CONTROL frame payloads (see
+// ../frame.h). DATA frames do not use protobuf -- they carry a module's raw
+// bytes.
 syntax = "proto3";
 
 package sqmux;
@@ -14,4 +15,11 @@ message OpenStream {
 // Sent in a CLOSE frame: ends the stream. `code` is 0 for a normal close.
 message CloseStream {
   uint32 code = 1;
+}
+
+// Sent in a CONTROL frame: reports stream state without polluting DATA.
+message StreamEvent {
+  uint32 kind = 1;
+  uint32 code = 2;
+  string message = 3;
 }

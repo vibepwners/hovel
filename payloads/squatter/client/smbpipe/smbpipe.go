@@ -77,10 +77,13 @@ const (
 	fileShareRead    = 0x00000001
 	fileShareWrite   = 0x00000002
 	pipeAccess       = 0x0002019f
+	fileAccess       = 0xc0000000
 	fileOpen         = 0x00000001
+	fileOverwriteIf  = 0x00000005
 	fileNonDirectory = 0x00000040
 	impersonation    = 0x00000002
 	transactNmPipe   = 0x0026
+	transPeekNmPipe  = 0x0023
 	transReadNmPipe  = 0x0036
 	transWriteNmPipe = 0x0037
 )
@@ -91,6 +94,7 @@ const (
 	authExtended authMode = "extended"
 	authNTLMv1   authMode = "ntlmv1"
 	authNTLMv2   authMode = "ntlmv2"
+	authAnon     authMode = "anonymous"
 )
 
 type Options struct {
@@ -159,9 +163,6 @@ func (o Options) validate() error {
 	if strings.TrimSpace(o.Pipe) == "" {
 		return fmt.Errorf("smb pipe is required")
 	}
-	if strings.TrimSpace(o.Username) == "" {
-		return fmt.Errorf("smb username is required")
-	}
 	if o.Port < 1 || o.Port > 65535 {
 		return fmt.Errorf("smb port is invalid: %d", o.Port)
 	}
@@ -178,13 +179,32 @@ func dial(ctx context.Context, opts Options) (io.ReadWriteCloser, error) {
 	if isStatus(err, statusLogonFailure) {
 		conn, err = dialMode(ctx, opts, authNTLMv1)
 		if isStatus(err, statusLogonFailure) {
-			return dialMode(ctx, opts, authNTLMv2)
+			conn, err = dialMode(ctx, opts, authNTLMv2)
+			if isStatus(err, statusLogonFailure) {
+				return dialMode(ctx, opts, authAnon)
+			}
 		}
 	}
 	return conn, err
 }
 
 func dialMode(ctx context.Context, opts Options, auth authMode) (io.ReadWriteCloser, error) {
+	c, err := dialSessionMode(ctx, opts, auth)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.treeConnectShare("IPC$"); err != nil {
+		_ = c.conn.Close()
+		return nil, err
+	}
+	if err := c.openPipe(opts.Pipe); err != nil {
+		_ = c.conn.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
+func dialSessionMode(ctx context.Context, opts Options, auth authMode) (*pipeConn, error) {
 	dialer := net.Dialer{Timeout: opts.Timeout}
 	netConn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(opts.Host, strconv.Itoa(opts.Port)))
 	if err != nil {
@@ -193,13 +213,15 @@ func dialMode(ctx context.Context, opts Options, auth authMode) (io.ReadWriteClo
 	c := &pipeConn{
 		conn:     netConn,
 		host:     opts.Host,
-		treeHost: treeHost(opts),
 		timeout:  opts.Timeout,
+		treeHost: treeHost(opts),
 		pid:      0x484f,
 		mid:      1,
+		pending:  make(map[uint16]chan exchangeResult),
 	}
 	c.auth = auth
 	c.debug = os.Getenv("HOVEL_SMB_DEBUG") != ""
+	go c.readResponses()
 	if err := c.handshake(opts); err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -208,7 +230,6 @@ func dialMode(ctx context.Context, opts Options, auth authMode) (io.ReadWriteClo
 }
 
 type pipeConn struct {
-	mu       sync.Mutex
 	conn     net.Conn
 	host     string
 	treeHost string
@@ -217,53 +238,94 @@ type pipeConn struct {
 	tid      uint16
 	fid      uint16
 	pid      uint16
-	mid      uint16
+
+	midMu sync.Mutex
+	mid   uint16
+
+	writeMu sync.Mutex
+
+	pendingMu sync.Mutex
+	pending   map[uint16]chan exchangeResult
+	readerErr error
+	closed    bool
 
 	auth            authMode
 	debug           bool
 	serverCaps      uint32
 	sessionKey      uint32
 	serverChallenge []byte
-	writeBuf        []byte
-	readBuf         []byte
+	serverTime      time.Time
+	serverTimeSeen  time.Time
+	serverTZMinutes int16
+
+	frameMu  sync.Mutex
+	sendMu   sync.Mutex
+	writeBuf []byte
+	readBuf  []byte
+}
+
+type exchangeResult struct {
+	response *smbResponse
+	err      error
 }
 
 func (c *pipeConn) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.readBuf) > 0 {
-		n := copy(p, c.readBuf)
-		c.readBuf = c.readBuf[n:]
-		return n, nil
-	}
-	data, err := c.readClassic(min(min(len(p), 16), 0xffff))
-	if err != nil {
-		return 0, err
-	}
-	return copy(p, data), nil
-}
-
-func (c *pipeConn) Write(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.writeBuf = append(c.writeBuf, p...)
 	for {
-		if len(c.writeBuf) < 16 {
-			return len(p), nil
+		if n := c.copyBufferedRead(p); n > 0 {
+			return n, nil
 		}
-		frameLen := 16 + int(binary.LittleEndian.Uint32(c.writeBuf[0:4]))
-		if len(c.writeBuf) < frameLen {
-			return len(p), nil
-		}
-		_, err := c.writeAll(c.writeBuf[:frameLen])
+		maxRead := min(len(p), 0xffff)
+		data, err := c.readClassicBlocking(maxRead)
 		if err != nil {
 			return 0, err
 		}
+		if len(data) == 0 {
+			continue
+		}
+		return copy(p, data), nil
+	}
+}
+
+func (c *pipeConn) Write(p []byte) (int, error) {
+	var frames [][]byte
+
+	c.frameMu.Lock()
+	c.writeBuf = append(c.writeBuf, p...)
+	for {
+		if len(c.writeBuf) < 16 {
+			break
+		}
+		frameLen := 16 + int(binary.LittleEndian.Uint32(c.writeBuf[0:4]))
+		if len(c.writeBuf) < frameLen {
+			break
+		}
+		frames = append(frames, append([]byte(nil), c.writeBuf[:frameLen]...))
 		c.writeBuf = c.writeBuf[frameLen:]
 	}
+	c.frameMu.Unlock()
+
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	for _, frame := range frames {
+		if _, err := c.writeAll(frame); err != nil {
+			return 0, err
+		}
+	}
+	return len(p), nil
+}
+
+func (c *pipeConn) copyBufferedRead(p []byte) int {
+	c.frameMu.Lock()
+	defer c.frameMu.Unlock()
+	if len(c.readBuf) == 0 {
+		return 0
+	}
+	n := copy(p, c.readBuf)
+	c.readBuf = c.readBuf[n:]
+	return n
 }
 
 func (c *pipeConn) writeAll(p []byte) (int, error) {
@@ -296,6 +358,19 @@ func (c *pipeConn) writeNMPipe(data []byte) (int, error) {
 
 func (c *pipeConn) readNMPipe(max int) ([]byte, error) {
 	return c.transaction(transReadNmPipe, nil, uint16(max))
+}
+
+func (c *pipeConn) peekNMPipe() (int, error) {
+	data, err := c.transaction(transPeekNmPipe, nil, 0x10)
+	if err != nil {
+		return 0, err
+	}
+	if len(data) < 2 {
+		return 0, fmt.Errorf("SMB1 peek named pipe response too short")
+	}
+	available := int(binary.LittleEndian.Uint16(data[0:2]))
+	c.debugf("peek pipe available=%d raw=%d", available, len(data))
+	return available, nil
 }
 
 func (c *pipeConn) transaction(subcommand uint16, data []byte, maxData uint16) ([]byte, error) {
@@ -360,13 +435,19 @@ func (c *pipeConn) transaction(subcommand uint16, data []byte, maxData uint16) (
 }
 
 func (c *pipeConn) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.fid != 0 {
+	if c.fid != 0 && !c.hasPendingRequests() {
 		_ = c.closeFID()
 		c.fid = 0
 	}
-	return c.conn.Close()
+	err := c.conn.Close()
+	c.failPending(io.ErrClosedPipe)
+	return err
+}
+
+func (c *pipeConn) hasPendingRequests() bool {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	return len(c.pending) > 0
 }
 
 func (c *pipeConn) handshake(opts Options) error {
@@ -375,12 +456,6 @@ func (c *pipeConn) handshake(opts Options) error {
 		return err
 	}
 	if err := c.sessionSetup(opts); err != nil {
-		return err
-	}
-	if err := c.treeConnect(); err != nil {
-		return err
-	}
-	if err := c.openPipe(opts.Pipe); err != nil {
 		return err
 	}
 	return nil
@@ -406,8 +481,11 @@ func (c *pipeConn) negotiate() error {
 	}
 	c.sessionKey = binary.LittleEndian.Uint32(res.params[15:19])
 	c.serverCaps = binary.LittleEndian.Uint32(res.params[19:23])
+	c.serverTime = filetimeToTime(binary.LittleEndian.Uint64(res.params[23:31]))
+	c.serverTZMinutes = int16(binary.LittleEndian.Uint16(res.params[31:33]))
+	c.serverTimeSeen = time.Now()
 	challengeLen := int(res.params[33])
-	c.debugf("negotiate status=0x%08x caps=0x%08x sessionKey=0x%08x challengeLen=%d flags2=0x%04x dataLen=%d", res.status, c.serverCaps, c.sessionKey, challengeLen, res.flags2, len(res.data))
+	c.debugf("negotiate status=0x%08x caps=0x%08x sessionKey=0x%08x challengeLen=%d flags2=0x%04x dataLen=%d serverTime=%s serverTZ=%d", res.status, c.serverCaps, c.sessionKey, challengeLen, res.flags2, len(res.data), c.serverTime.Format(time.RFC3339), c.serverTZMinutes)
 	if !c.usesExtendedSecurity() && challengeLen > 0 {
 		if len(res.data) < challengeLen {
 			return fmt.Errorf("SMB1 negotiate challenge is truncated")
@@ -417,7 +495,18 @@ func (c *pipeConn) negotiate() error {
 	return nil
 }
 
+func filetimeToTime(value uint64) time.Time {
+	const windowsToUnix100ns = 116444736000000000
+	if value <= windowsToUnix100ns {
+		return time.Time{}
+	}
+	return time.Unix(0, int64(value-windowsToUnix100ns)*100)
+}
+
 func (c *pipeConn) sessionSetup(opts Options) error {
+	if c.auth == authAnon {
+		return c.sessionSetupAnonymous()
+	}
 	if c.auth != authExtended {
 		return c.sessionSetupLegacy(opts)
 	}
@@ -520,13 +609,10 @@ func (c *pipeConn) sessionSetupLegacyWithResponses(opts Options, lmResp, ntResp 
 	data := make([]byte, 0, 96)
 	data = append(data, lmResp...)
 	data = append(data, ntResp...)
-	if legacyStringOffset(len(params), len(data))%2 == 1 {
-		data = append(data, 0)
-	}
-	data = append(data, utf16le(opts.Username)...)
-	data = append(data, utf16le(opts.Domain)...)
-	data = append(data, utf16le("Unix")...)
-	data = append(data, utf16le("Hovel")...)
+	data = append(data, oemString(opts.Username)...)
+	data = append(data, oemString(opts.Domain)...)
+	data = append(data, oemString("Unix")...)
+	data = append(data, oemString("Hovel")...)
 
 	req := buildSMB(cmdSessionSetup, c, 13, params, data)
 	res, err := c.exchange(req)
@@ -535,6 +621,30 @@ func (c *pipeConn) sessionSetupLegacyWithResponses(opts Options, lmResp, ntResp 
 	}
 	c.debugf("session setup legacy auth=%s status=0x%08x uid=%d lmLen=%d ntLen=%d dataLen=%d", c.auth, res.status, res.uid, len(lmResp), len(ntResp), len(res.data))
 	if err := checkStatus(res, statusOK, "SMB1 legacy session setup"); err != nil {
+		return err
+	}
+	c.uid = res.uid
+	return nil
+}
+
+func (c *pipeConn) sessionSetupAnonymous() error {
+	params := make([]byte, 26)
+	params[0] = 0xff
+	binary.LittleEndian.PutUint16(params[4:], 4356)
+	binary.LittleEndian.PutUint16(params[6:], 10)
+	binary.LittleEndian.PutUint32(params[22:], clientCapabilities(true))
+
+	data := []byte{0, 0}
+	data = append(data, oemString("Unix")...)
+	data = append(data, oemString("Hovel")...)
+
+	req := buildSMB(cmdSessionSetup, c, 13, params, data)
+	res, err := c.exchange(req)
+	if err != nil {
+		return err
+	}
+	c.debugf("session setup anonymous status=0x%08x uid=%d dataLen=%d", res.status, res.uid, len(res.data))
+	if err := checkStatus(res, statusOK, "SMB1 anonymous session setup"); err != nil {
 		return err
 	}
 	c.uid = res.uid
@@ -552,8 +662,8 @@ func sessionSetupBlob(res *smbResponse) []byte {
 	return res.data[:blobLen]
 }
 
-func (c *pipeConn) treeConnect() error {
-	path := `\\` + c.treeHost + `\IPC$`
+func (c *pipeConn) treeConnectShare(share string) error {
+	path := `\\` + c.treeHost + `\` + share
 	c.debugf("tree connect path=%s", path)
 	data := []byte{0}
 	data = append(data, []byte(path)...)
@@ -565,7 +675,7 @@ func (c *pipeConn) treeConnect() error {
 	if err != nil {
 		return err
 	}
-	if err := checkStatus(res, statusOK, "SMB1 tree connect IPC$"); err != nil {
+	if err := checkStatus(res, statusOK, "SMB1 tree connect "+share); err != nil {
 		return err
 	}
 	c.debugf("tree connect status=0x%08x tid=%d", res.status, res.tid)
@@ -583,18 +693,24 @@ func treeHost(opts Options) string {
 func (c *pipeConn) openPipe(pipe string) error {
 	normalized := NormalizePipePath(pipe)
 	names := []string{`\PIPE\` + normalized, `PIPE\` + normalized, `\pipe\` + normalized, `pipe\` + normalized, `\` + normalized, normalized}
-	var lastErr error
+	if c.legacy() {
+		return c.openPipeASCII(names)
+	}
 	for _, name := range names {
 		err := c.openPipePath(name)
 		if err == nil {
 			return nil
 		}
-		lastErr = err
 		if !isStatus(err, statusObjectNameNotFound) {
 			return err
 		}
 		c.debugf("open pipe path %q not found; trying next form", name)
 	}
+	return c.openPipeASCII(names)
+}
+
+func (c *pipeConn) openPipeASCII(names []string) error {
+	var lastErr error
 	for _, name := range names {
 		err := c.openPipePathASCII(name)
 		if err == nil {
@@ -696,13 +812,21 @@ func (c *pipeConn) readAndX(max int) ([]byte, error) {
 }
 
 func (c *pipeConn) readClassic(max int) ([]byte, error) {
+	return c.readClassicWithTimeout(max, c.timeout)
+}
+
+func (c *pipeConn) readClassicBlocking(max int) ([]byte, error) {
+	return c.readClassicWithTimeout(max, 0)
+}
+
+func (c *pipeConn) readClassicWithTimeout(max int, timeout time.Duration) ([]byte, error) {
 	params := make([]byte, 10)
 	binary.LittleEndian.PutUint16(params[0:], c.fid)
 	binary.LittleEndian.PutUint16(params[2:], uint16(max))
 	binary.LittleEndian.PutUint16(params[8:], uint16(max))
 	c.debugf("read classic fid=%d max=%d", c.fid, max)
 	req := buildSMB(cmdRead, c, 5, params, nil)
-	res, err := c.exchange(req)
+	res, err := c.exchangeWithTimeout(req, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -725,21 +849,19 @@ func (c *pipeConn) readClassic(max int) ([]byte, error) {
 }
 
 func (c *pipeConn) writeAndX(data []byte) (int, error) {
-	params := make([]byte, 28)
-	params[0] = 0xff
-	binary.LittleEndian.PutUint16(params[4:], c.fid)
-	binary.LittleEndian.PutUint32(params[10:], 0xff)
-	binary.LittleEndian.PutUint16(params[14:], 8)
-	binary.LittleEndian.PutUint16(params[16:], uint16(len(data)))
-	binary.LittleEndian.PutUint16(params[20:], uint16(len(data)))
-	dataOffset := smbHeaderLen + 1 + len(params) + 2
+	return c.writeAndXTo(c.fid, data, 0xff, 8)
+}
+
+func (c *pipeConn) writeAndXTo(fid uint16, data []byte, offset uint32, writeMode uint16) (int, error) {
+	const paramsLen = 28
+	dataOffset := smbHeaderLen + 1 + paramsLen + 2
 	if dataOffset%2 == 1 {
 		dataOffset++
 	}
-	binary.LittleEndian.PutUint16(params[22:], uint16(dataOffset))
+	params := writeAndXParams(fid, offset, len(data), dataOffset, writeMode)
 	payload := bytes.Repeat([]byte{0}, dataOffset-(smbHeaderLen+1+len(params)+2))
 	payload = append(payload, data...)
-	c.debugf("write fid=%d bytes=%d dataOffset=%d", c.fid, len(data), dataOffset)
+	c.debugf("write fid=%d bytes=%d dataOffset=%d", fid, len(data), dataOffset)
 	req := buildSMB(cmdWriteAndX, c, 14, params, payload)
 	res, err := c.exchange(req)
 	if err != nil {
@@ -754,6 +876,18 @@ func (c *pipeConn) writeAndX(data []byte) (int, error) {
 	written := int(binary.LittleEndian.Uint16(res.params[4:6]))
 	c.debugf("write status=0x%08x bytes=%d", res.status, written)
 	return written, nil
+}
+
+func writeAndXParams(fid uint16, offset uint32, length int, dataOffset int, writeMode uint16) []byte {
+	params := make([]byte, 28)
+	params[0] = 0xff
+	binary.LittleEndian.PutUint16(params[4:], fid)
+	binary.LittleEndian.PutUint32(params[6:], offset)
+	binary.LittleEndian.PutUint16(params[14:], writeMode)
+	binary.LittleEndian.PutUint16(params[16:], uint16(length))
+	binary.LittleEndian.PutUint16(params[20:], uint16(length))
+	binary.LittleEndian.PutUint16(params[22:], uint16(dataOffset))
+	return params
 }
 
 func (c *pipeConn) closeFID() error {
@@ -772,6 +906,7 @@ func buildSMB(command byte, c *pipeConn, wordCount byte, params, data []byte) []
 }
 
 func buildSMBWithFlags2(command byte, c *pipeConn, wordCount byte, params, data []byte, flags2 uint16) []byte {
+	mid := c.nextMID()
 	body := make([]byte, smbHeaderLen, smbHeaderLen+1+len(params)+2+len(data))
 	copy(body[0:], []byte{0xff, 'S', 'M', 'B'})
 	body[4] = command
@@ -780,8 +915,7 @@ func buildSMBWithFlags2(command byte, c *pipeConn, wordCount byte, params, data 
 	binary.LittleEndian.PutUint16(body[24:], c.tid)
 	binary.LittleEndian.PutUint16(body[26:], c.pid)
 	binary.LittleEndian.PutUint16(body[28:], c.uid)
-	binary.LittleEndian.PutUint16(body[30:], c.mid)
-	c.mid++
+	binary.LittleEndian.PutUint16(body[30:], mid)
 	body = append(body, wordCount)
 	body = append(body, params...)
 	body = binary.LittleEndian.AppendUint16(body, uint16(len(data)))
@@ -789,10 +923,21 @@ func buildSMBWithFlags2(command byte, c *pipeConn, wordCount byte, params, data 
 	return withNBT(body)
 }
 
+func (c *pipeConn) nextMID() uint16 {
+	c.midMu.Lock()
+	defer c.midMu.Unlock()
+	mid := c.mid
+	c.mid++
+	if c.mid == 0 {
+		c.mid = 1
+	}
+	return mid
+}
+
 func (c *pipeConn) flags2() uint16 {
-	flags := uint16(flags2LongNames | flags2EAS | flags2NTStatus | flags2Unicode)
+	flags := uint16(flags2LongNames | flags2NTStatus)
 	if !c.legacy() {
-		flags |= flags2ExtSecurity
+		flags |= flags2EAS | flags2Unicode | flags2ExtSecurity
 	}
 	return flags
 }
@@ -820,18 +965,129 @@ func withNBT(body []byte) []byte {
 }
 
 func (c *pipeConn) exchange(req []byte) (*smbResponse, error) {
-	if c.timeout > 0 {
-		_ = c.conn.SetDeadline(time.Now().Add(c.timeout))
-		defer func() { _ = c.conn.SetDeadline(time.Time{}) }()
-	}
-	if _, err := c.conn.Write(req); err != nil {
-		return nil, err
-	}
-	raw, err := readNBT(c.conn)
+	return c.exchangeWithTimeout(req, c.timeout)
+}
+
+func (c *pipeConn) exchangeWithTimeout(req []byte, timeout time.Duration) (*smbResponse, error) {
+	mid, err := requestMID(req)
 	if err != nil {
 		return nil, err
 	}
-	return parseResponse(raw)
+	wait, err := c.registerPending(mid)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.writeRequest(req); err != nil {
+		c.unregisterPending(mid, err)
+		return nil, err
+	}
+	if timeout <= 0 {
+		result := <-wait
+		return result.response, result.err
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case result := <-wait:
+		return result.response, result.err
+	case <-timer.C:
+		err := fmt.Errorf("SMB1 request MID %d timed out after %s", mid, timeout)
+		c.unregisterPending(mid, err)
+		return nil, err
+	}
+}
+
+func requestMID(req []byte) (uint16, error) {
+	if len(req) < 4+smbHeaderLen {
+		return 0, fmt.Errorf("SMB1 request too short")
+	}
+	body := req[4:]
+	if !bytes.Equal(body[:4], []byte{0xff, 'S', 'M', 'B'}) {
+		return 0, fmt.Errorf("SMB1 request has invalid protocol header")
+	}
+	return binary.LittleEndian.Uint16(body[30:32]), nil
+}
+
+func (c *pipeConn) registerPending(mid uint16) (<-chan exchangeResult, error) {
+	wait := make(chan exchangeResult, 1)
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	if c.closed {
+		if c.readerErr != nil {
+			return nil, c.readerErr
+		}
+		return nil, io.ErrClosedPipe
+	}
+	if _, exists := c.pending[mid]; exists {
+		return nil, fmt.Errorf("SMB1 duplicate pending MID %d", mid)
+	}
+	c.pending[mid] = wait
+	return wait, nil
+}
+
+func (c *pipeConn) unregisterPending(mid uint16, err error) {
+	c.pendingMu.Lock()
+	wait := c.pending[mid]
+	delete(c.pending, mid)
+	c.pendingMu.Unlock()
+	if wait != nil {
+		wait <- exchangeResult{err: err}
+	}
+}
+
+func (c *pipeConn) writeRequest(req []byte) error {
+	if c.timeout > 0 {
+		_ = c.conn.SetWriteDeadline(time.Now().Add(c.timeout))
+		defer func() { _ = c.conn.SetWriteDeadline(time.Time{}) }()
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	_, err := c.conn.Write(req)
+	return err
+}
+
+func (c *pipeConn) readResponses() {
+	for {
+		raw, err := readNBT(c.conn)
+		if err != nil {
+			c.failPending(err)
+			return
+		}
+		res, err := parseResponse(raw)
+		if err != nil {
+			c.failPending(err)
+			return
+		}
+		c.deliverResponse(res)
+	}
+}
+
+func (c *pipeConn) deliverResponse(res *smbResponse) {
+	c.pendingMu.Lock()
+	wait := c.pending[res.mid]
+	delete(c.pending, res.mid)
+	c.pendingMu.Unlock()
+	if wait == nil {
+		c.debugf("discarding unmatched SMB response mid=%d command=0x%02x status=0x%08x", res.mid, res.command, res.status)
+		return
+	}
+	wait <- exchangeResult{response: res}
+}
+
+func (c *pipeConn) failPending(err error) {
+	c.pendingMu.Lock()
+	if c.closed {
+		c.pendingMu.Unlock()
+		return
+	}
+	c.closed = true
+	c.readerErr = err
+	pending := c.pending
+	c.pending = make(map[uint16]chan exchangeResult)
+	c.pendingMu.Unlock()
+	for _, wait := range pending {
+		wait <- exchangeResult{err: err}
+	}
 }
 
 func readNBT(r io.Reader) ([]byte, error) {
@@ -933,9 +1189,11 @@ func desiredPipeAccess() uint32 {
 }
 
 func clientCapabilities(legacy bool) uint32 {
+	if legacy {
+		return capNT_SMBS | capNTStatus
+	}
 	caps := uint32(capRawMode |
 		capMpxMode |
-		capUnicode |
 		capLargeFiles |
 		capNT_SMBS |
 		capNTStatus |
@@ -943,10 +1201,7 @@ func clientCapabilities(legacy bool) uint32 {
 		capLevelIIOplocks |
 		capLargeReadX |
 		capLargeWriteX)
-	if !legacy {
-		caps |= capExtSecurity
-	}
-	return caps
+	return caps | capUnicode | capExtSecurity
 }
 
 func utf16le(s string) []byte {
@@ -960,8 +1215,8 @@ func utf16le(s string) []byte {
 	return append(out, 0, 0)
 }
 
-func legacyStringOffset(paramLen, dataLen int) int {
-	return smbHeaderLen + 1 + paramLen + 2 + dataLen
+func oemString(s string) []byte {
+	return append([]byte(s), 0)
 }
 
 func ntlmv1Response(password string, challenge []byte) ([]byte, error) {

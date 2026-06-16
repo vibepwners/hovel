@@ -39,6 +39,7 @@ type RunClient interface {
 	RunMockExploit(context.Context, RunMockExploitRequest) (RunMockExploitResponse, error)
 	ListSessions(context.Context) ([]SessionRef, error)
 	ReadSession(context.Context, string, time.Duration) (SessionChunk, error)
+	TailSession(context.Context, string, SessionTailOptions) (SessionChunk, error)
 	WriteSession(context.Context, string, []byte) error
 	CloseSession(context.Context, string) error
 }
@@ -211,6 +212,12 @@ type SessionChunk struct {
 	SessionID string `json:"sessionId"`
 	Data      []byte `json:"data"`
 	Closed    bool   `json:"closed"`
+}
+
+type SessionTailOptions struct {
+	MaxBytes int
+	MaxLines int
+	Consume  bool
 }
 
 type LogEntry struct {
@@ -877,8 +884,27 @@ func HovelRegistry(runtime Runtime) Registry {
 			},
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
+				stringOption("history-lines", "", "Print this many recent lines before attaching; default 20"),
+				stringOption("history-bytes", "", "Print this many recent bytes before attaching"),
+				boolOption("no-history", "", "Attach without printing recent session output"),
 			},
 			Handler: sessionConnectHandler(runtime),
+		},
+		Definition{
+			Path:           []string{"session", "tail"},
+			Aliases:        [][]string{{"sessions", "tail"}},
+			Summary:        "Print recent output from an active session.",
+			RequiresDaemon: true,
+			Positionals: []Positional{
+				{Name: "session", Help: "Session ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("bytes", "b", "Maximum recent bytes to print"),
+				stringOption("lines", "n", "Maximum recent lines to print; default 20"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: sessionTailHandler(runtime),
 		},
 		Definition{
 			Path:           []string{"session", "read"},
@@ -2435,6 +2461,34 @@ func sessionConnectHandler(runtime Runtime) Handler {
 	}
 }
 
+func sessionTailHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		client, closeClient, err := dialDaemonRunClient(ctx, runtime, invocation.Option("workspace"))
+		if err != nil {
+			return Result{}, err
+		}
+		defer closeClient()
+
+		options, err := sessionTailOptionsFromInvocation(invocation, 20)
+		if err != nil {
+			return Result{}, err
+		}
+		sessionID := invocation.Positional("session")
+		chunk, err := client.TailSession(ctx, sessionID, options)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{
+			Raw: chunk.Data,
+			JSON: map[string]any{
+				"sessionId": sessionID,
+				"data":      string(chunk.Data),
+				"closed":    chunk.Closed,
+			},
+		}, nil
+	}
+}
+
 func sessionReadHandler(runtime Runtime) Handler {
 	return func(ctx context.Context, invocation Invocation) (Result, error) {
 		client, closeClient, err := dialDaemonRunClient(ctx, runtime, invocation.Option("workspace"))
@@ -2488,6 +2542,50 @@ func sessionReadHandler(runtime Runtime) Handler {
 			},
 		}, nil
 	}
+}
+
+func sessionTailOptionsFromInvocation(invocation Invocation, defaultLines int) (SessionTailOptions, error) {
+	bytesValue := invocation.Option("bytes")
+	linesValue := invocation.Option("lines")
+	if bytesValue == "" {
+		bytesValue = invocation.Option("history-bytes")
+	}
+	if linesValue == "" {
+		linesValue = invocation.Option("history-lines")
+	}
+	if bytesValue != "" && linesValue != "" {
+		return SessionTailOptions{}, fmt.Errorf("byte and line history limits are mutually exclusive")
+	}
+	var options SessionTailOptions
+	switch {
+	case bytesValue != "":
+		count, err := parseSessionCount("bytes", bytesValue)
+		if err != nil {
+			return SessionTailOptions{}, err
+		}
+		options.MaxBytes = count
+	case linesValue != "":
+		count, err := parseSessionCount("lines", linesValue)
+		if err != nil {
+			return SessionTailOptions{}, err
+		}
+		options.MaxLines = count
+	case defaultLines > 0:
+		options.MaxLines = defaultLines
+	}
+	return options, nil
+}
+
+func parseSessionCount(name, value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	count, err := strconv.Atoi(value)
+	if err != nil || count <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return count, nil
 }
 
 func sessionSendHandler(runtime Runtime) Handler {

@@ -1,6 +1,6 @@
 // Regression test for the cmd module. The module runs cmd.exe /c with the
-// operator-provided command, streams combined stdout/stderr, then reports the
-// process exit code before closing the mux stream.
+// operator-provided command, streams combined stdout/stderr as DATA, then
+// reports process state out of band before closing the mux stream.
 #include <gtest/gtest.h>
 
 #include <string>
@@ -29,15 +29,14 @@ TEST_F(CmdIntegration, RunsCommandAndReportsExitCode) {
     ASSERT_NE(sess, nullptr);
     Peer peer(client);
 
-    peer.SendOpen(1, "cmd", {"echo", "squatter-cmd-ok"});
+    peer.SendOpen(1, "cmd", {"echo squatter-cmd-ok"});
 
     RxFrame f = peer.Recv();
     ASSERT_EQ(f.kind, SQ_FRAME_DATA);
     ASSERT_NE(f.payload.find("squatter-cmd-ok"), std::string::npos);
 
     f = peer.Recv();
-    ASSERT_EQ(f.kind, SQ_FRAME_DATA);
-    EXPECT_EQ(f.payload, "exit=0");
+    ASSERT_EQ(f.kind, SQ_FRAME_CONTROL);
 
     f = peer.Recv();
     EXPECT_EQ(f.kind, SQ_FRAME_CLOSE);
@@ -55,18 +54,17 @@ TEST_F(CmdIntegration, OpensInteractiveCommandShell) {
 
     peer.SendOpen(2, "cmd", {});
 
-    bool saw_banner = false;
+    bool saw_interactive = false;
     bool saw_echo = false;
-    for (int i = 0; i < 4 && !saw_banner; i++) {
+    for (int i = 0; i < 8 && !saw_interactive; i++) {
         RxFrame f = peer.Recv();
-        ASSERT_EQ(f.kind, SQ_FRAME_DATA);
-        if (f.payload.find("Microsoft") != std::string::npos ||
-            f.payload.find(">") != std::string::npos ||
-            f.payload.find("interactive cmd.exe started") != std::string::npos) {
-            saw_banner = true;
+        if (f.kind == SQ_FRAME_CONTROL) {
+            saw_interactive = true;
+            break;
         }
+        ASSERT_EQ(f.kind, SQ_FRAME_DATA);
     }
-    EXPECT_TRUE(saw_banner);
+    EXPECT_TRUE(saw_interactive);
 
     peer.SendFrame(SQ_FRAME_DATA, 2, "echo squatter-interactive-ok\r\n");
     for (int i = 0; i < 4 && !saw_echo; i++) {

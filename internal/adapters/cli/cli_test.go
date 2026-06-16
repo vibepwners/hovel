@@ -133,6 +133,47 @@ func TestExecuteLineEnforcesOperationThenChainFlow(t *testing.T) {
 	}
 }
 
+func TestParseSessionConnectTracksExplicitHistoryLimit(t *testing.T) {
+	sessionID, options, err := parseSessionConnect("session connect --history-bytes 4096 session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "session-1" {
+		t.Fatalf("sessionID = %q, want session-1", sessionID)
+	}
+	if !options.HistoryLimitChosen || options.HistoryBytes != 4096 || options.HistoryLines != 0 {
+		t.Fatalf("options = %#v, want explicit 4096-byte history limit", options)
+	}
+}
+
+func TestWriteSessionInputPreservesRawPTYBytes(t *testing.T) {
+	writer := &fakeSessionInputWriter{}
+	events := make(chan sessionConnectEvent, 1)
+
+	writeSessionInput(context.Background(), writer, "session-1", strings.NewReader("dir\r\n"+string([]byte{sessionDetachByte})), events, sessionInputOptions{Raw: true})
+
+	if got, want := writer.String(), "dir\r\n"; got != want {
+		t.Fatalf("written bytes = %q, want %q", got, want)
+	}
+	if event := <-events; event.err != nil || event.closed {
+		t.Fatalf("event = %#v, want clean detach", event)
+	}
+}
+
+func TestWriteSessionInputNormalizesCookedNewlines(t *testing.T) {
+	writer := &fakeSessionInputWriter{}
+	events := make(chan sessionConnectEvent, 1)
+
+	writeSessionInput(context.Background(), writer, "session-1", strings.NewReader("dir\r\n"+string([]byte{sessionDetachByte})), events, sessionInputOptions{})
+
+	if got, want := writer.String(), "dir\n"; got != want {
+		t.Fatalf("written bytes = %q, want %q", got, want)
+	}
+	if event := <-events; event.err != nil || event.closed {
+		t.Fatalf("event = %#v, want clean detach", event)
+	}
+}
+
 func TestOptionSuggestionsComeFromCommandRegistry(t *testing.T) {
 	app := newTestApp()
 	enterTestOperation(t, app)
@@ -150,6 +191,19 @@ func TestOptionSuggestionsComeFromCommandRegistry(t *testing.T) {
 			t.Fatalf("suggestions = %#v, missing %s", names, want)
 		}
 	}
+}
+
+type fakeSessionInputWriter struct {
+	data bytes.Buffer
+}
+
+func (w *fakeSessionInputWriter) WriteSession(_ context.Context, _ string, data []byte) error {
+	_, err := w.data.Write(data)
+	return err
+}
+
+func (w *fakeSessionInputWriter) String() string {
+	return w.data.String()
 }
 
 func TestTargetCommandsWorkInOperationContextWithoutActiveChain(t *testing.T) {

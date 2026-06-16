@@ -89,6 +89,17 @@ static UINT32 encoded_string_size(UINT32 field, const char *value)
         return varint_size(tag) + varint_size(len) + len;
 }
 
+static UINT32 encoded_varint_field_size(UINT32 field, UINT32 value)
+{
+        return varint_size((field << 3) | 0u) + varint_size(value);
+}
+
+static BYTE *write_varint_field(BYTE *cursor, UINT32 field, UINT32 value)
+{
+        cursor = write_varint(cursor, (field << 3) | 0u);
+        return write_varint(cursor, value);
+}
+
 static BYTE *write_string(BYTE *cursor, UINT32 field, const char *value)
 {
         UINT32 len = bounded_len(value);
@@ -238,7 +249,7 @@ BOOL sq_control_decode_open(const BYTE *payload, UINT32 len, sqmux_OpenStream *o
 
 BOOL sq_control_encode_close(UINT32 code, BYTE **out, UINT32 *out_len)
 {
-        UINT32 total = varint_size((1u << 3) | 0u) + varint_size(code);
+        UINT32 total = encoded_varint_field_size(1u, code);
         BYTE *buf = NULL;
         BYTE *cursor = NULL;
 
@@ -253,10 +264,176 @@ BOOL sq_control_encode_close(UINT32 code, BYTE **out, UINT32 *out_len)
         {
                 return FALSE;
         }
-        cursor = write_varint(buf, (1u << 3) | 0u);
-        cursor = write_varint(cursor, code);
+        cursor = write_varint_field(buf, 1u, code);
         *out = buf;
         *out_len = (UINT32)(cursor - buf);
+        return TRUE;
+}
+
+BOOL sq_control_decode_close(const BYTE *payload, UINT32 len, UINT32 *code)
+{
+        const BYTE *cursor = payload;
+        const BYTE *end = NULL;
+
+        if (code == NULL)
+        {
+                return FALSE;
+        }
+        *code = 0;
+        if (payload == NULL && len != 0)
+        {
+                return FALSE;
+        }
+        end = payload + len;
+        while (cursor < end)
+        {
+                UINT32 tag = 0;
+                UINT32 field = 0;
+                UINT32 wire_type = 0;
+                UINT32 value = 0;
+
+                if (!read_varint(&cursor, end, &tag))
+                {
+                        return FALSE;
+                }
+                field = tag >> 3;
+                wire_type = tag & 0x7u;
+                if (wire_type != 0u || !read_varint(&cursor, end, &value))
+                {
+                        return FALSE;
+                }
+                if (field == 1u)
+                {
+                        *code = value;
+                }
+        }
+        return TRUE;
+}
+
+BOOL sq_control_encode_event(UINT32 kind, UINT32 code, const char *message, BYTE **out, UINT32 *out_len)
+{
+        UINT32 total = encoded_varint_field_size(1u, kind) + encoded_varint_field_size(2u, code);
+        BYTE *buf = NULL;
+        BYTE *cursor = NULL;
+
+        if (out == NULL || out_len == NULL)
+        {
+                return FALSE;
+        }
+        *out = NULL;
+        *out_len = 0;
+        if (message != NULL && message[0] != '\0')
+        {
+                total += encoded_string_size(3u, message);
+        }
+        buf = HeapAlloc(GetProcessHeap(), 0, (total == 0) ? 1u : (SIZE_T)total);
+        if (buf == NULL)
+        {
+                return FALSE;
+        }
+        cursor = buf;
+        cursor = write_varint_field(cursor, 1u, kind);
+        cursor = write_varint_field(cursor, 2u, code);
+        if (message != NULL && message[0] != '\0')
+        {
+                cursor = write_string(cursor, 3u, message);
+        }
+        *out = buf;
+        *out_len = (UINT32)(cursor - buf);
+        return TRUE;
+}
+
+static void decode_event_varint_field(sqmux_StreamEvent *out, UINT32 field, UINT32 value)
+{
+        if (field == 1u)
+        {
+                out->kind = value;
+        }
+        else if (field == 2u)
+        {
+                out->code = value;
+        }
+}
+
+static BOOL decode_event_len_field(sqmux_StreamEvent *out, UINT32 field, const BYTE *cursor, UINT32 value_len)
+{
+        if (field == 3u)
+        {
+                copy_bounded_len(out->message, cursor, value_len, (int)sizeof out->message);
+        }
+        return TRUE;
+}
+
+static BOOL decode_event_varint(const BYTE **cursor, const BYTE *end, sqmux_StreamEvent *out, UINT32 field)
+{
+        UINT32 value = 0;
+
+        if (!read_varint(cursor, end, &value))
+        {
+                return FALSE;
+        }
+        decode_event_varint_field(out, field, value);
+        return TRUE;
+}
+
+static BOOL decode_event_string(const BYTE **cursor, const BYTE *end, sqmux_StreamEvent *out, UINT32 field)
+{
+        UINT32 value_len = 0;
+
+        if (!read_varint(cursor, end, &value_len) || (UINT32)(end - *cursor) < value_len)
+        {
+                return FALSE;
+        }
+        (void)decode_event_len_field(out, field, *cursor, value_len);
+        *cursor += value_len;
+        return TRUE;
+}
+
+static BOOL decode_event_field(const BYTE **cursor, const BYTE *end, sqmux_StreamEvent *out)
+{
+        UINT32 tag = 0;
+        UINT32 field = 0;
+        UINT32 wire_type = 0;
+
+        if (!read_varint(cursor, end, &tag))
+        {
+                return FALSE;
+        }
+        field = tag >> 3;
+        wire_type = tag & 0x7u;
+        if (wire_type == 0u)
+        {
+                return decode_event_varint(cursor, end, out, field);
+        }
+        if (wire_type == 2u)
+        {
+                return decode_event_string(cursor, end, out, field);
+        }
+        return FALSE;
+}
+
+BOOL sq_control_decode_event(const BYTE *payload, UINT32 len, sqmux_StreamEvent *out)
+{
+        const BYTE *cursor = payload;
+        const BYTE *end = NULL;
+
+        if (out == NULL)
+        {
+                return FALSE;
+        }
+        ZeroMemory(out, sizeof *out);
+        if (payload == NULL && len != 0)
+        {
+                return FALSE;
+        }
+        end = payload + len;
+        while (cursor < end)
+        {
+                if (!decode_event_field(&cursor, end, out))
+                {
+                        return FALSE;
+                }
+        }
         return TRUE;
 }
 

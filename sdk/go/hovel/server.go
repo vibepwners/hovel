@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -46,9 +47,11 @@ func ServeIO(module Module, in io.Reader, out io.Writer) error {
 		writer: newFrameWriter(out),
 	}
 	s.sessions = newSessionManager(s.emitSession)
+	var requests sync.WaitGroup
 	for {
 		message, err := s.reader.read()
 		if err == io.EOF {
+			requests.Wait()
 			return nil
 		}
 		if err != nil {
@@ -63,13 +66,20 @@ func ServeIO(module Module, in io.Reader, out io.Writer) error {
 			// Notification (e.g. "cancel"): no response expected.
 			continue
 		}
-		result, derr := s.dispatch(method, message["params"])
-		if derr != nil {
-			_ = s.writer.write(errorResponse(idRaw, derr))
-		} else {
-			_ = s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(idRaw), "result": result})
-		}
+		params := append(json.RawMessage(nil), message["params"]...)
+		id := append(json.RawMessage(nil), idRaw...)
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			result, derr := s.dispatch(method, params)
+			if derr != nil {
+				_ = s.writer.write(errorResponse(id, derr))
+			} else {
+				_ = s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result})
+			}
+		}()
 		if method == "shutdown" {
+			requests.Wait()
 			return nil
 		}
 	}

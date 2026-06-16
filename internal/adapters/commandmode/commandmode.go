@@ -21,6 +21,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 	"github.com/akamensky/argparse"
 	"github.com/charmbracelet/lipgloss"
@@ -643,6 +644,22 @@ func (c daemonRunClient) ListSessions(ctx context.Context) ([]commands.SessionRe
 
 func (c daemonRunClient) ReadSession(ctx context.Context, sessionID string, timeout time.Duration) (commands.SessionChunk, error) {
 	chunk, err := c.client.ReadSession(ctx, sessionID, timeout)
+	if err != nil {
+		return commands.SessionChunk{}, err
+	}
+	return commands.SessionChunk{
+		SessionID: chunk.SessionID,
+		Data:      append([]byte(nil), chunk.Data...),
+		Closed:    chunk.Closed,
+	}, nil
+}
+
+func (c daemonRunClient) TailSession(ctx context.Context, sessionID string, options commands.SessionTailOptions) (commands.SessionChunk, error) {
+	chunk, err := c.client.TailSession(ctx, sessionID, run.SessionTailOptions{
+		MaxBytes: options.MaxBytes,
+		MaxLines: options.MaxLines,
+		Consume:  options.Consume,
+	})
 	if err != nil {
 		return commands.SessionChunk{}, err
 	}

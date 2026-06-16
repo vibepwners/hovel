@@ -72,7 +72,7 @@ BOOL sq_frame_header_decode(const BYTE in[SQ_FRAME_HEADER_SIZE], sq_frame_header
         {
                 return FALSE;
         }
-        if (kind != SQ_FRAME_DATA && kind != SQ_FRAME_OPEN && kind != SQ_FRAME_CLOSE)
+        if (kind != SQ_FRAME_DATA && kind != SQ_FRAME_OPEN && kind != SQ_FRAME_CLOSE && kind != SQ_FRAME_CONTROL)
         {
                 return FALSE;
         }

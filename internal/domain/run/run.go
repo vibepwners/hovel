@@ -96,6 +96,12 @@ type SessionChunk struct {
 	Closed    bool
 }
 
+type SessionTailOptions struct {
+	MaxBytes int
+	MaxLines int
+	Consume  bool
+}
+
 type LogEntry struct {
 	ID             string
 	Time           string

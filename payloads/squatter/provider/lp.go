@@ -41,6 +41,7 @@ type smbConnectOptions struct {
 	Username string
 	Password string
 	Pipe     string
+	Timeout  time.Duration
 }
 
 type goSMBConnector struct{}
@@ -241,7 +242,20 @@ func (lp *placeholderLP) connectSMB(req hovel.ConnectSessionRequest) (io.ReadWri
 	if err != nil {
 		return nil, err
 	}
-	return connector.ConnectSMB(req, opts)
+	deadline := time.Now().Add(opts.Timeout)
+	var lastErr error
+	for {
+		conn, err := connector.ConnectSMB(req, opts)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return nil, lastErr
 }
 
 func smbOptionsFromRequest(req hovel.ConnectSessionRequest) (smbConnectOptions, error) {
@@ -261,6 +275,14 @@ func smbOptionsFromRequest(req hovel.ConnectSessionRequest) (smbConnectOptions, 
 		Username: req.Config["smb.username"],
 		Password: req.Config["smb.password"],
 		Pipe:     req.Config["payload.pipe"],
+		Timeout:  3 * time.Second,
+	}
+	if text := req.Config["session.connect_ms"]; text != "" {
+		millis, err := strconv.Atoi(text)
+		if err != nil || millis <= 0 {
+			return smbConnectOptions{}, fmt.Errorf("session.connect_ms must be a positive integer: %q", text)
+		}
+		opts.Timeout = time.Duration(millis) * time.Millisecond
 	}
 	if opts.Username == "" {
 		return smbConnectOptions{}, fmt.Errorf("smb.username is required for Squatter SMB sessions")
@@ -288,6 +310,7 @@ func (goSMBConnector) ConnectSMB(req hovel.ConnectSessionRequest, opts smbConnec
 		Username: opts.Username,
 		Password: opts.Password,
 		Pipe:     opts.Pipe,
+		Timeout:  opts.Timeout,
 	})
 }
 
@@ -360,6 +383,13 @@ func (lp *placeholderLP) tcpBindConn(target string) (net.Conn, bool) {
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
 	conn, ok := lp.bindConns[target]
+	return conn, ok
+}
+
+func (lp *placeholderLP) smbConn(target string) (io.ReadWriteCloser, bool) {
+	lp.mu.Lock()
+	defer lp.mu.Unlock()
+	conn, ok := lp.smbConns[target]
 	return conn, ok
 }
 

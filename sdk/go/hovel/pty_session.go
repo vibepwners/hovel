@@ -21,7 +21,8 @@ type PTYSession struct {
 
 	mu       sync.Mutex
 	master   *os.File
-	slave    *os.File
+	input    *os.File
+	output   *os.File
 	queue    [][]byte
 	notify   chan struct{}
 	closed   bool
@@ -45,23 +46,24 @@ func (s *PTYSession) Open() error {
 	if s.Frontend == nil {
 		return errors.New("pty session frontend is required")
 	}
-	master, slave, err := openPTY()
+	master, input, output, err := openPTY()
 	if err != nil {
 		return err
 	}
 	s.mu.Lock()
 	s.master = master
-	s.slave = slave
+	s.input = input
+	s.output = output
 	s.mu.Unlock()
 
 	go s.readMaster(master)
 	go func() {
-		err := s.Frontend(slave, slave)
-		_ = slave.Close()
+		err := s.Frontend(input, output)
 		if err != nil && !errors.Is(err, os.ErrClosed) && !errors.Is(err, io.EOF) {
 			s.emit([]byte("session frontend error: " + err.Error() + "\n"))
 		}
-		s.markClosed()
+		_ = input.Close()
+		_ = output.Close()
 	}()
 	return nil
 }
@@ -76,8 +78,7 @@ func (s *PTYSession) Write(data []byte) error {
 	if closed || master == nil || len(data) == 0 {
 		return nil
 	}
-	_, err := master.Write(data)
-	return err
+	return writeAll(master, data)
 }
 
 // Read returns the next PTY output chunk.
@@ -119,11 +120,14 @@ func (s *PTYSession) Close(reason string) error {
 	s.init()
 	s.closeOne.Do(func() {
 		s.mu.Lock()
-		master, slave := s.master, s.slave
+		master, input, output := s.master, s.input, s.output
 		s.closed = true
 		s.mu.Unlock()
-		if slave != nil {
-			_ = slave.Close()
+		if input != nil {
+			_ = input.Close()
+		}
+		if output != nil {
+			_ = output.Close()
 		}
 		if master != nil {
 			_ = master.Close()
@@ -172,8 +176,14 @@ func (s *PTYSession) markClosed() {
 		return
 	}
 	s.closed = true
-	master := s.master
+	master, input, output := s.master, s.input, s.output
 	s.mu.Unlock()
+	if input != nil {
+		_ = input.Close()
+	}
+	if output != nil {
+		_ = output.Close()
+	}
 	if master != nil {
 		_ = master.Close()
 	}
@@ -185,6 +195,22 @@ func (s *PTYSession) signal() {
 	case s.notify <- struct{}{}:
 	default:
 	}
+}
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
 
 var _ Session = (*PTYSession)(nil)

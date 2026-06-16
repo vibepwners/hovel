@@ -1972,6 +1972,52 @@ func TestSessionReadDrainsBufferedOutput(t *testing.T) {
 	}
 }
 
+func TestSessionTailPrintsRecentLinesByDefault(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{tail: SessionChunk{SessionID: "session-1", Data: []byte("line 2\nline 3\n")}}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+	definition, _ := registry.Find("session", "tail")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(result.Raw); got != "line 2\nline 3\n" {
+		t.Fatalf("raw output = %q, want tail output", got)
+	}
+	if got := recorder.tails[0].options; got.MaxLines != 20 || got.MaxBytes != 0 || got.Consume {
+		t.Fatalf("tail options = %#v, want default 20 line non-consuming tail", got)
+	}
+}
+
+func TestSessionTailAcceptsByteLimit(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{tail: SessionChunk{SessionID: "session-1", Data: []byte("tail")}}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+	definition, _ := registry.Find("session", "tail")
+
+	_, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1"},
+		Options:     map[string]string{"bytes": "128"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recorder.tails[0].options; got.MaxBytes != 128 || got.MaxLines != 0 {
+		t.Fatalf("tail options = %#v, want 128-byte tail", got)
+	}
+}
+
 func TestSessionSendAppendsDefaultAndCustomTerminators(t *testing.T) {
 	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
 	recorder := &fakeRunRecorder{}
@@ -2625,7 +2671,14 @@ type fakeRunRecorder struct {
 	requests   []RunMockExploitRequest
 	artifacts  []Artifact
 	reads      []SessionChunk
+	tail       SessionChunk
+	tails      []fakeSessionTail
 	writes     []fakeSessionWrite
+}
+
+type fakeSessionTail struct {
+	sessionID string
+	options   SessionTailOptions
 }
 
 type fakeSessionWrite struct {
@@ -2947,6 +3000,19 @@ func (c fakeRunClient) ReadSession(context.Context, string, time.Duration) (Sess
 	}
 	chunk := c.recorder.reads[0]
 	c.recorder.reads = c.recorder.reads[1:]
+	chunk.Data = append([]byte(nil), chunk.Data...)
+	return chunk, nil
+}
+
+func (c fakeRunClient) TailSession(_ context.Context, sessionID string, options SessionTailOptions) (SessionChunk, error) {
+	if c.recorder == nil {
+		return SessionChunk{SessionID: sessionID}, nil
+	}
+	c.recorder.tails = append(c.recorder.tails, fakeSessionTail{sessionID: sessionID, options: options})
+	chunk := c.recorder.tail
+	if chunk.SessionID == "" {
+		chunk.SessionID = sessionID
+	}
 	chunk.Data = append([]byte(nil), chunk.Data...)
 	return chunk, nil
 }

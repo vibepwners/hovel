@@ -7,6 +7,6 @@ import (
 	"os"
 )
 
-func openPTY() (*os.File, *os.File, error) {
-	return nil, nil, errors.New("pty sessions are not supported on this platform")
+func openPTY() (*os.File, *os.File, *os.File, error) {
+	return nil, nil, nil, errors.New("pty sessions are not supported on this platform")
 }

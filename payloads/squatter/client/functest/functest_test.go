@@ -135,27 +135,46 @@ func dial(t *testing.T) (net.Conn, *bufio.Reader) {
 	return conn, bufio.NewReader(conn)
 }
 
+func readSkippingControl(t *testing.T, r *bufio.Reader) (uint16, uint64, []byte) {
+	t.Helper()
+	for {
+		kind, sid, payload, err := wire.ReadFrame(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind != wire.KindControl {
+			return kind, sid, payload
+		}
+	}
+}
+
+func readData(t *testing.T, r *bufio.Reader) (uint64, []byte) {
+	t.Helper()
+	kind, sid, payload := readSkippingControl(t, r)
+	if kind != wire.KindData {
+		t.Fatalf("frame kind = %d, want DATA", kind)
+	}
+	return sid, payload
+}
+
 func TestEcho(t *testing.T) {
 	conn, r := dial(t)
 	if err := wire.WriteFrame(conn, wire.KindOpen, 1, wire.EncodeOpen("echo", []string{"a", "b"})); err != nil {
 		t.Fatal(err)
 	}
-	_, _, p, err := wire.ReadFrame(r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, p := readData(t, r)
 	if got := string(p); got != "argc=3 echo a b" {
 		t.Fatalf("argv echo = %q", got)
 	}
 
 	_ = wire.WriteFrame(conn, wire.KindData, 1, []byte("hello world"))
-	_, _, p, _ = wire.ReadFrame(r)
+	_, p = readData(t, r)
 	if got := string(p); got != "hello world" {
 		t.Fatalf("echo = %q", got)
 	}
 
 	_ = wire.WriteFrame(conn, wire.KindData, 1, []byte("END"))
-	k, _, _, _ := wire.ReadFrame(r)
+	k, _, _ := readSkippingControl(t, r)
 	if k != wire.KindClose {
 		t.Fatalf("expected CLOSE, got kind %d", k)
 	}
@@ -172,10 +191,7 @@ func TestEchoUnicode(t *testing.T) {
 	if err := wire.WriteFrame(conn, wire.KindOpen, 1, wire.EncodeOpen("echo", args)); err != nil {
 		t.Fatal(err)
 	}
-	_, _, p, err := wire.ReadFrame(r)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, p := readData(t, r)
 	if got, want := string(p), "argc=4 echo café 日本語 🚀"; got != want {
 		t.Fatalf("unicode argv echo = %q, want %q", got, want)
 	}
@@ -183,13 +199,13 @@ func TestEchoUnicode(t *testing.T) {
 	// Raw DATA is a byte passthrough; arbitrary UTF-8 must return unchanged.
 	payload := []byte("Ünïcödé ☃ \U0001F4E6")
 	_ = wire.WriteFrame(conn, wire.KindData, 1, payload)
-	_, _, p, _ = wire.ReadFrame(r)
+	_, p = readData(t, r)
 	if !bytes.Equal(p, payload) {
 		t.Fatalf("unicode data echo = %q, want %q", p, payload)
 	}
 
 	_ = wire.WriteFrame(conn, wire.KindData, 1, []byte("END"))
-	if k, _, _, _ := wire.ReadFrame(r); k != wire.KindClose {
+	if k, _, _ := readSkippingControl(t, r); k != wire.KindClose {
 		t.Fatalf("expected CLOSE, got kind %d", k)
 	}
 }
@@ -207,24 +223,29 @@ func TestCmdInteractiveEcho(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sawStart := false
+	sawInteractive := false
 	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
 		kind, _, p, err := wire.ReadFrame(r)
 		if err != nil {
 			t.Fatalf("read cmd startup: %v", err)
 		}
-		if kind != wire.KindData {
-			t.Fatalf("startup frame kind = %d, want DATA", kind)
+		if kind == wire.KindControl {
+			event, err := wire.DecodeStreamEvent(p)
+			if err != nil {
+				t.Fatalf("decode startup control: %v", err)
+			}
+			if event.Kind == wire.EventInteractive {
+				sawInteractive = true
+				break
+			}
+			continue
 		}
-		if bytes.Contains(p, []byte("interactive cmd.exe started")) ||
-			bytes.Contains(p, []byte(">")) ||
-			bytes.Contains(p, []byte("Microsoft")) {
-			sawStart = true
-			break
+		if kind != wire.KindData {
+			t.Fatalf("startup frame kind = %d, want DATA or CONTROL", kind)
 		}
 	}
-	if !sawStart {
-		t.Fatal("cmd did not emit startup marker or prompt")
+	if !sawInteractive {
+		t.Fatal("cmd did not report interactive state")
 	}
 
 	if err := wire.WriteFrame(conn, wire.KindData, 1, []byte("echo squatter-interactive-wine-ok\r\n")); err != nil {
@@ -265,23 +286,27 @@ func TestCmdInteractiveDebug(t *testing.T) {
 	}
 
 	sawDebug := false
-	sawStart := false
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && (!sawDebug || !sawStart); {
+	sawInteractive := false
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && (!sawDebug || !sawInteractive); {
 		kind, _, p, err := wire.ReadFrame(r)
 		if err != nil {
 			t.Fatalf("read debug startup: %v", err)
 		}
-		if kind != wire.KindData {
-			t.Fatalf("debug startup frame kind = %d, want DATA", kind)
+		if kind != wire.KindControl {
+			continue
 		}
-		sawDebug = sawDebug || bytes.Contains(p, []byte("[sqcmd]"))
-		sawStart = sawStart || bytes.Contains(p, []byte("interactive cmd.exe started"))
+		event, err := wire.DecodeStreamEvent(p)
+		if err != nil {
+			t.Fatalf("decode debug startup: %v", err)
+		}
+		sawDebug = sawDebug || event.Kind == wire.EventDebug
+		sawInteractive = sawInteractive || event.Kind == wire.EventInteractive
 	}
 	if !sawDebug {
-		t.Fatal("cmd --debug did not emit diagnostic frames")
+		t.Fatal("cmd --debug did not emit diagnostic control frames")
 	}
-	if !sawStart {
-		t.Fatal("cmd --debug did not start interactive shell")
+	if !sawInteractive {
+		t.Fatal("cmd --debug did not report interactive state")
 	}
 
 	if err := wire.WriteFrame(conn, wire.KindData, 1, []byte("echo squatter-debug-ok\r\n")); err != nil {
@@ -355,10 +380,7 @@ func TestManyStreams(t *testing.T) {
 	// argv echoes, bucketed by stream id (they may interleave)
 	argv := map[uint64]string{}
 	for i := 0; i < n; i++ {
-		_, sid, p, err := wire.ReadFrame(r)
-		if err != nil {
-			t.Fatal(err)
-		}
+		sid, p := readData(t, r)
 		argv[sid] = string(p)
 	}
 	for s := 0; s < n; s++ {
@@ -373,7 +395,7 @@ func TestManyStreams(t *testing.T) {
 	}
 	echoed := map[uint64]string{}
 	for i := 0; i < n; i++ {
-		_, sid, p, _ := wire.ReadFrame(r)
+		sid, p := readData(t, r)
 		echoed[sid] = string(p)
 	}
 	for s := 0; s < n; s++ {

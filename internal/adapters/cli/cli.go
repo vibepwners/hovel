@@ -255,12 +255,12 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 		return code
 	}
 	if isSessionConnectCommand(trimmed) {
-		sessionID, err := parseSessionConnectID(trimmed)
+		sessionID, options, err := parseSessionConnect(trimmed)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		return a.executeSessionConnect(ctx, sessionID, stdout, stderr)
+		return a.executeSessionConnect(ctx, sessionID, options, stdout, stderr)
 	}
 	stopThrowing := func() {}
 	if isAnimatedThrowExecutionCommand(trimmed) && a.surface != nil {
@@ -660,7 +660,7 @@ func (a App) positionalSuggestions(definition commands.Definition, commandWordCo
 			}
 		}
 		return nil, true
-	case "session connect", "sessions connect", "session read", "sessions read", "session send", "sessions send", "session write", "sessions write", "session close", "sessions close":
+	case "session connect", "sessions connect", "session tail", "sessions tail", "session read", "sessions read", "session send", "sessions send", "session write", "sessions write", "session close", "sessions close":
 		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.sessionSuggestions), true
 	default:
 		return nil, false

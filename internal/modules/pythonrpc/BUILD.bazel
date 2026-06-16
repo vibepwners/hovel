@@ -4,6 +4,7 @@ go_library(
     name = "pythonrpc",
     srcs = [
         "runner.go",
+        "session_history.go",
         "step_runtime.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc",
@@ -20,7 +21,10 @@ go_library(
 go_test(
     name = "pythonrpc_test",
     size = "small",
-    srcs = ["runner_test.go"],
+    srcs = [
+        "runner_test.go",
+        "session_history_test.go",
+    ],
     data = [
         "//examples/python:sources",
         "//sdk/python:sources",

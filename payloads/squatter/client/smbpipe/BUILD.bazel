@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "smbpipe",
-    srcs = ["smbpipe.go"],
+    srcs = [
+        "smbadmin.go",
+        "smbpipe.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe",
     visibility = ["//visibility:public"],
     deps = [
@@ -14,6 +17,9 @@ go_library(
 
 go_test(
     name = "smbpipe_test",
-    srcs = ["smbpipe_test.go"],
+    srcs = [
+        "smbadmin_test.go",
+        "smbpipe_test.go",
+    ],
     embed = [":smbpipe"],
 )

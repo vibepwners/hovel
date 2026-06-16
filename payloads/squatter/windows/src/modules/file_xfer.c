@@ -1,5 +1,7 @@
 #include "modules/file_xfer.h"
 
+#include "runtime/module_wire.h"
+
 /* Wire bytes are UTF-8; a status line is built by the (wide) caller and handed
  * here already encoded. A plain byte count (not lstrlenA) keeps this off the
  * ANSI WinAPI. */
@@ -21,7 +23,6 @@ BOOL sq_xfer_send_stat(HANDLE pipe, const char *text)
 {
         BYTE buf[256];
         int n = byte_len(text);
-        DWORD wrote = 0;
 
         if (n > (int)sizeof buf - 1)
         {
@@ -32,13 +33,12 @@ BOOL sq_xfer_send_stat(HANDLE pipe, const char *text)
         {
                 CopyMemory(buf + 1, text, (SIZE_T)n);
         }
-        return WriteFile(pipe, buf, (DWORD)(1 + n), &wrote, NULL) != FALSE && wrote == (DWORD)(1 + n);
+        return sq_module_write_data(pipe, buf, (DWORD)(1 + n));
 }
 
 BOOL sq_xfer_send_eof(HANDLE pipe)
 {
         BYTE tag = SQ_XFER_EOF;
-        DWORD wrote = 0;
 
-        return WriteFile(pipe, &tag, 1, &wrote, NULL) != FALSE && wrote == 1;
+        return sq_module_write_data(pipe, &tag, 1);
 }

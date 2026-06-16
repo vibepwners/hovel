@@ -1,6 +1,8 @@
 #include "modules/echo.h"
 
 #include "base/win.h"
+#include "runtime/module_wire.h"
+#include "wire/control_codec.h"
 
 enum
 {
@@ -42,17 +44,17 @@ int sq_echo_module_main(HANDLE input, HANDLE output, int argc, wchar_t **argv)
 {
         char argv_msg[SQ_ECHO_ARGV_MSG_MAX];
         int argv_len = 0;
-        DWORD wrote = 0;
 
         /* 1. Echo argc/argv back as one message. */
         argv_len = format_argv(argc, argv, argv_msg, (int)sizeof argv_msg);
         if (argv_len > 0)
         {
-                if (WriteFile(output, argv_msg, (DWORD)argv_len, &wrote, NULL) == FALSE)
+                if (!sq_module_write_data(output, (const BYTE *)argv_msg, (DWORD)argv_len))
                 {
                         return 1;
                 }
         }
+        (void)sq_module_write_control(output, SQMUX_EVENT_INTERACTIVE, 0, NULL);
 
         /* 2. Echo each message until "END". */
         for (;;)
@@ -60,9 +62,9 @@ int sq_echo_module_main(HANDLE input, HANDLE output, int argc, wchar_t **argv)
                 BYTE buf[SQ_ECHO_IO_BUF];
                 DWORD n = 0;
 
-                if (ReadFile(input, buf, (DWORD)sizeof buf, &n, NULL) == FALSE)
+                if (!sq_module_read_data(input, buf, (DWORD)sizeof buf, &n))
                 {
-                        break; /* pipe closed by the runtime (peer CLOSE) */
+                        break; /* stream closed by the peer */
                 }
                 if (n == 0)
                 {
@@ -72,7 +74,7 @@ int sq_echo_module_main(HANDLE input, HANDLE output, int argc, wchar_t **argv)
                 {
                         break; /* 3. graceful close */
                 }
-                if (WriteFile(output, buf, n, &wrote, NULL) == FALSE)
+                if (!sq_module_write_data(output, buf, n))
                 {
                         break;
                 }

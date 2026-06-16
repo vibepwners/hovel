@@ -37,8 +37,20 @@ func main() {
 	case shell.ModeStreams:
 		client.RunStreams(os.Stdout, opts.Streams)
 	default:
+		if isPiped(os.Stdin) {
+			client.Run(os.Stdin, os.Stdout)
+			return
+		}
 		client.RunPrompt(net.JoinHostPort(opts.Host, opts.Port))
 	}
+}
+
+func isPiped(file *os.File) bool {
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice == 0
 }
 
 func dial(opts shell.CLIOptions) (io.ReadWriteCloser, error) {

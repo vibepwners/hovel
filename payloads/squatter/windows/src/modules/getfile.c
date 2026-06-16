@@ -2,6 +2,7 @@
 
 #include "base/win.h"
 #include "modules/file_xfer.h"
+#include "runtime/module_wire.h"
 
 int sq_getfile_module_main(HANDLE input, HANDLE output, int argc, wchar_t **argv)
 {
@@ -11,7 +12,6 @@ int sq_getfile_module_main(HANDLE input, HANDLE output, int argc, wchar_t **argv
         wchar_t wheader[64];
         char header[64];
         DWORD got = 0;
-        DWORD wrote = 0;
 
         (void)input;
         if (argc < 2)
@@ -52,7 +52,7 @@ int sq_getfile_module_main(HANDLE input, HANDLE output, int argc, wchar_t **argv
                 {
                         break; /* end of file */
                 }
-                if (WriteFile(output, buf, 1 + got, &wrote, NULL) == FALSE || wrote != 1 + got)
+                if (!sq_module_write_data(output, buf, 1 + got))
                 {
                         (void)CloseHandle(file);
                         return 1; /* peer went away */
