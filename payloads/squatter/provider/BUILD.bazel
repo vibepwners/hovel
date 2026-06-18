@@ -1,0 +1,35 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+package(default_visibility = ["//visibility:public"])
+
+go_library(
+    name = "provider_lib",
+    srcs = [
+        "lp.go",
+        "main.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/provider",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//payloads/squatter/client/shell",
+        "//payloads/squatter/client/smbpipe",
+        "//sdk/go/hovel",
+    ],
+)
+
+go_binary(
+    name = "squatter-provider",
+    data = ["//payloads/squatter/windows:squatter_x86_exe"],
+    embed = [":provider_lib"],
+)
+
+go_test(
+    name = "provider_test",
+    srcs = ["main_test.go"],
+    data = ["//payloads/squatter/windows:squatter_x86_exe"],
+    embed = [":provider_lib"],
+    deps = [
+        "//sdk/go/hovel",
+        "//sdk/go/hoveltest",
+    ],
+)

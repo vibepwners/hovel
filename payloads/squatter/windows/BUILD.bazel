@@ -1,0 +1,42 @@
+load("@rules_python//python:defs.bzl", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+genrule(
+    name = "squatter_x86_exe",
+    srcs = ["//payloads/squatter/windows/src:squatter_all"],
+    outs = ["squatter.exe"],
+    cmd = """
+set -euo pipefail
+for src in $(SRCS); do
+  case "$$src" in
+    *-i686.exe) cp "$$src" "$@"; exit 0 ;;
+  esac
+done
+echo "missing i686 squatter.exe in inputs: $(SRCS)" >&2
+exit 1
+""",
+)
+
+py_test(
+    name = "squatter_x86_exe_pe_test",
+    size = "small",
+    srcs = ["pe_inspect_test.py"],
+    args = ["$(location :squatter_x86_exe)"],
+    data = [":squatter_x86_exe"],
+    main = "pe_inspect_test.py",
+    python_version = "PY3",
+)
+
+py_test(
+    name = "source_contract_test",
+    size = "small",
+    srcs = ["source_contract_test.py"],
+    args = ["$(location //payloads/squatter/windows/src:squatter.c)"],
+    data = [
+        "//payloads/squatter/windows/src:source_files",
+        "//payloads/squatter/windows/src:squatter.c",
+    ],
+    main = "source_contract_test.py",
+    python_version = "PY3",
+)

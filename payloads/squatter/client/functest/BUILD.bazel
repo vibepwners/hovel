@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_test")
+
+# Black-box functional test: launches the real squatter.exe under wine and
+# drives it over TCP. Runs on the host (Linux), so it is NOT wrapped by the
+# wine --run_under used for the C tests; `tags = ["local"]` keeps it out of the
+# sandbox so it can spawn wine, reach a wine prefix, and use loopback TCP.
+go_test(
+    name = "functest_test",
+    srcs = ["functest_test.go"],
+    data = ["//payloads/squatter/windows/src:squatter_all"],  # provides squatter_all-x86_64.exe in runfiles
+    tags = [
+        "local",
+        "requires-network",
+    ],
+    # Host-only: it spawns wine itself, so it must never be built/run for the
+    # Windows platform (e.g. under --config=win64 //...).
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//payloads/squatter/client/wire",
+        "//payloads/squatter/client/xfer",
+        "@rules_go//go/runfiles",
+    ],
+)

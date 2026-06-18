@@ -4,6 +4,7 @@ go_library(
     name = "commands",
     srcs = [
         "catalog.go",
+        "payload_inventory.go",
         "registry.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/app/commands",

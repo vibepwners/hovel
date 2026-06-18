@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,18 +63,108 @@ type Requirement struct {
 }
 
 type Module struct {
+	ID            string
+	Name          string
+	Type          ModuleType
+	Version       string
+	Summary       string
+	Description   string
+	Tags          []string
+	RuntimeKind   string
+	Author        string
+	Enabled       bool
+	ChainConfig   []Requirement
+	TargetConfig  []Requirement
+	StepContracts StepContractSet
+}
+
+type CapabilityType string
+
+const (
+	CapabilityRemoteExecution CapabilityType = "RemoteExecutionCapability"
+	CapabilityCredential      CapabilityType = "CredentialCapability"
+	CapabilityPayloadArtifact CapabilityType = "PayloadArtifact"
+	CapabilityPayloadInstance CapabilityType = "PayloadInstance"
+	CapabilityTransport       CapabilityType = "TransportEndpoint"
+	CapabilitySessionRef      CapabilityType = "SessionRef"
+	CapabilityCleanupHandle   CapabilityType = "CleanupHandle"
+)
+
+type StepContractSet struct {
+	Version string
+	Steps   []StepContract
+}
+
+type StepContract struct {
 	ID           string
-	Name         string
-	Type         ModuleType
-	Version      string
-	Summary      string
-	Description  string
-	Tags         []string
-	RuntimeKind  string
-	Author       string
-	Enabled      bool
-	ChainConfig  []Requirement
-	TargetConfig []Requirement
+	Kind         string
+	ConfigSchema map[string]any
+	Requires     []CapabilityRequirement
+	Produces     []CapabilityRequirement
+	Prepare      StepPrepareContract
+	Cleanup      *StepCleanupContract
+}
+
+type CapabilityRequirement struct {
+	Type          CapabilityType
+	SchemaVersion string
+	Attributes    map[string]any
+	States        []string
+}
+
+type Capability struct {
+	ID             string
+	Type           CapabilityType
+	SchemaVersion  string
+	State          string
+	ProducerStepID string
+	Attributes     map[string]any
+	Extensions     map[string]any
+}
+
+type CapabilityRef struct {
+	CapabilityID string
+	Type         CapabilityType
+}
+
+type StepInputResolution struct {
+	StepID   string
+	Ready    bool
+	Bindings []CapabilityBinding
+	Missing  []MissingCapability
+}
+
+type CapabilityBinding struct {
+	RequirementIndex int
+	CapabilityID     string
+}
+
+type MissingCapability struct {
+	RequirementIndex int
+	Type             CapabilityType
+	SchemaVersion    string
+	Attributes       map[string]any
+	States           []string
+}
+
+type StepAvailability struct {
+	ModuleID   string
+	Step       StepContract
+	Resolution StepInputResolution
+}
+
+type StepPrepareContract struct {
+	Materializes []string
+}
+
+type StepCleanupContract struct {
+	StepID string
+}
+
+type StepContractIssue struct {
+	ModuleID string
+	StepID   string
+	Message  string
 }
 
 // DangerTag marks a module that may perform destructive or otherwise dangerous
@@ -169,6 +260,29 @@ func (c Catalog) Find(id string) (Module, bool) {
 	return cloneModule(module), true
 }
 
+func (c Catalog) ResolveStepAvailability(capabilities []Capability) []StepAvailability {
+	var availability []StepAvailability
+	for _, module := range c.List() {
+		if !module.Enabled {
+			continue
+		}
+		for _, step := range module.StepContracts.Steps {
+			availability = append(availability, StepAvailability{
+				ModuleID:   module.ID,
+				Step:       cloneStepContract(step),
+				Resolution: ResolveStepInputs(step, capabilities),
+			})
+		}
+	}
+	sort.Slice(availability, func(i, j int) bool {
+		if availability[i].ModuleID != availability[j].ModuleID {
+			return availability[i].ModuleID < availability[j].ModuleID
+		}
+		return availability[i].Step.ID < availability[j].Step.ID
+	})
+	return availability
+}
+
 func NewModuleType(value string) (ModuleType, error) {
 	return domainmodule.NewType(value)
 }
@@ -222,6 +336,7 @@ func normalizeModule(module Module) Module {
 	module.Tags = append([]string(nil), module.Tags...)
 	module.ChainConfig = cloneRequirements(module.ChainConfig)
 	module.TargetConfig = cloneRequirements(module.TargetConfig)
+	module.StepContracts = cloneStepContractSet(module.StepContracts)
 	return module
 }
 
@@ -395,6 +510,115 @@ func DisplayValue(requirement Requirement, raw string) string {
 	return raw
 }
 
+func ValidateStepContracts(module Module) []StepContractIssue {
+	var issues []StepContractIssue
+	for _, step := range module.StepContracts.Steps {
+		stepID := strings.TrimSpace(step.ID)
+		if stepID == "" {
+			issues = append(issues, StepContractIssue{
+				ModuleID: module.ID,
+				Message:  "step id is required",
+			})
+		}
+		if strings.TrimSpace(step.Kind) == "" {
+			issues = append(issues, StepContractIssue{
+				ModuleID: module.ID,
+				StepID:   stepID,
+				Message:  "step kind is required",
+			})
+		}
+		issues = append(issues, validateCapabilityRequirements(module.ID, stepID, "requirement", step.Requires)...)
+		issues = append(issues, validateCapabilityRequirements(module.ID, stepID, "produced capability", step.Produces)...)
+	}
+	return issues
+}
+
+func validateCapabilityRequirements(moduleID, stepID, label string, requirements []CapabilityRequirement) []StepContractIssue {
+	var issues []StepContractIssue
+	for index, requirement := range requirements {
+		position := index + 1
+		if strings.TrimSpace(string(requirement.Type)) == "" {
+			issues = append(issues, StepContractIssue{
+				ModuleID: moduleID,
+				StepID:   stepID,
+				Message:  fmt.Sprintf("%s %d type is required", label, position),
+			})
+		}
+		if strings.TrimSpace(requirement.SchemaVersion) == "" {
+			issues = append(issues, StepContractIssue{
+				ModuleID: moduleID,
+				StepID:   stepID,
+				Message:  fmt.Sprintf("%s %d schemaVersion is required", label, position),
+			})
+		}
+	}
+	return issues
+}
+
+func CapabilitySatisfiesRequirement(capability Capability, requirement CapabilityRequirement) bool {
+	if requirement.Type != "" && capability.Type != requirement.Type {
+		return false
+	}
+	if requirement.SchemaVersion != "" && capability.SchemaVersion != requirement.SchemaVersion {
+		return false
+	}
+	if len(requirement.States) > 0 && !containsString(requirement.States, capability.State) {
+		return false
+	}
+	for key, want := range requirement.Attributes {
+		got, ok := capability.Attributes[key]
+		if !ok || !reflect.DeepEqual(got, want) {
+			return false
+		}
+	}
+	return true
+}
+
+func FindSatisfyingCapability(requirement CapabilityRequirement, capabilities []Capability) (Capability, bool) {
+	for _, capability := range capabilities {
+		if CapabilitySatisfiesRequirement(capability, requirement) {
+			return capability, true
+		}
+	}
+	return Capability{}, false
+}
+
+func ResolveStepInputs(step StepContract, capabilities []Capability) StepInputResolution {
+	resolution := StepInputResolution{
+		StepID:   step.ID,
+		Ready:    true,
+		Bindings: make([]CapabilityBinding, 0, len(step.Requires)),
+	}
+	for index, requirement := range step.Requires {
+		capability, ok := FindSatisfyingCapability(requirement, capabilities)
+		if ok {
+			resolution.Bindings = append(resolution.Bindings, CapabilityBinding{
+				RequirementIndex: index,
+				CapabilityID:     capability.ID,
+			})
+			continue
+		}
+		resolution.Ready = false
+		resolution.Missing = append(resolution.Missing, MissingCapability{
+			RequirementIndex: index,
+			Type:             requirement.Type,
+			SchemaVersion:    requirement.SchemaVersion,
+			Attributes:       cloneAnyMap(requirement.Attributes),
+			States:           append([]string(nil), requirement.States...),
+		})
+	}
+	return resolution
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func validateHost(raw string) error {
 	if net.ParseIP(raw) != nil {
 		return nil
@@ -420,6 +644,7 @@ func cloneModule(module Module) Module {
 	module.Tags = append([]string(nil), module.Tags...)
 	module.ChainConfig = cloneRequirements(module.ChainConfig)
 	module.TargetConfig = cloneRequirements(module.TargetConfig)
+	module.StepContracts = cloneStepContractSet(module.StepContracts)
 	return module
 }
 
@@ -428,6 +653,52 @@ func cloneRequirements(requirements []Requirement) []Requirement {
 	for _, requirement := range requirements {
 		requirement.Allowed = append([]string(nil), requirement.Allowed...)
 		out = append(out, requirement)
+	}
+	return out
+}
+
+func cloneStepContractSet(set StepContractSet) StepContractSet {
+	set.Steps = cloneStepContracts(set.Steps)
+	return set
+}
+
+func cloneStepContracts(steps []StepContract) []StepContract {
+	out := make([]StepContract, 0, len(steps))
+	for _, step := range steps {
+		out = append(out, cloneStepContract(step))
+	}
+	return out
+}
+
+func cloneStepContract(step StepContract) StepContract {
+	step.ConfigSchema = cloneAnyMap(step.ConfigSchema)
+	step.Requires = cloneCapabilityRequirements(step.Requires)
+	step.Produces = cloneCapabilityRequirements(step.Produces)
+	step.Prepare.Materializes = append([]string(nil), step.Prepare.Materializes...)
+	if step.Cleanup != nil {
+		cleanup := *step.Cleanup
+		step.Cleanup = &cleanup
+	}
+	return step
+}
+
+func cloneCapabilityRequirements(requirements []CapabilityRequirement) []CapabilityRequirement {
+	out := make([]CapabilityRequirement, 0, len(requirements))
+	for _, requirement := range requirements {
+		requirement.Attributes = cloneAnyMap(requirement.Attributes)
+		requirement.States = append([]string(nil), requirement.States...)
+		out = append(out, requirement)
+	}
+	return out
+}
+
+func cloneAnyMap(values map[string]any) map[string]any {
+	if values == nil {
+		return nil
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
 	}
 	return out
 }

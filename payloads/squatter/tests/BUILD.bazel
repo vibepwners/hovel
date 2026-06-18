@@ -1,0 +1,100 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+# gazelle:ignore
+
+# Tests are Windows .exe (MinGW gcc appends .exe to the link output, so Bazel
+# must expect it) and run under wine via //tools:wine_run (see //.bazelrc).
+
+_WINDOWS_TEST_LINKOPTS = [
+    "-lws2_32",
+    "-lshlwapi",
+]
+
+cc_test(
+    name = "gtest_smoke.exe",
+    linkopts = _WINDOWS_TEST_LINKOPTS,
+    srcs = ["gtest_smoke.cc"],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "frame_test.exe",
+    linkopts = _WINDOWS_TEST_LINKOPTS,
+    srcs = ["frame_test.cc"],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        "//payloads/squatter/windows/src:frame",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "framing_test.exe",
+    linkopts = _WINDOWS_TEST_LINKOPTS,
+    srcs = ["framing_test.cc"],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        "//payloads/squatter/windows/src:framing",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "cmd_integration_test.exe",
+    linkopts = _WINDOWS_TEST_LINKOPTS,
+    srcs = [
+        "cmd_integration_test.cc",
+        "mux_peer.h",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        "//payloads/squatter/windows/src:control_codec",
+        "//payloads/squatter/windows/src:framing",
+        "//payloads/squatter/windows/src:modules",
+        "//payloads/squatter/windows/src:runtime",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "echo_integration_test.exe",
+    linkopts = _WINDOWS_TEST_LINKOPTS,
+    srcs = [
+        "echo_integration_test.cc",
+        "mux_peer.h",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        "//payloads/squatter/windows/src:control_codec",
+        "//payloads/squatter/windows/src:framing",
+        "//payloads/squatter/windows/src:modules",
+        "//payloads/squatter/windows/src:runtime",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "file_xfer_test.exe",
+    linkopts = _WINDOWS_TEST_LINKOPTS,
+    srcs = [
+        "file_xfer_test.cc",
+        "mux_peer.h",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        "//payloads/squatter/windows/src:control_codec",
+        "//payloads/squatter/windows/src:framing",
+        "//payloads/squatter/windows/src:modules",
+        "//payloads/squatter/windows/src:runtime",
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
+    ],
+)

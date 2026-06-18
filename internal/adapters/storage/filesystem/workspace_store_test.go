@@ -210,6 +210,62 @@ func TestMaterializeArtifactKeepsSameBytesDistinctAcrossThrows(t *testing.T) {
 	}
 }
 
+func TestWorkspaceStoreDelegatesInstalledPayloadInventoryToSQLite(t *testing.T) {
+	store := NewWorkspaceStore()
+	workspacePath := filepath.Join(t.TempDir(), ".hovel")
+	record := commands.InstalledPayloadRecord{
+		Workspace:                workspacePath,
+		Provider:                 "squatter",
+		PayloadID:                "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		PayloadVersion:           "v0.1.0",
+		Target:                   "192.168.122.142",
+		TargetID:                 "t1",
+		State:                    commands.PayloadStateInstalled,
+		Transport:                "tcp-bind",
+		Endpoint:                 "192.168.122.142:9101",
+		InstanceKey:              "squatter:192.168.122.142:9101",
+		SupportsReconnect:        true,
+		SupportsMultipleSessions: true,
+		Reconnect: &commands.PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.tcp_bind.reconnect",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"host": "192.168.122.142", "port": float64(9101)},
+		},
+		CreatedAt: "2026-05-03T12:00:00Z",
+		UpdatedAt: "2026-05-03T12:00:00Z",
+	}
+
+	recorded, err := store.RecordInstalledPayload(context.Background(), record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorded.Handle != "p1" {
+		t.Fatalf("handle = %q, want p1", recorded.Handle)
+	}
+	loaded, err := store.GetInstalledPayload(context.Background(), workspacePath, recorded.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, recorded) {
+		t.Fatalf("loaded record = %#v, want %#v", loaded, recorded)
+	}
+	updated, err := store.UpdateInstalledPayloadState(context.Background(), workspacePath, recorded.Handle, commands.PayloadStateUnreachable, "connect failed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.State != commands.PayloadStateUnreachable {
+		t.Fatalf("updated state = %q", updated.State)
+	}
+	list, err := store.ListInstalledPayloads(context.Background(), workspacePath, commands.InstalledPayloadFilter{State: commands.PayloadStateUnreachable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Handle != recorded.Handle {
+		t.Fatalf("filtered payloads = %#v", list)
+	}
+}
+
 func TestMaterializeArtifactCopiesFileArtifactIntoWorkspace(t *testing.T) {
 	store := NewWorkspaceStore()
 	workspacePath := filepath.Join(t.TempDir(), ".hovel")

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -30,16 +31,28 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 			t.Fatalf("root suggestions = %#v, should hide %s outside chain context", root, hidden)
 		}
 	}
+	if !containsSuggestion(root, "payloads") {
+		t.Fatalf("root suggestions = %#v, want payloads before operation context", root)
+	}
 
 	controlChildren := app.Suggestions("control ")
 	if len(controlChildren) != 2 || controlChildren[0].Text != "daemon" || controlChildren[1].Text != "init" {
 		t.Fatalf("control suggestions = %#v, want daemon and init", controlChildren)
+	}
+	payloadChildren := app.Suggestions("payloads ")
+	for _, want := range []string{"available", "installed", "inspect", "connect", "cleanup", "mark-removed", "refresh"} {
+		if !containsSuggestion(payloadChildren, want) {
+			t.Fatalf("payload suggestions = %#v, missing %s", payloadChildren, want)
+		}
 	}
 
 	enterTestOperation(t, app)
 	root = app.Suggestions("ch")
 	if len(root) != 1 || root[0].Text != "chain" {
 		t.Fatalf("root suggestions = %#v, want chain after operation", root)
+	}
+	if root = app.Suggestions("pay"); !containsSuggestion(root, "payloads") {
+		t.Fatalf("root suggestions = %#v, want payloads after operation", root)
 	}
 
 	chainChildren := app.Suggestions("chain ")
@@ -132,6 +145,47 @@ func TestExecuteLineEnforcesOperationThenChainFlow(t *testing.T) {
 	}
 }
 
+func TestParseSessionConnectTracksExplicitHistoryLimit(t *testing.T) {
+	sessionID, options, err := parseSessionConnect("session connect --history-bytes 4096 session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "session-1" {
+		t.Fatalf("sessionID = %q, want session-1", sessionID)
+	}
+	if !options.HistoryLimitChosen || options.HistoryBytes != 4096 || options.HistoryLines != 0 {
+		t.Fatalf("options = %#v, want explicit 4096-byte history limit", options)
+	}
+}
+
+func TestWriteSessionInputPreservesRawPTYBytes(t *testing.T) {
+	writer := &fakeSessionInputWriter{}
+	events := make(chan sessionConnectEvent, 1)
+
+	writeSessionInput(context.Background(), writer, "session-1", strings.NewReader("dir\r\n"+string([]byte{sessionDetachByte})), events, sessionInputOptions{Raw: true})
+
+	if got, want := writer.String(), "dir\r\n"; got != want {
+		t.Fatalf("written bytes = %q, want %q", got, want)
+	}
+	if event := <-events; event.err != nil || event.closed {
+		t.Fatalf("event = %#v, want clean detach", event)
+	}
+}
+
+func TestWriteSessionInputNormalizesCookedNewlines(t *testing.T) {
+	writer := &fakeSessionInputWriter{}
+	events := make(chan sessionConnectEvent, 1)
+
+	writeSessionInput(context.Background(), writer, "session-1", strings.NewReader("dir\r\n"+string([]byte{sessionDetachByte})), events, sessionInputOptions{})
+
+	if got, want := writer.String(), "dir\n"; got != want {
+		t.Fatalf("written bytes = %q, want %q", got, want)
+	}
+	if event := <-events; event.err != nil || event.closed {
+		t.Fatalf("event = %#v, want clean detach", event)
+	}
+}
+
 func TestOptionSuggestionsComeFromCommandRegistry(t *testing.T) {
 	app := newTestApp()
 	enterTestOperation(t, app)
@@ -144,10 +198,51 @@ func TestOptionSuggestionsComeFromCommandRegistry(t *testing.T) {
 	for _, suggestion := range suggestions {
 		names = append(names, suggestion.Text)
 	}
-	for _, want := range []string{"--workspace", "--chain", "--target", "--json"} {
+	for _, want := range []string{"--workspace", "--chain", "--target", "--target-set", "--json"} {
 		if !contains(names, want) {
 			t.Fatalf("suggestions = %#v, missing %s", names, want)
 		}
+	}
+}
+
+type fakeSessionInputWriter struct {
+	data bytes.Buffer
+}
+
+func (w *fakeSessionInputWriter) WriteSession(_ context.Context, _ string, data []byte) error {
+	_, err := w.data.Write(data)
+	return err
+}
+
+func (w *fakeSessionInputWriter) String() string {
+	return w.data.String()
+}
+
+func TestTargetCommandsWorkInOperationContextWithoutActiveChain(t *testing.T) {
+	app := newTestApp()
+	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(context.Background(), "op use engagement", &stdout, &stderr); code != 0 {
+		t.Fatalf("op use exit code = %d, stderr = %s", code, stderr.String())
+	}
+	for _, line := range []string{
+		"target add mock://router-01",
+		"target config set mock://router-01 target.host router-01",
+		"target set create lab",
+		"target set add lab mock://router-01",
+	} {
+		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q exit code = %d, stderr = %s", line, code, stderr.String())
+		}
+	}
+	state := app.session.Snapshot()
+	if got, want := state.Targets, []string{"mock://router-01"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("targets = %#v, want %#v", got, want)
+	}
+	if len(state.TargetSets) != 1 || state.TargetSets[0].Name != "lab" {
+		t.Fatalf("target sets = %#v", state.TargetSets)
+	}
+	if code := app.ExecuteLine(context.Background(), "chain add mock-exploit", &stdout, &stderr); code == 0 || !strings.Contains(stderr.String(), "select a chain first") {
+		t.Fatalf("chain add exit code = %d, stderr = %s", code, stderr.String())
 	}
 }
 
@@ -352,7 +447,7 @@ func TestInteractiveConfigWizardEditsCurrentThenFillsRemainingConfig(t *testing.
 		}
 	}
 	for _, want := range []string{
-		"Current configuration for chain lab",
+		"Available configuration for chain lab",
 		"1) chain operator.confirmed_lab=false",
 		"Remaining configuration for chain lab",
 		"Chain lab configuration complete",
@@ -394,7 +489,10 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	for _, want := range []string{
-		"No current config values.",
+		"Available configuration for chain lab",
+		"chain operator.confirmed_lab=required",
+		"target mock://router-01 target.host=required",
+		"target mock://router-01 target.port=required",
 		"select config to edit or c to continue",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -447,6 +545,7 @@ func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndRedactsSe
 		},
 		TargetConfig: []modulecatalog.Requirement{
 			{Key: "target.port", Type: modulecatalog.ValuePort, Required: true},
+			{Key: "payload.bind_port", Type: modulecatalog.ValuePort, Required: false, Default: "9101"},
 		},
 	})
 	app := App{
@@ -463,6 +562,9 @@ func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndRedactsSe
 	}
 	if strings.Contains(stdout.String(), "hunter2") || !strings.Contains(stdout.String(), "chain api.token=********") {
 		t.Fatalf("current config should redact secret:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "target mock://router-01 payload.bind_port=default 9101") {
+		t.Fatalf("available config should show optional default:\n%s", stdout.String())
 	}
 	if suggestions := app.Suggestions(""); containsSuggestion(suggestions, "hunter2") || containsSuggestionDescription(suggestions, "hunter2") {
 		t.Fatalf("secret current value leaked into suggestions: %#v", suggestions)
@@ -501,6 +603,63 @@ func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndRedactsSe
 	}
 	if state.TargetConfigs["mock://router-01"]["target.port"] != "22" {
 		t.Fatalf("target config = %#v", state.TargetConfigs)
+	}
+}
+
+func TestInteractiveConfigWizardUsesEffectiveValidationForSquatterBind(t *testing.T) {
+	session := operatorsession.New()
+	modules := modulecatalog.New(
+		modulecatalog.Module{
+			ID:      "etro-exploit@v1.0.0",
+			Name:    "etro-exploit",
+			Type:    modulecatalog.TypeExploit,
+			Enabled: true,
+			ChainConfig: []modulecatalog.Requirement{
+				{Key: "operator.confirmed_lab", Type: modulecatalog.ValueBool, Required: true},
+			},
+			TargetConfig: []modulecatalog.Requirement{
+				{Key: "target.host", Type: modulecatalog.ValueHost, Required: true},
+				{Key: "target.port", Type: modulecatalog.ValuePort, Required: true},
+			},
+		},
+		modulecatalog.Module{
+			ID:      "squatter@v0.1.0",
+			Name:    "squatter",
+			Type:    modulecatalog.TypePayloadProvider,
+			Enabled: true,
+			ChainConfig: []modulecatalog.Requirement{
+				{Key: "payload.transport", Type: modulecatalog.ValueEnum, Required: true, Allowed: []string{"tcp-bind", "smb-named-pipe"}},
+				{Key: "payload.bind_port", Type: modulecatalog.ValuePort, Required: true},
+				{Key: "payload.pipe", Type: modulecatalog.ValueString, Required: true},
+				{Key: "smb.username", Type: modulecatalog.ValueString, Required: true},
+			},
+		},
+	)
+	app := newAppWithSessionAndModules(session, modules)
+	var stdout, stderr bytes.Buffer
+	for _, line := range []string{
+		"op use test-op",
+		"chain use lab",
+		"chain add etro-exploit@v1.0.0",
+		"chain add squatter@v0.1.0",
+		"target add t1",
+		"chain config interactive",
+		"c",
+		"true",
+		"192.168.122.142",
+		"445",
+	} {
+		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q exit code = %d, stderr = %s, stdout = %s", line, code, stderr.String(), stdout.String())
+		}
+	}
+	if !strings.Contains(stdout.String(), "Chain lab configuration complete") {
+		t.Fatalf("interactive output missing completion:\n%s", stdout.String())
+	}
+	for _, unexpected := range []string{"payload.transport", "payload.pipe", "smb.username"} {
+		if strings.Contains(stdout.String(), "missing chain config "+unexpected) {
+			t.Fatalf("interactive output surfaced raw Squatter provider requirement %s:\n%s", unexpected, stdout.String())
+		}
 	}
 }
 

@@ -137,6 +137,52 @@ CREATE INDEX events_topic_idx ON events(topic);
 CREATE INDEX events_timestamp_idx ON events(timestamp);
 `,
 	},
+	{
+		Version: 5,
+		Name:    "installed_payload_inventory",
+		SQL: `
+CREATE TABLE installed_payloads (
+	id TEXT PRIMARY KEY,
+	workspace TEXT NOT NULL,
+	handle TEXT NOT NULL,
+	provider TEXT NOT NULL,
+	payload_id TEXT NOT NULL,
+	target TEXT NOT NULL,
+	state TEXT NOT NULL,
+	instance_key TEXT NOT NULL,
+	stamp_id TEXT NOT NULL,
+	transport TEXT NOT NULL,
+	endpoint TEXT NOT NULL,
+	record_json TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	last_seen_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX installed_payloads_workspace_handle_idx ON installed_payloads(workspace, handle);
+CREATE INDEX installed_payloads_workspace_state_idx ON installed_payloads(workspace, state);
+CREATE INDEX installed_payloads_provider_payload_idx ON installed_payloads(provider, payload_id);
+CREATE INDEX installed_payloads_instance_idx ON installed_payloads(workspace, provider, payload_id, target, instance_key);
+CREATE INDEX installed_payloads_stamp_idx ON installed_payloads(workspace, provider, payload_id, target, stamp_id);
+
+CREATE TABLE installed_payload_events (
+	id TEXT PRIMARY KEY,
+	payload_id TEXT NOT NULL,
+	handle TEXT NOT NULL,
+	workspace TEXT NOT NULL,
+	type TEXT NOT NULL,
+	from_state TEXT NOT NULL,
+	to_state TEXT NOT NULL,
+	reason TEXT NOT NULL,
+	message TEXT NOT NULL,
+	event_json TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE INDEX installed_payload_events_payload_idx ON installed_payload_events(workspace, payload_id, created_at);
+CREATE INDEX installed_payload_events_handle_idx ON installed_payload_events(workspace, handle, created_at);
+`,
+	},
 }
 
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {

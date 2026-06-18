@@ -427,15 +427,15 @@ func TestSessionClientsKeepIndependentOperationChainAttachments(t *testing.T) {
 	if alphaState.ActiveOperation != "redteam-lab" || alphaState.ActiveChain != "alpha" {
 		t.Fatalf("alpha attachment = %s/%s, want redteam-lab/alpha", alphaState.ActiveOperation, alphaState.ActiveChain)
 	}
-	if len(alphaState.Targets) != 1 || alphaState.Targets[0] != "mock://alpha" {
-		t.Fatalf("alpha targets = %#v", alphaState.Targets)
+	if got, want := alphaState.Targets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("alpha targets = %#v, want %#v", got, want)
 	}
 	betaState := beta.Snapshot()
 	if betaState.ActiveOperation != "redteam-lab" || betaState.ActiveChain != "beta" {
 		t.Fatalf("beta attachment = %s/%s, want redteam-lab/beta", betaState.ActiveOperation, betaState.ActiveChain)
 	}
-	if len(betaState.Targets) != 1 || betaState.Targets[0] != "mock://beta" {
-		t.Fatalf("beta targets = %#v", betaState.Targets)
+	if got, want := betaState.Targets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("beta targets = %#v, want %#v", got, want)
 	}
 
 	alphaLogs, err := clientA.PollOperationChainLogs(context.Background(), "redteam-lab", "alpha", 0)
@@ -482,6 +482,12 @@ func TestSessionMutationsPersistSnapshots(t *testing.T) {
 	if err := session.AddTarget("mock://alpha"); err != nil {
 		t.Fatal(err)
 	}
+	if err := session.CreateTargetSet("lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTargetToSet("lab", "mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := session.AddModule("mock-survey"); err != nil {
 		t.Fatal(err)
 	}
@@ -490,11 +496,13 @@ func TestSessionMutationsPersistSnapshots(t *testing.T) {
 		t.Fatal("no persisted snapshots")
 	}
 	last := persisted[len(persisted)-1]
+	var gotOperation operatorsession.PersistedOperation
 	var got operatorsession.PersistedChain
 	for _, operation := range last.Operations {
 		if operation.Name != "redteam-lab" {
 			continue
 		}
+		gotOperation = operation
 		for _, chain := range operation.Chains {
 			if chain.Name == "alpha" {
 				got = chain
@@ -504,8 +512,14 @@ func TestSessionMutationsPersistSnapshots(t *testing.T) {
 	if got.Name != "alpha" {
 		t.Fatalf("persisted operations = %#v, want redteam-lab/alpha", last.Operations)
 	}
-	if !reflect.DeepEqual(got.Targets, []string{"mock://alpha"}) {
-		t.Fatalf("persisted targets = %#v", got.Targets)
+	if !reflect.DeepEqual(gotOperation.Targets, []string{"mock://alpha"}) {
+		t.Fatalf("persisted operation targets = %#v", gotOperation.Targets)
+	}
+	if !reflect.DeepEqual(gotOperation.TargetSets, []operatorsession.TargetSet{{Name: "lab", Targets: []string{"mock://alpha"}}}) {
+		t.Fatalf("persisted operation target sets = %#v", gotOperation.TargetSets)
+	}
+	if len(got.Targets) != 0 {
+		t.Fatalf("persisted chain targets = %#v, want none", got.Targets)
 	}
 	if !reflect.DeepEqual(got.Steps, []operatorsession.Step{{ID: "step-1", ModuleID: "mock-survey"}}) {
 		t.Fatalf("persisted steps = %#v", got.Steps)
@@ -567,6 +581,9 @@ func TestSessionRPCPropagatesRequestContext(t *testing.T) {
 	if _, err := server.readSessionRPC(ctx, SessionReadRequest{SessionID: "s1"}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("read session error = %v, want context canceled", err)
 	}
+	if _, err := server.tailSessionRPC(ctx, SessionTailRequest{SessionID: "s1", MaxLines: 20}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("tail session error = %v, want context canceled", err)
+	}
 	if _, err := server.writeSessionRPC(ctx, SessionWriteRequest{SessionID: "s1", Data: []byte("x")}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("write session error = %v, want context canceled", err)
 	}
@@ -590,6 +607,10 @@ func (contextCheckingSessionBroker) WriteSession(ctx context.Context, _ string, 
 }
 
 func (contextCheckingSessionBroker) ReadSession(ctx context.Context, _ string, _ time.Duration) (run.SessionChunk, error) {
+	return run.SessionChunk{}, contextOrMissing(ctx)
+}
+
+func (contextCheckingSessionBroker) TailSession(ctx context.Context, _ string, _ run.SessionTailOptions) (run.SessionChunk, error) {
 	return run.SessionChunk{}, contextOrMissing(ctx)
 }
 

@@ -24,7 +24,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
-const defaultTimeout = 5 * time.Second
+const defaultTimeout = 60 * time.Second
 
 const ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
 
@@ -48,14 +48,20 @@ func (e ModuleEntry) usesCommand() bool {
 }
 
 type Runner struct {
-	PythonPath string
-	SDKRoot    string
-	ConfigPath string
-	Events     services.EventSink
-	IDs        services.IDGenerator
-	Clock      services.Clock
-	Timeout    time.Duration
-	Sessions   *SessionBroker
+	PythonPath    string
+	SDKRoot       string
+	ConfigPath    string
+	Events        services.EventSink
+	IDs           services.IDGenerator
+	Clock         services.Clock
+	Timeout       time.Duration
+	Sessions      *SessionBroker
+	StepProcesses *StepProcessBroker
+}
+
+type StepCallRequest struct {
+	ModuleID string
+	Params   map[string]any
 }
 
 func ConfiguredCatalog(ctx context.Context) (modulecatalog.Catalog, error) {
@@ -118,15 +124,111 @@ func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Mod
 	if err != nil {
 		return modulecatalog.Module{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderr.String())
 	}
+	stepContracts, err := process.client.call(ctx, "step.describe", nil)
+	if err != nil {
+		if isMissingStepProvider(err) {
+			stepContracts = map[string]any{"steps": []any{}}
+		} else {
+			return modulecatalog.Module{}, moduleFailure("module failed while reporting step contracts", "module step describe failed", err, process.stderr.String())
+		}
+	}
 	_, _ = process.client.call(context.Background(), "shutdown", nil)
 	if err := process.wait(); err != nil {
 		return modulecatalog.Module{}, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
 	}
-	module, err := moduleFromRPC(moduleID, info, schema)
+	module, err := moduleFromRPC(moduleID, info, schema, stepContracts)
 	if err != nil {
 		return modulecatalog.Module{}, err
 	}
+	if issues := modulecatalog.ValidateStepContracts(module); len(issues) > 0 {
+		return modulecatalog.Module{}, fmt.Errorf("step contract invalid: %s", formatStepContractIssue(issues[0]))
+	}
 	return module, nil
+}
+
+func isMissingStepProvider(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "unknown method step.describe") ||
+		strings.Contains(message, `unknown method "step.describe"`) ||
+		strings.Contains(message, "not a step provider")
+}
+
+func (r Runner) PrepareStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
+	return r.callStep(ctx, request, "step.prepare", "module failed while preparing step", "module step prepare failed")
+}
+
+func (r Runner) ExecuteStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
+	return r.callStep(ctx, request, "step.execute", "module failed while executing step", "module step execute failed")
+}
+
+func (r Runner) CleanupStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
+	return r.callStep(ctx, request, "step.cleanup", "module failed while cleaning up step", "module step cleanup failed")
+}
+
+func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, summary, prefix string) (map[string]any, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var process *moduleProcess
+	var err error
+	owned := true
+	runID := stepCallRunID(request.Params)
+	if r.StepProcesses != nil && runID != "" {
+		process, err = r.StepProcesses.process(ctx, r, runID, request.ModuleID)
+		owned = false
+	} else {
+		process, err = r.start(ctx, request.ModuleID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if owned {
+		defer process.killAndWait()
+	}
+
+	result, err := process.client.call(ctx, method, request.Params)
+	if err != nil {
+		return nil, moduleFailure(summary, prefix, err, process.stderr.String())
+	}
+	if method == "step.execute" {
+		if sessions := sessionsFromStepRPC(request, result["sessions"]); len(sessions) > 0 && r.Sessions != nil {
+			r.Sessions.adopt(process, sessions)
+			if r.StepProcesses != nil {
+				r.StepProcesses.release(process)
+			}
+		}
+	}
+	if owned {
+		_, _ = process.client.call(context.Background(), "shutdown", nil)
+		if err := process.wait(); err != nil {
+			return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
+		}
+	}
+	return result, nil
+}
+
+func stepCallRunID(params map[string]any) string {
+	if params == nil {
+		return ""
+	}
+	if text := stringValue(params["runId"]); text != "" {
+		return text
+	}
+	return stringValue(params["preparedPlanId"])
+}
+
+func formatStepContractIssue(issue modulecatalog.StepContractIssue) string {
+	if issue.StepID == "" {
+		return issue.Message
+	}
+	return issue.StepID + ": " + issue.Message
 }
 
 func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error) {
@@ -281,6 +383,85 @@ func (p *moduleProcess) killAndWait() {
 		_ = p.cmd.Process.Kill()
 	}
 	_ = p.wait()
+}
+
+type StepProcessBroker struct {
+	mu        sync.Mutex
+	processes map[stepProcessKey]*moduleProcess
+}
+
+type stepProcessKey struct {
+	runID    string
+	moduleID string
+}
+
+func NewStepProcessBroker() *StepProcessBroker {
+	return &StepProcessBroker{processes: map[stepProcessKey]*moduleProcess{}}
+}
+
+func (b *StepProcessBroker) process(ctx context.Context, runner Runner, runID, moduleID string) (*moduleProcess, error) {
+	if b == nil || runID == "" {
+		return runner.start(ctx, moduleID)
+	}
+	key := stepProcessKey{runID: runID, moduleID: moduleID}
+	b.mu.Lock()
+	if process, ok := b.processes[key]; ok {
+		b.mu.Unlock()
+		return process, nil
+	}
+	b.mu.Unlock()
+
+	process, err := runner.start(context.Background(), moduleID)
+	if err != nil {
+		return nil, err
+	}
+
+	b.mu.Lock()
+	if existing, ok := b.processes[key]; ok {
+		b.mu.Unlock()
+		process.killAndWait()
+		return existing, nil
+	}
+	b.processes[key] = process
+	b.mu.Unlock()
+	return process, nil
+}
+
+func (b *StepProcessBroker) release(process *moduleProcess) {
+	if b == nil || process == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for key, tracked := range b.processes {
+		if tracked == process {
+			delete(b.processes, key)
+		}
+	}
+}
+
+func (b *StepProcessBroker) FinishRun(ctx context.Context, runID string) error {
+	if b == nil || runID == "" {
+		return nil
+	}
+	var processes []*moduleProcess
+	b.mu.Lock()
+	for key, process := range b.processes {
+		if key.runID == runID {
+			processes = append(processes, process)
+			delete(b.processes, key)
+		}
+	}
+	b.mu.Unlock()
+
+	var firstErr error
+	for _, process := range processes {
+		_, _ = process.client.call(ctx, "shutdown", nil)
+		if err := process.wait(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (r Runner) pythonPath() (string, error) {
@@ -725,15 +906,16 @@ type rpcSessionEvent struct {
 }
 
 type rpcSessionRef struct {
-	ID           string `json:"id"`
-	RunID        string `json:"runId"`
-	ModuleID     string `json:"moduleId"`
-	Target       string `json:"target"`
-	Name         string `json:"name"`
-	Kind         string `json:"kind"`
-	State        string `json:"state"`
-	Transport    string `json:"transport"`
-	Capabilities []any  `json:"capabilities"`
+	ID                 string `json:"id"`
+	RunID              string `json:"runId"`
+	ModuleID           string `json:"moduleId"`
+	Target             string `json:"target"`
+	Name               string `json:"name"`
+	Kind               string `json:"kind"`
+	State              string `json:"state"`
+	Transport          string `json:"transport"`
+	InstalledPayloadID string `json:"installedPayloadId"`
+	Capabilities       []any  `json:"capabilities"`
 }
 
 type frameDecoder struct {
@@ -819,11 +1001,12 @@ func writeFrame(writer io.Writer, message map[string]any) error {
 
 func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (run.Result, error) {
 	args := run.ResultArgs{
-		Summary:   stringValue(values["summary"]),
-		Findings:  findingsFromRPC(values["findings"]),
-		Artifacts: artifactsFromRPC(values["artifacts"]),
-		Logs:      logsFromRPC(request, logs),
-		Sessions:  sessionsFromRPC(request, values["sessions"]),
+		Summary:           stringValue(values["summary"]),
+		Findings:          findingsFromRPC(values["findings"]),
+		Artifacts:         artifactsFromRPC(values["artifacts"]),
+		Logs:              logsFromRPC(request, logs),
+		Sessions:          sessionsFromRPC(request, values["sessions"]),
+		InstalledPayloads: installedPayloadsFromRPC(values["installedPayloads"]),
 	}
 	if stringValue(values["status"]) == string(run.StateFailed) {
 		return run.Failed(request, args)
@@ -857,7 +1040,7 @@ func logsFromRPC(request run.Request, logs []rpcLog) []run.LogEntry {
 	return out
 }
 
-func moduleFromRPC(moduleID string, info, schema map[string]any) (modulecatalog.Module, error) {
+func moduleFromRPC(moduleID string, info, schema map[string]any, stepContractValues ...map[string]any) (modulecatalog.Module, error) {
 	name := strings.TrimSpace(stringValue(info["name"]))
 	configName, configVersion, configHasVersion := modulecatalog.SplitID(moduleID)
 	if name == "" {
@@ -881,7 +1064,7 @@ func moduleFromRPC(moduleID string, info, schema map[string]any) (modulecatalog.
 	if display == "" {
 		display = displayName(name)
 	}
-	return modulecatalog.Module{
+	module := modulecatalog.Module{
 		ID:           modulecatalog.CanonicalID(name, version),
 		Name:         display,
 		Type:         moduleType,
@@ -894,7 +1077,89 @@ func moduleFromRPC(moduleID string, info, schema map[string]any) (modulecatalog.
 		Enabled:      true,
 		ChainConfig:  requirementsFromRPC(schema["chainConfig"]),
 		TargetConfig: requirementsFromRPC(schema["targetConfig"]),
-	}, nil
+	}
+	if len(stepContractValues) > 0 {
+		module.StepContracts = stepContractsFromRPC(stepContractValues[0])
+	}
+	return module, nil
+}
+
+func stepContractsFromRPC(value map[string]any) modulecatalog.StepContractSet {
+	set := modulecatalog.StepContractSet{
+		Version: strings.TrimSpace(stringValue(value["version"])),
+	}
+	items, ok := value["steps"].([]any)
+	if !ok {
+		return set
+	}
+	set.Steps = make([]modulecatalog.StepContract, 0, len(items))
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		set.Steps = append(set.Steps, modulecatalog.StepContract{
+			ID:           strings.TrimSpace(stringValue(object["id"])),
+			Kind:         strings.TrimSpace(stringValue(object["kind"])),
+			ConfigSchema: anyMap(object["configSchema"]),
+			Requires:     capabilityRequirementsFromRPC(object["requires"]),
+			Produces:     capabilityRequirementsFromRPC(object["produces"]),
+			Prepare: modulecatalog.StepPrepareContract{
+				Materializes: stringSliceFromAny(object["prepare"], "materializes"),
+			},
+			Cleanup: cleanupContractFromRPC(object["cleanup"]),
+		})
+	}
+	return set
+}
+
+func capabilityRequirementsFromRPC(value any) []modulecatalog.CapabilityRequirement {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	requirements := make([]modulecatalog.CapabilityRequirement, 0, len(items))
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		requirements = append(requirements, modulecatalog.CapabilityRequirement{
+			Type:          modulecatalog.CapabilityType(strings.TrimSpace(stringValue(object["type"]))),
+			SchemaVersion: strings.TrimSpace(stringValue(object["schemaVersion"])),
+			Attributes:    anyMap(object["attributes"]),
+			States:        stringSlice(object["states"]),
+		})
+	}
+	return requirements
+}
+
+func cleanupContractFromRPC(value any) *modulecatalog.StepCleanupContract {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return &modulecatalog.StepCleanupContract{StepID: strings.TrimSpace(stringValue(object["stepId"]))}
+}
+
+func stringSliceFromAny(value any, key string) []string {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return stringSlice(object[key])
+}
+
+func anyMap(value any) map[string]any {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]any, len(object))
+	for key, item := range object {
+		out[key] = item
+	}
+	return out
 }
 
 func requirementsFromRPC(value any) []modulecatalog.Requirement {
@@ -963,17 +1228,16 @@ func artifactsFromRPC(value any) []run.Artifact {
 }
 
 type SessionBroker struct {
-	mu       sync.Mutex
-	sessions map[string]*brokerSession
-}
-
-type brokerSession struct {
-	ref     run.SessionRef
-	process *moduleProcess
+	mu           sync.Mutex
+	sessions     map[string]*brokerSession
+	historyLimit int
 }
 
 func NewSessionBroker() *SessionBroker {
-	return &SessionBroker{sessions: map[string]*brokerSession{}}
+	return &SessionBroker{
+		sessions:     map[string]*brokerSession{},
+		historyLimit: defaultSessionHistoryBytes,
+	}
 }
 
 func (b *SessionBroker) ListSessions(context.Context) ([]run.SessionRef, error) {
@@ -1009,30 +1273,27 @@ func (b *SessionBroker) ReadSession(ctx context.Context, sessionID string, timeo
 	if err != nil {
 		return run.SessionChunk{}, err
 	}
-	timeoutMs := int(timeout / time.Millisecond)
-	if timeoutMs < 0 {
-		timeoutMs = -1
+	return session.read(ctx, sessionID, timeout)
+}
+
+func (b *SessionBroker) TailSession(ctx context.Context, sessionID string, options run.SessionTailOptions) (run.SessionChunk, error) {
+	if err := ctx.Err(); err != nil {
+		return run.SessionChunk{}, err
 	}
-	values, err := session.process.client.call(ctx, "session/read", map[string]any{
-		"sessionId": sessionID,
-		"timeoutMs": timeoutMs,
-	})
+	if options.MaxBytes < 0 {
+		return run.SessionChunk{}, errors.New("tail byte count cannot be negative")
+	}
+	if options.MaxLines < 0 {
+		return run.SessionChunk{}, errors.New("tail line count cannot be negative")
+	}
+	if options.MaxBytes > 0 && options.MaxLines > 0 {
+		return run.SessionChunk{}, errors.New("tail byte and line limits are mutually exclusive")
+	}
+	session, err := b.lookup(sessionID)
 	if err != nil {
 		return run.SessionChunk{}, err
 	}
-	data, err := base64.StdEncoding.DecodeString(stringValue(values["data"]))
-	if err != nil {
-		return run.SessionChunk{}, err
-	}
-	chunk := run.SessionChunk{
-		SessionID: defaultString(stringValue(values["sessionId"]), sessionID),
-		Data:      data,
-		Closed:    boolValue(values["closed"]),
-	}
-	if chunk.Closed {
-		b.markClosed(sessionID)
-	}
-	return chunk, nil
+	return session.tail(sessionID, options), nil
 }
 
 func (b *SessionBroker) CloseSession(ctx context.Context, sessionID string) error {
@@ -1056,15 +1317,21 @@ func (b *SessionBroker) CloseSession(ctx context.Context, sessionID string) erro
 
 func (b *SessionBroker) adopt(process *moduleProcess, sessions []run.SessionRef) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if b.sessions == nil {
 		b.sessions = map[string]*brokerSession{}
 	}
+	var adopted []*brokerSession
 	for _, session := range sessions {
 		if session.ID == "" {
 			continue
 		}
-		b.sessions[session.ID] = &brokerSession{ref: cloneSessionRef(session), process: process}
+		brokerSession := newBrokerSession(session, process, b.historyLimit)
+		b.sessions[session.ID] = brokerSession
+		adopted = append(adopted, brokerSession)
+	}
+	b.mu.Unlock()
+	for _, session := range adopted {
+		go b.pumpSession(session.ref.ID, session)
 	}
 }
 
@@ -1083,16 +1350,26 @@ func (b *SessionBroker) lookup(sessionID string) (*brokerSession, error) {
 
 func (b *SessionBroker) markClosed(sessionID string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if session, ok := b.sessions[sessionID]; ok {
+	session, ok := b.sessions[sessionID]
+	if ok {
 		session.ref.State = "closed"
+	}
+	b.mu.Unlock()
+	if ok {
+		session.closeLocal()
 	}
 }
 
 func (b *SessionBroker) remove(sessionID string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	delete(b.sessions, sessionID)
+	session, ok := b.sessions[sessionID]
+	if ok {
+		delete(b.sessions, sessionID)
+	}
+	b.mu.Unlock()
+	if ok {
+		session.closeLocal()
+	}
 }
 
 func (b *SessionBroker) hasProcess(process *moduleProcess) bool {
@@ -1104,6 +1381,32 @@ func (b *SessionBroker) hasProcess(process *moduleProcess) bool {
 		}
 	}
 	return false
+}
+
+func (b *SessionBroker) pumpSession(sessionID string, session *brokerSession) {
+	for {
+		if session.isClosed() {
+			return
+		}
+		values, err := session.process.client.call(context.Background(), "session/read", map[string]any{
+			"sessionId": sessionID,
+			"timeoutMs": 250,
+		})
+		if err != nil {
+			b.markClosed(sessionID)
+			return
+		}
+		data, err := base64.StdEncoding.DecodeString(stringValue(values["data"]))
+		if err != nil {
+			b.markClosed(sessionID)
+			return
+		}
+		session.appendData(data)
+		if boolValue(values["closed"]) {
+			b.markClosed(sessionID)
+			return
+		}
+	}
 }
 
 func cloneSessionRef(session run.SessionRef) run.SessionRef {
@@ -1123,21 +1426,83 @@ func sessionsFromRPC(request run.Request, value any) []run.SessionRef {
 			continue
 		}
 		session := run.SessionRef{
-			ID:           stringValue(object["id"]),
-			RunID:        defaultString(stringValue(object["runId"]), request.ID),
-			ModuleID:     defaultString(stringValue(object["moduleId"]), request.ModuleID),
-			Target:       defaultString(stringValue(object["target"]), request.Target),
-			Name:         stringValue(object["name"]),
-			Kind:         defaultString(stringValue(object["kind"]), "shell"),
-			State:        defaultString(stringValue(object["state"]), "active"),
-			Transport:    defaultString(stringValue(object["transport"]), "stdio"),
-			Capabilities: stringSlice(object["capabilities"]),
+			ID:                 stringValue(object["id"]),
+			RunID:              defaultString(stringValue(object["runId"]), request.ID),
+			ModuleID:           defaultString(stringValue(object["moduleId"]), request.ModuleID),
+			Target:             defaultString(stringValue(object["target"]), request.Target),
+			Name:               stringValue(object["name"]),
+			Kind:               defaultString(stringValue(object["kind"]), "shell"),
+			State:              defaultString(stringValue(object["state"]), "active"),
+			Transport:          defaultString(stringValue(object["transport"]), "stdio"),
+			InstalledPayloadID: stringValue(object["installedPayloadId"]),
+			Capabilities:       stringSlice(object["capabilities"]),
 		}
 		if session.ID != "" {
 			sessions = append(sessions, session)
 		}
 	}
 	return sessions
+}
+
+func installedPayloadsFromRPC(value any) []run.InstalledPayloadDescriptor {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	payloads := make([]run.InstalledPayloadDescriptor, 0, len(items))
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		payload := run.InstalledPayloadDescriptor{
+			Provider:                 stringValue(object["provider"]),
+			PayloadID:                stringValue(object["payloadId"]),
+			PayloadVersion:           stringValue(object["payloadVersion"]),
+			Target:                   stringValue(object["target"]),
+			TargetID:                 stringValue(object["targetId"]),
+			State:                    stringValue(object["state"]),
+			Transport:                stringValue(object["transport"]),
+			Endpoint:                 stringValue(object["endpoint"]),
+			InstanceKey:              stringValue(object["instanceKey"]),
+			StampID:                  stringValue(object["stampId"]),
+			ArtifactIDs:              stringSlice(object["artifactIds"]),
+			SupportsReconnect:        boolValue(object["supportsReconnect"]),
+			SupportsMultipleSessions: boolValue(object["supportsMultipleSessions"]),
+			Reconnect:                payloadProviderRecordFromRPC(object["reconnect"]),
+			Cleanup:                  payloadProviderRecordFromRPC(object["cleanup"]),
+			Metadata:                 stringMapFromRPC(object["metadata"]),
+		}
+		if payload.Provider != "" && payload.PayloadID != "" {
+			payloads = append(payloads, payload)
+		}
+	}
+	return payloads
+}
+
+func payloadProviderRecordFromRPC(value any) *run.PayloadProviderRecord {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return &run.PayloadProviderRecord{
+		ProviderID:    stringValue(object["providerId"]),
+		Schema:        stringValue(object["schema"]),
+		SchemaVersion: stringValue(object["schemaVersion"]),
+		Descriptor:    anyMap(object["descriptor"]),
+	}
+}
+
+func stringMapFromRPC(value any) map[string]string {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(object))
+	for key, item := range object {
+		out[key] = stringValue(item)
+	}
+	return out
 }
 
 func defaultString(value, fallback string) string {
@@ -1225,8 +1590,9 @@ func (r Runner) appendLog(ctx context.Context, request run.Request, log rpcLog) 
 	if err != nil {
 		return err
 	}
+	level := normalizeModuleLogLevel(log.Level)
 	fields := map[string]string{
-		"level":   log.Level,
+		"level":   string(level),
 		"message": log.Message,
 		"logger":  log.Logger,
 	}
@@ -1239,7 +1605,7 @@ func (r Runner) appendLog(ctx context.Context, request run.Request, log rpcLog) 
 	evt, err := event.New(event.Args{
 		ID:        id,
 		Type:      eventType,
-		Level:     event.Level(log.Level),
+		Level:     level,
 		Message:   log.Message,
 		Timestamp: r.Clock.Now(),
 		Refs: event.Refs{
@@ -1255,6 +1621,21 @@ func (r Runner) appendLog(ctx context.Context, request run.Request, log rpcLog) 
 		return err
 	}
 	return r.Events.Append(ctx, evt)
+}
+
+func normalizeModuleLogLevel(level string) event.Level {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "debug":
+		return event.LevelDebug
+	case "", "info":
+		return event.LevelInfo
+	case "warn", "warning":
+		return event.LevelWarn
+	case "error", "exception", "critical", "fatal":
+		return event.LevelError
+	default:
+		return event.LevelInfo
+	}
 }
 
 func (r Runner) appendSessionCreated(ctx context.Context, request run.Request, session run.SessionRef) error {

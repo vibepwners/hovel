@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -37,7 +38,14 @@ type RunClient interface {
 	Close() error
 	RunMockExploit(context.Context, RunMockExploitRequest) (RunMockExploitResponse, error)
 	ListSessions(context.Context) ([]SessionRef, error)
+	ReadSession(context.Context, string, time.Duration) (SessionChunk, error)
+	TailSession(context.Context, string, SessionTailOptions) (SessionChunk, error)
+	WriteSession(context.Context, string, []byte) error
 	CloseSession(context.Context, string) error
+}
+
+type CapabilityChainRunner interface {
+	ExecuteCapabilityChain(context.Context, CapabilityChainRequest) (CapabilityChainResponse, error)
 }
 
 type ThrowPlanRecorder interface {
@@ -91,8 +99,12 @@ type OperatorSession interface {
 	RenameChain(string, string) error
 	DeleteChain(string) error
 	AddModule(string) (operatorsession.Step, error)
+	AddStep(string, string) (operatorsession.Step, error)
 	AddTarget(string) error
 	ClearTargets()
+	CreateTargetSet(string) error
+	AddTargetToSet(string, string) error
+	RemoveTargetFromSet(string, string) error
 	SetChainConfig(string, string) error
 	UnsetChainConfig(string) error
 	SetTargetConfig(string, string, string) error
@@ -111,6 +123,7 @@ type Runtime struct {
 	Workspaces         WorkspaceInitializer
 	Daemons            DaemonStatusProvider
 	Runs               RunClientFactory
+	CapabilityChains   CapabilityChainRunner
 	Plans              ThrowPlanRecorder
 	Throws             ThrowRecorder
 	Confirmations      ThrowConfirmationRecorder
@@ -123,6 +136,8 @@ type Runtime struct {
 	ChainFiles         ChainFileStore
 	Session            OperatorSession
 	Modules            ModuleDatabase
+	Payloads           PayloadRepository
+	PayloadProviders   PayloadProviderService
 }
 
 type ModuleDatabase interface {
@@ -131,6 +146,7 @@ type ModuleDatabase interface {
 	Search(string) []modulecatalog.Module
 	Find(string) (modulecatalog.Module, bool)
 	Validate(modulecatalog.ConfigView) modulecatalog.Validation
+	ResolveStepAvailability([]modulecatalog.Capability) []modulecatalog.StepAvailability
 }
 
 type RunMockExploitRequest struct {
@@ -183,15 +199,28 @@ type ArtifactMaterialization struct {
 }
 
 type SessionRef struct {
-	ID           string   `json:"id"`
-	RunID        string   `json:"runId"`
-	ModuleID     string   `json:"moduleId"`
-	Target       string   `json:"target"`
-	Name         string   `json:"name,omitempty"`
-	Kind         string   `json:"kind"`
-	State        string   `json:"state"`
-	Transport    string   `json:"transport"`
-	Capabilities []string `json:"capabilities"`
+	ID                 string   `json:"id"`
+	RunID              string   `json:"runId"`
+	ModuleID           string   `json:"moduleId"`
+	Target             string   `json:"target"`
+	Name               string   `json:"name,omitempty"`
+	Kind               string   `json:"kind"`
+	State              string   `json:"state"`
+	Transport          string   `json:"transport"`
+	InstalledPayloadID string   `json:"installedPayloadId,omitempty"`
+	Capabilities       []string `json:"capabilities"`
+}
+
+type SessionChunk struct {
+	SessionID string `json:"sessionId"`
+	Data      []byte `json:"data"`
+	Closed    bool   `json:"closed"`
+}
+
+type SessionTailOptions struct {
+	MaxBytes int
+	MaxLines int
+	Consume  bool
 }
 
 type LogEntry struct {
@@ -214,15 +243,65 @@ type LogEntry struct {
 }
 
 type RunMockExploitResponse struct {
-	RunID     string
-	ModuleID  string
-	Target    string
-	State     string
-	Summary   string
-	Findings  []Finding
-	Artifacts []Artifact
-	Logs      []LogEntry
-	Sessions  []SessionRef
+	RunID             string
+	ModuleID          string
+	Target            string
+	State             string
+	Summary           string
+	Findings          []Finding
+	Artifacts         []Artifact
+	Logs              []LogEntry
+	Sessions          []SessionRef
+	InstalledPayloads []InstalledPayloadDescriptor
+}
+
+type CapabilityChainRequest struct {
+	Operation    string
+	Chain        string
+	Target       string
+	Steps        []CapabilityChainStepRef
+	ChainConfig  map[string]string
+	TargetConfig map[string]string
+	ThrowID      string
+	RunID        string
+	ThrowStarted string
+}
+
+type CapabilityChainStepRef struct {
+	ID       string `json:"id"`
+	ModuleID string `json:"moduleId"`
+	StepID   string `json:"stepId"`
+}
+
+type CapabilityChainResponse struct {
+	RunID             string
+	Target            string
+	State             string
+	Summary           string
+	Capabilities      []CapabilityPayload
+	Evidence          []CapabilityEvidence
+	Logs              []LogEntry
+	Sessions          []SessionRef
+	InstalledPayloads []InstalledPayloadDescriptor
+}
+
+type CapabilityPayload struct {
+	ID             string         `json:"id"`
+	Type           string         `json:"type"`
+	SchemaVersion  string         `json:"schemaVersion,omitempty"`
+	State          string         `json:"state,omitempty"`
+	ProducerStepID string         `json:"producerStepId,omitempty"`
+	Attributes     map[string]any `json:"attributes,omitempty"`
+	Extensions     map[string]any `json:"extensions,omitempty"`
+}
+
+type CapabilityEvidence struct {
+	ID           string         `json:"id,omitempty"`
+	Level        string         `json:"level,omitempty"`
+	Kind         string         `json:"kind,omitempty"`
+	SourceStepID string         `json:"sourceStepId,omitempty"`
+	Message      string         `json:"message"`
+	Details      map[string]any `json:"details,omitempty"`
 }
 
 type InitPayload struct {
@@ -243,15 +322,18 @@ type DaemonStatusPayload struct {
 }
 
 type RunPayload struct {
-	RunID     string       `json:"runId"`
-	ModuleID  string       `json:"moduleId"`
-	Target    string       `json:"target"`
-	State     string       `json:"state"`
-	Summary   string       `json:"summary"`
-	Findings  []Finding    `json:"findings"`
-	Artifacts []Artifact   `json:"artifacts"`
-	Logs      []LogEntry   `json:"logs"`
-	Sessions  []SessionRef `json:"sessions"`
+	RunID             string                       `json:"runId"`
+	ModuleID          string                       `json:"moduleId"`
+	Target            string                       `json:"target"`
+	State             string                       `json:"state"`
+	Summary           string                       `json:"summary"`
+	Findings          []Finding                    `json:"findings"`
+	Artifacts         []Artifact                   `json:"artifacts"`
+	Capabilities      []CapabilityPayload          `json:"capabilities,omitempty"`
+	Evidence          []CapabilityEvidence         `json:"evidence,omitempty"`
+	Logs              []LogEntry                   `json:"logs"`
+	Sessions          []SessionRef                 `json:"sessions"`
+	InstalledPayloads []InstalledPayloadDescriptor `json:"installedPayloads,omitempty"`
 }
 
 type ThrowPayload struct {
@@ -268,12 +350,13 @@ type ThrowInspectPayload struct {
 }
 
 type ThrowPlanPayload struct {
-	ID             string   `json:"id"`
-	ConfirmationID string   `json:"confirmationId"`
-	PlanHash       string   `json:"planHash"`
-	Chain          string   `json:"chain"`
-	Targets        []string `json:"targets"`
-	Review         string   `json:"review"`
+	ID             string                   `json:"id"`
+	ConfirmationID string                   `json:"confirmationId"`
+	PlanHash       string                   `json:"planHash"`
+	Chain          string                   `json:"chain"`
+	Targets        []string                 `json:"targets"`
+	Steps          []CapabilityChainStepRef `json:"steps,omitempty"`
+	Review         string                   `json:"review"`
 }
 
 type ThrowPlanRecord struct {
@@ -285,6 +368,7 @@ type ThrowPlanRecord struct {
 	Chain          string                       `json:"chain"`
 	Targets        []string                     `json:"targets"`
 	Modules        []string                     `json:"modules,omitempty"`
+	Steps          []CapabilityChainStepRef     `json:"steps,omitempty"`
 	ChainConfig    map[string]string            `json:"chainConfig,omitempty"`
 	TargetConfigs  map[string]map[string]string `json:"targetConfigs,omitempty"`
 	Review         string                       `json:"review"`
@@ -331,6 +415,7 @@ func (r ThrowPlanRecord) Payload() ThrowPlanPayload {
 		PlanHash:       r.PlanHash,
 		Chain:          r.Chain,
 		Targets:        append([]string(nil), r.Targets...),
+		Steps:          cloneCapabilityChainStepRefs(r.Steps),
 		Review:         r.Review,
 	}
 }
@@ -338,6 +423,31 @@ func (r ThrowPlanRecord) Payload() ThrowPlanPayload {
 type ValidationPayload struct {
 	Valid  bool                  `json:"valid"`
 	Issues []modulecatalog.Issue `json:"issues"`
+}
+
+type ModuleInspectPayload struct {
+	ID           string                      `json:"id"`
+	Name         string                      `json:"name,omitempty"`
+	Type         modulecatalog.ModuleType    `json:"type"`
+	Version      string                      `json:"version,omitempty"`
+	Summary      string                      `json:"summary,omitempty"`
+	Description  string                      `json:"description,omitempty"`
+	Tags         []string                    `json:"tags,omitempty"`
+	RuntimeKind  string                      `json:"runtimeKind,omitempty"`
+	Author       string                      `json:"author,omitempty"`
+	Enabled      bool                        `json:"enabled"`
+	ChainConfig  []modulecatalog.Requirement `json:"chainConfig,omitempty"`
+	TargetConfig []modulecatalog.Requirement `json:"targetConfig,omitempty"`
+	Steps        []ModuleStepPayload         `json:"steps,omitempty"`
+}
+
+type ModuleStepPayload struct {
+	ID       string                                `json:"id"`
+	Kind     string                                `json:"kind"`
+	Ready    bool                                  `json:"ready"`
+	Requires []modulecatalog.CapabilityRequirement `json:"requires,omitempty"`
+	Produces []modulecatalog.CapabilityRequirement `json:"produces,omitempty"`
+	Missing  []modulecatalog.MissingCapability     `json:"missing,omitempty"`
 }
 
 type ChainFile struct {
@@ -362,6 +472,7 @@ type ChainFileSpec struct {
 type ChainFileStep struct {
 	ID   string `json:"id"`
 	Uses string `json:"uses"`
+	Step string `json:"step,omitempty"`
 }
 
 type ChainFileTarget struct {
@@ -561,7 +672,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		Definition{
 			Path:    []string{"target", "config", "set"},
 			Aliases: [][]string{{"targets", "config", "set"}},
-			Summary: "Set target configuration on the active chain.",
+			Summary: "Set operation target configuration.",
 			Positionals: []Positional{
 				{Name: "target", Help: "Target identifier", Required: true},
 				{Name: "key", Help: "Configuration key", Required: true},
@@ -572,7 +683,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		Definition{
 			Path:    []string{"target", "config", "unset"},
 			Aliases: [][]string{{"targets", "config", "unset"}},
-			Summary: "Unset target configuration on the active chain.",
+			Summary: "Unset operation target configuration.",
 			Positionals: []Positional{
 				{Name: "target", Help: "Target identifier", Required: true},
 				{Name: "key", Help: "Configuration key", Required: true},
@@ -582,11 +693,55 @@ func HovelRegistry(runtime Runtime) Registry {
 		Definition{
 			Path:    []string{"target", "config", "list"},
 			Aliases: [][]string{{"targets", "config", "list"}},
-			Summary: "List target configuration on the active chain.",
+			Summary: "List operation target configuration.",
 			Positionals: []Positional{
 				{Name: "target", Help: "Target identifier", Required: true},
 			},
 			Handler: targetsConfigListHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "set", "create"},
+			Aliases: [][]string{{"targets", "set", "create"}},
+			Summary: "Create an operation target set.",
+			Positionals: []Positional{
+				{Name: "name", Help: "Target set name", Required: true},
+			},
+			Handler: targetSetCreateHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "set", "add"},
+			Aliases: [][]string{{"targets", "set", "add"}},
+			Summary: "Add an operation target to a target set.",
+			Positionals: []Positional{
+				{Name: "name", Help: "Target set name", Required: true},
+				{Name: "target", Help: "Target identifier", Required: true},
+			},
+			Handler: targetSetAddHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "set", "remove"},
+			Aliases: [][]string{{"targets", "set", "remove"}},
+			Summary: "Remove an operation target from a target set.",
+			Positionals: []Positional{
+				{Name: "name", Help: "Target set name", Required: true},
+				{Name: "target", Help: "Target identifier", Required: true},
+			},
+			Handler: targetSetRemoveHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "set", "list"},
+			Aliases: [][]string{{"targets", "set", "list"}},
+			Summary: "List operation target sets.",
+			Handler: targetSetListHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "set", "inspect"},
+			Aliases: [][]string{{"targets", "set", "inspect"}},
+			Summary: "Inspect an operation target set.",
+			Positionals: []Positional{
+				{Name: "name", Help: "Target set name", Required: true},
+			},
+			Handler: targetSetInspectHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"module", "list"},
@@ -604,6 +759,9 @@ func HovelRegistry(runtime Runtime) Registry {
 			Positionals: []Positional{
 				{Name: "module", Help: "Module reference", Required: true},
 			},
+			Options: []Option{
+				boolOption("json", "j", "Emit JSON output"),
+			},
 			Handler: modulesInspectHandler(runtime),
 		},
 		Definition{
@@ -614,6 +772,95 @@ func HovelRegistry(runtime Runtime) Registry {
 				{Name: "query", Help: "Search query", Required: true},
 			},
 			Handler: modulesSearchHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "available"},
+			Aliases: [][]string{{"payload", "available"}},
+			Summary: "List payloads available from configured providers.",
+			Options: []Option{
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsAvailableHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "installed"},
+			Aliases: [][]string{{"payload", "installed"}, {"payloads", "list"}, {"payload", "list"}},
+			Summary: "List installed payload records.",
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("state", "", "Payload state filter"),
+				boolOption("all", "a", "Include removed payloads"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsInstalledHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "inspect"},
+			Aliases: [][]string{{"payload", "inspect"}},
+			Summary: "Inspect an installed payload record.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("events", "", "Include payload inventory events"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsInspectHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "connect"},
+			Aliases: [][]string{{"payload", "connect"}},
+			Summary: "Reconnect to an installed payload when the provider supports it.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsConnectHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "cleanup"},
+			Aliases: [][]string{{"payload", "cleanup"}},
+			Summary: "Ask the payload provider to clean up an installed payload.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("reason", "", "Cleanup reason"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsCleanupHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "mark-removed"},
+			Aliases: [][]string{{"payload", "mark-removed"}},
+			Summary: "Mark an installed payload record as removed without probing the target.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("reason", "", "Removal reason"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsMarkRemovedHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "refresh"},
+			Aliases: [][]string{{"payload", "refresh"}},
+			Summary: "Refresh an installed payload record through its provider.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsRefreshHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"artifact", "list"},
@@ -640,6 +887,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:           []string{"throw"},
+			Aliases:        [][]string{{"run"}},
 			Summary:        "Throw the selected chain or a configured chain file.",
 			RequiresDaemon: true,
 			Positionals: []Positional{
@@ -649,6 +897,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("workspace", "w", "Workspace path"),
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
+				stringOption("target-set", "", "Target set name"),
 				boolOption("now", "", "Bypass typed confirmation prompt"),
 				boolOption("allow-dangerous", "", "Permit modules tagged dangerous"),
 				boolOption("json", "j", "Emit JSON output"),
@@ -665,6 +914,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("workspace", "w", "Workspace path"),
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
+				stringOption("target-set", "", "Target set name"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: confirmHandler(runtime),
@@ -679,6 +929,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("workspace", "w", "Workspace path"),
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
+				stringOption("target-set", "", "Target set name"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: reviewHandler(runtime),
@@ -710,7 +961,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		Definition{
 			Path:           []string{"session", "list"},
 			Aliases:        [][]string{{"sessions"}},
-			Summary:        "List active post-exploitation sessions.",
+			Summary:        "List post-exploitation sessions.",
 			RequiresDaemon: true,
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
@@ -728,8 +979,59 @@ func HovelRegistry(runtime Runtime) Registry {
 			},
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
+				stringOption("history-lines", "", "Print this many recent lines before attaching; default 20"),
+				stringOption("history-bytes", "", "Print this many recent bytes before attaching"),
+				boolOption("no-history", "", "Attach without printing recent session output"),
 			},
 			Handler: sessionConnectHandler(runtime),
+		},
+		Definition{
+			Path:           []string{"session", "tail"},
+			Aliases:        [][]string{{"sessions", "tail"}},
+			Summary:        "Print recent output from an active session.",
+			RequiresDaemon: true,
+			Positionals: []Positional{
+				{Name: "session", Help: "Session ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("bytes", "b", "Maximum recent bytes to print"),
+				stringOption("lines", "n", "Maximum recent lines to print; default 20"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: sessionTailHandler(runtime),
+		},
+		Definition{
+			Path:           []string{"session", "read"},
+			Aliases:        [][]string{{"sessions", "read"}},
+			Summary:        "Read buffered output from an active session.",
+			RequiresDaemon: true,
+			Positionals: []Positional{
+				{Name: "session", Help: "Session ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("tail", "t", "Continue reading until the session closes or the command is interrupted"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: sessionReadHandler(runtime),
+		},
+		Definition{
+			Path:           []string{"session", "send"},
+			Aliases:        [][]string{{"sessions", "send"}, {"session", "write"}, {"sessions", "write"}},
+			Summary:        "Send data to an active session.",
+			RequiresDaemon: true,
+			Positionals: []Positional{
+				{Name: "session", Help: "Session ID", Required: true},
+				{Name: "data", Help: "Data to send", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("end", "e", "Terminator to append; supports escapes like \\n, \\r, \\0, and \\xNN"),
+				boolOption("no-newline", "n", "Do not append the default newline terminator"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: sessionSendHandler(runtime),
 		},
 		Definition{
 			Path:           []string{"session", "close"},
@@ -917,14 +1219,14 @@ func operationInspectHandler(runtime Runtime) Handler {
 		}
 		state := runtime.Session.Snapshot()
 		lines := []string{
-			fmt.Sprintf("Operation %s chains=%d active_chain=%s", state.ActiveOperation, len(state.Chains), displayValue(state.ActiveChain, "none")),
+			fmt.Sprintf("Operation %s chains=%d targets=%d target_sets=%d active_chain=%s", state.ActiveOperation, len(state.Chains), len(state.Targets), len(state.TargetSets), displayValue(state.ActiveChain, "none")),
 		}
 		for _, chain := range state.Chains {
 			prefix := " "
 			if chain.Name == state.ActiveChain {
 				prefix = "*"
 			}
-			lines = append(lines, fmt.Sprintf("%s %s steps=%d targets=%d topic=%s", prefix, chain.Name, len(chain.Steps), len(chain.Targets), chain.LogTopic))
+			lines = append(lines, fmt.Sprintf("%s %s steps=%d topic=%s", prefix, chain.Name, len(chain.Steps), chain.LogTopic))
 		}
 		return Result{Human: strings.Join(lines, "\n")}, nil
 	}
@@ -997,9 +1299,34 @@ func chainAddHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		moduleID := invocation.Positional("module")
+		if isSquatterBindAlias(moduleID) {
+			if runtime.Session == nil {
+				return Result{}, operatorSessionRequiredError("chain add")
+			}
+			moduleID = squatterProviderModuleID(moduleDB(runtime))
+			step, err := runtime.Session.AddModule(moduleID)
+			if err != nil {
+				return Result{}, withActiveChainHelp(err)
+			}
+			if err := runtime.Session.SetChainConfig(squatterTypeConfigKey, squatterTypeTCPBind); err != nil {
+				return Result{}, withActiveChainHelp(err)
+			}
+			if feedbackPublished(runtime.Session) {
+				return Result{}, nil
+			}
+			return Result{Human: fmt.Sprintf("Module added: %s as %s (%s=%s)", moduleID, step.ID, squatterTypeConfigKey, squatterTypeTCPBind)}, nil
+		}
 		module, ok := moduleDB(runtime).Find(moduleID)
 		if !ok {
-			return Result{}, fmt.Errorf("module %s does not exist", moduleID)
+			if !isSquatterProviderRef(moduleID) {
+				return Result{}, fmt.Errorf("module %s does not exist", moduleID)
+			}
+			module = modulecatalog.Module{
+				ID:      squatterProviderModuleID(moduleDB(runtime)),
+				Name:    "squatter",
+				Type:    modulecatalog.TypePayloadProvider,
+				Enabled: true,
+			}
 		}
 		if runtime.Session == nil {
 			return Result{}, operatorSessionRequiredError("chain add")
@@ -1008,11 +1335,104 @@ func chainAddHandler(runtime Runtime) Handler {
 		if err != nil {
 			return Result{}, withActiveChainHelp(err)
 		}
+		if isSquatterProviderModule(module) {
+			if err := runtime.Session.SetChainConfig(squatterTypeConfigKey, squatterTypeTCPBind); err != nil {
+				return Result{}, withActiveChainHelp(err)
+			}
+		}
 		if feedbackPublished(runtime.Session) {
 			return Result{}, nil
 		}
+		if isSquatterProviderModule(module) {
+			return Result{Human: fmt.Sprintf("Module added: %s as %s (%s=%s)", module.ID, step.ID, squatterTypeConfigKey, squatterTypeTCPBind)}, nil
+		}
 		return Result{Human: fmt.Sprintf("Module added: %s as %s", module.ID, step.ID)}, nil
 	}
+}
+
+const (
+	squatterTypeConfigKey = "squatter.type"
+	squatterTypeTCPBind   = "tcp-bind"
+	squatterTypeSMBPipe   = "smb-named-pipe"
+)
+
+func isSquatterBindAlias(value string) bool {
+	ref := strings.ToLower(strings.TrimSpace(value))
+	switch ref {
+	case "squatter.bind", "squatter-bind", "squatter/tcp-bind", "squatter.tcp_bind":
+		return true
+	}
+	return false
+}
+
+func isSquatterProviderModule(module modulecatalog.Module) bool {
+	return strings.EqualFold(module.Name, "squatter") && module.Type == modulecatalog.TypePayloadProvider
+}
+
+func isSquatterProviderRef(moduleID string) bool {
+	ref := strings.ToLower(strings.TrimSpace(moduleID))
+	return ref == "squatter" || ref == "squatter@v0.1.0"
+}
+
+func squatterProviderModuleID(db ModuleDatabase) string {
+	if db != nil {
+		if module, ok := db.Find("squatter@v0.1.0"); ok {
+			return module.ID
+		}
+		for _, module := range db.Search("squatter") {
+			if isSquatterProviderModule(module) {
+				return module.ID
+			}
+		}
+	}
+	return "squatter@v0.1.0"
+}
+
+func legacyExecutionModuleIDs(db ModuleDatabase, modules []string) []string {
+	out := make([]string, 0, len(modules))
+	for _, moduleID := range modules {
+		if moduleID == "squatter.bind" {
+			out = append(out, squatterProviderModuleID(db))
+			continue
+		}
+		out = append(out, moduleID)
+	}
+	return out
+}
+
+func hasSquatterBindModule(modules []string) bool {
+	for _, moduleID := range modules {
+		if moduleID == "squatter.bind" {
+			return true
+		}
+	}
+	return false
+}
+
+func isSquatterTCPBindModule(db ModuleDatabase, moduleID string, config map[string]string) bool {
+	module, ok := db.Find(moduleID)
+	if (!ok || !isSquatterProviderModule(module)) && !isSquatterProviderRef(moduleID) {
+		return false
+	}
+	transport := strings.TrimSpace(config["payload.transport"])
+	if transport != "" {
+		return transport == squatterTypeTCPBind
+	}
+	mode := strings.TrimSpace(config[squatterTypeConfigKey])
+	return mode == "" || mode == squatterTypeTCPBind
+}
+
+func chainFileHasSquatterTCPBindModule(db ModuleDatabase, steps []ChainFileStep, config map[string]string) bool {
+	for _, step := range steps {
+		if strings.TrimSpace(step.Step) != "" {
+			continue
+		}
+		moduleID := strings.TrimPrefix(strings.TrimSpace(step.Uses), "module:")
+		if isSquatterTCPBindModule(db, moduleID, config) {
+			return true
+		}
+	}
+	return false
 }
 
 func chainValidateHandler(runtime Runtime) Handler {
@@ -1025,7 +1445,7 @@ func chainValidateHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		_ = runtime.Session.AppendLog(operatorlog.Info("validate", "validation started"))
-		validation := moduleDB(runtime).Validate(validationView(state))
+		validation := ValidateState(moduleDB(runtime), state)
 		payload := ValidationPayload{Valid: validation.Valid, Issues: validation.Issues}
 		if validation.Valid {
 			_ = runtime.Session.AppendLog(operatorlog.Success("validate", "validation completed"))
@@ -1159,11 +1579,11 @@ func chainConfigListHandler(runtime Runtime) Handler {
 		if err != nil {
 			return Result{}, err
 		}
-		if len(state.Config) == 0 {
+		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeChain)
+		if len(state.Config) == 0 && len(requirements) == 0 {
 			return Result{Human: "No chain config set\n\nNext: config interactive"}, nil
 		}
-		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeChain)
-		return Result{Human: "Chain config\n" + configLines(state.Config, requirements)}, nil
+		return Result{Human: "Chain config\n" + availableConfigLines(state.Config, requirements)}, nil
 	}
 }
 
@@ -1185,7 +1605,7 @@ func chainListHandler(runtime Runtime) Handler {
 			if chain.Name == state.ActiveChain {
 				prefix = "*"
 			}
-			lines = append(lines, fmt.Sprintf("%s %s steps=%d targets=%d topic=%s", prefix, chain.Name, len(chain.Steps), len(chain.Targets), chain.LogTopic))
+			lines = append(lines, fmt.Sprintf("%s %s steps=%d topic=%s", prefix, chain.Name, len(chain.Steps), chain.LogTopic))
 		}
 		return Result{Human: strings.Join(lines, "\n")}, nil
 	}
@@ -1256,7 +1676,7 @@ func targetsAddHandler(runtime Runtime) Handler {
 			return Result{}, operatorSessionRequiredError("target add")
 		}
 		if err := runtime.Session.AddTarget(target); err != nil {
-			return Result{}, withActiveChainHelp(err)
+			return Result{}, err
 		}
 		if feedbackPublished(runtime.Session) {
 			return Result{}, nil
@@ -1287,13 +1707,13 @@ func targetsConfigSetHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, activeChainRequiredError()
+			return Result{}, operatorSessionRequiredError("target config set")
 		}
 		target := invocation.Positional("target")
 		key := invocation.Positional("key")
 		value := invocation.Positional("value")
 		if err := runtime.Session.SetTargetConfig(target, key, value); err != nil {
-			return Result{}, withActiveChainHelp(err)
+			return Result{}, err
 		}
 		if feedbackPublished(runtime.Session) {
 			return Result{}, nil
@@ -1308,12 +1728,12 @@ func targetsConfigUnsetHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if runtime.Session == nil {
-			return Result{}, activeChainRequiredError()
+			return Result{}, operatorSessionRequiredError("target config unset")
 		}
 		target := invocation.Positional("target")
 		key := invocation.Positional("key")
 		if err := runtime.Session.UnsetTargetConfig(target, key); err != nil {
-			return Result{}, withActiveChainHelp(err)
+			return Result{}, err
 		}
 		if feedbackPublished(runtime.Session) {
 			return Result{}, nil
@@ -1333,11 +1753,112 @@ func targetsConfigListHandler(runtime Runtime) Handler {
 		}
 		target := invocation.Positional("target")
 		config, ok := state.TargetConfigs[target]
-		if !ok || len(config) == 0 {
+		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeTarget)
+		if (!ok || len(config) == 0) && len(requirements) == 0 {
 			return Result{Human: fmt.Sprintf("No target config for %s\n\nNext: target config set %s <key> <value>", target, target)}, nil
 		}
-		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeTarget)
-		return Result{Human: fmt.Sprintf("Target config %s\n%s", target, configLines(config, requirements))}, nil
+		return Result{Human: fmt.Sprintf("Target config %s\n%s", target, availableConfigLines(config, requirements))}, nil
+	}
+}
+
+func targetSetCreateHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target set create")
+		}
+		name := invocation.Positional("name")
+		if err := runtime.Session.CreateTargetSet(name); err != nil {
+			return Result{}, err
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
+		return Result{Human: fmt.Sprintf("Target set created: %s", name)}, nil
+	}
+}
+
+func targetSetAddHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target set add")
+		}
+		name := invocation.Positional("name")
+		target := invocation.Positional("target")
+		if err := runtime.Session.AddTargetToSet(name, target); err != nil {
+			return Result{}, err
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
+		return Result{Human: fmt.Sprintf("Target set updated: %s added %s", name, target)}, nil
+	}
+}
+
+func targetSetRemoveHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target set remove")
+		}
+		name := invocation.Positional("name")
+		target := invocation.Positional("target")
+		if err := runtime.Session.RemoveTargetFromSet(name, target); err != nil {
+			return Result{}, err
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
+		return Result{Human: fmt.Sprintf("Target set updated: %s removed %s", name, target)}, nil
+	}
+}
+
+func targetSetListHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target set list")
+		}
+		state := runtime.Session.Snapshot()
+		if len(state.TargetSets) == 0 {
+			return Result{Human: "No target sets"}, nil
+		}
+		lines := make([]string, 0, len(state.TargetSets))
+		for _, set := range state.TargetSets {
+			lines = append(lines, fmt.Sprintf("%s targets=%d", set.Name, len(set.Targets)))
+		}
+		return Result{Human: strings.Join(lines, "\n")}, nil
+	}
+}
+
+func targetSetInspectHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target set inspect")
+		}
+		name := invocation.Positional("name")
+		state := runtime.Session.Snapshot()
+		for _, set := range state.TargetSets {
+			if set.Name != name {
+				continue
+			}
+			lines := []string{fmt.Sprintf("Target set %s targets=%d", set.Name, len(set.Targets))}
+			lines = append(lines, set.Targets...)
+			return Result{Human: strings.Join(lines, "\n"), JSON: set}, nil
+		}
+		return Result{}, fmt.Errorf("target set does not exist")
 	}
 }
 
@@ -1366,11 +1887,17 @@ func modulesInspectHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		moduleID := invocation.Positional("module")
-		module, ok := moduleDB(runtime).Find(moduleID)
+		db := moduleDB(runtime)
+		module, ok := db.Find(moduleID)
 		if !ok {
 			return Result{}, fmt.Errorf("module %s does not exist", moduleID)
 		}
-		return Result{Human: moduleInspect(module)}, nil
+		steps := moduleStepPayloads(module.ID, db.ResolveStepAvailability(nil))
+		payload := moduleInspectPayload(module, steps)
+		return Result{
+			Human: moduleInspect(payload),
+			JSON:  payload,
+		}, nil
 	}
 }
 
@@ -1445,12 +1972,15 @@ func throwHandler(runtime Runtime) Handler {
 		if runtime.Daemons == nil {
 			return Result{}, fmt.Errorf("daemon service is not configured")
 		}
-		if runtime.Runs == nil {
-			return Result{}, fmt.Errorf("run client factory is not configured")
-		}
 		throw, err := throwInputs(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
+		}
+		if len(throw.Steps) == 0 && runtime.Runs == nil {
+			return Result{}, fmt.Errorf("run client factory is not configured")
+		}
+		if len(throw.Steps) != 0 && runtime.CapabilityChains == nil {
+			return Result{}, fmt.Errorf("capability chain runner is not configured")
 		}
 		if err := guardDangerousModules(runtime, throw.Modules, invocation.Flag("allow-dangerous")); err != nil {
 			return Result{}, err
@@ -1520,12 +2050,6 @@ func throwHandler(runtime Runtime) Handler {
 			}
 		}
 
-		client, err := runtime.Runs.DialRunClient(status.Identity.SocketPath)
-		if err != nil {
-			return Result{}, err
-		}
-		defer client.Close()
-
 		throwStarted := time.Now()
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
 			_ = runtime.Session.AppendLogToChain(throw.Chain, throwHeader(throw.Chain))
@@ -1541,56 +2065,18 @@ func throwHandler(runtime Runtime) Handler {
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
 			_ = runtime.Session.AppendLogToChain(throw.Chain, throwPlanEntries(payload, throwStarted)...)
 		}
-		for _, target := range throw.Targets {
-			for _, moduleID := range throw.Modules {
-				runIndex := len(payload.Results) + 1
-				if runtime.Session != nil && feedbackPublished(runtime.Session) {
-					_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunStartEntries(throw.Chain, target, moduleID, runIndex, len(throw.Targets)*len(throw.Modules), throwStarted)...)
-				}
-				result, err := client.RunMockExploit(ctx, RunMockExploitRequest{
-					Operation:    planOperation(plan),
-					Chain:        throw.Chain,
-					ModuleID:     moduleID,
-					Target:       target,
-					ChainConfig:  throw.ChainConfig,
-					TargetConfig: throw.TargetConfigs[target],
-					ThrowStarted: throwStarted.Format(time.RFC3339Nano),
-				})
-				if err != nil {
-					return Result{}, err
-				}
-				payload.Results = append(payload.Results, runPayload(result))
-				if runtime.Artifacts != nil {
-					resultIndex := len(payload.Results) - 1
-					for artifactIndex, artifact := range payload.Results[resultIndex].Artifacts {
-						record, err := runtime.Artifacts.MaterializeArtifact(ctx, ArtifactMaterialization{
-							Workspace: status.WorkspacePath,
-							ThrowID:   payload.ThrowID,
-							RunID:     result.RunID,
-							ModuleID:  moduleID,
-							Target:    target,
-							Artifact:  artifact,
-							CreatedAt: time.Now().UTC(),
-						})
-						if err != nil {
-							return Result{}, err
-						}
-						if err := recordStructuredEvent(ctx, runtime, status.WorkspacePath, "hovel.artifact.recorded", "artifact recorded", plan, payload.ThrowID, result.RunID, event.LevelInfo, map[string]string{
-							"artifactId": record.ID,
-							"name":       record.Name,
-							"kind":       record.Kind,
-							"path":       record.Path,
-							"sha256":     record.SHA256,
-						}); err != nil {
-							return Result{}, err
-						}
-						payload.Results[resultIndex].Artifacts[artifactIndex].Data = ""
-						payload.Results[resultIndex].Artifacts[artifactIndex].Name = record.Name
-					}
-				}
-				if runtime.Session != nil && feedbackPublished(runtime.Session) {
-					_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunResultEntries(payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(throw.Modules), throwStarted)...)
-				}
+		if len(throw.Steps) != 0 {
+			if err := executeCapabilityThrow(ctx, runtime, status.WorkspacePath, plan, throw, &payload, throwStarted); err != nil {
+				return Result{}, err
+			}
+		} else {
+			client, err := runtime.Runs.DialRunClient(status.Identity.SocketPath)
+			if err != nil {
+				return Result{}, err
+			}
+			defer client.Close()
+			if err := executeLegacyThrow(ctx, runtime, client, status.WorkspacePath, plan, throw, &payload, throwStarted); err != nil {
+				return Result{}, err
 			}
 		}
 		log := throwLog(payload, throwStarted)
@@ -1626,6 +2112,177 @@ func throwHandler(runtime Runtime) Handler {
 			JSON:  payload,
 			Log:   log,
 		}, nil
+	}
+}
+
+func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, workspacePath string, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time) error {
+	modules := legacyExecutionModuleIDs(moduleDB(runtime), throw.Modules)
+	for _, target := range throw.Targets {
+		for _, moduleID := range modules {
+			runIndex := len(payload.Results) + 1
+			if runtime.Session != nil && feedbackPublished(runtime.Session) {
+				_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunStartEntries(throw.Chain, target, moduleID, runIndex, len(throw.Targets)*len(modules), throwStarted)...)
+			}
+			result, err := client.RunMockExploit(ctx, RunMockExploitRequest{
+				Operation:    planOperation(plan),
+				Chain:        throw.Chain,
+				ModuleID:     moduleID,
+				Target:       target,
+				ChainConfig:  throw.ChainConfig,
+				TargetConfig: throw.TargetConfigs[target],
+				ThrowStarted: throwStarted.Format(time.RFC3339Nano),
+			})
+			if err != nil {
+				return err
+			}
+			payload.Results = append(payload.Results, runPayload(result))
+			if err := materializeRunArtifacts(ctx, runtime, workspacePath, plan, payload, moduleID, target, result.RunID); err != nil {
+				return err
+			}
+			if err := recordInstalledPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1); err != nil {
+				return err
+			}
+			if runtime.Session != nil && feedbackPublished(runtime.Session) {
+				_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(modules), throwStarted)...)
+			}
+		}
+	}
+	return nil
+}
+
+func executeCapabilityThrow(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time) error {
+	for _, target := range throw.Targets {
+		runIndex := len(payload.Results) + 1
+		runID := fmt.Sprintf("%s-capability-%d", payload.ThrowID, runIndex)
+		if runtime.Session != nil && feedbackPublished(runtime.Session) {
+			_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunStartEntries(throw.Chain, target, "capability-chain", runIndex, len(throw.Targets), throwStarted)...)
+		}
+		result, err := runtime.CapabilityChains.ExecuteCapabilityChain(ctx, CapabilityChainRequest{
+			Operation:    planOperation(plan),
+			Chain:        throw.Chain,
+			Target:       target,
+			Steps:        cloneCapabilityChainStepRefs(throw.Steps),
+			ChainConfig:  cloneStringMap(throw.ChainConfig),
+			TargetConfig: cloneStringMap(throw.TargetConfigs[target]),
+			ThrowID:      payload.ThrowID,
+			RunID:        runID,
+			ThrowStarted: throwStarted.Format(time.RFC3339Nano),
+		})
+		if err != nil {
+			return err
+		}
+		payload.Results = append(payload.Results, capabilityChainRunPayload(target, runID, result))
+		if err := materializeRunArtifacts(ctx, runtime, workspacePath, plan, payload, "capability-chain", target, payload.Results[len(payload.Results)-1].RunID); err != nil {
+			return err
+		}
+		if err := recordInstalledPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1); err != nil {
+			return err
+		}
+		if runtime.Session != nil && feedbackPublished(runtime.Session) {
+			_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets), throwStarted)...)
+		}
+	}
+	return nil
+}
+
+func materializeRunArtifacts(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, payload *ThrowPayload, moduleID, target, runID string) error {
+	if runtime.Artifacts == nil {
+		return nil
+	}
+	resultIndex := len(payload.Results) - 1
+	for artifactIndex, artifact := range payload.Results[resultIndex].Artifacts {
+		record, err := runtime.Artifacts.MaterializeArtifact(ctx, ArtifactMaterialization{
+			Workspace: workspacePath,
+			ThrowID:   payload.ThrowID,
+			RunID:     runID,
+			ModuleID:  moduleID,
+			Target:    target,
+			Artifact:  artifact,
+			CreatedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		if err := recordStructuredEvent(ctx, runtime, workspacePath, "hovel.artifact.recorded", "artifact recorded", plan, payload.ThrowID, runID, event.LevelInfo, map[string]string{
+			"artifactId": record.ID,
+			"name":       record.Name,
+			"kind":       record.Kind,
+			"path":       record.Path,
+			"sha256":     record.SHA256,
+		}); err != nil {
+			return err
+		}
+		payload.Results[resultIndex].Artifacts[artifactIndex].Data = ""
+		payload.Results[resultIndex].Artifacts[artifactIndex].Name = record.Name
+	}
+	return nil
+}
+
+func recordInstalledPayloadsForRun(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, payload *ThrowPayload, resultIndex int) error {
+	if runtime.Payloads == nil || resultIndex < 0 || resultIndex >= len(payload.Results) {
+		return nil
+	}
+	result := payload.Results[resultIndex]
+	for descriptorIndex, descriptor := range result.InstalledPayloads {
+		record := installedPayloadRecordFromDescriptor(workspacePath, plan, payload.ThrowID, result, descriptor)
+		recorded, err := runtime.Payloads.RecordInstalledPayload(ctx, record)
+		if err != nil {
+			return err
+		}
+		payload.Results[resultIndex].InstalledPayloads[descriptorIndex].State = recorded.State
+		if err := recordStructuredEvent(ctx, runtime, workspacePath, "hovel.payload.installed", "installed payload recorded", plan, payload.ThrowID, result.RunID, event.LevelInfo, map[string]string{
+			"payloadHandle": recorded.Handle,
+			"payloadId":     recorded.PayloadID,
+			"provider":      recorded.Provider,
+			"state":         recorded.State,
+			"target":        recorded.Target,
+			"transport":     recorded.Transport,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func installedPayloadRecordFromDescriptor(workspacePath string, plan ThrowPlanRecord, throwID string, result RunPayload, descriptor InstalledPayloadDescriptor) InstalledPayloadRecord {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	state := descriptor.State
+	if state == "" {
+		state = PayloadStateInstalled
+	}
+	target := descriptor.Target
+	if target == "" {
+		target = result.Target
+	}
+	targetID := descriptor.TargetID
+	if targetID == "" {
+		targetID = result.Target
+	}
+	return InstalledPayloadRecord{
+		Workspace:                workspacePath,
+		Provider:                 descriptor.Provider,
+		PayloadID:                descriptor.PayloadID,
+		PayloadVersion:           descriptor.PayloadVersion,
+		Target:                   target,
+		TargetID:                 targetID,
+		State:                    state,
+		Transport:                descriptor.Transport,
+		Endpoint:                 descriptor.Endpoint,
+		InstanceKey:              descriptor.InstanceKey,
+		StampID:                  descriptor.StampID,
+		ArtifactIDs:              append([]string(nil), descriptor.ArtifactIDs...),
+		SupportsReconnect:        descriptor.SupportsReconnect,
+		SupportsMultipleSessions: descriptor.SupportsMultipleSessions,
+		Reconnect:                clonePayloadProviderRecord(descriptor.Reconnect),
+		Cleanup:                  clonePayloadProviderRecord(descriptor.Cleanup),
+		Operation:                planOperation(plan),
+		Chain:                    plan.Chain,
+		ThrowID:                  throwID,
+		RunID:                    result.RunID,
+		CreatedAt:                now,
+		UpdatedAt:                now,
+		LastSeenAt:               now,
+		Metadata:                 cloneStringMap(descriptor.Metadata),
 	}
 }
 
@@ -1954,7 +2611,7 @@ func sessionsListHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if len(sessions) == 0 {
-			return Result{Human: "No active sessions", JSON: sessions}, nil
+			return Result{Human: "No sessions", JSON: sessions}, nil
 		}
 		lines := []string{"ID                         KIND      STATE    TARGET        NAME"}
 		for _, session := range sessions {
@@ -1973,6 +2630,164 @@ func sessionConnectHandler(runtime Runtime) Handler {
 	}
 }
 
+func sessionTailHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		client, closeClient, err := dialDaemonRunClient(ctx, runtime, invocation.Option("workspace"))
+		if err != nil {
+			return Result{}, err
+		}
+		defer closeClient()
+
+		options, err := sessionTailOptionsFromInvocation(invocation, 20)
+		if err != nil {
+			return Result{}, err
+		}
+		sessionID := invocation.Positional("session")
+		chunk, err := client.TailSession(ctx, sessionID, options)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{
+			Raw: chunk.Data,
+			JSON: map[string]any{
+				"sessionId": sessionID,
+				"data":      string(chunk.Data),
+				"closed":    chunk.Closed,
+			},
+		}, nil
+	}
+}
+
+func sessionReadHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		client, closeClient, err := dialDaemonRunClient(ctx, runtime, invocation.Option("workspace"))
+		if err != nil {
+			return Result{}, err
+		}
+		defer closeClient()
+
+		sessionID := invocation.Positional("session")
+		var out []byte
+		closed := false
+		for {
+			timeout := 75 * time.Millisecond
+			if invocation.Flag("tail") {
+				timeout = 250 * time.Millisecond
+			}
+			chunk, err := client.ReadSession(ctx, sessionID, timeout)
+			if err != nil {
+				return Result{}, err
+			}
+			if len(chunk.Data) > 0 {
+				if invocation.Flag("tail") && !invocation.Flag("json") && invocation.Output != nil {
+					if _, err := invocation.Output.Write(chunk.Data); err != nil {
+						return Result{}, err
+					}
+				} else {
+					out = append(out, chunk.Data...)
+				}
+			}
+			if chunk.Closed {
+				closed = true
+				break
+			}
+			if !invocation.Flag("tail") && len(chunk.Data) == 0 {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				return Result{}, err
+			}
+		}
+
+		if invocation.Flag("tail") && !invocation.Flag("json") && invocation.Output != nil {
+			return Result{}, nil
+		}
+		return Result{
+			Raw: out,
+			JSON: map[string]any{
+				"sessionId": sessionID,
+				"data":      string(out),
+				"closed":    closed,
+			},
+		}, nil
+	}
+}
+
+func sessionTailOptionsFromInvocation(invocation Invocation, defaultLines int) (SessionTailOptions, error) {
+	bytesValue := invocation.Option("bytes")
+	linesValue := invocation.Option("lines")
+	if bytesValue == "" {
+		bytesValue = invocation.Option("history-bytes")
+	}
+	if linesValue == "" {
+		linesValue = invocation.Option("history-lines")
+	}
+	if bytesValue != "" && linesValue != "" {
+		return SessionTailOptions{}, fmt.Errorf("byte and line history limits are mutually exclusive")
+	}
+	var options SessionTailOptions
+	switch {
+	case bytesValue != "":
+		count, err := parseSessionCount("bytes", bytesValue)
+		if err != nil {
+			return SessionTailOptions{}, err
+		}
+		options.MaxBytes = count
+	case linesValue != "":
+		count, err := parseSessionCount("lines", linesValue)
+		if err != nil {
+			return SessionTailOptions{}, err
+		}
+		options.MaxLines = count
+	case defaultLines > 0:
+		options.MaxLines = defaultLines
+	}
+	return options, nil
+}
+
+func parseSessionCount(name, value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	count, err := strconv.Atoi(value)
+	if err != nil || count <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return count, nil
+}
+
+func sessionSendHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		client, closeClient, err := dialDaemonRunClient(ctx, runtime, invocation.Option("workspace"))
+		if err != nil {
+			return Result{}, err
+		}
+		defer closeClient()
+
+		sessionID := invocation.Positional("session")
+		payload := []byte(invocation.Positional("data"))
+		switch {
+		case invocation.Flag("no-newline") && invocation.Option("end") != "":
+			return Result{}, fmt.Errorf("--no-newline and --end cannot be used together")
+		case invocation.Option("end") != "":
+			end, err := parseSessionTerminator(invocation.Option("end"))
+			if err != nil {
+				return Result{}, err
+			}
+			payload = append(payload, end...)
+		case !invocation.Flag("no-newline"):
+			payload = append(payload, '\n')
+		}
+
+		if err := client.WriteSession(ctx, sessionID, payload); err != nil {
+			return Result{}, err
+		}
+		result := map[string]any{"sessionId": sessionID, "bytes": len(payload)}
+		return Result{Human: fmt.Sprintf("Sent %d bytes to %s", len(payload), sessionID), JSON: result}, nil
+	}
+}
+
 func sessionCloseHandler(runtime Runtime) Handler {
 	return func(ctx context.Context, invocation Invocation) (Result, error) {
 		client, closeClient, err := dialDaemonRunClient(ctx, runtime, invocation.Option("workspace"))
@@ -1987,6 +2802,45 @@ func sessionCloseHandler(runtime Runtime) Handler {
 		payload := map[string]string{"sessionId": sessionID, "status": "closed"}
 		return Result{Human: fmt.Sprintf("Session closed: %s", sessionID), JSON: payload}, nil
 	}
+}
+
+func parseSessionTerminator(value string) ([]byte, error) {
+	var out []byte
+	for i := 0; i < len(value); i++ {
+		if value[i] != '\\' {
+			out = append(out, value[i])
+			continue
+		}
+		if i+1 >= len(value) {
+			return nil, fmt.Errorf("invalid terminator escape: trailing backslash")
+		}
+		i++
+		switch value[i] {
+		case 'n':
+			out = append(out, '\n')
+		case 'r':
+			out = append(out, '\r')
+		case 't':
+			out = append(out, '\t')
+		case '0':
+			out = append(out, 0)
+		case '\\':
+			out = append(out, '\\')
+		case 'x':
+			if i+2 >= len(value) {
+				return nil, fmt.Errorf("invalid terminator escape: \\x requires two hex digits")
+			}
+			b, err := strconv.ParseUint(value[i+1:i+3], 16, 8)
+			if err != nil {
+				return nil, fmt.Errorf("invalid terminator escape: \\x%s", value[i+1:i+3])
+			}
+			out = append(out, byte(b))
+			i += 2
+		default:
+			return nil, fmt.Errorf("invalid terminator escape: \\%c", value[i])
+		}
+	}
+	return out, nil
 }
 
 func dialDaemonRunClient(ctx context.Context, runtime Runtime, workspacePath string) (RunClient, func(), error) {
@@ -2025,6 +2879,7 @@ func newThrowPlanForExecution(workspacePath string, throw throwExecution) ThrowP
 		Chain:          throw.Chain,
 		Targets:        append([]string(nil), throw.Targets...),
 		Modules:        append([]string(nil), throw.Modules...),
+		Steps:          cloneCapabilityChainStepRefs(throw.Steps),
 		ChainConfig:    cloneStringMap(throw.ChainConfig),
 		TargetConfigs:  cloneTargetConfigs(throw.TargetConfigs),
 		Review:         "operator-confirmed",
@@ -2110,12 +2965,14 @@ func planHashForExecution(throw throwExecution) string {
 		Chain         string                       `json:"chain"`
 		Targets       []string                     `json:"targets"`
 		Modules       []string                     `json:"modules"`
+		Steps         []CapabilityChainStepRef     `json:"steps,omitempty"`
 		ChainConfig   map[string]string            `json:"chainConfig,omitempty"`
 		TargetConfigs map[string]map[string]string `json:"targetConfigs,omitempty"`
 	}{
 		Chain:         throw.Chain,
 		Targets:       append([]string(nil), throw.Targets...),
 		Modules:       append([]string(nil), throw.Modules...),
+		Steps:         cloneCapabilityChainStepRefs(throw.Steps),
 		ChainConfig:   cloneStringMap(throw.ChainConfig),
 		TargetConfigs: cloneTargetConfigs(throw.TargetConfigs),
 	}
@@ -2174,13 +3031,22 @@ func stableIDComponent(value string) string {
 }
 
 type throwExecution struct {
-	Operation     string
-	Chain         string
-	Targets       []string
-	Modules       []string
-	ChainConfig   map[string]string
-	TargetConfigs map[string]map[string]string
+	Operation      string
+	Chain          string
+	Targets        []string
+	Modules        []string
+	Steps          []CapabilityChainStepRef
+	ChainConfig    map[string]string
+	TargetConfigs  map[string]map[string]string
+	SkippedTargets []SkippedTarget
 }
+
+type SkippedTarget struct {
+	Target string
+	Reason string
+}
+
+type throwStepRef = CapabilityChainStepRef
 
 // guardDangerousModules refuses to throw a chain that contains a module tagged
 // dangerous unless the operator explicitly opted in with --allow-dangerous. The
@@ -2194,6 +3060,10 @@ func guardDangerousModules(runtime Runtime, modules []string, allow bool) error 
 	db := moduleDB(runtime)
 	var blocked []string
 	for _, moduleID := range modules {
+		if moduleID == "squatter.bind" {
+			blocked = append(blocked, moduleID)
+			continue
+		}
 		module, ok := db.Find(moduleID)
 		if ok && module.Dangerous() {
 			blocked = append(blocked, module.ID)
@@ -2211,13 +3081,20 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 	}
 	operation := operatorsession.DefaultOperation
 	chain := invocation.Option("chain")
+	explicitTarget := invocation.Option("target")
+	targetSet := invocation.Option("target-set")
+	if explicitTarget != "" && targetSet != "" {
+		return throwExecution{}, fmt.Errorf("--target and --target-set cannot be used together")
+	}
 	var targets []string
-	if target := invocation.Option("target"); target != "" {
-		targets = append(targets, target)
+	if explicitTarget != "" {
+		targets = append(targets, explicitTarget)
 	}
 	chainConfig := map[string]string{}
 	targetConfigs := map[string]map[string]string{}
 	var modules []string
+	var steps []CapabilityChainStepRef
+	validateTargetCompatibility := false
 	if runtime.Session != nil {
 		state := runtime.Session.Snapshot()
 		if state.ActiveOperation != "" {
@@ -2230,14 +3107,46 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 		if !ok {
 			return throwExecution{}, fmt.Errorf("chain %s does not exist", chain)
 		}
+		hasSquatterBind := false
 		for _, step := range selected.Steps {
+			if step.StepID == "squatter.bind" {
+				hasSquatterBind = true
+				modules = append(modules, "squatter.bind")
+				continue
+			}
 			modules = append(modules, step.ModuleID)
+			if step.StepID != "" {
+				steps = append(steps, CapabilityChainStepRef{ID: step.ID, ModuleID: step.ModuleID, StepID: step.StepID})
+			}
 		}
 		chainConfig = cloneStringMap(selected.Config)
-		targetConfigs = cloneTargetConfigs(selected.TargetConfigs)
-		if len(targets) == 0 {
-			targets = append(targets, targetsForChain(state, chain)...)
+		for _, step := range selected.Steps {
+			if step.StepID == "" && isSquatterTCPBindModule(moduleDB(runtime), step.ModuleID, chainConfig) {
+				hasSquatterBind = true
+				break
+			}
 		}
+		targetConfigs = cloneTargetConfigs(state.TargetConfigs)
+		if explicitTarget != "" && hasString(state.Targets, explicitTarget) {
+			validateTargetCompatibility = true
+		}
+		if len(targets) == 0 {
+			if targetSet != "" {
+				set, ok := targetSetByName(state.TargetSets, targetSet)
+				if !ok {
+					return throwExecution{}, fmt.Errorf("target set %s does not exist", targetSet)
+				}
+				targets = append(targets, set.Targets...)
+				validateTargetCompatibility = true
+			} else {
+				targets = append(targets, state.Targets...)
+			}
+		}
+		if hasSquatterBind {
+			targetConfigs = applySquatterBindTargetConfig(targets, targetConfigs, chainConfig)
+		}
+	} else if targetSet != "" {
+		return throwExecution{}, fmt.Errorf("--target-set requires an operator session")
 	}
 	if strings.TrimSpace(chain) == "" {
 		return throwExecution{}, fmt.Errorf("chain is required; set one with chain use <chain> or pass --chain")
@@ -2256,14 +3165,116 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 		modules = append(modules, moduleRef)
 	}
 	targetConfigs = targetConfigsForTargets(targets, targetConfigs)
+	var skipped []SkippedTarget
+	if validateTargetCompatibility {
+		var err error
+		targets, targetConfigs, skipped, err = compatibleThrowTargets(moduleDB(runtime), validationSteps(modules, steps), chainConfig, targetConfigs, targets, explicitTarget != "")
+		if err != nil {
+			return throwExecution{}, err
+		}
+	}
 	return throwExecution{
-		Operation:     operation,
-		Chain:         chain,
-		Targets:       targets,
-		Modules:       modules,
-		ChainConfig:   chainConfig,
-		TargetConfigs: targetConfigs,
+		Operation:      operation,
+		Chain:          chain,
+		Targets:        targets,
+		Modules:        modules,
+		Steps:          steps,
+		ChainConfig:    chainConfig,
+		TargetConfigs:  targetConfigs,
+		SkippedTargets: skipped,
 	}, nil
+}
+
+func validationSteps(modules []string, steps []CapabilityChainStepRef) []CapabilityChainStepRef {
+	if len(steps) != 0 {
+		return steps
+	}
+	out := make([]CapabilityChainStepRef, 0, len(modules))
+	for i, moduleID := range modules {
+		out = append(out, CapabilityChainStepRef{
+			ID:       fmt.Sprintf("step-%d", i+1),
+			ModuleID: moduleID,
+		})
+	}
+	return out
+}
+
+func applySquatterBindTargetConfig(targets []string, configs map[string]map[string]string, chainConfig map[string]string) map[string]map[string]string {
+	if configs == nil {
+		configs = map[string]map[string]string{}
+	}
+	bindPort := strings.TrimSpace(chainConfig["squatter.bind_port"])
+	if bindPort == "" {
+		bindPort = strings.TrimSpace(chainConfig["payload.bind_port"])
+	}
+	if bindPort == "" {
+		bindPort = "9101"
+	}
+	remotePath := strings.TrimSpace(chainConfig["squatter.remote_path"])
+	localPath := squatterPayloadPath()
+	for _, target := range targets {
+		config := cloneStringMap(configs[target])
+		if config == nil {
+			config = map[string]string{}
+		}
+		switch strings.TrimSpace(config["target.port"]) {
+		case "139", "445":
+		default:
+			config["target.port"] = "445"
+		}
+		config["payload.local_path"] = localPath
+		if remotePath != "" {
+			config["payload.remote_path"] = remotePath
+		}
+		config["payload.bind_port"] = bindPort
+		configs[target] = config
+	}
+	return configs
+}
+
+func squatterPayloadPath() string {
+	if env := strings.TrimSpace(os.Getenv("SQUATTER_PAYLOAD_PATH")); env != "" {
+		return env
+	}
+	candidates := squatterPayloadPathCandidates()
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	if len(candidates) != 0 {
+		return candidates[0]
+	}
+	return filepath.Join("examples", "bin", "squatter.exe")
+}
+
+func squatterPayloadPathCandidates() []string {
+	var candidates []string
+	add := func(path string) {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == path {
+				return
+			}
+		}
+		candidates = append(candidates, path)
+	}
+
+	if configPath := strings.TrimSpace(os.Getenv("HOVEL_MODULE_CONFIG")); configPath != "" {
+		configDir := filepath.Dir(configPath)
+		add(filepath.Join(configDir, "bin", "squatter.exe"))
+		add(filepath.Join(filepath.Dir(configDir), "bin", "squatter.exe"))
+	}
+	if workspace := strings.TrimSpace(os.Getenv("BUILD_WORKSPACE_DIRECTORY")); workspace != "" {
+		add(filepath.Join(workspace, "examples", "bin", "squatter.exe"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		add(filepath.Join(cwd, "examples", "bin", "squatter.exe"))
+	}
+	return candidates
 }
 
 func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation Invocation, path string) (throwExecution, error) {
@@ -2293,6 +3304,7 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 	}
 	targetConfigs = targetConfigsForTargets(targets, targetConfigs)
 	modules := make([]string, 0, len(file.Spec.Steps))
+	steps := make([]throwStepRef, 0, len(file.Spec.Steps))
 	for _, step := range file.Spec.Steps {
 		if !strings.HasPrefix(strings.TrimSpace(step.Uses), "module:") {
 			return throwExecution{}, fmt.Errorf("chain file step %s uses unsupported runtime %q", step.ID, step.Uses)
@@ -2301,16 +3313,33 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 		if moduleID == "" {
 			return throwExecution{}, fmt.Errorf("chain file step %s module reference is required", step.ID)
 		}
-		modules = append(modules, moduleID)
+		stepID := strings.TrimSpace(step.Step)
+		if stepID == "squatter.bind" {
+			modules = append(modules, "squatter.bind")
+			continue
+		} else {
+			modules = append(modules, moduleID)
+		}
+		if stepID != "" {
+			steps = append(steps, throwStepRef{
+				ID:       step.ID,
+				ModuleID: moduleID,
+				StepID:   stepID,
+			})
+		}
 	}
 	if len(targets) == 0 {
 		return throwExecution{}, fmt.Errorf("target is required; configured chain files must include targets or pass --target")
+	}
+	if hasSquatterBindModule(modules) || chainFileHasSquatterTCPBindModule(moduleDB(runtime), file.Spec.Steps, file.Spec.Config) {
+		targetConfigs = applySquatterBindTargetConfig(targets, targetConfigs, file.Spec.Config)
 	}
 	return throwExecution{
 		Operation:     operatorsession.DefaultOperation,
 		Chain:         file.Metadata.Name,
 		Targets:       targets,
 		Modules:       modules,
+		Steps:         steps,
 		ChainConfig:   cloneStringMap(file.Spec.Config),
 		TargetConfigs: targetConfigs,
 	}, nil
@@ -2334,6 +3363,95 @@ func targetConfigsForTargets(targets []string, configs map[string]map[string]str
 	return scoped
 }
 
+func compatibleThrowTargets(db ModuleDatabase, steps []CapabilityChainStepRef, chainConfig map[string]string, targetConfigs map[string]map[string]string, targets []string, strict bool) ([]string, map[string]map[string]string, []SkippedTarget, error) {
+	var kept []string
+	var skipped []SkippedTarget
+	for _, target := range targets {
+		view := modulecatalog.ConfigView{
+			Steps:         validationStepRefs(steps),
+			Targets:       []string{target},
+			ChainConfig:   cloneStringMap(chainConfig),
+			TargetConfigs: targetConfigsForTargets([]string{target}, targetConfigs),
+		}
+		validation := db.Validate(view)
+		if validation.Valid {
+			kept = append(kept, target)
+			continue
+		}
+		targetIssues := targetIssuesFor(validation.Issues, target)
+		if len(targetIssues) == 0 {
+			kept = append(kept, target)
+			continue
+		}
+		if strict {
+			return nil, nil, nil, fmt.Errorf("target %s incompatible: %s", target, issueMessages(targetIssues))
+		}
+		skipped = append(skipped, SkippedTarget{Target: target, Reason: issueMessages(targetIssues)})
+	}
+	if len(kept) == 0 {
+		if len(skipped) != 0 {
+			return nil, nil, nil, fmt.Errorf("no compatible targets: %s", skippedTargetMessages(skipped))
+		}
+		return nil, nil, nil, fmt.Errorf("target is required; add one with target add <target> or pass --target")
+	}
+	return kept, targetConfigsForTargets(kept, targetConfigs), skipped, nil
+}
+
+func validationStepRefs(steps []CapabilityChainStepRef) []modulecatalog.StepRef {
+	refs := make([]modulecatalog.StepRef, 0, len(steps))
+	for _, step := range steps {
+		refs = append(refs, modulecatalog.StepRef{ID: step.ID, ModuleID: step.ModuleID})
+	}
+	return refs
+}
+
+func targetIssuesFor(issues []modulecatalog.Issue, target string) []modulecatalog.Issue {
+	var out []modulecatalog.Issue
+	for _, issue := range issues {
+		if issue.Scope == modulecatalog.ScopeTarget && issue.Target == target {
+			out = append(out, issue)
+		}
+	}
+	return out
+}
+
+func issueMessages(issues []modulecatalog.Issue) string {
+	if len(issues) == 0 {
+		return "unknown incompatibility"
+	}
+	messages := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		messages = append(messages, issue.Message)
+	}
+	return strings.Join(messages, "; ")
+}
+
+func skippedTargetMessages(skipped []SkippedTarget) string {
+	messages := make([]string, 0, len(skipped))
+	for _, target := range skipped {
+		messages = append(messages, fmt.Sprintf("%s (%s)", target.Target, target.Reason))
+	}
+	return strings.Join(messages, "; ")
+}
+
+func targetSetByName(sets []operatorsession.TargetSet, name string) (operatorsession.TargetSet, bool) {
+	for _, set := range sets {
+		if set.Name == name {
+			return set, true
+		}
+	}
+	return operatorsession.TargetSet{}, false
+}
+
+func hasString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func validateChainFileForThrow(file ChainFile) error {
 	if err := validateChainFileShape(file); err != nil {
 		return err
@@ -2343,6 +3461,21 @@ func validateChainFileForThrow(file ChainFile) error {
 	}
 	if len(file.Spec.Targets) == 0 {
 		return fmt.Errorf("chain file must include targets for throw")
+	}
+	capabilitySteps := 0
+	bridgeSteps := 0
+	for _, step := range file.Spec.Steps {
+		stepID := strings.TrimSpace(step.Step)
+		if stepID == "squatter.bind" {
+			bridgeSteps++
+			continue
+		}
+		if stepID != "" {
+			capabilitySteps++
+		}
+	}
+	if capabilitySteps != 0 && capabilitySteps+bridgeSteps != len(file.Spec.Steps) {
+		return fmt.Errorf("chain file capability-step execution: all steps must declare step")
 	}
 	return nil
 }
@@ -2380,12 +3513,10 @@ func validateChainFileShape(file ChainFile) error {
 func selectedChainState(state operatorsession.State, chain string) (operatorsession.Chain, bool) {
 	if chain == "" || chain == state.ActiveChain {
 		return operatorsession.Chain{
-			Name:          state.Chain,
-			Targets:       append([]string(nil), state.Targets...),
-			Steps:         append([]operatorsession.Step(nil), state.Steps...),
-			Config:        cloneStringMap(state.Config),
-			TargetConfigs: cloneTargetConfigs(state.TargetConfigs),
-			LogTopic:      state.LogTopic,
+			Name:     state.Chain,
+			Steps:    append([]operatorsession.Step(nil), state.Steps...),
+			Config:   cloneStringMap(state.Config),
+			LogTopic: state.LogTopic,
 		}, true
 	}
 	for _, candidate := range state.Chains {
@@ -2426,10 +3557,12 @@ func chainFileFromState(state operatorsession.State, template bool) ChainFile {
 func chainFileSteps(steps []operatorsession.Step) []ChainFileStep {
 	out := make([]ChainFileStep, 0, len(steps))
 	for _, step := range steps {
-		out = append(out, ChainFileStep{
+		fileStep := ChainFileStep{
 			ID:   step.ID,
 			Uses: "module:" + step.ModuleID,
-		})
+			Step: step.StepID,
+		}
+		out = append(out, fileStep)
 	}
 	return out
 }
@@ -2452,6 +3585,12 @@ func loadChainFile(session OperatorSession, file ChainFile) error {
 		moduleID := strings.TrimPrefix(strings.TrimSpace(step.Uses), "module:")
 		if moduleID == "" {
 			return fmt.Errorf("chain file step %s module reference is required", step.ID)
+		}
+		if strings.TrimSpace(step.Step) != "" {
+			if _, err := session.AddStep(moduleID, strings.TrimSpace(step.Step)); err != nil {
+				return err
+			}
+			continue
 		}
 		if _, err := session.AddModule(moduleID); err != nil {
 			return err
@@ -2477,18 +3616,6 @@ func loadChainFile(session OperatorSession, file ChainFile) error {
 			if err := session.SetTargetConfig(target.ID, key, value); err != nil {
 				return err
 			}
-		}
-	}
-	return nil
-}
-
-func targetsForChain(state operatorsession.State, chain string) []string {
-	if chain == "" || chain == state.ActiveChain {
-		return append([]string(nil), state.Targets...)
-	}
-	for _, candidate := range state.Chains {
-		if candidate.Name == chain {
-			return append([]string(nil), candidate.Targets...)
 		}
 	}
 	return nil
@@ -2553,9 +3680,96 @@ func validationView(state operatorsession.State) modulecatalog.ConfigView {
 	}
 }
 
+func ValidateState(db ModuleDatabase, state operatorsession.State) modulecatalog.Validation {
+	var issues []modulecatalog.Issue
+	if len(state.Steps) == 0 {
+		issues = append(issues, modulecatalog.Issue{Scope: modulecatalog.ScopeChain, Message: "chain has no modules"})
+	}
+	if len(state.Targets) == 0 {
+		issues = append(issues, modulecatalog.Issue{Scope: modulecatalog.ScopeTarget, Message: "chain has no targets"})
+	}
+
+	normalSteps := make([]modulecatalog.StepRef, 0, len(state.Steps))
+	for _, step := range state.Steps {
+		ref := modulecatalog.StepRef{ID: step.ID, ModuleID: step.ModuleID}
+		if step.StepID == "squatter.bind" || (step.StepID == "" && isSquatterTCPBindModule(db, step.ModuleID, state.Config)) {
+			if step.StepID == "squatter.bind" {
+				ref.ModuleID = "squatter.bind"
+			}
+			issues = append(issues, validateCommandRequirements(modulecatalog.ScopeChain, ref, "", squatterBindRequirements(modulecatalog.ScopeChain), state.Config)...)
+			continue
+		}
+		normalSteps = append(normalSteps, ref)
+	}
+	if len(normalSteps) != 0 {
+		validation := db.Validate(modulecatalog.ConfigView{
+			Steps:         normalSteps,
+			Targets:       append([]string(nil), state.Targets...),
+			ChainConfig:   cloneStringMap(state.Config),
+			TargetConfigs: cloneTargetConfigs(state.TargetConfigs),
+		})
+		for _, issue := range validation.Issues {
+			if issue.Scope == modulecatalog.ScopeTarget && issue.Message == "chain has no targets" {
+				continue
+			}
+			issues = append(issues, issue)
+		}
+	}
+	sort.Slice(issues, func(i, j int) bool {
+		if issues[i].Scope != issues[j].Scope {
+			return issues[i].Scope < issues[j].Scope
+		}
+		if issues[i].Target != issues[j].Target {
+			return issues[i].Target < issues[j].Target
+		}
+		if issues[i].StepID != issues[j].StepID {
+			return issues[i].StepID < issues[j].StepID
+		}
+		return issues[i].Key < issues[j].Key
+	})
+	return modulecatalog.Validation{Valid: len(issues) == 0, Issues: issues}
+}
+
+func validateCommandRequirements(scope modulecatalog.Scope, step modulecatalog.StepRef, target string, requirements []modulecatalog.Requirement, values map[string]string) []modulecatalog.Issue {
+	var issues []modulecatalog.Issue
+	for _, requirement := range requirements {
+		value := values[requirement.Key]
+		if value == "" {
+			if requirement.Required {
+				issues = append(issues, modulecatalog.Issue{
+					Scope:    scope,
+					StepID:   step.ID,
+					ModuleID: step.ModuleID,
+					Target:   target,
+					Key:      requirement.Key,
+					Message:  fmt.Sprintf("missing %s config %s", scope, requirement.Key),
+				})
+			}
+			continue
+		}
+		if err := modulecatalog.ValidateValue(requirement, value); err != nil {
+			issues = append(issues, modulecatalog.Issue{
+				Scope:    scope,
+				StepID:   step.ID,
+				ModuleID: step.ModuleID,
+				Target:   target,
+				Key:      requirement.Key,
+				Message:  fmt.Sprintf("invalid %s config %s: %v", scope, requirement.Key, err),
+			})
+		}
+	}
+	return issues
+}
+
 func requirementsByKey(db ModuleDatabase, state operatorsession.State, scope modulecatalog.Scope) map[string]modulecatalog.Requirement {
 	requirements := map[string]modulecatalog.Requirement{}
 	for _, step := range state.Steps {
+		if step.StepID == "squatter.bind" || (step.StepID == "" && isSquatterTCPBindModule(db, step.ModuleID, state.Config)) {
+			for _, requirement := range squatterBindRequirements(scope) {
+				requirements[requirement.Key] = requirement
+			}
+			continue
+		}
 		module, ok := db.Find(step.ModuleID)
 		if !ok {
 			continue
@@ -2571,6 +3785,35 @@ func requirementsByKey(db ModuleDatabase, state operatorsession.State, scope mod
 		}
 	}
 	return requirements
+}
+
+func squatterBindRequirements(scope modulecatalog.Scope) []modulecatalog.Requirement {
+	if scope == modulecatalog.ScopeTarget {
+		return nil
+	}
+	return []modulecatalog.Requirement{
+		{
+			Key:         squatterTypeConfigKey,
+			Type:        modulecatalog.ValueEnum,
+			Required:    false,
+			Default:     squatterTypeTCPBind,
+			Allowed:     []string{squatterTypeTCPBind},
+			Description: "Squatter install/session mode.",
+		},
+		{
+			Key:         "squatter.bind_port",
+			Type:        modulecatalog.ValuePort,
+			Required:    false,
+			Default:     "9101",
+			Description: "TCP bind port opened by the Squatter agent on the target.",
+		},
+		{
+			Key:         "squatter.remote_path",
+			Type:        modulecatalog.ValueString,
+			Required:    false,
+			Description: "Optional fixed target path used when ETRO installs the Squatter agent; unset auto-generates a fresh path.",
+		},
+	}
 }
 
 func configLines(config map[string]string, requirements map[string]modulecatalog.Requirement) string {
@@ -2592,6 +3835,63 @@ func configLines(config map[string]string, requirements map[string]modulecatalog
 	return strings.Join(lines, "\n")
 }
 
+func availableConfigLines(config map[string]string, requirements map[string]modulecatalog.Requirement) string {
+	seen := map[string]bool{}
+	var lines []string
+	for _, key := range sortedRequirementKeys(requirements) {
+		requirement := requirements[key]
+		seen[key] = true
+		status := "optional"
+		if requirement.Required {
+			status = "required"
+		}
+		value := config[key]
+		if value == "" && requirement.Default != "" {
+			status = "default"
+			value = requirement.Default
+		} else if value != "" {
+			status = "set"
+		}
+		typeName := string(requirement.Type)
+		if typeName == "" {
+			typeName = "string"
+		}
+		display := ""
+		if value != "" {
+			display = modulecatalog.DisplayValue(requirement, value)
+		}
+		lines = append(lines, fmt.Sprintf("  %-28s %-18s %-8s %s", key, typeName, status, display))
+	}
+	for _, key := range sortedConfigKeys(config) {
+		if seen[key] {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("  %-28s %-18s %-8s %s", key, "string", "set", config[key]))
+	}
+	if len(lines) == 0 {
+		return "  none"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func sortedRequirementKeys(values map[string]modulecatalog.Requirement) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedConfigKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func moduleLines(modules []modulecatalog.Module) string {
 	lines := []string{
 		"ID                         TYPE              SUMMARY",
@@ -2603,39 +3903,108 @@ func moduleLines(modules []modulecatalog.Module) string {
 	return strings.Join(lines, "\n")
 }
 
-func moduleInspect(module modulecatalog.Module) string {
+func moduleInspect(payload ModuleInspectPayload) string {
 	lines := []string{
-		fmt.Sprintf("%s %s", module.ID, module.Type),
+		fmt.Sprintf("%s %s", payload.ID, payload.Type),
 		"",
-		module.Summary,
+		payload.Summary,
 	}
-	if module.Description != "" {
-		lines = append(lines, module.Description)
+	if payload.Description != "" {
+		lines = append(lines, payload.Description)
 	}
 	lines = append(lines,
 		"",
-		fmt.Sprintf("version      %s", module.Version),
-		fmt.Sprintf("runtime      %s", module.RuntimeKind),
-		fmt.Sprintf("author       %s", module.Author),
-		fmt.Sprintf("enabled      %t", module.Enabled),
+		fmt.Sprintf("version      %s", payload.Version),
+		fmt.Sprintf("runtime      %s", payload.RuntimeKind),
+		fmt.Sprintf("author       %s", payload.Author),
+		fmt.Sprintf("enabled      %t", payload.Enabled),
 	)
-	if len(module.Tags) > 0 {
-		lines = append(lines, "tags         "+strings.Join(module.Tags, ", "))
+	if len(payload.Tags) > 0 {
+		lines = append(lines, "tags         "+strings.Join(payload.Tags, ", "))
 	}
-	if len(module.ChainConfig) > 0 {
+	if len(payload.ChainConfig) > 0 {
 		lines = append(lines, "", "chain config")
-		for _, requirement := range module.ChainConfig {
+		for _, requirement := range payload.ChainConfig {
 			lines = append(lines, requirementLine(requirement))
 		}
 	}
-	if len(module.TargetConfig) > 0 {
+	if len(payload.TargetConfig) > 0 {
 		lines = append(lines, "", "target config")
-		for _, requirement := range module.TargetConfig {
+		for _, requirement := range payload.TargetConfig {
 			lines = append(lines, requirementLine(requirement))
 		}
 	}
-	lines = append(lines, "", "Next: chain add "+module.ID)
+	if len(payload.Steps) > 0 {
+		lines = append(lines, "", "steps")
+		for _, step := range payload.Steps {
+			state := "ready"
+			if !step.Ready {
+				state = "blocked"
+			}
+			line := fmt.Sprintf("  %-28s %-20s %s", step.ID, step.Kind, state)
+			if len(step.Missing) > 0 {
+				line += " missing " + missingCapabilitySummary(step.Missing[0])
+				if len(step.Missing) > 1 {
+					line += fmt.Sprintf(" (+%d more)", len(step.Missing)-1)
+				}
+			}
+			lines = append(lines, line)
+		}
+	}
+	lines = append(lines, "", "Next: chain add "+payload.ID)
 	return strings.Join(lines, "\n")
+}
+
+func moduleInspectPayload(module modulecatalog.Module, steps []ModuleStepPayload) ModuleInspectPayload {
+	return ModuleInspectPayload{
+		ID:           module.ID,
+		Name:         module.Name,
+		Type:         module.Type,
+		Version:      module.Version,
+		Summary:      module.Summary,
+		Description:  module.Description,
+		Tags:         append([]string(nil), module.Tags...),
+		RuntimeKind:  module.RuntimeKind,
+		Author:       module.Author,
+		Enabled:      module.Enabled,
+		ChainConfig:  append([]modulecatalog.Requirement(nil), module.ChainConfig...),
+		TargetConfig: append([]modulecatalog.Requirement(nil), module.TargetConfig...),
+		Steps:        steps,
+	}
+}
+
+func moduleStepPayloads(moduleID string, availability []modulecatalog.StepAvailability) []ModuleStepPayload {
+	steps := []ModuleStepPayload{}
+	for _, item := range availability {
+		if item.ModuleID != moduleID {
+			continue
+		}
+		steps = append(steps, ModuleStepPayload{
+			ID:       item.Step.ID,
+			Kind:     item.Step.Kind,
+			Ready:    item.Resolution.Ready,
+			Requires: append([]modulecatalog.CapabilityRequirement(nil), item.Step.Requires...),
+			Produces: append([]modulecatalog.CapabilityRequirement(nil), item.Step.Produces...),
+			Missing:  append([]modulecatalog.MissingCapability(nil), item.Resolution.Missing...),
+		})
+	}
+	return steps
+}
+
+func missingCapabilitySummary(missing modulecatalog.MissingCapability) string {
+	parts := []string{string(missing.Type)}
+	keys := make([]string, 0, len(missing.Attributes))
+	for key := range missing.Attributes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%v", key, missing.Attributes[key]))
+	}
+	if len(missing.States) > 0 {
+		parts = append(parts, "state="+strings.Join(missing.States, "|"))
+	}
+	return strings.Join(parts, " ")
 }
 
 func requirementLine(requirement modulecatalog.Requirement) string {
@@ -2659,7 +4028,7 @@ func requirementLine(requirement modulecatalog.Requirement) string {
 
 func chainInspect(state operatorsession.State) string {
 	lines := []string{
-		fmt.Sprintf("Chain %s steps=%d targets=%d config=%d topic=%s", state.ActiveChain, len(state.Steps), len(state.Targets), len(state.Config), state.LogTopic),
+		fmt.Sprintf("Chain %s steps=%d config=%d topic=%s", state.ActiveChain, len(state.Steps), len(state.Config), state.LogTopic),
 		"",
 		"steps",
 	}
@@ -2667,7 +4036,11 @@ func chainInspect(state operatorsession.State) string {
 		lines = append(lines, "  none")
 	} else {
 		for _, step := range state.Steps {
-			lines = append(lines, fmt.Sprintf("  %-10s %s", step.ID, step.ModuleID))
+			label := step.ModuleID
+			if step.StepID != "" {
+				label = step.StepID
+			}
+			lines = append(lines, fmt.Sprintf("  %-10s %s", step.ID, label))
 		}
 	}
 	lines = append(lines, "", "targets")
@@ -2698,6 +4071,24 @@ func cloneTargetConfigs(values map[string]map[string]string) map[string]map[stri
 	return out
 }
 
+func cloneCapabilityChainStepRefs(values []CapabilityChainStepRef) []CapabilityChainStepRef {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]CapabilityChainStepRef(nil), values...)
+}
+
+func cloneAnyMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
 func daemonStatusPayload(status daemon.Status) DaemonStatusPayload {
 	payload := DaemonStatusPayload{
 		State:         string(status.State),
@@ -2713,16 +4104,63 @@ func daemonStatusPayload(status daemon.Status) DaemonStatusPayload {
 
 func runPayload(result RunMockExploitResponse) RunPayload {
 	return RunPayload{
-		RunID:     result.RunID,
-		ModuleID:  result.ModuleID,
-		Target:    result.Target,
-		State:     result.State,
-		Summary:   result.Summary,
-		Findings:  result.Findings,
-		Artifacts: result.Artifacts,
-		Logs:      result.Logs,
-		Sessions:  result.Sessions,
+		RunID:             result.RunID,
+		ModuleID:          result.ModuleID,
+		Target:            result.Target,
+		State:             result.State,
+		Summary:           result.Summary,
+		Findings:          result.Findings,
+		Artifacts:         result.Artifacts,
+		Logs:              result.Logs,
+		Sessions:          result.Sessions,
+		InstalledPayloads: cloneInstalledPayloadDescriptors(result.InstalledPayloads),
 	}
+}
+
+func capabilityChainRunPayload(target, runID string, result CapabilityChainResponse) RunPayload {
+	if result.RunID != "" {
+		runID = result.RunID
+	}
+	if result.Target != "" {
+		target = result.Target
+	}
+	return RunPayload{
+		RunID:             runID,
+		ModuleID:          "capability-chain",
+		Target:            target,
+		State:             result.State,
+		Summary:           result.Summary,
+		Capabilities:      cloneCapabilityPayloads(result.Capabilities),
+		Evidence:          cloneCapabilityEvidence(result.Evidence),
+		Logs:              append([]LogEntry(nil), result.Logs...),
+		Sessions:          append([]SessionRef(nil), result.Sessions...),
+		InstalledPayloads: cloneInstalledPayloadDescriptors(result.InstalledPayloads),
+	}
+}
+
+func cloneCapabilityPayloads(values []CapabilityPayload) []CapabilityPayload {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]CapabilityPayload, 0, len(values))
+	for _, value := range values {
+		value.Attributes = cloneAnyMap(value.Attributes)
+		value.Extensions = cloneAnyMap(value.Extensions)
+		out = append(out, value)
+	}
+	return out
+}
+
+func cloneCapabilityEvidence(values []CapabilityEvidence) []CapabilityEvidence {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]CapabilityEvidence, 0, len(values))
+	for _, value := range values {
+		value.Details = cloneAnyMap(value.Details)
+		out = append(out, value)
+	}
+	return out
 }
 
 func throwHeader(chain string) operatorlog.Entry {

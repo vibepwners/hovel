@@ -67,6 +67,8 @@ class JSONRPCServer:
             return self._module.info()
         if method == "schema":
             return self._module.module_schema()
+        if method.startswith("step."):
+            return self._dispatch_step(method, params)
         if method == "execute":
             return self._loop.run_until_complete(self._execute(params))
         if method.startswith("session/"):
@@ -74,6 +76,17 @@ class JSONRPCServer:
         if method == "shutdown":
             self._loop.run_until_complete(self._sessions.close_all())
             return {"status": "ok"}
+        raise ValueError(f"unknown method {method!r}")
+
+    def _dispatch_step(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method == "step.describe":
+            return self._module.describe_steps()
+        if method == "step.prepare":
+            return self._module.prepare_step(params)
+        if method == "step.execute":
+            return self._module.execute_step(params)
+        if method == "step.cleanup":
+            return self._module.cleanup_step(params)
         raise ValueError(f"unknown method {method!r}")
 
     async def _dispatch_session(self, method: str, params: dict[str, Any]) -> dict[str, Any]:

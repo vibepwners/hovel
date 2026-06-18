@@ -10,15 +10,32 @@ import (
 
 // SessionRef identifies an interactive session to the daemon and the operator.
 type SessionRef struct {
-	ID           string
-	RunID        string
-	ModuleID     string
-	Target       string
-	Name         string
-	Kind         string
-	State        string
-	Transport    string
-	Capabilities []string
+	ID                 string   `json:"id"`
+	RunID              string   `json:"runId"`
+	ModuleID           string   `json:"moduleId"`
+	Target             string   `json:"target"`
+	Name               string   `json:"name"`
+	Kind               string   `json:"kind"`
+	State              string   `json:"state"`
+	Transport          string   `json:"transport"`
+	InstalledPayloadID string   `json:"installedPayloadId,omitempty"`
+	Capabilities       []string `json:"capabilities"`
+}
+
+// CapabilityTerminalPTY marks sessions backed by a local pseudoterminal.
+const CapabilityTerminalPTY = "terminal.pty"
+
+// ListenerRef describes a provider-managed listener used to acquire sessions.
+type ListenerRef struct {
+	ID        string            `json:"id"`
+	RunID     string            `json:"runId,omitempty"`
+	Target    string            `json:"target,omitempty"`
+	Transport string            `json:"transport"`
+	Host      string            `json:"host,omitempty"`
+	Port      int               `json:"port,omitempty"`
+	Pipe      string            `json:"pipe,omitempty"`
+	State     string            `json:"state"`
+	Fields    map[string]string `json:"fields,omitempty"`
 }
 
 func (s SessionRef) toRPC() map[string]any {
@@ -27,15 +44,16 @@ func (s SessionRef) toRPC() map[string]any {
 		capabilities = []string{}
 	}
 	return map[string]any{
-		"id":           s.ID,
-		"runId":        s.RunID,
-		"moduleId":     s.ModuleID,
-		"target":       s.Target,
-		"name":         s.Name,
-		"kind":         s.Kind,
-		"state":        s.State,
-		"transport":    s.Transport,
-		"capabilities": capabilities,
+		"id":                 s.ID,
+		"runId":              s.RunID,
+		"moduleId":           s.ModuleID,
+		"target":             s.Target,
+		"name":               s.Name,
+		"kind":               s.Kind,
+		"state":              s.State,
+		"transport":          s.Transport,
+		"installedPayloadId": s.InstalledPayloadID,
+		"capabilities":       capabilities,
 	}
 }
 
@@ -291,6 +309,10 @@ func (m *sessionManager) open(scope sessionScope, session Session, opts ...sessi
 	if len(opts) > 0 {
 		options = opts[0]
 	}
+	capabilities := append([]string(nil), options.capabilities...)
+	if _, ok := session.(*PTYSession); ok {
+		capabilities = appendSessionCapability(capabilities, CapabilityTerminalPTY)
+	}
 	m.mu.Lock()
 	m.counter++
 	id := fmt.Sprintf("%s-session-%d", scope.runID, m.counter)
@@ -303,7 +325,7 @@ func (m *sessionManager) open(scope sessionScope, session Session, opts ...sessi
 		Kind:         options.kind,
 		State:        "active",
 		Transport:    options.transport,
-		Capabilities: options.capabilities,
+		Capabilities: capabilities,
 	}
 	m.sessions[id] = &managedSession{ref: ref, session: session}
 	m.mu.Unlock()
@@ -312,6 +334,15 @@ func (m *sessionManager) open(scope sessionScope, session Session, opts ...sessi
 	}
 	m.fire("session.created", ref, nil)
 	return ref, nil
+}
+
+func appendSessionCapability(capabilities []string, capability string) []string {
+	for _, existing := range capabilities {
+		if existing == capability {
+			return capabilities
+		}
+	}
+	return append(capabilities, capability)
 }
 
 func (m *sessionManager) lookup(id string) (*managedSession, error) {

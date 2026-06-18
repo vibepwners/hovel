@@ -190,6 +190,301 @@ func TestCatalogValidationAcceptsCompleteConfig(t *testing.T) {
 	}
 }
 
+func TestValidateStepContractsReportsMalformedContracts(t *testing.T) {
+	module := Module{
+		ID:      "bad-provider",
+		Enabled: true,
+		StepContracts: StepContractSet{Steps: []StepContract{
+			{
+				Kind: "payload.install",
+				Requires: []CapabilityRequirement{{
+					Type:          CapabilityCredential,
+					SchemaVersion: "v1",
+				}},
+			},
+			{
+				ID:   "squatter.connect_smb",
+				Kind: "session.connector",
+				Requires: []CapabilityRequirement{{
+					SchemaVersion: "v1",
+				}},
+				Produces: []CapabilityRequirement{{
+					Type: CapabilitySessionRef,
+				}},
+			},
+		}},
+	}
+
+	issues := ValidateStepContracts(module)
+	want := []StepContractIssue{
+		{ModuleID: "bad-provider", StepID: "", Message: "step id is required"},
+		{ModuleID: "bad-provider", StepID: "squatter.connect_smb", Message: "requirement 1 type is required"},
+		{ModuleID: "bad-provider", StepID: "squatter.connect_smb", Message: "produced capability 1 schemaVersion is required"},
+	}
+	if !reflect.DeepEqual(issues, want) {
+		t.Fatalf("issues = %#v, want %#v", issues, want)
+	}
+}
+
+func TestValidateStepContractsAcceptsLegacyEmptyContracts(t *testing.T) {
+	if issues := ValidateStepContracts(Module{ID: "legacy"}); len(issues) != 0 {
+		t.Fatalf("legacy issues = %#v, want none", issues)
+	}
+}
+
+func TestCapabilitySatisfiesRequirementMatchesTypeAttributesAndState(t *testing.T) {
+	capability := Capability{
+		Type:          CapabilityCredential,
+		SchemaVersion: "v1",
+		State:         "active",
+		Attributes: map[string]any{
+			"protocol":  "smb",
+			"principal": "local",
+		},
+	}
+	requirement := CapabilityRequirement{
+		Type:          CapabilityCredential,
+		SchemaVersion: "v1",
+		Attributes:    map[string]any{"protocol": "smb"},
+		States:        []string{"active"},
+	}
+	if !CapabilitySatisfiesRequirement(capability, requirement) {
+		t.Fatal("capability should satisfy requirement")
+	}
+
+	requirement.Type = CapabilityPayloadInstance
+	if CapabilitySatisfiesRequirement(capability, requirement) {
+		t.Fatal("different type should not satisfy requirement")
+	}
+
+	requirement.Type = CapabilityCredential
+	requirement.Attributes = map[string]any{"protocol": "ssh"}
+	if CapabilitySatisfiesRequirement(capability, requirement) {
+		t.Fatal("different attribute should not satisfy requirement")
+	}
+
+	requirement.Attributes = map[string]any{"protocol": "smb"}
+	requirement.States = []string{"planned"}
+	if CapabilitySatisfiesRequirement(capability, requirement) {
+		t.Fatal("disallowed state should not satisfy requirement")
+	}
+}
+
+func TestCapabilitySatisfiesRequirementRejectsDifferentSchemaVersion(t *testing.T) {
+	capability := Capability{
+		ID:            "cred-v2",
+		Type:          CapabilityCredential,
+		SchemaVersion: "v2",
+		State:         "active",
+		Attributes:    map[string]any{"protocol": "smb"},
+	}
+	requirement := CapabilityRequirement{
+		Type:          CapabilityCredential,
+		SchemaVersion: "v1",
+		States:        []string{"active"},
+		Attributes:    map[string]any{"protocol": "smb"},
+	}
+	if CapabilitySatisfiesRequirement(capability, requirement) {
+		t.Fatal("v2 capability satisfied v1 requirement")
+	}
+}
+
+func TestCapabilitySatisfiesRequirementAllowsUnconstrainedState(t *testing.T) {
+	if !CapabilitySatisfiesRequirement(
+		Capability{Type: CapabilityTransport, State: "planned", Attributes: map[string]any{"kind": "smb-pipe"}},
+		CapabilityRequirement{Type: CapabilityTransport, Attributes: map[string]any{"kind": "smb-pipe"}},
+	) {
+		t.Fatal("missing state requirement should allow any state")
+	}
+}
+
+func TestFindSatisfyingCapabilityReturnsFirstMatch(t *testing.T) {
+	capabilities := []Capability{
+		{ID: "tcp", Type: CapabilityTransport, State: "planned", Attributes: map[string]any{"kind": "tcp-bind"}},
+		{ID: "smb-1", Type: CapabilityTransport, State: "planned", Attributes: map[string]any{"kind": "smb-pipe"}},
+		{ID: "smb-2", Type: CapabilityTransport, State: "active", Attributes: map[string]any{"kind": "smb-pipe"}},
+	}
+
+	capability, ok := FindSatisfyingCapability(
+		CapabilityRequirement{
+			Type:       CapabilityTransport,
+			Attributes: map[string]any{"kind": "smb-pipe"},
+			States:     []string{"planned"},
+		},
+		capabilities,
+	)
+	if !ok {
+		t.Fatal("expected matching capability")
+	}
+	if capability.ID != "smb-1" {
+		t.Fatalf("capability id = %q, want smb-1", capability.ID)
+	}
+
+	_, ok = FindSatisfyingCapability(
+		CapabilityRequirement{Type: CapabilityCredential, Attributes: map[string]any{"protocol": "smb"}},
+		capabilities,
+	)
+	if ok {
+		t.Fatal("unexpected credential match")
+	}
+}
+
+func TestResolveStepInputsBindsRequirementsToCapabilities(t *testing.T) {
+	step := StepContract{
+		ID: "squatter.install_smb",
+		Requires: []CapabilityRequirement{
+			{
+				Type:       CapabilityPayloadArtifact,
+				Attributes: map[string]any{"runtime": "windows-x86"},
+				States:     []string{"built"},
+			},
+			{
+				Type:       CapabilityCredential,
+				Attributes: map[string]any{"protocol": "smb"},
+				States:     []string{"active"},
+			},
+		},
+	}
+	capabilities := []Capability{
+		{ID: "artifact-1", Type: CapabilityPayloadArtifact, SchemaVersion: "v1", State: "built", Attributes: map[string]any{"runtime": "windows-x86"}},
+		{ID: "credential-1", Type: CapabilityCredential, SchemaVersion: "v1", State: "active", Attributes: map[string]any{"protocol": "smb"}},
+	}
+
+	resolution := ResolveStepInputs(step, capabilities)
+	if !resolution.Ready {
+		t.Fatalf("resolution ready = false, missing %#v", resolution.Missing)
+	}
+	want := []CapabilityBinding{
+		{RequirementIndex: 0, CapabilityID: "artifact-1"},
+		{RequirementIndex: 1, CapabilityID: "credential-1"},
+	}
+	if !reflect.DeepEqual(resolution.Bindings, want) {
+		t.Fatalf("bindings = %#v, want %#v", resolution.Bindings, want)
+	}
+}
+
+func TestResolveStepInputsDoesNotBindDifferentSchemaVersion(t *testing.T) {
+	step := StepContract{
+		ID: "squatter.connect_smb",
+		Requires: []CapabilityRequirement{{
+			Type:          CapabilityPayloadInstance,
+			SchemaVersion: "v1",
+			States:        []string{"installed"},
+			Attributes:    map[string]any{"provider": "squatter", "transport": "smb-named-pipe"},
+		}},
+	}
+	capabilities := []Capability{{
+		ID:            "payload-v2",
+		Type:          CapabilityPayloadInstance,
+		SchemaVersion: "v2",
+		State:         "installed",
+		Attributes:    map[string]any{"provider": "squatter", "transport": "smb-named-pipe"},
+	}}
+
+	resolution := ResolveStepInputs(step, capabilities)
+	if resolution.Ready {
+		t.Fatalf("resolution ready = true, bindings %#v", resolution.Bindings)
+	}
+	if len(resolution.Missing) != 1 || resolution.Missing[0].SchemaVersion != "v1" {
+		t.Fatalf("missing = %#v, want v1 requirement missing", resolution.Missing)
+	}
+}
+
+func TestResolveStepInputsReportsMissingRequirements(t *testing.T) {
+	step := StepContract{
+		ID: "squatter.connect_smb",
+		Requires: []CapabilityRequirement{
+			{
+				Type:       CapabilityTransport,
+				Attributes: map[string]any{"kind": "smb-pipe"},
+				States:     []string{"active"},
+			},
+			{
+				Type:       CapabilityCredential,
+				Attributes: map[string]any{"protocol": "smb"},
+				States:     []string{"active"},
+			},
+		},
+	}
+	capabilities := []Capability{
+		{ID: "transport-1", Type: CapabilityTransport, State: "planned", Attributes: map[string]any{"kind": "smb-pipe"}},
+	}
+
+	resolution := ResolveStepInputs(step, capabilities)
+	if resolution.Ready {
+		t.Fatal("resolution ready = true, want false")
+	}
+	want := []MissingCapability{
+		{
+			RequirementIndex: 0,
+			Type:             CapabilityTransport,
+			Attributes:       map[string]any{"kind": "smb-pipe"},
+			States:           []string{"active"},
+		},
+		{
+			RequirementIndex: 1,
+			Type:             CapabilityCredential,
+			Attributes:       map[string]any{"protocol": "smb"},
+			States:           []string{"active"},
+		},
+	}
+	if !reflect.DeepEqual(resolution.Missing, want) {
+		t.Fatalf("missing = %#v, want %#v", resolution.Missing, want)
+	}
+}
+
+func TestCatalogResolveStepAvailabilityUsesEnabledModuleContracts(t *testing.T) {
+	catalog := New(
+		Module{
+			ID:      "squatter-provider@v1",
+			Enabled: true,
+			StepContracts: StepContractSet{Steps: []StepContract{
+				{
+					ID:   "squatter.connect_smb",
+					Kind: "session.connector",
+					Requires: []CapabilityRequirement{{
+						Type:       CapabilityTransport,
+						Attributes: map[string]any{"kind": "smb-pipe"},
+						States:     []string{"active"},
+					}},
+				},
+				{
+					ID:   "squatter.generate",
+					Kind: "payload.generate",
+				},
+			}},
+		},
+		Module{
+			ID:      "disabled-provider@v1",
+			Enabled: false,
+			StepContracts: StepContractSet{Steps: []StepContract{{
+				ID:   "disabled.step",
+				Kind: "payload.generate",
+			}}},
+		},
+	)
+
+	availability := catalog.ResolveStepAvailability([]Capability{{
+		ID:         "transport-1",
+		Type:       CapabilityTransport,
+		State:      "active",
+		Attributes: map[string]any{"kind": "smb-pipe"},
+	}})
+
+	if len(availability) != 2 {
+		t.Fatalf("availability count = %d, want 2", len(availability))
+	}
+	if availability[0].ModuleID != "squatter-provider@v1" || availability[0].Step.ID != "squatter.connect_smb" {
+		t.Fatalf("first availability = %#v", availability[0])
+	}
+	if !availability[0].Resolution.Ready {
+		t.Fatalf("connect resolution = %#v, want ready", availability[0].Resolution)
+	}
+	if availability[1].Step.ID != "squatter.generate" || !availability[1].Resolution.Ready {
+		t.Fatalf("generate availability = %#v, want ready without inputs", availability[1])
+	}
+}
+
 func exampleCatalog() Catalog {
 	return New(
 		Module{

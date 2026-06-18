@@ -1,0 +1,20 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "chainruntime",
+    srcs = ["runtime.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/app/chainruntime",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/app/modulecatalog",
+        "//internal/domain/run",
+    ],
+)
+
+go_test(
+    name = "chainruntime_test",
+    size = "small",
+    srcs = ["runtime_test.go"],
+    embed = [":chainruntime"],
+    deps = ["//internal/app/modulecatalog"],
+)

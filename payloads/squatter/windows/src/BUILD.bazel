@@ -1,0 +1,281 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//payloads/squatter/bazel:copts.bzl", "SQ_COPTS")
+load("//payloads/squatter/bazel:transitions.bzl", "windows_multiplatform")
+
+# gazelle:exclude wire
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "source_files",
+    srcs = glob([
+        "**/*.c",
+        "**/*.h",
+        "**/*.options",
+        "**/*.proto",
+    ]),
+)
+
+# ===========================================================================
+# base -- the platform foundation
+# ===========================================================================
+# The single Windows-header shim everything else includes (in the right order),
+# carrying the Win32 import libs it implies to dependents (and to C++ tests).
+cc_library(
+    name = "win",
+    hdrs = ["base/win.h"],
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+# ===========================================================================
+# wire -- the multiplexed-stream protocol (frames + control messages)
+# ===========================================================================
+cc_library(
+    name = "frame",
+    srcs = ["wire/frame.c"],
+    hdrs = ["wire/frame.h"],
+    copts = SQ_COPTS,
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [":win"],
+)
+
+cc_library(
+    name = "framing",
+    srcs = ["wire/framing.c"],
+    hdrs = ["wire/framing.h"],
+    copts = SQ_COPTS,
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        ":frame",
+        ":win",
+    ],
+)
+
+cc_library(
+    name = "control_codec",
+    srcs = ["wire/control_codec.c"],
+    hdrs = ["wire/control_codec.h"],
+    copts = SQ_COPTS,
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [":win"],
+)
+
+# ===========================================================================
+# runtime -- the multiplexing engine (channel, module contract, session)
+# ===========================================================================
+cc_library(
+    name = "runtime",
+    srcs = [
+        "runtime/channel.c",
+        "runtime/module.c",
+        "runtime/module_wire.c",
+        "runtime/session.c",
+    ],
+    hdrs = [
+        "runtime/channel.h",
+        "runtime/module.h",
+        "runtime/module_wire.h",
+        "runtime/session.h",
+    ],
+    copts = SQ_COPTS,
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        ":control_codec",
+        ":frame",
+        ":framing",
+        ":win",
+    ],
+)
+
+# ===========================================================================
+# modules -- pluggable modules (the unit of work on a stream)
+# ===========================================================================
+cc_library(
+    name = "modules",
+    srcs = [
+        "modules/cmd.c",
+        "modules/echo.c",
+        "modules/file_xfer.c",
+        "modules/getfile.c",
+        "modules/process_io.c",
+        "modules/putfile.c",
+    ],
+    hdrs = [
+        "modules/cmd.h",
+        "modules/echo.h",
+        "modules/file_xfer.h",
+        "modules/getfile.h",
+        "modules/process_io.h",
+        "modules/putfile.h",
+    ],
+    copts = SQ_COPTS,
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        ":control_codec",
+        ":runtime",
+        ":win",
+    ],
+)
+
+# ===========================================================================
+# sqlog -- the WinAPI-only logging library
+# ===========================================================================
+# The window sink's presence is a compile-time choice (SQLOG_WINDOW), which must
+# match between the library and its consumer. Hence two variants: the default
+# (console/debugger sinks) and a windowed one used by //examples:logdemo_window.
+_SQLOG_SRCS = ["sqlog/sqlog.c"]
+
+_SQLOG_HDRS = [
+    "sqlog/sqlog.h",
+    "sqlog/sqlog_config.h",
+    "sqlog/sqlog_subsystems.h",
+    "sqlog/sqlog_window.h",
+]
+
+cc_library(
+    name = "sqlog",
+    srcs = _SQLOG_SRCS,
+    hdrs = _SQLOG_HDRS,
+    copts = SQ_COPTS,
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_library(
+    name = "sqlog_windowed",
+    srcs = [
+        "sqlog/sqlog.c",
+        "sqlog/sqlog_window.c",
+    ],
+    hdrs = _SQLOG_HDRS,
+    copts = SQ_COPTS + ["-DSQLOG_WINDOW=1"],
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_library(
+    name = "nocrt",
+    srcs = [
+        "nocrt/api.c",
+        "nocrt/chkstk.S",
+        "nocrt/crt.c",
+        "nocrt/entry.c",
+        "nocrt/stubs.c",
+    ],
+    hdrs = ["nocrt/api.h"],
+    copts = SQ_COPTS + [
+        "-fno-asynchronous-unwind-tables",
+        "-fno-builtin",
+        "-fno-stack-protector",
+        "-fno-unwind-tables",
+    ],
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+# ===========================================================================
+# iocpserver -- an alternative IOCP + thread-pool TCP server library
+# (demonstrated by //examples:iocp_echo_server)
+# ===========================================================================
+cc_library(
+    name = "iocpserver",
+    srcs = [
+        "iocpserver/echo.c",
+        "iocpserver/iocp.c",
+        "iocpserver/net.c",
+        "iocpserver/result.c",
+        "iocpserver/server.c",
+    ],
+    hdrs = [
+        "iocpserver/echo.h",
+        "iocpserver/handler.h",
+        "iocpserver/iocp.h",
+        "iocpserver/net.h",
+        "iocpserver/result.h",
+        "iocpserver/server.h",
+    ],
+    copts = SQ_COPTS,
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        ":sqlog",
+        ":win",
+    ],
+)
+
+# ===========================================================================
+# squatter -- THE product: a multiplexed stream/module server
+# ===========================================================================
+# The ".exe" suffix is part of the target name on purpose: MinGW's gcc appends
+# ".exe" to an extensionless link output, so Bazel must expect it too.
+cc_binary(
+    name = "squatter.exe",
+    srcs = ["squatter.c"],
+    copts = SQ_COPTS + [
+        "-fno-asynchronous-unwind-tables",
+        "-fno-builtin",
+        "-fno-stack-protector",
+        "-fno-unwind-tables",
+    ],
+    features = ["-static_runtime"],
+    includes = ["."],
+    linkopts = [
+        "-nostdlib",
+        "-Wl,-e,_sq_nocrt_entry",
+        "-Wl,--subsystem,console",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        ":modules",
+        ":nocrt",
+        ":runtime",
+        ":sqlog",
+        ":win",
+    ],
+)
+
+cc_binary(
+    name = "squatter_checked_gui.exe",
+    srcs = ["squatter.c"],
+    copts = SQ_COPTS + [
+        "-DSQLOG_GUI=1",
+        "-DSQLOG_WINDOW=1",
+        "-DSQLOG_WINDOW_MIN_LEVEL=0",
+        "-fno-asynchronous-unwind-tables",
+        "-fno-builtin",
+        "-fno-stack-protector",
+        "-fno-unwind-tables",
+    ],
+    features = ["-static_runtime"],
+    includes = ["."],
+    linkopts = [
+        "-nostdlib",
+        "-Wl,-e,_sq_nocrt_entry",
+        "-Wl,--subsystem,windows",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        ":modules",
+        ":nocrt",
+        ":runtime",
+        ":sqlog_windowed",
+        ":win",
+    ],
+)
+
+# One command, both ABIs -> squatter_all-x86_64.exe and squatter_all-i686.exe.
+windows_multiplatform(
+    name = "squatter_all",
+    binary = ":squatter.exe",
+)
+
+windows_multiplatform(
+    name = "squatter_checked_gui_all",
+    binary = ":squatter_checked_gui.exe",
+)

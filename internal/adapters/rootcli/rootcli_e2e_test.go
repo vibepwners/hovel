@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 )
 
@@ -79,6 +81,142 @@ func TestMonoBinaryDaemonAndCommandRunMockExploitFlow(t *testing.T) {
 	}
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifact count = %d, want 1", len(result.Artifacts))
+	}
+}
+
+func TestRunCommandUsesDaemonSessionContextForThrow(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
+	ctx := context.Background()
+	run := func(args ...string) string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		full := append([]string{"run", "--workspace", fixture.WorkspacePath, "--op", "o1", "--chain", "mock"}, args...)
+		code := Run(ctx, full, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("hovel %s exit code = %d, stderr = %s", strings.Join(full, " "), code, stderr.String())
+		}
+		return stdout.String()
+	}
+
+	run("chain", "add", "mock-exploit@v0.0.0-example")
+	run("chain", "config", "set", "operator.confirmed_lab", "true")
+	run("target", "add", "mock://target")
+	run("target", "config", "set", "mock://target", "target.host", "mock.local")
+	run("target", "config", "set", "mock://target", "target.port", "22")
+	output := run("throw", "--now", "--json")
+
+	var payload struct {
+		Chain   string   `json:"chain"`
+		Targets []string `json:"targets"`
+		Results []struct {
+			ModuleID string `json:"moduleId"`
+			Target   string `json:"target"`
+			State    string `json:"state"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatalf("invalid JSON %q: %v", output, err)
+	}
+	if payload.Chain != "mock" {
+		t.Fatalf("chain = %q, want mock", payload.Chain)
+	}
+	if len(payload.Targets) != 1 || payload.Targets[0] != "mock://target" {
+		t.Fatalf("targets = %#v", payload.Targets)
+	}
+	if len(payload.Results) != 1 || payload.Results[0].ModuleID != "mock-exploit@v0.0.0-example" || payload.Results[0].State != "succeeded" {
+		t.Fatalf("results = %#v", payload.Results)
+	}
+}
+
+func TestRunCommandCanListReadAndSendSessions(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
+	ctx := context.Background()
+	run := func(args ...string) string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		full := append([]string{"run", "--workspace", fixture.WorkspacePath, "--op", "o1", "--chain", "session"}, args...)
+		code := Run(ctx, full, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("hovel %s exit code = %d, stderr = %s", strings.Join(full, " "), code, stderr.String())
+		}
+		return stdout.String()
+	}
+
+	run("chain", "add", "mock-exploit-session@v0.0.0-example")
+	run("chain", "config", "set", "operator.confirmed_lab", "true")
+	run("target", "add", "mock://router-01")
+	run("target", "config", "set", "mock://router-01", "target.host", "router-01")
+	run("target", "config", "set", "mock://router-01", "target.port", "22")
+	output := run("throw", "--now", "--json")
+
+	var payload struct {
+		Results []struct {
+			Sessions []struct {
+				ID string `json:"id"`
+			} `json:"sessions"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		t.Fatalf("invalid JSON %q: %v", output, err)
+	}
+	if len(payload.Results) != 1 || len(payload.Results[0].Sessions) != 1 {
+		t.Fatalf("results = %#v, want one session", payload.Results)
+	}
+	sessionID := payload.Results[0].Sessions[0].ID
+
+	listOutput := run("session", "list")
+	if !strings.Contains(listOutput, sessionID) || !strings.Contains(listOutput, "mock shell on mock://router-01") {
+		t.Fatalf("session list output = %q", listOutput)
+	}
+	readOutput := run("session", "read", sessionID)
+	if !strings.Contains(readOutput, "mock$") {
+		t.Fatalf("initial session read output = %q", readOutput)
+	}
+
+	run("session", "send", sessionID, "whoami")
+	echoOutput := run("session", "read", sessionID)
+	if !strings.Contains(echoOutput, "whoami") || !strings.Contains(echoOutput, "mock-operator") {
+		t.Fatalf("session read after send output = %q", echoOutput)
+	}
+
+	run("session", "send", sessionID, "pwd", "--end", "\\r\\n")
+	pwdOutput := run("session", "read", sessionID)
+	if !strings.Contains(pwdOutput, "pwd") || !strings.Contains(pwdOutput, "/mock/session") {
+		t.Fatalf("session read after custom terminator output = %q", pwdOutput)
+	}
+}
+
+func TestRunCommandPersistsSquatterAsModuleWithTypeConfig(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
+	ctx := context.Background()
+	run := func(args ...string) string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		full := append([]string{"run", "--workspace", fixture.WorkspacePath, "--op", "o1", "--chain", "etro"}, args...)
+		code := Run(ctx, full, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("hovel %s exit code = %d, stderr = %s", strings.Join(full, " "), code, stderr.String())
+		}
+		return stdout.String()
+	}
+
+	run("add", "etro-survey@v0.1.0")
+	run("add", "etro-exploit@v1.0.0")
+	run("add", "squatter@v0.1.0")
+	output := run("chain", "inspect")
+
+	for _, want := range []string{"etro-survey@v0.1.0", "etro-exploit@v1.0.0", "squatter@v0.1.0"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("chain inspect missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "squatter.bind") {
+		t.Fatalf("chain inspect contains legacy Squatter step:\n%s", output)
+	}
+
+	configOutput := run("chain", "config", "list")
+	if !strings.Contains(configOutput, "squatter.type") || !strings.Contains(configOutput, "tcp-bind") {
+		t.Fatalf("chain config list missing Squatter type config:\n%s", configOutput)
 	}
 }
 

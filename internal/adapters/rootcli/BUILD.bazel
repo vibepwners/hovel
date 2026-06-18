@@ -8,8 +8,10 @@ go_library(
     deps = [
         "//internal/adapters/cli",
         "//internal/adapters/commandmode",
+        "//internal/adapters/daemonrpc",
         "//internal/infra/daemonmanager",
         "//internal/infra/daemonruntime",
+        "//internal/modules/pythonrpc",
         "@com_github_akamensky_argparse//:argparse",
     ],
 )

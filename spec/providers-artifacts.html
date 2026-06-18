@@ -70,10 +70,53 @@
         <p>The first provider implementation should stay narrow:</p>
         <ol>
           <li><code>ArtifactProvider</code> records file-like outputs, hashes, metadata, and run associations.</li>
-          <li><code>PayloadProvider</code> resolves tagged bytes and records hashes or artifact refs before execution.</li>
+          <li><code>PayloadProvider</code> discovers available payloads live, resolves tagged bytes, records hashes or artifact refs before execution, and validates reconnect descriptors for installed payloads it owns.</li>
           <li>The structured logging rail reports provider resolution and artifact creation, but is not itself a provider.</li>
         </ol>
-        <p><code>FactProvider</code>, <code>CredentialProvider</code>, <code>ListenerProvider</code>, and <code>SessionProvider</code> remain part of the domain model, but should not block the first useful execution loop. Facts can start as module outputs, credentials can start as explicit run inputs, and listeners/sessions can arrive with the managed-service milestone.</p>
+        <p><code>FactProvider</code>, <code>CredentialProvider</code>, <code>ListenerProvider</code>, and <code>SessionProvider</code> remain part of the domain model, but should not block the first useful execution loop. Facts can start as module outputs, credentials can start as explicit run inputs or module-produced capabilities, and listeners/sessions can arrive with the managed-service milestone.</p>
+
+        <h2>Capability Records</h2>
+        <p>
+          Chain steps communicate reusable state through capabilities. The daemon owns
+          the core schemas, validates module outputs, persists current state, and appends
+          state-transition history. Modules own observed transitions and provide evidence
+          explaining what happened.
+        </p>
+<pre data-lang="capabilities"><code>RemoteExecutionCapability
+CredentialCapability
+PayloadArtifact
+PayloadInstance
+TransportEndpoint
+SessionRef
+CleanupHandle</code></pre>
+        <p>
+          Capabilities are distinct from evidence. A capability may be consumed by later
+          steps; evidence is displayed and audited. Failed steps may still produce partial
+          capabilities with explicit states, for example a Squatter
+          <code>PayloadInstance</code> that produced an installed payload record but did
+          not produce a live <code>SessionRef</code>, plus a warning evidence record.
+        </p>
+
+        <h2>Credentials as Evidence</h2>
+        <p>
+          Created credentials are assessment evidence and remediation material. Hovel
+          stores generated credentials in plaintext and shows them plainly in normal CLI
+          output. The <code>sensitive</code> field marks the material for evidence export
+          and downstream handling; it does not cause operator CLI redaction.
+        </p>
+<pre data-lang="credential"><code>CredentialCapability:
+  protocol: smb
+  principal: local
+  username: m7q4z92d
+  password: plain-high-entropy-password
+  sensitive: true
+  state: active
+  cleanup: registered</code></pre>
+        <p>
+          Target-side generated names should be neutral random strings by default. They
+          should not include Hovel, Squatter, run ids, or tool-identifying markers.
+          Evidence stores the mapping needed for remediation.
+        </p>
 
         <h2>Payload Provider</h2>
         <p>Payload query:</p>
@@ -110,6 +153,83 @@ capabilities:
           <li>Persist or hash-track the bytes for audit.</li>
           <li>Pass the bytes to the next module without parsing or proving the payload format.</li>
         </ol>
+        <p>
+          For core payload-provider modules such as <a href="squatter-payload-provider.html">Squatter</a>,
+          Hovel materializes provider-returned bytes into controlled workspace artifact paths
+          before exploit execution. Exploit modules receive typed payload metadata and local
+          paths, not raw bytes. This keeps storage location, deduplication, hashing, audit
+          metadata, and cleanup under Hovel's control while leaving payload internals opaque.
+        </p>
+        <p>
+          Payload generation is per target. A provider may return multiple artifacts for one
+          target, but one artifact must be marked primary so consuming exploits can identify
+          the deliverable path.
+        </p>
+
+        <h2>Stamped Payloads</h2>
+        <p>
+          Generated payload artifacts receive Hovel-issued stamp IDs. A stamp ties a
+          provider response to the exact artifact set, target, transport, generation
+          inputs, hashes, and later install records. Stamps make generated artifacts
+          queryable without treating them as installed target state.
+        </p>
+<pre data-lang="yaml"><code>stampId: payload-stamp-uuid
+provider: squatter
+payloadId: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
+targetId: t1
+transport: tcp-bind
+primaryArtifact: artifact-uuid
+sha256: abc123
+createdBy:
+  throwId: throw-uuid
+  runId: run-uuid
+</code></pre>
+        <p>
+          A stamped artifact becomes associated with installed inventory only after an
+          install step or module execution returns an explicit installed-payload
+          descriptor. Hovel must not infer installed payloads from log lines, artifact
+          names, or generic events.
+        </p>
+
+        <h2>Installed Payload Inventory</h2>
+        <p>
+          Installed payload records are persisted by Hovel core in SQLite. Providers and
+          installing modules may return explicit descriptors, but they never write
+          directly to the workspace database. Hovel validates provider identity, payload
+          identity, target provenance, transport, state, and reconnect schema before
+          accepting the record.
+        </p>
+        <p>
+          The normalized core fields are intentionally small: internal id, operator
+          handle, provider id, payload id/version, target address and optional target id,
+          transport, endpoint summary, state, timestamps, stamp id, source operation,
+          chain, throw, run, and artifact references. Provider-specific reconnect and
+          cleanup material is stored as opaque JSON with a schema name and version owned
+          by the provider.
+        </p>
+        <p>State transitions are append-only audit events over a current-state row:</p>
+<pre data-lang="states"><code>created
+connected
+unreachable
+cleanup_attempted
+removed
+manually_marked_removed
+</code></pre>
+        <p>
+          The current state is one of <code>installed</code>, <code>connected</code>,
+          <code>unreachable</code>, or <code>removed</code>. Failed installs remain throw
+          records and evidence; they do not become installed payload records. Repeated
+          successful installs upsert only when the provider supplies an explicit
+          <code>instance_key</code> or stamp identity proving it is the same target-side
+          instance. Otherwise, Hovel creates a new record.
+        </p>
+        <p>
+          Cleanup is split into provider-executed removal and operator bookkeeping.
+          <code>payloads cleanup &lt;payload&gt;</code> asks the provider to remove target-side
+          state and marks the record removed only on success. <code>payloads mark-removed
+          &lt;payload&gt;</code> records manual bookkeeping when the operator knows the payload
+          is gone or the target was rebuilt.
+        </p>
 
         <h2>PIC Payloads</h2>
         <p>PIC payloads are ordinary payload resources with specific metadata. Hovel should not implement PIC generation in core; external providers can generate or supply bytes.</p>
@@ -155,13 +275,14 @@ capabilities:
       cd/
         artifact-by-sha
   payloads/
+    stamps/
   services/
   listeners/
   sessions/
   logs/
   throws/
 </code></pre>
-        <p><code>workspace.db</code> is the canonical durable store for operation session state, throw plans, confirmation records, throw records, event indexes, and artifact metadata. Artifact bytes live in the workspace artifact store or in a configured workspace artifact path. Large artifacts must not be stored inline in SQLite.</p>
+        <p><code>workspace.db</code> is the canonical durable store for operation session state, throw plans, confirmation records, throw records, installed payload records, installed payload state-change history, event indexes, and artifact metadata. Artifact bytes live in the workspace artifact store or in a configured workspace artifact path. Large artifacts must not be stored inline in SQLite.</p>
 
         <h2>Artifact</h2>
         <p>An artifact is any file-like result generated by a throw, module, service, or provider.</p>
@@ -206,6 +327,13 @@ capabilities:
   - write
   - close
 </code></pre>
+        <p>
+          Long-lived payloads should also have a durable installed payload record.
+          The persisted installed payload record answers "what is deployed on the target";
+          a <code>SessionRef</code> answers "what is connected right now." Reconnecting an
+          installed payload creates a normal Hovel session through the existing session
+          broker and links that session back to the installed payload id.
+        </p>
         <p>Session events:</p>
 <pre data-lang="events"><code>session.created
 session.input
@@ -271,6 +399,11 @@ hovel.module.stdout
 hovel.module.stderr
 hovel.artifact.recorded
 hovel.provider.resolved
+hovel.payload.installed
+hovel.payload.connected
+hovel.payload.unreachable
+hovel.payload.cleanup_attempted
+hovel.payload.removed
 hovel.session.created
 hovel.session.input
 hovel.session.output

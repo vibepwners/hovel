@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "smbpipe",
+    srcs = [
+        "smbadmin.go",
+        "smbpipe.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_jfjallid_go_smb//gss",
+        "@com_github_jfjallid_go_smb//ntlmssp",
+        "@com_github_jfjallid_go_smb//spnego",
+    ],
+)
+
+go_test(
+    name = "smbpipe_test",
+    srcs = [
+        "smbadmin_test.go",
+        "smbpipe_test.go",
+    ],
+    embed = [":smbpipe"],
+)

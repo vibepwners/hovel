@@ -9,3 +9,4 @@ bazel-*
 *.egg-info/
 sdk/python/.venv/
 __pycache__/
+tmp/

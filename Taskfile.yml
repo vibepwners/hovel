@@ -75,6 +75,15 @@ tasks:
     cmds:
       - bazel run //cmd/hovel -- throw {{.CLI_ARGS}} --workspace "{{.WORKSPACE}}"
 
+  lab:etro-squatter-bind:
+    desc: Throw the representative Etro -> Squatter TCP bind lab chain against HOVEL_LAB_TARGET_HOST.
+    deps: [modules:build]
+    env:
+      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
+      HOVEL_WORKSPACE: '{{.WORKSPACE}}'
+    cmds:
+      - bash tools/lab/etro_squatter_bind.sh
+
   clean:
     desc: Remove local dev state (./.hovel workspace and .task cache). Leaves the Bazel cache alone.
     cmds:
@@ -103,6 +112,8 @@ tasks:
 
   run:
     desc: 'Run any Bazel target: task run -- //cmd/hovel -- daemon status.'
+    env:
+      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
       - bazel run {{.CLI_ARGS}}
 
@@ -129,18 +140,20 @@ tasks:
 
   lint:
     aliases: [l]
-    desc: Run all lint checks (Go formatting, Gazelle, Python).
+    desc: Run all lint checks (Go formatting, Gazelle, Python, Squatter C).
     cmds:
       - task: gofmt:check
       - task: gazelle:check
       - task: python:check
+      - task: squatter:check
 
   fmt:
     aliases: [format]
-    desc: Auto-format the tree (Go source, Gazelle BUILD metadata).
+    desc: Auto-format the tree (Go source, Gazelle BUILD metadata, Squatter C).
     cmds:
       - task: gofmt
       - task: gazelle
+      - task: squatter:format
 
   # --- Individual quality steps (composed by lint/fmt above) --------------
 
@@ -168,6 +181,56 @@ tasks:
     desc: Run Python lint, type, and doc checks.
     cmds:
       - bash tools/lint/check_python.sh
+
+  squatter:check:
+    desc: Run Squatter C static analysis.
+    cmds:
+      - task: squatter:format:check
+      - task: squatter:complexity
+      - task: squatter:cppcheck
+      - task: squatter:clang-tidy
+
+  squatter:test:wine:
+    desc: Run Squatter Windows C++ and functional tests under Wine.
+    cmds:
+      - task: test
+        vars:
+          CLI_ARGS: --config=win64 //payloads/squatter/tests/...
+      - task: test
+        vars:
+          CLI_ARGS: --test_env=HOVEL_SQUATTER_REQUIRE_WINE=1 //payloads/squatter/client/functest:functest_test
+
+  squatter:format:
+    desc: Format Squatter C sources with clang-format.
+    cmds:
+      - |
+        sources="$(tools/lint/squatter_sources.sh | sed "s#^#$PWD/#")"
+        bazel run //tools/lint:clang_format -- -i $sources
+
+  squatter:format:check:
+    desc: Check Squatter C formatting with clang-format.
+    cmds:
+      - |
+        sources="$(tools/lint/squatter_sources.sh | sed "s#^#$PWD/#")"
+        bazel run //tools/lint:clang_format -- --dry-run --Werror $sources
+
+  squatter:complexity:
+    desc: Check Squatter C cyclomatic complexity with lizard (CCN <= 10).
+    cmds:
+      - bash tools/lint/check_squatter_complexity.sh
+
+  squatter:cppcheck:
+    desc: Run cppcheck over Squatter C sources.
+    cmds:
+      - bash tools/lint/check_squatter_cppcheck.sh
+
+  squatter:clang-tidy:
+    desc: Run clang-tidy over Squatter C sources.
+    cmds:
+      - task: build
+        vars:
+          CLI_ARGS: //payloads/squatter/windows/src:squatter_all
+      - bash tools/lint/check_squatter_clang_tidy.sh
 
   # --- Git hooks ----------------------------------------------------------
 

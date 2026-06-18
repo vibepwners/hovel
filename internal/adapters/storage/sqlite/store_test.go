@@ -189,6 +189,119 @@ func TestStorePersistsThrowRecordsAndArtifactMetadata(t *testing.T) {
 	}
 }
 
+func TestStorePersistsInstalledPayloadInventory(t *testing.T) {
+	store := NewStore(t.TempDir())
+	record := installedPayloadFixture(".hovel", "192.168.122.142", "9101")
+
+	got, err := store.RecordInstalledPayload(context.Background(), record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID == "" || got.Handle != "p1" {
+		t.Fatalf("record identity = %#v, want generated id and p1 handle", got)
+	}
+	if got.State != commands.PayloadStateInstalled || got.CreatedAt != record.CreatedAt || got.UpdatedAt != record.UpdatedAt {
+		t.Fatalf("record timestamps/state = %#v", got)
+	}
+	if got.Reconnect == nil || got.Reconnect.Descriptor["host"] != "192.168.122.142" {
+		t.Fatalf("reconnect descriptor = %#v", got.Reconnect)
+	}
+
+	list, err := store.ListInstalledPayloads(context.Background(), ".hovel", commands.InstalledPayloadFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(list, []commands.InstalledPayloadRecord{got}) {
+		t.Fatalf("installed payloads = %#v, want %#v", list, []commands.InstalledPayloadRecord{got})
+	}
+	inspected, err := store.GetInstalledPayload(context.Background(), ".hovel", "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(inspected, got) {
+		t.Fatalf("inspected payload = %#v, want %#v", inspected, got)
+	}
+}
+
+func TestStoreUpsertsInstalledPayloadByProviderInstance(t *testing.T) {
+	store := NewStore(t.TempDir())
+	first := installedPayloadFixture(".hovel", "192.168.122.142", "9101")
+	recorded, err := store.RecordInstalledPayload(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second := installedPayloadFixture(".hovel", "192.168.122.142", "9101")
+	second.State = commands.PayloadStateConnected
+	second.RunID = "run-2"
+	second.UpdatedAt = "2026-05-03T12:02:00Z"
+	second.LastSeenAt = "2026-05-03T12:02:00Z"
+	upserted, err := store.RecordInstalledPayload(context.Background(), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upserted.ID != recorded.ID || upserted.Handle != recorded.Handle || upserted.CreatedAt != recorded.CreatedAt {
+		t.Fatalf("upserted identity = %#v, want id/handle/createdAt preserved from %#v", upserted, recorded)
+	}
+	if upserted.State != commands.PayloadStateConnected || upserted.RunID != "run-2" {
+		t.Fatalf("upserted record = %#v", upserted)
+	}
+	list, err := store.ListInstalledPayloads(context.Background(), ".hovel", commands.InstalledPayloadFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].RunID != "run-2" {
+		t.Fatalf("installed payloads after upsert = %#v, want one updated record", list)
+	}
+}
+
+func TestStoreInstalledPayloadStateTransitionsAndActiveFilter(t *testing.T) {
+	store := NewStore(t.TempDir())
+	first, err := store.RecordInstalledPayload(context.Background(), installedPayloadFixture(".hovel", "192.168.122.142", "9101"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := installedPayloadFixture(".hovel", "192.168.122.143", "9102")
+	second.InstanceKey = "squatter:192.168.122.143:9102"
+	second.Endpoint = "192.168.122.143:9102"
+	second.Reconnect.Descriptor["host"] = "192.168.122.143"
+	second.Reconnect.Descriptor["port"] = float64(9102)
+	second.Cleanup.Descriptor["remotePath"] = `C:\Windows\Temp\hovel-b.exe`
+	second, err = store.RecordInstalledPayload(context.Background(), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := store.UpdateInstalledPayloadState(context.Background(), ".hovel", first.Handle, commands.PayloadStateRemoved, "operator cleanup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.State != commands.PayloadStateRemoved {
+		t.Fatalf("removed payload state = %q", removed.State)
+	}
+	active, err := store.ListInstalledPayloads(context.Background(), ".hovel", commands.InstalledPayloadFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].Handle != second.Handle {
+		t.Fatalf("active payloads = %#v, want only second record", active)
+	}
+	all, err := store.ListInstalledPayloads(context.Background(), ".hovel", commands.InstalledPayloadFilter{IncludeRemoved: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("all payloads = %#v, want removed and active records", all)
+	}
+	events, err := store.ListInstalledPayloadEvents(context.Background(), ".hovel", first.Handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[0].Type != "installed" || events[1].Type != "state_changed" || events[1].To != commands.PayloadStateRemoved {
+		t.Fatalf("payload events = %#v", events)
+	}
+}
+
 func TestStorePersistsStructuredEvents(t *testing.T) {
 	store := NewStore(t.TempDir())
 	id, _ := event.NewID("event-1")
@@ -236,6 +349,45 @@ func TestStorePersistsStructuredEvents(t *testing.T) {
 	}
 	if len(events) != 0 {
 		t.Fatalf("events for other target = %#v", events)
+	}
+}
+
+func installedPayloadFixture(workspacePath, target, port string) commands.InstalledPayloadRecord {
+	return commands.InstalledPayloadRecord{
+		Workspace:                workspacePath,
+		Provider:                 "squatter",
+		PayloadID:                "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		PayloadVersion:           "v0.1.0",
+		Target:                   target,
+		TargetID:                 "t1",
+		State:                    commands.PayloadStateInstalled,
+		Transport:                "tcp-bind",
+		Endpoint:                 target + ":" + port,
+		InstanceKey:              "squatter:" + target + ":" + port,
+		StampID:                  "stamp-" + port,
+		ArtifactIDs:              []string{"artifact-squatter"},
+		SupportsReconnect:        true,
+		SupportsMultipleSessions: true,
+		Reconnect: &commands.PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.tcp_bind.reconnect",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"host": target, "port": float64(9101)},
+		},
+		Cleanup: &commands.PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.cleanup",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"remotePath": `C:\Windows\Temp\hovel-a.exe`},
+		},
+		Operation:  "default",
+		Chain:      "c1",
+		ThrowID:    "throw-1",
+		RunID:      "run-1",
+		CreatedAt:  "2026-05-03T12:00:00Z",
+		UpdatedAt:  "2026-05-03T12:00:00Z",
+		LastSeenAt: "2026-05-03T12:00:00Z",
+		Metadata:   map[string]string{"profile": "XP_SP2SP3_X86"},
 	}
 }
 

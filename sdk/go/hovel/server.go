@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -31,23 +32,26 @@ type server struct {
 //
 //	func main() { hovel.Serve(&MyModule{}) }
 func Serve(module Module) {
-	if err := serve(module, os.Stdin, os.Stdout); err != nil {
+	if err := ServeIO(module, os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "hovel sdk error: %v\n", err)
 		os.Exit(2)
 	}
 }
 
-// serve is the testable core of Serve.
-func serve(module Module, in io.Reader, out io.Writer) error {
+// ServeIO runs module over explicit streams. It is useful for contract tests
+// and embedded harnesses; production modules should normally call Serve.
+func ServeIO(module Module, in io.Reader, out io.Writer) error {
 	s := &server{
 		module: module,
 		reader: newFrameReader(in),
 		writer: newFrameWriter(out),
 	}
 	s.sessions = newSessionManager(s.emitSession)
+	var requests sync.WaitGroup
 	for {
 		message, err := s.reader.read()
 		if err == io.EOF {
+			requests.Wait()
 			return nil
 		}
 		if err != nil {
@@ -62,13 +66,20 @@ func serve(module Module, in io.Reader, out io.Writer) error {
 			// Notification (e.g. "cancel"): no response expected.
 			continue
 		}
-		result, derr := s.dispatch(method, message["params"])
-		if derr != nil {
-			_ = s.writer.write(errorResponse(idRaw, derr))
-		} else {
-			_ = s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(idRaw), "result": result})
-		}
+		params := append(json.RawMessage(nil), message["params"]...)
+		id := append(json.RawMessage(nil), idRaw...)
+		requests.Add(1)
+		go func() {
+			defer requests.Done()
+			result, derr := s.dispatch(method, params)
+			if derr != nil {
+				_ = s.writer.write(errorResponse(id, derr))
+			} else {
+				_ = s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result})
+			}
+		}()
 		if method == "shutdown" {
+			requests.Wait()
 			return nil
 		}
 	}
@@ -80,6 +91,28 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.handshake(), nil
 	case "schema":
 		return s.schema(), nil
+	case "list_payloads":
+		return s.listPayloads(params)
+	case "resolve_payload":
+		return s.resolvePayload(params)
+	case "prepare_listener":
+		return s.prepareListener(params)
+	case "generate_payload":
+		return s.generatePayload(params)
+	case "connect_session":
+		return s.connectSession(params)
+	case "cleanup_payload":
+		return s.cleanupPayload(params)
+	case "read_payload_chunk":
+		return s.readPayloadChunk(params)
+	case "step.describe":
+		return s.describeSteps()
+	case "step.prepare":
+		return s.prepareStep(params)
+	case "step.execute":
+		return s.executeStep(params)
+	case "step.cleanup":
+		return s.cleanupStep(params)
 	case "execute":
 		return s.execute(params)
 	case "session/write":
@@ -123,6 +156,161 @@ func (s *server) schema() map[string]any {
 		"targetConfig": requirementsToRPC(schema.TargetConfig),
 		"outputs":      outputs,
 	}
+}
+
+func (s *server) payloadProvider() (PayloadProvider, error) {
+	provider, ok := s.module.(PayloadProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q is not a payload provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func (s *server) stepProvider() (StepProvider, error) {
+	provider, ok := s.module.(StepProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q is not a step provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func decodeParams[T any](params json.RawMessage) (T, error) {
+	var p T
+	if len(params) == 0 {
+		return p, nil
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+func (s *server) describeSteps() (any, error) {
+	provider, err := s.stepProvider()
+	if err != nil {
+		return nil, err
+	}
+	return provider.DescribeSteps()
+}
+
+func (s *server) prepareStep(params json.RawMessage) (any, error) {
+	provider, err := s.stepProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[StepPrepareRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.PrepareStep(req)
+}
+
+func (s *server) executeStep(params json.RawMessage) (any, error) {
+	provider, err := s.stepProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[StepExecuteRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ExecuteStep(req)
+}
+
+func (s *server) cleanupStep(params json.RawMessage) (any, error) {
+	provider, err := s.stepProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[StepCleanupRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.CleanupStep(req)
+}
+
+func (s *server) listPayloads(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	query, err := decodeParams[PayloadQuery](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ListPayloads(query)
+}
+
+func (s *server) resolvePayload(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	query, err := decodeParams[PayloadQuery](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ResolvePayload(query)
+}
+
+func (s *server) prepareListener(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[PrepareListenerRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.PrepareListener(req)
+}
+
+func (s *server) generatePayload(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[GeneratePayloadRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.GeneratePayload(req)
+}
+
+func (s *server) connectSession(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[ConnectSessionRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ConnectSession(req)
+}
+
+func (s *server) cleanupPayload(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[CleanupPayloadRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.CleanupPayload(req)
+}
+
+func (s *server) readPayloadChunk(params json.RawMessage) (any, error) {
+	provider, err := s.payloadProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[ReadPayloadChunkRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.ReadPayloadChunk(req)
 }
 
 func requirementsToRPC(requirements []Requirement) []map[string]any {

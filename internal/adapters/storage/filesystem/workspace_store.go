@@ -331,6 +331,49 @@ func (s WorkspaceStore) GetArtifact(ctx context.Context, workspacePath, id strin
 	return sqlitestore.NewStore(workspacePath).GetArtifact(ctx, id)
 }
 
+func (s WorkspaceStore) RecordInstalledPayload(ctx context.Context, record commands.InstalledPayloadRecord) (commands.InstalledPayloadRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	workspacePath := workspace.ResolvePath(record.Workspace)
+	record.Workspace = workspacePath
+	return sqlitestore.NewStore(workspacePath).RecordInstalledPayload(ctx, record)
+}
+
+func (s WorkspaceStore) ListInstalledPayloads(ctx context.Context, workspacePath string, filter commands.InstalledPayloadFilter) ([]commands.InstalledPayloadRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return sqlitestore.NewStore(workspace.ResolvePath(workspacePath)).ListInstalledPayloads(ctx, workspace.ResolvePath(workspacePath), filter)
+}
+
+func (s WorkspaceStore) GetInstalledPayload(ctx context.Context, workspacePath, ref string) (commands.InstalledPayloadRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	if ref == "" {
+		return commands.InstalledPayloadRecord{}, errors.New("installed payload reference is required")
+	}
+	return sqlitestore.NewStore(workspace.ResolvePath(workspacePath)).GetInstalledPayload(ctx, workspace.ResolvePath(workspacePath), ref)
+}
+
+func (s WorkspaceStore) UpdateInstalledPayloadState(ctx context.Context, workspacePath, ref, state, reason string) (commands.InstalledPayloadRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return commands.InstalledPayloadRecord{}, err
+	}
+	if ref == "" {
+		return commands.InstalledPayloadRecord{}, errors.New("installed payload reference is required")
+	}
+	return sqlitestore.NewStore(workspace.ResolvePath(workspacePath)).UpdateInstalledPayloadState(ctx, workspace.ResolvePath(workspacePath), ref, state, reason)
+}
+
+func (s WorkspaceStore) ListInstalledPayloadEvents(ctx context.Context, workspacePath, ref string) ([]commands.InstalledPayloadEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return sqlitestore.NewStore(workspace.ResolvePath(workspacePath)).ListInstalledPayloadEvents(ctx, workspace.ResolvePath(workspacePath), ref)
+}
+
 func (s WorkspaceStore) ListEvents(ctx context.Context, workspacePath string, filter event.Filter) ([]event.Event, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

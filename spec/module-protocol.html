@@ -110,6 +110,232 @@
   "outputs": {}
 }</code></pre>
 
+        <h3>step.describe</h3>
+        <p>
+          Reports the module's current chain-step contracts. Hovel calls this dynamically
+          while planning and persists the exact returned snapshot when the operator
+          confirms. Execution is blocked if a referenced step contract changes after
+          confirmation.
+        </p>
+        <p>
+          Planning treats the returned requirements as typed capability predicates.
+          Hovel compares requirement type, attributes, and allowed states against the
+          current capability set, then records either a deterministic capability binding
+          or a typed missing requirement. <code>module inspect --json</code> exposes that
+          same resolved view for operator tooling.
+        </p>
+<pre data-lang="result"><code>{
+  "steps": [
+    {
+      "id": "squatter.connect_smb",
+      "kind": "session.connector",
+      "configSchema": { "type": "object", "properties": {} },
+      "requires": [
+        {
+          "type": "PayloadInstance",
+          "schemaVersion": "v1",
+          "attributes": {
+            "provider": "squatter",
+            "transport": "smb-named-pipe"
+          },
+          "states": ["installed", "connected", "unreachable"]
+        },
+        {
+          "type": "CredentialCapability",
+          "schemaVersion": "v1",
+          "attributes": { "protocol": "smb" },
+          "states": ["active"]
+        }
+      ],
+      "produces": [
+        {
+          "type": "SessionRef",
+          "schemaVersion": "v1",
+          "attributes": {
+            "provider": "squatter",
+            "transport": "smb-named-pipe"
+          }
+        }
+      ],
+      "prepare": { "materializes": [] },
+      "cleanup": null
+    }
+  ]
+}</code></pre>
+
+        <h3>step.prepare</h3>
+        <p>
+          Validates step config and materializes planned values. This method is pure and
+          local: it may generate random names, credentials, paths, endpoints, and planned
+          cleanup handles, but it must not connect to a target, authenticate, stage files,
+          start listeners that accept target traffic, or produce final payload bytes.
+          Repeated prepare for an existing prepared plan preserves materialized values
+          unless the operator explicitly regenerates or edits them.
+        </p>
+<pre data-lang="params"><code>{
+  "preparedPlanId": "prep-1",
+  "stepId": "windows.credential.create_local_admin",
+  "config": { "usernamePolicy": "random", "passwordLength": 24 },
+  "inputs": [
+    { "capabilityId": "cap_remote_execution_f8a21b", "type": "RemoteExecutionCapability" }
+  ],
+  "existingPreparedValues": {}
+}</code></pre>
+<pre data-lang="result"><code>{
+  "plannedOutputs": [
+    {
+      "id": "cap_credential_6mb8pq",
+      "type": "CredentialCapability",
+      "schemaVersion": "v1",
+      "state": "planned",
+      "attributes": {
+        "protocol": "smb",
+        "username": "m7q4z92d",
+        "password": "plain-high-entropy-password",
+        "sensitive": true
+      }
+    }
+  ],
+  "preparedValues": {
+    "username": { "value": "m7q4z92d", "editable": true },
+    "password": { "value": "plain-high-entropy-password", "editable": true }
+  },
+  "operatorSummary": {
+    "warnings": [],
+    "targetSideArtifacts": ["local admin user m7q4z92d"]
+  }
+}</code></pre>
+
+        <h3>step.execute</h3>
+        <p>
+          Executes a confirmed step. The daemon supplies only the capabilities declared
+          by the step contract plus minimal run metadata. A step should be idempotent
+          where possible and must use confirmed prepared values exactly; confirmed
+          collisions fail rather than silently changing target-side names.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "stepId": "squatter.install_smb",
+  "confirmedPreparedValues": {
+    "stagedPath": "C:\\Windows\\Temp\\n4x9q2.exe",
+    "serviceName": "q7mcz91a",
+    "pipeName": "\\\\.\\pipe\\a8kq27mf"
+  },
+  "inputs": [
+    { "capabilityId": "cap_remote_execution_f8a21b", "type": "RemoteExecutionCapability" },
+    { "capabilityId": "cap_credential_6mb8pq", "type": "CredentialCapability" },
+    { "capabilityId": "cap_payload_artifact_vc9s31", "type": "PayloadArtifact" }
+  ]
+}</code></pre>
+<pre data-lang="result"><code>{
+  "status": "succeeded",
+  "capabilities": [ Capability, ... ],
+  "installedPayloads": [ InstalledPayloadDescriptor, ... ],
+  "stateTransitions": [ CapabilityTransition, ... ],
+  "evidence": [ Evidence, ... ]
+}</code></pre>
+        <p>
+          <code>installedPayloads</code> is optional and is the only way a module or
+          provider can ask Hovel to create or update installed payload inventory. Hovel
+          validates each descriptor against the named payload provider before persistence.
+          Logs, artifacts, and generic evidence are never promoted into installed payload
+          records by inference.
+        </p>
+
+        <h3>step.cleanup</h3>
+        <p>
+          Executes or verifies cleanup for a durable <code>CleanupHandle</code>. Cleanup
+          defaults to the module that created the handle. Another module may consume a
+          cleanup handle only when both modules explicitly declare compatibility. Cleanup
+          is retriable until the handle reaches <code>removed</code>,
+          <code>cleanup_verified</code>, or the operator marks it
+          <code>abandoned</code>.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "stepId": "squatter.cleanup_smb",
+  "cleanupHandleId": "cap_cleanup_74m2wq",
+  "mode": "execute"                  // execute | verify
+}</code></pre>
+
+        <h3>payload/list</h3>
+        <p>
+          Lists provider-supported payloads for live discovery. Hovel does not cache this
+          response as durable workspace inventory in v1.
+        </p>
+<pre data-lang="params"><code>{
+  "query": {
+    "provider": "squatter",
+    "platform": "windows",
+    "arch": "x86",
+    "transport": "tcp-bind"
+  }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "payloads": [ PayloadInfo, ... ]
+}</code></pre>
+
+        <h3>payload/resolve</h3>
+        <p>
+          Resolves one provider-supported payload from a query. Planning uses this for
+          compatibility and review metadata; final bytes are still generated or
+          materialized after confirmation.
+        </p>
+<pre data-lang="params"><code>{
+  "query": {
+    "provider": "squatter",
+    "payloadId": "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+    "platform": "windows",
+    "arch": "x86",
+    "transport": "tcp-bind"
+  }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "payload": PayloadInfo
+}</code></pre>
+
+        <h3>payload/connect_session</h3>
+        <p>
+          Reconnects to an installed payload from a Hovel-persisted descriptor and returns
+          a normal <code>SessionRef</code>. The provider owns compatibility checks for its
+          reconnect schema. Hovel owns session registration and installed-payload state
+          persistence.
+        </p>
+<pre data-lang="params"><code>{
+  "installedPayloadId": "installed-payload-uuid",
+  "provider": "squatter",
+  "payloadId": "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+  "target": { "id": "t1", "address": "10.0.0.42" },
+  "transport": "tcp-bind",
+  "reconnect": {
+    "schema": "squatter.reconnect.tcp_bind",
+    "schemaVersion": 1,
+    "descriptor": { "host": "10.0.0.42", "port": 9101 }
+  }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "session": SessionRef
+}</code></pre>
+
+        <h3>payload/cleanup</h3>
+        <p>
+          Attempts provider-executed cleanup for an installed payload. A successful
+          provider result lets Hovel mark the installed payload <code>removed</code>;
+          failures are recorded as cleanup-attempt events and leave the record active.
+        </p>
+<pre data-lang="params"><code>{
+  "installedPayloadId": "installed-payload-uuid",
+  "cleanup": {
+    "schema": "squatter.cleanup.tcp_bind",
+    "schemaVersion": 1,
+    "descriptor": { "remotePath": "C:\\Windows\\Temp\\n4x9q2.exe" }
+  }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "status": "removed",
+  "evidence": [ Evidence, ... ]
+}</code></pre>
+
         <h3>execute</h3>
         <p>Runs the module against one target. The daemon supplies the resolved configuration; the module returns its result.</p>
 <pre data-lang="params"><code>{
@@ -126,6 +352,7 @@
   "findings":  [ Finding, ... ],
   "artifacts": [ Artifact, ... ],
   "outputs":   { "facts": { "host": "example.test", "reachable": true } },
+  "installedPayloads": [ InstalledPayloadDescriptor, ... ],
   "sessions":  [ SessionRef, ... ]
 }</code></pre>
         <p>
@@ -204,7 +431,128 @@
   "kind": "shell",
   "state": "active",                 // active | closed
   "transport": "stdio",
+  "installedPayloadId": "installed-payload-uuid",
   "capabilities": ["read", "write", "exec", "close"]
+}</code></pre>
+
+        <h3>Capability</h3>
+        <p>
+          Capabilities are typed chain state. Core capability schemas are owned by Hovel
+          and versioned; modules may add namespaced extension attributes. Capability ids
+          are readable structured identifiers with random entropy, and run/step linkage is
+          carried as fields rather than encoded as the only source of truth.
+        </p>
+<pre data-lang="object"><code>{
+  "id": "cap_payload_instance_q8m2v4",
+  "type": "PayloadInstance",
+  "schemaVersion": "v1",
+  "state": "installed",
+  "producerStepId": "squatter.install_smb",
+  "attributes": {
+    "provider": "squatter",
+    "transport": "smb-named-pipe",
+    "endpointId": "cap_endpoint_smb_pipe_c4a7nx"
+  },
+  "extensions": {
+    "squatter": {
+      "artifactSha256": "abc123",
+      "reconnectStrategy": "active_connect"
+    }
+  }
+}</code></pre>
+        <p>
+          Core capability types for the Squatter chain are
+          <code>RemoteExecutionCapability</code>, <code>CredentialCapability</code>,
+          <code>PayloadArtifact</code>, <code>PayloadInstance</code>,
+          <code>TransportEndpoint</code>, <code>SessionRef</code>, and
+          <code>CleanupHandle</code>. A step may still emit partial capabilities with
+          explicit states and warning evidence, such as an installed payload record that
+          reaches <code>unreachable</code> when reconnect fails, or a cleanup handle in
+          <code>cleanup_failed</code>.
+        </p>
+
+        <h3>InstalledPayloadDescriptor</h3>
+        <p>
+          An installed payload descriptor is an explicit module/provider claim that a
+          target-side payload instance exists and may be tracked. Hovel core validates and
+          persists it; modules and providers never write installed payload rows directly.
+        </p>
+<pre data-lang="object"><code>{
+  "provider": "squatter",
+  "payloadId": "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+  "payloadVersion": "0.1.0",
+  "instanceKey": "provider-stable-key-or-empty",
+  "stampId": "payload-stamp-uuid",
+  "target": {
+    "id": "t1",
+    "address": "10.0.0.42"
+  },
+  "transport": "tcp-bind",
+  "endpointSummary": "10.0.0.42:9101",
+  "state": "installed",
+  "supportsReconnect": true,
+  "supportsMultipleSessions": false,
+  "reconnect": {
+    "schema": "squatter.reconnect.tcp_bind",
+    "schemaVersion": 1,
+    "descriptor": { "host": "10.0.0.42", "port": 9101 }
+  },
+  "cleanup": {
+    "schema": "squatter.cleanup.tcp_bind",
+    "schemaVersion": 1,
+    "descriptor": { "remotePath": "C:\\Windows\\Temp\\n4x9q2.exe" }
+  }
+}</code></pre>
+        <p>
+          The accepted current states are <code>installed</code>,
+          <code>connected</code>, <code>unreachable</code>, and <code>removed</code>.
+          Failed installs are reported as step failure evidence, not installed payload
+          descriptors. When a provider can prove a repeated report is the same deployed
+          instance using <code>instanceKey</code> or <code>stampId</code>, Hovel may upsert
+          the existing record; otherwise it creates a new operator-facing handle.
+        </p>
+
+        <h3>CredentialCapability</h3>
+        <p>
+          Created credentials are assessment evidence. They are stored and displayed in
+          plaintext in normal operator CLI output so the operator can remediate manually
+          if automated cleanup fails. The <code>sensitive</code> marker labels the field
+          for evidence exports and downstream handling; it is not a CLI redaction request.
+        </p>
+<pre data-lang="object"><code>{
+  "id": "cap_credential_6mb8pq",
+  "type": "CredentialCapability",
+  "schemaVersion": "v1",
+  "state": "active",
+  "attributes": {
+    "protocol": "smb",
+    "principal": "local",
+    "username": "m7q4z92d",
+    "password": "plain-high-entropy-password",
+    "secretType": "password",
+    "targetScope": "10.0.0.42",
+    "sensitive": true,
+    "durability": "until_cleanup"
+  }
+}</code></pre>
+
+        <h3>Evidence</h3>
+        <p>
+          Evidence is operator and audit material, not chain input. It uses a common
+          envelope with flexible module-specific details so modules can report rich
+          diagnostics without forcing core schema churn.
+        </p>
+<pre data-lang="object"><code>{
+  "id": "ev_squatter_connect_warning_2m7kq9",
+  "level": "warning",
+  "kind": "payload.unreachable",
+  "sourceStepId": "squatter.connect_smb",
+  "message": "Squatter installed but no session was established.",
+  "details": {
+    "target": "10.0.0.42",
+    "endpoint": "\\\\10.0.0.42\\pipe\\a8kq27mf",
+    "error": "NT_STATUS_ACCESS_DENIED"
+  }
 }</code></pre>
 
         <h2>Lifecycle summary</h2>

@@ -64,6 +64,8 @@ Provider
 Service
 Module
 Payload
+PayloadStamp
+InstalledPayload
 Artifact
 Chain
 Phase
@@ -77,10 +79,12 @@ Transport
 Session
 Listener
 Credential
+Capability
+CleanupHandle
 </code></pre>
 
         <h2>Workspace</h2>
-        <p>A workspace is the local project/database context for operations, targets, throws, modules, services, structured events, artifacts, and provider state.</p>
+        <p>A workspace is the local project/database context for operations, targets, throws, modules, services, structured events, artifacts, installed payload inventory, and provider state.</p>
         <p>MVP storage may be SQLite.</p>
         <p>Workspace data:</p>
         <ol>
@@ -90,6 +94,7 @@ Credential
           <li>Target inventory.</li>
           <li>Facts.</li>
           <li>Artifacts.</li>
+          <li>Installed payload records and state-change history.</li>
           <li>Structured events.</li>
           <li>Provider cache.</li>
           <li>Logs rendered from structured events.</li>
@@ -97,12 +102,13 @@ Credential
         </ol>
 
         <h2>Operation</h2>
-        <p>An operation is the top-level operator context. It is the thing a red teamer picks up, puts down, and comes back to later. Operations own chains, chain log topics, target assignments, throws, artifacts, and the operator-facing transcript rendered from structured events.</p>
+        <p>An operation is the top-level operator context. It is the thing a red teamer picks up, puts down, and comes back to later. Operations own chains, chain log topics, target inventory, target sets, throws, artifacts, and the operator-facing transcript rendered from structured events.</p>
         <p><code>op</code> is the primary command spelling. <code>operation</code> may remain as a readable alias, but product copy and examples should prefer <code>op</code>.</p>
         <p>Operation responsibilities:</p>
         <ol>
           <li>Name and describe the active work context.</li>
           <li>Own one or more chains.</li>
+          <li>Own target inventory, per-target configuration, and target sets shared by those chains.</li>
           <li>Keep each client attachment's active chain separate from the shared chain state.</li>
           <li>Preserve chain logs and throw records by operation.</li>
           <li>Keep findings, artifacts, and structured events tied to the operation that produced them.</li>
@@ -173,16 +179,17 @@ SessionProvider
 </code></pre>
         <p>The first provider implementation should only require <code>PayloadProvider</code> and <code>ArtifactProvider</code>. Facts may be plain module outputs at first, and credential, listener, and session providers should wait until service lifecycle, policy review, and artifact/event capture are stable.</p>
         <p>Future providers may include build, encoder, shellcode, stager, and implant providers.</p>
-        <p>Payload generation is outside the Hovel core. Hovel resolves payload bytes through provider interfaces, tags them with declared metadata, records hashes and artifacts, then passes the bytes to the next module in the chain.</p>
+        <p>Payload generation is outside the Hovel core. Hovel resolves payload bytes through provider interfaces, tags them with declared metadata, records hashes and artifacts, then passes the bytes to the next module in the chain. When a payload provider or installing module reports a successful install, Hovel core validates the explicit install descriptor and persists the installed payload record in the workspace database.</p>
 
         <h2>Payload</h2>
-        <p>A payload is tagged bytes returned by a provider.</p>
+        <p>A payload is provider-described capability that can produce tagged bytes. The list of available payloads is discovered live from provider contracts in v1, not cached as durable workspace state.</p>
         <p>Initial payload kinds:</p>
 <pre data-lang="kinds"><code>shell
 shellcode
 library
 executable
 </code></pre>
+
         <p>Payload metadata:</p>
 <pre data-lang="yaml"><code>id: payload-uuid
 name: sshplant-x86_64-linux
@@ -201,6 +208,115 @@ constraints:
   writesDisk: false
 requiresPython: false
 </code></pre>
+        <p>
+          Generated payload bytes become stamped payload artifacts. A stamp is Hovel's
+          durable handle for a generated artifact set: it links provider identity, payload
+          metadata, generation inputs, target, transport, artifact hashes, and later
+          install records. A stamped artifact is not an installed payload until a provider
+          or installing module explicitly reports a successful target-side install.
+        </p>
+
+        <h2>Installed Payload</h2>
+        <p>
+          An installed payload is a durable workspace record for one target-side deployed
+          payload agent, executable, service, or listener-capable instance. It is the
+          object operators inspect, reconnect to, refresh, clean up, or manually mark
+          removed. It is distinct from generated payload artifacts and from live sessions.
+        </p>
+<pre data-lang="yaml"><code>handle: p1
+id: installed-payload-uuid
+provider: squatter
+payloadId: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
+payloadVersion: 0.1.0
+state: installed
+target:
+  id: t1
+  address: 10.0.0.42
+transport: tcp-bind
+endpointSummary: 10.0.0.42:9101
+stampId: payload-stamp-uuid
+provenance:
+  operationId: op-uuid
+  chainId: c1
+  targetId: t1
+  throwId: throw-uuid
+  runId: run-uuid
+  artifactIds: [artifact-uuid]
+reconnect:
+  providerId: squatter
+  schema: squatter.reconnect.tcp_bind
+  schemaVersion: 1
+  descriptor: { "host": "10.0.0.42", "port": 9101 }
+</code></pre>
+        <p>
+          Operator-facing handles use short names such as <code>p1</code> and
+          <code>p2</code>, backed by stable internal identifiers. Records are global
+          workspace inventory with operation, chain, target, throw, run, and artifact
+          provenance. They remain discoverable after switching chains or restarting
+          Hovel.
+        </p>
+        <p>Installed payload states for v1:</p>
+<pre data-lang="states"><code>installed
+connected
+unreachable
+removed
+</code></pre>
+        <p>
+          Listing installed payloads reads last-known state from SQLite and does not probe
+          targets by default. Reconnect or refresh actions ask the current provider to
+          validate the stored reconnect descriptor and may update state. If the provider is
+          missing or rejects the descriptor version, the record remains visible with
+          reconnect marked unavailable.
+        </p>
+
+        <h2>Capability</h2>
+        <p>
+          A capability is typed, durable chain state that one step produces and later
+          steps may consume. Hovel owns the core capability schemas and validates module
+          outputs against them. Module contracts match by concrete type, required
+          attributes, and allowed states.
+        </p>
+<pre data-lang="types"><code>RemoteExecutionCapability
+CredentialCapability
+PayloadArtifact
+PayloadInstance
+TransportEndpoint
+SessionRef
+CleanupHandle</code></pre>
+        <p>
+          Capabilities have stable ids, schema versions, producer step ids, current
+          state, attributes, optional namespaced extensions, and append-only event
+          history. Evidence remains separate from capability state.
+        </p>
+
+        <h2>Payload Instance Capability</h2>
+        <p>
+          A <code>PayloadInstance</code> capability is runtime chain state produced by an
+          install step. When it contains an explicit installed-payload descriptor, Hovel
+          may persist or update an <code>InstalledPayload</code> inventory record. The
+          capability itself is still scoped to the throw and capability graph; the
+          installed payload record is the durable cross-chain inventory object.
+        </p>
+<pre data-lang="yaml"><code>id: cap_payload_instance_q8m2v4
+provider: squatter
+target: 10.0.0.42
+transport: smb-named-pipe
+endpoint: cap_endpoint_smb_pipe_c4a7nx
+state: installed
+installedPayload: p1
+cleanupHandles:
+  - cap_cleanup_74m2wq
+</code></pre>
+
+        <h2>Cleanup Handle</h2>
+        <p>
+          A cleanup handle is a first-class capability for target or provider-side state
+          that can be removed or verified later. It records the owner module, cleanup
+          step id, required inputs, current cleanup state, and evidence for each attempt.
+          Cleanup is retriable until it reaches <code>removed</code>,
+          <code>cleanup_verified</code>, or the operator marks it
+          <code>abandoned</code>.
+        </p>
 
         <h2>Listener</h2>
         <p>A listener or listening post is a managed service that receives callbacks, brokers sessions, serves staged payloads, or controls post-execution sessions.</p>
@@ -218,7 +334,7 @@ failed
         <h2>Chain</h2>
         <p>A chain is an operation-owned workflow record and an ordered graph of phases and steps. Chains are CRUD resources: operators can create, select, rename, inspect, list, and delete them through shared application services.</p>
         <p>Chain definitions should be modular and loadable. They are collections of module references and chain-scoped configuration, not modules themselves.</p>
-        <p>Chains own targets for the current workflow. Adding or clearing targets through an operator front end mutates that client's active chain inside the active operation, not a global target scratchpad.</p>
+        <p>Chains do not own targets. Targets are operation-owned assets, and a throw binds a chain to targets at plan time from <code>--target</code>, <code>--target-set</code>, or the operation inventory. Chain records own ordered steps, chain-scoped configuration, and logs; target config follows the target across chains in the same operation.</p>
         <p>Chains also own their logging topic. The canonical topic shape is <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>. A front end only renders logs for the chain selected by its attachment, while daemon-side storage and the structured logging rail keep those logs available for other clients attached to the same operation and chain.</p>
         <p>Typical phases:</p>
 <pre data-lang="phases"><code>service_prepare

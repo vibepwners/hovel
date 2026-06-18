@@ -16,6 +16,7 @@ sh_test(
         "$(rootpath :introduction.html)",
         "$(rootpath :module-development.html)",
         "$(rootpath :module-protocol.html)",
+        "$(rootpath :squatter-payload-provider.html)",
         "$(rootpath :reference/descriptors.html)",
     ],
     data = [
@@ -24,5 +25,6 @@ sh_test(
         "module-development.html",
         "module-protocol.html",
         "reference/descriptors.html",
+        "squatter-payload-provider.html",
     ],
 )

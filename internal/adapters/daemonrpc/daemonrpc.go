@@ -50,15 +50,16 @@ type Artifact struct {
 }
 
 type SessionRef struct {
-	ID           string
-	RunID        string
-	ModuleID     string
-	Target       string
-	Name         string
-	Kind         string
-	State        string
-	Transport    string
-	Capabilities []string
+	ID                 string
+	RunID              string
+	ModuleID           string
+	Target             string
+	Name               string
+	Kind               string
+	State              string
+	Transport          string
+	InstalledPayloadID string
+	Capabilities       []string
 }
 
 type SessionChunk struct {
@@ -123,18 +124,45 @@ type PollLogsResponse struct {
 }
 
 type RunMockExploitResponse struct {
-	RunID     string
-	ModuleID  string
-	Target    string
-	State     string
-	Summary   string
-	Findings  []Finding
-	Artifacts []Artifact
-	Logs      []LogEntry
-	Sessions  []SessionRef
+	RunID             string
+	ModuleID          string
+	Target            string
+	State             string
+	Summary           string
+	Findings          []Finding
+	Artifacts         []Artifact
+	Logs              []LogEntry
+	Sessions          []SessionRef
+	InstalledPayloads []InstalledPayloadDescriptor
 }
 
 type ExecuteModuleResponse = RunMockExploitResponse
+
+type PayloadProviderRecord struct {
+	ProviderID    string
+	Schema        string
+	SchemaVersion string
+	Descriptor    map[string]any
+}
+
+type InstalledPayloadDescriptor struct {
+	Provider                 string
+	PayloadID                string
+	PayloadVersion           string
+	Target                   string
+	TargetID                 string
+	State                    string
+	Transport                string
+	Endpoint                 string
+	InstanceKey              string
+	StampID                  string
+	ArtifactIDs              []string
+	SupportsReconnect        bool
+	SupportsMultipleSessions bool
+	Reconnect                *PayloadProviderRecord
+	Cleanup                  *PayloadProviderRecord
+	Metadata                 map[string]string
+}
 
 type Server struct {
 	runs           services.RunService
@@ -160,6 +188,7 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[ExecuteModuleRequest, ExecuteModuleResponse](mux, "ExecuteModule", rpcServer.executeModuleRPC)
 	registerUnary[EmptyRequest, ListSessionsResponse](mux, "ListSessions", rpcServer.listSessionsRPC)
 	registerUnary[SessionReadRequest, SessionChunk](mux, "ReadSession", rpcServer.readSessionRPC)
+	registerUnary[SessionTailRequest, SessionChunk](mux, "TailSession", rpcServer.tailSessionRPC)
 	registerUnary[SessionWriteRequest, EmptyResponse](mux, "WriteSession", rpcServer.writeSessionRPC)
 	registerUnary[SessionCloseRequest, EmptyResponse](mux, "CloseSession", rpcServer.closeSessionRPC)
 	registerUnary[OperationRequest, EmptyResponse](mux, "CreateOperation", rpcServer.createOperationRPC)
@@ -170,6 +199,9 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[ChainRequest, EmptyResponse](mux, "DeleteChain", rpcServer.deleteChainRPC)
 	registerUnary[TargetRequest, EmptyResponse](mux, "AddTarget", rpcServer.addTargetRPC)
 	registerUnary[ChainRequest, EmptyResponse](mux, "ClearTargets", rpcServer.clearTargetsRPC)
+	registerUnary[TargetSetRequest, EmptyResponse](mux, "CreateTargetSet", rpcServer.createTargetSetRPC)
+	registerUnary[TargetSetRequest, EmptyResponse](mux, "AddTargetToSet", rpcServer.addTargetToSetRPC)
+	registerUnary[TargetSetRequest, EmptyResponse](mux, "RemoveTargetFromSet", rpcServer.removeTargetFromSetRPC)
 	registerUnary[ModuleRequest, StepResponse](mux, "AddModule", rpcServer.addModuleRPC)
 	registerUnary[ConfigRequest, EmptyResponse](mux, "SetChainConfig", rpcServer.setChainConfigRPC)
 	registerUnary[ConfigRequest, EmptyResponse](mux, "UnsetChainConfig", rpcServer.unsetChainConfigRPC)
@@ -290,6 +322,13 @@ type SessionReadRequest struct {
 	TimeoutMs int
 }
 
+type SessionTailRequest struct {
+	SessionID string
+	MaxBytes  int
+	MaxLines  int
+	Consume   bool
+}
+
 type SessionWriteRequest struct {
 	SessionID string
 	Data      []byte
@@ -364,6 +403,47 @@ func (s *Server) readSessionRPC(ctx context.Context, req SessionReadRequest) (Se
 	return resp, nil
 }
 
+func (s Server) TailSession(req SessionTailRequest, resp *SessionChunk) error {
+	if s.moduleSessions == nil {
+		return errors.New("session broker is not configured")
+	}
+	chunk, err := s.moduleSessions.TailSession(context.Background(), req.SessionID, run.SessionTailOptions{
+		MaxBytes: req.MaxBytes,
+		MaxLines: req.MaxLines,
+		Consume:  req.Consume,
+	})
+	if err != nil {
+		return err
+	}
+	*resp = SessionChunk{
+		SessionID: chunk.SessionID,
+		Data:      append([]byte(nil), chunk.Data...),
+		Closed:    chunk.Closed,
+	}
+	return nil
+}
+
+func (s *Server) tailSessionRPC(ctx context.Context, req SessionTailRequest) (SessionChunk, error) {
+	var resp SessionChunk
+	if s.moduleSessions == nil {
+		return resp, errors.New("session broker is not configured")
+	}
+	chunk, err := s.moduleSessions.TailSession(ctx, req.SessionID, run.SessionTailOptions{
+		MaxBytes: req.MaxBytes,
+		MaxLines: req.MaxLines,
+		Consume:  req.Consume,
+	})
+	if err != nil {
+		return resp, err
+	}
+	resp = SessionChunk{
+		SessionID: chunk.SessionID,
+		Data:      append([]byte(nil), chunk.Data...),
+		Closed:    chunk.Closed,
+	}
+	return resp, nil
+}
+
 func (s Server) WriteSession(req SessionWriteRequest, resp *EmptyResponse) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
@@ -409,15 +489,24 @@ type TargetRequest struct {
 	Chain     string
 }
 
+type TargetSetRequest struct {
+	Operation string
+	Name      string
+	Target    string
+	Chain     string
+}
+
 type ModuleRequest struct {
 	Operation string
 	ModuleID  string
+	StepID    string
 	Chain     string
 }
 
 type StepResponse struct {
 	ID       string
 	ModuleID string
+	StepID   string
 }
 
 type ConfigRequest struct {
@@ -529,34 +618,94 @@ func (s *Server) DeleteChain(req ChainRequest, resp *EmptyResponse) error {
 }
 
 func (s *Server) AddTarget(req TargetRequest, resp *EmptyResponse) error {
-	return s.withChain(req.Operation, req.Chain, func(session *operatorsession.Session, operation, chain string) error {
-		if err := session.AddTarget(req.Target); err != nil {
-			return err
-		}
-		s.publish(operation, chain, operatorlog.Info("target", "target added", operatorlog.Field{Name: "target", Value: req.Target}))
-		return nil
-	})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session := s.attachment(req.Operation, req.Chain)
+	if err := session.AddTarget(req.Target); err != nil {
+		return err
+	}
+	state := session.Snapshot()
+	if state.ActiveChain != "" {
+		s.publish(state.ActiveOperation, state.ActiveChain, operatorlog.Info("target", "target added", operatorlog.Field{Name: "target", Value: req.Target}))
+	}
+	return s.persistLocked()
 }
 
 func (s *Server) ClearTargets(req ChainRequest, resp *EmptyResponse) error {
-	return s.withChain(req.Operation, req.Chain, func(session *operatorsession.Session, operation, chain string) error {
-		session.ClearTargets()
-		s.publish(operation, chain, operatorlog.Info("target", "targets cleared"))
-		return nil
-	})
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session := s.attachment(req.Operation, req.Chain)
+	session.ClearTargets()
+	state := session.Snapshot()
+	if state.ActiveChain != "" {
+		s.publish(state.ActiveOperation, state.ActiveChain, operatorlog.Info("target", "targets cleared"))
+	}
+	return s.persistLocked()
+}
+
+func (s *Server) CreateTargetSet(req TargetSetRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session := s.attachment(req.Operation, req.Chain)
+	if err := session.CreateTargetSet(req.Name); err != nil {
+		return err
+	}
+	state := session.Snapshot()
+	if state.ActiveChain != "" {
+		s.publish(state.ActiveOperation, state.ActiveChain, operatorlog.Info("target", "target set created", operatorlog.Field{Name: "targetSet", Value: req.Name}))
+	}
+	return s.persistLocked()
+}
+
+func (s *Server) AddTargetToSet(req TargetSetRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session := s.attachment(req.Operation, req.Chain)
+	if err := session.AddTargetToSet(req.Name, req.Target); err != nil {
+		return err
+	}
+	state := session.Snapshot()
+	if state.ActiveChain != "" {
+		s.publish(state.ActiveOperation, state.ActiveChain, operatorlog.Info("target", "target added to set",
+			operatorlog.Field{Name: "targetSet", Value: req.Name},
+			operatorlog.Field{Name: "target", Value: req.Target},
+		))
+	}
+	return s.persistLocked()
+}
+
+func (s *Server) RemoveTargetFromSet(req TargetSetRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session := s.attachment(req.Operation, req.Chain)
+	if err := session.RemoveTargetFromSet(req.Name, req.Target); err != nil {
+		return err
+	}
+	state := session.Snapshot()
+	if state.ActiveChain != "" {
+		s.publish(state.ActiveOperation, state.ActiveChain, operatorlog.Info("target", "target removed from set",
+			operatorlog.Field{Name: "targetSet", Value: req.Name},
+			operatorlog.Field{Name: "target", Value: req.Target},
+		))
+	}
+	return s.persistLocked()
 }
 
 func (s *Server) AddModule(req ModuleRequest, resp *StepResponse) error {
 	return s.withChain(req.Operation, req.Chain, func(session *operatorsession.Session, operation, chain string) error {
-		step, err := session.AddModule(req.ModuleID)
+		step, err := session.AddStep(req.ModuleID, req.StepID)
 		if err != nil {
 			return err
 		}
-		*resp = StepResponse{ID: step.ID, ModuleID: step.ModuleID}
-		s.publish(operation, chain, operatorlog.Info("chain", "module added",
+		*resp = StepResponse{ID: step.ID, ModuleID: step.ModuleID, StepID: step.StepID}
+		fields := []operatorlog.Field{
 			operatorlog.Field{Name: "step", Value: step.ID},
 			operatorlog.Field{Name: "module", Value: req.ModuleID},
-		))
+		}
+		if step.StepID != "" {
+			fields = append(fields, operatorlog.Field{Name: "providerStep", Value: step.StepID})
+		}
+		s.publish(operation, chain, operatorlog.Info("chain", "module added", fields...))
 		return nil
 	})
 }
@@ -582,29 +731,37 @@ func (s *Server) UnsetChainConfig(req ConfigRequest, resp *EmptyResponse) error 
 }
 
 func (s *Server) SetTargetConfig(req TargetConfigRequest, resp *EmptyResponse) error {
-	return s.withChain(req.Operation, req.Chain, func(session *operatorsession.Session, operation, chain string) error {
-		if err := session.SetTargetConfig(req.Target, req.Key, req.Value); err != nil {
-			return err
-		}
-		s.publish(operation, chain, operatorlog.Info("config", "target config set",
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session := s.attachment(req.Operation, req.Chain)
+	if err := session.SetTargetConfig(req.Target, req.Key, req.Value); err != nil {
+		return err
+	}
+	state := session.Snapshot()
+	if state.ActiveChain != "" {
+		s.publish(state.ActiveOperation, state.ActiveChain, operatorlog.Info("config", "target config set",
 			operatorlog.Field{Name: "target", Value: req.Target},
 			operatorlog.Field{Name: "key", Value: req.Key},
 		))
-		return nil
-	})
+	}
+	return s.persistLocked()
 }
 
 func (s *Server) UnsetTargetConfig(req TargetConfigRequest, resp *EmptyResponse) error {
-	return s.withChain(req.Operation, req.Chain, func(session *operatorsession.Session, operation, chain string) error {
-		if err := session.UnsetTargetConfig(req.Target, req.Key); err != nil {
-			return err
-		}
-		s.publish(operation, chain, operatorlog.Info("config", "target config unset",
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session := s.attachment(req.Operation, req.Chain)
+	if err := session.UnsetTargetConfig(req.Target, req.Key); err != nil {
+		return err
+	}
+	state := session.Snapshot()
+	if state.ActiveChain != "" {
+		s.publish(state.ActiveOperation, state.ActiveChain, operatorlog.Info("config", "target config unset",
 			operatorlog.Field{Name: "target", Value: req.Target},
 			operatorlog.Field{Name: "key", Value: req.Key},
 		))
-		return nil
-	})
+	}
+	return s.persistLocked()
 }
 
 func (s *Server) Snapshot(req SnapshotRequest, resp *SnapshotResponse) error {
@@ -699,6 +856,24 @@ func (s *Server) addTargetRPC(_ context.Context, req TargetRequest) (EmptyRespon
 func (s *Server) clearTargetsRPC(_ context.Context, req ChainRequest) (EmptyResponse, error) {
 	var resp EmptyResponse
 	err := s.ClearTargets(req, &resp)
+	return resp, err
+}
+
+func (s *Server) createTargetSetRPC(_ context.Context, req TargetSetRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.CreateTargetSet(req, &resp)
+	return resp, err
+}
+
+func (s *Server) addTargetToSetRPC(_ context.Context, req TargetSetRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.AddTargetToSet(req, &resp)
+	return resp, err
+}
+
+func (s *Server) removeTargetFromSetRPC(_ context.Context, req TargetSetRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.RemoveTargetFromSet(req, &resp)
 	return resp, err
 }
 
@@ -874,6 +1049,15 @@ func (c *Client) ReadSession(ctx context.Context, sessionID string, timeout time
 	})
 }
 
+func (c *Client) TailSession(ctx context.Context, sessionID string, options run.SessionTailOptions) (SessionChunk, error) {
+	return invoke[SessionTailRequest, SessionChunk](c, ctx, "TailSession", SessionTailRequest{
+		SessionID: sessionID,
+		MaxBytes:  options.MaxBytes,
+		MaxLines:  options.MaxLines,
+		Consume:   options.Consume,
+	})
+}
+
 func (c *Client) WriteSession(ctx context.Context, sessionID string, data []byte) error {
 	_, err := invoke[SessionWriteRequest, EmptyResponse](c, ctx, "WriteSession", SessionWriteRequest{
 		SessionID: sessionID,
@@ -978,9 +1162,28 @@ func (s *SessionClient) ClearTargets() {
 	_, _ = invoke[ChainRequest, EmptyResponse](s.client, s.ctx, "ClearTargets", ChainRequest{Operation: s.operation(), Chain: s.active()})
 }
 
+func (s *SessionClient) CreateTargetSet(name string) error {
+	_, err := invoke[TargetSetRequest, EmptyResponse](s.client, s.ctx, "CreateTargetSet", TargetSetRequest{Operation: s.operation(), Name: name, Chain: s.active()})
+	return err
+}
+
+func (s *SessionClient) AddTargetToSet(name, target string) error {
+	_, err := invoke[TargetSetRequest, EmptyResponse](s.client, s.ctx, "AddTargetToSet", TargetSetRequest{Operation: s.operation(), Name: name, Target: target, Chain: s.active()})
+	return err
+}
+
+func (s *SessionClient) RemoveTargetFromSet(name, target string) error {
+	_, err := invoke[TargetSetRequest, EmptyResponse](s.client, s.ctx, "RemoveTargetFromSet", TargetSetRequest{Operation: s.operation(), Name: name, Target: target, Chain: s.active()})
+	return err
+}
+
 func (s *SessionClient) AddModule(moduleID string) (operatorsession.Step, error) {
-	resp, err := invoke[ModuleRequest, StepResponse](s.client, s.ctx, "AddModule", ModuleRequest{Operation: s.operation(), ModuleID: moduleID, Chain: s.active()})
-	return operatorsession.Step{ID: resp.ID, ModuleID: resp.ModuleID}, err
+	return s.AddStep(moduleID, "")
+}
+
+func (s *SessionClient) AddStep(moduleID, stepID string) (operatorsession.Step, error) {
+	resp, err := invoke[ModuleRequest, StepResponse](s.client, s.ctx, "AddModule", ModuleRequest{Operation: s.operation(), ModuleID: moduleID, StepID: stepID, Chain: s.active()})
+	return operatorsession.Step{ID: resp.ID, ModuleID: resp.ModuleID, StepID: resp.StepID}, err
 }
 
 func (s *SessionClient) SetChainConfig(key, value string) error {
@@ -1275,6 +1478,7 @@ func responseFromResult(result run.Result) RunMockExploitResponse {
 		})
 	}
 	resp.Sessions = sessionRefsFromRun(result.Sessions)
+	resp.InstalledPayloads = installedPayloadsFromRun(result.InstalledPayloads)
 	for _, log := range result.Logs {
 		resp.Logs = append(resp.Logs, LogEntry{
 			ID:             log.ID,
@@ -1302,18 +1506,56 @@ func sessionRefsFromRun(sessions []run.SessionRef) []SessionRef {
 	out := make([]SessionRef, 0, len(sessions))
 	for _, session := range sessions {
 		out = append(out, SessionRef{
-			ID:           session.ID,
-			RunID:        session.RunID,
-			ModuleID:     session.ModuleID,
-			Target:       session.Target,
-			Name:         session.Name,
-			Kind:         session.Kind,
-			State:        session.State,
-			Transport:    session.Transport,
-			Capabilities: append([]string(nil), session.Capabilities...),
+			ID:                 session.ID,
+			RunID:              session.RunID,
+			ModuleID:           session.ModuleID,
+			Target:             session.Target,
+			Name:               session.Name,
+			Kind:               session.Kind,
+			State:              session.State,
+			Transport:          session.Transport,
+			InstalledPayloadID: session.InstalledPayloadID,
+			Capabilities:       append([]string(nil), session.Capabilities...),
 		})
 	}
 	return out
+}
+
+func installedPayloadsFromRun(payloads []run.InstalledPayloadDescriptor) []InstalledPayloadDescriptor {
+	out := make([]InstalledPayloadDescriptor, 0, len(payloads))
+	for _, payload := range payloads {
+		out = append(out, InstalledPayloadDescriptor{
+			Provider:                 payload.Provider,
+			PayloadID:                payload.PayloadID,
+			PayloadVersion:           payload.PayloadVersion,
+			Target:                   payload.Target,
+			TargetID:                 payload.TargetID,
+			State:                    payload.State,
+			Transport:                payload.Transport,
+			Endpoint:                 payload.Endpoint,
+			InstanceKey:              payload.InstanceKey,
+			StampID:                  payload.StampID,
+			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
+			SupportsReconnect:        payload.SupportsReconnect,
+			SupportsMultipleSessions: payload.SupportsMultipleSessions,
+			Reconnect:                payloadProviderRecordFromRun(payload.Reconnect),
+			Cleanup:                  payloadProviderRecordFromRun(payload.Cleanup),
+			Metadata:                 cloneStringMap(payload.Metadata),
+		})
+	}
+	return out
+}
+
+func payloadProviderRecordFromRun(record *run.PayloadProviderRecord) *PayloadProviderRecord {
+	if record == nil {
+		return nil
+	}
+	return &PayloadProviderRecord{
+		ProviderID:    record.ProviderID,
+		Schema:        record.Schema,
+		SchemaVersion: record.SchemaVersion,
+		Descriptor:    cloneAnyMap(record.Descriptor),
+	}
 }
 
 func sourceOrDefault(value, fallback string) string {
@@ -1400,6 +1642,17 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneAnyMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(values))
 	for key, value := range values {
 		out[key] = value
 	}

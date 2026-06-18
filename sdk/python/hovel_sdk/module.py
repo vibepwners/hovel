@@ -37,6 +37,18 @@ class HovelModule(ABC):
             "outputs": dict(self.outputs),
         }
 
+    def describe_steps(self) -> dict[str, Any]:
+        return {"steps": []}
+
+    def prepare_step(self, request: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError(f"{self.name or self.__class__.__name__} does not implement step.prepare")
+
+    def execute_step(self, request: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError(f"{self.name or self.__class__.__name__} does not implement step.execute")
+
+    def cleanup_step(self, request: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError(f"{self.name or self.__class__.__name__} does not implement step.cleanup")
+
     @abstractmethod
     def run(self, ctx: Context) -> Result | Awaitable[Result]:
         raise NotImplementedError

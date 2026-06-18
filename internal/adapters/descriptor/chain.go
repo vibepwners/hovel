@@ -146,7 +146,7 @@ func validateSteps(value any) error {
 		if err := requireKeys(fmt.Sprintf("chain file schema spec.steps[%d]", index), step, []string{"id", "uses"}); err != nil {
 			return err
 		}
-		if err := rejectAdditional(fmt.Sprintf("chain file schema spec.steps[%d]", index), step, []string{"id", "uses"}); err != nil {
+		if err := rejectAdditional(fmt.Sprintf("chain file schema spec.steps[%d]", index), step, []string{"id", "uses", "step"}); err != nil {
 			return err
 		}
 		if err := requireString(fmt.Sprintf("chain file schema spec.steps[%d].id", index), step["id"]); err != nil {
@@ -155,6 +155,11 @@ func validateSteps(value any) error {
 		uses, ok := step["uses"].(string)
 		if !ok || !chainStepUsesPattern.MatchString(uses) {
 			return fmt.Errorf("chain file schema spec.steps[%d].uses must match module:, service:, or provider: reference", index)
+		}
+		if value, ok := step["step"]; ok {
+			if err := requireString(fmt.Sprintf("chain file schema spec.steps[%d].step", index), value); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

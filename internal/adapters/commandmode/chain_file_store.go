@@ -50,6 +50,9 @@ func formatChainFile(file commands.ChainFile) string {
 	for _, step := range file.Spec.Steps {
 		writeListKV(&b, 4, "id", step.ID)
 		writeKV(&b, 6, "uses", step.Uses)
+		if strings.TrimSpace(step.Step) != "" {
+			writeKV(&b, 6, "step", step.Step)
+		}
 	}
 	if file.Spec.Mode != "template" {
 		writeMap(&b, 2, "config", file.Spec.Config)

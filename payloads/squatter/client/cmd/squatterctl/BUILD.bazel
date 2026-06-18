@@ -1,0 +1,21 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "squatterctl_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/cmd/squatterctl",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//payloads/squatter/client/shell",
+        "//payloads/squatter/client/smbpipe",
+    ],
+)
+
+go_binary(
+    name = "squatterctl",
+    embed = [":squatterctl_lib"],
+    # A host tool that connects to the wine-hosted server; never built for the
+    # Windows platform (so `--config=win64 //...` skips it).
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+)

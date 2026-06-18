@@ -3,7 +3,10 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -51,13 +54,26 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"module", "inspect"},
 		{"module", "list"},
 		{"module", "search"},
+		{"payloads", "available"},
+		{"payloads", "cleanup"},
+		{"payloads", "connect"},
+		{"payloads", "inspect"},
+		{"payloads", "installed"},
+		{"payloads", "mark-removed"},
+		{"payloads", "refresh"},
 		{"chain", "use"},
 		{"target", "add"},
 		{"target", "clear"},
 		{"target", "config", "list"},
 		{"target", "config", "set"},
 		{"target", "config", "unset"},
+		{"target", "set", "add"},
+		{"target", "set", "create"},
+		{"target", "set", "inspect"},
+		{"target", "set", "list"},
+		{"target", "set", "remove"},
 		{"confirm"},
+		{"run"},
 		{"throw"},
 		{"throw", "inspect"},
 		{"throw", "list"},
@@ -73,7 +89,9 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"chains", "load"},
 		{"chains", "save"},
 		{"modules", "list"},
+		{"run"},
 		{"targets", "add"},
+		{"targets", "set", "create"},
 		{"throws", "list"},
 	} {
 		if _, ok := registry.Find(alias...); !ok {
@@ -99,7 +117,7 @@ func TestThrowDefinitionRequiresDaemonAndCentralOptions(t *testing.T) {
 	if got, want := definition.Positionals, []Positional{{Name: "file", Help: "Configured chain YAML file", Required: false}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("positionals = %#v, want %#v", got, want)
 	}
-	for _, name := range []string{"workspace", "chain", "target", "now", "json", "no-color", "verbose", "debug"} {
+	for _, name := range []string{"workspace", "chain", "target", "target-set", "now", "json", "no-color", "verbose", "debug"} {
 		if !hasOption(definition, name) {
 			t.Fatalf("throw definition missing %q option", name)
 		}
@@ -114,7 +132,7 @@ func TestRegistryHasRootUsesDefinitions(t *testing.T) {
 		Modules:    exampleCatalog(),
 	})
 
-	for _, root := range []string{"op", "chain", "chains", "confirm", "control", "module", "modules", "target", "targets", "throw", "throws"} {
+	for _, root := range []string{"op", "chain", "chains", "confirm", "control", "module", "modules", "payload", "payloads", "run", "target", "targets", "throw", "throws"} {
 		if !registry.HasRoot(root) {
 			t.Fatalf("HasRoot(%q) = false, want true", root)
 		}
@@ -625,6 +643,166 @@ func TestArtifactListAndInspectHandlersUseRepository(t *testing.T) {
 	}
 }
 
+func TestPayloadsAvailableUsesProviderService(t *testing.T) {
+	providers := &fakePayloadProviderService{available: []AvailablePayload{{
+		Provider:     "squatter",
+		PayloadID:    "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Name:         "squatter",
+		Version:      "v0.1.0",
+		Platform:     "windows",
+		Arch:         "x86",
+		Formats:      []string{"pe-exe"},
+		Capabilities: []string{"file.get", "exec"},
+		Transport:    "tcp-bind",
+	}}}
+	registry := HovelRegistry(Runtime{
+		Modules:          exampleCatalog(),
+		PayloadProviders: providers,
+	})
+	definition, _ := registry.Find("payloads", "available")
+
+	result, err := definition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "squatter") || !strings.Contains(result.Human, "tcp-bind") {
+		t.Fatalf("available output = %q", result.Human)
+	}
+	if !reflect.DeepEqual(result.JSON, providers.available) {
+		t.Fatalf("available json = %#v, want %#v", result.JSON, providers.available)
+	}
+}
+
+func TestPayloadsInstalledInspectAndMarkRemovedUseRepository(t *testing.T) {
+	repository := newFakePayloadRepository([]InstalledPayloadRecord{
+		payloadRecordFixture("p1", PayloadStateInstalled),
+		payloadRecordFixture("p2", PayloadStateRemoved),
+	})
+	registry := HovelRegistry(Runtime{
+		Modules:  exampleCatalog(),
+		Payloads: repository,
+	})
+	installedDefinition, _ := registry.Find("payloads", "installed")
+	inspectDefinition, _ := registry.Find("payloads", "inspect")
+	removeDefinition, _ := registry.Find("payloads", "mark-removed")
+
+	installed, err := installedDefinition.Execute(context.Background(), Invocation{Options: map[string]string{"workspace": ".hovel"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(installed.Human, "p2") || !strings.Contains(installed.Human, "p1") {
+		t.Fatalf("installed output = %q", installed.Human)
+	}
+	installedJSON, ok := installed.JSON.([]InstalledPayloadRecord)
+	if !ok || len(installedJSON) != 1 || installedJSON[0].Handle != "p1" {
+		t.Fatalf("installed json = %#v", installed.JSON)
+	}
+
+	inspected, err := inspectDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel"},
+		Flags:       map[string]bool{"events": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inspected.Human, "Payload p1") || !strings.Contains(inspected.Human, "endpoint   192.168.122.142:9101") {
+		t.Fatalf("inspect output = %q", inspected.Human)
+	}
+	if payload, ok := inspected.JSON.(PayloadInspectPayload); !ok || payload.Record.Handle != "p1" || len(payload.Events) != 1 {
+		t.Fatalf("inspect json = %#v", inspected.JSON)
+	}
+
+	removed, err := removeDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel", "reason": "operator verified cleanup"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(removed.Human, "Payload marked removed: p1") {
+		t.Fatalf("mark-removed output = %q", removed.Human)
+	}
+	if repository.records["p1"].State != PayloadStateRemoved {
+		t.Fatalf("payload state = %q, want removed", repository.records["p1"].State)
+	}
+}
+
+func TestPayloadsConnectCleanupAndRefreshUseProviderService(t *testing.T) {
+	record := payloadRecordFixture("p1", PayloadStateInstalled)
+	repository := newFakePayloadRepository([]InstalledPayloadRecord{record})
+	providers := &fakePayloadProviderService{
+		session: SessionRef{
+			ID:                 "session-1",
+			RunID:              "run-1",
+			ModuleID:           "squatter@v0.1.0",
+			Target:             record.Target,
+			Kind:               "agent",
+			State:              "open",
+			Transport:          "squatter/tcp-bind",
+			InstalledPayloadID: "p1",
+		},
+		refresh: func(record InstalledPayloadRecord) InstalledPayloadRecord {
+			record.State = PayloadStateUnreachable
+			record.UpdatedAt = "2026-05-03T12:02:00Z"
+			return record
+		},
+	}
+	registry := HovelRegistry(Runtime{
+		Modules:          exampleCatalog(),
+		Payloads:         repository,
+		PayloadProviders: providers,
+	})
+	connectDefinition, _ := registry.Find("payloads", "connect")
+	cleanupDefinition, _ := registry.Find("payloads", "cleanup")
+	refreshDefinition, _ := registry.Find("payloads", "refresh")
+
+	connected, err := connectDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(connected.Human, "Session opened: session-1") {
+		t.Fatalf("connect output = %q", connected.Human)
+	}
+	if repository.records["p1"].State != PayloadStateConnected {
+		t.Fatalf("state after connect = %q", repository.records["p1"].State)
+	}
+	if providers.connected.Handle != "p1" {
+		t.Fatalf("provider connected record = %#v", providers.connected)
+	}
+
+	refreshed, err := refreshDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(refreshed.Human, "Payload refreshed: p1 unreachable") {
+		t.Fatalf("refresh output = %q", refreshed.Human)
+	}
+	if repository.records["p1"].State != PayloadStateUnreachable {
+		t.Fatalf("state after refresh = %q", repository.records["p1"].State)
+	}
+
+	cleaned, err := cleanupDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel", "reason": "operator cleanup"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cleaned.Human, "Payload cleaned up: p1") {
+		t.Fatalf("cleanup output = %q", cleaned.Human)
+	}
+	if repository.records["p1"].State != PayloadStateRemoved || providers.cleaned.Handle != "p1" {
+		t.Fatalf("cleanup state/provider = %#v %#v", repository.records["p1"], providers.cleaned)
+	}
+}
+
 func TestThrowInspectCanIncludeStructuredEvents(t *testing.T) {
 	plan := newThrowPlanForExecution(".hovel", throwExecution{Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
 	evt := testEvent(t, "event-1", "hovel.throw.started", "throw started", event.Refs{WorkspaceID: ".hovel", Operation: "default", Chain: plan.Chain, ThrowID: "throw-1"})
@@ -714,6 +892,56 @@ func TestThrowUsesExistingConfirmationWithoutRecordingTypedYes(t *testing.T) {
 	}
 }
 
+func TestThrowRecordsInstalledPayloadsFromLegacyRun(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloads := newFakePayloadRepository(nil)
+	events := &fakeEventRecorder{}
+	recorder := &fakeRunRecorder{installedPayloads: []InstalledPayloadDescriptor{installedPayloadDescriptorFixture()}}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+		Payloads:      payloads,
+		Events:        events,
+	})
+	definition, _ := registry.Find("throw")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "t1",
+		},
+		Flags: map[string]bool{"now": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := payloads.records["p1"]
+	if record.Provider != "squatter" || record.Target != "192.168.122.142" || record.Chain != "mock-exploit" {
+		t.Fatalf("installed payload record = %#v", record)
+	}
+	if !hasStructuredEvent(events.events, "hovel.payload.installed") {
+		t.Fatalf("events = %#v, want hovel.payload.installed", events.events)
+	}
+	throwPayload := result.JSON.(ThrowPayload)
+	if len(throwPayload.Results) != 1 || len(throwPayload.Results[0].InstalledPayloads) != 1 {
+		t.Fatalf("throw payload installed descriptors = %#v", throwPayload.Results)
+	}
+}
+
 func TestThrowChainFileUsesFileConfigWithoutSessionMutation(t *testing.T) {
 	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
 		WorkspacePath: ".hovel",
@@ -777,6 +1005,282 @@ func TestThrowChainFileUsesFileConfigWithoutSessionMutation(t *testing.T) {
 	state := session.Snapshot()
 	if state.ActiveChain != "interactive" || len(state.Targets) != 0 || state.Steps[0].ModuleID != "mock-survey@v0.0.0-example" {
 		t.Fatalf("session mutated by file throw: %#v", state)
+	}
+}
+
+func TestThrowChainFileCapabilityStepsUsesCapabilityRunner(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeChainFileStore{reads: map[string]ChainFile{
+		"alpha.chain.yaml": capabilityChainFileFixture("alpha", "mock://target"),
+	}}
+	runner := &fakeCapabilityChainRunner{
+		response: CapabilityChainResponse{
+			RunID:   "cap-run-1",
+			State:   "succeeded",
+			Summary: "capability chain completed",
+			Capabilities: []CapabilityPayload{{
+				ID:             "session-1",
+				Type:           string(modulecatalog.CapabilitySessionRef),
+				SchemaVersion:  "v1",
+				State:          "active",
+				ProducerStepID: "squatter.connect_smb",
+				Attributes:     map[string]any{"transport": "smb-named-pipe"},
+			}},
+			Evidence: []CapabilityEvidence{{
+				ID:           "ev-1",
+				Level:        "info",
+				Kind:         "session",
+				SourceStepID: "squatter.connect_smb",
+				Message:      "smb session established",
+			}},
+			Sessions: []SessionRef{{
+				ID:                 "session-1",
+				RunID:              "cap-run-1",
+				ModuleID:           "squatter@v1",
+				Target:             "mock://target",
+				Kind:               "shell",
+				State:              "active",
+				Transport:          "smb-named-pipe",
+				InstalledPayloadID: "p1",
+			}},
+			InstalledPayloads: []InstalledPayloadDescriptor{installedPayloadDescriptorFixture()},
+		},
+	}
+	payloads := newFakePayloadRepository(nil)
+	events := &fakeEventRecorder{}
+	registry := HovelRegistry(Runtime{
+		Workspaces:       fakeWorkspaceService{},
+		Daemons:          fakeDaemonService{status: daemon.Running(identity)},
+		CapabilityChains: runner,
+		Modules:          exampleCatalog(),
+		Plans:            &fakePlanRecorder{},
+		Confirmations:    &fakeConfirmationRecorder{},
+		ChainFiles:       store,
+		Payloads:         payloads,
+		Events:           events,
+	})
+	definition, _ := registry.Find("throw")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"file": "alpha.chain.yaml"},
+		Options:     map[string]string{"workspace": ".hovel"},
+		Flags:       map[string]bool{"now": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("capability chain requests = %#v, want one", runner.requests)
+	}
+	wantRequest := CapabilityChainRequest{
+		Operation:    operatorsession.DefaultOperation,
+		Chain:        "alpha",
+		Target:       "mock://target",
+		ChainConfig:  map[string]string{"operator.confirmed_lab": "true"},
+		TargetConfig: map[string]string{"target.host": "router-01", "target.port": "22"},
+		Steps: []CapabilityChainStepRef{
+			{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+			{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
+		},
+	}
+	runner.requests[0].ThrowStarted = ""
+	runner.requests[0].ThrowID = ""
+	runner.requests[0].RunID = ""
+	if !reflect.DeepEqual(runner.requests[0], wantRequest) {
+		t.Fatalf("capability chain request = %#v, want %#v", runner.requests[0], wantRequest)
+	}
+	payload := result.JSON.(ThrowPayload)
+	if len(payload.Results) != 1 {
+		t.Fatalf("results = %#v, want one aggregate result", payload.Results)
+	}
+	got := payload.Results[0]
+	if got.RunID != "cap-run-1" || got.ModuleID != "capability-chain" || got.Target != "mock://target" || got.State != "succeeded" {
+		t.Fatalf("aggregate run = %#v", got)
+	}
+	if len(got.Capabilities) != 1 || got.Capabilities[0].ID != "session-1" {
+		t.Fatalf("capabilities = %#v, want session capability", got.Capabilities)
+	}
+	if len(got.Evidence) != 1 || got.Evidence[0].SourceStepID != "squatter.connect_smb" {
+		t.Fatalf("evidence = %#v, want squatter evidence", got.Evidence)
+	}
+	if len(got.Sessions) != 1 || got.Sessions[0].Transport != "smb-named-pipe" {
+		t.Fatalf("sessions = %#v, want smb session", got.Sessions)
+	}
+	if len(got.InstalledPayloads) != 1 {
+		t.Fatalf("installed payloads = %#v, want one descriptor", got.InstalledPayloads)
+	}
+	if record := payloads.records["p1"]; record.Provider != "squatter" || record.RunID != "cap-run-1" {
+		t.Fatalf("persisted payload = %#v", record)
+	}
+	if !hasStructuredEvent(events.events, "hovel.payload.installed") {
+		t.Fatalf("events = %#v, want hovel.payload.installed", events.events)
+	}
+	if !reflect.DeepEqual(payload.Plan.Steps, []CapabilityChainStepRef{
+		{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+		{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
+	}) {
+		t.Fatalf("plan steps = %#v", payload.Plan.Steps)
+	}
+}
+
+func TestThrowActiveChainCapabilityStepsUseCapabilityRunnerWithPayloadConfig(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := operatorsession.New()
+	if err := session.UseChain("payload-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddStep("etro@v1", "etro.exploit"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddStep("squatter@v1", "squatter.connect_smb"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("payload.transport", "smb-named-pipe"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("payload.pipe", `\\.\pipe\hovel-test`); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("smb://target"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("smb://target", "target.host", "192.0.2.10"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("smb://target", "target.port", "445"); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeCapabilityChainRunner{
+		response: CapabilityChainResponse{
+			State:   "succeeded",
+			Summary: "capability chain completed",
+			Capabilities: []CapabilityPayload{{
+				ID:             "session-1",
+				Type:           string(modulecatalog.CapabilitySessionRef),
+				State:          "active",
+				ProducerStepID: "squatter.connect_smb",
+				Attributes:     map[string]any{"transport": "smb-named-pipe"},
+			}},
+		},
+	}
+	registry := HovelRegistry(Runtime{
+		Workspaces:       fakeWorkspaceService{},
+		Daemons:          fakeDaemonService{status: daemon.Running(identity)},
+		CapabilityChains: runner,
+		Modules: modulecatalog.New(
+			modulecatalog.Module{ID: "etro@v1", Type: modulecatalog.TypeExploit, Enabled: true},
+			modulecatalog.Module{
+				ID:      "squatter@v1",
+				Type:    modulecatalog.TypePayloadProvider,
+				Enabled: true,
+				ChainConfig: []modulecatalog.Requirement{
+					{Key: "payload.transport", Type: modulecatalog.ValueEnum, Required: true, Allowed: []string{"smb-named-pipe", "tcp-bind"}},
+					{Key: "payload.pipe", Type: modulecatalog.ValueString, Required: true},
+				},
+				TargetConfig: []modulecatalog.Requirement{
+					{Key: "target.host", Type: modulecatalog.ValueHost, Required: true},
+					{Key: "target.port", Type: modulecatalog.ValuePort, Required: true},
+				},
+			},
+		),
+		Session:       session,
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+	})
+	definition, _ := registry.Find("run")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": ".hovel"},
+		Flags:   map[string]bool{"now": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("capability chain requests = %#v, want one", runner.requests)
+	}
+	request := runner.requests[0]
+	request.ThrowID = ""
+	request.RunID = ""
+	request.ThrowStarted = ""
+	want := CapabilityChainRequest{
+		Operation:   operatorsession.DefaultOperation,
+		Chain:       "payload-lab",
+		Target:      "smb://target",
+		ChainConfig: map[string]string{"payload.transport": "smb-named-pipe", "payload.pipe": `\\.\pipe\hovel-test`},
+		TargetConfig: map[string]string{
+			"target.host": "192.0.2.10",
+			"target.port": "445",
+		},
+		Steps: []CapabilityChainStepRef{
+			{ID: "step-1", ModuleID: "etro@v1", StepID: "etro.exploit"},
+			{ID: "step-2", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
+		},
+	}
+	if !reflect.DeepEqual(request, want) {
+		t.Fatalf("capability chain request = %#v, want %#v", request, want)
+	}
+	payload := result.JSON.(ThrowPayload)
+	if len(payload.Results) != 1 || payload.Results[0].ModuleID != "capability-chain" {
+		t.Fatalf("payload results = %#v, want one capability-chain result", payload.Results)
+	}
+	if !reflect.DeepEqual(payload.Plan.Steps, want.Steps) {
+		t.Fatalf("plan steps = %#v, want %#v", payload.Plan.Steps, want.Steps)
+	}
+}
+
+func TestThrowChainFileRejectsMixedCapabilityAndLegacySteps(t *testing.T) {
+	store := &fakeChainFileStore{reads: map[string]ChainFile{
+		"mixed.chain.yaml": {
+			APIVersion: "hovel.dev/v1alpha1",
+			Kind:       "Chain",
+			Metadata:   ChainFileMetadata{Name: "mixed"},
+			Spec: ChainFileSpec{
+				Mode: "configured",
+				Steps: []ChainFileStep{
+					{ID: "exploit", Uses: "module:etro@v1", Step: "etro.exploit"},
+					{ID: "connect", Uses: "module:squatter@v1"},
+				},
+				Targets: []ChainFileTarget{{ID: "mock://target"}},
+			},
+		},
+	}}
+	registry := HovelRegistry(Runtime{
+		Workspaces:       fakeWorkspaceService{},
+		Daemons:          fakeDaemonService{},
+		CapabilityChains: &fakeCapabilityChainRunner{},
+		Modules:          exampleCatalog(),
+		Plans:            &fakePlanRecorder{},
+		Confirmations:    &fakeConfirmationRecorder{},
+		ChainFiles:       store,
+	})
+	definition, _ := registry.Find("throw")
+
+	_, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"file": "mixed.chain.yaml"},
+		Options:     map[string]string{"workspace": ".hovel"},
+		Flags:       map[string]bool{"now": true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "all steps must declare step") {
+		t.Fatalf("err = %v, want mixed capability step error", err)
 	}
 }
 
@@ -1001,7 +1505,13 @@ func TestThrowTargetOverrideScopesTargetConfigs(t *testing.T) {
 	if err := session.SetTargetConfig("mock://one", "target.host", "one.local"); err != nil {
 		t.Fatal(err)
 	}
+	if err := session.SetTargetConfig("mock://one", "target.port", "22"); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.SetTargetConfig("mock://two", "target.host", "two.local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://two", "target.port", "22"); err != nil {
 		t.Fatal(err)
 	}
 	runtime := Runtime{Session: session, Modules: exampleCatalog()}
@@ -1011,18 +1521,356 @@ func TestThrowTargetOverrideScopesTargetConfigs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantConfigs := map[string]map[string]string{"mock://one": {"target.host": "one.local"}}
+	wantConfigs := map[string]map[string]string{"mock://one": {"target.host": "one.local", "target.port": "22"}}
 	if !reflect.DeepEqual(throw.TargetConfigs, wantConfigs) {
 		t.Fatalf("target configs = %#v, want %#v", throw.TargetConfigs, wantConfigs)
 	}
 	baseHash := planHashForExecution(throw)
 	changed := throw
 	changed.TargetConfigs = map[string]map[string]string{
-		"mock://one": {"target.host": "one.local"},
-		"mock://two": {"target.host": "changed.local"},
+		"mock://one": {"target.host": "one.local", "target.port": "22"},
+		"mock://two": {"target.host": "changed.local", "target.port": "22"},
 	}
 	if baseHash == planHashForExecution(changed) {
 		t.Fatal("test setup invalid: unscoped target config should affect hash")
+	}
+}
+
+func TestThrowInputsSquatterTypeDerivesEtroInstallConfig(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("etro-exploit@v1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("squatter@v0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("operator.confirmed_lab", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("squatter.type", "tcp-bind"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("squatter.bind_port", "9101"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("t1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("t1", "target.host", "192.168.122.142"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("t1", "target.port", "1337"); err != nil {
+		t.Fatal(err)
+	}
+
+	throw, err := throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := throw.Modules, []string{"etro-exploit@v1.0.0", "squatter@v0.1.0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("modules = %#v, want %#v", got, want)
+	}
+	if len(throw.Steps) != 0 {
+		t.Fatalf("steps = %#v, want module-only execution", throw.Steps)
+	}
+	config := throw.TargetConfigs["t1"]
+	if config["target.port"] != "445" {
+		t.Fatalf("target.port = %q, want 445", config["target.port"])
+	}
+	if config["payload.bind_port"] != "9101" {
+		t.Fatalf("payload.bind_port = %q, want 9101", config["payload.bind_port"])
+	}
+	if _, ok := config["payload.remote_path"]; ok {
+		t.Fatalf("payload.remote_path = %q, want ETRO to auto-generate an unlocked path", config["payload.remote_path"])
+	}
+	if !strings.HasSuffix(config["payload.local_path"], filepath.Join("examples", "bin", "squatter.exe")) {
+		t.Fatalf("payload.local_path = %q, want staged squatter.exe", config["payload.local_path"])
+	}
+
+	if err := session.SetChainConfig("squatter.remote_path", `C:\Windows\Temp\hovel-fixed.exe`); err != nil {
+		t.Fatal(err)
+	}
+	throw, err = throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config = throw.TargetConfigs["t1"]
+	if config["payload.remote_path"] != `C:\Windows\Temp\hovel-fixed.exe` {
+		t.Fatalf("payload.remote_path = %q, want explicit Squatter remote path", config["payload.remote_path"])
+	}
+}
+
+func TestSquatterPayloadPathPrefersModuleConfigStagedBinary(t *testing.T) {
+	t.Setenv("SQUATTER_PAYLOAD_PATH", "")
+	t.Setenv("BUILD_WORKSPACE_DIRECTORY", "")
+
+	root := t.TempDir()
+	payloadPath := filepath.Join(root, "examples", "bin", "squatter.exe")
+	if err := os.MkdirAll(filepath.Dir(payloadPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(payloadPath, []byte("fixture"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, configPath := range []string{
+		filepath.Join(root, "examples", "hovel-modules.json"),
+		filepath.Join(root, "examples", "python", "hovel-modules.json"),
+	} {
+		t.Run(configPath, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(configPath, []byte("{}"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOVEL_MODULE_CONFIG", configPath)
+			if got := squatterPayloadPath(); got != payloadPath {
+				t.Fatalf("squatterPayloadPath() = %q, want %q", got, payloadPath)
+			}
+		})
+	}
+}
+
+func TestThrowInputsFromChainFileSquatterTypeDerivesInstallConfig(t *testing.T) {
+	store := &fakeChainFileStore{
+		reads: map[string]ChainFile{
+			"etro-squatter.chain.yaml": {
+				APIVersion: "hovel.dev/v1alpha1",
+				Kind:       "Chain",
+				Metadata:   ChainFileMetadata{Name: "etro-squatter"},
+				Spec: ChainFileSpec{
+					Mode: "configured",
+					Steps: []ChainFileStep{
+						{ID: "exploit", Uses: "module:etro-exploit@v1.0.0"},
+						{ID: "squatter-bind", Uses: "module:squatter@v0.1.0"},
+					},
+					Config: map[string]string{"operator.confirmed_lab": "true", "squatter.type": "tcp-bind", "squatter.bind_port": "9101"},
+					Targets: []ChainFileTarget{{
+						ID: "t1",
+						Config: map[string]string{
+							"target.host": "192.168.122.142",
+							"target.port": "1337",
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	throw, err := throwInputs(context.Background(), Runtime{ChainFiles: store}, Invocation{
+		Positionals: map[string]string{"file": "etro-squatter.chain.yaml"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := throw.Modules, []string{"etro-exploit@v1.0.0", "squatter@v0.1.0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("modules = %#v, want %#v", got, want)
+	}
+	config := throw.TargetConfigs["t1"]
+	if config["target.port"] != "445" || config["payload.bind_port"] != "9101" || config["payload.local_path"] == "" {
+		t.Fatalf("target config = %#v, want derived Squatter install config", config)
+	}
+}
+
+func TestThrowInputsFromChainFileSquatterSMBTransportKeepsExplicitInstallConfig(t *testing.T) {
+	store := &fakeChainFileStore{
+		reads: map[string]ChainFile{
+			"etro-squatter-smb.chain.yaml": {
+				APIVersion: "hovel.dev/v1alpha1",
+				Kind:       "Chain",
+				Metadata:   ChainFileMetadata{Name: "etro-squatter-smb"},
+				Spec: ChainFileSpec{
+					Mode: "configured",
+					Steps: []ChainFileStep{
+						{ID: "exploit", Uses: "module:etro-exploit@v1.0.0"},
+						{ID: "squatter-smb", Uses: "module:squatter@v0.1.0"},
+					},
+					Config: map[string]string{
+						"operator.confirmed_lab": "true",
+						"payload.transport":      "smb-named-pipe",
+						"payload.pipe":           "squatter",
+					},
+					Targets: []ChainFileTarget{{
+						ID: "t1",
+						Config: map[string]string{
+							"target.host":         "192.168.122.142",
+							"target.port":         "445",
+							"payload.local_path":  "/tmp/squatter-smb.exe",
+							"payload.remote_path": `C:\Windows\Temp\hovelsmb.exe`,
+							"payload.bind_port":   "",
+						},
+					}},
+				},
+			},
+		},
+	}
+
+	throw, err := throwInputs(context.Background(), Runtime{ChainFiles: store}, Invocation{
+		Positionals: map[string]string{"file": "etro-squatter-smb.chain.yaml"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := throw.TargetConfigs["t1"]
+	if config["payload.local_path"] != "/tmp/squatter-smb.exe" {
+		t.Fatalf("payload.local_path = %q, want explicit SMB payload", config["payload.local_path"])
+	}
+	if config["payload.remote_path"] != `C:\Windows\Temp\hovelsmb.exe` {
+		t.Fatalf("payload.remote_path = %q, want explicit SMB remote path", config["payload.remote_path"])
+	}
+	if config["payload.bind_port"] != "" {
+		t.Fatalf("payload.bind_port = %q, want no TCP bind arg for SMB payload", config["payload.bind_port"])
+	}
+}
+
+func TestChainAddVersionedSquatterSetsTypeConfig(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := chainAddHandler(Runtime{Session: session, Modules: squatterCatalog()})(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "squatter@v0.1.0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "squatter.type=tcp-bind") {
+		t.Fatalf("human = %q, want squatter.type=tcp-bind", result.Human)
+	}
+	state := session.Snapshot()
+	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "squatter@v0.1.0" || state.Steps[0].StepID != "" {
+		t.Fatalf("steps = %#v, want Squatter provider module", state.Steps)
+	}
+	if got := state.Config["squatter.type"]; got != "tcp-bind" {
+		t.Fatalf("squatter.type = %q, want tcp-bind", got)
+	}
+}
+
+func TestExecuteLegacyThrowRunsSquatterProviderAfterEtroInstall(t *testing.T) {
+	recorder := &fakeRunRecorder{}
+	client := fakeRunClient{recorder: recorder}
+	throw := throwExecution{
+		Operation: "op1",
+		Chain:     "alpha",
+		Targets:   []string{"t1"},
+		Modules:   []string{"etro-exploit@v1.0.0", "squatter.bind"},
+		TargetConfigs: map[string]map[string]string{
+			"t1": {
+				"target.host":         "192.168.122.142",
+				"target.port":         "445",
+				"payload.local_path":  "/tmp/squatter.exe",
+				"payload.remote_path": `C:\Windows\Temp\hovel-squatter.exe`,
+				"payload.bind_port":   "9101",
+			},
+		},
+	}
+	payload := ThrowPayload{ThrowID: "throw-1", Chain: "alpha", Targets: []string{"t1"}}
+	err := executeLegacyThrow(context.Background(), Runtime{Modules: squatterCatalog()}, client, "", ThrowPlanRecord{Operation: "op1", Chain: "alpha"}, throw, &payload, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.requests) != 2 {
+		t.Fatalf("requests = %#v, want etro and squatter provider", recorder.requests)
+	}
+	if recorder.requests[0].ModuleID != "etro-exploit@v1.0.0" {
+		t.Fatalf("first module = %q", recorder.requests[0].ModuleID)
+	}
+	if recorder.requests[1].ModuleID != "squatter@v0.1.0" {
+		t.Fatalf("second module = %q, want squatter provider", recorder.requests[1].ModuleID)
+	}
+	if recorder.requests[1].TargetConfig["payload.bind_port"] != "9101" {
+		t.Fatalf("squatter target config = %#v", recorder.requests[1].TargetConfig)
+	}
+}
+
+func TestThrowTargetSetFiltersIncompatibleTargets(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-exploit@v0.0.0-example"); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"mock://ready", "mock://missing-port"} {
+		if err := session.AddTarget(target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := session.SetTargetConfig("mock://ready", "target.host", "ready.local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://ready", "target.port", "22"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://missing-port", "target.host", "missing.local"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.CreateTargetSet("mixed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTargetToSet("mixed", "mock://ready"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTargetToSet("mixed", "mock://missing-port"); err != nil {
+		t.Fatal(err)
+	}
+
+	throw, err := throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{
+		Options: map[string]string{"target-set": "mixed"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := throw.Targets, []string{"mock://ready"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("targets = %#v, want %#v", got, want)
+	}
+	if _, ok := throw.TargetConfigs["mock://missing-port"]; ok {
+		t.Fatalf("incompatible target config leaked into throw: %#v", throw.TargetConfigs)
+	}
+	if len(throw.SkippedTargets) != 1 || throw.SkippedTargets[0].Target != "mock://missing-port" {
+		t.Fatalf("skipped targets = %#v", throw.SkippedTargets)
+	}
+	if !strings.Contains(throw.SkippedTargets[0].Reason, "target.port") {
+		t.Fatalf("skip reason = %q, want missing target.port", throw.SkippedTargets[0].Reason)
+	}
+}
+
+func TestThrowExplicitTargetFailsWhenIncompatible(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-exploit@v0.0.0-example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://missing-port"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://missing-port", "target.host", "missing.local"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{
+		Options: map[string]string{"target": "mock://missing-port"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "target.port") {
+		t.Fatalf("error = %v, want target.port validation failure", err)
 	}
 }
 
@@ -1083,6 +1931,9 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	createDefinition, _ := registry.Find("chain", "create")
 	useDefinition, _ := registry.Find("chain", "use")
 	targetDefinition, _ := registry.Find("target", "add")
+	targetSetCreateDefinition, _ := registry.Find("target", "set", "create")
+	targetSetAddDefinition, _ := registry.Find("target", "set", "add")
+	targetSetInspectDefinition, _ := registry.Find("target", "set", "inspect")
 	listDefinition, _ := registry.Find("chain", "list")
 	inspectDefinition, _ := registry.Find("chain", "inspect")
 	renameDefinition, _ := registry.Find("chain", "rename")
@@ -1121,8 +1972,34 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	if state.ActiveChain != "beta" {
 		t.Fatalf("active chain = %q, want beta", state.ActiveChain)
 	}
-	if len(state.Targets) != 1 || state.Targets[0] != "mock://beta" {
-		t.Fatalf("beta target = %#v", state.Targets)
+	if got, want := state.Targets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("targets = %#v, want %#v", got, want)
+	}
+	if _, err := targetSetCreateDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "xp-lab"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetSetAddDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "xp-lab", "target": "mock://alpha"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetSetAddDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "xp-lab", "target": "mock://beta"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targetSetResult, err := targetSetInspectDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "xp-lab"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Target set xp-lab", "mock://alpha", "mock://beta"} {
+		if !strings.Contains(targetSetResult.Human, want) {
+			t.Fatalf("target set inspect missing %q:\n%s", want, targetSetResult.Human)
+		}
 	}
 
 	listResult, err := listDefinition.Execute(context.Background(), Invocation{})
@@ -1130,8 +2007,8 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"  alpha steps=0 targets=1 topic=operation/default/chain/alpha/logs",
-		"* beta steps=0 targets=1 topic=operation/default/chain/beta/logs",
+		"  alpha steps=0 topic=operation/default/chain/alpha/logs",
+		"* beta steps=0 topic=operation/default/chain/beta/logs",
 	} {
 		if !strings.Contains(listResult.Human, want) {
 			t.Fatalf("chain list missing %q:\n%s", want, listResult.Human)
@@ -1142,7 +2019,7 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(inspectResult.Human, "Chain beta steps=0 targets=1 config=0 topic=operation/default/chain/beta/logs") {
+	if !strings.Contains(inspectResult.Human, "Chain beta steps=0 config=0 topic=operation/default/chain/beta/logs") {
 		t.Fatalf("inspect result = %q", inspectResult.Human)
 	}
 
@@ -1155,7 +2032,7 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	if state.ActiveChain != "renamed" {
 		t.Fatalf("active chain = %q, want renamed", state.ActiveChain)
 	}
-	if len(state.Targets) != 1 || state.Targets[0] != "mock://beta" {
+	if got, want := state.Targets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("renamed target = %#v", state.Targets)
 	}
 	if state.LogTopic != "operation/default/chain/renamed/logs" {
@@ -1226,7 +2103,7 @@ func TestOperationHandlersSegmentChainState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(inspectResult.Human, "Operation afterparty chains=1 active_chain=beta") {
+	if !strings.Contains(inspectResult.Human, "Operation afterparty chains=1 targets=1 target_sets=0 active_chain=beta") {
 		t.Fatalf("op inspect = %q", inspectResult.Human)
 	}
 }
@@ -1275,6 +2152,62 @@ func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 	}
 }
 
+func TestModuleInspectReportsStepAvailability(t *testing.T) {
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules: modulecatalog.New(modulecatalog.Module{
+			ID:      "squatter-provider@v1",
+			Name:    "Squatter Provider",
+			Type:    modulecatalog.TypePayloadProvider,
+			Version: "v1",
+			Enabled: true,
+			StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{
+				{
+					ID:   "squatter.connect_smb",
+					Kind: "session.connector",
+					Requires: []modulecatalog.CapabilityRequirement{{
+						Type:       modulecatalog.CapabilityTransport,
+						Attributes: map[string]any{"kind": "smb-pipe"},
+						States:     []string{"active"},
+					}},
+					Produces: []modulecatalog.CapabilityRequirement{{
+						Type: modulecatalog.CapabilitySessionRef,
+					}},
+				},
+			}},
+		}),
+	})
+	inspectDefinition, _ := registry.Find("module", "inspect")
+
+	result, err := inspectDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "squatter-provider"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"steps", "squatter.connect_smb", "session.connector", "missing TransportEndpoint kind=smb-pipe state=active"} {
+		if !strings.Contains(result.Human, want) {
+			t.Fatalf("inspect missing %q:\n%s", want, result.Human)
+		}
+	}
+	payload, ok := result.JSON.(ModuleInspectPayload)
+	if !ok {
+		t.Fatalf("json payload type = %T, want ModuleInspectPayload", result.JSON)
+	}
+	if payload.ID != "squatter-provider@v1" || len(payload.Steps) != 1 {
+		t.Fatalf("payload = %#v", payload)
+	}
+	step := payload.Steps[0]
+	if step.ID != "squatter.connect_smb" || step.Ready || len(step.Missing) != 1 {
+		t.Fatalf("step payload = %#v", step)
+	}
+	if step.Missing[0].Type != modulecatalog.CapabilityTransport {
+		t.Fatalf("missing type = %q", step.Missing[0].Type)
+	}
+}
+
 func TestSessionCommandsRejectOneShotMode(t *testing.T) {
 	registry := HovelRegistry(Runtime{
 		Workspaces: fakeWorkspaceService{},
@@ -1289,6 +2222,122 @@ func TestSessionCommandsRejectOneShotMode(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "hovel shell") {
 		t.Fatalf("error = %v, want shell guidance", err)
+	}
+}
+
+func TestSessionReadDrainsBufferedOutput(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{reads: []SessionChunk{
+		{SessionID: "session-1", Data: []byte("first")},
+		{SessionID: "session-1", Data: []byte(" second")},
+		{SessionID: "session-1"},
+	}}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+	definition, _ := registry.Find("session", "read")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(result.Raw); got != "first second" {
+		t.Fatalf("raw output = %q, want buffered session output", got)
+	}
+}
+
+func TestSessionTailPrintsRecentLinesByDefault(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{tail: SessionChunk{SessionID: "session-1", Data: []byte("line 2\nline 3\n")}}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+	definition, _ := registry.Find("session", "tail")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(result.Raw); got != "line 2\nline 3\n" {
+		t.Fatalf("raw output = %q, want tail output", got)
+	}
+	if got := recorder.tails[0].options; got.MaxLines != 20 || got.MaxBytes != 0 || got.Consume {
+		t.Fatalf("tail options = %#v, want default 20 line non-consuming tail", got)
+	}
+}
+
+func TestSessionTailAcceptsByteLimit(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{tail: SessionChunk{SessionID: "session-1", Data: []byte("tail")}}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+	definition, _ := registry.Find("session", "tail")
+
+	_, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1"},
+		Options:     map[string]string{"bytes": "128"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recorder.tails[0].options; got.MaxBytes != 128 || got.MaxLines != 0 {
+		t.Fatalf("tail options = %#v, want 128-byte tail", got)
+	}
+}
+
+func TestSessionSendAppendsDefaultAndCustomTerminators(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+	definition, _ := registry.Find("session", "send")
+
+	_, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1", "data": "cmd /c whoami"},
+		Options:     map[string]string{},
+		Flags:       map[string]bool{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1", "data": "raw"},
+		Options:     map[string]string{"end": "\\r\\n"},
+		Flags:       map[string]bool{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "session-1", "data": "none"},
+		Options:     map[string]string{},
+		Flags:       map[string]bool{"no-newline": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := len(recorder.writes), 3; got != want {
+		t.Fatalf("writes = %d, want %d", got, want)
+	}
+	for i, want := range []string{"cmd /c whoami\n", "raw\r\n", "none"} {
+		if got := string(recorder.writes[i].data); got != want {
+			t.Fatalf("write[%d] = %q, want %q", i, got, want)
+		}
 	}
 }
 
@@ -1396,6 +2445,55 @@ func TestChainAddConfigAndValidateHandlers(t *testing.T) {
 	payload, ok := validResult.JSON.(ValidationPayload)
 	if !ok || !payload.Valid {
 		t.Fatalf("validation payload = %#v", validResult.JSON)
+	}
+}
+
+func TestChainValidateSquatterBindUsesBridgeConfig(t *testing.T) {
+	session := operatorsession.New()
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules:    squatterCatalog(),
+		Session:    session,
+	})
+	useDefinition, _ := registry.Find("chain", "use")
+	addDefinition, _ := registry.Find("chain", "add")
+	chainConfigSetDefinition, _ := registry.Find("chain", "config", "set")
+	targetDefinition, _ := registry.Find("target", "add")
+	validateDefinition, _ := registry.Find("chain", "validate")
+
+	if _, err := useDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"chain": "squatter-lab"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := addDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "squatter@v0.1.0"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chainConfigSetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"key": "squatter.bind_port", "value": "9444"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "smb://192.0.2.10"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := validateDefinition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Human != "Chain squatter-lab valid" {
+		t.Fatalf("validation result = %q", result.Human)
+	}
+	payload, ok := result.JSON.(ValidationPayload)
+	if !ok || !payload.Valid {
+		t.Fatalf("validation payload = %#v", result.JSON)
 	}
 }
 
@@ -1526,7 +2624,39 @@ func TestChainLoadRestoresConfiguredChainFile(t *testing.T) {
 	}
 }
 
-func TestTargetHandlerRequiresActiveChain(t *testing.T) {
+func TestThrowInputsFromChainFileKeepsCapabilityStepRefs(t *testing.T) {
+	store := &fakeChainFileStore{
+		reads: map[string]ChainFile{
+			"etro-squatter.yaml": {
+				APIVersion: "hovel.dev/v1alpha1",
+				Kind:       "Chain",
+				Metadata:   ChainFileMetadata{Name: "etro-squatter"},
+				Spec: ChainFileSpec{
+					Mode: "configured",
+					Steps: []ChainFileStep{
+						{ID: "exploit", Uses: "module:etro@v1", Step: "etro.exploit"},
+						{ID: "connect", Uses: "module:squatter@v1", Step: "squatter.connect_smb"},
+					},
+					Targets: []ChainFileTarget{{ID: "smb://target"}},
+				},
+			},
+		},
+	}
+
+	throw, err := throwInputsFromChainFile(context.Background(), Runtime{ChainFiles: store}, Invocation{}, "etro-squatter.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []throwStepRef{
+		{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+		{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
+	}
+	if !reflect.DeepEqual(throw.Steps, want) {
+		t.Fatalf("steps = %#v, want %#v", throw.Steps, want)
+	}
+}
+
+func TestTargetHandlerRequiresActiveOperation(t *testing.T) {
 	session := operatorsession.New()
 	registry := HovelRegistry(Runtime{
 		Workspaces: fakeWorkspaceService{},
@@ -1540,8 +2670,16 @@ func TestTargetHandlerRequiresActiveChain(t *testing.T) {
 	_, err := targetDefinition.Execute(context.Background(), Invocation{
 		Positionals: map[string]string{"target": "mock://target"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "active chain is required") {
-		t.Fatalf("error = %v, want active chain required", err)
+	if err == nil || !strings.Contains(err.Error(), "active operation is required") {
+		t.Fatalf("error = %v, want active operation required", err)
+	}
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"target": "mock://target"},
+	}); err != nil {
+		t.Fatalf("target add with active operation failed: %v", err)
 	}
 }
 
@@ -1758,6 +2896,25 @@ func exampleCatalog() modulecatalog.Catalog {
 	)
 }
 
+func squatterCatalog() modulecatalog.Catalog {
+	return modulecatalog.New(
+		modulecatalog.Module{
+			ID:          "squatter@v0.1.0",
+			Name:        "squatter",
+			Type:        modulecatalog.TypePayloadProvider,
+			Version:     "v0.1.0",
+			Summary:     "Build Squatter Windows payload artifacts.",
+			RuntimeKind: "jsonrpc-stdio",
+			Enabled:     true,
+			Tags:        []string{"dangerous", "payload_provider"},
+			ChainConfig: []modulecatalog.Requirement{
+				{Key: "payload.transport", Type: modulecatalog.ValueEnum, Required: true, Allowed: []string{"tcp-bind"}},
+				{Key: "payload.bind_port", Type: modulecatalog.ValuePort, Required: true},
+			},
+		},
+	)
+}
+
 func hasOption(definition Definition, name string) bool {
 	for _, option := range definition.Options {
 		if option.Name == name {
@@ -1788,9 +2945,24 @@ func (s fakeDaemonService) Status(context.Context, services.DaemonStatusRequest)
 }
 
 type fakeRunRecorder struct {
-	socketPath string
-	requests   []RunMockExploitRequest
-	artifacts  []Artifact
+	socketPath        string
+	requests          []RunMockExploitRequest
+	artifacts         []Artifact
+	installedPayloads []InstalledPayloadDescriptor
+	reads             []SessionChunk
+	tail              SessionChunk
+	tails             []fakeSessionTail
+	writes            []fakeSessionWrite
+}
+
+type fakeSessionTail struct {
+	sessionID string
+	options   SessionTailOptions
+}
+
+type fakeSessionWrite struct {
+	sessionID string
+	data      []byte
 }
 
 type fakePlanRecorder struct {
@@ -1884,6 +3056,199 @@ type fakeArtifactRepository struct {
 
 func (r *fakeArtifactRepository) ListArtifacts(_ context.Context, _ string) ([]ArtifactRecord, error) {
 	return append([]ArtifactRecord(nil), r.records...), nil
+}
+
+type fakePayloadRepository struct {
+	records map[string]InstalledPayloadRecord
+	events  map[string][]InstalledPayloadEvent
+}
+
+func newFakePayloadRepository(records []InstalledPayloadRecord) *fakePayloadRepository {
+	repo := &fakePayloadRepository{
+		records: map[string]InstalledPayloadRecord{},
+		events:  map[string][]InstalledPayloadEvent{},
+	}
+	for _, record := range records {
+		repo.records[record.Handle] = record
+		repo.events[record.Handle] = []InstalledPayloadEvent{{
+			ID:        "payload-event-" + record.Handle,
+			PayloadID: record.ID,
+			Handle:    record.Handle,
+			Workspace: record.Workspace,
+			Type:      "installed",
+			To:        record.State,
+			CreatedAt: record.CreatedAt,
+		}}
+	}
+	return repo
+}
+
+func (r *fakePayloadRepository) RecordInstalledPayload(_ context.Context, record InstalledPayloadRecord) (InstalledPayloadRecord, error) {
+	if record.Handle == "" {
+		record.Handle = fmt.Sprintf("p%d", len(r.records)+1)
+	}
+	if record.ID == "" {
+		record.ID = "payload-" + record.Handle
+	}
+	if record.State == "" {
+		record.State = PayloadStateInstalled
+	}
+	r.records[record.Handle] = record
+	return record, nil
+}
+
+func (r *fakePayloadRepository) ListInstalledPayloads(_ context.Context, _ string, filter InstalledPayloadFilter) ([]InstalledPayloadRecord, error) {
+	var records []InstalledPayloadRecord
+	for _, record := range r.records {
+		if !filter.IncludeRemoved && record.State == PayloadStateRemoved {
+			continue
+		}
+		if filter.State != "" && record.State != filter.State {
+			continue
+		}
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Handle < records[j].Handle })
+	return records, nil
+}
+
+func (r *fakePayloadRepository) GetInstalledPayload(_ context.Context, _ string, ref string) (InstalledPayloadRecord, error) {
+	if record, ok := r.records[ref]; ok {
+		return record, nil
+	}
+	for _, record := range r.records {
+		if record.ID == ref {
+			return record, nil
+		}
+	}
+	return InstalledPayloadRecord{}, fmt.Errorf("payload %s not found", ref)
+}
+
+func (r *fakePayloadRepository) UpdateInstalledPayloadState(_ context.Context, _ string, ref, state, reason string) (InstalledPayloadRecord, error) {
+	record, err := r.GetInstalledPayload(context.Background(), "", ref)
+	if err != nil {
+		return InstalledPayloadRecord{}, err
+	}
+	from := record.State
+	record.State = state
+	r.records[record.Handle] = record
+	r.events[record.Handle] = append(r.events[record.Handle], InstalledPayloadEvent{
+		ID:        fmt.Sprintf("payload-event-%s-%d", record.Handle, len(r.events[record.Handle])+1),
+		PayloadID: record.ID,
+		Handle:    record.Handle,
+		Workspace: record.Workspace,
+		Type:      "state_changed",
+		From:      from,
+		To:        state,
+		Reason:    reason,
+		CreatedAt: "2026-05-03T12:01:00Z",
+	})
+	return record, nil
+}
+
+func (r *fakePayloadRepository) ListInstalledPayloadEvents(_ context.Context, _ string, ref string) ([]InstalledPayloadEvent, error) {
+	return append([]InstalledPayloadEvent(nil), r.events[ref]...), nil
+}
+
+type fakePayloadProviderService struct {
+	available []AvailablePayload
+	session   SessionRef
+	connected InstalledPayloadRecord
+	cleaned   InstalledPayloadRecord
+	refresh   func(InstalledPayloadRecord) InstalledPayloadRecord
+}
+
+func (s *fakePayloadProviderService) ListAvailablePayloads(context.Context) ([]AvailablePayload, error) {
+	return append([]AvailablePayload(nil), s.available...), nil
+}
+
+func (s *fakePayloadProviderService) ConnectInstalledPayload(_ context.Context, record InstalledPayloadRecord) (SessionRef, error) {
+	s.connected = record
+	session := s.session
+	if session.ID == "" {
+		session = SessionRef{ID: "session-1", Target: record.Target, Kind: "agent", State: "open", Transport: record.Transport, InstalledPayloadID: record.Handle}
+	}
+	return session, nil
+}
+
+func (s *fakePayloadProviderService) CleanupInstalledPayload(_ context.Context, record InstalledPayloadRecord, _ string) error {
+	s.cleaned = record
+	return nil
+}
+
+func (s *fakePayloadProviderService) RefreshInstalledPayload(_ context.Context, record InstalledPayloadRecord) (InstalledPayloadRecord, error) {
+	if s.refresh != nil {
+		return s.refresh(record), nil
+	}
+	return record, nil
+}
+
+func payloadRecordFixture(handle, state string) InstalledPayloadRecord {
+	return InstalledPayloadRecord{
+		ID:                       "payload-" + handle,
+		Handle:                   handle,
+		Workspace:                ".hovel",
+		Provider:                 "squatter",
+		PayloadID:                "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		PayloadVersion:           "v0.1.0",
+		Target:                   "192.168.122.142",
+		TargetID:                 "t1",
+		State:                    state,
+		Transport:                "tcp-bind",
+		Endpoint:                 "192.168.122.142:9101",
+		InstanceKey:              "squatter:192.168.122.142:9101",
+		SupportsReconnect:        true,
+		SupportsMultipleSessions: true,
+		Reconnect: &PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.tcp_bind.reconnect",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"host": "192.168.122.142", "port": float64(9101)},
+		},
+		Cleanup: &PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.cleanup",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"remotePath": `C:\Windows\Temp\hovel.exe`},
+		},
+		Operation:  "default",
+		Chain:      "c1",
+		ThrowID:    "throw-1",
+		RunID:      "run-1",
+		CreatedAt:  "2026-05-03T12:00:00Z",
+		UpdatedAt:  "2026-05-03T12:00:00Z",
+		LastSeenAt: "2026-05-03T12:00:00Z",
+	}
+}
+
+func installedPayloadDescriptorFixture() InstalledPayloadDescriptor {
+	return InstalledPayloadDescriptor{
+		Provider:                 "squatter",
+		PayloadID:                "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		PayloadVersion:           "v0.1.0",
+		Target:                   "192.168.122.142",
+		TargetID:                 "t1",
+		State:                    PayloadStateInstalled,
+		Transport:                "tcp-bind",
+		Endpoint:                 "192.168.122.142:9101",
+		InstanceKey:              "squatter:192.168.122.142:9101",
+		StampID:                  "stamp-squatter-9101",
+		SupportsReconnect:        true,
+		SupportsMultipleSessions: true,
+		Reconnect: &PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.tcp_bind.reconnect",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"host": "192.168.122.142", "port": float64(9101)},
+		},
+		Cleanup: &PayloadProviderRecord{
+			ProviderID:    "squatter",
+			Schema:        "squatter.cleanup",
+			SchemaVersion: "v1",
+			Descriptor:    map[string]any{"remotePath": `C:\Windows\Temp\hovel.exe`},
+		},
+		Metadata: map[string]string{"profile": "XP_SP2SP3_X86"},
+	}
 }
 
 type fakeEventRecorder struct {
@@ -2000,6 +3365,35 @@ func configuredChainFileFixture(name, target string) ChainFile {
 	}
 }
 
+func capabilityChainFileFixture(name, target string) ChainFile {
+	return ChainFile{
+		APIVersion: "hovel.dev/v1alpha1",
+		Kind:       "Chain",
+		Metadata:   ChainFileMetadata{Name: name},
+		Spec: ChainFileSpec{
+			Mode: "configured",
+			Steps: []ChainFileStep{
+				{ID: "exploit", Uses: "module:etro@v1", Step: "etro.exploit"},
+				{ID: "connect", Uses: "module:squatter@v1", Step: "squatter.connect_smb"},
+			},
+			Config: map[string]string{"operator.confirmed_lab": "true"},
+			Targets: []ChainFileTarget{
+				{ID: target, Config: map[string]string{"target.host": "router-01", "target.port": "22"}},
+			},
+		},
+	}
+}
+
+type fakeCapabilityChainRunner struct {
+	requests []CapabilityChainRequest
+	response CapabilityChainResponse
+}
+
+func (r *fakeCapabilityChainRunner) ExecuteCapabilityChain(_ context.Context, req CapabilityChainRequest) (CapabilityChainResponse, error) {
+	r.requests = append(r.requests, req)
+	return r.response, nil
+}
+
 type fakeInput struct {
 	answer string
 	prompt ConfirmationPrompt
@@ -2041,12 +3435,17 @@ func (c fakeRunClient) RunMockExploit(_ context.Context, req RunMockExploitReque
 	if c.recorder != nil && c.recorder.artifacts != nil {
 		artifacts = append([]Artifact(nil), c.recorder.artifacts...)
 	}
+	var installedPayloads []InstalledPayloadDescriptor
+	if c.recorder != nil {
+		installedPayloads = cloneInstalledPayloadDescriptors(c.recorder.installedPayloads)
+	}
 	return RunMockExploitResponse{
-		RunID:    "run-1",
-		ModuleID: req.ModuleID,
-		Target:   req.Target,
-		State:    "succeeded",
-		Summary:  "mock exploit completed",
+		RunID:             "run-1",
+		ModuleID:          req.ModuleID,
+		Target:            req.Target,
+		State:             "succeeded",
+		Summary:           "mock exploit completed",
+		InstalledPayloads: installedPayloads,
 		Logs: []LogEntry{{
 			Level:   "info",
 			Logger:  req.ModuleID,
@@ -2070,6 +3469,39 @@ func (fakeRunClient) ListSessions(context.Context) ([]SessionRef, error) {
 		Transport:    "stdio",
 		Capabilities: []string{"read", "write", "exec", "close"},
 	}}, nil
+}
+
+func (c fakeRunClient) ReadSession(context.Context, string, time.Duration) (SessionChunk, error) {
+	if c.recorder == nil || len(c.recorder.reads) == 0 {
+		return SessionChunk{SessionID: "session-1"}, nil
+	}
+	chunk := c.recorder.reads[0]
+	c.recorder.reads = c.recorder.reads[1:]
+	chunk.Data = append([]byte(nil), chunk.Data...)
+	return chunk, nil
+}
+
+func (c fakeRunClient) TailSession(_ context.Context, sessionID string, options SessionTailOptions) (SessionChunk, error) {
+	if c.recorder == nil {
+		return SessionChunk{SessionID: sessionID}, nil
+	}
+	c.recorder.tails = append(c.recorder.tails, fakeSessionTail{sessionID: sessionID, options: options})
+	chunk := c.recorder.tail
+	if chunk.SessionID == "" {
+		chunk.SessionID = sessionID
+	}
+	chunk.Data = append([]byte(nil), chunk.Data...)
+	return chunk, nil
+}
+
+func (c fakeRunClient) WriteSession(_ context.Context, sessionID string, data []byte) error {
+	if c.recorder != nil {
+		c.recorder.writes = append(c.recorder.writes, fakeSessionWrite{
+			sessionID: sessionID,
+			data:      append([]byte(nil), data...),
+		})
+	}
+	return nil
 }
 
 func (fakeRunClient) CloseSession(context.Context, string) error {

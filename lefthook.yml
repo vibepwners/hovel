@@ -3,7 +3,7 @@
 #
 # Install (or refresh) the hooks with: task hooks:install
 #
-# pre-commit  -> task precommit  (lint + build; fast)
+# pre-commit  -> task precommit  (lint, Squatter static checks, build; fast)
 # pre-push    -> task prepush    (tests; thorough)
 #
 # Skip a hook for one command with LEFTHOOK=0, e.g. LEFTHOOK=0 git commit ...

@@ -3,6 +3,7 @@ package pythonrpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
@@ -201,6 +204,468 @@ func TestRunnerInspectsPythonModuleDeclaredSchema(t *testing.T) {
 	}
 	if len(module.TargetConfig) != 2 || module.TargetConfig[0].Key != "target.host" {
 		t.Fatalf("target config = %#v", module.TargetConfig)
+	}
+}
+
+func TestRunnerInspectsPythonModuleStepContracts(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "stepper",
+            "version": "v0.0.0-test",
+            "moduleType": "payload_provider"
+        }})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"version": "contracts-v1", "steps": [{
+            "id": "squatter.connect_smb",
+            "kind": "session.connector",
+            "requires": [
+                {"type": "PayloadInstance", "schemaVersion": "v1", "attributes": {"provider": "squatter", "transport": "smb-named-pipe"}, "states": ["installed", "unreachable"]},
+                {"type": "CredentialCapability", "schemaVersion": "v1", "attributes": {"protocol": "smb"}, "states": ["active"]}
+            ],
+            "produces": [
+                {"type": "SessionRef", "schemaVersion": "v1", "attributes": {"provider": "squatter", "transport": "smb-named-pipe"}}
+            ],
+            "prepare": {"materializes": []}
+        }]}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+
+	module, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if module.ID != "stepper@v0.0.0-test" {
+		t.Fatalf("id = %q, want stepper@v0.0.0-test", module.ID)
+	}
+	if module.StepContracts.Version != "contracts-v1" {
+		t.Fatalf("contract version = %q", module.StepContracts.Version)
+	}
+	if len(module.StepContracts.Steps) != 1 {
+		t.Fatalf("steps = %#v, want one", module.StepContracts.Steps)
+	}
+	step := module.StepContracts.Steps[0]
+	if step.ID != "squatter.connect_smb" || len(step.Requires) != 2 || len(step.Produces) != 1 {
+		t.Fatalf("step contract = %#v", step)
+	}
+	if step.Requires[1].Attributes["protocol"] != "smb" {
+		t.Fatalf("credential requirement = %#v", step.Requires[1])
+	}
+}
+
+func TestRunnerTreatsNonStepProviderAsLegacyModule(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "legacy-module",
+            "version": "v0.0.0-test",
+            "moduleType": "survey"
+        }})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "module \"legacy-module\" is not a step provider"}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+
+	module, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if module.ID != "legacy-module@v0.0.0-test" {
+		t.Fatalf("id = %q, want legacy-module@v0.0.0-test", module.ID)
+	}
+	if len(module.StepContracts.Steps) != 0 {
+		t.Fatalf("step contracts = %#v, want none", module.StepContracts)
+	}
+}
+
+func TestIsMissingStepProviderRecognizesLegacyResponses(t *testing.T) {
+	for _, message := range []string{
+		"unknown method step.describe",
+		`unknown method "step.describe"`,
+		`module "mock-survey-go" is not a step provider`,
+	} {
+		if !isMissingStepProvider(errors.New(message)) {
+			t.Fatalf("isMissingStepProvider(%q) = false, want true", message)
+		}
+	}
+	if isMissingStepProvider(errors.New("step.describe exploded")) {
+		t.Fatal("isMissingStepProvider accepted unrelated error")
+	}
+}
+
+func TestNormalizeModuleLogLevel(t *testing.T) {
+	cases := map[string]event.Level{
+		"debug":    event.LevelDebug,
+		"info":     event.LevelInfo,
+		"":         event.LevelInfo,
+		"warn":     event.LevelWarn,
+		"warning":  event.LevelWarn,
+		"error":    event.LevelError,
+		"critical": event.LevelError,
+		"noisy":    event.LevelInfo,
+	}
+	for input, want := range cases {
+		if got := normalizeModuleLogLevel(input); got != want {
+			t.Fatalf("normalizeModuleLogLevel(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestRunnerRejectsMalformedStepContracts(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "bad-stepper",
+            "version": "v0.0.0-test",
+            "moduleType": "payload_provider"
+        }})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"steps": [{
+            "id": "squatter.connect_smb",
+            "kind": "session.connector",
+            "requires": [{"schemaVersion": "v1"}]
+        }]}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+
+	_, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+	if err == nil || !strings.Contains(err.Error(), "step contract invalid: squatter.connect_smb: requirement 1 type is required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunnerCallsStepLifecycleMethods(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    params = request.get("params") or {}
+    if method == "step.prepare":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "plannedOutputs": [{
+                "id": "cap_credential_6mb8pq",
+                "type": "CredentialCapability",
+                "schemaVersion": "v1",
+                "state": "planned",
+                "producerStepId": params["stepId"],
+                "attributes": {
+                    "protocol": "smb",
+                    "username": "m7q4z92d",
+                    "password": "plain-high-entropy-password",
+                    "sensitive": True
+                }
+            }],
+            "preparedValues": {
+                "password": {"value": "plain-high-entropy-password", "editable": True}
+            }
+        }})
+    elif method == "step.execute":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "status": "succeeded",
+            "capabilities": [{
+                "id": "cap_session_q8m2v4",
+                "type": "SessionRef",
+                "schemaVersion": "v1",
+                "state": "connected",
+                "producerStepId": params["stepId"]
+            }]
+        }})
+    elif method == "step.cleanup":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "cleanup_verified"}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	runner := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}
+
+	prepared, err := runner.PrepareStep(context.Background(), StepCallRequest{
+		ModuleID: "broken",
+		Params: map[string]any{
+			"preparedPlanId": "prep-1",
+			"stepId":         "windows.credential.create_local_admin",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := prepared["preparedValues"].(map[string]any)
+	password := values["password"].(map[string]any)
+	if password["value"] != "plain-high-entropy-password" {
+		t.Fatalf("prepared password = %#v", password)
+	}
+
+	executed, err := runner.ExecuteStep(context.Background(), StepCallRequest{
+		ModuleID: "broken",
+		Params:   map[string]any{"runId": "run-1", "stepId": "squatter.connect_smb"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executed["status"] != "succeeded" {
+		t.Fatalf("execute result = %#v", executed)
+	}
+
+	cleanup, err := runner.CleanupStep(context.Background(), StepCallRequest{
+		ModuleID: "broken",
+		Params:   map[string]any{"runId": "run-1", "stepId": "squatter.cleanup_smb", "cleanupHandleId": "cap_cleanup_74m2wq"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleanup["status"] != "cleanup_verified" {
+		t.Fatalf("cleanup result = %#v", cleanup)
+	}
+}
+
+func TestStepRuntimeRunnerExecutesCapabilityChain(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    params = request.get("params") or {}
+    step_id = params.get("stepId")
+    if method == "step.prepare":
+        if step_id == "etro.exploit":
+            send({"jsonrpc": "2.0", "id": rid, "result": {}})
+        elif step_id == "squatter.connect_smb":
+            if params.get("inputs", [])[0]["capabilityId"] != "remote-1":
+                send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "missing remote input"}})
+            else:
+                send({"jsonrpc": "2.0", "id": rid, "result": {}})
+        else:
+            send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "unknown step"}})
+    elif method == "step.execute":
+        if step_id == "etro.exploit":
+            send({"jsonrpc": "2.0", "id": rid, "result": {
+                "status": "succeeded",
+                "capabilities": [{
+                    "id": "remote-1",
+                    "type": "RemoteExecutionCapability",
+                    "schemaVersion": "v1",
+                    "state": "active",
+                    "producerStepId": step_id
+                }]
+            }})
+        elif step_id == "squatter.connect_smb":
+            send({"jsonrpc": "2.0", "id": rid, "result": {
+                "status": "succeeded",
+                "capabilities": [{
+                    "id": "session-1",
+                    "type": "SessionRef",
+                    "schemaVersion": "v1",
+                    "state": "active",
+                    "producerStepId": step_id,
+                    "attributes": {"transport": "smb-named-pipe"}
+                }],
+                "evidence": [{
+                    "id": "evidence-1",
+                    "level": "info",
+                    "kind": "session",
+                    "sourceStepId": step_id,
+                    "message": "session connected"
+                }]
+            }})
+        else:
+            send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "unknown step"}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	catalog := modulecatalog.New(modulecatalog.Module{
+		ID:      "broken@v1",
+		Enabled: true,
+		StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{
+			{
+				ID:   "etro.exploit",
+				Kind: "exploit.remote_execution",
+			},
+			{
+				ID:   "squatter.connect_smb",
+				Kind: "session.connector",
+				Requires: []modulecatalog.CapabilityRequirement{{
+					Type:   modulecatalog.CapabilityRemoteExecution,
+					States: []string{"active"},
+				}},
+			},
+		}},
+	})
+	runtime := chainruntime.New(catalog, StepRuntimeRunner{Runner: Runner{ConfigPath: configPath, Timeout: 2 * time.Second}})
+
+	result, err := runtime.Execute(context.Background(), chainruntime.Request{
+		RunID: "run-1",
+		Steps: []chainruntime.StepRef{
+			{ModuleID: "broken", StepID: "etro.exploit"},
+			{ModuleID: "broken", StepID: "squatter.connect_smb"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	if len(result.Capabilities) != 2 || result.Capabilities[1].ID != "session-1" {
+		t.Fatalf("capabilities = %#v", result.Capabilities)
+	}
+	if len(result.Evidence) != 1 || result.Evidence[0].Message != "session connected" {
+		t.Fatalf("evidence = %#v", result.Evidence)
+	}
+}
+
+func TestStepRuntimeRunnerKeepsStepProviderProcessForLiveChainStateAndAdoptsSessions(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+import base64
+
+listener_ready = False
+session_open = False
+reads = 0
+
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    params = request.get("params") or {}
+    step_id = params.get("stepId")
+    if method == "step.prepare":
+        send({"jsonrpc": "2.0", "id": rid, "result": {}})
+    elif method == "step.execute":
+        if step_id == "squatter.listen_tcp_callback":
+            listener_ready = True
+            send({"jsonrpc": "2.0", "id": rid, "result": {
+                "status": "succeeded",
+                "capabilities": [{
+                    "id": "listener-1",
+                    "type": "TransportEndpoint",
+                    "schemaVersion": "v1",
+                    "state": "active",
+                    "producerStepId": step_id,
+                    "attributes": {"kind": "tcp-listener"}
+                }]
+            }})
+        elif step_id == "squatter.connect_tcp_callback":
+            if not listener_ready:
+                send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "listener state was lost"}})
+            else:
+                session_open = True
+                send({"jsonrpc": "2.0", "id": rid, "result": {
+                    "status": "succeeded",
+                    "sessions": [{
+                        "id": "session-1",
+                        "runId": params.get("runId"),
+                        "moduleId": "broken@v1",
+                        "target": "target-1",
+                        "name": "Squatter session",
+                        "kind": "agent",
+                        "state": "open",
+                        "transport": "squatter/tcp-callback"
+                    }],
+                    "capabilities": [{
+                        "id": "session-1",
+                        "type": "SessionRef",
+                        "schemaVersion": "v1",
+                        "state": "active",
+                        "producerStepId": step_id
+                    }]
+                }})
+    elif method == "session/read":
+        if session_open and reads == 0:
+            reads += 1
+            send({"jsonrpc": "2.0", "id": rid, "result": {"data": base64.b64encode(b"sq> ").decode()}})
+        else:
+            send({"jsonrpc": "2.0", "id": rid, "result": {"data": ""}})
+    elif method == "session/close":
+        session_open = False
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	catalog := modulecatalog.New(modulecatalog.Module{
+		ID:      "broken@v1",
+		Enabled: true,
+		StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{
+			{ID: "squatter.listen_tcp_callback", Kind: "listener.start"},
+			{ID: "squatter.connect_tcp_callback", Kind: "session.connector"},
+		}},
+	})
+	sessions := NewSessionBroker()
+	stepProcesses := NewStepProcessBroker()
+	runtime := chainruntime.New(catalog, StepRuntimeRunner{Runner: Runner{
+		ConfigPath:    configPath,
+		Timeout:       2 * time.Second,
+		Sessions:      sessions,
+		StepProcesses: stepProcesses,
+	}})
+
+	result, err := runtime.Execute(context.Background(), chainruntime.Request{
+		RunID: "run-1",
+		Steps: []chainruntime.StepRef{
+			{ModuleID: "broken", StepID: "squatter.listen_tcp_callback"},
+			{ModuleID: "broken", StepID: "squatter.connect_tcp_callback"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	if len(result.Sessions) != 1 || result.Sessions[0].ID != "session-1" {
+		t.Fatalf("sessions = %#v, want adopted session", result.Sessions)
+	}
+	chunk, err := sessions.ReadSession(context.Background(), "session-1", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(chunk.Data) != "sq> " {
+		t.Fatalf("session data = %q, want prompt", string(chunk.Data))
+	}
+	if err := sessions.CloseSession(context.Background(), "session-1"); err != nil {
+		t.Fatal(err)
 	}
 }
 

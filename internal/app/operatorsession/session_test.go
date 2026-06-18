@@ -38,9 +38,15 @@ func TestSessionCreatesUsesListsAndDeletesChains(t *testing.T) {
 	}
 }
 
-func TestSessionTargetsAreOwnedByActiveChain(t *testing.T) {
+func TestSessionTargetsAreOwnedByOperation(t *testing.T) {
 	session := New()
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
 
+	if err := session.AddTarget("mock://ops"); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.UseChain("alpha"); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +64,7 @@ func TestSessionTargetsAreOwnedByActiveChain(t *testing.T) {
 	if beta.Chain != "beta" {
 		t.Fatalf("chain = %q, want beta", beta.Chain)
 	}
-	if len(beta.Targets) != 1 || beta.Targets[0] != "mock://beta" {
+	if got, want := beta.Targets, []string{"mock://ops", "mock://alpha", "mock://beta"}; !equalStrings(got, want) {
 		t.Fatalf("beta targets = %#v", beta.Targets)
 	}
 
@@ -66,8 +72,16 @@ func TestSessionTargetsAreOwnedByActiveChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	alpha := session.Snapshot()
-	if len(alpha.Targets) != 1 || alpha.Targets[0] != "mock://alpha" {
+	if got, want := alpha.Targets, []string{"mock://ops", "mock://alpha", "mock://beta"}; !equalStrings(got, want) {
 		t.Fatalf("alpha targets = %#v", alpha.Targets)
+	}
+	if len(alpha.Chains) != 2 {
+		t.Fatalf("chains = %#v, want alpha and beta", alpha.Chains)
+	}
+	for _, chain := range alpha.Chains {
+		if len(chain.Targets) != 0 {
+			t.Fatalf("chain %s owns targets %#v, want none", chain.Name, chain.Targets)
+		}
 	}
 }
 
@@ -113,16 +127,25 @@ func TestSessionRejectsBlankChainAndTarget(t *testing.T) {
 	}
 }
 
-func TestSessionRequiresActiveChainForTargets(t *testing.T) {
+func TestSessionRequiresActiveOperationForTargets(t *testing.T) {
 	session := New()
 
 	if err := session.AddTarget("mock://target"); err == nil {
-		t.Fatal("expected active chain error")
+		t.Fatal("expected active operation error")
+	}
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://target"); err != nil {
+		t.Fatalf("target add after operation use failed: %v", err)
 	}
 }
 
-func TestSessionClearsOnlyActiveChainTargets(t *testing.T) {
+func TestSessionClearsOperationTargets(t *testing.T) {
 	session := New()
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.UseChain("alpha"); err != nil {
 		t.Fatal(err)
 	}
@@ -138,14 +161,54 @@ func TestSessionClearsOnlyActiveChainTargets(t *testing.T) {
 
 	session.ClearTargets()
 
-	if targets := session.Snapshot().Targets; len(targets) != 0 {
-		t.Fatalf("beta targets = %#v, want none", targets)
+	state := session.Snapshot()
+	if targets := state.Targets; len(targets) != 0 {
+		t.Fatalf("operation targets = %#v, want none", targets)
+	}
+	if configs := state.TargetConfigs; len(configs) != 0 {
+		t.Fatalf("operation target configs = %#v, want none", configs)
 	}
 	if err := session.UseChain("alpha"); err != nil {
 		t.Fatal(err)
 	}
-	if targets := session.Snapshot().Targets; len(targets) != 1 || targets[0] != "mock://alpha" {
-		t.Fatalf("alpha targets = %#v", targets)
+	if targets := session.Snapshot().Targets; len(targets) != 0 {
+		t.Fatalf("alpha snapshot targets = %#v, want none", targets)
+	}
+}
+
+func TestSessionTargetSetsAreOwnedByOperation(t *testing.T) {
+	session := New()
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://beta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.CreateTargetSet("xp-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTargetToSet("xp-lab", "mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTargetToSet("xp-lab", "mock://beta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha-chain"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("beta-chain"); err != nil {
+		t.Fatal(err)
+	}
+
+	state := session.Snapshot()
+	if len(state.TargetSets) != 1 {
+		t.Fatalf("target sets = %#v", state.TargetSets)
+	}
+	if state.TargetSets[0].Name != "xp-lab" || !equalStrings(state.TargetSets[0].Targets, []string{"mock://alpha", "mock://beta"}) {
+		t.Fatalf("target set = %#v", state.TargetSets[0])
 	}
 }
 
@@ -373,4 +436,16 @@ func hasLogMessage(logs []operatorlog.Entry, message string) bool {
 		}
 	}
 	return false
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

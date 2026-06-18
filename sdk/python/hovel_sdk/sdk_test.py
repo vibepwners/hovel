@@ -6,7 +6,17 @@ import unittest
 from pathlib import Path
 from typing import Any, ClassVar
 
-from hovel_sdk import Artifact, Context, HovelModule, LineShellSession, Requirement, Result, setup_logging
+from hovel_sdk import (
+    Artifact,
+    Context,
+    HovelModule,
+    InstalledPayload,
+    LineShellSession,
+    PayloadProviderRecord,
+    Requirement,
+    Result,
+    setup_logging,
+)
 from hovel_sdk.framing import encode_message, read_message, write_message
 from hovel_sdk.server import JSONRPCServer
 
@@ -40,6 +50,98 @@ class SessionModule(HovelModule):
             capabilities=("read", "write", "exec", "close"),
         )
         return Result.ok({"sessionId": session.id}, summary="session opened")
+
+
+class StepModule(HovelModule):
+    name = "step-module"
+    module_type = "payload_provider"
+
+    def describe_steps(self) -> dict[str, Any]:
+        return {
+            "steps": [
+                {
+                    "id": "squatter.connect_smb",
+                    "kind": "session.connector",
+                    "configSchema": {"type": "object"},
+                    "requires": [
+                        {
+                            "type": "PayloadInstance",
+                            "schemaVersion": "v1",
+                            "attributes": {"provider": "squatter", "transport": "smb-named-pipe"},
+                            "states": ["installed", "disconnected", "installed_unconnected"],
+                        },
+                        {
+                            "type": "CredentialCapability",
+                            "schemaVersion": "v1",
+                            "attributes": {"protocol": "smb"},
+                            "states": ["active"],
+                        },
+                    ],
+                    "produces": [
+                        {
+                            "type": "SessionRef",
+                            "schemaVersion": "v1",
+                            "attributes": {"provider": "squatter", "transport": "smb-named-pipe"},
+                        }
+                    ],
+                    "prepare": {"materializes": []},
+                }
+            ]
+        }
+
+    def prepare_step(self, request: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "plannedOutputs": [
+                {
+                    "id": "cap_credential_6mb8pq",
+                    "type": "CredentialCapability",
+                    "schemaVersion": "v1",
+                    "state": "planned",
+                    "producerStepId": request["stepId"],
+                    "attributes": {
+                        "protocol": "smb",
+                        "username": "m7q4z92d",
+                        "password": "plain-high-entropy-password",
+                        "sensitive": True,
+                    },
+                }
+            ],
+            "preparedValues": {
+                "username": {"value": "m7q4z92d", "editable": True},
+                "password": {"value": "plain-high-entropy-password", "editable": True},
+            },
+            "operatorSummary": {"targetSideArtifacts": ["local admin user m7q4z92d"], "warnings": []},
+        }
+
+    def execute_step(self, request: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "status": "succeeded",
+            "capabilities": [
+                {
+                    "id": "cap_session_q8m2v4",
+                    "type": "SessionRef",
+                    "schemaVersion": "v1",
+                    "state": "connected",
+                    "producerStepId": request["stepId"],
+                    "attributes": {"provider": "squatter", "transport": "smb-named-pipe"},
+                }
+            ],
+            "evidence": [
+                {
+                    "id": "ev_connected",
+                    "level": "info",
+                    "kind": "session.connected",
+                    "sourceStepId": request["stepId"],
+                    "message": "connected",
+                }
+            ],
+        }
+
+    def cleanup_step(self, _request: dict[str, Any]) -> dict[str, Any]:
+        return {"status": "cleanup_verified"}
+
+    def run(self, _ctx: Context) -> Result:
+        return Result.ok(summary="not used")
 
 
 class SDKTest(unittest.TestCase):
@@ -91,6 +193,48 @@ class SDKTest(unittest.TestCase):
         self.assertEqual(message["result"]["chainConfig"][0]["key"], "operator.confirmed_lab")
         self.assertEqual(message["result"]["targetConfig"][0]["type"], "host")
 
+    def test_step_contract_methods_dispatch_over_json_rpc(self) -> None:
+        stdin = io.BytesIO(
+            encode_message({"jsonrpc": "2.0", "id": 1, "method": "step.describe"})
+            + encode_message({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "step.prepare",
+                "params": {"preparedPlanId": "prep-1", "stepId": "windows.credential.create_local_admin"},
+            })
+            + encode_message({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "step.execute",
+                "params": {"runId": "run-1", "stepId": "squatter.connect_smb"},
+            })
+            + encode_message({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "step.cleanup",
+                "params": {"runId": "run-1", "stepId": "squatter.cleanup_smb"},
+            })
+        )
+        stdout = io.BytesIO()
+
+        JSONRPCServer(StepModule(), stdin, stdout).serve_forever()
+
+        messages: list[dict[str, Any]] = []
+        stdout.seek(0)
+        while True:
+            message = read_message(stdout)
+            if message is None:
+                break
+            messages.append(message)
+
+        self.assertEqual(messages[0]["result"]["steps"][0]["id"], "squatter.connect_smb")
+        self.assertEqual(
+            messages[1]["result"]["preparedValues"]["password"]["value"],
+            "plain-high-entropy-password",
+        )
+        self.assertEqual(messages[2]["result"]["status"], "succeeded")
+        self.assertEqual(messages[3]["result"]["status"], "cleanup_verified")
+
     def test_artifact_helpers_emit_inline_and_file_references(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "loot.txt"
@@ -111,6 +255,41 @@ class SDKTest(unittest.TestCase):
             {"name": "summary.json", "kind": "application/json", "data": '{"count":2,"ok":true}'},
         )
         self.assertEqual(artifacts[3], {"name": "loot.txt", "kind": "text/plain", "path": str(path)})
+
+    def test_result_serializes_installed_payload_descriptors(self) -> None:
+        result = Result.ok(summary="installed").with_installed_payloads(
+            InstalledPayload(
+                provider="squatter",
+                payload_id="squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+                payload_version="v0.1.0",
+                target="192.168.122.142",
+                state="installed",
+                transport="tcp-bind",
+                endpoint="192.168.122.142:9101",
+                instance_key="squatter:tcp-bind:192.168.122.142:9101",
+                stamp_id="svc123",
+                supports_reconnect=True,
+                supports_multiple_sessions=True,
+                reconnect=PayloadProviderRecord(
+                    schema="squatter.tcp_bind.reconnect",
+                    descriptor={"transport": "tcp-bind", "host": "192.168.122.142", "port": 9101},
+                ),
+                cleanup=PayloadProviderRecord(
+                    schema="etro.smb_service.cleanup",
+                    descriptor={
+                        "remotePath": r"C:\Windows\Temp\svc123.exe",
+                        "serviceName": "svc123",
+                    },
+                ),
+                metadata={"launch_method": "etro-smb-service"},
+            )
+        )
+
+        installed = result.to_rpc()["installedPayloads"][0]
+        self.assertEqual(installed["provider"], "squatter")
+        self.assertEqual(installed["payloadId"], "squatter/windows/x86/windows-7/tcp-bind/pe-exe")
+        self.assertEqual(installed["reconnect"]["descriptor"]["port"], 9101)
+        self.assertEqual(installed["cleanup"]["descriptor"]["serviceName"], "svc123")
 
     def test_async_module_can_open_and_drive_shell_session(self) -> None:
         stdin = io.BytesIO(

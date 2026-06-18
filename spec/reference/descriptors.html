@@ -241,6 +241,47 @@ outputs:
   session: session-ref
 </code></pre>
 
+        <h2>Installed Payload Descriptor</h2>
+        <p>
+          Modules and payload providers return this shape when they explicitly report a
+          successful target-side install. Hovel core validates the descriptor and writes
+          the installed payload record; providers never write directly to
+          <code>workspace.db</code>.
+        </p>
+<pre data-lang="yaml"><code>provider: squatter
+payloadId: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
+payloadVersion: 0.1.0
+instanceKey: optional-provider-stable-key
+stampId: payload-stamp-uuid
+target:
+  id: t1
+  address: 10.0.0.42
+transport: tcp-bind
+endpointSummary: 10.0.0.42:9101
+state: installed
+supportsReconnect: true
+supportsMultipleSessions: false
+reconnect:
+  schema: squatter.reconnect.tcp_bind
+  schemaVersion: 1
+  descriptor:
+    host: 10.0.0.42
+    port: 9101
+cleanup:
+  schema: squatter.cleanup.tcp_bind
+  schemaVersion: 1
+  descriptor:
+    remotePath: C:\Windows\Temp\n4x9q2.exe
+</code></pre>
+        <p>
+          The durable installed payload row stores a normalized core plus opaque
+          provider-owned reconnect and cleanup JSON. Valid current states are
+          <code>installed</code>, <code>connected</code>, <code>unreachable</code>, and
+          <code>removed</code>. Repeated descriptors update an existing row only when
+          <code>instanceKey</code> or <code>stampId</code> proves it is the same deployed
+          instance.
+        </p>
+
         <h2>Event Shape</h2>
 <pre data-lang="yaml"><code>id: event-uuid
 runId: run-uuid

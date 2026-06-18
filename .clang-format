@@ -1,0 +1,5 @@
+BasedOnStyle: Microsoft
+Language: Cpp
+IndentWidth: 8
+TabWidth: 8
+UseTab: Never
