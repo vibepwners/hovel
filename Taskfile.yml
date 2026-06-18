@@ -227,6 +227,9 @@ tasks:
   squatter:clang-tidy:
     desc: Run clang-tidy over Squatter C sources.
     cmds:
+      - task: build
+        vars:
+          CLI_ARGS: //payloads/squatter/windows/src:squatter_all
       - bash tools/lint/check_squatter_clang_tidy.sh
 
   # --- Git hooks ----------------------------------------------------------
