@@ -167,6 +167,13 @@ fn request(id: i64, method: &str, params: Value) -> Value {
     ])
 }
 
+#[test]
+fn framing_rejects_oversized_frame_before_body_read() {
+    let mut cursor = Cursor::new(b"Content-Length: 67108865\r\n\r\n".to_vec());
+    let err = crate::framing::read_message(&mut cursor).expect_err("frame should be rejected");
+    assert!(err.to_string().contains("exceeds maximum"), "{err}");
+}
+
 fn run_session(input: Vec<u8>, module: FakeModule) -> Vec<Value> {
     let captured = SharedBuf(Rc::new(RefCell::new(Vec::new())));
     let mut reader = Cursor::new(input);

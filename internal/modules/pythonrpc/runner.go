@@ -26,6 +26,7 @@ import (
 
 const defaultTimeout = 60 * time.Second
 const stderrSettleTimeout = 50 * time.Millisecond
+const maxFrameBytes = 64 * 1024 * 1024
 
 const ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
 
@@ -199,7 +200,11 @@ func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, s
 		return nil, moduleFailure(summary, prefix, err, process.stderrString())
 	}
 	if method == "step.execute" {
-		if sessions := sessionsFromStepRPC(request, result["sessions"]); len(sessions) > 0 && r.Sessions != nil {
+		sessions, err := sessionsFromStepRPC(request, result["sessions"])
+		if err != nil {
+			return nil, services.NewModuleExecutionFailure("module returned invalid step result", err)
+		}
+		if len(sessions) > 0 && r.Sessions != nil {
 			r.Sessions.adopt(process, sessions)
 			if r.StepProcesses != nil {
 				r.StepProcesses.release(process)
@@ -269,9 +274,11 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 	if err != nil {
 		return run.Result{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderrString())
 	}
-	if module, err := moduleFromRPC(request.ModuleID, info, schema); err == nil {
-		request.ModuleID = module.ID
+	module, err := moduleFromRPC(request.ModuleID, info, schema)
+	if err != nil {
+		return run.Result{}, moduleFailure("module failed while reporting metadata", "module metadata invalid", err, process.stderrString())
 	}
+	request.ModuleID = module.ID
 	executeResult, err := process.client.call(ctx, "execute", map[string]any{
 		"runId":        request.ID,
 		"moduleId":     request.ModuleID,
@@ -578,24 +585,28 @@ func (r Runner) moduleEntries() ([]ModuleEntry, error) {
 	}
 	baseDir := filepath.Dir(path)
 	entries := make([]ModuleEntry, 0, len(config.Modules))
-	for _, entry := range config.Modules {
+	for index, entry := range config.Modules {
 		entry.ID = strings.TrimSpace(entry.ID)
 		entry.Runtime = strings.TrimSpace(entry.Runtime)
 		entry.ProjectDir = strings.TrimSpace(entry.ProjectDir)
 		entry.Module = strings.TrimSpace(entry.Module)
 		if entry.ID == "" {
-			continue
+			return nil, fmt.Errorf("module entry %d missing id", index+1)
 		}
 		if entry.Runtime == "" {
 			entry.Runtime = modulecatalog.RuntimeJSONRPCStdio
 		}
 		if entry.Runtime != modulecatalog.RuntimeJSONRPCStdio {
-			continue
+			return nil, fmt.Errorf("module %q uses unsupported runtime %q", entry.ID, entry.Runtime)
 		}
 		if entry.ProjectDir != "" && !filepath.IsAbs(entry.ProjectDir) {
 			entry.ProjectDir = filepath.Join(baseDir, entry.ProjectDir)
 		}
 		if entry.usesCommand() {
+			entry.Command[0] = strings.TrimSpace(entry.Command[0])
+			if entry.Command[0] == "" {
+				return nil, fmt.Errorf("module %q command[0] is required", entry.ID)
+			}
 			// command[0] may be a path relative to the config file; resolve it
 			// so the runner can launch the binary regardless of working dir.
 			if program := entry.Command[0]; program != "" && !filepath.IsAbs(program) && strings.ContainsRune(program, os.PathSeparator) {
@@ -1001,6 +1012,12 @@ func (d *frameDecoder) read() (rpcMessage, error) {
 	if err != nil {
 		return rpcMessage{}, fmt.Errorf("invalid Content-Length header: %w", err)
 	}
+	if length < 0 {
+		return rpcMessage{}, errors.New("invalid Content-Length header")
+	}
+	if length > maxFrameBytes {
+		return rpcMessage{}, fmt.Errorf("Content-Length %d exceeds maximum %d", length, maxFrameBytes)
+	}
 	body := make([]byte, length)
 	if _, err := io.ReadFull(d.reader, body); err != nil {
 		return rpcMessage{}, err
@@ -1050,13 +1067,29 @@ func writeFrame(writer io.Writer, message map[string]any) error {
 }
 
 func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (run.Result, error) {
+	findings, err := findingsFromRPC(values["findings"])
+	if err != nil {
+		return run.Result{}, err
+	}
+	artifacts, err := artifactsFromRPC(values["artifacts"])
+	if err != nil {
+		return run.Result{}, err
+	}
+	sessions, err := sessionsFromRPC(request, values["sessions"])
+	if err != nil {
+		return run.Result{}, err
+	}
+	installedPayloads, err := installedPayloadsFromRPC(values["installedPayloads"])
+	if err != nil {
+		return run.Result{}, err
+	}
 	args := run.ResultArgs{
 		Summary:           stringValue(values["summary"]),
-		Findings:          findingsFromRPC(values["findings"]),
-		Artifacts:         artifactsFromRPC(values["artifacts"]),
+		Findings:          findings,
+		Artifacts:         artifacts,
 		Logs:              logsFromRPC(request, logs),
-		Sessions:          sessionsFromRPC(request, values["sessions"]),
-		InstalledPayloads: installedPayloadsFromRPC(values["installedPayloads"]),
+		Sessions:          sessions,
+		InstalledPayloads: installedPayloads,
 	}
 	if stringValue(values["status"]) == string(run.StateFailed) {
 		return run.Failed(request, args)
@@ -1110,6 +1143,18 @@ func moduleFromRPC(moduleID string, info, schema map[string]any, stepContractVal
 	if err != nil {
 		return modulecatalog.Module{}, err
 	}
+	chainConfig, err := requirementsFromRPC(schema["chainConfig"], "chainConfig")
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	targetConfig, err := requirementsFromRPC(schema["targetConfig"], "targetConfig")
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	tags, err := strictStringSlice(info["tags"], "handshake tags")
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
 	display := strings.TrimSpace(stringValue(info["displayName"]))
 	if display == "" {
 		display = displayName(name)
@@ -1121,83 +1166,189 @@ func moduleFromRPC(moduleID string, info, schema map[string]any, stepContractVal
 		Version:      version,
 		Summary:      stringValue(info["summary"]),
 		Description:  stringValue(info["description"]),
-		Tags:         stringSlice(info["tags"]),
+		Tags:         tags,
 		RuntimeKind:  modulecatalog.RuntimeJSONRPCStdio,
 		Author:       "hovel",
 		Enabled:      true,
-		ChainConfig:  requirementsFromRPC(schema["chainConfig"]),
-		TargetConfig: requirementsFromRPC(schema["targetConfig"]),
+		ChainConfig:  chainConfig,
+		TargetConfig: targetConfig,
 	}
 	if len(stepContractValues) > 0 {
-		module.StepContracts = stepContractsFromRPC(stepContractValues[0])
+		stepContracts, err := stepContractsFromRPC(stepContractValues[0])
+		if err != nil {
+			return modulecatalog.Module{}, err
+		}
+		module.StepContracts = stepContracts
 	}
 	return module, nil
 }
 
-func stepContractsFromRPC(value map[string]any) modulecatalog.StepContractSet {
+func stepContractsFromRPC(value map[string]any) (modulecatalog.StepContractSet, error) {
 	set := modulecatalog.StepContractSet{
 		Version: strings.TrimSpace(stringValue(value["version"])),
 	}
-	items, ok := value["steps"].([]any)
+	rawSteps, present := value["steps"]
+	if !present || rawSteps == nil {
+		return set, nil
+	}
+	items, ok := rawSteps.([]any)
 	if !ok {
-		return set
+		return set, errors.New("step contracts steps must be an array")
 	}
 	set.Steps = make([]modulecatalog.StepContract, 0, len(items))
-	for _, item := range items {
+	for index, item := range items {
 		object, ok := item.(map[string]any)
 		if !ok {
-			continue
+			return set, fmt.Errorf("step contract %d must be an object", index+1)
+		}
+		requires, err := capabilityRequirementsFromRPC(object["requires"], fmt.Sprintf("step contract %d requires", index+1))
+		if err != nil {
+			return set, err
+		}
+		produces, err := capabilityRequirementsFromRPC(object["produces"], fmt.Sprintf("step contract %d produces", index+1))
+		if err != nil {
+			return set, err
+		}
+		materializes, err := prepareMaterializesFromRPC(object["prepare"], fmt.Sprintf("step contract %d prepare", index+1))
+		if err != nil {
+			return set, err
+		}
+		cleanup, err := cleanupContractFromRPC(object["cleanup"], fmt.Sprintf("step contract %d cleanup", index+1))
+		if err != nil {
+			return set, err
 		}
 		set.Steps = append(set.Steps, modulecatalog.StepContract{
 			ID:           strings.TrimSpace(stringValue(object["id"])),
 			Kind:         strings.TrimSpace(stringValue(object["kind"])),
 			ConfigSchema: anyMap(object["configSchema"]),
-			Requires:     capabilityRequirementsFromRPC(object["requires"]),
-			Produces:     capabilityRequirementsFromRPC(object["produces"]),
+			Requires:     requires,
+			Produces:     produces,
 			Prepare: modulecatalog.StepPrepareContract{
-				Materializes: stringSliceFromAny(object["prepare"], "materializes"),
+				Materializes: materializes,
 			},
-			Cleanup: cleanupContractFromRPC(object["cleanup"]),
+			Cleanup: cleanup,
 		})
 	}
-	return set
+	return set, nil
 }
 
-func capabilityRequirementsFromRPC(value any) []modulecatalog.CapabilityRequirement {
+func capabilityRequirementsFromRPC(value any, label string) ([]modulecatalog.CapabilityRequirement, error) {
+	if value == nil {
+		return nil, nil
+	}
 	items, ok := value.([]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("%s must be an array", label)
 	}
 	requirements := make([]modulecatalog.CapabilityRequirement, 0, len(items))
-	for _, item := range items {
+	for index, item := range items {
 		object, ok := item.(map[string]any)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("%s item %d must be an object", label, index+1)
+		}
+		states, err := strictStringSlice(object["states"], fmt.Sprintf("%s item %d states", label, index+1))
+		if err != nil {
+			return nil, err
 		}
 		requirements = append(requirements, modulecatalog.CapabilityRequirement{
 			Type:          modulecatalog.CapabilityType(strings.TrimSpace(stringValue(object["type"]))),
 			SchemaVersion: strings.TrimSpace(stringValue(object["schemaVersion"])),
 			Attributes:    anyMap(object["attributes"]),
-			States:        stringSlice(object["states"]),
+			States:        states,
 		})
 	}
-	return requirements
+	return requirements, nil
 }
 
-func cleanupContractFromRPC(value any) *modulecatalog.StepCleanupContract {
+func prepareMaterializesFromRPC(value any, label string) ([]string, error) {
+	if value == nil {
+		return nil, nil
+	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("%s must be an object", label)
 	}
-	return &modulecatalog.StepCleanupContract{StepID: strings.TrimSpace(stringValue(object["stepId"]))}
+	materializes, present := object["materializes"]
+	if !present || materializes == nil {
+		return nil, nil
+	}
+	items, ok := materializes.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s materializes must be an array", label)
+	}
+	out := make([]string, 0, len(items))
+	for index, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s materializes item %d must be a string", label, index+1)
+		}
+		out = append(out, strings.TrimSpace(text))
+	}
+	return out, nil
 }
 
-func stringSliceFromAny(value any, key string) []string {
+func cleanupContractFromRPC(value any, label string) (*modulecatalog.StepCleanupContract, error) {
+	if value == nil {
+		return nil, nil
+	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("%s must be an object", label)
 	}
-	return stringSlice(object[key])
+	return &modulecatalog.StepCleanupContract{StepID: strings.TrimSpace(stringValue(object["stepId"]))}, nil
+}
+
+func rpcArray(value any, label string) ([]any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array", label)
+	}
+	return items, nil
+}
+
+func rpcObjectItem(value any, label string, index int) (map[string]any, error) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s item %d must be an object", label, index+1)
+	}
+	return object, nil
+}
+
+func strictStringSlice(value any, label string) ([]string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array", label)
+	}
+	out := make([]string, 0, len(items))
+	for index, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s item %d must be a string", label, index+1)
+		}
+		out = append(out, strings.TrimSpace(text))
+	}
+	return out, nil
+}
+
+func optionalAnyMap(value any, label string) (map[string]any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an object", label)
+	}
+	out := make(map[string]any, len(object))
+	for key, item := range object {
+		out[key] = item
+	}
+	return out, nil
 }
 
 func anyMap(value any) map[string]any {
@@ -1212,40 +1363,109 @@ func anyMap(value any) map[string]any {
 	return out
 }
 
-func requirementsFromRPC(value any) []modulecatalog.Requirement {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
+func requirementsFromRPC(value any, label string) ([]modulecatalog.Requirement, error) {
+	items, err := rpcArray(value, label)
+	if err != nil {
+		return nil, err
 	}
 	requirements := make([]modulecatalog.Requirement, 0, len(items))
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			continue
+	for index, item := range items {
+		object, err := rpcObjectItem(item, label, index)
+		if err != nil {
+			return nil, err
+		}
+		key, err := requiredStringValue(object["key"], fmt.Sprintf("%s item %d key", label, index+1))
+		if err != nil {
+			return nil, err
+		}
+		rawType, err := requiredStringValue(object["type"], fmt.Sprintf("%s item %d type", label, index+1))
+		if err != nil {
+			return nil, err
+		}
+		valueType := modulecatalog.ValueType(rawType)
+		if !validRequirementType(valueType) {
+			return nil, fmt.Errorf("%s item %d type %q is unsupported", label, index+1, rawType)
+		}
+		defaultValue, err := optionalStringValue(object["default"], fmt.Sprintf("%s item %d default", label, index+1))
+		if err != nil {
+			return nil, err
+		}
+		description, err := optionalStringValue(object["description"], fmt.Sprintf("%s item %d description", label, index+1))
+		if err != nil {
+			return nil, err
+		}
+		allowed, err := strictStringSlice(object["allowed"], fmt.Sprintf("%s item %d allowed", label, index+1))
+		if err != nil {
+			return nil, err
 		}
 		requirements = append(requirements, modulecatalog.Requirement{
-			Key:         stringValue(object["key"]),
-			Type:        modulecatalog.ValueType(stringValue(object["type"])),
+			Key:         key,
+			Type:        valueType,
 			Required:    boolValue(object["required"]),
-			Default:     stringValue(object["default"]),
-			Description: stringValue(object["description"]),
-			Allowed:     stringSlice(object["allowed"]),
+			Default:     defaultValue,
+			Description: description,
+			Allowed:     allowed,
 			Secret:      boolValue(object["secret"]),
 		})
 	}
-	return requirements
+	return requirements, nil
 }
 
-func findingsFromRPC(value any) []run.Finding {
-	items, ok := value.([]any)
+func requiredStringValue(value any, label string) (string, error) {
+	text, ok := value.(string)
 	if !ok {
-		return nil
+		return "", fmt.Errorf("%s is required", label)
 	}
-	var findings []run.Finding
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			continue
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", fmt.Errorf("%s is required", label)
+	}
+	return text, nil
+}
+
+func optionalStringValue(value any, label string) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("%s must be a string", label)
+	}
+	return text, nil
+}
+
+func validRequirementType(value modulecatalog.ValueType) bool {
+	switch value {
+	case modulecatalog.ValueString,
+		modulecatalog.ValueSecret,
+		modulecatalog.ValueBool,
+		modulecatalog.ValueInt,
+		modulecatalog.ValueFloat,
+		modulecatalog.ValueEnum,
+		modulecatalog.ValueDuration,
+		modulecatalog.ValueURL,
+		modulecatalog.ValueHost,
+		modulecatalog.ValuePort,
+		modulecatalog.ValueCIDR,
+		modulecatalog.ValuePath,
+		modulecatalog.ValueStringList,
+		modulecatalog.ValueStringStringMap:
+		return true
+	default:
+		return false
+	}
+}
+
+func findingsFromRPC(value any) ([]run.Finding, error) {
+	items, err := rpcArray(value, "findings")
+	if err != nil {
+		return nil, err
+	}
+	findings := make([]run.Finding, 0, len(items))
+	for index, item := range items {
+		object, err := rpcObjectItem(item, "findings", index)
+		if err != nil {
+			return nil, err
 		}
 		findings = append(findings, run.Finding{
 			Title:    stringValue(object["title"]),
@@ -1253,19 +1473,19 @@ func findingsFromRPC(value any) []run.Finding {
 			Detail:   stringValue(object["detail"]),
 		})
 	}
-	return findings
+	return findings, nil
 }
 
-func artifactsFromRPC(value any) []run.Artifact {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
+func artifactsFromRPC(value any) ([]run.Artifact, error) {
+	items, err := rpcArray(value, "artifacts")
+	if err != nil {
+		return nil, err
 	}
-	var artifacts []run.Artifact
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			continue
+	artifacts := make([]run.Artifact, 0, len(items))
+	for index, item := range items {
+		object, err := rpcObjectItem(item, "artifacts", index)
+		if err != nil {
+			return nil, err
 		}
 		artifacts = append(artifacts, run.Artifact{
 			Name: stringValue(object["name"]),
@@ -1274,7 +1494,7 @@ func artifactsFromRPC(value any) []run.Artifact {
 			Path: stringValue(object["path"]),
 		})
 	}
-	return artifacts
+	return artifacts, nil
 }
 
 type SessionBroker struct {
@@ -1464,16 +1684,20 @@ func cloneSessionRef(session run.SessionRef) run.SessionRef {
 	return session
 }
 
-func sessionsFromRPC(request run.Request, value any) []run.SessionRef {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
+func sessionsFromRPC(request run.Request, value any) ([]run.SessionRef, error) {
+	items, err := rpcArray(value, "sessions")
+	if err != nil {
+		return nil, err
 	}
-	var sessions []run.SessionRef
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			continue
+	sessions := make([]run.SessionRef, 0, len(items))
+	for index, item := range items {
+		object, err := rpcObjectItem(item, "sessions", index)
+		if err != nil {
+			return nil, err
+		}
+		capabilities, err := strictStringSlice(object["capabilities"], fmt.Sprintf("sessions item %d capabilities", index+1))
+		if err != nil {
+			return nil, err
 		}
 		session := run.SessionRef{
 			ID:                 stringValue(object["id"]),
@@ -1485,25 +1709,42 @@ func sessionsFromRPC(request run.Request, value any) []run.SessionRef {
 			State:              defaultString(stringValue(object["state"]), "active"),
 			Transport:          defaultString(stringValue(object["transport"]), "stdio"),
 			InstalledPayloadID: stringValue(object["installedPayloadId"]),
-			Capabilities:       stringSlice(object["capabilities"]),
+			Capabilities:       capabilities,
 		}
-		if session.ID != "" {
-			sessions = append(sessions, session)
+		if session.ID == "" {
+			return nil, fmt.Errorf("sessions item %d id is required", index+1)
 		}
+		sessions = append(sessions, session)
 	}
-	return sessions
+	return sessions, nil
 }
 
-func installedPayloadsFromRPC(value any) []run.InstalledPayloadDescriptor {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
+func installedPayloadsFromRPC(value any) ([]run.InstalledPayloadDescriptor, error) {
+	items, err := rpcArray(value, "installedPayloads")
+	if err != nil {
+		return nil, err
 	}
 	payloads := make([]run.InstalledPayloadDescriptor, 0, len(items))
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			continue
+	for index, item := range items {
+		object, err := rpcObjectItem(item, "installedPayloads", index)
+		if err != nil {
+			return nil, err
+		}
+		artifactIDs, err := strictStringSlice(object["artifactIds"], fmt.Sprintf("installedPayloads item %d artifactIds", index+1))
+		if err != nil {
+			return nil, err
+		}
+		reconnect, err := payloadProviderRecordFromRPC(object["reconnect"], fmt.Sprintf("installedPayloads item %d reconnect", index+1))
+		if err != nil {
+			return nil, err
+		}
+		cleanup, err := payloadProviderRecordFromRPC(object["cleanup"], fmt.Sprintf("installedPayloads item %d cleanup", index+1))
+		if err != nil {
+			return nil, err
+		}
+		metadata, err := stringMapFromRPC(object["metadata"], fmt.Sprintf("installedPayloads item %d metadata", index+1))
+		if err != nil {
+			return nil, err
 		}
 		payload := run.InstalledPayloadDescriptor{
 			Provider:                 stringValue(object["provider"]),
@@ -1516,43 +1757,57 @@ func installedPayloadsFromRPC(value any) []run.InstalledPayloadDescriptor {
 			Endpoint:                 stringValue(object["endpoint"]),
 			InstanceKey:              stringValue(object["instanceKey"]),
 			StampID:                  stringValue(object["stampId"]),
-			ArtifactIDs:              stringSlice(object["artifactIds"]),
+			ArtifactIDs:              artifactIDs,
 			SupportsReconnect:        boolValue(object["supportsReconnect"]),
 			SupportsMultipleSessions: boolValue(object["supportsMultipleSessions"]),
-			Reconnect:                payloadProviderRecordFromRPC(object["reconnect"]),
-			Cleanup:                  payloadProviderRecordFromRPC(object["cleanup"]),
-			Metadata:                 stringMapFromRPC(object["metadata"]),
+			Reconnect:                reconnect,
+			Cleanup:                  cleanup,
+			Metadata:                 metadata,
 		}
-		if payload.Provider != "" && payload.PayloadID != "" {
-			payloads = append(payloads, payload)
+		if payload.Provider == "" {
+			return nil, fmt.Errorf("installedPayloads item %d provider is required", index+1)
 		}
+		if payload.PayloadID == "" {
+			return nil, fmt.Errorf("installedPayloads item %d payloadId is required", index+1)
+		}
+		payloads = append(payloads, payload)
 	}
-	return payloads
+	return payloads, nil
 }
 
-func payloadProviderRecordFromRPC(value any) *run.PayloadProviderRecord {
+func payloadProviderRecordFromRPC(value any, label string) (*run.PayloadProviderRecord, error) {
+	if value == nil {
+		return nil, nil
+	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("%s must be an object", label)
+	}
+	descriptor, err := optionalAnyMap(object["descriptor"], label+" descriptor")
+	if err != nil {
+		return nil, err
 	}
 	return &run.PayloadProviderRecord{
 		ProviderID:    stringValue(object["providerId"]),
 		Schema:        stringValue(object["schema"]),
 		SchemaVersion: stringValue(object["schemaVersion"]),
-		Descriptor:    anyMap(object["descriptor"]),
-	}
+		Descriptor:    descriptor,
+	}, nil
 }
 
-func stringMapFromRPC(value any) map[string]string {
+func stringMapFromRPC(value any, label string) (map[string]string, error) {
+	if value == nil {
+		return nil, nil
+	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("%s must be an object", label)
 	}
 	out := make(map[string]string, len(object))
 	for key, item := range object {
 		out[key] = stringValue(item)
 	}
-	return out
+	return out, nil
 }
 
 func defaultString(value, fallback string) string {
@@ -1575,18 +1830,6 @@ func stringValue(value any) string {
 func boolValue(value any) bool {
 	result, _ := value.(bool)
 	return result
-}
-
-func stringSlice(value any) []string {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(items))
-	for _, item := range items {
-		out = append(out, stringValue(item))
-	}
-	return out
 }
 
 func displayName(moduleID string) string {

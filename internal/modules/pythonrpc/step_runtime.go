@@ -2,6 +2,7 @@ package pythonrpc
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
@@ -26,7 +27,7 @@ func (r StepRuntimeRunner) PrepareStep(ctx context.Context, req chainruntime.Ste
 	if err != nil {
 		return chainruntime.StepPrepareResult{}, err
 	}
-	return stepPrepareResultFromRPC(result), nil
+	return stepPrepareResultFromRPC(result)
 }
 
 func (r StepRuntimeRunner) ExecuteStep(ctx context.Context, req chainruntime.StepExecuteRequest) (chainruntime.StepExecuteResult, error) {
@@ -43,7 +44,7 @@ func (r StepRuntimeRunner) ExecuteStep(ctx context.Context, req chainruntime.Ste
 	if err != nil {
 		return chainruntime.StepExecuteResult{}, err
 	}
-	return stepExecuteResultFromRPC(req, result), nil
+	return stepExecuteResultFromRPC(req, result)
 }
 
 func (r StepRuntimeRunner) FinishRun(ctx context.Context, runID string) error {
@@ -59,35 +60,71 @@ func (r StepRuntimeRunner) FinishRun(ctx context.Context, runID string) error {
 	return r.Runner.StepProcesses.FinishRun(finishCtx, runID)
 }
 
-func stepPrepareResultFromRPC(result map[string]any) chainruntime.StepPrepareResult {
-	return chainruntime.StepPrepareResult{
-		PlannedOutputs: capabilitiesFromRPC(result["plannedOutputs"]),
-		PreparedValues: preparedValuesFromRPC(result["preparedValues"]),
-		Evidence:       evidenceFromRPC(result["evidence"]),
+func stepPrepareResultFromRPC(result map[string]any) (chainruntime.StepPrepareResult, error) {
+	plannedOutputs, err := capabilitiesFromRPC(result["plannedOutputs"], "plannedOutputs")
+	if err != nil {
+		return chainruntime.StepPrepareResult{}, err
 	}
+	preparedValues, err := preparedValuesFromRPC(result["preparedValues"])
+	if err != nil {
+		return chainruntime.StepPrepareResult{}, err
+	}
+	evidence, err := evidenceFromRPC(result["evidence"])
+	if err != nil {
+		return chainruntime.StepPrepareResult{}, err
+	}
+	return chainruntime.StepPrepareResult{
+		PlannedOutputs: plannedOutputs,
+		PreparedValues: preparedValues,
+		Evidence:       evidence,
+	}, nil
 }
 
-func stepExecuteResultFromRPC(req chainruntime.StepExecuteRequest, result map[string]any) chainruntime.StepExecuteResult {
+func stepExecuteResultFromRPC(req chainruntime.StepExecuteRequest, result map[string]any) (chainruntime.StepExecuteResult, error) {
+	capabilities, err := capabilitiesFromRPC(result["capabilities"], "capabilities")
+	if err != nil {
+		return chainruntime.StepExecuteResult{}, err
+	}
+	transitions, err := transitionsFromRPC(result["stateTransitions"])
+	if err != nil {
+		return chainruntime.StepExecuteResult{}, err
+	}
+	evidence, err := evidenceFromRPC(result["evidence"])
+	if err != nil {
+		return chainruntime.StepExecuteResult{}, err
+	}
+	sessions, err := sessionsFromStepRPC(StepCallRequest{ModuleID: req.ModuleID, Params: map[string]any{"runId": req.RunID}}, result["sessions"])
+	if err != nil {
+		return chainruntime.StepExecuteResult{}, err
+	}
+	installedPayloads, err := stepInstalledPayloadsFromRPC(result["installedPayloads"])
+	if err != nil {
+		return chainruntime.StepExecuteResult{}, err
+	}
 	return chainruntime.StepExecuteResult{
 		Status:            stringValue(result["status"]),
-		Capabilities:      capabilitiesFromRPC(result["capabilities"]),
-		StateTransitions:  transitionsFromRPC(result["stateTransitions"]),
-		Evidence:          evidenceFromRPC(result["evidence"]),
-		Sessions:          sessionsFromStepRPC(StepCallRequest{ModuleID: req.ModuleID, Params: map[string]any{"runId": req.RunID}}, result["sessions"]),
-		InstalledPayloads: stepInstalledPayloadsFromRPC(result["installedPayloads"]),
-	}
+		Capabilities:      capabilities,
+		StateTransitions:  transitions,
+		Evidence:          evidence,
+		Sessions:          sessions,
+		InstalledPayloads: installedPayloads,
+	}, nil
 }
 
-func sessionsFromStepRPC(request StepCallRequest, value any) []run.SessionRef {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
+func sessionsFromStepRPC(request StepCallRequest, value any) ([]run.SessionRef, error) {
+	items, err := rpcArray(value, "sessions")
+	if err != nil {
+		return nil, err
 	}
-	var sessions []run.SessionRef
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			continue
+	sessions := make([]run.SessionRef, 0, len(items))
+	for index, item := range items {
+		object, err := rpcObjectItem(item, "sessions", index)
+		if err != nil {
+			return nil, err
+		}
+		capabilities, err := strictStringSlice(object["capabilities"], fmt.Sprintf("sessions item %d capabilities", index+1))
+		if err != nil {
+			return nil, err
 		}
 		session := run.SessionRef{
 			ID:                 stringValue(object["id"]),
@@ -99,89 +136,119 @@ func sessionsFromStepRPC(request StepCallRequest, value any) []run.SessionRef {
 			State:              defaultString(stringValue(object["state"]), "active"),
 			Transport:          defaultString(stringValue(object["transport"]), "stdio"),
 			InstalledPayloadID: stringValue(object["installedPayloadId"]),
-			Capabilities:       stringSlice(object["capabilities"]),
+			Capabilities:       capabilities,
 		}
-		if session.ID != "" {
-			sessions = append(sessions, session)
+		if session.ID == "" {
+			return nil, fmt.Errorf("sessions item %d id is required", index+1)
 		}
+		sessions = append(sessions, session)
 	}
-	return sessions
+	return sessions, nil
 }
 
-func capabilitiesFromRPC(value any) []modulecatalog.Capability {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
+func capabilitiesFromRPC(value any, label string) ([]modulecatalog.Capability, error) {
+	items, err := rpcArray(value, label)
+	if err != nil {
+		return nil, err
 	}
 	capabilities := make([]modulecatalog.Capability, 0, len(items))
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			continue
+	for index, item := range items {
+		object, err := rpcObjectItem(item, label, index)
+		if err != nil {
+			return nil, err
 		}
-		capabilities = append(capabilities, modulecatalog.Capability{
+		attributes, err := optionalAnyMap(object["attributes"], fmt.Sprintf("%s item %d attributes", label, index+1))
+		if err != nil {
+			return nil, err
+		}
+		extensions, err := optionalAnyMap(object["extensions"], fmt.Sprintf("%s item %d extensions", label, index+1))
+		if err != nil {
+			return nil, err
+		}
+		capability := modulecatalog.Capability{
 			ID:             stringValue(object["id"]),
 			Type:           modulecatalog.CapabilityType(stringValue(object["type"])),
 			SchemaVersion:  stringValue(object["schemaVersion"]),
 			State:          stringValue(object["state"]),
 			ProducerStepID: stringValue(object["producerStepId"]),
-			Attributes:     anyMap(object["attributes"]),
-			Extensions:     anyMap(object["extensions"]),
-		})
+			Attributes:     attributes,
+			Extensions:     extensions,
+		}
+		if capability.ID == "" {
+			return nil, fmt.Errorf("%s item %d id is required", label, index+1)
+		}
+		if capability.Type == "" {
+			return nil, fmt.Errorf("%s item %d type is required", label, index+1)
+		}
+		capabilities = append(capabilities, capability)
 	}
-	return capabilities
+	return capabilities, nil
 }
 
-func preparedValuesFromRPC(value any) map[string]chainruntime.PreparedValue {
+func preparedValuesFromRPC(value any) (map[string]chainruntime.PreparedValue, error) {
+	if value == nil {
+		return nil, nil
+	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("preparedValues must be an object")
 	}
 	values := make(map[string]chainruntime.PreparedValue, len(object))
 	for key, item := range object {
 		valueObject, ok := item.(map[string]any)
 		if !ok {
-			continue
+			return nil, fmt.Errorf("preparedValues item %q must be an object", key)
 		}
 		values[key] = chainruntime.PreparedValue{
 			Value:    valueObject["value"],
 			Editable: boolValue(valueObject["editable"]),
 		}
 	}
-	return values
+	return values, nil
 }
 
-func transitionsFromRPC(value any) []chainruntime.CapabilityTransition {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
+func transitionsFromRPC(value any) ([]chainruntime.CapabilityTransition, error) {
+	items, err := rpcArray(value, "stateTransitions")
+	if err != nil {
+		return nil, err
 	}
 	transitions := make([]chainruntime.CapabilityTransition, 0, len(items))
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			continue
+	for index, item := range items {
+		object, err := rpcObjectItem(item, "stateTransitions", index)
+		if err != nil {
+			return nil, err
 		}
-		transitions = append(transitions, chainruntime.CapabilityTransition{
+		transition := chainruntime.CapabilityTransition{
 			CapabilityID: stringValue(object["capabilityId"]),
 			From:         stringValue(object["from"]),
 			To:           stringValue(object["to"]),
 			Reason:       stringValue(object["reason"]),
-		})
+		}
+		if transition.CapabilityID == "" {
+			return nil, fmt.Errorf("stateTransitions item %d capabilityId is required", index+1)
+		}
+		if transition.To == "" {
+			return nil, fmt.Errorf("stateTransitions item %d to is required", index+1)
+		}
+		transitions = append(transitions, transition)
 	}
-	return transitions
+	return transitions, nil
 }
 
-func evidenceFromRPC(value any) []chainruntime.Evidence {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
+func evidenceFromRPC(value any) ([]chainruntime.Evidence, error) {
+	items, err := rpcArray(value, "evidence")
+	if err != nil {
+		return nil, err
 	}
 	evidence := make([]chainruntime.Evidence, 0, len(items))
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			continue
+	for index, item := range items {
+		object, err := rpcObjectItem(item, "evidence", index)
+		if err != nil {
+			return nil, err
+		}
+		details, err := optionalAnyMap(object["details"], fmt.Sprintf("evidence item %d details", index+1))
+		if err != nil {
+			return nil, err
 		}
 		evidence = append(evidence, chainruntime.Evidence{
 			ID:           stringValue(object["id"]),
@@ -189,22 +256,38 @@ func evidenceFromRPC(value any) []chainruntime.Evidence {
 			Kind:         stringValue(object["kind"]),
 			SourceStepID: stringValue(object["sourceStepId"]),
 			Message:      stringValue(object["message"]),
-			Details:      anyMap(object["details"]),
+			Details:      details,
 		})
 	}
-	return evidence
+	return evidence, nil
 }
 
-func stepInstalledPayloadsFromRPC(value any) []chainruntime.InstalledPayloadDescriptor {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
+func stepInstalledPayloadsFromRPC(value any) ([]chainruntime.InstalledPayloadDescriptor, error) {
+	items, err := rpcArray(value, "installedPayloads")
+	if err != nil {
+		return nil, err
 	}
 	payloads := make([]chainruntime.InstalledPayloadDescriptor, 0, len(items))
-	for _, item := range items {
-		object, ok := item.(map[string]any)
-		if !ok {
-			continue
+	for index, item := range items {
+		object, err := rpcObjectItem(item, "installedPayloads", index)
+		if err != nil {
+			return nil, err
+		}
+		artifactIDs, err := strictStringSlice(object["artifactIds"], fmt.Sprintf("installedPayloads item %d artifactIds", index+1))
+		if err != nil {
+			return nil, err
+		}
+		reconnect, err := stepPayloadProviderRecordFromRPC(object["reconnect"], fmt.Sprintf("installedPayloads item %d reconnect", index+1))
+		if err != nil {
+			return nil, err
+		}
+		cleanup, err := stepPayloadProviderRecordFromRPC(object["cleanup"], fmt.Sprintf("installedPayloads item %d cleanup", index+1))
+		if err != nil {
+			return nil, err
+		}
+		metadata, err := stepStringMapFromRPC(object["metadata"], fmt.Sprintf("installedPayloads item %d metadata", index+1))
+		if err != nil {
+			return nil, err
 		}
 		payload := chainruntime.InstalledPayloadDescriptor{
 			Provider:                 stringValue(object["provider"]),
@@ -217,43 +300,57 @@ func stepInstalledPayloadsFromRPC(value any) []chainruntime.InstalledPayloadDesc
 			Endpoint:                 stringValue(object["endpoint"]),
 			InstanceKey:              stringValue(object["instanceKey"]),
 			StampID:                  stringValue(object["stampId"]),
-			ArtifactIDs:              stringSlice(object["artifactIds"]),
+			ArtifactIDs:              artifactIDs,
 			SupportsReconnect:        boolValue(object["supportsReconnect"]),
 			SupportsMultipleSessions: boolValue(object["supportsMultipleSessions"]),
-			Reconnect:                stepPayloadProviderRecordFromRPC(object["reconnect"]),
-			Cleanup:                  stepPayloadProviderRecordFromRPC(object["cleanup"]),
-			Metadata:                 stepStringMapFromRPC(object["metadata"]),
+			Reconnect:                reconnect,
+			Cleanup:                  cleanup,
+			Metadata:                 metadata,
 		}
-		if payload.Provider != "" && payload.PayloadID != "" {
-			payloads = append(payloads, payload)
+		if payload.Provider == "" {
+			return nil, fmt.Errorf("installedPayloads item %d provider is required", index+1)
 		}
+		if payload.PayloadID == "" {
+			return nil, fmt.Errorf("installedPayloads item %d payloadId is required", index+1)
+		}
+		payloads = append(payloads, payload)
 	}
-	return payloads
+	return payloads, nil
 }
 
-func stepPayloadProviderRecordFromRPC(value any) *chainruntime.PayloadProviderRecord {
+func stepPayloadProviderRecordFromRPC(value any, label string) (*chainruntime.PayloadProviderRecord, error) {
+	if value == nil {
+		return nil, nil
+	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("%s must be an object", label)
+	}
+	descriptor, err := optionalAnyMap(object["descriptor"], label+" descriptor")
+	if err != nil {
+		return nil, err
 	}
 	return &chainruntime.PayloadProviderRecord{
 		ProviderID:    stringValue(object["providerId"]),
 		Schema:        stringValue(object["schema"]),
 		SchemaVersion: stringValue(object["schemaVersion"]),
-		Descriptor:    anyMap(object["descriptor"]),
-	}
+		Descriptor:    descriptor,
+	}, nil
 }
 
-func stepStringMapFromRPC(value any) map[string]string {
+func stepStringMapFromRPC(value any, label string) (map[string]string, error) {
+	if value == nil {
+		return nil, nil
+	}
 	object, ok := value.(map[string]any)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("%s must be an object", label)
 	}
 	out := make(map[string]string, len(object))
 	for key, item := range object {
 		out[key] = stringValue(item)
 	}
-	return out
+	return out, nil
 }
 
 func capabilityRefsToRPC(refs []modulecatalog.CapabilityRef) []map[string]any {

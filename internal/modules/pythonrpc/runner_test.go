@@ -176,15 +176,128 @@ func TestModuleEntriesResolvesCommandPaths(t *testing.T) {
 	}
 }
 
+func TestModuleEntriesRejectsInvalidEntries(t *testing.T) {
+	cases := []struct {
+		name         string
+		config       ModuleConfig
+		wantFragment string
+	}{
+		{
+			name: "missing id",
+			config: ModuleConfig{Modules: []ModuleEntry{{
+				Runtime:    "jsonrpc-stdio",
+				ProjectDir: "project",
+				Module:     "missing_id",
+			}}},
+			wantFragment: "module entry 1 missing id",
+		},
+		{
+			name: "unsupported runtime",
+			config: ModuleConfig{Modules: []ModuleEntry{{
+				ID:      "not-jsonrpc",
+				Runtime: "python",
+				Command: []string{"python", "-m", "mod"},
+			}}},
+			wantFragment: `module "not-jsonrpc" uses unsupported runtime "python"`,
+		},
+		{
+			name: "empty command",
+			config: ModuleConfig{Modules: []ModuleEntry{{
+				ID:      "empty-command",
+				Runtime: "jsonrpc-stdio",
+				Command: []string{""},
+			}}},
+			wantFragment: `module "empty-command" command[0] is required`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configBody, err := json.Marshal(tc.config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			configPath := filepath.Join(t.TempDir(), "modules.json")
+			if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = (Runner{ConfigPath: configPath}).moduleEntries()
+			if err == nil || !strings.Contains(err.Error(), tc.wantFragment) {
+				t.Fatalf("error = %v, want %q", err, tc.wantFragment)
+			}
+		})
+	}
+}
+
 func TestArtifactsFromRPCSupportsFileReferences(t *testing.T) {
-	artifacts := artifactsFromRPC([]any{
+	artifacts, err := artifactsFromRPC([]any{
 		map[string]any{"name": "loot.txt", "kind": "text/plain", "path": "/tmp/loot.txt"},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(artifacts) != 1 {
 		t.Fatalf("artifacts = %#v, want one", artifacts)
 	}
 	if artifacts[0].Path != "/tmp/loot.txt" || artifacts[0].Data != "" {
 		t.Fatalf("artifact = %#v, want file reference without data", artifacts[0])
+	}
+}
+
+func TestResultFromRPCRejectsMalformedCollections(t *testing.T) {
+	request, err := run.NewRequest(run.RequestArgs{ID: "run-1", ModuleID: "broken", Target: "mock://target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name         string
+		values       map[string]any
+		wantFragment string
+	}{
+		{
+			name: "finding is not object",
+			values: map[string]any{
+				"summary":  "bad result",
+				"findings": []any{"not-an-object"},
+			},
+			wantFragment: "findings item 1 must be an object",
+		},
+		{
+			name: "session missing id",
+			values: map[string]any{
+				"summary":  "bad result",
+				"sessions": []any{map[string]any{"name": "missing id"}},
+			},
+			wantFragment: "sessions item 1 id is required",
+		},
+		{
+			name: "installed payload missing payload id",
+			values: map[string]any{
+				"summary":           "bad result",
+				"installedPayloads": []any{map[string]any{"provider": "squatter"}},
+			},
+			wantFragment: "installedPayloads item 1 payloadId is required",
+		},
+		{
+			name: "installed payload artifact ids is not array",
+			values: map[string]any{
+				"summary": "bad result",
+				"installedPayloads": []any{map[string]any{
+					"provider":    "squatter",
+					"payloadId":   "payload-1",
+					"artifactIds": "artifact-1",
+				}},
+			},
+			wantFragment: "installedPayloads item 1 artifactIds must be an array",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := resultFromRPC(request, tc.values, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.wantFragment) {
+				t.Fatalf("error = %v, want %q", err, tc.wantFragment)
+			}
+		})
 	}
 }
 
@@ -204,6 +317,79 @@ func TestRunnerInspectsPythonModuleDeclaredSchema(t *testing.T) {
 	}
 	if len(module.TargetConfig) != 2 || module.TargetConfig[0].Key != "target.host" {
 		t.Fatalf("target config = %#v", module.TargetConfig)
+	}
+}
+
+func TestRunnerRejectsMalformedSchemaRequirementShapes(t *testing.T) {
+	cases := []struct {
+		name           string
+		handshakeExtra string
+		schemaPayload  string
+		wantFragment   string
+	}{
+		{
+			name:           "tags is not array",
+			handshakeExtra: `{"tags": "dangerous"}`,
+			schemaPayload:  `{"chainConfig": [], "targetConfig": [], "outputs": {}}`,
+			wantFragment:   "handshake tags must be an array",
+		},
+		{
+			name:           "requirement is not object",
+			handshakeExtra: `{}`,
+			schemaPayload:  `{"chainConfig": [], "targetConfig": ["not-an-object"], "outputs": {}}`,
+			wantFragment:   "targetConfig item 1 must be an object",
+		},
+		{
+			name:           "requirement missing key",
+			handshakeExtra: `{}`,
+			schemaPayload:  `{"chainConfig": [{"type": "bool"}], "targetConfig": [], "outputs": {}}`,
+			wantFragment:   "chainConfig item 1 key is required",
+		},
+		{
+			name:           "unsupported type",
+			handshakeExtra: `{}`,
+			schemaPayload:  `{"chainConfig": [{"key": "target.meta", "type": "object"}], "targetConfig": [], "outputs": {}}`,
+			wantFragment:   `chainConfig item 1 type "object" is unsupported`,
+		},
+		{
+			name:           "allowed is not array",
+			handshakeExtra: `{}`,
+			schemaPayload:  `{"chainConfig": [{"key": "mode", "type": "enum", "allowed": "fast"}], "targetConfig": [], "outputs": {}}`,
+			wantFragment:   "chainConfig item 1 allowed must be an array",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := writePythonModuleFixture(t, fmt.Sprintf(`
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "handshake":
+        result = {
+            "name": "bad-schema",
+            "version": "v0.0.0-test",
+            "moduleType": "survey"
+        }
+        result.update(%s)
+        send({"jsonrpc": "2.0", "id": rid, "result": result})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": %s})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"steps": []}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`, tc.handshakeExtra, tc.schemaPayload))
+
+			_, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+			if err == nil || !strings.Contains(err.Error(), tc.wantFragment) {
+				t.Fatalf("error = %v, want %q", err, tc.wantFragment)
+			}
+		})
 	}
 }
 
@@ -364,6 +550,61 @@ while True:
 	_, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
 	if err == nil || !strings.Contains(err.Error(), "step contract invalid: squatter.connect_smb: requirement 1 type is required") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunnerRejectsMalformedStepContractShapes(t *testing.T) {
+	cases := []struct {
+		name         string
+		stepPayload  string
+		wantFragment string
+	}{
+		{
+			name:         "step is not an object",
+			stepPayload:  `"not-an-object"`,
+			wantFragment: "step contract 1 must be an object",
+		},
+		{
+			name:         "requirement is not an object",
+			stepPayload:  `{"id": "broken.step", "kind": "session.connector", "requires": ["not-an-object"]}`,
+			wantFragment: "step contract 1 requires item 1 must be an object",
+		},
+		{
+			name:         "prepare is not an object",
+			stepPayload:  `{"id": "broken.step", "kind": "session.connector", "prepare": "not-an-object"}`,
+			wantFragment: "step contract 1 prepare must be an object",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := writePythonModuleFixture(t, fmt.Sprintf(`
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "bad-stepper",
+            "version": "v0.0.0-test",
+            "moduleType": "payload_provider"
+        }})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"steps": [%s]}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`, tc.stepPayload))
+
+			_, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+			if err == nil || !strings.Contains(err.Error(), tc.wantFragment) {
+				t.Fatalf("error = %v, want %q", err, tc.wantFragment)
+			}
+		})
 	}
 }
 
@@ -550,6 +791,49 @@ while True:
 	}
 	if len(result.Evidence) != 1 || result.Evidence[0].Message != "session connected" {
 		t.Fatalf("evidence = %#v", result.Evidence)
+	}
+}
+
+func TestStepRuntimeRunnerRejectsMalformedStepResult(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "step.prepare":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "plannedOutputs": ["not-an-object"]
+        }})
+    elif method == "step.execute":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "status": "succeeded",
+            "capabilities": [{"type": "SessionRef"}]
+        }})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	runner := StepRuntimeRunner{Runner: Runner{ConfigPath: configPath, Timeout: 2 * time.Second}}
+
+	_, err := runner.PrepareStep(context.Background(), chainruntime.StepPrepareRequest{
+		ModuleID: "broken",
+		RunID:    "run-1",
+		StepID:   "broken.prepare",
+	})
+	if err == nil || !strings.Contains(err.Error(), "plannedOutputs item 1 must be an object") {
+		t.Fatalf("prepare error = %v", err)
+	}
+
+	_, err = runner.ExecuteStep(context.Background(), chainruntime.StepExecuteRequest{
+		ModuleID: "broken",
+		RunID:    "run-1",
+		StepID:   "broken.execute",
+	})
+	if err == nil || !strings.Contains(err.Error(), "capabilities item 1 id is required") {
+		t.Fatalf("execute error = %v", err)
 	}
 }
 
@@ -851,8 +1135,13 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 		},
 		{
 			name: "execute error",
-			body: `read(); send({"jsonrpc":"2.0","id":1,"result":{"moduleType":"exploit"}}); read(); send({"jsonrpc":"2.0","id":2,"result":{}}); read(); send({"jsonrpc":"2.0","id":3,"error":{"message":"execute denied"}})`,
+			body: `read(); send({"jsonrpc":"2.0","id":1,"result":{"name":"broken","version":"v0.0.0-test","moduleType":"exploit"}}); read(); send({"jsonrpc":"2.0","id":2,"result":{"chainConfig":[],"targetConfig":[]}}); read(); send({"jsonrpc":"2.0","id":3,"error":{"message":"execute denied"}})`,
 			want: "module execute failed: execute denied",
+		},
+		{
+			name: "invalid schema blocks execution",
+			body: `read(); send({"jsonrpc":"2.0","id":1,"result":{"name":"broken","version":"v0.0.0-test","moduleType":"exploit"}}); read(); send({"jsonrpc":"2.0","id":2,"result":{"chainConfig":[{"type":"bool"}],"targetConfig":[]}})`,
+			want: "module metadata invalid: chainConfig item 1 key is required",
 		},
 		{
 			name:    "timeout",
@@ -884,6 +1173,14 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 				t.Fatalf("error = %v, want containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestFrameDecoderRejectsOversizedFrameBeforeBodyRead(t *testing.T) {
+	decoder := newFrameDecoder(strings.NewReader(fmt.Sprintf("Content-Length: %d\r\n\r\n", maxFrameBytes+1)))
+	_, err := decoder.read()
+	if err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Fatalf("error = %v, want frame size error", err)
 	}
 }
 

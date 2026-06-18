@@ -7,7 +7,7 @@ import sys
 from typing import Any, BinaryIO
 
 from hovel_sdk.context import Context
-from hovel_sdk.framing import FrameError, read_message, write_message
+from hovel_sdk.framing import FrameError, MessageWriter, read_message
 from hovel_sdk.logging import setup_logging
 from hovel_sdk.module import HovelModule
 from hovel_sdk.session import SessionManager
@@ -17,7 +17,7 @@ class JSONRPCServer:
     def __init__(self, module: HovelModule, stdin: BinaryIO, stdout: BinaryIO) -> None:
         self._module = module
         self._stdin = stdin
-        self._stdout = stdout
+        self._writer = MessageWriter(stdout)
         self._loop = asyncio.new_event_loop()
         self._sessions = SessionManager(self._emit_session_event)
 
@@ -35,7 +35,7 @@ class JSONRPCServer:
                     self._handle_notification(message)
                     continue
                 response = self._handle_request(message)
-                write_message(self._stdout, response)
+                self._writer.write(response)
                 if message.get("method") == "shutdown":
                     return
         finally:
@@ -126,10 +126,10 @@ class JSONRPCServer:
         return result.to_rpc(sessions=sessions.refs())
 
     def _emit_log(self, params: dict[str, Any]) -> None:
-        write_message(self._stdout, {"jsonrpc": "2.0", "method": "module/log", "params": params})
+        self._writer.write({"jsonrpc": "2.0", "method": "module/log", "params": params})
 
     def _emit_session_event(self, params: dict[str, Any]) -> None:
-        write_message(self._stdout, {"jsonrpc": "2.0", "method": "module/session", "params": params})
+        self._writer.write({"jsonrpc": "2.0", "method": "module/session", "params": params})
 
 
 def serve(module: HovelModule, stdin: BinaryIO | None = None, stdout: BinaryIO | None = None) -> None:
