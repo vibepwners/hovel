@@ -887,6 +887,21 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 	}
 }
 
+func TestCapturedStderrWaitsForLateWrite(t *testing.T) {
+	stderr := newCapturedStderr()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(10 * time.Millisecond)
+		_, _ = stderr.Write([]byte("late stderr"))
+	}()
+
+	if got := stderr.StringAfter(time.Second); got != "late stderr" {
+		t.Fatalf("stderr = %q, want late stderr", got)
+	}
+	<-done
+}
+
 func TestRPCClientTimeoutDoesNotCorruptNextCall(t *testing.T) {
 	moduleStdoutReader, moduleStdoutWriter := io.Pipe()
 	moduleStdinReader, moduleStdinWriter := io.Pipe()

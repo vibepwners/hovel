@@ -25,6 +25,7 @@ import (
 )
 
 const defaultTimeout = 60 * time.Second
+const stderrSettleTimeout = 50 * time.Millisecond
 
 const ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
 
@@ -118,23 +119,23 @@ func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Mod
 
 	info, err := process.client.call(ctx, "handshake", nil)
 	if err != nil {
-		return modulecatalog.Module{}, moduleFailure("module failed during startup", "module handshake failed", err, process.stderr.String())
+		return modulecatalog.Module{}, moduleFailure("module failed during startup", "module handshake failed", err, process.stderrString())
 	}
 	schema, err := process.client.call(ctx, "schema", nil)
 	if err != nil {
-		return modulecatalog.Module{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderr.String())
+		return modulecatalog.Module{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderrString())
 	}
 	stepContracts, err := process.client.call(ctx, "step.describe", nil)
 	if err != nil {
 		if isMissingStepProvider(err) {
 			stepContracts = map[string]any{"steps": []any{}}
 		} else {
-			return modulecatalog.Module{}, moduleFailure("module failed while reporting step contracts", "module step describe failed", err, process.stderr.String())
+			return modulecatalog.Module{}, moduleFailure("module failed while reporting step contracts", "module step describe failed", err, process.stderrString())
 		}
 	}
 	_, _ = process.client.call(context.Background(), "shutdown", nil)
 	if err := process.wait(); err != nil {
-		return modulecatalog.Module{}, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
+		return modulecatalog.Module{}, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
 	}
 	module, err := moduleFromRPC(moduleID, info, schema, stepContracts)
 	if err != nil {
@@ -195,7 +196,7 @@ func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, s
 
 	result, err := process.client.call(ctx, method, request.Params)
 	if err != nil {
-		return nil, moduleFailure(summary, prefix, err, process.stderr.String())
+		return nil, moduleFailure(summary, prefix, err, process.stderrString())
 	}
 	if method == "step.execute" {
 		if sessions := sessionsFromStepRPC(request, result["sessions"]); len(sessions) > 0 && r.Sessions != nil {
@@ -208,7 +209,7 @@ func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, s
 	if owned {
 		_, _ = process.client.call(context.Background(), "shutdown", nil)
 		if err := process.wait(); err != nil {
-			return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
+			return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
 		}
 	}
 	return result, nil
@@ -262,11 +263,11 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 
 	info, err := process.client.call(ctx, "handshake", nil)
 	if err != nil {
-		return run.Result{}, moduleFailure("module failed during startup", "module handshake failed", err, process.stderr.String())
+		return run.Result{}, moduleFailure("module failed during startup", "module handshake failed", err, process.stderrString())
 	}
 	schema, err := process.client.call(ctx, "schema", nil)
 	if err != nil {
-		return run.Result{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderr.String())
+		return run.Result{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderrString())
 	}
 	if module, err := moduleFromRPC(request.ModuleID, info, schema); err == nil {
 		request.ModuleID = module.ID
@@ -280,7 +281,7 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 		"targetConfig": request.TargetConfig,
 	})
 	if err != nil {
-		return run.Result{}, moduleFailure("module failed during execution", "module execute failed", err, process.stderr.String())
+		return run.Result{}, moduleFailure("module failed during execution", "module execute failed", err, process.stderrString())
 	}
 	result, err := resultFromRPC(request, executeResult, process.client.logsSnapshot())
 	if err != nil {
@@ -297,7 +298,7 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 	} else {
 		_, _ = process.client.call(context.Background(), "shutdown", nil)
 		if err := process.wait(); err != nil {
-			return run.Result{}, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
+			return run.Result{}, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
 		}
 	}
 	return result, nil
@@ -306,7 +307,7 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 type moduleProcess struct {
 	cmd    *exec.Cmd
 	client *rpcClient
-	stderr *bytes.Buffer
+	stderr *capturedStderr
 	waited bool
 }
 
@@ -331,7 +332,7 @@ func (r Runner) start(ctx context.Context, moduleID string) (*moduleProcess, err
 	if err != nil {
 		return nil, err
 	}
-	stderr := &bytes.Buffer{}
+	stderr := newCapturedStderr()
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -383,6 +384,55 @@ func (p *moduleProcess) killAndWait() {
 		_ = p.cmd.Process.Kill()
 	}
 	_ = p.wait()
+}
+
+func (p *moduleProcess) stderrString() string {
+	if p == nil || p.stderr == nil {
+		return ""
+	}
+	return p.stderr.StringAfter(stderrSettleTimeout)
+}
+
+type capturedStderr struct {
+	mu      sync.Mutex
+	buf     bytes.Buffer
+	updated chan struct{}
+}
+
+func newCapturedStderr() *capturedStderr {
+	return &capturedStderr{updated: make(chan struct{}, 1)}
+}
+
+func (s *capturedStderr) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	n, err := s.buf.Write(p)
+	s.mu.Unlock()
+	if n > 0 {
+		select {
+		case s.updated <- struct{}{}:
+		default:
+		}
+	}
+	return n, err
+}
+
+func (s *capturedStderr) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+func (s *capturedStderr) StringAfter(wait time.Duration) string {
+	if text := s.String(); strings.TrimSpace(text) != "" || wait <= 0 {
+		return text
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-s.updated:
+	case <-timer.C:
+	}
+	return s.String()
 }
 
 type StepProcessBroker struct {
