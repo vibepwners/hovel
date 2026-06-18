@@ -61,6 +61,15 @@ inline bool LoopbackPair(SOCKET* client, SOCKET* server) {
     return c != INVALID_SOCKET && sv != INVALID_SOCKET;
 }
 
+inline bool DecodeEvent(const RxFrame& frame, sqmux_StreamEvent* out) {
+    if (frame.kind != SQ_FRAME_CONTROL) {
+        return false;
+    }
+    return sq_control_decode_event(
+               reinterpret_cast<const BYTE*>(frame.payload.data()),
+               static_cast<UINT32>(frame.payload.size()), out) != FALSE;
+}
+
 // One end of a connection: send frames, and receive whole frames (reassembled).
 class Peer {
    public:
@@ -118,6 +127,20 @@ class Peer {
     sq_frame_reader* reader_;
     std::deque<RxFrame> queue_;
 };
+
+inline RxFrame RecvUntilKind(Peer* peer, UINT64 stream_id, UINT16 kind,
+                             int max_frames = 32) {
+    for (int i = 0; i < max_frames; ++i) {
+        RxFrame f = peer->Recv();
+        EXPECT_EQ(f.stream_id, stream_id);
+        if (f.kind == kind) {
+            return f;
+        }
+    }
+    ADD_FAILURE() << "expected frame kind " << kind << " for stream "
+                  << stream_id;
+    return RxFrame{0, stream_id, ""};
+}
 
 // Test fixture that brings Winsock up and down.
 class WsaFixture : public ::testing::Test {

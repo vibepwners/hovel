@@ -20,6 +20,13 @@ git_override(
     commit = "20f62d96d3d59709a58f2ec5b98d15919a9ac425",
 )
 
+single_version_override(
+    module_name = "googletest",
+    version = "1.17.0",
+    patches = ["//third_party/patches:googletest-bazel9-cc-rules.patch"],
+    patch_strip = 0,
+)
+
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.download(
     name = "go_sdk",

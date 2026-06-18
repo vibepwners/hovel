@@ -190,6 +190,13 @@ tasks:
       - task: squatter:cppcheck
       - task: squatter:clang-tidy
 
+  squatter:test:wine:
+    desc: Run Squatter Windows C++ tests under Wine.
+    cmds:
+      - task: test
+        vars:
+          CLI_ARGS: --config=win64 //payloads/squatter/tests/...
+
   squatter:format:
     desc: Format Squatter C sources with clang-format.
     cmds:

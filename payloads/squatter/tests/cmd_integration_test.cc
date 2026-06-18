@@ -31,14 +31,27 @@ TEST_F(CmdIntegration, RunsCommandAndReportsExitCode) {
 
     peer.SendOpen(1, "cmd", {"echo squatter-cmd-ok"});
 
-    RxFrame f = peer.Recv();
-    ASSERT_EQ(f.kind, SQ_FRAME_DATA);
-    ASSERT_NE(f.payload.find("squatter-cmd-ok"), std::string::npos);
+    bool saw_output = false;
+    bool saw_exit = false;
+    for (int i = 0; i < 32 && !saw_exit; ++i) {
+        RxFrame f = peer.Recv();
+        ASSERT_EQ(f.stream_id, 1u);
+        if (f.kind == SQ_FRAME_DATA) {
+            if (f.payload.find("squatter-cmd-ok") != std::string::npos) {
+                saw_output = true;
+            }
+            continue;
+        }
+        ASSERT_EQ(f.kind, SQ_FRAME_CONTROL);
+        sqmux_StreamEvent event{};
+        ASSERT_TRUE(muxtest::DecodeEvent(f, &event));
+        EXPECT_EQ(event.kind, SQMUX_EVENT_EXITED);
+        saw_exit = true;
+    }
+    EXPECT_TRUE(saw_output);
+    EXPECT_TRUE(saw_exit);
 
-    f = peer.Recv();
-    ASSERT_EQ(f.kind, SQ_FRAME_CONTROL);
-
-    f = peer.Recv();
+    RxFrame f = muxtest::RecvUntilKind(&peer, 1, SQ_FRAME_CLOSE);
     EXPECT_EQ(f.kind, SQ_FRAME_CLOSE);
     EXPECT_EQ(f.stream_id, 1u);
 
@@ -59,6 +72,9 @@ TEST_F(CmdIntegration, OpensInteractiveCommandShell) {
     for (int i = 0; i < 8 && !saw_interactive; i++) {
         RxFrame f = peer.Recv();
         if (f.kind == SQ_FRAME_CONTROL) {
+            sqmux_StreamEvent event{};
+            ASSERT_TRUE(muxtest::DecodeEvent(f, &event));
+            EXPECT_EQ(event.kind, SQMUX_EVENT_INTERACTIVE);
             saw_interactive = true;
             break;
         }
@@ -67,8 +83,12 @@ TEST_F(CmdIntegration, OpensInteractiveCommandShell) {
     EXPECT_TRUE(saw_interactive);
 
     peer.SendFrame(SQ_FRAME_DATA, 2, "echo squatter-interactive-ok\r\n");
-    for (int i = 0; i < 4 && !saw_echo; i++) {
+    for (int i = 0; i < 16 && !saw_echo; i++) {
         RxFrame f = peer.Recv();
+        ASSERT_EQ(f.stream_id, 2u);
+        if (f.kind == SQ_FRAME_CONTROL) {
+            continue;
+        }
         ASSERT_EQ(f.kind, SQ_FRAME_DATA);
         if (f.payload.find("squatter-interactive-ok") != std::string::npos) {
             saw_echo = true;
@@ -78,14 +98,18 @@ TEST_F(CmdIntegration, OpensInteractiveCommandShell) {
 
     peer.SendFrame(SQ_FRAME_DATA, 2, "exit\r\n");
 
-    for (;;) {
+    bool saw_close = false;
+    for (int i = 0; i < 32; ++i) {
         RxFrame f = peer.Recv();
+        ASSERT_EQ(f.stream_id, 2u);
         if (f.kind == SQ_FRAME_CLOSE) {
             EXPECT_EQ(f.stream_id, 2u);
+            saw_close = true;
             break;
         }
-        ASSERT_EQ(f.kind, SQ_FRAME_DATA);
+        ASSERT_TRUE(f.kind == SQ_FRAME_DATA || f.kind == SQ_FRAME_CONTROL);
     }
+    EXPECT_TRUE(saw_close);
 
     sq_session_destroy(sess);
 }

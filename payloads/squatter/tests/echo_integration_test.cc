@@ -45,26 +45,28 @@ TEST_F(EchoIntegration, EchoesArgvThenDataThenClosesOnEnd) {
     // 1. Open stream 1 running "echo" with three args.
     peer.SendOpen(1, "echo", {"alpha", "beta", "gamma"});
 
-    // The module's first act is to echo its argc/argv.
-    RxFrame f = peer.Recv();
+    // The module echoes argc/argv and also advertises stream interactivity.
+    // Those frames can race through different session threads, so wait for the
+    // data frame rather than depending on the CONTROL/DATA ordering.
+    RxFrame f = muxtest::RecvUntilKind(&peer, 1, SQ_FRAME_DATA);
     EXPECT_EQ(f.kind, SQ_FRAME_DATA);
     EXPECT_EQ(f.stream_id, 1u);
     EXPECT_EQ(f.payload, "argc=4 echo alpha beta gamma");
 
     // 2. Send data; it must come back verbatim.
     peer.SendFrame(SQ_FRAME_DATA, 1, "hello world");
-    f = peer.Recv();
+    f = muxtest::RecvUntilKind(&peer, 1, SQ_FRAME_DATA);
     EXPECT_EQ(f.kind, SQ_FRAME_DATA);
     EXPECT_EQ(f.stream_id, 1u);
     EXPECT_EQ(f.payload, "hello world");
 
     peer.SendFrame(SQ_FRAME_DATA, 1, "second message");
-    f = peer.Recv();
+    f = muxtest::RecvUntilKind(&peer, 1, SQ_FRAME_DATA);
     EXPECT_EQ(f.payload, "second message");
 
     // 3. "END" makes the module close gracefully -> a CLOSE frame comes back.
     peer.SendFrame(SQ_FRAME_DATA, 1, "END");
-    f = peer.Recv();
+    f = muxtest::RecvUntilKind(&peer, 1, SQ_FRAME_CLOSE);
     EXPECT_EQ(f.kind, SQ_FRAME_CLOSE);
     EXPECT_EQ(f.stream_id, 1u);
 
@@ -91,8 +93,12 @@ TEST_F(EchoIntegration, ManyStreamsMultiplexedOverOneConnection) {
 
     // Collect the argv echoes, bucketed by stream id (they may interleave).
     std::map<UINT64, std::vector<std::string>> got;
-    for (int i = 0; i < kStreams; ++i) {
+    for (int i = 0; i < kStreams * 4 && static_cast<int>(got.size()) < kStreams;
+         ++i) {
         RxFrame f = peer.Recv();
+        if (f.kind == SQ_FRAME_CONTROL) {
+            continue;
+        }
         ASSERT_EQ(f.kind, SQ_FRAME_DATA);
         got[f.stream_id].push_back(f.payload);
     }
@@ -109,8 +115,13 @@ TEST_F(EchoIntegration, ManyStreamsMultiplexedOverOneConnection) {
                        "payload-" + std::to_string(i));
     }
     std::map<UINT64, std::string> echoed;
-    for (int i = 0; i < kStreams; ++i) {
+    for (int i = 0; i < kStreams * 4 &&
+                    static_cast<int>(echoed.size()) < kStreams;
+         ++i) {
         RxFrame f = peer.Recv();
+        if (f.kind == SQ_FRAME_CONTROL) {
+            continue;
+        }
         ASSERT_EQ(f.kind, SQ_FRAME_DATA);
         echoed[f.stream_id] = f.payload;
     }
@@ -124,8 +135,13 @@ TEST_F(EchoIntegration, ManyStreamsMultiplexedOverOneConnection) {
         peer.SendFrame(SQ_FRAME_DATA, static_cast<UINT64>(10 + i), "END");
     }
     std::map<UINT64, bool> closed;
-    for (int i = 0; i < kStreams; ++i) {
+    for (int i = 0; i < kStreams * 4 &&
+                    static_cast<int>(closed.size()) < kStreams;
+         ++i) {
         RxFrame f = peer.Recv();
+        if (f.kind == SQ_FRAME_CONTROL) {
+            continue;
+        }
         EXPECT_EQ(f.kind, SQ_FRAME_CLOSE);
         closed[f.stream_id] = true;
     }
@@ -146,6 +162,13 @@ TEST_F(EchoIntegration, UnknownModuleIsRejectedWithClose) {
     Peer peer(client);
     peer.SendOpen(7, "does-not-exist", {});
     RxFrame f = peer.Recv();
+    ASSERT_EQ(f.kind, SQ_FRAME_CONTROL);
+    EXPECT_EQ(f.stream_id, 7u);
+    sqmux_StreamEvent event{};
+    ASSERT_TRUE(muxtest::DecodeEvent(f, &event));
+    EXPECT_EQ(event.kind, SQMUX_EVENT_ERROR);
+
+    f = peer.Recv();
     EXPECT_EQ(f.kind, SQ_FRAME_CLOSE);
     EXPECT_EQ(f.stream_id, 7u);
 
