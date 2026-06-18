@@ -5,6 +5,7 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
 type StepRuntimeRunner struct {
@@ -42,7 +43,20 @@ func (r StepRuntimeRunner) ExecuteStep(ctx context.Context, req chainruntime.Ste
 	if err != nil {
 		return chainruntime.StepExecuteResult{}, err
 	}
-	return stepExecuteResultFromRPC(result), nil
+	return stepExecuteResultFromRPC(req, result), nil
+}
+
+func (r StepRuntimeRunner) FinishRun(ctx context.Context, runID string) error {
+	if r.Runner.StepProcesses == nil {
+		return nil
+	}
+	timeout := r.Runner.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	finishCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return r.Runner.StepProcesses.FinishRun(finishCtx, runID)
 }
 
 func stepPrepareResultFromRPC(result map[string]any) chainruntime.StepPrepareResult {
@@ -53,14 +67,45 @@ func stepPrepareResultFromRPC(result map[string]any) chainruntime.StepPrepareRes
 	}
 }
 
-func stepExecuteResultFromRPC(result map[string]any) chainruntime.StepExecuteResult {
+func stepExecuteResultFromRPC(req chainruntime.StepExecuteRequest, result map[string]any) chainruntime.StepExecuteResult {
 	return chainruntime.StepExecuteResult{
 		Status:            stringValue(result["status"]),
 		Capabilities:      capabilitiesFromRPC(result["capabilities"]),
 		StateTransitions:  transitionsFromRPC(result["stateTransitions"]),
 		Evidence:          evidenceFromRPC(result["evidence"]),
+		Sessions:          sessionsFromStepRPC(StepCallRequest{ModuleID: req.ModuleID, Params: map[string]any{"runId": req.RunID}}, result["sessions"]),
 		InstalledPayloads: stepInstalledPayloadsFromRPC(result["installedPayloads"]),
 	}
+}
+
+func sessionsFromStepRPC(request StepCallRequest, value any) []run.SessionRef {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	var sessions []run.SessionRef
+	for _, item := range items {
+		object, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		session := run.SessionRef{
+			ID:                 stringValue(object["id"]),
+			RunID:              defaultString(stringValue(object["runId"]), stepCallRunID(request.Params)),
+			ModuleID:           defaultString(stringValue(object["moduleId"]), request.ModuleID),
+			Target:             stringValue(object["target"]),
+			Name:               stringValue(object["name"]),
+			Kind:               defaultString(stringValue(object["kind"]), "shell"),
+			State:              defaultString(stringValue(object["state"]), "active"),
+			Transport:          defaultString(stringValue(object["transport"]), "stdio"),
+			InstalledPayloadID: stringValue(object["installedPayloadId"]),
+			Capabilities:       stringSlice(object["capabilities"]),
+		}
+		if session.ID != "" {
+			sessions = append(sessions, session)
+		}
+	}
+	return sessions
 }
 
 func capabilitiesFromRPC(value any) []modulecatalog.Capability {

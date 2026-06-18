@@ -130,17 +130,13 @@ tools/
 <pre data-lang="steps"><code>squatter.generate
 squatter.install_smb
 squatter.connect_smb
-squatter.install_tcp_bind
 squatter.connect_tcp_bind
 squatter.listen_tcp_callback
-squatter.install_tcp_callback
-squatter.connect_tcp_callback
-squatter.cleanup_smb
-squatter.cleanup_tcp_bind
-squatter.cleanup_tcp_callback</code></pre>
+squatter.connect_tcp_callback</code></pre>
         <p>
-          Only connector and listener steps produce <code>SessionRef</code>. Generate and
-          install steps may produce <code>PayloadArtifact</code>,
+          Only connector steps produce <code>SessionRef</code>. Listener steps keep
+          provider-owned live state for the chain run. Generate and install steps may
+          produce <code>PayloadArtifact</code>,
           <code>PayloadInstance</code>, <code>TransportEndpoint</code>,
           <code>CleanupHandle</code>, and explicit installed-payload descriptors, but they
           do not open operator sessions.
@@ -165,11 +161,13 @@ squatter.agent.max_chunk_size = 65536
           <code>payload.transport</code> is required. The first Squatter provider supports
           <code>smb-named-pipe</code>, <code>tcp-bind</code>, and
           <code>tcp-callback</code>. SMB named-pipe mode requires an SMB
-          <code>CredentialCapability</code>. TCP bind mode requires a target endpoint.
-          TCP callback mode requires a listener step. If the agent has not connected back,
-          the installed payload remains <code>installed</code> with provider-owned
-          callback status in its reconnect metadata until a refresh or connection attempt
-          proves it unreachable.
+          <code>CredentialCapability</code> and can be installed by the provider. TCP bind
+          mode requires an explicit installed-payload record or capability for a target
+          endpoint. TCP callback mode requires a listener step plus an explicit
+          installed-payload record or capability. If the agent has not connected back, the
+          installed payload remains <code>installed</code> with provider-owned callback
+          status in its reconnect metadata until a refresh or connection attempt proves it
+          unreachable.
         </p>
 
         <h2>Payload Metadata</h2>
@@ -225,13 +223,13 @@ squatter.connect_smb
 provider-owned Hovel session</code></pre>
         <p>TCP bind mode uses target-side listening:</p>
 <pre data-lang="flow"><code>squatter.generate
-squatter.install_tcp_bind
+explicit or external TCP-bind install record
 squatter.connect_tcp_bind
 provider-owned Hovel session</code></pre>
         <p>TCP callback mode uses a confirmed listener step:</p>
 <pre data-lang="flow"><code>squatter.listen_tcp_callback
 squatter.generate
-squatter.install_tcp_callback
+explicit or external TCP-callback install record
 payload callback
 squatter.connect_tcp_callback
 provider-owned Hovel session</code></pre>
@@ -256,13 +254,14 @@ provider-owned Hovel session</code></pre>
           representative Etro chain unless a separate SMBv1 pipe connector is added.
         </p>
         <p>
-          TCP bind mode patches the payload to listen on <code>payload.bind_port</code>
-          on the target. The provider connects to
+          TCP bind generation patches the payload to listen on
+          <code>payload.bind_port</code> on the target. The provider connects to
           <code>target.host:payload.bind_port</code> after installation and emits an
-          active <code>SessionRef</code> when the TCP connection opens. TCP callback mode
-          patches the payload with <code>payload.lhost</code> and
+          active <code>SessionRef</code> when the TCP connection opens. TCP callback
+          generation patches the payload with <code>payload.lhost</code> and
           <code>payload.lport</code>, starts a provider listener, and adopts the accepted
-          connection as the Squatter session.
+          connection as the Squatter session. TCP install is intentionally record-driven
+          until the provider has a real remote-execution installer for those transports.
         </p>
 
         <h2>Prepared Target Footprint</h2>

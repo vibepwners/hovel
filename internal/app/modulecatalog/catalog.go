@@ -559,6 +559,9 @@ func CapabilitySatisfiesRequirement(capability Capability, requirement Capabilit
 	if requirement.Type != "" && capability.Type != requirement.Type {
 		return false
 	}
+	if requirement.SchemaVersion != "" && capability.SchemaVersion != requirement.SchemaVersion {
+		return false
+	}
 	if len(requirement.States) > 0 && !containsString(requirement.States, capability.State) {
 		return false
 	}

@@ -553,6 +553,122 @@ while True:
 	}
 }
 
+func TestStepRuntimeRunnerKeepsStepProviderProcessForLiveChainStateAndAdoptsSessions(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+import base64
+
+listener_ready = False
+session_open = False
+reads = 0
+
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    params = request.get("params") or {}
+    step_id = params.get("stepId")
+    if method == "step.prepare":
+        send({"jsonrpc": "2.0", "id": rid, "result": {}})
+    elif method == "step.execute":
+        if step_id == "squatter.listen_tcp_callback":
+            listener_ready = True
+            send({"jsonrpc": "2.0", "id": rid, "result": {
+                "status": "succeeded",
+                "capabilities": [{
+                    "id": "listener-1",
+                    "type": "TransportEndpoint",
+                    "schemaVersion": "v1",
+                    "state": "active",
+                    "producerStepId": step_id,
+                    "attributes": {"kind": "tcp-listener"}
+                }]
+            }})
+        elif step_id == "squatter.connect_tcp_callback":
+            if not listener_ready:
+                send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "listener state was lost"}})
+            else:
+                session_open = True
+                send({"jsonrpc": "2.0", "id": rid, "result": {
+                    "status": "succeeded",
+                    "sessions": [{
+                        "id": "session-1",
+                        "runId": params.get("runId"),
+                        "moduleId": "broken@v1",
+                        "target": "target-1",
+                        "name": "Squatter session",
+                        "kind": "agent",
+                        "state": "open",
+                        "transport": "squatter/tcp-callback"
+                    }],
+                    "capabilities": [{
+                        "id": "session-1",
+                        "type": "SessionRef",
+                        "schemaVersion": "v1",
+                        "state": "active",
+                        "producerStepId": step_id
+                    }]
+                }})
+    elif method == "session/read":
+        if session_open and reads == 0:
+            reads += 1
+            send({"jsonrpc": "2.0", "id": rid, "result": {"data": base64.b64encode(b"sq> ").decode()}})
+        else:
+            send({"jsonrpc": "2.0", "id": rid, "result": {"data": ""}})
+    elif method == "session/close":
+        session_open = False
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	catalog := modulecatalog.New(modulecatalog.Module{
+		ID:      "broken@v1",
+		Enabled: true,
+		StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{
+			{ID: "squatter.listen_tcp_callback", Kind: "listener.start"},
+			{ID: "squatter.connect_tcp_callback", Kind: "session.connector"},
+		}},
+	})
+	sessions := NewSessionBroker()
+	stepProcesses := NewStepProcessBroker()
+	runtime := chainruntime.New(catalog, StepRuntimeRunner{Runner: Runner{
+		ConfigPath:    configPath,
+		Timeout:       2 * time.Second,
+		Sessions:      sessions,
+		StepProcesses: stepProcesses,
+	}})
+
+	result, err := runtime.Execute(context.Background(), chainruntime.Request{
+		RunID: "run-1",
+		Steps: []chainruntime.StepRef{
+			{ModuleID: "broken", StepID: "squatter.listen_tcp_callback"},
+			{ModuleID: "broken", StepID: "squatter.connect_tcp_callback"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("status = %q, want succeeded", result.Status)
+	}
+	if len(result.Sessions) != 1 || result.Sessions[0].ID != "session-1" {
+		t.Fatalf("sessions = %#v, want adopted session", result.Sessions)
+	}
+	chunk, err := sessions.ReadSession(context.Background(), "session-1", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(chunk.Data) != "sq> " {
+		t.Fatalf("session data = %q, want prompt", string(chunk.Data))
+	}
+	if err := sessions.CloseSession(context.Background(), "session-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRunnerLaunchesEveryBuiltInMockModule(t *testing.T) {
 	for _, moduleID := range []string{"mock-survey", "mock-exploit", "mock-exploit-session"} {
 		t.Run(moduleID, func(t *testing.T) {

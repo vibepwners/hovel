@@ -55,14 +55,17 @@ func TestProviderReportsStepContracts(t *testing.T) {
 		"squatter.generate",
 		"squatter.install_smb",
 		"squatter.connect_smb",
-		"squatter.install_tcp_bind",
 		"squatter.connect_tcp_bind",
 		"squatter.listen_tcp_callback",
-		"squatter.install_tcp_callback",
 		"squatter.connect_tcp_callback",
 	} {
 		if _, ok := byID[id]; !ok {
 			t.Fatalf("missing step contract %s in %#v", id, contracts.Steps)
+		}
+	}
+	for _, id := range []string{"squatter.install_tcp_bind", "squatter.install_tcp_callback"} {
+		if _, ok := byID[id]; ok {
+			t.Fatalf("step contract %s is advertised but has no execution implementation", id)
 		}
 	}
 
@@ -83,6 +86,37 @@ func TestProviderReportsStepContracts(t *testing.T) {
 	install := byID["squatter.install_smb"]
 	if got := install.Prepare.Materializes; len(got) != 3 || got[0] != "staged_path" || got[1] != "service_name" || got[2] != "pipe_name" {
 		t.Fatalf("install_smb materializes = %#v", got)
+	}
+}
+
+func TestProviderExecuteGenerateProducesPayloadArtifactCapability(t *testing.T) {
+	result, err := newProvider().ExecuteStep(hovel.StepExecuteRequest{
+		RunID:  "run-1",
+		StepID: "squatter.generate",
+		RunMetadata: map[string]any{
+			"config": map[string]any{
+				"target.host":       "192.0.2.20",
+				"payload.transport": tcpBind,
+				"payload.format":    formatPEEXE,
+				"payload.bind_port": "9100",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "succeeded" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(result.Capabilities) != 1 || result.Capabilities[0].Type != hovel.CapabilityPayloadArtifact {
+		t.Fatalf("capabilities = %#v, want payload artifact", result.Capabilities)
+	}
+	capability := result.Capabilities[0]
+	if capability.State != "built" || capability.Attributes["provider"] != payloadName || capability.Attributes["transport"] != tcpBind {
+		t.Fatalf("artifact capability = %#v", capability)
+	}
+	if capability.Attributes["sha256"] == "" || capability.Attributes["size"] == int64(0) {
+		t.Fatalf("artifact metadata = %#v", capability.Attributes)
 	}
 }
 
@@ -659,6 +693,9 @@ func TestProviderExecuteConnectTCPBindProducesSessionCapability(t *testing.T) {
 	if len(result.Capabilities) != 1 || result.Capabilities[0].Type != hovel.CapabilitySessionRef {
 		t.Fatalf("capabilities = %#v, want SessionRef", result.Capabilities)
 	}
+	if len(result.Sessions) != 1 || result.Sessions[0].Transport != "squatter/tcp-bind" {
+		t.Fatalf("sessions = %#v, want tcp-bind session", result.Sessions)
+	}
 	if result.Capabilities[0].Attributes["transport"] != tcpBind {
 		t.Fatalf("session capability attributes = %#v", result.Capabilities[0].Attributes)
 	}
@@ -726,6 +763,9 @@ func TestProviderExecuteTCPCallbackAdoptsAcceptedConnection(t *testing.T) {
 	if len(connect.Capabilities) != 1 || connect.Capabilities[0].Attributes["transport"] != tcpCallback {
 		t.Fatalf("session capability = %#v", connect.Capabilities)
 	}
+	if len(connect.Sessions) != 1 || connect.Sessions[0].Transport != "squatter/tcp-callback" {
+		t.Fatalf("sessions = %#v, want tcp-callback session", connect.Sessions)
+	}
 }
 
 func TestProviderExecuteConnectSMBProducesSessionCapability(t *testing.T) {
@@ -755,6 +795,9 @@ func TestProviderExecuteConnectSMBProducesSessionCapability(t *testing.T) {
 	}
 	if len(result.Capabilities) != 1 || result.Capabilities[0].Type != hovel.CapabilitySessionRef {
 		t.Fatalf("capabilities = %#v, want SessionRef", result.Capabilities)
+	}
+	if len(result.Sessions) != 1 || result.Sessions[0].Transport != "squatter/smb-named-pipe" {
+		t.Fatalf("sessions = %#v, want smb session", result.Sessions)
 	}
 	if result.Capabilities[0].Attributes["transport"] != smbNamedPipe {
 		t.Fatalf("session capability attributes = %#v", result.Capabilities[0].Attributes)

@@ -48,14 +48,15 @@ func (e ModuleEntry) usesCommand() bool {
 }
 
 type Runner struct {
-	PythonPath string
-	SDKRoot    string
-	ConfigPath string
-	Events     services.EventSink
-	IDs        services.IDGenerator
-	Clock      services.Clock
-	Timeout    time.Duration
-	Sessions   *SessionBroker
+	PythonPath    string
+	SDKRoot       string
+	ConfigPath    string
+	Events        services.EventSink
+	IDs           services.IDGenerator
+	Clock         services.Clock
+	Timeout       time.Duration
+	Sessions      *SessionBroker
+	StepProcesses *StepProcessBroker
 }
 
 type StepCallRequest struct {
@@ -175,21 +176,52 @@ func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, s
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	process, err := r.start(ctx, request.ModuleID)
+	var process *moduleProcess
+	var err error
+	owned := true
+	runID := stepCallRunID(request.Params)
+	if r.StepProcesses != nil && runID != "" {
+		process, err = r.StepProcesses.process(ctx, r, runID, request.ModuleID)
+		owned = false
+	} else {
+		process, err = r.start(ctx, request.ModuleID)
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer process.killAndWait()
+	if owned {
+		defer process.killAndWait()
+	}
 
 	result, err := process.client.call(ctx, method, request.Params)
 	if err != nil {
 		return nil, moduleFailure(summary, prefix, err, process.stderr.String())
 	}
-	_, _ = process.client.call(context.Background(), "shutdown", nil)
-	if err := process.wait(); err != nil {
-		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
+	if method == "step.execute" {
+		if sessions := sessionsFromStepRPC(request, result["sessions"]); len(sessions) > 0 && r.Sessions != nil {
+			r.Sessions.adopt(process, sessions)
+			if r.StepProcesses != nil {
+				r.StepProcesses.release(process)
+			}
+		}
+	}
+	if owned {
+		_, _ = process.client.call(context.Background(), "shutdown", nil)
+		if err := process.wait(); err != nil {
+			return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderr.String())
+		}
 	}
 	return result, nil
+}
+
+func stepCallRunID(params map[string]any) string {
+	if params == nil {
+		return ""
+	}
+	if text := stringValue(params["runId"]); text != "" {
+		return text
+	}
+	return stringValue(params["preparedPlanId"])
 }
 
 func formatStepContractIssue(issue modulecatalog.StepContractIssue) string {
@@ -351,6 +383,85 @@ func (p *moduleProcess) killAndWait() {
 		_ = p.cmd.Process.Kill()
 	}
 	_ = p.wait()
+}
+
+type StepProcessBroker struct {
+	mu        sync.Mutex
+	processes map[stepProcessKey]*moduleProcess
+}
+
+type stepProcessKey struct {
+	runID    string
+	moduleID string
+}
+
+func NewStepProcessBroker() *StepProcessBroker {
+	return &StepProcessBroker{processes: map[stepProcessKey]*moduleProcess{}}
+}
+
+func (b *StepProcessBroker) process(ctx context.Context, runner Runner, runID, moduleID string) (*moduleProcess, error) {
+	if b == nil || runID == "" {
+		return runner.start(ctx, moduleID)
+	}
+	key := stepProcessKey{runID: runID, moduleID: moduleID}
+	b.mu.Lock()
+	if process, ok := b.processes[key]; ok {
+		b.mu.Unlock()
+		return process, nil
+	}
+	b.mu.Unlock()
+
+	process, err := runner.start(context.Background(), moduleID)
+	if err != nil {
+		return nil, err
+	}
+
+	b.mu.Lock()
+	if existing, ok := b.processes[key]; ok {
+		b.mu.Unlock()
+		process.killAndWait()
+		return existing, nil
+	}
+	b.processes[key] = process
+	b.mu.Unlock()
+	return process, nil
+}
+
+func (b *StepProcessBroker) release(process *moduleProcess) {
+	if b == nil || process == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for key, tracked := range b.processes {
+		if tracked == process {
+			delete(b.processes, key)
+		}
+	}
+}
+
+func (b *StepProcessBroker) FinishRun(ctx context.Context, runID string) error {
+	if b == nil || runID == "" {
+		return nil
+	}
+	var processes []*moduleProcess
+	b.mu.Lock()
+	for key, process := range b.processes {
+		if key.runID == runID {
+			processes = append(processes, process)
+			delete(b.processes, key)
+		}
+	}
+	b.mu.Unlock()
+
+	var firstErr error
+	for _, process := range processes {
+		_, _ = process.client.call(ctx, "shutdown", nil)
+		if err := process.wait(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (r Runner) pythonPath() (string, error) {

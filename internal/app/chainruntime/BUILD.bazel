@@ -5,7 +5,10 @@ go_library(
     srcs = ["runtime.go"],
     importpath = "github.com/Vibe-Pwners/hovel/internal/app/chainruntime",
     visibility = ["//:__subpackages__"],
-    deps = ["//internal/app/modulecatalog"],
+    deps = [
+        "//internal/app/modulecatalog",
+        "//internal/domain/run",
+    ],
 )
 
 go_test(

@@ -306,20 +306,6 @@ func (Provider) DescribeSteps() (hovel.StepContractSet, error) {
 				},
 			},
 			{
-				ID:   "squatter.install_tcp_bind",
-				Kind: "payload.install",
-				Requires: []hovel.CapabilityRequirement{
-					capability(hovel.CapabilityRemoteExecution, nil),
-					capability(hovel.CapabilityPayloadArtifact, map[string]any{"provider": payloadName}),
-				},
-				Produces: []hovel.CapabilityRequirement{
-					capability(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": tcpBind}),
-					capability(hovel.CapabilityTransport, map[string]any{"kind": "tcp-endpoint"}),
-					capability(hovel.CapabilityCleanupHandle, map[string]any{"owner": payloadName}),
-				},
-				Prepare: hovel.StepPrepareContract{Materializes: []string{"staged_path", "service_name", "bind_host", "bind_port"}},
-			},
-			{
 				ID:   "squatter.connect_tcp_bind",
 				Kind: "session.connector",
 				Requires: []hovel.CapabilityRequirement{
@@ -338,20 +324,6 @@ func (Provider) DescribeSteps() (hovel.StepContractSet, error) {
 					capability(hovel.CapabilityCleanupHandle, map[string]any{"owner": payloadName}),
 				},
 				Prepare: hovel.StepPrepareContract{Materializes: []string{"listen_host", "listen_port"}},
-			},
-			{
-				ID:   "squatter.install_tcp_callback",
-				Kind: "payload.install",
-				Requires: []hovel.CapabilityRequirement{
-					capability(hovel.CapabilityRemoteExecution, nil),
-					capability(hovel.CapabilityPayloadArtifact, map[string]any{"provider": payloadName}),
-					capability(hovel.CapabilityTransport, map[string]any{"kind": "tcp-listener"}),
-				},
-				Produces: []hovel.CapabilityRequirement{
-					capability(hovel.CapabilityPayloadInstance, map[string]any{"provider": payloadName, "transport": tcpCallback}),
-					capability(hovel.CapabilityCleanupHandle, map[string]any{"owner": payloadName}),
-				},
-				Prepare: hovel.StepPrepareContract{Materializes: []string{"staged_path", "service_name"}},
 			},
 			{
 				ID:   "squatter.connect_tcp_callback",
@@ -685,6 +657,8 @@ func randomToken(byteCount int) (string, error) {
 
 func (p Provider) ExecuteStep(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {
 	switch req.StepID {
+	case "squatter.generate":
+		return p.executeGenerate(req)
 	case "squatter.install_smb":
 		return p.executeSMBInstall(req)
 	case "squatter.listen_tcp_callback":
@@ -704,6 +678,73 @@ func (p Provider) ExecuteStep(req hovel.StepExecuteRequest) (hovel.StepExecuteRe
 			Kind:         "step.execute.not_implemented",
 			SourceStepID: req.StepID,
 			Message:      "squatter step execution is not implemented yet",
+		}},
+	}, nil
+}
+
+func (p Provider) executeGenerate(req hovel.StepExecuteRequest) (hovel.StepExecuteResult, error) {
+	config := stringMapFromAny(req.RunMetadata["config"])
+	if config == nil {
+		config = map[string]string{}
+	}
+	transport := canonicalTransport(config["payload.transport"])
+	if transport == "" {
+		transport = tcpBind
+	}
+	config["payload.transport"] = transport
+	target := firstNonEmpty(config["target.host"], config["smb.host"], "target")
+	payloadID := "squatter/windows/x86/windows-7/" + transport + "/" + formatPEEXE
+	artifactSet, err := p.GeneratePayload(hovel.GeneratePayloadRequest{
+		RunID:     req.RunID,
+		Target:    target,
+		PayloadID: payloadID,
+		Format:    formatPEEXE,
+		Config:    config,
+	})
+	if err != nil {
+		return hovel.StepExecuteResult{
+			Status: "generate_failed",
+			Evidence: []hovel.Evidence{{
+				ID:           "ev_squatter_generate_failed",
+				Level:        "warning",
+				Kind:         "payload.generate.failed",
+				SourceStepID: req.StepID,
+				Message:      "Squatter payload generation failed",
+				Details:      map[string]any{"error": err.Error(), "transport": transport},
+			}},
+		}, nil
+	}
+	return hovel.StepExecuteResult{
+		Status: "succeeded",
+		Capabilities: []hovel.Capability{{
+			ID:             "cap_payload_artifact_" + sanitizeCapabilitySuffix(transport+"_"+target),
+			Type:           hovel.CapabilityPayloadArtifact,
+			SchemaVersion:  "v1",
+			State:          "built",
+			ProducerStepID: req.StepID,
+			Attributes: map[string]any{
+				"provider":      payloadName,
+				"payload_id":    payloadID,
+				"transport":     transport,
+				"format":        artifactSet.Primary.Format,
+				"artifact_name": artifactSet.Primary.Name,
+				"sha256":        artifactSet.Primary.SHA256,
+				"size":          artifactSet.Primary.Size,
+			},
+		}},
+		Evidence: []hovel.Evidence{{
+			ID:           "ev_squatter_generate",
+			Level:        "info",
+			Kind:         "payload.generate",
+			SourceStepID: req.StepID,
+			Message:      "Squatter payload generated",
+			Details: map[string]any{
+				"payload_id": payloadID,
+				"transport":  transport,
+				"format":     artifactSet.Primary.Format,
+				"sha256":     artifactSet.Primary.SHA256,
+				"size":       artifactSet.Primary.Size,
+			},
 		}},
 	}, nil
 }
@@ -1006,6 +1047,9 @@ func (p Provider) executeTCPConnect(req hovel.StepExecuteRequest, transport stri
 	}
 	return hovel.StepExecuteResult{
 		Status: "succeeded",
+		Sessions: []hovel.SessionRef{
+			session,
+		},
 		Capabilities: []hovel.Capability{{
 			ID:             "cap_session_" + session.ID,
 			Type:           hovel.CapabilitySessionRef,
@@ -1060,6 +1104,9 @@ func (p Provider) executeSMBConnect(req hovel.StepExecuteRequest) (hovel.StepExe
 	}
 	return hovel.StepExecuteResult{
 		Status: "succeeded",
+		Sessions: []hovel.SessionRef{
+			session,
+		},
 		Capabilities: []hovel.Capability{{
 			ID:             "cap_session_" + session.ID,
 			Type:           hovel.CapabilitySessionRef,

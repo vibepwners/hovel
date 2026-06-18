@@ -200,12 +200,16 @@ tasks:
   squatter:format:
     desc: Format Squatter C sources with clang-format.
     cmds:
-      - bash tools/lint/format_squatter_c.sh
+      - |
+        sources="$(tools/lint/squatter_sources.sh | sed "s#^#$PWD/#")"
+        bazel run //tools/lint:clang_format -- -i $sources
 
   squatter:format:check:
     desc: Check Squatter C formatting with clang-format.
     cmds:
-      - bash tools/lint/check_squatter_format.sh
+      - |
+        sources="$(tools/lint/squatter_sources.sh | sed "s#^#$PWD/#")"
+        bazel run //tools/lint:clang_format -- --dry-run --Werror $sources
 
   squatter:complexity:
     desc: Check Squatter C cyclomatic complexity with lizard (CCN <= 10).

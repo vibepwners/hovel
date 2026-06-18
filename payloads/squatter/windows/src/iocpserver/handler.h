@@ -21,7 +21,7 @@
 #include <stddef.h>
 
 /* Distinct from any valid byte count (which is bounded by out_cap << SIZE_MAX). */
-#define SQ_HANDLER_CLOSE ((size_t)-1)
+#define SQ_HANDLER_CLOSE (~(size_t)0)
 
 typedef size_t (*sq_handler_fn)(void *user, const unsigned char *in, size_t in_len, unsigned char *out, size_t out_cap);
 

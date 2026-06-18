@@ -5,11 +5,16 @@ import (
 	"fmt"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
 type StepRunner interface {
 	PrepareStep(context.Context, StepPrepareRequest) (StepPrepareResult, error)
 	ExecuteStep(context.Context, StepExecuteRequest) (StepExecuteResult, error)
+}
+
+type RunFinalizer interface {
+	FinishRun(context.Context, string) error
 }
 
 type Runtime struct {
@@ -34,6 +39,7 @@ type Result struct {
 	Capabilities      []modulecatalog.Capability
 	Missing           []MissingStepRequirement
 	Evidence          []Evidence
+	Sessions          []run.SessionRef
 	InstalledPayloads []InstalledPayloadDescriptor
 }
 
@@ -73,6 +79,7 @@ type StepExecuteResult struct {
 	Capabilities      []modulecatalog.Capability
 	StateTransitions  []CapabilityTransition
 	Evidence          []Evidence
+	Sessions          []run.SessionRef
 	InstalledPayloads []InstalledPayloadDescriptor
 }
 
@@ -132,19 +139,28 @@ func New(catalog modulecatalog.Catalog, runner StepRunner) Runtime {
 	return Runtime{catalog: catalog, runner: runner}
 }
 
-func (r Runtime) Execute(ctx context.Context, req Request) (Result, error) {
+func (r Runtime) Execute(ctx context.Context, req Request) (result Result, err error) {
+	if finalizer, ok := r.runner.(RunFinalizer); ok {
+		defer func() {
+			if finishErr := finalizer.FinishRun(context.Background(), req.RunID); finishErr != nil && err == nil {
+				result.Status = "failed"
+				err = finishErr
+			}
+		}()
+	}
 	capabilities := append([]modulecatalog.Capability(nil), req.Capabilities...)
 	var evidence []Evidence
+	var sessions []run.SessionRef
 	var installedPayloads []InstalledPayloadDescriptor
 	for _, stepRef := range req.Steps {
 		module, step, err := r.resolveStep(stepRef)
 		if err != nil {
-			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, InstalledPayloads: installedPayloads}, err
+			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, err
 		}
 		resolution := modulecatalog.ResolveStepInputs(step, capabilities)
 		if !resolution.Ready {
 			missing := missingStepRequirements(module.ID, step.ID, resolution.Missing)
-			return Result{Status: "blocked", Capabilities: capabilities, Missing: missing, Evidence: evidence, InstalledPayloads: installedPayloads}, fmt.Errorf("step %s missing %d requirement(s)", step.ID, len(missing))
+			return Result{Status: "blocked", Capabilities: capabilities, Missing: missing, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, fmt.Errorf("step %s missing %d requirement(s)", step.ID, len(missing))
 		}
 		inputs := capabilityRefs(resolution.Bindings, capabilities)
 		prepared, err := r.runner.PrepareStep(ctx, StepPrepareRequest{
@@ -155,7 +171,7 @@ func (r Runtime) Execute(ctx context.Context, req Request) (Result, error) {
 			Inputs:   inputs,
 		})
 		if err != nil {
-			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, InstalledPayloads: installedPayloads}, err
+			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, err
 		}
 		evidence = append(evidence, prepared.Evidence...)
 		capabilities = upsertCapabilities(capabilities, prepared.PlannedOutputs)
@@ -171,17 +187,18 @@ func (r Runtime) Execute(ctx context.Context, req Request) (Result, error) {
 			},
 		})
 		if err != nil {
-			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, InstalledPayloads: installedPayloads}, err
+			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, err
 		}
 		evidence = append(evidence, executed.Evidence...)
+		sessions = append(sessions, cloneSessions(executed.Sessions)...)
 		installedPayloads = append(installedPayloads, cloneInstalledPayloads(executed.InstalledPayloads)...)
 		capabilities = upsertCapabilities(capabilities, executed.Capabilities)
 		capabilities = applyTransitions(capabilities, executed.StateTransitions)
 		if executed.Status != "" && executed.Status != "succeeded" {
-			return Result{Status: executed.Status, Capabilities: capabilities, Evidence: evidence, InstalledPayloads: installedPayloads}, nil
+			return Result{Status: executed.Status, Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, nil
 		}
 	}
-	return Result{Status: "succeeded", Capabilities: capabilities, Evidence: evidence, InstalledPayloads: installedPayloads}, nil
+	return Result{Status: "succeeded", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, nil
 }
 
 func (r Runtime) resolveStep(ref StepRef) (modulecatalog.Module, modulecatalog.StepContract, error) {
@@ -291,6 +308,18 @@ func cloneInstalledPayloads(payloads []InstalledPayloadDescriptor) []InstalledPa
 			Cleanup:                  clonePayloadProviderRecord(payload.Cleanup),
 			Metadata:                 cloneStringMap(payload.Metadata),
 		})
+	}
+	return out
+}
+
+func cloneSessions(sessions []run.SessionRef) []run.SessionRef {
+	if len(sessions) == 0 {
+		return nil
+	}
+	out := make([]run.SessionRef, 0, len(sessions))
+	for _, session := range sessions {
+		session.Capabilities = append([]string(nil), session.Capabilities...)
+		out = append(out, session)
 	}
 	return out
 }

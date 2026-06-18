@@ -107,6 +107,7 @@ type StepExecuteResult struct {
 	Capabilities      []Capability                 `json:"capabilities,omitempty"`
 	StateTransitions  []CapabilityTransition       `json:"stateTransitions,omitempty"`
 	Evidence          []Evidence                   `json:"evidence,omitempty"`
+	Sessions          []SessionRef                 `json:"sessions,omitempty"`
 	InstalledPayloads []InstalledPayloadDescriptor `json:"installedPayloads,omitempty"`
 }
 

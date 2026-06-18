@@ -234,17 +234,19 @@ func TestValidateStepContractsAcceptsLegacyEmptyContracts(t *testing.T) {
 
 func TestCapabilitySatisfiesRequirementMatchesTypeAttributesAndState(t *testing.T) {
 	capability := Capability{
-		Type:  CapabilityCredential,
-		State: "active",
+		Type:          CapabilityCredential,
+		SchemaVersion: "v1",
+		State:         "active",
 		Attributes: map[string]any{
 			"protocol":  "smb",
 			"principal": "local",
 		},
 	}
 	requirement := CapabilityRequirement{
-		Type:       CapabilityCredential,
-		Attributes: map[string]any{"protocol": "smb"},
-		States:     []string{"active"},
+		Type:          CapabilityCredential,
+		SchemaVersion: "v1",
+		Attributes:    map[string]any{"protocol": "smb"},
+		States:        []string{"active"},
 	}
 	if !CapabilitySatisfiesRequirement(capability, requirement) {
 		t.Fatal("capability should satisfy requirement")
@@ -265,6 +267,25 @@ func TestCapabilitySatisfiesRequirementMatchesTypeAttributesAndState(t *testing.
 	requirement.States = []string{"planned"}
 	if CapabilitySatisfiesRequirement(capability, requirement) {
 		t.Fatal("disallowed state should not satisfy requirement")
+	}
+}
+
+func TestCapabilitySatisfiesRequirementRejectsDifferentSchemaVersion(t *testing.T) {
+	capability := Capability{
+		ID:            "cred-v2",
+		Type:          CapabilityCredential,
+		SchemaVersion: "v2",
+		State:         "active",
+		Attributes:    map[string]any{"protocol": "smb"},
+	}
+	requirement := CapabilityRequirement{
+		Type:          CapabilityCredential,
+		SchemaVersion: "v1",
+		States:        []string{"active"},
+		Attributes:    map[string]any{"protocol": "smb"},
+	}
+	if CapabilitySatisfiesRequirement(capability, requirement) {
+		t.Fatal("v2 capability satisfied v1 requirement")
 	}
 }
 
@@ -325,8 +346,8 @@ func TestResolveStepInputsBindsRequirementsToCapabilities(t *testing.T) {
 		},
 	}
 	capabilities := []Capability{
-		{ID: "artifact-1", Type: CapabilityPayloadArtifact, State: "built", Attributes: map[string]any{"runtime": "windows-x86"}},
-		{ID: "credential-1", Type: CapabilityCredential, State: "active", Attributes: map[string]any{"protocol": "smb"}},
+		{ID: "artifact-1", Type: CapabilityPayloadArtifact, SchemaVersion: "v1", State: "built", Attributes: map[string]any{"runtime": "windows-x86"}},
+		{ID: "credential-1", Type: CapabilityCredential, SchemaVersion: "v1", State: "active", Attributes: map[string]any{"protocol": "smb"}},
 	}
 
 	resolution := ResolveStepInputs(step, capabilities)
@@ -339,6 +360,33 @@ func TestResolveStepInputsBindsRequirementsToCapabilities(t *testing.T) {
 	}
 	if !reflect.DeepEqual(resolution.Bindings, want) {
 		t.Fatalf("bindings = %#v, want %#v", resolution.Bindings, want)
+	}
+}
+
+func TestResolveStepInputsDoesNotBindDifferentSchemaVersion(t *testing.T) {
+	step := StepContract{
+		ID: "squatter.connect_smb",
+		Requires: []CapabilityRequirement{{
+			Type:          CapabilityPayloadInstance,
+			SchemaVersion: "v1",
+			States:        []string{"installed"},
+			Attributes:    map[string]any{"provider": "squatter", "transport": "smb-named-pipe"},
+		}},
+	}
+	capabilities := []Capability{{
+		ID:            "payload-v2",
+		Type:          CapabilityPayloadInstance,
+		SchemaVersion: "v2",
+		State:         "installed",
+		Attributes:    map[string]any{"provider": "squatter", "transport": "smb-named-pipe"},
+	}}
+
+	resolution := ResolveStepInputs(step, capabilities)
+	if resolution.Ready {
+		t.Fatalf("resolution ready = true, bindings %#v", resolution.Bindings)
+	}
+	if len(resolution.Missing) != 1 || resolution.Missing[0].SchemaVersion != "v1" {
+		t.Fatalf("missing = %#v, want v1 requirement missing", resolution.Missing)
 	}
 }
 

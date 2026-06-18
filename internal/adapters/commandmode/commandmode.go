@@ -66,11 +66,13 @@ func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 	store := filesystem.NewWorkspaceStore()
 	catalog := pythonrpc.MustConfiguredCatalog()
 	pythonSessions := pythonrpc.NewSessionBroker()
+	stepProcesses := pythonrpc.NewStepProcessBroker()
 	stepRunner := pythonrpc.StepRuntimeRunner{Runner: pythonrpc.Runner{
-		Events:   discardEvents{},
-		IDs:      randomIDs{},
-		Clock:    systemClock{},
-		Sessions: pythonSessions,
+		Events:        discardEvents{},
+		IDs:           randomIDs{},
+		Clock:         systemClock{},
+		Sessions:      pythonSessions,
+		StepProcesses: stepProcesses,
 	}}
 	return commands.Runtime{
 		Workspaces: services.NewWorkspaceService(
@@ -514,6 +516,7 @@ func (e capabilityChainExecutor) ExecuteCapabilityChain(ctx context.Context, req
 			State:             result.Status,
 			Capabilities:      capabilitiesToCommand(result.Capabilities),
 			Evidence:          evidenceToCommand(result.Evidence),
+			Sessions:          sessionsFromRun(result.Sessions),
 			InstalledPayloads: installedPayloadsFromChainRuntime(result.InstalledPayloads),
 		}, err
 	}
@@ -524,6 +527,7 @@ func (e capabilityChainExecutor) ExecuteCapabilityChain(ctx context.Context, req
 		Summary:           "capability chain completed",
 		Capabilities:      capabilitiesToCommand(result.Capabilities),
 		Evidence:          evidenceToCommand(result.Evidence),
+		Sessions:          sessionsFromRun(result.Sessions),
 		InstalledPayloads: installedPayloadsFromChainRuntime(result.InstalledPayloads),
 	}, nil
 }
@@ -580,6 +584,25 @@ func evidenceToCommand(evidence []chainruntime.Evidence) []commands.CapabilityEv
 			SourceStepID: item.SourceStepID,
 			Message:      item.Message,
 			Details:      cloneAnyMap(item.Details),
+		})
+	}
+	return out
+}
+
+func sessionsFromRun(sessions []run.SessionRef) []commands.SessionRef {
+	out := make([]commands.SessionRef, 0, len(sessions))
+	for _, session := range sessions {
+		out = append(out, commands.SessionRef{
+			ID:                 session.ID,
+			RunID:              session.RunID,
+			ModuleID:           session.ModuleID,
+			Target:             session.Target,
+			Name:               session.Name,
+			Kind:               session.Kind,
+			State:              session.State,
+			Transport:          session.Transport,
+			InstalledPayloadID: session.InstalledPayloadID,
+			Capabilities:       append([]string(nil), session.Capabilities...),
 		})
 	}
 	return out
