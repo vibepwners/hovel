@@ -117,5 +117,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Install lizard
+        run: uv tool install lizard
+
       - name: Lint
         run: task lint
