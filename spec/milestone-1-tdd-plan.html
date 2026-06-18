@@ -56,6 +56,7 @@
       <article>
         <h1>Milestone 1 TDD Plan</h1>
 
+        <p>This page is retained as the historical TDD plan for the first skeleton milestone. The repository has since added module execution, capability-step execution, provider-backed installed-payload records, chain-file throws, and other later slices; use the rest of the spec and the source tree for current implementation status.</p>
         <p>Milestone 1 should establish the Bazel-first Go skeleton, domain vocabulary, workspace initialization, daemon contract, descriptor validation shape, event model, and in-process test harness. It should not include real module execution.</p>
         <p>The implementation approach is domain-driven design with test-driven development:</p>
         <ol>
@@ -111,7 +112,7 @@ guardrail
         <p>Write the failing tests first:</p>
         <ol>
           <li><code>task test</code> discovers at least one Go or shell test target.</li>
-          <li><code>task lint</code> (Gazelle diff check) succeeds.</li>
+          <li><code>task lint</code> succeeds for the checks present at that milestone, including generated BUILD-file validation.</li>
         </ol>
         <p>Then implement:</p>
         <ol>
@@ -239,7 +240,7 @@ guardrail
 
         <h2>Definition of Done</h2>
         <p>Milestone 1 is complete when this passes:</p>
-<pre data-lang="bash"><code>task ci      # lint + build + test
+<pre data-lang="bash"><code>task ci      # lint + docs + build + test
 </code></pre>
         <p>The repository should also expose these user-visible flows:</p>
 <pre data-lang="bash"><code>HOVEL_WORKSPACE=/tmp/hovel-lab task cli

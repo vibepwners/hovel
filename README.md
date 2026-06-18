@@ -5,11 +5,13 @@
 Hovel is a Go-hosted framework for authorized red-team emulation, controlled
 lab exercises, defensive validation, and operator workflow automation. It is
 designed for scoped, auditable assessments rather than general-purpose
-dual-use automation. A local engine (`hoveld`) owns the workspace database,
+dual-use automation. The local daemon role (`hovel daemon serve`, often called
+`hoveld` in internal docs and logs) owns the workspace database,
 module process lifecycle, a plan -> confirm -> throw safety pipeline, installed
 payload inventory, an artifact store, and a structured event/log rail. Operators
-drive it through an interactive CLI; the same application services are intended
-to back additional front ends (one-shot chain files, TUI, REST, MCP).
+drive it through an interactive CLI and one-shot saved chain files; the same
+application services are intended to back additional front ends (TUI, REST,
+MCP).
 
 > **Authorized red-team emulation only.** Use Hovel only in environments you
 > own or are explicitly authorized to assess, with written scope and approvals.
@@ -79,7 +81,7 @@ task status
 # Wipe local state and relaunch from a clean slate
 task reset
 
-# Run the full check suite (lint + build + test) — what CI runs
+# Run the full check suite (lint + docs + build + test) — what CI runs
 task ci
 ```
 
@@ -104,9 +106,9 @@ Build & checks:
 | --- | --- |
 | `task build` (`b`) | Build all targets (`task build -- //cmd/hovel` for one). |
 | `task test` (`t`) | Run all tests (`task test -- //internal/...` for some). |
-| `task lint` (`l`) | gofmt + Gazelle + Python checks (read-only). |
-| `task fmt` | Auto-format Go source and regenerate `BUILD` metadata. |
-| `task check` (`ci`) | Lint, build, and test. |
+| `task lint` (`l`) | Go formatting, Gazelle, Python, and Squatter C checks (read-only). |
+| `task fmt` | Auto-format Go source, regenerate `BUILD` metadata, and format Squatter C. |
+| `task check` (`ci`) | Lint, docs, build, and test. |
 | `task hooks:install` | Install git hooks via Lefthook. |
 
 ## Front-end roles
@@ -121,6 +123,10 @@ hovel tui ...              # not implemented yet
 `cli` auto-starts or attaches to a local daemon for the workspace. A daemon
 started by an interactive session is owned by it and shuts down on exit; a
 pre-existing daemon is left running.
+
+Root help also exposes compatibility and developer entrypoints such as `shell`,
+`command`, `run`, direct registry roots (`module`, `chain`, `op`, ...), `init`,
+and `status`. Prefer the role commands above in user-facing docs and examples.
 
 ## Contributing
 

@@ -165,10 +165,12 @@
 
         <h3>step.describe</h3>
         <p>
-          Reports the module's current chain-step contracts. Hovel calls this dynamically
-          while planning and persists the exact returned snapshot when the operator
-          confirms. Execution is blocked if a referenced step contract changes after
-          confirmation.
+          Reports the module's current chain-step contracts. The current host calls this
+          during catalog inspection and uses the resulting catalog snapshot during
+          validation, module inspection, planning, and capability-step execution.
+          Persisting the exact returned snapshot when the operator confirms, then
+          blocking execution if a referenced contract changes after confirmation, is a
+          target safeguard that is not implemented yet.
         </p>
         <p>
           <code>handshake</code>, <code>schema</code>, and <code>step.describe</code>
@@ -408,8 +410,9 @@
         <h3>cleanup_payload</h3>
         <p>
           Attempts provider-executed cleanup for an installed payload. A successful
-          provider result lets Hovel mark the installed payload <code>removed</code>;
-          failures are recorded as cleanup-attempt events and leave the record active.
+          provider result returns <code>{ "status": "ok" }</code>; Hovel then marks the
+          installed payload <code>removed</code>. Failures are recorded as
+          cleanup-attempt events and leave the record active.
         </p>
 <pre data-lang="params"><code>{
   "runId": "run-1",
@@ -420,7 +423,7 @@
   "cleanup": PayloadProviderRecord
 }</code></pre>
 <pre data-lang="result"><code>{
-  "status": "removed"
+  "status": "ok"
 }</code></pre>
 
         <h3>read_payload_chunk</h3>
@@ -662,26 +665,30 @@
   "provider": "squatter",
   "payloadId": "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
   "payloadVersion": "0.1.0",
+  "target": "10.0.0.42",
+  "targetId": "t1",
+  "state": "installed",
+  "transport": "tcp-bind",
+  "endpoint": "10.0.0.42:9101",
   "instanceKey": "provider-stable-key-or-empty",
   "stampId": "payload-stamp-uuid",
-  "target": {
-    "id": "t1",
-    "address": "10.0.0.42"
-  },
-  "transport": "tcp-bind",
-  "endpointSummary": "10.0.0.42:9101",
-  "state": "installed",
+  "artifactIds": ["artifact-squatter-exe"],
   "supportsReconnect": true,
   "supportsMultipleSessions": false,
   "reconnect": {
+    "providerId": "squatter",
     "schema": "squatter.reconnect.tcp_bind",
-    "schemaVersion": 1,
+    "schemaVersion": "1",
     "descriptor": { "host": "10.0.0.42", "port": 9101 }
   },
   "cleanup": {
+    "providerId": "squatter",
     "schema": "squatter.cleanup.tcp_bind",
-    "schemaVersion": 1,
+    "schemaVersion": "1",
     "descriptor": { "remotePath": "C:\\Windows\\Temp\\n4x9q2.exe" }
+  },
+  "metadata": {
+    "profile": "xp-sp3-lab"
   }
 }</code></pre>
         <p>
@@ -782,7 +789,7 @@
 
         <h3>CleanupResult</h3>
 <pre data-lang="object"><code>{
-  "status": "removed"
+  "status": "ok"
 }</code></pre>
 
         <h3>PayloadChunk</h3>
@@ -826,7 +833,7 @@
         </p>
 <pre data-lang="object"><code>{
   "id": "ev_squatter_connect_warning_2m7kq9",
-  "level": "warning",
+  "level": "warn",
   "kind": "payload.unreachable",
   "sourceStepId": "squatter.connect_smb",
   "message": "Squatter installed but no session was established.",

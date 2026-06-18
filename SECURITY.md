@@ -28,9 +28,11 @@ Key safety properties (see `spec/safety.html` for the full model):
 - Starting a throw requires a recorded confirmation that the plan was reviewed
   (typed `yes`, or a deliberate `throw --now`, which still records that the
   bypass flag was used).
-- Throws record operator intent, inputs, target IDs, timestamps, module
-  versions, payload hashes, installed payload descriptors, artifacts,
-  structured events, and errors.
+- Throws record operator intent, reviewed configuration, target IDs, timestamps,
+  module references, installed payload descriptors, materialized artifact
+  hashes, structured events, and errors. Planned audit fields such as resolved
+  service versions and richer risk labels should be added only when the source
+  path emits them.
 - Public modules should avoid destructive behavior by default.
 - Artifacts are hash-tracked.
 

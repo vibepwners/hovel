@@ -12,6 +12,6 @@ fi
 unformatted="$(gofmt -l "${files[@]}")"
 if [[ -n "$unformatted" ]]; then
   printf 'gofmt found files that need formatting:\n%s\n' "$unformatted" >&2
-  printf 'Run gofmt -w on the files above before committing.\n' >&2
+  printf 'Run task fmt before committing.\n' >&2
   exit 1
 fi

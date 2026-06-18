@@ -58,6 +58,13 @@
         <p>Configuration should be explicit, schema-validated, and easy to inspect.</p>
 
         <h2>Global Config</h2>
+        <p>
+          The implemented module discovery path today is the JSON module launch catalog
+          pointed to by <code>HOVEL_MODULE_CONFIG</code>, with Python entries using
+          <code>project_dir</code> plus <code>module</code> and compiled entries using
+          <code>command</code>. The broader global config shape below is target design,
+          not a currently loaded operator config file.
+        </p>
 <pre data-lang="yaml"><code>theme: acid
 workspace: .hovel
 modules:
@@ -79,6 +86,13 @@ logging:
 </code></pre>
 
         <h2>Workspace Config</h2>
+        <p>
+          Current workspace initialization creates <code>workspace.json</code>,
+          <code>workspace.db</code>, and the standard workspace directories. The
+          following policy-oriented workspace config is planned shape for richer
+          guardrails and retention settings; it is not yet parsed as a durable
+          workspace configuration file.
+        </p>
 <pre data-lang="yaml"><code>name: lab
 artifactRetentionDays: 30
 allowDangerousModules: false
@@ -97,24 +111,31 @@ guardrails:
     parity: true
     requirePlanReview: true
 </code></pre>
-        <p>Module and service configs should be schema-validated.</p>
+        <p>
+          Module and service descriptor schemas exist in source. Runtime module launch
+          configuration currently uses <code>examples/hovel-modules.json</code> or another
+          <code>HOVEL_MODULE_CONFIG</code> file; a general service launch config is not
+          implemented yet.
+        </p>
 
         <h2>Build Strategy</h2>
         <p>Hovel should start as a monorepo because in-tree modules, services, SDKs, schemas, CLI, TUI, API, and MCP adapters need to evolve together.</p>
-        <p>Bazel is the authoritative build, test, docs, and release interface from day one. Ordinary Go and Python tooling may remain useful for local authoring, but CI and project workflows should go through Bazel.</p>
-        <p>Initial Bazel responsibilities:</p>
+        <p><code>Taskfile.yml</code> is the authoritative build, test, lint, docs, run, and release entry point. The tasks may call Bazel or other tools internally, but contributors, CI, hooks, docs, and automation use <code>task &lt;name&gt;</code> rather than invoking Bazel, gofmt, uv, or lefthook directly.</p>
+        <p>Initial Task/Bazel responsibilities:</p>
         <ol>
           <li>Build and test all Go packages and binaries.</li>
           <li>Build and test the Python SDK.</li>
           <li>Build the static documentation site from the in-tree HTML sources.</li>
           <li>Run Gazelle for Go BUILD file generation.</li>
+          <li>Run Squatter C formatting, complexity, cppcheck, and clang-tidy checks.</li>
           <li>Own generated schemas and contract-test outputs.</li>
           <li>Produce release archives when binaries exist.</li>
         </ol>
         <p>The minimum repository contract is, with <a href="https://taskfile.dev/">Task</a> as the single entry point:</p>
 <pre data-lang="bash"><code>task build
 task test
-task fmt     # gofmt + gazelle
+task fmt     # gofmt + Gazelle + Squatter C format
+task ci      # lint + docs + build + test
 </code></pre>
         <p><code>Taskfile.yml</code> is the one correct way to build, test, lint, format, and run; contributors, CI, and tooling never invoke Bazel, gofmt, uv, or lefthook directly. Tasks are thin wrappers over Bazel targets, not an alternate build system.</p>
 
@@ -124,12 +145,8 @@ task fmt     # gofmt + gazelle
 hovel-linux-arm64
 hovel-darwin-arm64
 hovel-windows-amd64.exe
-hoveld-linux-amd64
-hoveld-linux-arm64
-hoveld-darwin-arm64
-hoveld-windows-amd64.exe
 </code></pre>
-        <p>The <code>hovel</code> binary is the production mono-binary. It includes <code>cli</code>, one-shot chain-file execution, <code>daemon</code>, and <code>tui</code> roles. A separate <code>hoveld</code> binary may exist only as a development shim if it materially improves local testing; it is not the product contract.</p>
+        <p>The <code>hovel</code> binary is the production mono-binary. It currently includes <code>cli</code>, one-shot chain-file execution, <code>daemon</code>, and an explicit not-implemented <code>tui</code> placeholder. A separate <code>hoveld</code> binary may exist only as a development shim if it materially improves local testing; it is not a primary release artifact or product contract.</p>
         <p>Hovel may also publish a PyPI wrapper for Python-centric users:</p>
 <pre data-lang="bash"><code>uvx hovel throw ./ssh-memory.chain.yaml
 </code></pre>
@@ -137,14 +154,12 @@ hoveld-windows-amd64.exe
 <pre data-lang="bash"><code>uvx hovel throw ./ssh-memory.chain.yaml --now
 </code></pre>
         <p>The PyPI package may download or include the Go binary, similar to other compiled tools distributed through Python package indexes.</p>
-        <p>Module and service sources:</p>
+        <p>Module sources today:</p>
         <ol>
-          <li>In-tree modules and services in the monorepo, loaded through the ordinary module and service contracts.</li>
-          <li>Local module and service directories.</li>
-          <li>Git repositories.</li>
-          <li>PEX packages.</li>
-          <li>Native binaries.</li>
-          <li>Future registry.</li>
+          <li>In-tree Python modules loaded from source with <code>project_dir</code> and <code>module</code> entries in the module catalog.</li>
+          <li>In-tree Go, Rust, and Squatter provider binaries built by <code>task modules:build</code> and loaded through <code>command</code> entries.</li>
+          <li>Private or out-of-tree Python source directories and native binaries listed in a private <code>HOVEL_MODULE_CONFIG</code> file.</li>
+          <li>Future sources such as service directories, Git repositories, PEX packages, and registries once those loaders exist.</li>
         </ol>
 
         <h2>Terminal Libraries And Theming</h2>

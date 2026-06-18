@@ -48,7 +48,7 @@ fn main() {
 Rules that matter in real integrations:
 
 - Never print to stdout. The SDK owns stdout for framed JSON-RPC messages.
-- Use `ctx.info`, `ctx.warn`, and `ctx.error` for module logs.
+- Use `ctx.info` and `ctx.error` for module logs.
 - Keep `info` and `schema` cheap and side-effect free.
 - Return `Outcome::ok` or `Outcome::failed`; attach `Finding`, `Artifact`,
   `SessionRef`, and `InstalledPayloadDescriptor` values explicitly.

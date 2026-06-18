@@ -60,11 +60,11 @@
         <p>Chains have three related forms:</p>
         <ol>
           <li>An interactive chain record owned by an operation and edited through <code>hovel cli</code>.</li>
-          <li>A chain template, which is a reusable chain definition with steps and configuration schema but without target bindings.</li>
-          <li>A configured chain file, which fully represents a chain, its steps, configuration schema, configured values, selected target bindings, and target config for review, sharing, and one-shot execution.</li>
+          <li>A chain template, which is a reusable chain definition with steps but without configured values or target bindings.</li>
+          <li>A configured chain file, which represents a chain, its steps, configured string values, selected target bindings, and target config for review, sharing, and one-shot execution.</li>
         </ol>
         <p>Interactive editing and persistent representation are separate concerns. <code>chain add &lt;module&gt;</code> remains the fast CLI workflow for building a chain. <code>chain save &lt;file&gt;</code> writes the active chain to a YAML file, and <code>chain load &lt;file&gt;</code> imports or updates a chain from that file. One-shot shell execution throws a configured chain file rather than relying on prompt session state. Target config is essential to configured chain files because it is part of what the operator reviews and confirms before throwing.</p>
-        <p>The first chain thrower should be intentionally small. It should support sequential steps, literal inputs, <code>${inputs.*}</code> references, <code>${steps.&lt;id&gt;.output}</code> references, per-step events, cancellation, and artifact creation. It should not initially support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.</p>
+        <p>The current chain thrower is intentionally small. It executes ordered module steps with string chain and target configuration, persists plans and confirmation records, and records events, artifacts, installed payloads, throw records, and final state produced by the module or provider path. Chain files do not expose <code>${inputs.*}</code> or <code>${steps.*}</code> expression syntax today, and they do not support arbitrary expressions, loops, embedded scripting, dynamic graph mutation, or user-defined functions.</p>
         <p>Operator-facing chain records are CRUD resources. A chain can be created, selected with <code>chain use</code>, renamed, inspected, listed, deleted, and then thrown against targets selected from the active operation. The active chain is client attachment state: it determines that client's prompt context, default chain for <code>throw</code>, and log topic subscription without changing another client's active chain.</p>
         <p>Targets are owned by operations in the operator workflow. A target added while <code>alpha</code> is active is still available when the same operation switches to <code>beta</code>; target config follows the target, not the chain. Target sets are named operation-owned groups used only to select targets conveniently at plan time. Chain logs remain chain-scoped: <code>chain logs</code> renders the active chain's operation-scoped topic only, and multi-client front ends attached to the same operation and chain observe the same topic.</p>
         <p>A throw binds a chain to a target source when planning. <code>throw --target &lt;id&gt;</code> is strict and blocks on an incompatible target. <code>throw --target-set &lt;name&gt;</code> and default operation-inventory throws filter out incompatible targets, report each skipped target, and proceed when at least one compatible target remains.</p>
@@ -73,9 +73,12 @@
           provider-before-exploit ordering alone. A module reports, over JSON-RPC, which
           step contracts it supports, what each step requires, what it produces, which
           configuration schema applies, and which prepare-time values it materializes.
-          Hovel queries those live contracts while planning, validates that producer
-          outputs satisfy consumer requirements, prepares local values, freezes the
-          confirmed contract snapshot, and executes the same snapshot after confirmation.
+          Hovel loads those contracts into the module catalog, uses them during
+          validation and planning to report typed missing requirements, and executes
+          capability-step chains after confirmation. Persisting an exact contract
+          snapshot at confirmation time, presenting editable prepared values in the
+          review surface, and blocking post-confirmation contract drift are target
+          safeguards rather than current source behavior.
           Squatter is the first core provider following this model; see
           <a href="squatter-payload-provider.html">Squatter Payload Provider</a>.
         </p>
@@ -121,16 +124,18 @@ CleanupHandle</code></pre>
         <ol>
           <li><code>describe</code> queries live module contracts over JSON-RPC.</li>
           <li><code>prepare</code> is pure and local: it validates config and generates planned values, but it does not touch the target or produce final payload bytes.</li>
-          <li><code>confirm</code> freezes the contract snapshot and prepared values.</li>
+          <li><code>confirm</code> currently records the reviewed plan, target set, module or step references, and configuration; freezing contract snapshots and prepared values is planned.</li>
           <li><code>execute</code> materializes final artifacts, mutates targets, and records exact hashes and state transitions.</li>
           <li><code>operate</code> keeps sessions attachable, detachable, and reconnectable while installed payload records remain active.</li>
           <li><code>cleanup</code> executes durable cleanup handles, records verification where possible, and remains retriable until removed, verified, or abandoned.</li>
         </ol>
         <p>
-          If any module reports a different contract after confirmation, execution is
-          blocked. The operator must review the contract diff, re-prepare if needed, and
-          re-confirm. Confirmed prepared values are immutable; before confirmation they
-          may be edited through generic plan editing and revalidated by the owning module.
+          The target safety model blocks execution if a module reports a different
+          contract after confirmation; the operator must review the contract diff,
+          re-prepare if needed, and re-confirm. The current implementation has the
+          runtime pieces for <code>step.prepare</code> and <code>step.execute</code>,
+          but generic pre-confirm prepared-value editing and drift blocking remain
+          pending.
         </p>
         <p>
           The catalog owns the first planning primitive: it can resolve every enabled
@@ -154,9 +159,9 @@ CleanupHandle</code></pre>
           contract inside that module. Omitting <code>step</code> on every step
           preserves the legacy single-module execution path. Setting <code>step</code>
           opts the configured chain file into capability-step execution, and every step
-          in that file must then name a JSON-RPC step contract. The approved throw plan
-          records the module references and the callable step references so an operator
-          can see exactly which contracts were confirmed.
+          in that file must then name a JSON-RPC step contract, except for the current
+          Squatter TCP-bind bridge. The approved throw plan records the module
+          references and callable step references, but not yet full contract snapshots.
         </p>
         <p>
           A capability-step throw executes the configured ordered steps through the
@@ -165,7 +170,7 @@ CleanupHandle</code></pre>
           set, diagnostic evidence, logs, and any opened sessions; step-level prepare and
           execute detail remains available through capability evidence and structured
           events.
-          Command-mode one-shot throws use the same primitive with the configured module
+          One-shot chain-file throws use the same primitive with the configured module
           catalog and JSON-RPC step runner, so Etro-to-Squatter is not a special throw
           path; it is one ordered capability-step chain.
         </p>
@@ -253,7 +258,7 @@ squatter.connect_smb
         </p>
 
         <h2>Operation Attachments</h2>
-        <p>Each CLI, TUI, REST, or MCP client attaches to exactly one operation at a time and keeps its own active chain selection.</p>
+        <p>Each implemented CLI client, and each future TUI, REST, or MCP client, attaches to exactly one operation at a time and keeps its own active chain selection.</p>
         <p>Concurrency rules:</p>
         <ol>
           <li><code>op use &lt;operation&gt;</code> changes only the caller's attached operation.</li>
@@ -266,71 +271,49 @@ squatter.connect_smb
         </ol>
 
         <h2>Chain Definition</h2>
-        <p>Example:</p>
+        <p>
+          Current chain files use the flat descriptor shape enforced by
+          <code>hovel.chain.schema.json</code> and the Go descriptor parser. They do
+          not contain <code>inputs</code>, <code>phases</code>, or per-step
+          <code>with</code> blocks. Chain and target configuration are string maps
+          reviewed before confirmation. The descriptor schema accepts
+          <code>module:</code>, <code>service:</code>, and <code>provider:</code>
+          step references, but the current one-shot throw path executes
+          <code>module:</code> steps.
+        </p>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: Chain
 metadata:
-  name: ssh-memory
+  name: ssh-memory-flow
 spec:
-  inputs:
-    target:
-      type: targetRef
-    payload:
-      type: payloadRef
-  phases:
-    - name: service_prepare
-      steps:
-        - id: start-lp
-          uses: service:sshplant-lp.start_listener
-          with:
-            bindHost: 127.0.0.1
-            bindPort: 0
-    - name: survey
-      steps:
-        - id: ssh-survey
-          uses: module:ssh-survey
-          with:
-            target: ${inputs.target}
-    - name: prepare
-      steps:
-        - id: resolve-payload
-          uses: provider:payload.resolve
-          with:
-            payload: ${inputs.payload}
-            facts: ${steps.ssh-survey.output.facts}
-            listener: ${steps.start-lp.output}
-    - name: deliver
-      steps:
-        - id: ssh-deliver
-          uses: module:ssh-deliver
-          with:
-            target: ${inputs.target}
-            payload: ${steps.resolve-payload.output}
-    - name: execute
-      steps:
-        - id: ssh-execute
-          uses: module:ssh-execute
-          with:
-            target: ${inputs.target}
-            delivered: ${steps.ssh-deliver.output}
-    - name: collect
-      steps:
-        - id: collect-artifacts
-          uses: module:artifact-collect
-    - name: service_cleanup
-      steps:
-        - id: stop-lp
-          uses: service:sshplant-lp.stop_listener
-          with:
-            listener: ${steps.start-lp.output}
+  mode: configured
+  steps:
+    - id: survey
+      uses: module:ssh-survey
+    - id: exploit
+      uses: module:ssh-memory@0.1.0
+  config:
+    operator.confirmed_lab: "true"
+    payload.transport: "ssh"
+  targets:
+    - id: ssh://10.41.32.2
+      config:
+        target.host: "10.41.32.2"
+        target.port: "22"
 </code></pre>
+        <p>
+          Capability-step chain files may add a <code>step</code> field to each
+          step. A throw that uses capability-step execution must declare
+          <code>step</code> on every step in the file, except for the current
+          Squatter TCP-bind bridge step.
+        </p>
         <p>A chain template records reusable workflow shape:</p>
         <ol>
-          <li>Chain identity and version.</li>
-          <li>Ordered phases and steps.</li>
+          <li>Chain identity. The schema accepts descriptor metadata such as version and description, but current command flows use <code>metadata.name</code> as the durable chain identity.</li>
+          <li>Ordered steps. The schema admits <code>module:</code>, <code>service:</code>, and <code>provider:</code> references; current one-shot throws execute <code>module:</code> references.</li>
           <li>Module references with resolved versions when available.</li>
-          <li>Chain-level and target-level configuration schema.</li>
-          <li>Expected providers, services, listeners, sessions, and artifacts when known.</li>
+          <li>Configuration schema is resolved from the referenced modules during validation and planning; it is not embedded in the current chain file shape.</li>
+          <li>Expected providers, services, listeners, sessions, and artifacts are planning outputs when known, not fields in the current chain descriptor.</li>
         </ol>
         <p>A configured chain file must contain enough information to reconstruct the review surface without relying on hidden prompt state. At minimum it records:</p>
         <ol>
@@ -338,8 +321,8 @@ spec:
           <li>Chain-level configured values.</li>
           <li>Target list.</li>
           <li>Per-target configuration values.</li>
-          <li>Risk and confirmation metadata produced by planning.</li>
         </ol>
+        <p>Risk review and confirmation metadata live in throw-plan and confirmation records, not in chain files.</p>
         <p>
           Payload plans include selected provider, selected payload query, target-scoped
           provider configuration, expected format and platform, compatibility facts, and
@@ -349,18 +332,18 @@ spec:
           recorded as events, artifacts, and installed-payload records.
         </p>
 
-        <h2>First Thrower Requirements</h2>
-        <p>The first thrower must support:</p>
+        <h2>Current Thrower Support</h2>
+        <p>The implemented thrower supports:</p>
         <ol>
           <li>Sequential steps.</li>
-          <li>Simple input and step-output references.</li>
+          <li>String chain and target configuration.</li>
+          <li>Capability-step input binding through declared module step contracts.</li>
           <li>Per-step status and logging.</li>
           <li>Artifact creation.</li>
           <li>Fact propagation as ordinary step output.</li>
           <li>Cancellation between steps.</li>
           <li>Persisted throw plans and throw records.</li>
           <li>Confirmation records, including prompt confirmations and <code>--now</code> bypass confirmations.</li>
-          <li>Service start/stop steps once the service manager milestone is complete.</li>
         </ol>
         <p><code>review</code> and <code>throw</code> share the same planning and review code path. <code>confirm</code> stops after recording a pre-confirmation. <code>review</code> always displays the reviewed plan, requires the operator to type <code>yes</code>, and records or refreshes the confirmation without starting execution. <code>throw</code> starts execution only after an existing confirmation, an inline typed <code>yes</code>, or an explicit <code>--now</code> bypass has produced a confirmation record.</p>
 

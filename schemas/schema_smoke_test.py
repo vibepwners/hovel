@@ -31,6 +31,10 @@ class SchemaSmokeTest(unittest.TestCase):
                     spec = schema["properties"]
                     self.assertEqual(spec["schemaVersion"]["const"], "hovel.event/v1alpha1")
                     self.assertEqual(spec["level"]["enum"], ["debug", "info", "warn", "error"])
+                    pattern = spec["type"]["pattern"]
+                    self.assertRegex("workspace.initialized", pattern)
+                    self.assertNotRegex("workspace initialized", pattern)
+                    self.assertNotRegex("module.mock-survey.log", pattern)
                     continue
                 self.assertIn("apiVersion", schema["required"])
                 self.assertIn("kind", schema["required"])
@@ -53,6 +57,7 @@ class SchemaSmokeTest(unittest.TestCase):
                 if schema["properties"]["kind"]["const"] == "ThrowPlan":
                     self.assertIn("confirmation", spec)
                     self.assertIn("now_bypass", schema["$defs"]["confirmation"]["properties"]["method"]["enum"])
+                    self.assertIn("reviewed_yes", schema["$defs"]["confirmation"]["properties"]["method"]["enum"])
 
     def test_contract_fixtures_match_schemas(self):
         schemas = {}

@@ -113,7 +113,7 @@ CleanupHandle
           <li>Preserve chain logs and throw records by operation.</li>
           <li>Keep findings, artifacts, and structured events tied to the operation that produced them.</li>
         </ol>
-        <p>An attached client can work inside one operation at a time. The operation state is daemon-owned shared state; the active chain selected by a CLI, TUI, REST, or MCP client is client-local attachment state.</p>
+        <p>An attached client can work inside one operation at a time. The operation state is daemon-owned shared state; the active chain selected by the implemented CLI or by future TUI, REST, or MCP clients is client-local attachment state.</p>
 
         <h2>Target</h2>
         <p>A target represents something the operator is authorized to test.</p>
@@ -151,6 +151,12 @@ payload_provider
 
         <h2>Service</h2>
         <p>A service is a long-lived or reusable capability managed by Hovel.</p>
+        <p>
+          Current source has service descriptor value objects and validation, but not a
+          general service discovery, launch, health-check, or stop runtime. Implemented
+          provider behavior is module-backed today; the service model below is the
+          target shape for longer-lived capabilities.
+        </p>
         <p>Service examples:</p>
         <ol>
           <li>Payload build service.</li>
@@ -182,7 +188,7 @@ SessionProvider
         <p>Payload generation is outside the Hovel core. Hovel resolves payload bytes through provider interfaces, tags them with declared metadata, records hashes and artifacts, then passes the bytes to the next module in the chain. When a payload provider or installing module reports a successful install, Hovel core validates the explicit install descriptor and persists the installed payload record in the workspace database.</p>
 
         <h2>Payload</h2>
-        <p>A payload is provider-described capability that can produce tagged bytes. The list of available payloads is discovered live from provider contracts in v1, not cached as durable workspace state.</p>
+        <p>A payload is provider-described capability that can produce tagged bytes. In the target provider model, available payloads are discovered live from provider contracts rather than cached as durable workspace state. In the current operator command path, <code>payloads available</code> lists configured payload-provider modules; Go provider modules already expose the richer <code>list_payloads</code> RPC method for provider integrations and contract tests.</p>
         <p>Initial payload kinds:</p>
 <pre data-lang="kinds"><code>shell
 shellcode
@@ -229,11 +235,10 @@ provider: squatter
 payloadId: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
 payloadVersion: 0.1.0
 state: installed
-target:
-  id: t1
-  address: 10.0.0.42
+target: 10.0.0.42
+targetId: t1
 transport: tcp-bind
-endpointSummary: 10.0.0.42:9101
+endpoint: 10.0.0.42:9101
 stampId: payload-stamp-uuid
 provenance:
   operationId: op-uuid
@@ -245,7 +250,7 @@ provenance:
 reconnect:
   providerId: squatter
   schema: squatter.reconnect.tcp_bind
-  schemaVersion: 1
+  schemaVersion: "1"
   descriptor: { "host": "10.0.0.42", "port": 9101 }
 </code></pre>
         <p>
@@ -340,13 +345,13 @@ cleanupHandles:
         </figure>
 
         <h2>Chain</h2>
-        <p>A chain is an operation-owned workflow record and an ordered graph of phases and steps. Chains are CRUD resources: operators can create, select, rename, inspect, list, and delete them through shared application services.</p>
+        <p>A chain is an operation-owned workflow record with ordered steps. Product docs may group those steps into conceptual phases, but the current stored chain model is step-based. Chains are CRUD resources: operators can create, select, rename, inspect, list, and delete them through shared application services.</p>
         <p>Chain definitions should be modular and loadable. They are collections of module references and chain-scoped configuration, not modules themselves.</p>
         <p>Chains do not own targets. Targets are operation-owned assets, and a throw binds a chain to targets at plan time from <code>--target</code>, <code>--target-set</code>, or the operation inventory. Chain records own ordered steps, chain-scoped configuration, and logs; target config follows the target across chains in the same operation.</p>
         <p>Chains also own their logging topic. The canonical topic shape is <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>. A front end only renders logs for the chain selected by its attachment, while daemon-side storage and the structured logging rail keep those logs available for other clients attached to the same operation and chain.</p>
-        <p>Typical phases:</p>
-        <figure class="diagram" aria-label="Typical chain phases from service preparation through service cleanup.">
-          <figcaption>Typical Chain Phases</figcaption>
+        <p>Conceptual workflow phases:</p>
+        <figure class="diagram" aria-label="Conceptual workflow phases from service preparation through service cleanup.">
+          <figcaption>Conceptual Workflow Phases</figcaption>
           <ol class="flow-diagram">
             <li class="flow-step">service_prepare</li>
             <li class="flow-step">survey</li>

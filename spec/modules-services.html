@@ -58,23 +58,28 @@
         <p>Modules and services are separate domain concepts with separate lifecycle expectations.</p>
 
         <h2>Module Runtime</h2>
-        <p>The MVP module runtime should optimize for Python implementation ergonomics and debuggability while keeping the protocol language-neutral.</p>
-        <p>Runtime types:</p>
-<pre data-lang="runtimes"><code>jsonrpc-stdio     MVP
-process-rpc       later
-go-binary-rpc     later
-rust-binary-rpc   later
-node-rpc          later
-</code></pre>
-        <p>MVP priority:</p>
-        <ol>
-          <li>Python-implemented modules using JSON-RPC over stdio.</li>
-          <li>In-tree modules that are discoverable by default but still load through the same descriptor and runtime paths as ordinary modules.</li>
-          <li>Generic process fallback only after the Python path is stable.</li>
-        </ol>
-        <p>The thrower must not have a private "native built-in" execution path for production modules. A module may live in the Hovel repository and feel built in to users because it is bundled or discoverable by default, but it should still use the same module catalog, descriptor, planning, validation, logging, event, artifact, and runtime contracts as third-party modules.</p>
-        <p>Mock exploit modules are test fixtures. They should stay benign, avoid real network exploitation, and exercise orchestration contracts. They are not part of the final shipped product catalog unless deliberately promoted as lab-only examples.</p>
-        <p>The host starts module processes, connects to them over a controlled channel, exchanges typed messages, receives structured logs, supervises lifecycle, and persists events.</p>
+        <p>
+          The implemented module runtime is <code>jsonrpc-stdio</code>. Every module is a
+          separate process that speaks Content-Length framed JSON-RPC 2.0 on
+          stdin/stdout. Python modules are launched with <code>python -m
+          &lt;module&gt;</code> from a configured <code>project_dir</code>; Go, Rust, Squatter,
+          and any other executable module are launched through an explicit
+          <code>command</code> argv.
+        </p>
+        <p>
+          This is the runtime boundary for all supported languages today. A module may
+          live in this repository and be bundled with the example catalog, but it still
+          goes through the same catalog loading, handshake, schema, execution, logging,
+          session, artifact, and installed-payload contracts as third-party modules.
+          Production modules should not rely on a private native built-in path.
+        </p>
+        <p>
+          The in-tree examples are deliberately benign and exercise the orchestration
+          surface: survey, exploit, and session modules exist in Python, Go, and Rust.
+          The Go and Rust examples plus the Squatter provider are built and staged into
+          <code>examples/bin/</code> by <code>task modules:build</code>; Python examples run
+          from source.
+        </p>
 
         <h2>Module Lifecycle</h2>
         <figure class="diagram" aria-label="Module lifecycle from discovery through shutdown.">
@@ -91,39 +96,60 @@ node-rpc          later
             <li class="flow-step">shutdown</li>
           </ol>
         </figure>
-        <p>Every module must provide or emulate:</p>
+        <p>Every module must provide:</p>
 <pre data-lang="rpc"><code>handshake() -&gt; ModuleInfo
 schema() -&gt; ModuleSchema
-execute(request: ExecuteRequest) -&gt; ExecuteResult
+execute(request: ExecuteRequest) -&gt; ModuleResult
 shutdown() -&gt; ShutdownResult
 </code></pre>
-        <p>Optional methods:</p>
-<pre data-lang="rpc"><code>plan(request: PlanRequest) -&gt; PlanResult
-validate(request: ValidateRequest) -&gt; ValidateResult
-cancel(request: CancelRequest) -&gt; CancelResult
-stream() -&gt; EventStream
-</code></pre>
         <p>
-          Payload-provider modules share this lifecycle and expose their orchestration
-          surface through generic step methods over the same JSON-RPC stdio channel.
-          Hovel uses those methods to learn live step contracts, prepare pure local
-          values, generate per-target payload artifacts after confirmation, connect
-          sessions through declared connector steps, and clean up durable handles. Install
-          steps and legacy execute paths may return explicit installed-payload
-          descriptors. Hovel core validates those descriptors and persists workspace
-          inventory; the provider owns only payload-specific reconnect and cleanup
-          metadata. The first core design is
-          <a href="squatter-payload-provider.html">Squatter Payload Provider</a>.
+          Session-capable SDKs also implement <code>session/write</code>,
+          <code>session/read</code>, and <code>session/close</code>. During catalog
+          inspection, Hovel calls <code>handshake</code>, <code>schema</code>, and
+          <code>step.describe</code>. SDKs that do not expose step contracts either return
+          an empty step set or a missing-step-provider JSON-RPC error; the runner treats
+          both as an ordinary non-step module.
+        </p>
+        <p>
+          Step-provider modules share the base lifecycle and add generic step methods
+          over the same JSON-RPC stdio channel. Hovel uses those methods to learn live
+          step contracts, prepare pure local values, execute confirmed steps, and clean
+          up durable handles. Go and Python implement this step surface today; Rust does
+          not yet dispatch <code>step.*</code> methods.
         </p>
 <pre data-lang="rpc"><code>step.describe() -&gt; StepContractSet
 step.prepare(request) -&gt; StepPrepareResult
 step.execute(request) -&gt; StepExecuteResult
 step.cleanup(request) -&gt; StepCleanupResult
 </code></pre>
+        <p>
+          Payload providers may also expose provider-specific RPC methods. The Go SDK is
+          the complete provider surface today:
+        </p>
+<pre data-lang="rpc"><code>list_payloads(query) -&gt; []PayloadInfo
+resolve_payload(query) -&gt; PayloadInfo
+prepare_listener(request) -&gt; ListenerRef
+generate_payload(request) -&gt; PayloadArtifactSet
+connect_session(request) -&gt; SessionRef
+cleanup_payload(request) -&gt; CleanupResult
+read_payload_chunk(request) -&gt; PayloadChunk
+</code></pre>
+        <p>
+          Install steps and ordinary <code>execute</code> paths may return explicit
+          installed-payload descriptors. Hovel core validates those descriptors and
+          persists workspace inventory; the provider owns only payload-specific
+          reconnect and cleanup metadata. The first core design is
+          <a href="squatter-payload-provider.html">Squatter Payload Provider</a>.
+        </p>
 
         <h2>Service Runtime</h2>
-        <p>Services are long-lived capabilities managed by Hovel.</p>
-        <p>A service may be:</p>
+        <p>
+          Services are long-lived capabilities in the domain model. Service descriptors
+          and validation exist today; a general external service process runtime remains
+          design work. Current provider behavior that operators can exercise is exposed
+          through module RPC, especially Go payload-provider modules.
+        </p>
+        <p>A future service process may be:</p>
         <ol>
           <li>Built into the Go host.</li>
           <li>A Go binary launched by Hovel.</li>
@@ -132,9 +158,14 @@ step.cleanup(request) -&gt; StepCleanupResult
           <li>A pre-existing process Hovel connects to.</li>
           <li>A future remote service.</li>
         </ol>
-        <p>Services expose typed operations to the Hovel engine.</p>
+        <p>Future service processes should expose typed operations to the Hovel engine.</p>
 
         <h2>Service Lifecycle</h2>
+        <p>
+          The lifecycle below is the target model for a future external service
+          runtime. The current repository validates service descriptors but does not
+          discover, launch, health-check, or stop general service processes.
+        </p>
         <figure class="diagram" aria-label="Service lifecycle from discovery through cleanup.">
           <figcaption>Service Lifecycle</figcaption>
           <ol class="flow-diagram">
@@ -172,24 +203,20 @@ run_scoped   started for one run and stopped after cleanup
 workspace    started with workspace or daemon
 external     Hovel connects to an already running service
 </code></pre>
-        <p>Every service must implement or emulate:</p>
+        <p>A future service process runtime should implement or emulate:</p>
 <pre data-lang="rpc"><code>handshake() -&gt; ServiceInfo
 schema() -&gt; ServiceSchema
 start(request: StartRequest) -&gt; StartResult
 health() -&gt; HealthResult
 stop(request: StopRequest) -&gt; StopResult
 </code></pre>
-        <p>Provider services additionally implement typed operations for their resource kind.</p>
-        <p>Payload provider service operations:</p>
-<pre data-lang="rpc"><code>describe_steps() -&gt; StepContractSet
-prepare_step(request) -&gt; StepPrepareResult
-execute_step(request) -&gt; StepExecuteResult
-cleanup_step(request) -&gt; StepCleanupResult
-list_payloads(query) -&gt; []PayloadInfo
-resolve_payload(query) -&gt; PayloadInfo
-connect_session(request) -&gt; SessionRef
-cleanup_payload(request) -&gt; CleanupResult
-</code></pre>
+        <p>
+          Service process management is not the same implemented path as module
+          execution. Provider behavior that is available in the current tree is exposed
+          through module RPC, especially the Go <code>PayloadProvider</code> interface and
+          the in-tree Squatter provider command.
+        </p>
+        <p>Future provider services may additionally implement typed operations for their resource kind.</p>
         <p>Listener service methods:</p>
 <pre data-lang="rpc"><code>start_listener(request) -&gt; ListenerRef
 stop_listener(listenerRef) -&gt; StopResult
@@ -199,96 +226,111 @@ close_session(sessionRef) -&gt; CloseResult
 </code></pre>
 
         <h2>Protocol Position</h2>
-        <p>The first protocol should optimize for simplicity and observability.</p>
-        <p>Recommended MVP:</p>
-        <ol>
-          <li>JSON-RPC over stdio for modules implemented in Python.</li>
-          <li>A small shared envelope for logs, events, requests, and responses.</li>
-          <li>Contract tests before broad runtime support.</li>
-          <li>gRPC or socket-based protocols only after contracts settle.</li>
-        </ol>
-        <p>Module and service processes may eventually share one protocol, but that should not be assumed before contract tests prove the common lifecycle and event needs. The JSON-RPC stdio module contract should harden first.</p>
-        <p>MVP stdio framing:</p>
+        <p>
+          The implemented module protocol optimizes for simplicity and observability.
+          JSON-RPC over stdio is already shared by Python, Go, Rust, and the Squatter
+          provider; future socket or service protocols should not change the module
+          authoring contract without new contract tests and updated SDK guides.
+        </p>
+        <p>Stdio framing rules:</p>
         <ol>
           <li>Use UTF-8 JSON-RPC 2.0 messages.</li>
           <li>Frame each message with an LSP-style <code>Content-Length: &lt;bytes&gt;\r\n\r\n</code> header.</li>
           <li>Reserve stdout exclusively for framed protocol messages.</li>
-          <li>Capture Python <code>print()</code>, <code>logging</code>, and stderr in the SDK and forward them as structured log events.</li>
-          <li>Treat malformed frames, unexpected stdout bytes, and protocol timeouts as module failures with persisted events.</li>
-          <li>Support host-to-module cancellation as a JSON-RPC notification.</li>
-          <li>Add a lightweight heartbeat or health request before supporting long-running modules.</li>
+          <li>Forward SDK logs as <code>module/log</code> notifications; do not print progress to stdout.</li>
+          <li>Capture stderr as process diagnostics for startup, schema, execution, and shutdown failures.</li>
+          <li>Treat malformed frames, unexpected stdout bytes, and protocol timeouts as module failures.</li>
+          <li>Host-to-module notifications such as <code>cancel</code> are best-effort; process teardown remains host-owned.</li>
         </ol>
         <p>Do not use the same byte stream for both RPC frames and arbitrary module output. Modules that write arbitrary bytes directly to file descriptor 1 are incompatible with stdio RPC and should use a later process mode or a dedicated side-channel transport.</p>
 
-        <h2>Python SDK</h2>
-        <p>Python module authors should not have to know about RPC. They should write normal Python with a tiny Hovel SDK surface area.</p>
-        <p>Minimal module:</p>
-<pre data-lang="python"><code>from hovel_sdk import module, Context, Result
-
-@module(name="hello", version="0.1.0", module_type="survey")
-def run(ctx: Context) -&gt; Result:
-    ctx.log.info("hello from module")
-    return Result.ok({"message": "done"})
-</code></pre>
-        <p>Class-based module:</p>
+        <h2>Language SDKs</h2>
+        <p>
+          Module authors use the language guide for their implementation language. All
+          three SDKs expose the same base lifecycle under language-appropriate names.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Language</th>
+              <th>Authoring shape</th>
+              <th>Launch shape</th>
+              <th>Examples</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><a href="module-python.html">Python</a></td>
+              <td>Subclass <code>HovelModule</code>; implement sync or async <code>run</code>.</td>
+              <td><code>project_dir</code> plus <code>module</code>; launched as <code>python -m &lt;module&gt;</code>.</td>
+              <td><code>examples/python/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
+            </tr>
+            <tr>
+              <td><a href="module-go.html">Go</a></td>
+              <td>Implement <code>hovel.Module</code>; optionally <code>StepProvider</code> or <code>PayloadProvider</code>.</td>
+              <td><code>command</code> entry pointing at a staged binary.</td>
+              <td><code>examples/go/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
+            </tr>
+            <tr>
+              <td><a href="module-rust.html">Rust</a></td>
+              <td>Implement the <code>hovel::Module</code> trait and return <code>Outcome</code>.</td>
+              <td><code>command</code> entry pointing at a staged binary.</td>
+              <td><code>examples/rust/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
+            </tr>
+          </tbody>
+        </table>
+        <p>Minimal Python shape:</p>
 <pre data-lang="python"><code>from hovel_sdk import HovelModule, Context, Result
 
-class SSHMemoryModule(HovelModule):
-    name = "ssh-memory"
+class HelloModule(HovelModule):
+    name = "hello"
     version = "0.1.0"
-    module_type = "exploit"
+    module_type = "survey"
 
     def run(self, ctx: Context) -&gt; Result:
-        target = ctx.input("target")
-        payload = ctx.providers.payload.resolve(ctx.input("payload"))
-        ctx.log.info("resolved payload", extra={"payload": payload.name})
-        return Result.ok({"target": target})
+        ctx.log.info("hello from module", extra={"target": ctx.target})
+        return Result.ok({"target": ctx.target})
 </code></pre>
-        <p>Service author experience:</p>
-<pre data-lang="python"><code>from hovel_sdk import service, ServiceContext
+        <p>
+          The Python SDK does not expose decorator-based module or service APIs. Use
+          <code>HovelModule</code>, class attributes, and <code>serve(MyModule())</code>.
+          Go and Rust equivalents are documented in their language pages.
+        </p>
 
-@service(name="picblob-provider")
-class PicBlobProvider:
-    def generate_payload(self, ctx: ServiceContext, req):
-        ctx.log.info("generating PIC payload", extra={"arch": req.arch})
-        blob = build_blob(req)
-        return ctx.payloads.bytes(blob, kind="pic", arch=req.arch)
-</code></pre>
-
-        <h2>Python Packaging</h2>
-        <p>Supported packaging options:</p>
-        <ol>
-          <li>Source directory with <code>pyproject.toml</code>.</li>
-          <li>PEX file.</li>
-          <li>Zipapp/pyz.</li>
-          <li>Installed Python package.</li>
-          <li>Arbitrary command.</li>
-        </ol>
-        <p>Recommended sequence:</p>
-        <ol>
-          <li>Start with local source modules and services.</li>
-          <li>Add PEX support for dependency isolation.</li>
-          <li>Add broader package discovery after the descriptor schema is stable.</li>
-        </ol>
-        <p>Descriptor examples:</p>
-<pre data-lang="yaml"><code>runtime:
-  type: jsonrpc-stdio
-  packaging: source
-  entrypoint: python -m hovel_ssh_memory
-</code></pre>
-<pre data-lang="yaml"><code>runtime:
-  type: jsonrpc-stdio
-  packaging: pex
-  entrypoint: hovel_picblob_service:main
-</code></pre>
+        <h2>Registration</h2>
+        <p>
+          Runtime registration for the current daemon comes from the JSON module config
+          pointed to by <code>HOVEL_MODULE_CONFIG</code>. Paths are resolved relative to
+          that config file.
+        </p>
+<pre data-lang="json"><code>{
+  "modules": [
+    {
+      "id": "hello-python",
+      "runtime": "jsonrpc-stdio",
+      "project_dir": "python/hello",
+      "module": "hovel_hello"
+    },
+    {
+      "id": "hello-go",
+      "runtime": "jsonrpc-stdio",
+      "command": ["bin/hello-go"]
+    }
+  ]
+}</code></pre>
 
         <h2>Logging</h2>
-        <p>The Python SDK must install a logging handler that forwards structured logs to the host.</p>
+        <p>The Python SDK installs a logging handler when <code>serve</code> starts. It forwards standard Python log records to the host as <code>module/log</code> notifications.</p>
 <pre data-lang="python"><code>from hovel_sdk import setup_logging
 
 setup_logging()
 </code></pre>
-        <p>If a module uses the <code>@module</code> decorator, <code>@service</code> decorator, or Hovel entrypoint, logging setup should happen automatically.</p>
+        <p>
+          Calling <code>setup_logging</code> manually is only needed for custom harnesses.
+          In normal modules, prefer <code>ctx.log</code> or standard logging after
+          <code>serve</code> is running. Go modules use <code>ctx.Log</code>; Rust modules
+          use <code>ctx.info</code> and <code>ctx.error</code>.
+        </p>
       </article>
 
       <nav class="page-nav">

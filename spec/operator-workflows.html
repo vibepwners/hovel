@@ -57,13 +57,13 @@
         <h1>Operator Workflows</h1>
 
         <p>The operation is the root object of operator work. A chain is the throw path inside that operation: it is the shared workspace where clients collaborate, add modules, validate readiness, and throw against operation-owned targets.</p>
-        <p>An entity is any actor connected to <code>hoveld</code>: a human operator in <code>cli</code>, a TUI session, an MCP client, an AI agent, or another authorized user. Multiple entities may attach to the same operation. Each attachment has its own active chain, while chain state, operation target inventory, target sets, configuration, steps, and logs are daemon-owned shared state.</p>
+        <p>An entity is any actor connected to <code>hoveld</code>: a human operator in the implemented <code>cli</code>, a future TUI session, a future MCP client, an AI agent, or another authorized user. Multiple entities may attach to the same operation. Each attachment has its own active chain, while chain state, operation target inventory, target sets, configuration, steps, and logs are daemon-owned shared state.</p>
 
         <h2>Operation Collaboration</h2>
         <p>Every chain owns an operation-scoped log topic:</p>
 <pre data-lang="topic"><code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs
 </code></pre>
-        <p>Every entity attached to the same operation and chain subscribes to the same topic. A log statement for a chain change must be visible to every connected CLI, TUI, and MCP client attached to that chain, but clients working other chains should not receive it by default.</p>
+        <p>Every entity attached to the same operation and chain subscribes to the same topic. A log statement for a chain change must be visible to every connected CLI client and, once implemented, every TUI and MCP client attached to that chain, but clients working other chains should not receive it by default.</p>
         <p>Client-local attachment state:</p>
         <ol>
           <li>Attached operation.</li>
@@ -95,7 +95,7 @@
           <li>Exploit step started, completed, or failed.</li>
           <li>Finding, artifact, structured event, or throw result emitted.</li>
         </ol>
-        <p>The CLI should render this as a live transcript. The TUI should render the same topic in a log panel. MCP should expose the same stream through a tool or resource optimized for agents.</p>
+        <p>The CLI should render this as a live transcript. The future TUI should render the same topic in a log panel. Future MCP should expose the same stream through a tool or resource optimized for agents.</p>
 
         <h2>Throw Transcript</h2>
         <p>A throw should look like a live operator transcript, not a JSON blob. The transcript is a terminal rendering of structured log events; JSON, RPC, MCP, files, the CLI, and the eventual TUI must consume the same typed event model rather than parsing terminal text.</p>
@@ -162,7 +162,7 @@ payload_provider
           <li>Safety labels.</li>
           <li>Enabled or disabled state.</li>
         </ol>
-        <p>Initial commands:</p>
+        <p>Implemented commands:</p>
 <pre data-lang="commands"><code>module list
 module list --type survey
 module inspect &lt;module-id&gt;
@@ -171,13 +171,11 @@ module search &lt;query&gt;
 
         <h2>Chain Steps</h2>
         <p>Chains contain ordered steps. A step usually references a module from the module database.</p>
-        <p>Initial CLI commands:</p>
+        <p>Implemented commands:</p>
 <pre data-lang="commands"><code>chain add &lt;module-id&gt;
-chain remove &lt;step-id&gt;
-chain move &lt;step-id&gt; --before &lt;step-id&gt;
 chain inspect
 </code></pre>
-        <p>Adding a module logs to the chain topic. Removing or reordering a step also logs to the chain topic. Step IDs must be stable so validation errors, logs, and UI selection can point at a specific item.</p>
+        <p>Adding a module logs to the chain topic. Removing or reordering a step is a planned editing capability, not a current registry command. When step editing lands, those mutations must also log to the chain topic. Step IDs must be stable so validation errors, logs, and UI selection can point at a specific item.</p>
         <p>Payload providers must also be visible as chain steps. Operators should add Squatter explicitly with <code>chain add squatter.bind</code> rather than configuring low-level payload file paths on every target. For the current Etro-to-Squatter TCP bind slice, that step contributes chain-scoped Squatter settings such as <code>squatter.bind_port</code> and optional <code>squatter.remote_path</code>. During planning Hovel derives the ETRO install inputs for each selected target from that step, including the staged local payload path, optional fixed remote path, bind port, and SMB transport port. When no fixed remote path is configured, Etro generates a fresh target path during execution and records it in the result artifact.</p>
 
         <h2>Configuration</h2>
@@ -219,7 +217,7 @@ map&lt;string,string&gt;
           <li>Validation rule.</li>
           <li>Scope: <code>chain</code> or <code>target</code>.</li>
         </ol>
-        <p>Initial commands:</p>
+        <p>Implemented commands:</p>
 <pre data-lang="commands"><code>config set &lt;key&gt; &lt;value&gt;
 config unset &lt;key&gt;
 config list
@@ -235,7 +233,7 @@ target set remove &lt;name&gt; &lt;target&gt;
 target set list
 target set inspect &lt;name&gt;
 </code></pre>
-        <p><code>config interactive</code> is a guided CLI workflow implemented inside the existing go-prompt loop and backed by the canonical <code>chain config interactive</code> command. It first renders the current chain and target configuration as a numbered menu, then changes the prompt into config-selection mode with completions for editable items, continue, and cancel. When the operator continues, Hovel changes the prompt into config-value mode, offers type-aware completions where possible, walks the remaining required chain and per-target keys, validates each typed value as it is entered, and repeats until all required configuration is set or an unfixable validation issue remains.</p>
+        <p><code>config interactive</code> is the active-chain alias for the CLI-only <code>chain config interactive</code> wizard. It is implemented inside the existing go-prompt loop and uses the same session mutation path as <code>chain config set</code> and <code>target config set</code>. It first renders the current chain and target configuration as a numbered menu, then changes the prompt into config-selection mode with completions for editable items, continue, and cancel. When the operator continues, Hovel changes the prompt into config-value mode, offers type-aware completions where possible, walks the remaining required chain and per-target keys, validates each typed value as it is entered, and repeats until all required configuration is set or an unfixable validation issue remains.</p>
 
         <h2>Validation</h2>
         <p><code>chain validate</code> checks whether the active chain is ready to throw.</p>
@@ -265,17 +263,17 @@ target set inspect &lt;name&gt;
           payload commands answer what is available or installed; session commands answer
           what is connected now.
         </p>
-        <p>Initial commands:</p>
+        <p>Implemented commands:</p>
 <pre data-lang="commands"><code>payloads available
 payloads available --json
 payloads installed
 payloads installed --all
 payloads installed --state installed|connected|unreachable|removed
-payloads inspect &lt;payload-id&gt;
-payloads connect &lt;payload-id&gt;
-payloads refresh &lt;payload-id&gt;
-payloads cleanup &lt;payload-id&gt;
-payloads mark-removed &lt;payload-id&gt;
+payloads inspect &lt;payload-id&gt; [--events] [--json]
+payloads connect &lt;payload-id&gt; [--json]
+payloads refresh &lt;payload-id&gt; [--json]
+payloads cleanup &lt;payload-id&gt; [--reason &lt;reason&gt;] [--json]
+payloads mark-removed &lt;payload-id&gt; [--reason &lt;reason&gt;] [--json]
 </code></pre>
         <p>
           Installed payload IDs use short operator-facing handles such as
@@ -288,10 +286,13 @@ payloads mark-removed &lt;payload-id&gt;
           an explicit removed-state filter.
         </p>
         <p>
-          <code>payloads available</code> uses live provider discovery in v1. It does not
-          cache provider metadata in SQLite. <code>payloads installed</code> is a local
-          database read and does not probe targets by default. <code>payloads refresh</code>
-          and <code>payloads connect</code> ask the current provider to validate and use
+          <code>payloads available</code> currently lists configured
+          <code>payload_provider</code> modules from the live module catalog; the Go
+          provider RPC surface also defines <code>list_payloads</code> for richer provider
+          discovery. <code>payloads installed</code> is a local database read and does not
+          probe targets by default. <code>payloads refresh</code> is implemented as a
+          record-preserving command today; provider-backed validation is still a planned
+          behavior. <code>payloads connect</code> asks the current provider module to use
           the stored reconnect descriptor; if the provider is missing or incompatible,
           the record remains visible with reconnect marked unavailable.
         </p>
@@ -305,14 +306,38 @@ payloads mark-removed &lt;payload-id&gt;
         </p>
         <p>
           Cleanup has two explicit paths. <code>payloads cleanup &lt;payload-id&gt;</code>
-          asks the provider to remove target-side state and marks the record
-          <code>removed</code> only on success. <code>payloads mark-removed
-          &lt;payload-id&gt;</code> records operator bookkeeping when the payload is already
-          gone or the target was rebuilt.
+          is the planned provider-executed removal path. The Go provider RPC surface
+          implements <code>cleanup_payload</code>, but the current commandmode provider
+          cleanup service is not wired yet and returns an explicit error directing the
+          operator to <code>payloads mark-removed</code> after manual cleanup.
+          <code>payloads mark-removed &lt;payload-id&gt;</code> records operator bookkeeping
+          when the payload is already gone or the target was rebuilt.
+        </p>
+        <p>
+          Commands that read or mutate installed payload records accept
+          <code>--workspace</code> for explicit workspace selection. <code>payloads
+          inspect --events</code> includes the installed-payload state-change history.
+          Singular <code>payload ...</code> aliases exist for the implemented command
+          paths.
+        </p>
+
+        <h2>Artifact Commands</h2>
+        <p>
+          The <code>artifact</code> command suite is the operator surface for
+          materialized artifact records produced by throws, payload generation, and
+          module execution.
+        </p>
+<pre data-lang="commands"><code>artifact list [--workspace &lt;path&gt;] [--json]
+artifact inspect &lt;artifact-id&gt; [--workspace &lt;path&gt;] [--json]
+</code></pre>
+        <p>
+          Artifact commands are read-only in the current registry. They inspect the
+          workspace's recorded artifact metadata and support plural
+          <code>artifacts ...</code> aliases for the implemented command paths.
         </p>
 
         <h2>Post-Exploitation Sessions (MSF-Style)</h2>
-        <p>Hovel should treat post-exploitation access as a first-class operation object, not an ad-hoc log line. A successful exploit step may open zero, one, or many sessions. Sessions should be stable, interactive, resumable, and automatable across CLI, TUI, and MCP.</p>
+        <p>Hovel should treat post-exploitation access as a first-class operation object, not an ad-hoc log line. A successful exploit step may open zero, one, or many sessions. Sessions should be stable, interactive, resumable, and automatable across CLI and future TUI and MCP adapters.</p>
 
         <h3>Session Goals</h3>
         <ol>
@@ -339,16 +364,26 @@ payloads mark-removed &lt;payload-id&gt;
         </ol>
 
         <h3>Session Control Plane</h3>
-        <p>Initial operator commands:</p>
+        <p>Implemented operator commands:</p>
 <pre data-lang="commands"><code>session list
-session inspect &lt;session-id&gt;
-session use &lt;session-id&gt;
-session background
-session close &lt;session-id&gt;
-session rename &lt;session-id&gt; &lt;name&gt;
-session tag add &lt;session-id&gt; &lt;tag&gt;
-session tag remove &lt;session-id&gt; &lt;tag&gt;
+session connect &lt;session-id&gt; [--history-lines &lt;n&gt;|--history-bytes &lt;n&gt;|--no-history]
+session tail &lt;session-id&gt; [--lines &lt;n&gt;|--bytes &lt;n&gt;] [--json]
+session read &lt;session-id&gt; [--tail] [--json]
+session send &lt;session-id&gt; &lt;data&gt; [--end &lt;terminator&gt;|--no-newline] [--json]
+session close &lt;session-id&gt; [--json]
 </code></pre>
+        <p>
+          <code>session connect</code> is implemented by the interactive CLI attach loop;
+          invoking it through non-interactive commandmode returns an explicit message
+          telling the operator to use <code>hovel cli</code>. It prints recent history by
+          default, supports byte or line history limits, and detaches on Ctrl-].
+          <code>session tail</code> prints recent transcript output without attaching.
+          <code>session read --tail</code> streams until close or interruption.
+          <code>session send</code> appends a newline by default; use
+          <code>--no-newline</code> or <code>--end</code> for exact terminators. The
+          <code>session write</code> alias maps to <code>session send</code>.
+        </p>
+        <p><code>session inspect</code>, <code>session use</code>, <code>session background</code>, <code>session rename</code>, and session tagging are future control-plane goals rather than current registry commands.</p>
         <p>Control-plane requirements:</p>
         <ol>
           <li>Session attach/detach is explicit and logged.</li>
@@ -388,7 +423,7 @@ session tag remove &lt;session-id&gt; &lt;tag&gt;
           <li>A successful exploit reliably emits discoverable session objects within one command (<code>session list</code>).</li>
           <li>Detach/reattach is lossless for context and transcript.</li>
           <li>A second operator can safely observe or take over a session with auditable state transitions.</li>
-          <li>Session APIs are identical across CLI/TUI/MCP, with only presentation differences.</li>
+          <li>Session APIs are identical across CLI and future TUI/MCP adapters, with only presentation differences.</li>
           <li>Module authors can add session support by emitting typed events and passing contract tests.</li>
         </ol>
 

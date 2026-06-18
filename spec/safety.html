@@ -70,23 +70,25 @@
         <ol>
           <li>Every throw must start from a persisted throw plan.</li>
           <li>Starting a throw must require an explicit recorded confirmation that the plan was reviewed. In interactive flows this means the operator saw the final configuration and typed <code>yes</code>, or deliberately used <code>throw --now</code>.</li>
-          <li>Throws must record operator intent, inputs, target IDs, timestamps, module versions, service versions, payload hashes, installed payload descriptors, artifacts, structured events, and errors.</li>
+          <li>Throws must record operator intent, reviewed configuration, target IDs, timestamps, module references, installed payload descriptors, materialized artifact hashes, structured events, and errors. Resolved service versions and richer risk labels are planned audit fields once those source paths emit them.</li>
           <li>Public modules should avoid destructive behavior by default.</li>
-          <li>Workspace config should support an explicit <code>allowDangerousModules</code> gate.</li>
+          <li>The current throw path blocks modules tagged <code>dangerous</code> unless the operator passes <code>--allow-dangerous</code>. A durable workspace-level <code>allowDangerousModules</code> policy is planned but not implemented.</li>
           <li>Listeners binding beyond localhost should require explicit configuration.</li>
           <li>MCP execution tools should require the same validation and audit trail as CLI and REST execution.</li>
           <li>Artifacts should be content-addressed or hash-tracked.</li>
-          <li>Chain cleanup steps should be visible and evented.</li>
-          <li>Throw plans should surface risk labels, external binds, file writes, credential use, network reachability, and cleanup behavior before execution.</li>
+          <li>Implemented cleanup surfaces, such as installed-payload state changes, should be visible and evented. General chain cleanup-step orchestration remains target design.</li>
+          <li>Current throw plans surface the reviewed chain, target, module/step, and configuration snapshot. Future planning should add explicit risk labels, external binds, file writes, credential use, network reachability, and cleanup behavior before execution.</li>
           <li>Modules should have maximum practical optionality to perform validation, survey, compatibility checks, and target-specific safety checks before performing work.</li>
         </ol>
         <p>
           Core payload providers with post-exploitation capabilities, including
           <a href="squatter-payload-provider.html">Squatter</a>, must carry the
-          <code>dangerous</code> tag when they participate in throws. Their review output
-          should surface payload capabilities, transport, whether communication is
-          encrypted, listener or post-connect behavior, and produced payload artifact
-          hashes, installed payload handles, reconnect behavior, and cleanup handles.
+          <code>dangerous</code> tag when they participate in throws. The current guardrail
+          enforces that tag through <code>--allow-dangerous</code>. Review output should grow
+          to surface payload capabilities, transport, whether communication is
+          encrypted, listener or post-connect behavior, produced payload artifact
+          hashes, installed payload handles, reconnect behavior, and cleanup handles as
+          those planning fields become source-backed.
         </p>
         <p>
           Installed payload inventory is an audit surface. Hovel must create or update it

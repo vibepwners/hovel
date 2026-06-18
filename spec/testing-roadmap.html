@@ -65,8 +65,8 @@
           <li>Application service tests.</li>
           <li>Adapter tests with fake services.</li>
           <li>Module protocol contract tests.</li>
-          <li>Service protocol contract tests.</li>
-          <li>Supervisor tests.</li>
+          <li>Service protocol contract tests once the general service process runtime exists.</li>
+          <li>Supervisor tests for daemon and module process ownership, plus service supervision when that runtime lands.</li>
           <li>Golden tests for one-shot chain-file output.</li>
           <li>CLI prompt model, completion, and render tests.</li>
           <li>TUI model/update tests.</li>
@@ -77,9 +77,9 @@
         <ol>
           <li>Logging handler tests.</li>
           <li>RPC protocol tests.</li>
-          <li>Decorator and class module tests.</li>
-          <li>Service decorator tests.</li>
-          <li>Provider client tests.</li>
+          <li><code>HovelModule</code> metadata, schema, and class-attribute tests.</li>
+          <li>Step hook dispatch tests for <code>step.describe</code>, <code>step.prepare</code>, <code>step.execute</code>, and <code>step.cleanup</code>.</li>
+          <li>Session and installed-payload descriptor serialization tests.</li>
           <li>Packaging tests.</li>
         </ol>
 
@@ -90,7 +90,7 @@
           <li>Module handshakes.</li>
           <li>Module emits logs.</li>
           <li>Module returns result.</li>
-          <li>Host captures stdout, stderr, and logging as structured events.</li>
+          <li>Host treats module stdout as the framed RPC transport, records SDK <code>module/log</code> notifications as structured events, and preserves stderr as failure diagnostics.</li>
           <li>Host records malformed protocol output as a failed module execution.</li>
           <li>One-shot chain-file execution displays throw results.</li>
           <li><code>hovel</code> starts or attaches to <code>hoveld</code>.</li>
@@ -133,6 +133,7 @@ Python SDK: 85%+
 </code></pre>
 
         <h2>Milestones</h2>
+        <p>The milestone list is a planning roadmap, not a live feature matrix. Some later slices are already present in source, while service lifecycle management, the TUI, REST, MCP, and richer chain-control features remain future work.</p>
 
         <h3>Milestone 1: Skeleton</h3>
         <ol>
@@ -229,21 +230,21 @@ Python SDK: 85%+
         <h2>Hard Rules</h2>
         <ol>
           <li><code>cli</code> and one-shot chain-file execution first, TUI second.</li>
-          <li><code>hoveld</code> is mandatory and owns operations, chains, throws, services, modules, structured events, providers, installed payload inventory, artifacts, and sessions.</li>
+          <li><code>hoveld</code> is mandatory and owns operations, chains, throws, module processes, structured events, module-backed providers, installed payload inventory, artifacts, and sessions. General service lifecycle ownership starts when the service runtime lands.</li>
           <li>TUI calls application services only.</li>
           <li>MCP calls application services only.</li>
           <li>REST calls application services only.</li>
           <li>MCP has eventual operator parity through the same guardrail and audit model.</li>
           <li>Throw execution requires a persisted plan and confirmation record.</li>
           <li>Python module authors should not need to see transport internals.</li>
-          <li>Python service authors should not need to see transport internals.</li>
+          <li>Future Python service authors should not need to see transport internals.</li>
           <li>All module logs flow through the host.</li>
-          <li>All service logs flow through the host.</li>
+          <li>All future service logs flow through the host.</li>
           <li>Providers are typed.</li>
           <li>First-slice providers are artifact and payload only.</li>
           <li>Payload provider outputs are tagged bytes with minimal framework validation.</li>
           <li>Installed payload records are created only from explicit descriptors and persisted by Hovel core.</li>
-          <li>Services are lifecycle-managed.</li>
+          <li>Services are lifecycle-managed once the service runtime lands.</li>
           <li>Payloads are content-addressed or hash-tracked.</li>
           <li>Chain throws are replay-inspectable.</li>
           <li>Public demos are authorized and lab-safe.</li>
