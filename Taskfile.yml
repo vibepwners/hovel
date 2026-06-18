@@ -191,11 +191,14 @@ tasks:
       - task: squatter:clang-tidy
 
   squatter:test:wine:
-    desc: Run Squatter Windows C++ tests under Wine.
+    desc: Run Squatter Windows C++ and functional tests under Wine.
     cmds:
       - task: test
         vars:
           CLI_ARGS: --config=win64 //payloads/squatter/tests/...
+      - task: test
+        vars:
+          CLI_ARGS: --test_env=HOVEL_SQUATTER_REQUIRE_WINE=1 //payloads/squatter/client/functest:functest_test
 
   squatter:format:
     desc: Format Squatter C sources with clang-format.

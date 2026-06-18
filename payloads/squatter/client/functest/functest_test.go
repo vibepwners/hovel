@@ -79,15 +79,30 @@ func waitListen(port int, timeout time.Duration) bool {
 	return false
 }
 
+func findWine() (string, error) {
+	if override := os.Getenv("HOVEL_SQUATTER_WINE"); override != "" {
+		if _, err := os.Stat(override); err != nil {
+			return "", err
+		}
+		return override, nil
+	}
+	return exec.LookPath("wine")
+}
+
 func TestMain(m *testing.M) {
 	exe, err := findSquatter()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot find squatter.exe:", err)
 		os.Exit(2)
 	}
-	wine, err := exec.LookPath("wine")
+	wine, err := findWine()
 	if err != nil {
-		wine = "/usr/bin/wine"
+		if os.Getenv("HOVEL_SQUATTER_REQUIRE_WINE") != "" {
+			fmt.Fprintln(os.Stderr, "wine is required for squatter functest:", err)
+			os.Exit(2)
+		}
+		fmt.Fprintln(os.Stderr, "skipping squatter functest: wine not found")
+		os.Exit(0)
 	}
 
 	serverDir, err = os.MkdirTemp("", "sq-functest-srv")
