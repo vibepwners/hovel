@@ -1,0 +1,22 @@
+stages:
+  - docs
+
+pages:
+  image: ubuntu:24.04
+  stage: docs
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends ca-certificates curl python3 unzip
+    - curl -fsSL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/download/v1.25.0/bazelisk-linux-amd64
+    - chmod +x /usr/local/bin/bazel
+    - sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+  script:
+    - task docs
+    - rm -rf public
+    - cp -r _site public
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'

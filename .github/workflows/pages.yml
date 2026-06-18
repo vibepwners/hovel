@@ -7,6 +7,9 @@ on:
       - "index.html"
       - "assets/**"
       - "spec/**/*.html"
+      - "sdk/**"
+      - "tools/docs/**"
+      - "Taskfile.yml"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -25,15 +28,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache Bazel
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazel
+            ~/.cache/bazelisk
+          key: bazel-pages-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}
+          restore-keys: |
+            bazel-pages-${{ runner.os }}-
+
+      - name: Install Task
+        uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Stage site
-        run: |
-          set -euo pipefail
-          mkdir -p _site
-          cp index.html _site/
-          cp -r assets _site/
-          cp -r spec _site/
-          # Pages serves _site/ as the document root. nothing here needs Jekyll.
-          touch _site/.nojekyll
+        run: task docs
 
       - uses: actions/configure-pages@v5
 

@@ -57,9 +57,23 @@
         <h1>Architecture</h1>
 
         <p>Hovel uses a clean application core with adapters at the edges.</p>
-<pre data-lang="layers"><code>adapters -&gt; app -&gt; domain
-infra    -&gt; app -&gt; domain
-</code></pre>
+        <figure class="diagram layer-diagram" aria-label="Adapters and infrastructure depend on application services, and application services depend on the domain core.">
+          <figcaption>Dependency Direction</figcaption>
+          <div class="layer-path">
+            <div class="diagram-node"><strong>Adapters</strong><span>CLI / TUI / REST / MCP</span></div>
+            <div class="diagram-arrow">→</div>
+            <div class="diagram-node primary"><strong>Application</strong><span>services and use cases</span></div>
+            <div class="diagram-arrow">→</div>
+            <div class="diagram-node core"><strong>Domain</strong><span>pure model and rules</span></div>
+          </div>
+          <div class="layer-path">
+            <div class="diagram-node"><strong>Infrastructure</strong><span>storage / RPC / process runtime</span></div>
+            <div class="diagram-arrow">→</div>
+            <div class="diagram-node primary"><strong>Application</strong><span>ports and orchestration</span></div>
+            <div class="diagram-arrow">→</div>
+            <div class="diagram-node core"><strong>Domain</strong><span>validated value objects</span></div>
+          </div>
+        </figure>
         <p>The domain package must not import CLI, TUI, REST, MCP, storage, RPC, concrete module code, or concrete service code.</p>
 
         <h2>Engine</h2>

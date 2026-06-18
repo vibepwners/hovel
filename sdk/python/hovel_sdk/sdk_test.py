@@ -19,6 +19,7 @@ from hovel_sdk import (
 )
 from hovel_sdk.framing import encode_message, read_message, write_message
 from hovel_sdk.server import JSONRPCServer
+from hovel_sdk.testing import ModuleRPC, RPCError, drive_module
 
 
 class EchoModule(HovelModule):
@@ -352,6 +353,67 @@ class SDKTest(unittest.TestCase):
             logging.getLogger().removeHandler(handler)
         self.assertEqual(emitted[0]["message"], "hello world")
         self.assertEqual(emitted[0]["fields"]["answer"], 42)
+
+    def test_module_rpc_helper_executes_and_collects_notifications(self) -> None:
+        with ModuleRPC(EchoModule()) as rpc:
+            handshake = rpc.call("handshake")
+            result = rpc.call(
+                "execute",
+                {"runId": "run-1", "moduleId": "echo", "target": "mock://target"},
+            )
+
+            self.assertEqual(handshake["name"], "echo")
+            self.assertEqual(result["summary"], "echo done")
+            self.assertEqual(rpc.notifications[0]["method"], "module/log")
+            self.assertEqual(rpc.notifications[0]["params"]["fields"]["target"], "mock://target")
+
+    def test_module_rpc_helper_drives_session_round_trip(self) -> None:
+        with ModuleRPC(SessionModule()) as rpc:
+            execute = rpc.call(
+                "execute",
+                {"runId": "run-1", "moduleId": "session-echo", "target": "mock://target"},
+            )
+            self.assertEqual(execute["sessions"][0]["id"], "run-1-session-1")
+
+            prompt = rpc.call("session/read", {"sessionId": "run-1-session-1", "timeoutMs": 100})
+            rpc.call(
+                "session/write",
+                {"sessionId": "run-1-session-1", "data": base64.b64encode(b"whoami\n").decode()},
+            )
+            output = rpc.call("session/read", {"sessionId": "run-1-session-1", "timeoutMs": 100})
+
+            self.assertEqual(base64.b64decode(prompt["data"]), b"mock$ ")
+            self.assertEqual(base64.b64decode(output["data"]), b"mock-user\n")
+
+    def test_module_rpc_helper_drives_step_methods(self) -> None:
+        with ModuleRPC(StepModule()) as rpc:
+            describe = rpc.call("step.describe")
+            prepared = rpc.call(
+                "step.prepare",
+                {"preparedPlanId": "prep-1", "stepId": "windows.credential.create_local_admin"},
+            )
+            executed = rpc.call("step.execute", {"runId": "run-1", "stepId": "squatter.connect_smb"})
+
+            self.assertEqual(describe["steps"][0]["id"], "squatter.connect_smb")
+            self.assertEqual(prepared["preparedValues"]["username"]["value"], "m7q4z92d")
+            self.assertEqual(executed["capabilities"][0]["type"], "SessionRef")
+
+    def test_module_rpc_helper_raises_on_rpc_error(self) -> None:
+        with ModuleRPC(EchoModule()) as rpc:
+            try:
+                rpc.call("does.not.exist")
+            except RPCError as exc:
+                self.assertIn("unknown method", str(exc))
+            else:
+                self.fail("expected RPCError")
+
+    def test_drive_module_runs_script_and_returns_notifications(self) -> None:
+        def script(rpc: ModuleRPC) -> None:
+            rpc.call("execute", {"runId": "run-1", "moduleId": "echo", "target": "mock://target"})
+
+        notifications = drive_module(EchoModule(), script)
+
+        self.assertEqual(notifications[0]["method"], "module/log")
 
 
 if __name__ == "__main__":

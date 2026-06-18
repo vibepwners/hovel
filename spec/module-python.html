@@ -17,6 +17,7 @@
     <nav class="top-nav">
       <a href="../index.html">Home</a>
       <a href="index.html" aria-current="page">Spec</a>
+      <a href="../api/sdk/index.html">API Docs</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
@@ -41,6 +42,7 @@
       <p class="sidebar-section">Reference</p>
       <ul>
         <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+        <li><a href="../api/sdk/python/index.html">Python SDK API</a></li>
       </ul>
       <p class="sidebar-section">Module Development</p>
       <ul>
@@ -64,6 +66,10 @@
 
         <h2>The SDK in one import</h2>
         <p>You subclass <code>HovelModule</code>, set a few class attributes, implement <code>run</code>, and hand an instance to <code>serve</code>.</p>
+        <p>
+          The generated API reference for the source package is published at
+          <a href="../api/sdk/python/index.html">Python SDK API</a>.
+        </p>
 <pre data-lang="python"><code>from hovel_sdk import (
     Artifact, Context, Finding, HovelModule,
     LineShellSession, Requirement, Result, serve,
@@ -76,6 +82,28 @@
           <li><code>LineShellSession</code> — a base for interactive shell sessions.</li>
           <li><code>serve</code> — runs the JSON-RPC loop on stdin/stdout.</li>
         </ul>
+        <p>
+          Treat stdout as reserved for <code>serve</code>. A stray <code>print()</code>,
+          progress bar, subprocess inherited stdout, or banner will corrupt the frame
+          stream and fail the module. Use <code>ctx.log</code> or the standard
+          <code>logging</code> package for operator-visible progress, and capture tool
+          output into artifacts or sessions.
+        </p>
+
+        <h2>Metadata and schema rules</h2>
+        <p>
+          Class attributes are not just documentation: the daemon calls them during
+          catalog inspection. Keep <code>info</code>, <code>module_schema</code>, and
+          <code>describe_steps</code> deterministic and side-effect free. Put target
+          probes, listener startup, payload generation, random target-side names, and
+          expensive imports inside <code>run</code>, <code>prepare_step</code>, or
+          <code>execute_step</code>, not at import time.
+        </p>
+        <p>
+          Config values arrive as JSON-compatible Python values. Prefer explicit
+          <code>Requirement</code> entries over ad hoc environment reads so operators,
+          saved chains, and transcripts all agree on what controlled the run.
+        </p>
 
         <h2>A survey module</h2>
         <p>
@@ -132,6 +160,45 @@ class MockSurvey(HovelModule):
         )],
     )</code></pre>
         <p><code>Artifact</code> also offers <code>text</code>, <code>json</code>, and <code>file</code> constructors for common cases.</p>
+        <p>
+          Use <code>Result.failed(...)</code> for expected operator-facing failures such
+          as "not vulnerable", "authentication failed", or "confirmation missing".
+          Let exceptions mean bugs or unexpected infrastructure failures; the SDK will
+          report them as JSON-RPC errors and include traceback details in module logs.
+        </p>
+
+        <h2>Installed payload records</h2>
+        <p>
+          If a Python exploit or provider installs a durable target-side payload, return
+          an explicit installed-payload descriptor. This is the only supported way for a
+          module to ask Hovel to create installed payload inventory.
+        </p>
+<pre data-lang="python"><code>from hovel_sdk import InstalledPayload, PayloadProviderRecord, Result
+
+
+payload = InstalledPayload(
+    provider="squatter",
+    payload_id="squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+    payload_version="0.1.0",
+    target=ctx.target,
+    state="installed",
+    transport="tcp-bind",
+    endpoint="10.0.0.42:9101",
+    supports_reconnect=True,
+    cleanup=PayloadProviderRecord(
+        schema="squatter.cleanup.tcp_bind",
+        descriptor={"remotePath": r"C:\Windows\Temp\n4x9q2.exe"},
+    ),
+)
+return Result.ok(
+    {"payload": payload.payload_id},
+    summary="payload installed and recorded",
+).with_installed_payloads(payload)</code></pre>
+        <p>
+          Do not write <code>workspace.db</code> or invent operator-facing payload
+          handles. Hovel validates descriptors, assigns handles, persists state, and
+          routes future reconnect or cleanup calls back to the provider.
+        </p>
 
         <h2>Interactive sessions</h2>
         <p>
@@ -174,6 +241,64 @@ class MockExploitSession(HovelModule):
           built-in <code>exit</code>/<code>logout</code> commands for you.
         </p>
 
+        <h2>Step-provider hooks</h2>
+        <p>
+          Python is suitable for real exploit modules and for lightweight chain-step
+          providers. Override the step methods when the module participates in the
+          capability-native chain planner.
+        </p>
+<pre data-lang="python"><code>class WindowsCredentialStep(HovelModule):
+    name = "windows-credential"
+    module_type = "exploit"
+    tags = ("dangerous", "credential", "python")
+
+    def describe_steps(self) -&gt; dict[str, object]:
+        return {"steps": [{
+            "id": "windows.credential.create_local_admin",
+            "kind": "credential.create",
+            "requires": [{"type": "RemoteExecutionCapability", "states": ["active"]}],
+            "produces": [{"type": "CredentialCapability", "states": ["active"]}],
+            "prepare": {"materializes": ["username", "password"]},
+        }]}
+
+    def prepare_step(self, request: dict[str, object]) -&gt; dict[str, object]:
+        return {
+            "preparedValues": {
+                "username": {"value": "neutral-name", "editable": True},
+                "password": {"value": "plain-high-entropy-password", "editable": True},
+            },
+            "operatorSummary": {
+                "warnings": [],
+                "targetSideArtifacts": ["temporary local administrator credential"],
+            },
+        }
+
+    def execute_step(self, request: dict[str, object]) -&gt; dict[str, object]:
+        confirmed = dict(request.get("confirmedPreparedValues") or {})
+        return {
+            "status": "succeeded",
+            "capabilities": [{
+                "id": "cap_credential_example",
+                "type": "CredentialCapability",
+                "schemaVersion": "v1",
+                "state": "active",
+                "attributes": {
+                    "protocol": "smb",
+                    "username": confirmed["username"],
+                    "password": confirmed["password"],
+                    "sensitive": True,
+                },
+            }],
+        }
+
+    def cleanup_step(self, request: dict[str, object]) -&gt; dict[str, object]:
+        return {"status": "removed"}</code></pre>
+        <p>
+          The Python SDK leaves step payloads as dictionaries so providers can move fast
+          while the capability schema evolves. The <a href="module-protocol.html">Wire
+          Protocol</a> page is the source of truth for field names.
+        </p>
+
         <h2>Entry point</h2>
         <p>Each module package has a <code>__main__.py</code> so the daemon can run <code>python -m &lt;module&gt;</code>.</p>
 <pre data-lang="examples/python/mock_survey/.../__main__.py"><code>from hovel_example_survey.module import MockSurvey
@@ -186,6 +311,70 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()</code></pre>
+
+        <h2>Test without the daemon</h2>
+        <p>
+          Unit-test module logic directly first. Construct a <code>Context</code>, call
+          <code>run</code>, and assert the result shape. Session modules can use
+          <code>SessionManager</code> to exercise <code>ctx.open_session</code> without
+          starting <code>hoveld</code>.
+        </p>
+<pre data-lang="python"><code>from hovel_example_exploit.module import MockExploit
+from hovel_sdk import Context
+
+
+def test_failure_mode_returns_failed_result() -&gt; None:
+    result = MockExploit().run(Context(
+        run_id="run-1",
+        module_id="mock-exploit",
+        target="mock://target",
+        inputs={"failure_mode": "execution"},
+    ))
+    assert result.status == "failed"</code></pre>
+        <p>
+          Then use <code>hovel_sdk.testing.ModuleRPC</code> for contract tests that
+          exercise the real framed JSON-RPC server. This catches stdout corruption,
+          schema drift, step dispatch mistakes, session RPC errors, and shutdown
+          behavior earlier than a full CLI run.
+        </p>
+<pre data-lang="python"><code>import base64
+
+from hovel_example_exploit_session.module import MockExploitSession
+from hovel_sdk.testing import ModuleRPC
+
+
+def test_session_over_framed_rpc() -&gt; None:
+    with ModuleRPC(MockExploitSession()) as rpc:
+        result = rpc.call("execute", {
+            "runId": "run-1",
+            "moduleId": "mock-exploit-session",
+            "target": "mock://target",
+        })
+        session_id = result["sessions"][0]["id"]
+
+        prompt = rpc.call("session/read", {"sessionId": session_id, "timeoutMs": 100})
+        rpc.call("session/write", {
+            "sessionId": session_id,
+            "data": base64.b64encode(b"whoami\n").decode(),
+        })
+        output = rpc.call("session/read", {"sessionId": session_id, "timeoutMs": 100})
+
+        assert base64.b64decode(prompt["data"]).endswith(b"$ ")
+        assert base64.b64decode(output["data"])</code></pre>
+        <p>
+          <code>ModuleRPC.notifications</code> records <code>module/log</code> and
+          <code>module/session</code> notifications emitted before each response.
+          <code>drive_module(module, script)</code> is a shorter wrapper for tests that
+          only need the final notification list.
+        </p>
+<pre data-lang="shell"><code>task test -- //examples/python:mock_exploit_test
+task test -- //examples/python:mock_exploit_session_test</code></pre>
+        <p>
+          Move to daemon or CLI tests only after pure parsing, schema, failure paths,
+          artifact construction, and session behavior are covered. Real network-facing
+          exploit tests should keep packet builders and response parsers unit-testable
+          offline, then reserve live target checks for an authorized lab.
+        </p>
 
         <h2>Register and run</h2>
         <p>Add the module to the config with <code>project_dir</code> and <code>module</code>; the daemon puts the SDK and project on <code>PYTHONPATH</code> automatically.</p>

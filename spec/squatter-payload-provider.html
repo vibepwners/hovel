@@ -217,22 +217,37 @@ squatter.agent.max_chunk_size = 65536
           the Squatter provider owns the actual LP-to-payload protocol in all modes.
         </p>
         <p>SMB named-pipe mode uses credential-backed active connection:</p>
-<pre data-lang="flow"><code>squatter.generate
-squatter.install_smb
-squatter.connect_smb
-provider-owned Hovel session</code></pre>
+        <figure class="diagram" aria-label="SMB named-pipe transport flow from generation through provider-owned Hovel session.">
+          <figcaption>SMB Named-Pipe Flow</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">squatter.generate</li>
+            <li class="flow-step">squatter.install_smb</li>
+            <li class="flow-step strong">squatter.connect_smb</li>
+            <li class="flow-step ready">provider-owned Hovel session</li>
+          </ol>
+        </figure>
         <p>TCP bind mode uses target-side listening:</p>
-<pre data-lang="flow"><code>squatter.generate
-explicit or external TCP-bind install record
-squatter.connect_tcp_bind
-provider-owned Hovel session</code></pre>
+        <figure class="diagram" aria-label="TCP bind transport flow from generation through install record, TCP bind connection, and provider-owned Hovel session.">
+          <figcaption>TCP Bind Flow</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">squatter.generate</li>
+            <li class="flow-step warning">explicit or external TCP-bind install record</li>
+            <li class="flow-step strong">squatter.connect_tcp_bind</li>
+            <li class="flow-step ready">provider-owned Hovel session</li>
+          </ol>
+        </figure>
         <p>TCP callback mode uses a confirmed listener step:</p>
-<pre data-lang="flow"><code>squatter.listen_tcp_callback
-squatter.generate
-explicit or external TCP-callback install record
-payload callback
-squatter.connect_tcp_callback
-provider-owned Hovel session</code></pre>
+        <figure class="diagram" aria-label="TCP callback transport flow from listener setup through payload callback, TCP callback connection, and provider-owned Hovel session.">
+          <figcaption>TCP Callback Flow</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">squatter.listen_tcp_callback</li>
+            <li class="flow-step">squatter.generate</li>
+            <li class="flow-step warning">explicit or external TCP-callback install record</li>
+            <li class="flow-step">payload callback</li>
+            <li class="flow-step strong">squatter.connect_tcp_callback</li>
+            <li class="flow-step ready">provider-owned Hovel session</li>
+          </ol>
+        </figure>
         <p>
           SMB mode uses a Windows named pipe exposed through SMB. The provider connects
           to <code>\\target\pipe\name</code> using an explicit
@@ -377,16 +392,20 @@ capabilities        file.get, file.put, process.exec, process.tasklist, library.
           and connection failures are reported at the responsible step with exact
           evidence.
         </p>
-<pre data-lang="flow"><code>for each target:
-  query live step contracts
-  prepare local names and transport config
-  confirm snapshot
-  generate final per-target payload artifacts
-  materialize artifacts in workspace
-  install payload with declared capabilities
-  connect or listen for session when required
-  keep provider alive while it owns active sessions
-  cleanup target and provider-side state from cleanup handles</code></pre>
+        <figure class="diagram" aria-label="Squatter throw execution flow for each target from live contract query through cleanup.">
+          <figcaption>Throw Execution Flow</figcaption>
+          <ol class="flow-diagram vertical">
+            <li class="flow-step">for each target, query live step contracts</li>
+            <li class="flow-step">prepare local names and transport config</li>
+            <li class="flow-step warning">confirm snapshot</li>
+            <li class="flow-step">generate final per-target payload artifacts</li>
+            <li class="flow-step">materialize artifacts in workspace</li>
+            <li class="flow-step strong">install payload with declared capabilities</li>
+            <li class="flow-step">connect or listen for session when required</li>
+            <li class="flow-step ready">keep provider alive while it owns active sessions</li>
+            <li class="flow-step">cleanup target and provider-side state from cleanup handles</li>
+          </ol>
+        </figure>
         <p>
           Hovel records generated payloads in the normal artifact list. Operators should
           see metadata such as name, kind, provider module, target, throw, SHA-256, size,

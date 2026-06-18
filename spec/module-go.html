@@ -17,6 +17,7 @@
     <nav class="top-nav">
       <a href="../index.html">Home</a>
       <a href="index.html" aria-current="page">Spec</a>
+      <a href="../api/sdk/index.html">API Docs</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
@@ -41,6 +42,8 @@
       <p class="sidebar-section">Reference</p>
       <ul>
         <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+        <li><a href="../api/sdk/go/hovel/index.html">Go SDK API</a></li>
+        <li><a href="../api/sdk/go/hoveltest/index.html">Go hoveltest API</a></li>
       </ul>
       <p class="sidebar-section">Module Development</p>
       <ul>
@@ -61,6 +64,9 @@
           (<code>github.com/Vibe-Pwners/hovel/sdk/go/hovel</code>); the worked examples are
           under <code>examples/go/</code>. The shapes mirror the
           <a href="module-python.html">Python SDK</a> one-to-one.
+          Generated references are published for
+          <a href="../api/sdk/go/hovel/index.html">hovel</a> and
+          <a href="../api/sdk/go/hoveltest/index.html">hoveltest</a>.
         </p>
 
         <h2>The Module interface</h2>
@@ -75,6 +81,13 @@ func main() { hovel.Serve(MyModule{}) }</code></pre>
           <code>Serve</code> runs the JSON-RPC loop on stdin/stdout. <code>Info</code> and
           <code>Schema</code> must be cheap and side-effect free — the daemon calls them while
           building its catalog.
+        </p>
+        <p>
+          Do not write to stdout yourself. The SDK serializes responses and
+          notifications there; banners, <code>fmt.Println</code>, inherited subprocess
+          stdout, or progress bars will corrupt the framed stream. Use <code>ctx.Log</code>,
+          artifacts, or sessions for operator-visible output. Stderr is reserved for
+          process-level diagnostics that help explain startup or crash failures.
         </p>
 
         <h2>A survey module</h2>
@@ -145,6 +158,33 @@ func main() { hovel.Serve(MockSurvey{}) }</code></pre>
     ), nil
 }</code></pre>
 
+        <h2>Installed payload records</h2>
+        <p>
+          A Go exploit or provider that installs a durable target-side payload should
+          return an explicit descriptor with <code>hovel.WithInstalledPayloads</code>.
+          Hovel validates and persists it; the module never writes installed payload
+          inventory directly.
+        </p>
+<pre data-lang="go"><code>payload := hovel.InstalledPayloadDescriptor{
+    Provider:          "squatter",
+    PayloadID:         "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+    PayloadVersion:    "0.1.0",
+    Target:            ctx.Target,
+    State:             "installed",
+    Transport:         "tcp-bind",
+    Endpoint:          "10.0.0.42:9101",
+    SupportsReconnect: true,
+    Cleanup: &amp;hovel.PayloadProviderRecord{
+        Schema:     "squatter.cleanup.tcp_bind",
+        Descriptor: map[string]any{"remotePath": `C:\Windows\Temp\n4x9q2.exe`},
+    },
+}
+return hovel.Ok(
+    map[string]any{"payload": payload.PayloadID},
+    hovel.WithSummary("payload installed and recorded"),
+    hovel.WithInstalledPayloads(payload),
+), nil</code></pre>
+
         <h2>Interactive sessions</h2>
         <p>
           <code>LineShellSession</code> needs no subclassing in Go — set its
@@ -176,6 +216,72 @@ func main() { hovel.Serve(MockSurvey{}) }</code></pre>
         hovel.WithSummary("mock exploit opened an interactive shell session"),
     ), nil
 }</code></pre>
+        <p>
+          For modules that already wrap a local interactive client, use
+          <code>PTYSession</code> on supported platforms. It exposes a local
+          pseudoterminal through the same Hovel session broker, so operator input and
+          output still travel through <code>session/write</code> and
+          <code>session/read</code> instead of raw stdout.
+        </p>
+
+        <h2>Step and payload providers</h2>
+        <p>
+          Go is the best-supported SDK for payload providers and capability-native
+          post-exploitation steps. Implement <code>StepProvider</code> when the module
+          should expose planner-visible steps; implement <code>PayloadProvider</code>
+          when it also owns payload discovery, generation, reconnect, cleanup, and
+          payload chunking.
+        </p>
+<pre data-lang="go"><code>type StepProvider interface {
+    hovel.Module
+    DescribeSteps() (hovel.StepContractSet, error)
+    PrepareStep(hovel.StepPrepareRequest) (hovel.StepPrepareResult, error)
+    ExecuteStep(hovel.StepExecuteRequest) (hovel.StepExecuteResult, error)
+    CleanupStep(hovel.StepCleanupRequest) (hovel.StepCleanupResult, error)
+}</code></pre>
+        <p>
+          <code>DescribeSteps</code> is called during catalog inspection and planning, so
+          it must be pure. <code>PrepareStep</code> may materialize editable planned
+          values such as usernames, passwords, service names, pipe names, or paths, but
+          it must not touch the target. <code>ExecuteStep</code> consumes confirmed
+          prepared values exactly and returns capabilities, evidence, sessions, state
+          transitions, and installed payload descriptors. <code>CleanupStep</code> is
+          retriable and should report explicit state transitions rather than hiding
+          partial cleanup failures.
+        </p>
+        <p>
+          The <code>sdk/go/hoveltest</code> package has provider-oriented test helpers;
+          use it for contract tests that assert payload listing, resolution, session
+          connection, and cleanup behavior without starting a real daemon.
+        </p>
+
+        <h2>Test without the daemon</h2>
+        <p>
+          Start with ordinary Go unit tests against <code>Info</code>,
+          <code>Schema</code>, and <code>Run</code>. Build a <code>hovel.Context</code>
+          directly and assert result status, outputs, findings, artifacts, and
+          installed payload descriptors.
+        </p>
+<pre data-lang="go"><code>func TestMockExploitFailureMode(t *testing.T) {
+    ctx := &amp;hovel.Context{
+        Target: "mock://target",
+        Inputs: map[string]any{"failure_mode": "execution"},
+    }
+    result, err := MockExploit{}.Run(ctx)
+    if err != nil {
+        t.Fatal(err)
+    }
+    if result.Status != "failed" {
+        t.Fatalf("status = %q, want failed", result.Status)
+    }
+}</code></pre>
+        <p>
+          Use <code>hoveltest.NewRPCConn</code> when you need to test the actual framed
+          JSON-RPC surface, including handshake, schema, step methods, payload-provider
+          methods, and shutdown behavior.
+        </p>
+<pre data-lang="shell"><code>task test -- //examples/go/mock_exploit:mock_exploit_test
+task test -- //sdk/go/hoveltest:hoveltest_test</code></pre>
 
         <h2>Build, stage, and register</h2>
         <p>

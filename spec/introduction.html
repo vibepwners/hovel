@@ -82,32 +82,36 @@
 
         <h2>Product Shape</h2>
         <p>Hovel exposes one engine through multiple front ends:</p>
-<pre data-lang="diagram"><code> +--------------+ +--------------+ +--------------+
- |  one-shot    | |     cli      | |     TUI      |
- +------+-------+ +------+-------+ +------+-------+
-        |                |                |
-+-------v------+ +-------v------+ +-------v------+
-|     MCP      |&gt;|   hoveld     |&lt;| REST/OpenAPI |
-+--------------+ | Application  | +--------------+
-                 |   Services   |
-                 +------+-------+
-                        |
-                 +------v-------+
-                 | Domain Core  |
-                 +------+-------+
-                        |
-         +--------------+-----------------+
-         |              |                 |
- +-------v------+ +-----v-------+ +-------v------+
- | Module Host  | | Service Mgr | | Provider Reg |
- +-------+------+ +-----+-------+ +-------+------+
-         |              |                 |
- +-------v------+ +-----v-------+ +-------v------+
- | module       | | payloads,   | | artifacts,   |
- | processes    | | listeners,  | | facts,       |
- |              | | sessions    | | credentials  |
- +--------------+ +-------------+ +--------------+
-</code></pre>
+        <figure class="diagram product-diagram" aria-label="Hovel front ends connect to hoveld application services, which orchestrate the domain core, module host, service manager, and provider registry.">
+          <figcaption>Product Shape</figcaption>
+          <div class="product-tier product-frontends">
+            <div class="diagram-node"><strong>One-shot</strong><span>saved chain execution</span></div>
+            <div class="diagram-node"><strong>CLI</strong><span>interactive prompt</span></div>
+            <div class="diagram-node"><strong>TUI</strong><span>terminal workspace</span></div>
+            <div class="diagram-node"><strong>MCP</strong><span>agent front end</span></div>
+            <div class="diagram-node"><strong>REST/OpenAPI</strong><span>HTTP adapter</span></div>
+          </div>
+          <div class="diagram-bus">same application service boundary</div>
+          <div class="product-center">
+            <div class="diagram-node primary"><strong>hoveld</strong><span>Application Services</span></div>
+          </div>
+          <div class="diagram-bus">validates, plans, runs, records</div>
+          <div class="product-center">
+            <div class="diagram-node core"><strong>Domain Core</strong><span>pure product model</span></div>
+          </div>
+          <div class="diagram-bus">runtime orchestration</div>
+          <div class="product-tier product-platform">
+            <div class="diagram-node"><strong>Module Host</strong><span>bounded module processes</span></div>
+            <div class="diagram-node"><strong>Service Manager</strong><span>payloads, listeners, sessions</span></div>
+            <div class="diagram-node"><strong>Provider Registry</strong><span>artifacts, facts, credentials</span></div>
+          </div>
+          <div class="diagram-bus">external capabilities</div>
+          <div class="product-tier product-runtime">
+            <div class="diagram-node storage"><strong>Module Processes</strong><span>Python / Go / Rust</span></div>
+            <div class="diagram-node storage"><strong>Managed Capabilities</strong><span>payloads and live sessions</span></div>
+            <div class="diagram-node storage"><strong>Provider Outputs</strong><span>artifacts and evidence</span></div>
+          </div>
+        </figure>
         <p>All front ends must call the same application services. The TUI must not contain business logic. The MCP adapter must not bypass validation. One-shot execution and <code>cli</code> mode must not implement their own chain runners. The REST API must not become a second framework.</p>
 
         <h2>MVP Boundaries</h2>

@@ -208,13 +208,17 @@ createdBy:
           by the provider.
         </p>
         <p>State transitions are append-only audit events over a current-state row:</p>
-<pre data-lang="states"><code>created
-connected
-unreachable
-cleanup_attempted
-removed
-manually_marked_removed
-</code></pre>
+        <figure class="diagram" aria-label="Installed payload audit transitions from created through connected, unreachable, cleanup attempted, removed, or manually marked removed.">
+          <figcaption>Installed Payload Transitions</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">created</li>
+            <li class="flow-step ready">connected</li>
+            <li class="flow-step warn">unreachable</li>
+            <li class="flow-step warning">cleanup_attempted</li>
+            <li class="flow-step stop">removed</li>
+            <li class="flow-step stop">manually_marked_removed</li>
+          </ol>
+        </figure>
         <p>
           The current state is one of <code>installed</code>, <code>connected</code>,
           <code>unreachable</code>, or <code>removed</code>. Failed installs remain throw

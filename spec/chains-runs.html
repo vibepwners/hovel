@@ -107,12 +107,17 @@ CleanupHandle</code></pre>
         <p>
           The lifecycle is explicit:
         </p>
-<pre data-lang="lifecycle"><code>describe
-prepare
-confirm
-execute
-operate
-cleanup</code></pre>
+        <figure class="diagram" aria-label="Chain step lifecycle from describe through cleanup.">
+          <figcaption>Step Lifecycle</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">describe</li>
+            <li class="flow-step">prepare</li>
+            <li class="flow-step warning">confirm</li>
+            <li class="flow-step strong">execute</li>
+            <li class="flow-step">operate</li>
+            <li class="flow-step">cleanup</li>
+          </ol>
+        </figure>
         <ol>
           <li><code>describe</code> queries live module contracts over JSON-RPC.</li>
           <li><code>prepare</code> is pure and local: it validates config and generates planned values, but it does not touch the target or produce final payload bytes.</li>
@@ -398,15 +403,19 @@ spec:
         <p>This chain is a conceptual example, not an MVP dependency. It uses authenticated SSH as a transport and demonstrates payload delivery/execution in a controlled authorized environment.</p>
         <p>The Hovel repository should not need to provide the payload generator, listening post, or target-specific execution components for this example. Those should arrive through providers, managed services, or third-party modules.</p>
         <p>Phases:</p>
-<pre data-lang="phases"><code>service_prepare
-survey
-resolve_payload
-prepare_delivery
-execute
-collect
-cleanup
-service_cleanup
-</code></pre>
+        <figure class="diagram" aria-label="Conceptual SSH memory chain phases from service preparation through service cleanup.">
+          <figcaption>SSH Memory Chain Phases</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">service_prepare</li>
+            <li class="flow-step">survey</li>
+            <li class="flow-step">resolve_payload</li>
+            <li class="flow-step">prepare_delivery</li>
+            <li class="flow-step strong">execute</li>
+            <li class="flow-step">collect</li>
+            <li class="flow-step">cleanup</li>
+            <li class="flow-step">service_cleanup</li>
+          </ol>
+        </figure>
         <p>Survey questions:</p>
         <ol>
           <li>What OS is the target?</li>

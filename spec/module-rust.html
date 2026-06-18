@@ -17,6 +17,7 @@
     <nav class="top-nav">
       <a href="../index.html">Home</a>
       <a href="index.html" aria-current="page">Spec</a>
+      <a href="../api/sdk/index.html">API Docs</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
@@ -41,6 +42,7 @@
       <p class="sidebar-section">Reference</p>
       <ul>
         <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+        <li><a href="../api/sdk/rust/hovel/index.html">Rust SDK API</a></li>
       </ul>
       <p class="sidebar-section">Module Development</p>
       <ul>
@@ -61,7 +63,8 @@
           hand-rolls a tiny JSON layer and base64 codec rather than pulling in
           <code>serde_json</code>, so the whole crate builds with nothing but the standard
           library. Real modules are free to add whatever crates they like. The worked examples
-          are under <code>examples/rust/</code>.
+          are under <code>examples/rust/</code>. The generated source reference is published at
+          <a href="../api/sdk/rust/hovel/index.html">Rust SDK API</a>.
         </p>
         <blockquote>
           Rust's standard library already defines <code>Result</code>, so this SDK names the
@@ -77,6 +80,36 @@
 }
 
 fn main() { hovel::serve(MyModule); }</code></pre>
+        <p>
+          <code>info</code> and <code>schema</code> are catalog-inspection paths. Keep
+          them fast, deterministic, offline, and side-effect free. Put target I/O,
+          payload building, random target-side names, and listener startup in
+          <code>run</code> or in a Go/Python step provider, not in Rust module metadata.
+        </p>
+        <p>
+          Stdout is reserved for the SDK's framed JSON-RPC stream. Use
+          <code>ctx.info</code> and <code>ctx.error</code> for structured logs, artifacts
+          for captured output, and sessions for interactive streams. Use stderr only for
+          process-level diagnostics.
+        </p>
+
+        <h2>Current SDK boundary</h2>
+        <p>
+          The Rust SDK currently implements the base module lifecycle, structured logs,
+          artifacts, interactive sessions, and installed-payload result descriptors. It
+          does not yet dispatch the generic <code>step.describe</code>,
+          <code>step.prepare</code>, <code>step.execute</code>, and
+          <code>step.cleanup</code> methods, and it does not provide the full typed
+          payload-provider interface available in Go.
+        </p>
+        <p>
+          Use Rust today for standalone survey or exploit modules where a compiled,
+          dependency-light binary is valuable, including modules that need to return
+          installed payload descriptors from <code>run</code>. Use Go or Python for
+          payload providers, capability-native chain steps, and provider-owned
+          reconnect/cleanup RPC methods until the Rust SDK grows those dispatch
+          surfaces.
+        </p>
 
         <h2>A survey module</h2>
 <pre data-lang="examples/rust/mock_survey/src/main.rs"><code>use hovel::json::Value;
@@ -146,6 +179,49 @@ fn main() { hovel::serve(MockSurvey); }</code></pre>
             "example module invoked through daemon RPC",
         ))
 }</code></pre>
+        <p>
+          Prefer <code>Outcome::failed</code> for expected operator-facing failures such
+          as "not vulnerable" or "missing confirmation". Reserve panics and process
+          exits for bugs or unrecoverable local failures; otherwise the daemon sees a
+          broken module rather than a useful exploit result.
+        </p>
+
+        <h2>Installed payload records</h2>
+        <p>
+          A Rust exploit that installs or observes a durable target-side payload can
+          return an explicit <code>InstalledPayloadDescriptor</code>. Hovel validates the
+          descriptor, assigns the operator-facing handle, and persists it as installed
+          payload inventory. The Rust module still does not own workspace writes.
+        </p>
+<pre data-lang="rust"><code>use hovel::{InstalledPayloadDescriptor, PayloadProviderRecord};
+
+let payload = InstalledPayloadDescriptor::new(
+    "squatter",
+    "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+    ctx.target.as_str(),
+)
+.with_payload_version("0.1.0")
+.with_transport("tcp-bind")
+.with_endpoint("10.0.0.42:9101")
+.with_supports_reconnect(true)
+.with_reconnect(
+    PayloadProviderRecord::new(
+        "squatter.reconnect.tcp_bind",
+        vec![
+            ("host".into(), Value::from("10.0.0.42")),
+            ("port".into(), Value::from(9101_i64)),
+        ],
+    )
+    .with_schema_version("1"),
+)
+.with_cleanup(PayloadProviderRecord::new(
+    "squatter.cleanup.tcp_bind",
+    vec![("remotePath".into(), Value::from(r"C:\Windows\Temp\n4x9q2.exe"))],
+));
+
+Outcome::ok(vec![("target".into(), Value::from(ctx.target.as_str()))])
+    .with_summary("payload installed and recorded")
+    .with_installed_payload(payload)</code></pre>
 
         <h2>Interactive sessions</h2>
         <p>
@@ -171,6 +247,27 @@ fn main() { hovel::serve(MockSurvey); }</code></pre>
     Outcome::ok(vec![("sessionId".into(), Value::from(sref.id.as_str()))])
         .with_summary("mock exploit opened an interactive shell session")
 }</code></pre>
+
+        <h2>Test without the daemon</h2>
+        <p>
+          Keep pure module behavior testable through ordinary Rust tests. For protocol
+          coverage, use the SDK's <code>serve_with</code> helper with an in-memory reader
+          and writer; that exercises the same <code>Content-Length</code> framing the
+          daemon uses.
+        </p>
+<pre data-lang="rust"><code>#[test]
+fn info_is_a_rust_exploit() {
+    let info = MockExploit.info();
+    assert_eq!(info.name, "mock-exploit-rust");
+    assert_eq!(info.module_type, ModuleType::Exploit);
+}</code></pre>
+<pre data-lang="shell"><code>task test -- //examples/rust/mock_exploit:mock_exploit_rust_test
+task test -- //sdk/rust/hovel:hovel_test</code></pre>
+        <p>
+          For real exploit work, keep parsers, packet builders, state machines, and
+          result construction behind testable functions. Reserve live target execution
+          for an authorized lab; CI should stay offline and deterministic.
+        </p>
 
         <h2>Build, stage, and register</h2>
         <p>

@@ -22,6 +22,17 @@ The full specification is a static website rooted at
 
 ## → [vibe-pwners.github.io/hovel](https://vibe-pwners.github.io/hovel/index.html) ←
 
+Module authors should start with the
+[Module Development](spec/module-development.html) guide, then use the
+language-specific guides for [Python](spec/module-python.html),
+[Go](spec/module-go.html), or [Rust](spec/module-rust.html). Those pages cover
+the stdio JSON-RPC contract, registration, safety tags, sessions, artifacts,
+installed payload records, and provider boundaries.
+
+`task docs` stages the full documentation site in `_site/`, including generated
+SDK API reference pages under `_site/api/sdk/` and an internal link check. GitHub
+Pages and GitLab Pages both run that task before publishing.
+
 ## Layout
 
 | Path | What it is |
@@ -32,8 +43,13 @@ The full specification is a static website rooted at
 | `internal/adapters` | CLI, daemon RPC, SQLite/filesystem storage, descriptors. |
 | `internal/infra` | Daemon manager and runtime. |
 | `internal/modules` | In-tree module runners (Python RPC host, mock modules). |
-| `sdk/python` | Python module SDK (`hovel_sdk`). |
+| [`sdk`](sdk/README.md) | SDK overview for module authors. |
+| [`sdk/python`](sdk/python/README.md) | Python module SDK (`hovel_sdk`). |
+| [`sdk/go`](sdk/go/README.md) | Go module SDK (`github.com/Vibe-Pwners/hovel/sdk/go/hovel`). |
+| [`sdk/rust`](sdk/rust/README.md) | Rust module SDK crate. |
 | `examples/python` | Example modules exercised by tests. |
+| `examples/go` | Go module examples: survey, exploit, and session. |
+| `examples/rust` | Rust module examples: survey, exploit, and session. |
 | `schemas` | JSON schemas for descriptors, chains, events, throw plans. |
 | `spec` | The specification website source. |
 

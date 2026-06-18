@@ -77,16 +77,20 @@ node-rpc          later
         <p>The host starts module processes, connects to them over a controlled channel, exchanges typed messages, receives structured logs, supervises lifecycle, and persists events.</p>
 
         <h2>Module Lifecycle</h2>
-<pre data-lang="lifecycle"><code>discover
-validate
-start
-handshake
-configure
-execute
-stream events
-finish
-shutdown
-</code></pre>
+        <figure class="diagram" aria-label="Module lifecycle from discovery through shutdown.">
+          <figcaption>Module Lifecycle</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">discover</li>
+            <li class="flow-step">validate</li>
+            <li class="flow-step">start</li>
+            <li class="flow-step">handshake</li>
+            <li class="flow-step">configure</li>
+            <li class="flow-step strong">execute</li>
+            <li class="flow-step">stream events</li>
+            <li class="flow-step">finish</li>
+            <li class="flow-step">shutdown</li>
+          </ol>
+        </figure>
         <p>Every module must provide or emulate:</p>
 <pre data-lang="rpc"><code>handshake() -&gt; ModuleInfo
 schema() -&gt; ModuleSchema
@@ -131,28 +135,36 @@ step.cleanup(request) -&gt; StepCleanupResult
         <p>Services expose typed operations to the Hovel engine.</p>
 
         <h2>Service Lifecycle</h2>
-<pre data-lang="lifecycle"><code>discover
-validate
-start
-handshake
-configure
-health_check
-ready
-serve
-reload
-stop
-cleanup
-</code></pre>
+        <figure class="diagram" aria-label="Service lifecycle from discovery through cleanup.">
+          <figcaption>Service Lifecycle</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">discover</li>
+            <li class="flow-step">validate</li>
+            <li class="flow-step">start</li>
+            <li class="flow-step">handshake</li>
+            <li class="flow-step">configure</li>
+            <li class="flow-step">health_check</li>
+            <li class="flow-step ready">ready</li>
+            <li class="flow-step strong">serve</li>
+            <li class="flow-step">reload</li>
+            <li class="flow-step">stop</li>
+            <li class="flow-step">cleanup</li>
+          </ol>
+        </figure>
         <p>Service states:</p>
-<pre data-lang="states"><code>registered
-starting
-configuring
-healthy
-degraded
-failed
-stopping
-stopped
-</code></pre>
+        <figure class="diagram" aria-label="Service states include registered, starting, configuring, healthy, degraded, failed, stopping, and stopped.">
+          <figcaption>Service States</figcaption>
+          <ul class="state-set">
+            <li class="state-pill">registered</li>
+            <li class="state-pill">starting</li>
+            <li class="state-pill">configuring</li>
+            <li class="state-pill ready">healthy</li>
+            <li class="state-pill warn">degraded</li>
+            <li class="state-pill stop">failed</li>
+            <li class="state-pill">stopping</li>
+            <li class="state-pill">stopped</li>
+          </ul>
+        </figure>
         <p>Start modes:</p>
 <pre data-lang="modes"><code>manual       operator starts explicitly
 on_demand    started when a provider or service is requested

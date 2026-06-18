@@ -23,20 +23,25 @@ class JSONRPCServer:
 
     def serve_forever(self) -> None:
         asyncio.set_event_loop(self._loop)
-        setup_logging(self._emit_log)
-        while True:
-            message = read_message(self._stdin)
-            if message is None:
-                return
-            if "method" not in message:
-                continue
-            if "id" not in message:
-                self._handle_notification(message)
-                continue
-            response = self._handle_request(message)
-            write_message(self._stdout, response)
-            if message.get("method") == "shutdown":
-                return
+        handler = setup_logging(self._emit_log)
+        try:
+            while True:
+                message = read_message(self._stdin)
+                if message is None:
+                    return
+                if "method" not in message:
+                    continue
+                if "id" not in message:
+                    self._handle_notification(message)
+                    continue
+                response = self._handle_request(message)
+                write_message(self._stdout, response)
+                if message.get("method") == "shutdown":
+                    return
+        finally:
+            logging.getLogger().removeHandler(handler)
+            self._loop.run_until_complete(self._sessions.close_all())
+            self._loop.close()
 
     def _handle_notification(self, message: dict[str, Any]) -> None:
         if message.get("method") == "cancel":
