@@ -22,7 +22,7 @@ Then:
 
 ```sh
 task hooks:install   # optional: run checks on commit
-task ci              # lint + build + test — must pass before you push
+task ci              # lint + docs + build + test — must pass before you push
 ```
 
 ## Before you open a PR
@@ -33,9 +33,9 @@ Run the same suite CI runs:
 task ci
 ```
 
-That is `task lint` (gofmt, Gazelle up-to-date, Python ruff/mypy/pydoclint),
-then `task build`, then `task test`. CI (`.github/workflows/ci.yml`) runs the
-same checks on every pull request.
+That is `task lint` (gofmt, Gazelle up-to-date, Python ruff/mypy/pydoclint,
+and Squatter C static checks), then `task docs`, `task build`, and `task test`. CI
+(`.github/workflows/ci.yml`) runs the same checks on every pull request.
 
 If you add, move, or remove Go files or imports, regenerate formatting and
 `BUILD.bazel` metadata:
@@ -64,7 +64,7 @@ infra    -> app -> domain
 
 ## Code style
 
-- Go code is formatted with `gofmt`; `task fmt` formats in place.
+- Go code is formatted with `gofmt`; `task fmt` formats Go and Squatter C in place.
 - Match the surrounding code's naming, error-wrapping, and defensive-copy
   conventions (maps/slices are cloned at boundaries).
 - Python SDK code must pass `ruff`, `mypy --strict`, and `pydoclint`.

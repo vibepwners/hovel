@@ -25,9 +25,9 @@ Run `task --list` to see everything available.
 | `task test` | Run all tests. |
 | `task test -- //internal/domain/...` | Run specific tests. |
 | `task run -- //cmd/hovel -- daemon status` | Run an arbitrary target. |
-| `task lint` | Go formatting + Gazelle + Python checks (read-only). |
-| `task fmt` | Auto-format: rewrite Go source and regenerate BUILD files. |
-| `task check` (`task ci`) | Lint, build, and test — the full gate. |
+| `task lint` | Go formatting + Gazelle + Python + Squatter C checks (read-only). |
+| `task fmt` | Auto-format: rewrite Go source, regenerate BUILD files, and format Squatter C. |
+| `task check` (`task ci`) | Lint, docs, build, and test — the full gate. |
 | `task start` (`cli`) / `task daemon` | Launch the interactive CLI / the daemon. |
 | `task status` / `task init` / `task reset` | Dev workspace: status, init, wipe-and-relaunch. |
 | `task modules:build` | Build the Go/Rust example modules and stage binaries to `examples/bin/`. |
@@ -37,13 +37,16 @@ Run `task --list` to see everything available.
 ## Definition of done
 
 Before considering a code change complete, run **`task ci`** and make sure it
-passes. This is exactly what CI (`.github/workflows/ci.yml`) and the pre-commit
-hook run, so a green `task ci` locally means a green build.
+passes. This is the full local gate: lint, docs, build, and test. CI
+(`.github/workflows/ci.yml`) runs the same suite; the git hooks split the same
+Task-backed checks across pre-commit (`task precommit`) and pre-push
+(`task prepush`).
 
 If you added, moved, or removed Go files or imports, run **`task fmt`** so
 `gofmt` and Gazelle-generated `BUILD.bazel` files are up to date; otherwise
-`task lint` will fail on the Gazelle diff check. When you add a new test target,
-also add it to the `test_suite` in the root `BUILD.bazel`.
+`task lint` will fail on the Gazelle diff check. `task fmt` also formats
+Squatter C sources. When you add a new test target, also add it to the
+`test_suite` in the root `BUILD.bazel`.
 
 ## Architecture guardrails
 
@@ -71,8 +74,7 @@ guardrail, or audit-event path need extra care. Preserve:
 - A throw cannot start without a persisted plan and a recorded confirmation.
 - `--now` skips the typed prompt but still records an auditable confirmation
   noting the bypass.
-- Higher-risk modules that use the existing explicit-risk metadata require the
-  matching allow flag before they can throw.
+- Modules tagged `dangerous` require `--allow-dangerous` before they can throw.
 - Never silently redact or drop operator-controlled configuration values.
 
 See `SECURITY.md` and `CONTRIBUTING.md` for the fuller picture.

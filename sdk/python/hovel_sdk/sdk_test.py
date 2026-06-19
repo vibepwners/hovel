@@ -2,9 +2,10 @@ import base64
 import io
 import logging
 import tempfile
+import threading
 import unittest
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, BinaryIO, ClassVar, cast
 
 from hovel_sdk import (
     Artifact,
@@ -17,8 +18,16 @@ from hovel_sdk import (
     Result,
     setup_logging,
 )
-from hovel_sdk.framing import encode_message, read_message, write_message
+from hovel_sdk.framing import (
+    MAX_FRAME_BYTES,
+    FrameError,
+    MessageWriter,
+    encode_message,
+    read_message,
+    write_message,
+)
 from hovel_sdk.server import JSONRPCServer
+from hovel_sdk.testing import ModuleRPC, RPCError, drive_module
 
 
 class EchoModule(HovelModule):
@@ -144,16 +153,83 @@ class StepModule(HovelModule):
         return Result.ok(summary="not used")
 
 
+class _FragmentingStream:
+    def __init__(self) -> None:
+        self._buffer = io.BytesIO()
+
+    def write(self, data: bytes) -> int:
+        midpoint = max(1, len(data) // 2)
+        first = self._buffer.write(data[:midpoint])
+        threading.Event().wait(0.001)
+        second = self._buffer.write(data[midpoint:])
+        return first + second
+
+    def flush(self) -> None:
+        return
+
+    def getvalue(self) -> bytes:
+        return self._buffer.getvalue()
+
+
+def _write_many_messages(writer: MessageWriter, prefix: str) -> None:
+    for index in range(25):
+        writer.write({
+            "jsonrpc": "2.0",
+            "method": "module/log",
+            "params": {"message": f"{prefix}-{index}"},
+        })
+
+
+def _read_all_messages(stream: BinaryIO) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    while True:
+        message = read_message(stream)
+        if message is None:
+            return messages
+        messages.append(message)
+
+
 class SDKTest(unittest.TestCase):
     def test_lsp_framing_round_trips_json_rpc(self) -> None:
         message = {"jsonrpc": "2.0", "id": 1, "method": "handshake"}
         stream = io.BytesIO(encode_message(message))
         self.assertEqual(read_message(stream), message)
 
+    def test_read_message_rejects_oversized_frame_before_body_read(self) -> None:
+        stream = io.BytesIO(f"Content-Length: {MAX_FRAME_BYTES + 1}\r\n\r\n".encode())
+        try:
+            read_message(stream)
+        except FrameError as exc:
+            self.assertIn("exceeds maximum", str(exc))
+        else:
+            self.fail("expected oversized frame to be rejected")
+
     def test_write_message_uses_content_length(self) -> None:
         stream = io.BytesIO()
         write_message(stream, {"ok": True})
         self.assertTrue(stream.getvalue().startswith(b"Content-Length: "))
+
+    def test_message_writer_serializes_concurrent_frames(self) -> None:
+        stream = _FragmentingStream()
+        writer = MessageWriter(cast("BinaryIO", stream))
+
+        threads = [
+            threading.Thread(target=_write_many_messages, args=(writer, prefix))
+            for prefix in ("a", "b", "c")
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        read_stream = io.BytesIO(stream.getvalue())
+        messages = _read_all_messages(read_stream)
+
+        self.assertEqual(len(messages), 75)
+        self.assertEqual(
+            sorted(message["params"]["message"] for message in messages),
+            sorted(f"{prefix}-{index}" for prefix in ("a", "b", "c") for index in range(25)),
+        )
 
     def test_server_executes_module_and_emits_log_notification(self) -> None:
         stdin = io.BytesIO(
@@ -271,11 +347,19 @@ class SDKTest(unittest.TestCase):
                 supports_reconnect=True,
                 supports_multiple_sessions=True,
                 reconnect=PayloadProviderRecord(
+                    provider_id="squatter",
                     schema="squatter.tcp_bind.reconnect",
-                    descriptor={"transport": "tcp-bind", "host": "192.168.122.142", "port": 9101},
+                    schema_version="v1",
+                    descriptor={
+                        "transport": "tcp-bind",
+                        "host": "192.168.122.142",
+                        "port": 9101,
+                    },
                 ),
                 cleanup=PayloadProviderRecord(
+                    provider_id="etro",
                     schema="etro.smb_service.cleanup",
+                    schema_version="v1",
                     descriptor={
                         "remotePath": r"C:\Windows\Temp\svc123.exe",
                         "serviceName": "svc123",
@@ -287,8 +371,14 @@ class SDKTest(unittest.TestCase):
 
         installed = result.to_rpc()["installedPayloads"][0]
         self.assertEqual(installed["provider"], "squatter")
-        self.assertEqual(installed["payloadId"], "squatter/windows/x86/windows-7/tcp-bind/pe-exe")
+        self.assertEqual(
+            installed["payloadId"],
+            "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+        )
+        self.assertEqual(installed["reconnect"]["providerId"], "squatter")
+        self.assertEqual(installed["reconnect"]["schemaVersion"], "v1")
         self.assertEqual(installed["reconnect"]["descriptor"]["port"], 9101)
+        self.assertEqual(installed["cleanup"]["providerId"], "etro")
         self.assertEqual(installed["cleanup"]["descriptor"]["serviceName"], "svc123")
 
     def test_async_module_can_open_and_drive_shell_session(self) -> None:
@@ -352,6 +442,67 @@ class SDKTest(unittest.TestCase):
             logging.getLogger().removeHandler(handler)
         self.assertEqual(emitted[0]["message"], "hello world")
         self.assertEqual(emitted[0]["fields"]["answer"], 42)
+
+    def test_module_rpc_helper_executes_and_collects_notifications(self) -> None:
+        with ModuleRPC(EchoModule()) as rpc:
+            handshake = rpc.call("handshake")
+            result = rpc.call(
+                "execute",
+                {"runId": "run-1", "moduleId": "echo", "target": "mock://target"},
+            )
+
+            self.assertEqual(handshake["name"], "echo")
+            self.assertEqual(result["summary"], "echo done")
+            self.assertEqual(rpc.notifications[0]["method"], "module/log")
+            self.assertEqual(rpc.notifications[0]["params"]["fields"]["target"], "mock://target")
+
+    def test_module_rpc_helper_drives_session_round_trip(self) -> None:
+        with ModuleRPC(SessionModule()) as rpc:
+            execute = rpc.call(
+                "execute",
+                {"runId": "run-1", "moduleId": "session-echo", "target": "mock://target"},
+            )
+            self.assertEqual(execute["sessions"][0]["id"], "run-1-session-1")
+
+            prompt = rpc.call("session/read", {"sessionId": "run-1-session-1", "timeoutMs": 100})
+            rpc.call(
+                "session/write",
+                {"sessionId": "run-1-session-1", "data": base64.b64encode(b"whoami\n").decode()},
+            )
+            output = rpc.call("session/read", {"sessionId": "run-1-session-1", "timeoutMs": 100})
+
+            self.assertEqual(base64.b64decode(prompt["data"]), b"mock$ ")
+            self.assertEqual(base64.b64decode(output["data"]), b"mock-user\n")
+
+    def test_module_rpc_helper_drives_step_methods(self) -> None:
+        with ModuleRPC(StepModule()) as rpc:
+            describe = rpc.call("step.describe")
+            prepared = rpc.call(
+                "step.prepare",
+                {"preparedPlanId": "prep-1", "stepId": "windows.credential.create_local_admin"},
+            )
+            executed = rpc.call("step.execute", {"runId": "run-1", "stepId": "squatter.connect_smb"})
+
+            self.assertEqual(describe["steps"][0]["id"], "squatter.connect_smb")
+            self.assertEqual(prepared["preparedValues"]["username"]["value"], "m7q4z92d")
+            self.assertEqual(executed["capabilities"][0]["type"], "SessionRef")
+
+    def test_module_rpc_helper_raises_on_rpc_error(self) -> None:
+        with ModuleRPC(EchoModule()) as rpc:
+            try:
+                rpc.call("does.not.exist")
+            except RPCError as exc:
+                self.assertIn("unknown method", str(exc))
+            else:
+                self.fail("expected RPCError")
+
+    def test_drive_module_runs_script_and_returns_notifications(self) -> None:
+        def script(rpc: ModuleRPC) -> None:
+            rpc.call("execute", {"runId": "run-1", "moduleId": "echo", "target": "mock://target"})
+
+        notifications = drive_module(EchoModule(), script)
+
+        self.assertEqual(notifications[0]["method"], "module/log")
 
 
 if __name__ == "__main__":

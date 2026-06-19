@@ -1,5 +1,6 @@
 .hovel/
 .task/
+_site/
 examples/bin/
 lefthook-local.yml
 bazel-*

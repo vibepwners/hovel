@@ -18,6 +18,8 @@ import (
 	"sync"
 )
 
+const maxFrameBytes = 64 * 1024 * 1024
+
 // frameError wraps a malformed or truncated frame on the wire.
 type frameError struct{ msg string }
 
@@ -56,8 +58,11 @@ func (fr *frameReader) read() (map[string]json.RawMessage, error) {
 		}
 		if strings.EqualFold(strings.TrimSpace(name), "content-length") {
 			length, convErr := strconv.Atoi(strings.TrimSpace(value))
-			if convErr != nil {
+			if convErr != nil || length < 0 {
 				return nil, frameError{"invalid Content-Length"}
+			}
+			if length > maxFrameBytes {
+				return nil, frameError{fmt.Sprintf("Content-Length %d exceeds maximum %d", length, maxFrameBytes)}
 			}
 			contentLength = length
 		}

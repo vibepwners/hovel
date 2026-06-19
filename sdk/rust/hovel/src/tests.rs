@@ -5,7 +5,10 @@ use std::io::Cursor;
 use std::rc::Rc;
 
 use crate::json::{self, Value};
-use crate::{base64, serve_with, Context, Info, LineShellSession, Module, ModuleType, Outcome, Schema, Session, SessionOptions};
+use crate::{
+    base64, serve_with, Context, Info, InstalledPayloadDescriptor, LineShellSession, Module,
+    ModuleType, Outcome, PayloadProviderRecord, Schema, Session, SessionOptions,
+};
 
 #[test]
 fn json_round_trips() {
@@ -164,6 +167,13 @@ fn request(id: i64, method: &str, params: Value) -> Value {
     ])
 }
 
+#[test]
+fn framing_rejects_oversized_frame_before_body_read() {
+    let mut cursor = Cursor::new(b"Content-Length: 67108865\r\n\r\n".to_vec());
+    let err = crate::framing::read_message(&mut cursor).expect_err("frame should be rejected");
+    assert!(err.to_string().contains("exceeds maximum"), "{err}");
+}
+
 fn run_session(input: Vec<u8>, module: FakeModule) -> Vec<Value> {
     let captured = SharedBuf(Rc::new(RefCell::new(Vec::new())));
     let mut reader = Cursor::new(input);
@@ -208,6 +218,65 @@ fn serve_handshake_schema_execute() {
     let execute = responses[2].get("result").unwrap();
     assert_eq!(execute.get("status").and_then(Value::as_str), Some("succeeded"));
     assert_eq!(execute.get("summary").and_then(Value::as_str), Some("surveyed example.test"));
+}
+
+#[test]
+fn outcome_serializes_installed_payload_descriptors() {
+    let payload = InstalledPayloadDescriptor::new(
+        "squatter",
+        "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+        "10.0.0.42",
+    )
+    .with_payload_version("0.1.0")
+    .with_transport("tcp-bind")
+    .with_endpoint("10.0.0.42:9101")
+    .with_instance_key("squatter:10.0.0.42:9101")
+    .with_stamp_id("stamp-1")
+    .with_artifact_id("artifact-1")
+    .with_supports_reconnect(true)
+    .with_cleanup(PayloadProviderRecord::new(
+        "squatter.cleanup.tcp_bind",
+        vec![("remotePath".into(), Value::from(r"C:\Windows\Temp\n4x9q2.exe"))],
+    ))
+    .with_reconnect(
+        PayloadProviderRecord::new(
+            "squatter.reconnect.tcp_bind",
+            vec![("host".into(), Value::from("10.0.0.42")), ("port".into(), Value::from(9101_i64))],
+        )
+        .with_schema_version("1"),
+    )
+    .with_metadata("launch_method", Value::from("rust-test"));
+
+    let result = Outcome::ok(vec![("target".into(), Value::from("10.0.0.42"))])
+        .with_installed_payload(payload)
+        .to_value(Vec::new());
+
+    let installed = match result.get("installedPayloads") {
+        Some(Value::Array(items)) => &items[0],
+        other => panic!("missing installed payloads: {other:?}"),
+    };
+    assert_eq!(installed.get("provider").and_then(Value::as_str), Some("squatter"));
+    assert_eq!(
+        installed.get("payloadId").and_then(Value::as_str),
+        Some("squatter/windows/x86/xp-sp3/tcp-bind/pe-exe")
+    );
+    assert_eq!(installed.get("supportsReconnect").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        installed
+            .get("reconnect")
+            .and_then(|v| v.get("descriptor"))
+            .and_then(|v| v.get("port"))
+            .and_then(Value::as_f64),
+        Some(9101.0)
+    );
+    assert_eq!(
+        installed
+            .get("cleanup")
+            .and_then(|v| v.get("descriptor"))
+            .and_then(|v| v.get("remotePath"))
+            .and_then(Value::as_str),
+        Some(r"C:\Windows\Temp\n4x9q2.exe")
+    );
 }
 
 #[test]

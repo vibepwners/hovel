@@ -64,6 +64,13 @@
           <li>Run Go domain validation for semantic rules that JSON Schema cannot express cleanly.</li>
         </ol>
         <p>TOML is out of scope for the alpha and can be reconsidered after module, service, chain, event, provider, and run-plan schemas are stable.</p>
+        <p>
+          The current throwable authoring format is the Chain descriptor. Module
+          and service descriptors are schema/domain contracts in source; the daemon's
+          current module discovery path is the JSON launch catalog pointed to by
+          <code>HOVEL_MODULE_CONFIG</code>, documented in
+          <a href="../module-development.html">Module Development</a>.
+        </p>
 
         <h2>Module Descriptor</h2>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
@@ -106,7 +113,14 @@ spec:
     session:
       type: sessionRef
     artifacts:
-      type: artifactRef[]
+      - name: command-transcript.txt
+        kind: text/plain
+        mode: inline
+        description: Captured command output.
+      - name: payload.bin
+        kind: application/octet-stream
+        mode: file
+        description: Generated payload bytes.
     facts:
       type: fact[]
   requires:
@@ -131,21 +145,31 @@ spec:
 kind: Chain
 metadata:
   name: ssh-memory-flow
-  version: 0.1.0
+  version: "0.1.0"
   description: Survey a target and run the SSH memory module.
 spec:
+  mode: configured
   steps:
     - id: survey
-      module: ssh-survey
+      uses: module:ssh-survey
     - id: exploit
-      module: ssh-memory@0.1.0
+      uses: module:ssh-memory@0.1.0
   config:
-    operator.confirmed_lab:
-      type: bool
-      required: true
+    operator.confirmed_lab: "true"
+  targets:
+    - id: 10.41.32.2
+      config:
+        target.host: "10.41.32.2"
 </code></pre>
+        <p>The schema accepts metadata such as <code>version</code>, <code>description</code>, and <code>tags</code>; current command flows use <code>metadata.name</code> as the chain identity.</p>
 
         <h2>Service Descriptor</h2>
+        <p>
+          Service descriptors are schema/domain contracts in the current tree. They are
+          not yet loaded by a general service process runtime; implemented provider
+          behavior currently runs through module RPC, especially Go payload-provider
+          modules.
+        </p>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: Service
 metadata:
@@ -208,37 +232,29 @@ spec:
         <h2>Execute Request</h2>
 <pre data-lang="yaml"><code>runId: run-uuid
 moduleId: ssh-memory@0.1.0
-targets:
-  - id: target-uuid
-    address: 10.41.32.2
+target: 10.41.32.2
 inputs:
-  port: 22
-  username: user
-  payload:
-    id: payload:sshplant-x86_64-linux
-    kind: elf
-    bytes: !!binary |
-      AAEC...
-    sha256: abc123
-providers:
-  payload: provider-ref
-  artifact: provider-ref
-  facts: provider-ref
-env:
-  HOVEL_RUN_ID: run-uuid
+  failure_mode: ""
+chainConfig:
+  operator.confirmed_lab: "true"
+targetConfig:
+  target.host: "10.41.32.2"
+  target.port: "22"
 </code></pre>
 
         <h2>Execute Result</h2>
 <pre data-lang="yaml"><code>status: succeeded
-facts:
-  - type: os.name
-    value: linux
-    confidence: 0.95
-artifacts:
-  - artifact:artifact-uuid
-findings: []
 outputs:
-  session: session-ref
+  facts:
+    os.name: linux
+    confidence: 0.95
+findings: []
+artifacts:
+  - name: ssh-transcript.txt
+    kind: text/plain
+    path: /tmp/ssh-transcript.txt
+sessions:
+  - id: session-ref
 </code></pre>
 
         <h2>Installed Payload Descriptor</h2>
@@ -251,27 +267,32 @@ outputs:
 <pre data-lang="yaml"><code>provider: squatter
 payloadId: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
 payloadVersion: 0.1.0
+target: 10.0.0.42
+targetId: t1
+state: installed
+transport: tcp-bind
+endpoint: 10.0.0.42:9101
 instanceKey: optional-provider-stable-key
 stampId: payload-stamp-uuid
-target:
-  id: t1
-  address: 10.0.0.42
-transport: tcp-bind
-endpointSummary: 10.0.0.42:9101
-state: installed
+artifactIds:
+  - artifact-squatter-exe
 supportsReconnect: true
 supportsMultipleSessions: false
 reconnect:
+  providerId: squatter
   schema: squatter.reconnect.tcp_bind
-  schemaVersion: 1
+  schemaVersion: "1"
   descriptor:
     host: 10.0.0.42
     port: 9101
 cleanup:
+  providerId: squatter
   schema: squatter.cleanup.tcp_bind
-  schemaVersion: 1
+  schemaVersion: "1"
   descriptor:
     remotePath: C:\Windows\Temp\n4x9q2.exe
+metadata:
+  profile: xp-sp3-lab
 </code></pre>
         <p>
           The durable installed payload row stores a normalized core plus opaque
@@ -284,35 +305,47 @@ cleanup:
 
         <h2>Event Shape</h2>
 <pre data-lang="yaml"><code>id: event-uuid
-runId: run-uuid
-targetId: target-uuid
-moduleId: ssh-survey@0.1.0
-type: module.log
+schemaVersion: hovel.event/v1alpha1
+type: hovel.module.log
 level: info
 message: detected target architecture
+timestamp: 2026-04-25T18:00:00Z
+refs:
+  runId: run-uuid
+  target: target-uuid
+  moduleId: ssh-survey@0.1.0
 fields:
   arch: x86_64
-timestamp: 2026-04-25T18:00:00Z
 </code></pre>
         <p>Service event:</p>
 <pre data-lang="yaml"><code>id: event-uuid
-runId: run-uuid
-serviceId: service:sshplant-lp
-type: service.log
+schemaVersion: hovel.event/v1alpha1
+type: hovel.service.log
 level: info
 message: listener started
+timestamp: 2026-04-25T18:00:00Z
+refs:
+  runId: run-uuid
+  serviceId: service:sshplant-lp
 fields:
   bindHost: 127.0.0.1
   bindPort: 49152
-timestamp: 2026-04-25T18:00:00Z
 </code></pre>
         <p>Artifact event:</p>
-<pre data-lang="yaml"><code>type: artifact.created
-artifactId: artifact-uuid
-name: ssh-transcript.txt
-mediaType: text/plain
-size: 1234
-sha256: abc123
+<pre data-lang="yaml"><code>id: event-uuid
+schemaVersion: hovel.event/v1alpha1
+type: hovel.artifact.recorded
+level: info
+message: artifact recorded
+timestamp: 2026-04-25T18:00:00Z
+refs:
+  runId: run-uuid
+fields:
+  artifactId: artifact-uuid
+  name: ssh-transcript.txt
+  mediaType: text/plain
+  size: "1234"
+  sha256: abc123
 </code></pre>
 
         <h2>Schema Files</h2>
@@ -322,11 +355,10 @@ sha256: abc123
   hovel.chain.schema.json
   hovel.throw-plan.schema.json
   hovel.event.schema.json
-  hovel.provider.schema.json
 </code></pre>
-        <p>Schemas should be hand-authored while the contracts are still moving. Generation from Go types can be reconsidered after the schema contracts stabilize.</p>
-        <p>Module and service schemas are the first slice. Chain and throw-plan schemas are required before chain-file one-shot execution is product-supported. Event and provider schemas become required before external adapters or third-party providers depend on those contracts.</p>
-        <p>Throw-plan schemas should cover planned steps, resolved descriptor versions, risk labels, required confirmations, requested targets, expected services, expected providers, and the confirmation record shape used by <code>StartThrow</code>.</p>
+        <p>Schemas are hand-authored while the contracts are still moving. Generation from Go types can be reconsidered after the schema contracts stabilize.</p>
+        <p>Module, service, chain, throw-plan, and event schemas are present in source. A separate provider schema is not currently present; provider-facing shapes are documented in the module wire protocol and SDK APIs.</p>
+        <p>The current throw-plan schema covers plan identity, workspace, chain, targets, planned steps, review text, intent, and confirmation records including <code>typed_yes</code>, <code>preconfirmed</code>, <code>reviewed_yes</code>, and <code>now_bypass</code> methods. Future schema revisions should add resolved descriptor versions, risk labels, expected services, and expected providers once those fields are emitted by the planning path.</p>
       </article>
 
       <nav class="page-nav">

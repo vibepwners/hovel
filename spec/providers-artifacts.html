@@ -56,21 +56,20 @@
       <article>
         <h1>Providers, Artifacts, and Structured Logging</h1>
         <p>Providers let modules and chains ask for typed resources without hard-coding where those resources come from.</p>
-        <p>Example:</p>
-<pre data-lang="python"><code>payload = ctx.providers.payload.resolve(
-    name="sshplant",
-    os="linux",
-    arch="x86_64",
-    kind="elf",
-)
-</code></pre>
-        <p>The module should not care whether the payload came from a local file, a build step, an artifact cache, another module, a managed service, or an external project.</p>
+        <p>
+          In the current implementation, provider behavior is exposed through module RPC:
+          Go modules can implement <code>PayloadProvider</code>, Go and Python modules can
+          implement <code>step.*</code> providers, and any module can return explicit
+          installed-payload descriptors. The SDK contexts do not expose a
+          <code>ctx.providers</code> convenience API.
+        </p>
+        <p>The consuming module should not care whether the payload came from a local file, a build step, an artifact cache, another module, a managed service, or an external project.</p>
 
         <h2>MVP Provider Scope</h2>
         <p>The first provider implementation should stay narrow:</p>
         <ol>
           <li><code>ArtifactProvider</code> records file-like outputs, hashes, metadata, and run associations.</li>
-          <li><code>PayloadProvider</code> discovers available payloads live, resolves tagged bytes, records hashes or artifact refs before execution, and validates reconnect descriptors for installed payloads it owns.</li>
+          <li><code>PayloadProvider</code> resolves tagged bytes, records hashes or artifact refs before execution, validates reconnect descriptors for installed payloads it owns, and should be the eventual live-discovery source for richer payload catalogs. Today, <code>payloads available</code> projects configured payload-provider modules until live discovery is wired through the operator command.</li>
           <li>The structured logging rail reports provider resolution and artifact creation, but is not itself a provider.</li>
         </ol>
         <p><code>FactProvider</code>, <code>CredentialProvider</code>, <code>ListenerProvider</code>, and <code>SessionProvider</code> remain part of the domain model, but should not block the first useful execution loop. Facts can start as module outputs, credentials can start as explicit run inputs or module-produced capabilities, and listeners/sessions can arrive with the managed-service milestone.</p>
@@ -120,31 +119,52 @@ CleanupHandle</code></pre>
 
         <h2>Payload Provider</h2>
         <p>Payload query:</p>
-<pre data-lang="yaml"><code>name: sshplant
-kind: elf
-os: linux
-arch: x86_64
+<pre data-lang="yaml"><code>target: 10.0.0.42
+platform: windows
+arch: x86
+format: pe-exe
+transport: tcp-bind
+config:
+  lhost: 10.0.0.5
+  lport: "9101"
 capabilities:
-  - interactive_session
-constraints:
-  writesDisk: false
+  - session.shell
 </code></pre>
-        <p>Payload response:</p>
-<pre data-lang="yaml"><code>id: payload-uuid
-name: sshplant-x86_64-linux
-kind: elf
-os: linux
-arch: x86_64
-bytes: !!binary |
-  AAEC...
-metadata:
-  entrypoint: default
+        <p>Payload metadata response:</p>
+<pre data-lang="yaml"><code>id: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
+name: Squatter TCP bind PE
+version: 0.1.0
+platform: windows
+arch: x86
+minOS: Windows XP SP3
+testedOS:
+  - Windows XP SP3
+formats:
+  - pe-exe
+capabilities:
+  - session.shell
+transport:
+  kind: tcp-bind
+  encrypted: false
+session:
+  kind: shell
+  acquisition: connect
+  requiresPreThrowListener: false
+  requiresPostThrowConnect: true
+  owner: provider
+</code></pre>
+        <p>Payload generation response:</p>
+<pre data-lang="yaml"><code>primary:
+  name: squatter.exe
+  role: primary
+  format: pe-exe
+  encoding: base64
+  bytes: TVqQAAMAAAAEAAAA...
   size: 123456
   sha256: abc123
-capabilities:
-  - interactive_session
+artifacts: []
 </code></pre>
-        <p>Provider outputs are logically bytes. An implementation may stream bytes or store them in an artifact first for efficiency, but the contract exposed to the next module is a tagged byte payload.</p>
+        <p>Provider outputs are logically payload artifacts. An implementation may return inline base64 bytes or a provider handle that Hovel streams with <code>read_payload_chunk</code>.</p>
         <p>Hovel performs minimal payload validation:</p>
         <ol>
           <li>Ensure bytes were returned.</li>
@@ -208,13 +228,17 @@ createdBy:
           by the provider.
         </p>
         <p>State transitions are append-only audit events over a current-state row:</p>
-<pre data-lang="states"><code>created
-connected
-unreachable
-cleanup_attempted
-removed
-manually_marked_removed
-</code></pre>
+        <figure class="diagram" aria-label="Installed payload audit transitions from created through connected, unreachable, cleanup attempted, removed, or manually marked removed.">
+          <figcaption>Installed Payload Transitions</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">created</li>
+            <li class="flow-step ready">connected</li>
+            <li class="flow-step warn">unreachable</li>
+            <li class="flow-step warning">cleanup_attempted</li>
+            <li class="flow-step stop">removed</li>
+            <li class="flow-step stop">manually_marked_removed</li>
+          </ol>
+        </figure>
         <p>
           The current state is one of <code>installed</code>, <code>connected</code>,
           <code>unreachable</code>, or <code>removed</code>. Failed installs remain throw
@@ -225,10 +249,12 @@ manually_marked_removed
         </p>
         <p>
           Cleanup is split into provider-executed removal and operator bookkeeping.
-          <code>payloads cleanup &lt;payload&gt;</code> asks the provider to remove target-side
-          state and marks the record removed only on success. <code>payloads mark-removed
-          &lt;payload&gt;</code> records manual bookkeeping when the operator knows the payload
-          is gone or the target was rebuilt.
+          The Go provider RPC surface already includes <code>cleanup_payload</code>, but
+          the current commandmode <code>payloads cleanup &lt;payload&gt;</code> path is not wired
+          to provider cleanup yet and fails explicitly. Today, after manual or
+          out-of-band provider cleanup, <code>payloads mark-removed &lt;payload&gt;</code>
+          records bookkeeping when the operator knows the payload is gone or the target
+          was rebuilt.
         </p>
 
         <h2>PIC Payloads</h2>
@@ -267,18 +293,15 @@ capabilities:
 </code></pre>
 
         <h2>Provider Storage</h2>
-        <p>MVP provider data may live in SQLite and local files.</p>
+        <p>MVP provider data may live in SQLite and local files. Current workspace initialization creates <code>workspace.json</code>, <code>workspace.db</code>, and the <code>artifacts/</code>, <code>logs/</code>, <code>modules/</code>, <code>throws/</code>, and <code>services/</code> directories. Provider-specific directories can be added when a provider needs file-shaped state.</p>
 <pre data-lang="tree"><code>.hovel/
+  workspace.json
   workspace.db
   artifacts/
-    ab/
-      cd/
-        artifact-by-sha
-  payloads/
-    stamps/
+    &lt;throw-id&gt;/
+      &lt;run-id&gt;/
+        &lt;artifact-name&gt;
   services/
-  listeners/
-  sessions/
   logs/
   throws/
 </code></pre>
@@ -305,7 +328,7 @@ targetId: target-uuid
 serviceId: service:sshplant-lp
 name: ssh-transcript.txt
 mediaType: text/plain
-path: .hovel/artifacts/ab/cd/hash
+path: artifacts/throw-uuid/run-uuid/ssh-transcript.txt
 sha256: abc123
 createdBy: module:ssh-memory
 </code></pre>
@@ -344,7 +367,7 @@ session.error
 
         <h2>Structured Logging Rail</h2>
         <p>Hovel does not treat evidence as a first-class product vertical in the alpha. Other tools can handle assessment evidence, reporting, and proof curation. Hovel is responsible for being a red-team thrower with excellent structured observability: operators should be able to see what ran, what it did, what it produced, where it failed, and which artifacts or sessions were created.</p>
-        <p>Structured logging is a logging rail, not only a database table. Producers emit typed structured events. Handlers subscribe to those events and decide what to do with them. Persistence is one handler. CLI and TUI rendering are handlers. Future NDJSON export, remote streaming, debug sinks, and test recorders are handlers.</p>
+        <p>Structured logging is a logging rail, not only a database table. Producers emit typed structured events. Handlers subscribe to those events and decide what to do with them. Persistence is one handler. CLI rendering is a handler. Future TUI rendering, NDJSON export, remote streaming, debug sinks, and test recorders are handlers.</p>
         <p>Required components:</p>
         <ol>
           <li><code>Event</code> is the durable envelope.</li>
@@ -379,14 +402,16 @@ fields:
         <ol>
           <li>Events are append-only. Corrections are new events.</li>
           <li>Event IDs are generated, not globally deduplicated.</li>
-          <li>Hovel reserves <code>hovel.*</code> event types.</li>
-          <li>Modules may emit custom types under <code>module.&lt;module-name&gt;.*</code>.</li>
+          <li>Event types are lowercase dot-separated segments using letters, digits, and underscores.</li>
+          <li>Hovel reserves core categories such as <code>hovel.*</code> and <code>workspace.*</code>.</li>
+          <li>Modules may emit custom types under <code>module.*</code> using the same lowercase segment rules.</li>
           <li>The envelope is validated. <code>fields</code> is arbitrary JSON.</li>
           <li>Large payloads, transcripts, and binary data must be stored as artifacts. Events reference artifact IDs or paths and hashes.</li>
           <li>Module crashes, malformed frames, protocol timeouts, artifact registration failures, and guardrail failures must produce structured failure events when the host can observe them.</li>
         </ol>
-        <p>Core event types:</p>
+        <p>Core event taxonomy, including current emitted events and planned producer categories:</p>
 <pre data-lang="events"><code>hovel.throw.planned
+workspace.initialized
 hovel.throw.confirmed
 hovel.throw.started
 hovel.throw.completed
@@ -415,7 +440,7 @@ hovel.service.failed
 hovel.service.stopped
 hovel.error.raised
 </code></pre>
-        <p>The TUI, CLI, REST stream, and MCP adapter should all subscribe to the same logging rail. They may apply different filters and renderers, but they must observe the same underlying event contract.</p>
+        <p>The CLI, future TUI, future REST stream, and future MCP adapter should all subscribe to the same logging rail. They may apply different filters and renderers, but they must observe the same underlying event contract.</p>
       </article>
 
       <nav class="page-nav">

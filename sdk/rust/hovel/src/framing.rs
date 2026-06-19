@@ -4,6 +4,8 @@ use std::io::{self, BufRead, Write};
 
 use crate::json::{self, Value};
 
+const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
+
 /// Reads one framed JSON message. Returns `Ok(None)` on a clean end of stream
 /// between frames.
 pub fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Value>> {
@@ -25,7 +27,16 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Value>> {
         }
         if let Some((name, value)) = trimmed.split_once(':') {
             if name.trim().eq_ignore_ascii_case("content-length") {
-                content_length = value.trim().parse().ok();
+                let parsed = value
+                    .trim()
+                    .parse()
+                    .map_err(|_| frame_error("invalid Content-Length"))?;
+                if parsed > MAX_FRAME_BYTES {
+                    return Err(frame_error(&format!(
+                        "Content-Length {parsed} exceeds maximum {MAX_FRAME_BYTES}"
+                    )));
+                }
+                content_length = Some(parsed);
             }
         }
     }

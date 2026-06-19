@@ -124,17 +124,24 @@ tasks:
       - bash tools/modules/stage_examples.sh
 
   docs:
-    desc: Build the static spec site.
+    desc: Build and stage the static docs site, including generated SDK API docs.
     cmds:
-      - bazel build //spec:site
+      - bash tools/docs/stage_site.sh
+
+  docs:api:
+    desc: Generate SDK API docs into _site/api/sdk.
+    cmds:
+      - mkdir -p _site
+      - python3 tools/docs/generate_sdk_api_docs.py --site-root "$PWD/_site" --output "$PWD/_site/api/sdk"
 
   # --- Checks (what CI runs) ----------------------------------------------
 
   check:
     aliases: [ci]
-    desc: Run lint, build, and test.
+    desc: Run lint, docs, build, and test.
     cmds:
       - task: lint
+      - task: docs
       - task: build
       - task: test
 

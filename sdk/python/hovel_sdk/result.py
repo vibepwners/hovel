@@ -57,16 +57,19 @@ class Artifact:
 class PayloadProviderRecord:
     schema: str = ""
     descriptor: dict[str, Any] = field(default_factory=dict)
-    config: dict[str, str] = field(default_factory=dict)
+    provider_id: str = ""
+    schema_version: str = ""
 
     def to_rpc(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
+        if self.provider_id:
+            out["providerId"] = self.provider_id
         if self.schema:
             out["schema"] = self.schema
+        if self.schema_version:
+            out["schemaVersion"] = self.schema_version
         if self.descriptor:
             out["descriptor"] = dict(self.descriptor)
-        if self.config:
-            out["config"] = dict(self.config)
         return out
 
 

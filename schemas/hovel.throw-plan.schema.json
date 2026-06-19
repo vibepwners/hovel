@@ -112,7 +112,7 @@
         },
         "method": {
           "type": "string",
-          "enum": ["typed_yes", "preconfirmed", "now_bypass"]
+          "enum": ["typed_yes", "preconfirmed", "reviewed_yes", "now_bypass"]
         },
         "confirmedAt": {
           "type": "string"

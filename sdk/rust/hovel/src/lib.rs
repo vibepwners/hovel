@@ -50,6 +50,6 @@ mod tests;
 
 pub use context::Context;
 pub use module::{Info, Module, ModuleType, Requirement, Schema};
-pub use result::{Artifact, Finding, Outcome};
+pub use result::{Artifact, Finding, InstalledPayloadDescriptor, Outcome, PayloadProviderRecord};
 pub use server::{serve, serve_with};
 pub use session::{LineShellSession, Session, SessionOptions, SessionRef};

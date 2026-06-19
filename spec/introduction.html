@@ -57,14 +57,14 @@
         <h1>Introduction</h1>
 
         <p>Status: Draft 0.3</p>
-        <p>Audience: Hovel maintainers, module authors, service authors, and operator-tooling engineers.</p>
+        <p>Audience: Hovel maintainers, module authors, future service authors, and operator-tooling engineers.</p>
         <p>Hovel is a Go-hosted framework for authorized security research, adversary emulation, lab exploitation, defensive validation, and operator workflow automation.</p>
         <p>Hovel is a platform for wrapping and operating third-party proofs of concept, not a catalog of first-party exploits. The project should provide the engine, SDKs, descriptors, providers, guardrails, examples, and operator experience that make third-party modules acceptable to run and inspect.</p>
         <p>The main product goal is straightforward:</p>
         <blockquote>
           <p>Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every throw, installed payload, and session.</p>
         </blockquote>
-        <p>The central runtime is a local engine, <code>hoveld</code>, which owns operations, chains, throws, module processes, managed services, provider state, installed payload inventory, sessions, structured events, artifacts, and workspace storage. Interactive <code>cli</code> mode, one-shot chain-file execution, TUI, REST/OpenAPI, and MCP are clients or adapters over the same application services.</p>
+        <p>The central runtime is a local engine, <code>hoveld</code>, which owns operations, chains, throws, module processes, provider-backed payload state, installed payload inventory, sessions, structured events, artifacts, and workspace storage. Interactive <code>cli</code> mode and one-shot chain-file execution are implemented clients over the application services; TUI, REST/OpenAPI, MCP, and a general managed-service process runtime are planned adapters or runtime extensions over the same boundary.</p>
 
         <h2>Core Decisions</h2>
         <ol>
@@ -72,8 +72,8 @@
           <li>Python is the first-class module authoring language.</li>
           <li><code>hoveld</code> is mandatory; invoking <code>hovel</code> starts or attaches to a daemon.</li>
           <li>Modules run as bounded processes through normal module runtime contracts.</li>
-          <li>Long-lived capabilities are managed as services.</li>
-          <li>Providers expose typed resources such as payloads, artifacts, facts, credentials, listeners, and sessions.</li>
+          <li>Long-lived capabilities should be managed as services in the target model; the current source validates service descriptors but does not launch general service processes.</li>
+          <li>Providers expose typed resources such as payloads, artifacts, facts, credentials, listeners, and sessions. The current implemented provider path is module RPC, especially Go payload-provider modules.</li>
           <li>Payload providers return tagged bytes with minimal framework validation, and return explicit installed-payload descriptors when they install or reconnect target-side payloads.</li>
           <li>Hovel core owns installed-payload persistence in SQLite; providers own reconnect and cleanup semantics.</li>
           <li>Throws emit structured events onto a shared logging rail consumed by every front end and persistence sink.</li>
@@ -81,34 +81,38 @@
         </ol>
 
         <h2>Product Shape</h2>
-        <p>Hovel exposes one engine through multiple front ends:</p>
-<pre data-lang="diagram"><code> +--------------+ +--------------+ +--------------+
- |  one-shot    | |     cli      | |     TUI      |
- +------+-------+ +------+-------+ +------+-------+
-        |                |                |
-+-------v------+ +-------v------+ +-------v------+
-|     MCP      |&gt;|   hoveld     |&lt;| REST/OpenAPI |
-+--------------+ | Application  | +--------------+
-                 |   Services   |
-                 +------+-------+
-                        |
-                 +------v-------+
-                 | Domain Core  |
-                 +------+-------+
-                        |
-         +--------------+-----------------+
-         |              |                 |
- +-------v------+ +-----v-------+ +-------v------+
- | Module Host  | | Service Mgr | | Provider Reg |
- +-------+------+ +-----+-------+ +-------+------+
-         |              |                 |
- +-------v------+ +-----v-------+ +-------v------+
- | module       | | payloads,   | | artifacts,   |
- | processes    | | listeners,  | | facts,       |
- |              | | sessions    | | credentials  |
- +--------------+ +-------------+ +--------------+
-</code></pre>
-        <p>All front ends must call the same application services. The TUI must not contain business logic. The MCP adapter must not bypass validation. One-shot execution and <code>cli</code> mode must not implement their own chain runners. The REST API must not become a second framework.</p>
+        <p>Hovel exposes one engine through multiple front ends. In the current source, CLI and one-shot execution are implemented, <code>hovel tui</code> is an explicit not-implemented placeholder, and REST/OpenAPI and MCP have not landed yet:</p>
+        <figure class="diagram product-diagram" aria-label="Hovel front ends connect to hoveld application services, which orchestrate the domain core, module host, current provider module path, and planned service manager.">
+          <figcaption>Product Shape</figcaption>
+          <div class="product-tier product-frontends">
+            <div class="diagram-node"><strong>One-shot</strong><span>saved chain execution</span></div>
+            <div class="diagram-node"><strong>CLI</strong><span>interactive prompt</span></div>
+            <div class="diagram-node"><strong>TUI</strong><span>terminal workspace</span></div>
+            <div class="diagram-node"><strong>MCP</strong><span>agent front end</span></div>
+            <div class="diagram-node"><strong>REST/OpenAPI</strong><span>HTTP adapter</span></div>
+          </div>
+          <div class="diagram-bus">same application service boundary</div>
+          <div class="product-center">
+            <div class="diagram-node primary"><strong>hoveld</strong><span>Application Services</span></div>
+          </div>
+          <div class="diagram-bus">validates, plans, runs, records</div>
+          <div class="product-center">
+            <div class="diagram-node core"><strong>Domain Core</strong><span>pure product model</span></div>
+          </div>
+          <div class="diagram-bus">runtime orchestration</div>
+          <div class="product-tier product-platform">
+            <div class="diagram-node"><strong>Module Host</strong><span>bounded module processes</span></div>
+            <div class="diagram-node"><strong>Provider Modules</strong><span>payloads and chain steps today</span></div>
+            <div class="diagram-node"><strong>Service Manager</strong><span>planned long-lived services</span></div>
+          </div>
+          <div class="diagram-bus">external capabilities</div>
+          <div class="product-tier product-runtime">
+            <div class="diagram-node storage"><strong>Module Processes</strong><span>Python / Go / Rust</span></div>
+            <div class="diagram-node storage"><strong>Managed Capabilities</strong><span>installed payloads and live sessions</span></div>
+            <div class="diagram-node storage"><strong>Provider Outputs</strong><span>artifacts and evidence</span></div>
+          </div>
+        </figure>
+        <p>All front ends must call the same application services. As planned adapters land, the TUI must not contain business logic, the MCP adapter must not bypass validation, and the REST API must not become a second framework. One-shot execution and <code>cli</code> mode must not implement their own chain runners.</p>
 
         <h2>MVP Boundaries</h2>
         <p>The MVP should avoid pretending to be the final platform. Defer:</p>
@@ -125,7 +129,7 @@
         <ol>
           <li>Initialize a local workspace.</li>
           <li>Start or attach to <code>hoveld</code> from <code>hovel</code>.</li>
-          <li>Load and validate one module descriptor.</li>
+          <li>Load one module from the configured module launch catalog and validate its handshake/schema.</li>
           <li>Launch one Python module through the SDK path.</li>
           <li>Complete handshake, execution, logging, and shutdown.</li>
           <li>Emit structured events through the shared logging rail.</li>

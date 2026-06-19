@@ -57,9 +57,23 @@
         <h1>Architecture</h1>
 
         <p>Hovel uses a clean application core with adapters at the edges.</p>
-<pre data-lang="layers"><code>adapters -&gt; app -&gt; domain
-infra    -&gt; app -&gt; domain
-</code></pre>
+        <figure class="diagram layer-diagram" aria-label="Adapters and infrastructure depend on application services, and application services depend on the domain core.">
+          <figcaption>Dependency Direction</figcaption>
+          <div class="layer-path">
+            <div class="diagram-node"><strong>Adapters</strong><span>CLI / TUI / REST / MCP</span></div>
+            <div class="diagram-arrow">→</div>
+            <div class="diagram-node primary"><strong>Application</strong><span>services and use cases</span></div>
+            <div class="diagram-arrow">→</div>
+            <div class="diagram-node core"><strong>Domain</strong><span>pure model and rules</span></div>
+          </div>
+          <div class="layer-path">
+            <div class="diagram-node"><strong>Infrastructure</strong><span>storage / RPC / process runtime</span></div>
+            <div class="diagram-arrow">→</div>
+            <div class="diagram-node primary"><strong>Application</strong><span>ports and orchestration</span></div>
+            <div class="diagram-arrow">→</div>
+            <div class="diagram-node core"><strong>Domain</strong><span>validated value objects</span></div>
+          </div>
+        </figure>
         <p>The domain package must not import CLI, TUI, REST, MCP, storage, RPC, concrete module code, or concrete service code.</p>
 
         <h2>Engine</h2>
@@ -70,31 +84,34 @@ infra    -&gt; app -&gt; domain
           <li>Throw state.</li>
           <li>Chain execution.</li>
           <li>Module process lifecycle.</li>
-          <li>Service lifecycle.</li>
-          <li>Provider registry.</li>
+          <li>Provider-backed payload and step behavior through module RPC.</li>
+          <li>Service descriptor contracts; general service lifecycle management is planned.</li>
           <li>Installed payload inventory.</li>
           <li>Artifact store.</li>
           <li>Event bus.</li>
           <li>Logging pipeline.</li>
           <li>REST/OpenAPI endpoint when enabled.</li>
           <li>MCP endpoint or adapter when enabled.</li>
-          <li>TUI attachment endpoint.</li>
+          <li>Future TUI attachment endpoint.</li>
         </ol>
         <p>The primary executable is one <code>hovel</code> binary with these product roles:</p>
 <pre data-lang="shell"><code>hovel cli ...
-hovel daemon ...
-hovel tui ...
+hovel throw &lt;chain-file&gt;
+hovel daemon serve ...
+hovel daemon status
+hovel tui ...              # explicit placeholder today
 </code></pre>
         <p><code>hovel tui</code> is part of the product contract but may remain an explicit "not implemented yet" role until the TUI milestone. The production operator surface should center on <code>hovel cli</code> for stateful work and on a narrow one-shot shell surface for throwing a saved chain file.</p>
-        <p><code>cli</code> and, once implemented, <code>tui</code> must auto-start or attach to the daemon role in local mode. General-purpose <code>hovel command ...</code> mode is not part of the product contract. Shell one-shot execution is limited to saved chain files and daemon-management commands.</p>
-<pre data-lang="modes"><code>managed local mode: hovel cli or hovel tui starts or uses a local daemon
+        <p><code>cli</code> and, once implemented, <code>tui</code> must auto-start or attach to the daemon role in local mode. The root CLI also accepts compatibility and developer entrypoints such as <code>shell</code>, <code>command</code>, <code>run</code>, direct registry roots, <code>init</code>, and <code>status</code>, but they are not the durable product contract. Shell one-shot execution is limited to saved chain files and daemon-management commands.</p>
+<pre data-lang="modes"><code>managed local mode: hovel cli starts or uses a local daemon
+planned TUI mode:    hovel tui will start or use a local daemon when implemented
 one-shot mode:      hovel throw &lt;chain-file&gt; prompts for confirmation unless --now is passed
 server mode: hovel daemon serve is explicitly launched and clients attach
 </code></pre>
         <p>MVP should implement local mode first.</p>
 
         <h2>Daemon Contract</h2>
-        <p>Daemon-backed <code>hovel</code> operations must resolve a workspace, locate the matching local daemon, wait until it is healthy, then execute through application services. <code>cli</code> and <code>tui</code> may start a managed daemon when none exists. One-shot chain-file execution may start or attach to a local daemon, but it must use the same planning, confirmation, event, artifact, and persistence path as interactive execution.</p>
+        <p>Daemon-backed <code>hovel</code> operations must resolve a workspace, locate the matching local daemon, wait until it is healthy, then execute through application services. <code>cli</code> and, once implemented, <code>tui</code> may start a managed daemon when none exists. One-shot chain-file execution may start or attach to a local daemon, but it must use the same planning, confirmation, event, artifact, and persistence path as interactive execution.</p>
         <p>MVP daemon rules:</p>
         <ol>
           <li>One active <code>hoveld</code> per workspace.</li>
@@ -111,16 +128,16 @@ server mode: hovel daemon serve is explicitly launched and clients attach
         </ol>
         <p>Managed daemon ownership rules:</p>
         <ol>
-          <li>If <code>hovel cli</code> or <code>hovel tui</code> finds an already-running daemon for the workspace, it attaches and leaves that daemon running on exit.</li>
-          <li>If <code>hovel cli</code> or <code>hovel tui</code> starts the daemon because none is running, that daemon is owned by the interactive session.</li>
-          <li>An owned daemon should shut down when the owning <code>cli</code> or <code>tui</code> session exits.</li>
+          <li>If <code>hovel cli</code>, or future <code>hovel tui</code>, finds an already-running daemon for the workspace, it attaches and leaves that daemon running on exit.</li>
+          <li>If <code>hovel cli</code>, or future <code>hovel tui</code>, starts the daemon because none is running, that daemon is owned by the interactive session.</li>
+          <li>An owned daemon should shut down when the owning <code>cli</code>, or future <code>tui</code>, session exits.</li>
           <li>Ownership must be explicit in tests: started-by-session daemons are stopped on exit; preexisting daemons are not.</li>
           <li>One-shot chain-file execution must not create hidden durable operator session state beyond the throw records, events, artifacts, and logs it explicitly produces.</li>
         </ol>
 
         <h2>Application Services</h2>
         <p>Application services are the only things front ends should call.</p>
-        <p>Initial services:</p>
+        <p>Target service boundaries. The current concrete source includes workspace, daemon, run/module execution, command registry, chain runtime, artifacts, events, sessions, and installed-payload inventory paths; service lifecycle and listener management remain target boundaries until the service runtime lands:</p>
 <pre data-lang="services"><code>ModuleService
 ManagedServiceService
 ProviderService
@@ -135,7 +152,7 @@ SessionService
 PayloadService
 GuardrailService
 </code></pre>
-        <p>Representative methods:</p>
+        <p>Representative target methods, not all implemented today:</p>
 <pre data-lang="api"><code>ListModules(ctx) ([]ModuleDescriptor, error)
 InspectModule(ctx, moduleID) (ModuleDescriptor, error)
 ListServices(ctx) ([]ServiceDescriptor, error)
@@ -178,9 +195,10 @@ CheckGuardrails(ctx, ActionRequest) (GuardrailResult, error)
         <p>Confirmations do not expire by time. A confirmation is invalidated by any change that changes the plan hash. The confirmation record should stay small: plan hash, timestamp, and client ID are required. Additional fields may be recorded when already available, but should not require heavyweight identity or account systems.</p>
 
         <h2>Command Registry</h2>
-        <p>Application command definitions live in a central registry. The registry is the single source of truth for interactive CLI commands, TUI action metadata, one-shot chain-file execution options, help, validation, output modes, and handler bindings.</p>
-        <p>The initial operator registry should expose execution through chain and target setup, not a top-level <code>run</code> command:</p>
+        <p>Shared application command definitions live in a central registry. The registry owns command paths, aliases, options, help, validation, output modes, and handler bindings. The interactive CLI may add prompt-only affordances such as active-chain aliases and <code>chain config interactive</code>, but those affordances must delegate to the same session and application-service behavior.</p>
+        <p>The implemented operator registry exposes execution through chain and target setup, not a durable top-level <code>run</code> product command:</p>
 <pre data-lang="commands"><code>control daemon status
+control init
 op create &lt;operation&gt;
 op use &lt;operation&gt;
 op list
@@ -195,6 +213,12 @@ chain list
 chain inspect
 chain delete &lt;chain&gt;
 chain logs
+chain config set &lt;key&gt; &lt;value&gt;
+chain config unset &lt;key&gt;
+chain config list
+module list
+module inspect &lt;module&gt;
+module search &lt;query&gt;
 target add &lt;target&gt;
 target clear
 target config set &lt;target&gt; &lt;key&gt; &lt;value&gt;
@@ -217,6 +241,14 @@ payloads connect &lt;payload&gt;
 payloads cleanup &lt;payload&gt;
 payloads mark-removed &lt;payload&gt;
 payloads refresh &lt;payload&gt;
+artifact list
+artifact inspect &lt;artifact&gt;
+session list
+session connect &lt;session&gt;
+session tail &lt;session&gt;
+session read &lt;session&gt;
+session send &lt;session&gt; &lt;data&gt;
+session close &lt;session&gt;
 </code></pre>
         <p>Operations and chains are durable operator resources, not just transient prompt variables. The selected operation owns chains, target inventory, target configuration, and target sets; each client attachment owns its active chain selection. Target commands mutate the caller's active operation. Saved chain files are the portable representation for shell one-shot execution.</p>
         <p>The one-shot shell form is:</p>
@@ -293,7 +325,7 @@ hovel throw &lt;chain-file&gt; --now
         <ol>
           <li>One operator creates or activates an operation.</li>
           <li>One client selects chain <code>alpha</code>; another client selects chain <code>beta</code> in the same operation.</li>
-          <li>MCP tooling can attach to the same operation and choose either chain.</li>
+          <li>Future MCP tooling can attach to the same operation and choose either chain.</li>
           <li>One-shot invocations can import and throw a saved chain file without mutating another client's active chain selection.</li>
           <li>CLI prompt commands query and control the same daemon-owned operation and chain state.</li>
           <li>The daemon publishes operation-scoped chain topics such as <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>.</li>
@@ -303,7 +335,7 @@ hovel throw &lt;chain-file&gt; --now
         </ol>
 
         <h2>Workspace Database</h2>
-        <p>Every workspace owns a SQLite database at <code>&lt;workspace&gt;/workspace.db</code>. The database is the durable state store for operator session state, operations, chains, targets, steps, config, throw plans, confirmation records, throw records, installed payload records, installed payload state-change history, events, artifact metadata, and final throw state. File directories under the workspace remain for artifacts, logs, modules, services, payload bytes, and other file-shaped data.</p>
+        <p>Every workspace owns metadata at <code>&lt;workspace&gt;/workspace.json</code> and a SQLite database at <code>&lt;workspace&gt;/workspace.db</code>. The database is the durable state store for operator session state, operations, chains, targets, steps, config, throw plans, confirmation records, throw records, installed payload records, installed payload state-change history, events, artifact metadata, and final throw state. Current workspace initialization creates file directories for artifacts, logs, modules, throws, and services; provider-specific payload, listener, or session directories can be added when a provider needs file-shaped state.</p>
         <p>
           Installed payload records are global workspace inventory with chain, target,
           throw, run, and artifact provenance. They are not owned by the active chain
@@ -315,7 +347,7 @@ hovel throw &lt;chain-file&gt; --now
 
         <h2>Test Harness</h2>
         <p>Application services must be constructible in-process for unit, contract, and integration tests. The in-process harness should use the same domain logic, guardrail checks, event bus contracts, descriptor validation, and storage interfaces as <code>hoveld</code>.</p>
-        <p>Production <code>hovel cli</code>, one-shot chain-file execution, and <code>hovel tui</code> behavior should still cross the daemon boundary for daemon-backed operations. Tests may use the in-process harness to keep core behavior fast and deterministic, but daemon-contract tests must verify workspace locking, daemon discovery, managed daemon ownership, health checks, client attachment, and execution through the local transport.</p>
+        <p>Production <code>hovel cli</code>, one-shot chain-file execution, and future <code>hovel tui</code> behavior should still cross the daemon boundary for daemon-backed operations. Tests may use the in-process harness to keep core behavior fast and deterministic, but daemon-contract tests must verify workspace locking, daemon discovery, managed daemon ownership, health checks, client attachment, and execution through the local transport.</p>
       </article>
 
       <nav class="page-nav">

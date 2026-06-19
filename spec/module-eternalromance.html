@@ -383,7 +383,7 @@ squatter.connect_smb
           logic — the pool-chunk parser, the token-group builder, the packet builders, the wire
           marshalling, the configuration schema, and the confirmation gate — without any network
           access, so they run in CI offline. They are wired into the Bazel test suite and pass the
-          same <code>task ci</code> (formatting, lint, type check, and tests) as the rest of the
+          same <code>task ci</code> gate (lint, docs, build, and tests) as the rest of the
           repository. The chain itself is exercised against a live lab host, not in CI.
         </p>
 

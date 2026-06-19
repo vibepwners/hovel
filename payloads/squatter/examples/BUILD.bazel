@@ -4,7 +4,7 @@ load("//payloads/squatter/bazel:copts.bzl", "SQ_COPTS")
 # Demonstration binaries. The product itself is
 # //payloads/squatter/windows/src:squatter.exe; everything
 # here is illustrative. All run under wine, e.g.:
-#   bazel build --config=win64 //examples:logdemo.exe
+#   task build -- --config=win64 //payloads/squatter/examples:logdemo.exe
 
 # Toolchain smoke test (just enough to prove the cross compiler links a PE).
 cc_binary(
