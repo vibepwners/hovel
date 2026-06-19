@@ -124,12 +124,12 @@ tasks:
       - bash tools/modules/stage_examples.sh
 
   docs:
-    desc: Build and stage the static docs site, including generated SDK API docs.
+    desc: Build and stage the static docs site, including language-native SDK API docs.
     cmds:
       - bash tools/docs/stage_site.sh
 
   docs:api:
-    desc: Generate SDK API docs into _site/api/sdk.
+    desc: Generate language-native SDK API docs into _site/api/sdk.
     cmds:
       - mkdir -p _site
       - python3 tools/docs/generate_sdk_api_docs.py --site-root "$PWD/_site" --output "$PWD/_site/api/sdk"
