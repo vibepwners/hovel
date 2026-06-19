@@ -22,6 +22,8 @@ def main() -> None:
     for page in sorted(site_root.rglob("*.html")):
         text = page.read_text()
         for raw in LINK_RE.findall(text):
+            if "${" in raw:
+                continue
             target = urlsplit(raw)
             if target.scheme in EXTERNAL_SCHEMES or raw.startswith("#"):
                 continue

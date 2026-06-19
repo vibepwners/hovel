@@ -2,47 +2,52 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import html
 import os
+import posixpath
 import re
-from dataclasses import dataclass, field
+import shutil
+import socket
+import subprocess
+import tempfile
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
-
-
-@dataclass(frozen=True)
-class ApiItem:
-    kind: str
-    name: str
-    signature: str
-    doc: str
-    source: str
-    line: int
-    children: tuple["ApiItem", ...] = ()
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin, unquote, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 
 @dataclass(frozen=True)
 class ApiPage:
     title: str
     subtitle: str
-    output: Path
-    items: tuple[ApiItem, ...] = ()
-    intro: str = ""
-    source_root: str = ""
-    links: tuple[tuple[str, str], ...] = ()
+    href: str
+    description: str
 
 
-EXPORT_RE = re.compile(r'^__all__\s*=\s*\[(?P<body>.*?)\]', re.S)
-GO_TYPE_RE = re.compile(r"^type\s+([A-Z]\w*)\b(.*)$")
-GO_FUNC_RE = re.compile(r"^func\s+(?P<receiver>\([^)]*\)\s*)?(?P<name>[A-Z]\w*)\b(?P<tail>.*)$")
-GO_CONST_RE = re.compile(r"^([A-Z]\w*)\b(?:\s+[\w\[\]\*\.]+)?\s*=")
-RUST_ITEM_RE = re.compile(r"^pub\s+(?:enum|struct|trait|type)\s+([A-Za-z]\w*)\b(.*)$")
-RUST_FN_RE = re.compile(r"^pub\s+fn\s+([A-Za-z_]\w*)\b(.*)$")
+PKGSITE_VERSION = "v0.2.0"
+PKGSITE_PACKAGES = (
+    (
+        "Go SDK API: hovel",
+        "github.com/Vibe-Pwners/hovel/sdk/go/hovel",
+        "go/hovel/index.html",
+        "go/github.com/Vibe-Pwners/hovel/sdk/go/hovel/index.html",
+        "pkgsite snapshot for the primary Go SDK package.",
+    ),
+    (
+        "Go SDK API: hoveltest",
+        "github.com/Vibe-Pwners/hovel/sdk/go/hoveltest",
+        "go/hoveltest/index.html",
+        "go/github.com/Vibe-Pwners/hovel/sdk/go/hoveltest/index.html",
+        "pkgsite snapshot for Go SDK test helpers.",
+    ),
+)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate source-derived SDK API reference pages.")
+    parser = argparse.ArgumentParser(description="Generate native SDK API reference pages.")
     parser.add_argument("--output", default="_site/api/sdk", type=Path)
     parser.add_argument("--site-root", default="_site", type=Path)
     parser.add_argument("--repo-root", default=".", type=Path)
@@ -51,331 +56,307 @@ def main() -> None:
     repo = args.repo_root.resolve()
     site_root = args.site_root.resolve()
     output = args.output.resolve()
+
+    if output.exists():
+        shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
 
     pages = [
-        python_page(repo, output),
-        go_page(repo, output, "hovel", repo / "sdk/go/hovel", output / "go/hovel/index.html"),
-        go_page(repo, output, "hoveltest", repo / "sdk/go/hoveltest", output / "go/hoveltest/index.html"),
-        rust_page(repo, output),
+        generate_python_docs(repo, output),
+        *generate_go_docs(repo, site_root, output),
+        generate_rust_docs(repo, output),
     ]
-    for page in pages:
-        write_api_page(page, site_root)
     write_index(output / "index.html", site_root, pages)
 
 
-def python_page(repo: Path, output: Path) -> ApiPage:
-    package = repo / "sdk/python/hovel_sdk"
-    exports = parse_python_exports(package / "__init__.py")
-    items: list[ApiItem] = []
-    for path in sorted(package.glob("*.py")):
-        if path.name == "sdk_test.py":
-            continue
-        items.extend(parse_python_file(repo, path, exports))
-    items.sort(key=lambda item: (item.kind, item.name))
+def generate_python_docs(repo: Path, output: Path) -> ApiPage:
+    source = repo / "tools/docs/python_api"
+    with tempfile.TemporaryDirectory(prefix="hovel-sphinx-doctrees-") as doctrees:
+        run(
+            [
+                "uv",
+                "run",
+                "--project",
+                str(repo / "sdk/python"),
+                "--only-group",
+                "docs",
+                "sphinx-build",
+                "-W",
+                "--keep-going",
+                "-b",
+                "html",
+                "-d",
+                doctrees,
+                str(source),
+                str(output / "python"),
+            ],
+            cwd=repo,
+            env={"HOVEL_DOCS_REPO_ROOT": str(repo)},
+        )
     return ApiPage(
         title="Python SDK API",
         subtitle="hovel_sdk",
-        output=output / "python/index.html",
-        source_root="sdk/python/hovel_sdk",
-        intro=(
-            "Source-derived reference for the public Python module SDK. "
-            "The prose guide explains lifecycle rules; this page keeps the callable surface visible."
-        ),
-        links=(("Guide", "../../../spec/module-python.html"),),
-        items=tuple(items),
+        href="python/index.html",
+        description="Sphinx autodoc output from the importable Python SDK package.",
     )
 
 
-def parse_python_exports(init_file: Path) -> set[str]:
-    source = init_file.read_text()
-    match = EXPORT_RE.search(source.replace("\n", " "))
-    if not match:
-        return set()
-    return set(re.findall(r'"([^"]+)"', match.group("body")))
+def generate_go_docs(repo: Path, site_root: Path, output: Path) -> list[ApiPage]:
+    pages: list[ApiPage] = []
+    go_output = output / "go"
+    with run_pkgsite(repo) as base_url:
+        write_go_index(go_output / "index.html", site_root)
+        for title, import_path, href, snapshot_href, description in PKGSITE_PACKAGES:
+            snapshot_pkgsite_package(base_url, go_output, import_path)
+            write_redirect(output / href, relative_href(output / href, output / snapshot_href), title)
+            pages.append(ApiPage(title=title, subtitle=import_path, href=href, description=description))
+    return pages
 
 
-def parse_python_file(repo: Path, path: Path, exports: set[str]) -> list[ApiItem]:
-    tree = ast.parse(path.read_text(), filename=str(path))
-    module_name = "hovel_sdk" if path.stem == "__init__" else f"hovel_sdk.{path.stem}"
-    items: list[ApiItem] = []
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and is_public_python(node.name, exports):
-            methods = []
-            for member in node.body:
-                if isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef) and is_public_member(member.name):
-                    methods.append(
-                        ApiItem(
-                            kind="method",
-                            name=f"{node.name}.{member.name}",
-                            signature=f"{member.name}{python_arguments(member.args)}",
-                            doc=docstring(member),
-                            source=rel(repo, path),
-                            line=member.lineno,
-                        )
-                    )
-            bases = ", ".join(ast.unparse(base) for base in node.bases) or "object"
-            items.append(
-                ApiItem(
-                    kind="class",
-                    name=f"{module_name}.{node.name}",
-                    signature=f"class {node.name}({bases})",
-                    doc=docstring(node),
-                    source=rel(repo, path),
-                    line=node.lineno,
-                    children=tuple(methods),
-                )
-            )
-        elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and is_public_python(node.name, exports):
-            prefix = "async " if isinstance(node, ast.AsyncFunctionDef) else ""
-            items.append(
-                ApiItem(
-                    kind="function",
-                    name=f"{module_name}.{node.name}",
-                    signature=f"{prefix}def {node.name}{python_arguments(node.args)}",
-                    doc=docstring(node),
-                    source=rel(repo, path),
-                    line=node.lineno,
-                )
-            )
-    return items
-
-
-def is_public_python(name: str, exports: set[str]) -> bool:
-    return name in exports
-
-
-def is_public_member(name: str) -> bool:
-    return not name.startswith("_")
-
-
-def python_arguments(args: ast.arguments) -> str:
-    names = [arg.arg for arg in [*args.posonlyargs, *args.args]]
-    if args.vararg is not None:
-        names.append(f"*{args.vararg.arg}")
-    if args.kwonlyargs:
-        if args.vararg is None:
-            names.append("*")
-        names.extend(arg.arg for arg in args.kwonlyargs)
-    if args.kwarg is not None:
-        names.append(f"**{args.kwarg.arg}")
-    return f"({', '.join(names)})"
-
-
-def go_page(repo: Path, output: Path, package: str, source_dir: Path, page_path: Path) -> ApiPage:
-    items: list[ApiItem] = []
-    for path in sorted(source_dir.glob("*.go")):
-        if path.name.endswith("_test.go"):
-            continue
-        items.extend(parse_go_file(repo, path))
-    items.sort(key=lambda item: (item.kind, item.name))
-    return ApiPage(
-        title=f"Go SDK API: {package}",
-        subtitle=f"github.com/Vibe-Pwners/hovel/sdk/go/{package}",
-        output=page_path,
-        source_root=rel(repo, source_dir),
-        intro="Source-derived reference from exported Go declarations and doc comments.",
-        links=(("Guide", "../../../../spec/module-go.html"),),
-        items=tuple(items),
-    )
-
-
-def parse_go_file(repo: Path, path: Path) -> list[ApiItem]:
-    lines = path.read_text().splitlines()
-    items: list[ApiItem] = []
-    comments: list[str] = []
-    in_const_block = False
-    for idx, line in enumerate(lines, start=1):
-        stripped = line.strip()
-        if stripped.startswith("//"):
-            comments.append(stripped[2:].strip())
-            continue
-        if stripped == "":
-            comments = []
-            continue
-        if stripped.startswith("const ("):
-            in_const_block = True
-            comments = []
-            continue
-        if in_const_block:
-            if stripped == ")":
-                in_const_block = False
-                comments = []
-                continue
-            match = GO_CONST_RE.match(stripped)
-            if match:
-                items.append(go_item("const", match.group(1), stripped, comments, repo, path, idx))
-            comments = []
-            continue
-        for kind, pattern in (("type", GO_TYPE_RE), ("func", GO_FUNC_RE)):
-            match = pattern.match(stripped)
-            if match:
-                if kind == "func":
-                    receiver = match.group("receiver") or ""
-                    name = match.group("name")
-                    receiver_type = go_receiver_type(receiver)
-                    if receiver and not is_go_exported(receiver_type):
-                        break
-                    if receiver_type:
-                        items.append(go_item("method", f"{receiver_type}.{name}", stripped, comments, repo, path, idx))
-                    else:
-                        items.append(go_item(kind, name, stripped, comments, repo, path, idx))
-                else:
-                    items.append(go_item(kind, match.group(1), stripped, comments, repo, path, idx))
-                break
-        comments = []
-    return items
-
-
-def go_receiver_type(receiver: str) -> str:
-    if not receiver:
-        return ""
-    inner = receiver.strip()[1:-1].strip()
-    if not inner:
-        return ""
-    type_name = inner.split()[-1].lstrip("*")
-    return type_name.split(".")[-1]
-
-
-def is_go_exported(name: str) -> bool:
-    return bool(name and name[0].isupper())
-
-
-def go_item(kind: str, name: str, signature: str, comments: list[str], repo: Path, path: Path, line: int) -> ApiItem:
-    return ApiItem(
-        kind=kind,
-        name=name,
-        signature=signature,
-        doc="\n".join(comments).strip(),
-        source=rel(repo, path),
-        line=line,
-    )
-
-
-def rust_page(repo: Path, output: Path) -> ApiPage:
-    source_dir = repo / "sdk/rust/hovel/src"
-    items: list[ApiItem] = []
-    for path in sorted(source_dir.glob("*.rs")):
-        if path.name == "tests.rs":
-            continue
-        items.extend(parse_rust_file(repo, path))
-    items.sort(key=lambda item: (item.kind, item.name))
+def generate_rust_docs(repo: Path, output: Path) -> ApiPage:
+    rust_output = output / "rust"
+    rust_output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="hovel-rustdoc-") as tmp:
+        tmp_output = Path(tmp) / "doc"
+        run(
+            [
+                "rustdoc",
+                "--crate-name",
+                "hovel",
+                "--edition=2021",
+                str(repo / "sdk/rust/hovel/src/lib.rs"),
+                "-o",
+                str(tmp_output),
+            ],
+            cwd=repo,
+        )
+        copy_tree_contents(tmp_output, rust_output)
+    (rust_output / ".lock").unlink(missing_ok=True)
+    write_redirect(rust_output / "index.html", "hovel/index.html", "Hovel Rust SDK API")
+    write_missing_rustdoc_implementor_files(rust_output)
     return ApiPage(
         title="Rust SDK API",
         subtitle="crate hovel",
-        output=output / "rust/hovel/index.html",
-        source_root="sdk/rust/hovel/src",
-        intro="Source-derived reference from public Rust items and doc comments.",
-        links=(("Guide", "../../../../spec/module-rust.html"),),
-        items=tuple(items),
+        href="rust/hovel/index.html",
+        description="rustdoc output from the Rust SDK crate root.",
     )
 
 
-def parse_rust_file(repo: Path, path: Path) -> list[ApiItem]:
-    lines = path.read_text().splitlines()
-    items: list[ApiItem] = []
-    comments: list[str] = []
-    for idx, line in enumerate(lines, start=1):
-        stripped = line.strip()
-        if stripped.startswith("///"):
-            comments.append(stripped[3:].strip())
-            continue
-        if stripped.startswith("//!") or stripped == "" or stripped.startswith("#["):
-            continue
-        match = RUST_ITEM_RE.match(stripped)
-        kind = "item"
-        if match is None:
-            match = RUST_FN_RE.match(stripped)
-            kind = "fn"
-        else:
-            kind = stripped.split()[1]
-        if match:
-            items.append(
-                ApiItem(
-                    kind=kind,
-                    name=match.group(1),
-                    signature=stripped,
-                    doc="\n".join(comments).strip(),
-                    source=rel(repo, path),
-                    line=idx,
-                )
+@contextmanager
+def run_pkgsite(repo: Path):
+    port = free_port()
+    base_url = f"http://127.0.0.1:{port}"
+    with tempfile.TemporaryDirectory(prefix="hovel-pkgsite-") as tmp:
+        log_path = Path(tmp) / "pkgsite.log"
+        with log_path.open("w+") as log:
+            process = subprocess.Popen(
+                [
+                    "go",
+                    "run",
+                    f"golang.org/x/pkgsite/cmd/pkgsite@{PKGSITE_VERSION}",
+                    f"-http=127.0.0.1:{port}",
+                    "-list=false",
+                ],
+                cwd=repo,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
             )
-        comments = []
-    return items
+            try:
+                wait_for_pkgsite(base_url, process, log_path)
+                yield base_url
+            finally:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
 
 
-def write_index(path: Path, site_root: Path, pages: Iterable[ApiPage]) -> None:
+def wait_for_pkgsite(base_url: str, process: subprocess.Popen[str], log_path: Path) -> None:
+    package_path = "/" + PKGSITE_PACKAGES[0][1]
+    deadline = time.monotonic() + 120
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"pkgsite exited early:\n{log_path.read_text(errors='replace')}")
+        try:
+            fetch_url(base_url, package_path, timeout=10)
+            return
+        except (HTTPError, URLError, TimeoutError) as err:
+            last_error = err
+            time.sleep(1)
+    raise RuntimeError(f"pkgsite did not become ready: {last_error}\n{log_path.read_text(errors='replace')}")
+
+
+def snapshot_pkgsite_package(base_url: str, go_output: Path, import_path: str) -> None:
+    page_path = "/" + import_path
+    page_output = pkgsite_page_output(go_output, page_path)
+    assets: set[str] = set()
+    text = fetch_url(base_url, page_path).decode("utf-8")
+    page_output.parent.mkdir(parents=True, exist_ok=True)
+    page_output.write_text(rewrite_pkgsite_html(text, page_output, go_output, assets))
+    snapshot_pkgsite_assets(base_url, go_output, assets)
+
+
+def rewrite_pkgsite_html(text: str, page_output: Path, go_output: Path, assets: set[str]) -> str:
+    def replace_attr(match: re.Match[str]) -> str:
+        attr = match.group("attr")
+        quote = match.group("quote")
+        raw = match.group("url")
+        return f"{attr}={quote}{rewrite_pkgsite_url(raw, page_output, go_output, assets)}{quote}"
+
+    def replace_asset_literal(match: re.Match[str]) -> str:
+        quote = match.group("quote")
+        raw = match.group("path")
+        target = urlsplit(raw)
+        assets.add(target.path)
+        rewritten = url_for_local_path(go_output / target.path.lstrip("/"), page_output, target.query, target.fragment)
+        return f"{quote}{rewritten}{quote}"
+
+    text = re.sub(r'(?P<attr>\b(?:href|src))=(?P<quote>["\'])(?P<url>[^"\']+)(?P=quote)', replace_attr, text)
+    return re.sub(r'(?P<quote>["\'])(?P<path>/(?:static|third_party)/[^"\']+)(?P=quote)', replace_asset_literal, text)
+
+
+def rewrite_pkgsite_url(raw: str, page_output: Path, go_output: Path, assets: set[str]) -> str:
+    if raw.startswith("#"):
+        return raw
+    target = urlsplit(raw)
+    if target.scheme or target.netloc:
+        return raw
+    if not target.path.startswith("/"):
+        return raw
+
+    path = target.path
+    if is_pkgsite_asset_path(path):
+        assets.add(path)
+        return url_for_local_path(go_output / path.lstrip("/"), page_output, target.query, target.fragment)
+    if path == "/":
+        return url_for_local_path(go_output / "index.html", page_output, target.query, target.fragment)
+    if is_hovel_go_package_path(path):
+        return url_for_local_path(pkgsite_page_output(go_output, path), page_output, target.query, target.fragment)
+    return urlunsplit(("https", "pkg.go.dev", path, target.query, target.fragment))
+
+
+def snapshot_pkgsite_assets(base_url: str, go_output: Path, initial_assets: set[str]) -> None:
+    seen: set[str] = set()
+    pending = list(sorted(initial_assets))
+    while pending:
+        asset_path = pending.pop()
+        if asset_path in seen:
+            continue
+        seen.add(asset_path)
+        data = fetch_url(base_url, asset_path)
+        output_path = go_output / asset_path.lstrip("/")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if asset_path.endswith(".css"):
+            text, nested_assets = rewrite_pkgsite_css(data.decode("utf-8"), asset_path, output_path, go_output)
+            pending.extend(sorted(nested_assets - seen))
+            output_path.write_text(text)
+        else:
+            output_path.write_bytes(data)
+
+
+def rewrite_pkgsite_css(text: str, asset_path: str, output_path: Path, go_output: Path) -> tuple[str, set[str]]:
+    nested_assets: set[str] = set()
+
+    def replace(match: re.Match[str]) -> str:
+        quote = match.group("quote") or ""
+        raw = match.group("url").strip()
+        target = urlsplit(raw)
+        if target.scheme or target.netloc or raw.startswith("data:") or raw.startswith("#"):
+            return match.group(0)
+        if is_pkgsite_asset_path(target.path):
+            nested_assets.add(target.path)
+            rewritten = url_for_local_path(go_output / target.path.lstrip("/"), output_path, target.query, target.fragment)
+            return f"url({quote}{rewritten}{quote})"
+        if target.path:
+            resolved_path = posixpath.normpath(posixpath.join(posixpath.dirname(asset_path), target.path))
+            if not resolved_path.startswith("/"):
+                resolved_path = "/" + resolved_path
+            if is_pkgsite_asset_path(resolved_path):
+                nested_assets.add(resolved_path)
+        return match.group(0)
+
+    pattern = r"url\((?P<quote>['\"]?)(?P<url>[^)'\"\s]+)(?P=quote)\)"
+    return re.sub(pattern, replace, text), nested_assets
+
+
+def fetch_url(base_url: str, path: str, *, timeout: int = 30) -> bytes:
+    url = urljoin(base_url + "/", path.lstrip("/"))
+    request = Request(url, headers={"User-Agent": "hovel-docs"})
+    with urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def pkgsite_page_output(go_output: Path, path: str) -> Path:
+    return go_output / path.lstrip("/") / "index.html"
+
+
+def is_hovel_go_package_path(path: str) -> bool:
+    return path.startswith("/github.com/Vibe-Pwners/hovel/sdk/go/")
+
+
+def is_pkgsite_asset_path(path: str) -> bool:
+    return path.startswith("/static/") or path.startswith("/third_party/")
+
+
+def url_for_local_path(target_path: Path, from_file: Path, query: str = "", fragment: str = "") -> str:
+    return urlunsplit(("", "", relative_href(from_file, target_path), query, fragment))
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def write_index(path: Path, site_root: Path, pages: list[ApiPage]) -> None:
     cards = []
     for page in pages:
         cards.append(
-            f'<a class="tile" href="{html.escape(page_href(path, page.output))}">'
+            f'<a class="tile" href="{html.escape(page.href)}">'
             f'<span class="tile-label">API</span>'
             f'<span class="tile-title">{html.escape(page.title)}</span>'
             f'<span class="tile-desc">{html.escape(page.subtitle)}</span>'
+            f'<span class="tile-desc">{html.escape(page.description)}</span>'
             "</a>"
         )
     body = (
         "<h1>SDK API Reference</h1>"
-        "<p>These pages are generated from SDK source during the documentation build. "
-        "Edit source doc comments and docstrings, then run <code>task docs</code>.</p>"
+        "<p>These pages are generated with each SDK language's documentation tooling: "
+        "Sphinx autodoc for Python, pkgsite for Go, and rustdoc for Rust.</p>"
         '<div class="tiles">'
         + "\n".join(cards)
         + "</div>"
     )
-    write_html(path, site_root, "SDK API Reference", body, current="API Docs")
+    write_hovel_page(path, site_root, "SDK API Reference", body, current="API Docs")
 
 
-def write_api_page(page: ApiPage, site_root: Path) -> None:
-    parts = [f"<h1>{html.escape(page.title)}</h1>"]
-    if page.intro:
-        parts.append(f"<p>{html.escape(page.intro)}</p>")
-    if page.links:
-        links = " ".join(f'<a class="cta ghost" href="{href}">{html.escape(label)}</a>' for label, href in page.links)
-        parts.append(f"<p>{links}</p>")
-    parts.append(f"<p><strong>Source:</strong> <code>{html.escape(page.source_root)}</code></p>")
-    current_kind = ""
-    for item in page.items:
-        if item.kind != current_kind:
-            current_kind = item.kind
-            parts.append(f"<h2>{html.escape(item.kind.title())}</h2>")
-        parts.append(render_item(item))
-    write_html(page.output, site_root, page.title, "\n".join(parts), current="API Docs")
-
-
-def render_item(item: ApiItem) -> str:
-    doc = markdownish(item.doc) if item.doc else "<p>No source documentation yet.</p>"
-    children = ""
-    if item.children:
-        children = "<h4>Methods</h4>" + "\n".join(render_child(child) for child in item.children)
-    return (
-        '<section class="api-item">'
-        f"<h3>{html.escape(item.name)}</h3>"
-        f'<pre data-lang="{html.escape(item.kind)}"><code>{html.escape(item.signature)}</code></pre>'
-        f"{doc}"
-        f'<p class="api-source"><code>{html.escape(item.source)}:{item.line}</code></p>'
-        f"{children}"
-        "</section>"
+def write_go_index(path: Path, site_root: Path) -> None:
+    cards = []
+    for title, import_path, _href, snapshot_href, description in PKGSITE_PACKAGES:
+        cards.append(
+            f'<a class="tile" href="{html.escape(snapshot_href.removeprefix("go/"))}">'
+            '<span class="tile-label">Go</span>'
+            f'<span class="tile-title">{html.escape(title)}</span>'
+            f'<span class="tile-desc">{html.escape(import_path)}</span>'
+            f'<span class="tile-desc">{html.escape(description)}</span>'
+            "</a>"
+        )
+    body = (
+        "<h1>Go SDK API</h1>"
+        f"<p>This section is a static snapshot from pkgsite {html.escape(PKGSITE_VERSION)}, "
+        "the local documentation server for pkg.go.dev-style Go package docs.</p>"
+        '<div class="tiles">'
+        + "\n".join(cards)
+        + "</div>"
     )
+    write_hovel_page(path, site_root, "Go SDK API", body, current="API Docs")
 
 
-def render_child(item: ApiItem) -> str:
-    doc = markdownish(item.doc) if item.doc else "<p>No source documentation yet.</p>"
-    return (
-        '<section class="api-member">'
-        f"<h4>{html.escape(item.name)}</h4>"
-        f'<pre data-lang="{html.escape(item.kind)}"><code>{html.escape(item.signature)}</code></pre>'
-        f"{doc}"
-        f'<p class="api-source"><code>{html.escape(item.source)}:{item.line}</code></p>'
-        "</section>"
-    )
-
-
-def markdownish(text: str) -> str:
-    paragraphs = [paragraph.strip() for paragraph in text.split("\n\n") if paragraph.strip()]
-    return "".join(f"<p>{html.escape(paragraph).replace(chr(10), '<br>')}</p>" for paragraph in paragraphs)
-
-
-def write_html(path: Path, site_root: Path, title: str, body: str, *, current: str) -> None:
+def write_hovel_page(path: Path, site_root: Path, title: str, body: str, *, current: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     root = relative_prefix(path, site_root)
     nav = [
@@ -412,12 +393,58 @@ def write_html(path: Path, site_root: Path, title: str, body: str, *, current: s
     {body}
   </main>
   <footer class="sitefoot">
-    <p>Hovel SDK API · generated from source · <a href="{root}spec/module-development.html">module docs</a></p>
+    <p>Hovel SDK API · generated from native documentation tools · <a href="{root}spec/module-development.html">module docs</a></p>
   </footer>
 </body>
 </html>
 """
     path.write_text(html_text)
+
+
+def write_redirect(path: Path, target: str, title: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0; url={html.escape(target)}">
+  <title>{html.escape(title)}</title>
+</head>
+<body>
+  <p><a href="{html.escape(target)}">{html.escape(title)}</a></p>
+</body>
+</html>
+"""
+    )
+
+
+def write_missing_rustdoc_implementor_files(rust_output: Path) -> None:
+    for page in rust_output.rglob("*.html"):
+        text = page.read_text()
+        for raw in re.findall(r'<script\s+src="([^"]*trait\.impl/[^"]+\.js)"', text):
+            target = urlsplit(raw)
+            if target.scheme or target.netloc:
+                continue
+            path = unquote(target.path)
+            resolved = (page.parent / path).resolve()
+            try:
+                resolved.relative_to(rust_output.resolve())
+            except ValueError:
+                continue
+            if resolved.exists():
+                continue
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            resolved.write_text("const implementors = Object.fromEntries([]);\n")
+
+
+def copy_tree_contents(source: Path, dest: Path) -> None:
+    for child in source.iterdir():
+        target = dest / child.name
+        if child.is_dir():
+            shutil.copytree(child, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(child, target)
 
 
 def relative_prefix(path: Path, site_root: Path) -> str:
@@ -427,16 +454,29 @@ def relative_prefix(path: Path, site_root: Path) -> str:
     return rel.replace(os.sep, "/").rstrip("/") + "/"
 
 
-def page_href(from_path: Path, to_path: Path) -> str:
+def relative_href(from_path: Path, to_path: Path) -> str:
     return os.path.relpath(to_path, from_path.parent).replace(os.sep, "/")
 
 
-def docstring(node: ast.AST) -> str:
-    return ast.get_docstring(node) or ""
-
-
-def rel(root: Path, path: Path) -> str:
-    return path.resolve().relative_to(root.resolve()).as_posix()
+def run(
+    args: list[str],
+    *,
+    cwd: Path,
+    capture: bool = False,
+    env: dict[str, str] | None = None,
+) -> str:
+    process_env = os.environ.copy()
+    if env:
+        process_env.update(env)
+    completed = subprocess.run(
+        args,
+        cwd=cwd,
+        env=process_env,
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+    )
+    return completed.stdout if capture else ""
 
 
 if __name__ == "__main__":

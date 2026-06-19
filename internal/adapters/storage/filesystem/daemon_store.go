@@ -67,7 +67,7 @@ func (s WorkspaceStore) WriteDaemonStatus(ctx context.Context, identity daemon.I
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(filepath.Join(identity.WorkspacePath, daemonStatusFile), data, 0o644)
+	return writeFileAtomic(filepath.Join(identity.WorkspacePath, daemonStatusFile), data, 0o644)
 }
 
 func (s WorkspaceStore) ClearDaemonStatus(ctx context.Context, workspacePath string) error {
@@ -87,4 +87,40 @@ type daemonFile struct {
 	SocketPath    string `json:"socketPath"`
 	StartedAt     string `json:"startedAt"`
 	Health        string `json:"health"`
+}
+
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	file, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := file.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Chmod(perm); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
