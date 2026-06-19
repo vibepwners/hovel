@@ -78,7 +78,7 @@ def generate_python_docs(repo: Path, output: Path) -> ApiPage:
                 "run",
                 "--project",
                 str(repo / "sdk/python"),
-                "--group",
+                "--only-group",
                 "docs",
                 "sphinx-build",
                 "-W",
