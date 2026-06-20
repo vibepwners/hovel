@@ -309,20 +309,28 @@ blockquote {
   background: var(--bg-deep);
 }
 .demo-figure figcaption {
-  margin: 0 0 0.55rem;
-  padding-bottom: 0.35rem;
-  border-bottom: 1px dashed var(--border);
+  margin: 0.7rem 0 0;
+  padding: 0.45rem 0 0;
+  border-top: 1px dashed var(--border);
   color: var(--amber);
   font-family: var(--mono);
   font-size: 0.72rem;
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
-.demo-figure figcaption {
-  margin: 0.7rem 0 0;
-  padding: 0.45rem 0 0;
-  border-top: 1px dashed var(--border);
-  border-bottom: 0;
+.demo-series {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  margin: 1.2rem 0 1.4rem;
+}
+.demo-series .demo-figure {
+  margin: 0;
+  width: 100%;
+}
+.demo-series .demo-figure figcaption strong {
+  color: var(--cyan);
+  font-weight: 700;
 }
 .demo-open {
   display: block;
@@ -343,6 +351,9 @@ blockquote {
 }
 .homepage-demo figcaption {
   color: var(--cyan);
+}
+.homepage-demo-series {
+  margin-top: 0;
 }
 .demo-modal {
   position: fixed;

@@ -250,17 +250,12 @@ createdBy:
         <p>
           Cleanup is split into provider-executed removal and operator bookkeeping.
           The Go provider RPC surface already includes <code>cleanup_payload</code>, but
-          the current commandmode <code>payloads cleanup &lt;payload&gt;</code> path is not wired
+          the current command-mode <code>payloads cleanup &lt;payload&gt;</code> path is not wired
           to provider cleanup yet and fails explicitly. Today, after manual or
           out-of-band provider cleanup, <code>payloads mark-removed &lt;payload&gt;</code>
           records bookkeeping when the operator knows the payload is gone or the target
           was rebuilt.
         </p>
-        <figure class="demo-figure">
-          <img src="../assets/demos/mock-survey-exploit-cli.gif" alt="Hovel CLI demo showing daemon-backed session state created by a deterministic mock exploit.">
-          <figcaption>Related demo: deterministic state created by a mock exploit</figcaption>
-        </figure>
-
         <h2>PIC Payloads</h2>
         <p>PIC payloads are ordinary payload resources with specific metadata. Hovel should not implement PIC generation in core; external providers can generate or supply bytes.</p>
 <pre data-lang="yaml"><code>kind: pic

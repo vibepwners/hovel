@@ -83,7 +83,7 @@ task status
 # Wipe local state and relaunch from a clean slate
 task reset
 
-# Run the full check suite (lint + docs + build + test) — what CI runs
+# Run the full check suite (lint + demo-backed docs + build + test) — what CI runs
 task ci
 ```
 
@@ -118,7 +118,7 @@ Build & checks:
 
 Scripted terminal demos live under [`demo/tapes`](demo/tapes). Hovel uses
 [Charmbracelet VHS](https://github.com/charmbracelet/vhs) to render them into
-GIF and MP4 artifacts under `demo/out/`; generated outputs are ignored by git.
+GIF artifacts under `demo/out/`; generated outputs are ignored by git.
 
 Install VHS locally with your package manager, for example:
 
@@ -138,26 +138,30 @@ task demos
 ```
 
 `task docs` runs the demo generator before staging the site, then copies the
-generated GIFs and MP4s into `_site/assets/demos/` so the static HTML can embed
-them. The homepage masthead uses `mock-survey-exploit-cli-commands.gif`; the spec
-chapters use the other generated mock survey/exploit demos inline.
+generated GIFs into `_site/assets/demos/` so the static HTML can embed
+them. The homepage and spec chapters embed the generated mock survey/exploit
+steps inline.
 
 The current demos cover both saved-chain execution and from-scratch chain
 construction against the Go mock survey and mock session-exploit modules. The
 saved-chain demos use the checked-in
 [`demo/chains/mock-survey-exploit.chain.yaml`](demo/chains/mock-survey-exploit.chain.yaml).
-The command-construction demos create the operation chain with `chain create`,
+The direct saved-chain series runs a non-JSON throw so the live log stream is
+visible, lists the resulting mock shell session, reads the prompt, sends
+`whoami`, reads the response, attaches with `session connect` for several typed
+commands, detaches, and then reconnects to the same session. The CLI session
+series starts from a hidden completed throw and shows the same read/send and
+attach/detach/reconnect operations inside `hovel cli`. The
+command-construction demos create the operation chain with `chain create`,
 `chain add`, `target add`, `target config set`, and `chain config set`, then
-save the configured chain before throwing it. The command-construction demos
-also list required chain and target config before setting values, then list the
-resolved config afterward. Each visible demo lists the resulting mock shell
-session, reads the prompt, sends `whoami`, reads the response, attaches with
-`session connect` for several typed commands, detaches, then reconnects to the
-same session. The generator first runs silent JSON throws and session
-interactions as e2e checks, then renders the visible VHS tapes without showing
-test harness output in the recordings. Demos that interact with sessions start
-an explicit daemon in hidden setup, because live module sessions belong to the
-daemon process; a CLI-owned managed daemon shuts down when that CLI exits.
+save the configured chain. They also list required chain and target config
+before setting values, then list the resolved config afterward. The generator
+first runs silent JSON throws and session interactions for both saved and
+constructed chains as e2e checks, then renders the visible VHS tapes without
+showing test harness output in the recordings. Demos that interact with
+sessions start an explicit daemon in hidden setup, because live module sessions
+belong to the daemon process; a CLI-owned managed daemon shuts down when that
+CLI exits. Each rendered GIF is capped at 10 seconds by the generator.
 
 CI runs the `demos` job after the `build-test` job passes. That job installs VHS,
 runs `task demos`, and uploads the generated files as the `hovel-demos` workflow
@@ -166,15 +170,29 @@ artifact. The CI docs job downloads that artifact and stages `_site` with
 regenerates the demos with `task docs`, uploads `_site`, and deploys it. The
 source GIF paths are:
 
-- `demo/out/mock-survey-exploit.gif`
-- `demo/out/mock-survey-exploit-cli.gif`
-- `demo/out/mock-survey-exploit-commands.gif`
-- `demo/out/mock-survey-exploit-cli-commands.gif`
+| Series | Step | Output |
+| --- | --- | --- |
+| CLI construction | Create operation chain | `demo/out/mock-survey-exploit-cli-commands-01-create.gif` |
+| CLI construction | List required config | `demo/out/mock-survey-exploit-cli-commands-02-config-before.gif` |
+| CLI construction | Apply and verify config | `demo/out/mock-survey-exploit-cli-commands-03-config-apply.gif` |
+| CLI construction | Validate and save | `demo/out/mock-survey-exploit-cli-commands-04-save.gif` |
+| Direct construction | Create operation chain | `demo/out/mock-survey-exploit-commands-01-create.gif` |
+| Direct construction | List required config | `demo/out/mock-survey-exploit-commands-02-config-before.gif` |
+| Direct construction | Apply and verify config | `demo/out/mock-survey-exploit-commands-03-config-apply.gif` |
+| Direct construction | Validate and save | `demo/out/mock-survey-exploit-commands-04-save.gif` |
+| Direct saved chain | Inspect modules | `demo/out/mock-survey-exploit-01-inspect.gif` |
+| Direct saved chain | Throw with live logs | `demo/out/mock-survey-exploit-02-throw.gif` |
+| Direct saved chain | Read and send session data | `demo/out/mock-survey-exploit-03-session-io.gif` |
+| Direct saved chain | Attach, detach, reconnect | `demo/out/mock-survey-exploit-04-session-connect.gif` |
+| CLI saved chain | Read and send session data | `demo/out/mock-survey-exploit-cli-02-session-io.gif` |
+| CLI saved chain | Attach, detach, reconnect | `demo/out/mock-survey-exploit-cli-03-session-connect.gif` |
 
 To add a demo, add a `.tape` file under `demo/tapes/`, put reusable demo fixtures
-such as configured chain files under `demo/`, and point each tape's `Output`
-directives at `demo/out/`. Keep setup and validation commands hidden in the tape
-or in `scripts/generate-demos.sh` so the GIF shows only the operator-facing flow.
+such as configured chain files under `demo/`, and point the tape's GIF `Output`
+directive at `demo/out/`. Keep each GIF under 10 seconds by splitting long flows
+into steps. Put setup and validation commands in hidden tape sections,
+`scripts/demo-step-setup.sh`, or `scripts/generate-demos.sh` so the GIF shows
+only the operator-facing flow.
 
 ## Front-end roles
 

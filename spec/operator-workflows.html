@@ -169,7 +169,7 @@ module inspect &lt;module-id&gt;
 module search &lt;query&gt;
 </code></pre>
         <figure class="demo-figure">
-          <img src="../assets/demos/mock-survey-exploit.gif" alt="Direct terminal demo inspecting mock survey and mock exploit module metadata before running a saved chain.">
+          <img src="../assets/demos/mock-survey-exploit-01-inspect.gif" alt="Direct terminal demo inspecting mock survey and mock exploit module metadata before running a saved chain.">
           <figcaption>Demo: mock module discovery before execution</figcaption>
         </figure>
 
@@ -258,10 +258,20 @@ target set inspect &lt;name&gt;
         <p>Validation output must be human-first and scriptable with <code>--json</code>.</p>
         <p>Targets are operation assets, not chain assets. Existing commands such as <code>target add</code> and <code>target config set</code> continue to work in the active operation, but the resulting inventory is reusable by every chain in that operation. A throw binds a chain to targets at plan time from one of three sources: an explicit <code>--target</code>, an explicit <code>--target-set</code>, or the operation's full target inventory. Target sets are convenience views over the same target records; they do not duplicate target config.</p>
         <p>When a target set contains mixed readiness, Hovel plans and throws against the compatible targets and reports skipped targets with the validation issues that made them incompatible. If no compatible targets remain, planning fails. Explicit <code>--target</code> remains strict: an incompatible explicit target blocks the throw so a typo or missing config is not silently ignored.</p>
-        <figure class="demo-figure">
-          <img src="../assets/demos/mock-survey-exploit-cli-commands.gif" alt="Hovel CLI demo listing missing required config, setting target and chain values, then validating the configured chain.">
-          <figcaption>Demo: required config discovery and validation</figcaption>
-        </figure>
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-02-config-before.gif" alt="Hovel CLI demo listing missing required chain and target config.">
+            <figcaption><strong>Step 1</strong> list missing required config</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-03-config-apply.gif" alt="Hovel CLI demo setting target and chain values and listing resolved config.">
+            <figcaption><strong>Step 2</strong> set values and verify config</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-04-save.gif" alt="Hovel CLI demo validating and saving the configured chain.">
+            <figcaption><strong>Step 3</strong> validate and save the configured chain</figcaption>
+          </figure>
+        </div>
 
         <h2>Payload Commands</h2>
         <p>
@@ -315,7 +325,7 @@ payloads mark-removed &lt;payload-id&gt; [--reason &lt;reason&gt;] [--json]
         <p>
           Cleanup has two explicit paths. <code>payloads cleanup &lt;payload-id&gt;</code>
           is the planned provider-executed removal path. The Go provider RPC surface
-          implements <code>cleanup_payload</code>, but the current commandmode provider
+          implements <code>cleanup_payload</code>, but the current command-mode provider
           cleanup service is not wired yet and returns an explicit error directing the
           operator to <code>payloads mark-removed</code> after manual cleanup.
           <code>payloads mark-removed &lt;payload-id&gt;</code> records operator bookkeeping
@@ -328,11 +338,6 @@ payloads mark-removed &lt;payload-id&gt; [--reason &lt;reason&gt;] [--json]
           Singular <code>payload ...</code> aliases exist for the implemented command
           paths.
         </p>
-        <figure class="demo-figure">
-          <img src="../assets/demos/mock-survey-exploit-cli.gif" alt="Hovel CLI demo showing deterministic daemon-owned session state after a mock exploit step.">
-          <figcaption>Related demo: deterministic post-exploitation state</figcaption>
-        </figure>
-
         <h2>Artifact Commands</h2>
         <p>
           The <code>artifact</code> command suite is the operator surface for
@@ -347,11 +352,6 @@ artifact inspect &lt;artifact-id&gt; [--workspace &lt;path&gt;] [--json]
           workspace's recorded artifact metadata and support plural
           <code>artifacts ...</code> aliases for the implemented command paths.
         </p>
-        <figure class="demo-figure">
-          <img src="../assets/demos/mock-survey-exploit-commands.gif" alt="Direct command demo producing a durable throw record and active mock shell session after a configured chain run.">
-          <figcaption>Related demo: persisted run state after a throw</figcaption>
-        </figure>
-
         <h2>Post-Exploitation Sessions (MSF-Style)</h2>
         <p>Hovel should treat post-exploitation access as a first-class operation object, not an ad-hoc log line. A successful exploit step may open zero, one, or many sessions. Sessions should be stable, interactive, resumable, and automatable across CLI and future TUI and MCP adapters.</p>
 
@@ -399,10 +399,16 @@ session close &lt;session-id&gt; [--json]
           <code>--no-newline</code> or <code>--end</code> for exact terminators. The
           <code>session write</code> alias maps to <code>session send</code>.
         </p>
-        <figure class="demo-figure">
-          <img src="../assets/demos/mock-survey-exploit-cli.gif" alt="Hovel CLI demo listing, reading, sending to, attaching, detaching, and reconnecting to a mock shell session.">
-          <figcaption>Demo: session control commands</figcaption>
-        </figure>
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-02-session-io.gif" alt="Hovel CLI demo listing, reading, sending to, and reading from a mock shell session.">
+            <figcaption><strong>Step 1</strong> non-attached session IO</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-03-session-connect.gif" alt="Hovel CLI demo attaching to a mock shell session, detaching, and reconnecting.">
+            <figcaption><strong>Step 2</strong> attach, detach, and reconnect</figcaption>
+          </figure>
+        </div>
         <p><code>session inspect</code>, <code>session use</code>, <code>session background</code>, <code>session rename</code>, and session tagging are future control-plane goals rather than current registry commands.</p>
         <p>Control-plane requirements:</p>
         <ol>

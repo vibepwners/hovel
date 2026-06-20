@@ -15,14 +15,20 @@ cp -r spec _site/
 find _site -name BUILD.bazel -delete
 
 demo_outputs=(
-  "mock-survey-exploit.gif"
-  "mock-survey-exploit.mp4"
-  "mock-survey-exploit-cli.gif"
-  "mock-survey-exploit-cli.mp4"
-  "mock-survey-exploit-commands.gif"
-  "mock-survey-exploit-commands.mp4"
-  "mock-survey-exploit-cli-commands.gif"
-  "mock-survey-exploit-cli-commands.mp4"
+  "mock-survey-exploit-01-inspect.gif"
+  "mock-survey-exploit-02-throw.gif"
+  "mock-survey-exploit-03-session-io.gif"
+  "mock-survey-exploit-04-session-connect.gif"
+  "mock-survey-exploit-cli-02-session-io.gif"
+  "mock-survey-exploit-cli-03-session-connect.gif"
+  "mock-survey-exploit-cli-commands-01-create.gif"
+  "mock-survey-exploit-cli-commands-02-config-before.gif"
+  "mock-survey-exploit-cli-commands-03-config-apply.gif"
+  "mock-survey-exploit-cli-commands-04-save.gif"
+  "mock-survey-exploit-commands-01-create.gif"
+  "mock-survey-exploit-commands-02-config-before.gif"
+  "mock-survey-exploit-commands-03-config-apply.gif"
+  "mock-survey-exploit-commands-04-save.gif"
 )
 mkdir -p _site/assets/demos
 for output in "${demo_outputs[@]}"; do

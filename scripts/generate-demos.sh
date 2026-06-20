@@ -44,7 +44,8 @@ if [[ "${#tapes[@]}" -eq 0 ]]; then
 fi
 
 rm -rf demo/out demo/tmp
-mkdir -p demo/out demo/tmp
+mkdir -p demo/out demo/tmp/vhs-tmp
+export TMPDIR="$PWD/demo/tmp/vhs-tmp"
 
 task build -- //cmd/hovel
 task modules:build
@@ -136,6 +137,91 @@ for output in "${outputs[@]}"; do
     exit 1
   fi
 done
+
+python3 - "${outputs[@]}" <<'PY'
+import pathlib
+import sys
+
+MAX_SECONDS = 15.0
+
+
+def gif_duration_seconds(path: pathlib.Path) -> float:
+    data = path.read_bytes()
+    if len(data) < 13 or data[:3] != b"GIF":
+        raise ValueError(f"{path} is not a GIF")
+
+    duration_cs = 0
+    index = 13
+
+    # Global color table.
+    if data[10] & 0x80:
+        index += 3 * (2 ** ((data[10] & 0x07) + 1))
+
+    def skip_sub_blocks(offset: int) -> int:
+        while offset < len(data):
+            block_size = data[offset]
+            offset += 1
+            if block_size == 0:
+                return offset
+            offset += block_size
+        raise ValueError(f"{path} has unterminated GIF sub-blocks")
+
+    while index < len(data):
+        block_type = data[index]
+        index += 1
+        if block_type == 0x3B:  # trailer
+            break
+        if block_type == 0x21:  # extension
+            if index >= len(data):
+                raise ValueError(f"{path} has truncated extension block")
+            label = data[index]
+            index += 1
+            if label == 0xF9:  # graphics control extension
+                if index >= len(data):
+                    raise ValueError(f"{path} has truncated graphics control block")
+                block_size = data[index]
+                index += 1
+                if block_size != 4 or index + block_size > len(data):
+                    raise ValueError(f"{path} has invalid graphics control block")
+                duration_cs += int.from_bytes(data[index + 1 : index + 3], "little")
+                index += block_size
+                if index >= len(data) or data[index] != 0:
+                    raise ValueError(f"{path} has unterminated graphics control block")
+                index += 1
+            else:
+                index = skip_sub_blocks(index)
+            continue
+        if block_type == 0x2C:  # image descriptor
+            if index + 9 >= len(data):
+                raise ValueError(f"{path} has truncated image descriptor")
+            packed = data[index + 8]
+            index += 9
+            if packed & 0x80:  # local color table
+                index += 3 * (2 ** ((packed & 0x07) + 1))
+            if index >= len(data):
+                raise ValueError(f"{path} has truncated image data")
+            index += 1  # LZW minimum code size
+            index = skip_sub_blocks(index)
+            continue
+        raise ValueError(f"{path} has unknown GIF block type 0x{block_type:02x}")
+
+    return duration_cs / 100.0
+
+
+failed = False
+for raw_path in sys.argv[1:]:
+    path = pathlib.Path(raw_path)
+    if path.suffix.lower() != ".gif":
+        continue
+    duration = gif_duration_seconds(path)
+    print(f"{path}: {duration:.2f}s")
+    if duration > MAX_SECONDS:
+        print(f"{path} exceeds {MAX_SECONDS:.0f}s GIF duration cap", file=sys.stderr)
+        failed = True
+
+if failed:
+    sys.exit(1)
+PY
 
 printf 'generated demo artifacts:\n'
 printf '  %s\n' "${outputs[@]}"
