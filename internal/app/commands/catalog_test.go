@@ -2349,6 +2349,57 @@ func TestSessionCommandsResolveLatestSession(t *testing.T) {
 	}
 }
 
+func TestSessionLatestUsesLastActiveSessionInDaemonOrder(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{
+		sessions: []SessionRef{
+			{ID: "session-z", State: "active"},
+			{ID: "session-a", State: "active"},
+			{ID: "session-m", State: "closed"},
+		},
+	}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+	definition, _ := registry.Find("session", "send")
+
+	if _, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "latest", "data": "whoami"},
+		Options:     map[string]string{},
+		Flags:       map[string]bool{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.writes) != 1 || recorder.writes[0].sessionID != "session-a" {
+		t.Fatalf("writes = %#v, want latest active session-a", recorder.writes)
+	}
+}
+
+func TestSessionLatestRejectsClosedOnlySessions(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{
+		sessions: []SessionRef{
+			{ID: "session-1", State: "closed"},
+			{ID: "session-2", State: "closed"},
+		},
+	}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+	definition, _ := registry.Find("session", "read")
+
+	_, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "latest"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "no active sessions available") {
+		t.Fatalf("error = %v, want no active sessions", err)
+	}
+}
+
 func TestSessionSendAppendsDefaultAndCustomTerminators(t *testing.T) {
 	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
 	recorder := &fakeRunRecorder{}
@@ -3002,6 +3053,7 @@ type fakeRunRecorder struct {
 	requests          []RunMockExploitRequest
 	artifacts         []Artifact
 	installedPayloads []InstalledPayloadDescriptor
+	sessions          []SessionRef
 	reads             []SessionChunk
 	tail              SessionChunk
 	tails             []fakeSessionTail
@@ -3510,7 +3562,10 @@ func (c fakeRunClient) RunMockExploit(_ context.Context, req RunMockExploitReque
 	}, nil
 }
 
-func (fakeRunClient) ListSessions(context.Context) ([]SessionRef, error) {
+func (c fakeRunClient) ListSessions(context.Context) ([]SessionRef, error) {
+	if c.recorder != nil && c.recorder.sessions != nil {
+		return append([]SessionRef(nil), c.recorder.sessions...), nil
+	}
 	return []SessionRef{{
 		ID:           "session-1",
 		RunID:        "run-1",

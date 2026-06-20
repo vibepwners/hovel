@@ -161,14 +161,14 @@ constructed chains as e2e checks, then renders the visible VHS tapes without
 showing test harness output in the recordings. Demos that interact with
 sessions start an explicit daemon in hidden setup, because live module sessions
 belong to the daemon process; a CLI-owned managed daemon shuts down when that
-CLI exits. Each rendered GIF is capped at 10 seconds by the generator.
+CLI exits. Each rendered GIF is capped at 15 seconds by the generator.
 
-CI runs the `demos` job after the `build-test` job passes. That job installs VHS,
-runs `task demos`, and uploads the generated files as the `hovel-demos` workflow
-artifact. The CI docs job downloads that artifact and stages `_site` with
-`task docs:stage`; the GitHub Pages workflow runs after the CI workflow succeeds,
-regenerates the demos with `task docs`, uploads `_site`, and deploys it. The
-source GIF paths are:
+CI runs the `demos` job after the `build-test` job passes. That job installs
+`ffmpeg`, `ttyd`, and pinned VHS directly, runs `task demos`, and uploads the
+generated files as the `hovel-demos` workflow artifact. The CI docs job
+downloads that artifact and stages `_site` with `task docs:stage`; the GitHub
+Pages workflow runs after the CI workflow succeeds, regenerates the demos with
+`task docs`, uploads `_site`, and deploys it. The source GIF paths are:
 
 | Series | Step | Output |
 | --- | --- | --- |
@@ -189,8 +189,8 @@ source GIF paths are:
 
 To add a demo, add a `.tape` file under `demo/tapes/`, put reusable demo fixtures
 such as configured chain files under `demo/`, and point the tape's GIF `Output`
-directive at `demo/out/`. Keep each GIF under 10 seconds by splitting long flows
-into steps. Put setup and validation commands in hidden tape sections,
+directive at `demo/out/`. Split long flows into steps when it improves
+readability. Put setup and validation commands in hidden tape sections,
 `scripts/demo-step-setup.sh`, or `scripts/generate-demos.sh` so the GIF shows
 only the operator-facing flow.
 

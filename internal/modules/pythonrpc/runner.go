@@ -1500,6 +1500,7 @@ func artifactsFromRPC(value any) ([]run.Artifact, error) {
 type SessionBroker struct {
 	mu           sync.Mutex
 	sessions     map[string]*brokerSession
+	nextOrder    uint64
 	historyLimit int
 }
 
@@ -1516,13 +1517,20 @@ func (b *SessionBroker) ListSessions(context.Context) ([]run.SessionRef, error) 
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	sessions := make([]run.SessionRef, 0, len(b.sessions))
+	ordered := make([]*brokerSession, 0, len(b.sessions))
 	for _, session := range b.sessions {
+		ordered = append(ordered, session)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].order == ordered[j].order {
+			return ordered[i].ref.ID < ordered[j].ref.ID
+		}
+		return ordered[i].order < ordered[j].order
+	})
+	sessions := make([]run.SessionRef, 0, len(ordered))
+	for _, session := range ordered {
 		sessions = append(sessions, cloneSessionRef(session.ref))
 	}
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].ID < sessions[j].ID
-	})
 	return sessions, nil
 }
 
@@ -1595,7 +1603,13 @@ func (b *SessionBroker) adopt(process *moduleProcess, sessions []run.SessionRef)
 		if session.ID == "" {
 			continue
 		}
+		order := b.nextOrder
+		b.nextOrder++
+		if existing, ok := b.sessions[session.ID]; ok {
+			order = existing.order
+		}
 		brokerSession := newBrokerSession(session, process, b.historyLimit)
+		brokerSession.order = order
 		b.sessions[session.ID] = brokerSession
 		adopted = append(adopted, brokerSession)
 	}
