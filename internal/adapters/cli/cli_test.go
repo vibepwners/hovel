@@ -12,6 +12,7 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
 	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
+	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
@@ -146,15 +147,18 @@ func TestExecuteLineEnforcesOperationThenChainFlow(t *testing.T) {
 }
 
 func TestParseSessionConnectTracksExplicitHistoryLimit(t *testing.T) {
-	sessionID, options, err := parseSessionConnect("session connect --history-bytes 4096 session-1")
+	parsed, err := ParseSessionConnectCommand(strings.Fields("session connect --workspace=/tmp/hovel --history-bytes=4096 session-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sessionID != "session-1" {
-		t.Fatalf("sessionID = %q, want session-1", sessionID)
+	if parsed.SessionID != "session-1" {
+		t.Fatalf("sessionID = %q, want session-1", parsed.SessionID)
 	}
-	if !options.HistoryLimitChosen || options.HistoryBytes != 4096 || options.HistoryLines != 0 {
-		t.Fatalf("options = %#v, want explicit 4096-byte history limit", options)
+	if parsed.Workspace != "/tmp/hovel" {
+		t.Fatalf("workspace = %q, want /tmp/hovel", parsed.Workspace)
+	}
+	if !parsed.Options.HistoryLimitChosen || parsed.Options.HistoryBytes != 4096 || parsed.Options.HistoryLines != 0 {
+		t.Fatalf("options = %#v, want explicit 4096-byte history limit", parsed.Options)
 	}
 }
 
@@ -707,6 +711,67 @@ func TestThrowAnimationOnlyWrapsThrowExecution(t *testing.T) {
 		if isThrowExecutionCommand(line) {
 			t.Fatalf("%q was recognized as throw execution", line)
 		}
+	}
+	for _, line := range []string{"throw --now", "throw demo/chain.yaml --now"} {
+		if !isLiveThrowExecutionCommand(line) {
+			t.Fatalf("%q was not recognized as live throw execution", line)
+		}
+	}
+	for _, line := range []string{"throw --now --json", "throw -j --now", "throw list"} {
+		if isLiveThrowExecutionCommand(line) {
+			t.Fatalf("%q should not render live throw logs", line)
+		}
+	}
+}
+
+func TestExecuteLineInjectsShellWorkspaceForWorkspaceCommands(t *testing.T) {
+	var capturedWorkspace string
+	registry, err := commands.NewRegistry(commands.Definition{
+		Path:        []string{"throw"},
+		Summary:     "Run a throw.",
+		Positionals: []commands.Positional{{Name: "chain_file", Required: true}},
+		Options: []commands.Option{
+			{Name: "workspace", Short: "w", ValueName: "path", Kind: commands.OptionString},
+			{Name: "now", Short: "n", Kind: commands.OptionBool},
+		},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			capturedWorkspace = invocation.Option("workspace")
+			return commands.Result{Human: "ok"}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := operatorsession.New()
+	if err := session.UseOperation("demo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("mock-survey-exploit-demo"); err != nil {
+		t.Fatal(err)
+	}
+	workspacePath := filepath.Join(t.TempDir(), "workspace with space")
+	app := App{
+		commands:      commandmode.NewAppWithRegistry(registry),
+		theme:         DefaultTheme(),
+		session:       session,
+		workspacePath: workspacePath,
+	}
+	var stdout, stderr bytes.Buffer
+
+	if code := app.ExecuteLine(context.Background(), "throw demo.chain --now", &stdout, &stderr); code != 0 {
+		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if capturedWorkspace != workspacePath {
+		t.Fatalf("workspace = %q, want %q", capturedWorkspace, workspacePath)
+	}
+	stdout.Reset()
+	stderr.Reset()
+
+	if code := app.ExecuteLine(context.Background(), "throw demo.chain --workspace explicit --now", &stdout, &stderr); code != 0 {
+		t.Fatalf("throw explicit workspace exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if capturedWorkspace != "explicit" {
+		t.Fatalf("explicit workspace = %q, want explicit", capturedWorkspace)
 	}
 }
 

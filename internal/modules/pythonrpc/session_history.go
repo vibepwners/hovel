@@ -17,6 +17,7 @@ type brokerSession struct {
 	ref     run.SessionRef
 	process *moduleProcess
 	limit   int
+	order   uint64
 
 	mu      sync.Mutex
 	history []byte

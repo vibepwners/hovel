@@ -45,3 +45,20 @@ func TestBrokerSessionTailConsumeClearsPendingBytes(t *testing.T) {
 		t.Fatalf("pending data = %q, want consumed", string(chunk.Data))
 	}
 }
+
+func TestSessionBrokerListsSessionsInAdoptionOrder(t *testing.T) {
+	broker := NewSessionBroker()
+	broker.sessions["session-z"] = &brokerSession{ref: run.SessionRef{ID: "session-z"}, order: 0}
+	broker.sessions["session-a"] = &brokerSession{ref: run.SessionRef{ID: "session-a"}, order: 1}
+
+	sessions, err := broker.ListSessions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("sessions = %#v, want two sessions", sessions)
+	}
+	if sessions[0].ID != "session-z" || sessions[1].ID != "session-a" {
+		t.Fatalf("session order = %q, %q; want adoption order", sessions[0].ID, sessions[1].ID)
+	}
+}

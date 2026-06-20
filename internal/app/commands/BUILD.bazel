@@ -6,6 +6,7 @@ go_library(
         "catalog.go",
         "payload_inventory.go",
         "registry.go",
+        "session_commands.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/app/commands",
     visibility = ["//:__subpackages__"],

@@ -1,16 +1,10 @@
 name: Pages
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
     branches: [main]
-    paths:
-      - "index.html"
-      - "assets/**"
-      - "spec/**/*.html"
-      - "sdk/**"
-      - "tools/docs/**"
-      - "Taskfile.yml"
-      - ".github/workflows/pages.yml"
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -24,9 +18,12 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Cache Bazel
         uses: actions/cache@v4
@@ -56,6 +53,19 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.84.0
 
+      - name: Install VHS dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg ttyd fonts-dejavu-core
+
+      - name: Install VHS
+        run: |
+          go install github.com/charmbracelet/vhs@v0.11.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/vhs" --version
+          ffmpeg -version | head -n 1
+          ttyd --version
+
       - name: Stage site
         run: task docs
 
@@ -66,6 +76,7 @@ jobs:
           path: _site
 
   deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     needs: build
     runs-on: ubuntu-latest
     environment:

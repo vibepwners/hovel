@@ -38,6 +38,23 @@ func TestPromptSurfaceRefreshesPromptBelowAsyncLog(t *testing.T) {
 	}
 }
 
+func TestPromptSurfaceWritesCommandActiveLogsWithoutPromptRewrite(t *testing.T) {
+	writer := &recordingConsoleWriter{}
+	surface := newPromptSurface(writer)
+	surface.SetDocument(prompt.Document{Text: "throw --now"})
+	surface.SetCommandLogState(true, true)
+
+	surface.WriteAsyncLog("first\nsecond", "h0v3l> ")
+
+	output := writer.String()
+	if !strings.Contains(output, "<erase-line>first\r\nsecond\r\n") {
+		t.Fatalf("output = %q, want log written as command output", output)
+	}
+	if strings.Contains(output, "<erase-down>") || strings.Contains(output, "h0v3l> ") {
+		t.Fatalf("output = %q, want no prompt-preserving rewrite while command is active", output)
+	}
+}
+
 func TestPromptSurfaceShowsThrowingAnimation(t *testing.T) {
 	writer := &recordingConsoleWriter{}
 	surface := newPromptSurface(writer)

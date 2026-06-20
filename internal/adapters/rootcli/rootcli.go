@@ -10,6 +10,8 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/adapters/cli"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
+	"github.com/Vibe-Pwners/hovel/internal/app/services"
+	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
@@ -50,12 +52,56 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if args[0] == "throw" && throwFileArg(args[1:]) != "" {
 			return runOneShotThrow(ctx, args, stdout, stderr)
 		}
+		if isDirectSessionConnectCommand(args) {
+			return runDirectSessionConnect(ctx, args, stdout, stderr)
+		}
 		if commandmode.NewApp().Registry().HasRoot(args[0]) {
 			return commandmode.Run(ctx, args, stdout, stderr)
 		}
 		fmt.Fprint(stderr, newRootParser().Usage(fmt.Sprintf("unknown command or role %q", args[0])))
 		return 2
 	}
+}
+
+func isDirectSessionConnectCommand(args []string) bool {
+	if len(args) < 2 {
+		return false
+	}
+	if args[0] != "session" && args[0] != "sessions" {
+		return false
+	}
+	if args[1] != "connect" {
+		return false
+	}
+	return !helpRequested(args[2:])
+}
+
+func runDirectSessionConnect(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	parsed, err := cli.ParseSessionConnectCommand(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	workspacePath := parsed.Workspace
+	if workspacePath == "" {
+		workspacePath = ".hovel"
+	}
+	status, err := daemonmanager.New().Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if status.State != daemon.StateRunning {
+		fmt.Fprintf(stderr, "daemon is not running for workspace %s\n", status.WorkspacePath)
+		return 1
+	}
+	client, err := daemonrpc.Dial(status.Identity.SocketPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	defer client.Close()
+	return cli.RunSessionConnect(ctx, client, parsed.SessionID, parsed.Options, stdout, stderr)
 }
 
 func runOneShotThrow(ctx context.Context, args []string, stdout, stderr io.Writer) int {

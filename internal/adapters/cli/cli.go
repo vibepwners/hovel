@@ -146,6 +146,10 @@ func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surfac
 			case <-pollCtx.Done():
 				return
 			case <-ticker.C:
+				commandActive, renderCommandLogs := false, true
+				if surface != nil {
+					commandActive, renderCommandLogs = surface.CommandLogState()
+				}
 				state := a.session.Snapshot()
 				operation := state.ActiveOperation
 				chain := state.ActiveChain
@@ -162,6 +166,9 @@ func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surfac
 					continue
 				}
 				cursor = result.Last
+				if commandActive && !renderCommandLogs {
+					continue
+				}
 				for _, log := range result.Logs {
 					rendered := renderer.Render(operatorLog(log))
 					if rendered != "" {
@@ -262,10 +269,16 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 		}
 		return a.executeSessionConnect(ctx, sessionID, options, stdout, stderr)
 	}
-	stopThrowing := func() {}
-	if isAnimatedThrowExecutionCommand(trimmed) && a.surface != nil {
-		stopThrowing = a.surface.StartThrowing(a.PromptPrefix())
-		defer stopThrowing()
+	trimmed = a.withWorkspaceArgument(trimmed)
+	if a.surface != nil {
+		renderCommandLogs := !isJSONThrowExecutionCommand(trimmed)
+		a.surface.SetCommandLogState(true, renderCommandLogs)
+		defer func() {
+			if renderCommandLogs && !isLiveThrowExecutionCommand(trimmed) {
+				time.Sleep(200 * time.Millisecond)
+			}
+			a.surface.SetCommandLogState(false, false)
+		}()
 	}
 	code := a.commands.ExecuteLine(ctx, trimmed, stdout, stderr)
 	if err := a.saveWorkspaceSession(ctx); err != nil {
@@ -273,6 +286,59 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 		return 1
 	}
 	return code
+}
+
+func (a App) withWorkspaceArgument(line string) string {
+	if a.workspacePath == "" || commandLineHasWorkspaceArg(line) || !commandLineUsesWorkspace(line) {
+		return line
+	}
+	return line + " --workspace " + quoteCommandArg(a.workspacePath)
+}
+
+func commandLineHasWorkspaceArg(line string) bool {
+	fields := strings.Fields(line)
+	for i, field := range fields {
+		if field == "--workspace" || field == "-w" {
+			return i+1 < len(fields)
+		}
+		if strings.HasPrefix(field, "--workspace=") {
+			return true
+		}
+	}
+	return false
+}
+
+func commandLineUsesWorkspace(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "throw", "throws", "confirm", "review", "artifact", "artifacts", "session", "sessions":
+		return true
+	default:
+		return false
+	}
+}
+
+func quoteCommandArg(arg string) string {
+	if arg == "" {
+		return `""`
+	}
+	if !strings.HasPrefix(arg, "-") && !strings.ContainsAny(arg, " \t\r\n\"\\") {
+		return arg
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range arg {
+		switch r {
+		case '\\', '"':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 func isThrowExecutionCommand(line string) bool {
@@ -296,6 +362,26 @@ func isAnimatedThrowExecutionCommand(line string) bool {
 	fields := strings.Fields(line)
 	for _, field := range fields[1:] {
 		if field == "--now" || field == "-n" || strings.HasPrefix(field, "--now=") {
+			return true
+		}
+	}
+	return false
+}
+
+func isLiveThrowExecutionCommand(line string) bool {
+	if !isThrowExecutionCommand(line) {
+		return false
+	}
+	return !isJSONThrowExecutionCommand(line)
+}
+
+func isJSONThrowExecutionCommand(line string) bool {
+	if !isThrowExecutionCommand(line) {
+		return false
+	}
+	fields := strings.Fields(line)
+	for _, field := range fields[1:] {
+		if field == "--json" || field == "-j" || strings.HasPrefix(field, "--json=") {
 			return true
 		}
 	}

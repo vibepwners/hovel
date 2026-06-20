@@ -124,9 +124,20 @@ tasks:
       - bash tools/modules/stage_examples.sh
 
   docs:
-    desc: Build and stage the static docs site, including language-native SDK API docs.
+    desc: Generate demos, then build and stage the static docs site.
+    deps: [demos]
+    cmds:
+      - task: docs:stage
+
+  docs:stage:
+    desc: Build and stage the static docs site from existing demo outputs.
     cmds:
       - bash tools/docs/stage_site.sh
+
+  demos:
+    desc: Generate VHS terminal demos into demo/out/.
+    cmds:
+      - bash scripts/generate-demos.sh
 
   docs:api:
     desc: Generate language-native SDK API docs into _site/api/sdk.

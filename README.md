@@ -31,9 +31,10 @@ language-specific guides for [Python](spec/module-python.html),
 the stdio JSON-RPC contract, registration, safety tags, sessions, artifacts,
 installed payload records, and provider boundaries.
 
-`task docs` stages the full documentation site in `_site/`, including generated
-SDK API reference pages under `_site/api/sdk/` and an internal link check. GitHub
-Pages and GitLab Pages both run that task before publishing.
+`task docs` renders the terminal demos, stages the full documentation site in
+`_site/`, embeds the generated GIFs under `_site/assets/demos/`, generates SDK
+API reference pages under `_site/api/sdk/`, and runs an internal link check.
+GitHub Pages runs that task before uploading and deploying the site.
 
 ## Layout
 
@@ -64,6 +65,7 @@ or concrete module/service code.
 - [Task](https://taskfile.dev/) — the single entry point for every build command
 - [Bazel](https://bazel.build/) (via [bazelisk](https://github.com/bazelbuild/bazelisk); pinned by `.bazelversion`)
 - [uv](https://docs.astral.sh/uv/) for Python SDK lint/type/doc checks
+- [VHS](https://github.com/charmbracelet/vhs) plus `ttyd` and `ffmpeg` for demo and docs generation
 - [Lefthook](https://lefthook.dev/) (optional) for git hooks
 
 ## Quick start
@@ -81,7 +83,7 @@ task status
 # Wipe local state and relaunch from a clean slate
 task reset
 
-# Run the full check suite (lint + docs + build + test) — what CI runs
+# Run the full check suite (lint + demo-backed docs + build + test) — what CI runs
 task ci
 ```
 
@@ -108,8 +110,89 @@ Build & checks:
 | `task test` (`t`) | Run all tests (`task test -- //internal/...` for some). |
 | `task lint` (`l`) | Go formatting, Gazelle, Python, and Squatter C checks (read-only). |
 | `task fmt` | Auto-format Go source, regenerate `BUILD` metadata, and format Squatter C. |
-| `task check` (`ci`) | Lint, docs, build, and test. |
+| `task check` (`ci`) | Lint, demo-backed docs, build, and test. |
+| `task demos` | Generate VHS terminal demos into `demo/out/`. |
 | `task hooks:install` | Install git hooks via Lefthook. |
+
+## Terminal demos
+
+Scripted terminal demos live under [`demo/tapes`](demo/tapes). Hovel uses
+[Charmbracelet VHS](https://github.com/charmbracelet/vhs) to render them into
+GIF artifacts under `demo/out/`; generated outputs are ignored by git.
+
+Install VHS locally with your package manager, for example:
+
+```sh
+brew install vhs
+```
+
+The CI job currently pins VHS `v0.11.0`; install that version directly with
+`go install github.com/charmbracelet/vhs@v0.11.0` if you want the same renderer
+locally. VHS requires `ttyd` and `ffmpeg` on `PATH`; install those too if your
+package manager does not include them with VHS.
+
+Generate the demos locally through Task:
+
+```sh
+task demos
+```
+
+`task docs` runs the demo generator before staging the site, then copies the
+generated GIFs into `_site/assets/demos/` so the static HTML can embed
+them. The homepage and spec chapters embed the generated mock survey/exploit
+steps inline.
+
+The current demos cover both saved-chain execution and from-scratch chain
+construction against the Go mock survey and mock session-exploit modules. The
+saved-chain demos use the checked-in
+[`demo/chains/mock-survey-exploit.chain.yaml`](demo/chains/mock-survey-exploit.chain.yaml).
+The direct saved-chain series runs a non-JSON throw so the live log stream is
+visible, lists the resulting mock shell session, reads the prompt, sends
+`whoami`, reads the response, attaches with `session connect` for several typed
+commands, detaches, and then reconnects to the same session. The CLI session
+series starts from a hidden completed throw and shows the same read/send and
+attach/detach/reconnect operations inside `hovel cli`. The
+command-construction demos create the operation chain with `chain create`,
+`chain add`, `target add`, `target config set`, and `chain config set`, then
+save the configured chain. They also list required chain and target config
+before setting values, then list the resolved config afterward. The generator
+first runs silent JSON throws and session interactions for both saved and
+constructed chains as e2e checks, then renders the visible VHS tapes without
+showing test harness output in the recordings. Demos that interact with
+sessions start an explicit daemon in hidden setup, because live module sessions
+belong to the daemon process; a CLI-owned managed daemon shuts down when that
+CLI exits. Each rendered GIF is capped at 15 seconds by the generator.
+
+CI runs the `demos` job after the `build-test` job passes. That job installs
+`ffmpeg`, `ttyd`, and pinned VHS directly, runs `task demos`, and uploads the
+generated files as the `hovel-demos` workflow artifact. The CI docs job
+downloads that artifact and stages `_site` with `task docs:stage`; the GitHub
+Pages workflow runs after the CI workflow succeeds, regenerates the demos with
+`task docs`, uploads `_site`, and deploys it. The source GIF paths are:
+
+| Series | Step | Output |
+| --- | --- | --- |
+| CLI construction | Create operation chain | `demo/out/mock-survey-exploit-cli-commands-01-create.gif` |
+| CLI construction | List required config | `demo/out/mock-survey-exploit-cli-commands-02-config-before.gif` |
+| CLI construction | Apply and verify config | `demo/out/mock-survey-exploit-cli-commands-03-config-apply.gif` |
+| CLI construction | Validate and save | `demo/out/mock-survey-exploit-cli-commands-04-save.gif` |
+| Direct construction | Create operation chain | `demo/out/mock-survey-exploit-commands-01-create.gif` |
+| Direct construction | List required config | `demo/out/mock-survey-exploit-commands-02-config-before.gif` |
+| Direct construction | Apply and verify config | `demo/out/mock-survey-exploit-commands-03-config-apply.gif` |
+| Direct construction | Validate and save | `demo/out/mock-survey-exploit-commands-04-save.gif` |
+| Direct saved chain | Inspect modules | `demo/out/mock-survey-exploit-01-inspect.gif` |
+| Direct saved chain | Throw with live logs | `demo/out/mock-survey-exploit-02-throw.gif` |
+| Direct saved chain | Read and send session data | `demo/out/mock-survey-exploit-03-session-io.gif` |
+| Direct saved chain | Attach, detach, reconnect | `demo/out/mock-survey-exploit-04-session-connect.gif` |
+| CLI saved chain | Read and send session data | `demo/out/mock-survey-exploit-cli-02-session-io.gif` |
+| CLI saved chain | Attach, detach, reconnect | `demo/out/mock-survey-exploit-cli-03-session-connect.gif` |
+
+To add a demo, add a `.tape` file under `demo/tapes/`, put reusable demo fixtures
+such as configured chain files under `demo/`, and point the tape's GIF `Output`
+directive at `demo/out/`. Split long flows into steps when it improves
+readability. Put setup and validation commands in hidden tape sections,
+`scripts/demo-step-setup.sh`, or `scripts/generate-demos.sh` so the GIF shows
+only the operator-facing flow.
 
 ## Front-end roles
 

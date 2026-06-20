@@ -25,6 +25,7 @@
       <p class="sidebar-section">Specification</p>
       <ul>
         <li><a href="index.html">Contents</a></li>
+        <li><a href="user-guide.html">User Guide</a></li>
         <li><a href="introduction.html">Introduction</a></li>
         <li><a href="safety.html">Safety and Scope</a></li>
         <li><a href="architecture.html">Architecture</a></li>
@@ -36,7 +37,6 @@
         <li><a href="front-ends.html" aria-current="page">Front Ends</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
         <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
-        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
@@ -97,6 +97,16 @@ hovel tui ...              # explicit placeholder today
     serve
     status
 </code></pre>
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-02-throw.gif" alt="Direct terminal demo replaying a configured mock chain file with live logs.">
+            <figcaption><strong>Step 1</strong> one-shot chain-file execution</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-03-session-io.gif" alt="Direct terminal demo reading from and sending to the resulting session.">
+            <figcaption><strong>Step 2</strong> operate the resulting session</figcaption>
+          </figure>
+        </div>
 
         <h2>CLI Mode</h2>
         <p><code>cli</code> mode is the first implemented rich operator interface. It starts an interactive prompt shell with command history, completions, contextual help, and styled output. It uses <code>go-prompt</code> for the prompt and completion loop and Lip Gloss for prompt, table, panel, status, and result styling.</p>
@@ -220,6 +230,24 @@ quit
           <li>Execute the active chain against selected operation targets with <code>throw</code>.</li>
           <li>Persist the chain definition with <code>chain save &lt;file&gt;</code> when it should be shared or used from one-shot mode.</li>
         </ol>
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-01-create.gif" alt="Hovel CLI demo selecting an operation, creating a chain, and adding modules and target.">
+            <figcaption><strong>Step 1</strong> create chain context</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-02-config-before.gif" alt="Hovel CLI demo listing required config before applying values.">
+            <figcaption><strong>Step 2</strong> inspect config requirements</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-03-config-apply.gif" alt="Hovel CLI demo applying and verifying config values.">
+            <figcaption><strong>Step 3</strong> apply config</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-04-save.gif" alt="Hovel CLI demo validating and saving a configured chain.">
+            <figcaption><strong>Step 4</strong> validate and save</figcaption>
+          </figure>
+        </div>
         <p>Targets belong to operations. <code>target add</code>, <code>target clear</code>, and <code>target config</code> operate on the active operation inventory and persist across chains. <code>target set</code> groups operation targets for convenience. Interactive <code>throw</code> binds the active chain to targets from <code>--target</code>, <code>--target-set</code>, or the operation inventory before planning and review.</p>
         <p><code>review</code> and <code>throw</code> share the same review rendering. <code>confirm</code> records a pre-confirmation and stops. <code>review</code> always displays the current plan, requires the operator to type <code>yes</code>, records or refreshes the confirmation, and stops. <code>throw</code> starts execution if the current plan hash already has a matching confirmation; otherwise it shows the review, asks the operator to type <code>yes</code>, records the confirmation, and starts execution. Confirmations do not expire by time. They become invalid when the reviewed plan hash changes. <code>throw --now</code> skips the prompt but records the bypass in the confirmation record.</p>
         <p>Chains own their operation-scoped log topic. A chain topic is addressable as <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>, and <code>chain logs</code> shows only the logs for the active chain. In multi-client sessions, an implemented <code>cli</code> client and future TUI or MCP clients attached to an operation and chain subscribe to that chain topic; clients attached to the same operation and chain see the same logs, while clients attached to other chains do not see them by default.</p>
