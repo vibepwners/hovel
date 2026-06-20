@@ -40,6 +40,13 @@
   </section>
 
   <main class="content" style="max-width: 1080px; margin: 0 auto; padding: 2rem 2.5rem 3rem;">
+    <figure class="demo-figure homepage-demo" id="homepage-demo">
+      <a class="demo-open" href="#homepage-demo-modal" aria-label="Open Hovel terminal demo full screen">
+        <img src="assets/demos/mock-survey-exploit-cli-commands.gif" alt="Hovel CLI demo building a mock survey and exploit chain, throwing it, and reconnecting to the resulting session.">
+      </a>
+      <figcaption>Demo: build a chain, throw it, operate the session</figcaption>
+    </figure>
+
     <h2>The pitch</h2>
     <blockquote>
       <p>
@@ -70,6 +77,11 @@
 
     <h2>Start here</h2>
     <div class="tiles">
+      <a class="tile" href="spec/user-guide.html">
+        <span class="tile-label">00 // Use</span>
+        <span class="tile-title">User guide</span>
+        <span class="tile-desc">Run Hovel, throw a saved chain, build a chain interactively, inspect results, and operate sessions with generated demos.</span>
+      </a>
       <a class="tile" href="spec/introduction.html">
         <span class="tile-label">01 // Read</span>
         <span class="tile-title">Introduction</span>
@@ -122,5 +134,13 @@ task ci      # lint + build + test</code></pre>
   <footer class="sitefoot">
     <p>Hovel · authorized security research · <a href="LICENSE">LICENSE</a> · <a href="https://github.com/Vibe-Pwners/hovel">github.com/Vibe-Pwners/hovel</a></p>
   </footer>
+
+  <div class="demo-modal" id="homepage-demo-modal" role="dialog" aria-label="Hovel terminal demo">
+    <a class="demo-modal-backdrop" href="#homepage-demo" aria-label="Close demo"></a>
+    <div class="demo-modal-content">
+      <a class="demo-modal-close" href="#homepage-demo" aria-label="Close demo">Close</a>
+      <img src="assets/demos/mock-survey-exploit-cli-commands.gif" alt="Hovel CLI demo building a mock survey and exploit chain, throwing it, and reconnecting to the resulting session.">
+    </div>
+  </div>
 </body>
 </html>

@@ -10,11 +10,14 @@ import (
 )
 
 type promptSurface struct {
-	mu            sync.Mutex
-	writer        *styledPromptWriter
-	document      prompt.Document
-	throwing      bool
-	throwingFrame int
+	mu                sync.Mutex
+	writer            *styledPromptWriter
+	document          prompt.Document
+	throwing          bool
+	throwingFrame     int
+	commandActive     bool
+	commandLogs       bool
+	suppressLogsUntil time.Time
 }
 
 func newPromptSurface(writer prompt.ConsoleWriter) *promptSurface {
@@ -38,6 +41,14 @@ func (w *promptSurface) WriteAsyncLog(rendered, prefix string) {
 	defer w.writer.ShowCursor()
 	w.writer.WriteRaw([]byte("\r"))
 	w.writer.EraseLine()
+	if w.commandActive {
+		w.writer.WriteRawStr(terminalNewlines(rendered))
+		if !strings.HasSuffix(rendered, "\n") {
+			w.writer.WriteRaw([]byte("\r\n"))
+		}
+		_ = w.writer.Flush()
+		return
+	}
 	w.writer.EraseDown()
 	w.writer.WriteRawStr(terminalNewlines(rendered))
 	if !strings.HasSuffix(rendered, "\n") {
@@ -72,6 +83,31 @@ func (w *promptSurface) StartThrowing(prefix string) func() {
 			w.setThrowing(prefix, false)
 		})
 	}
+}
+
+func (w *promptSurface) SetCommandLogState(active, renderLogs bool) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !active && w.commandActive && !w.commandLogs {
+		w.suppressLogsUntil = time.Now().Add(500 * time.Millisecond)
+	}
+	w.commandActive = active
+	w.commandLogs = renderLogs
+}
+
+func (w *promptSurface) CommandLogState() (bool, bool) {
+	if w == nil {
+		return false, true
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.commandActive && time.Now().Before(w.suppressLogsUntil) {
+		return true, false
+	}
+	return w.commandActive, w.commandLogs
 }
 
 func (w *promptSurface) setThrowing(prefix string, active bool) {

@@ -44,6 +44,22 @@ type RunClient interface {
 	CloseSession(context.Context, string) error
 }
 
+type RunLogPoller interface {
+	PollOperationChainLogs(context.Context, string, string, uint64) (RunLogPollResult, error)
+}
+
+type RunLogPollResult struct {
+	Last uint64
+	Logs []RunPublishedLog
+}
+
+type RunPublishedLog struct {
+	Seq       uint64
+	Operation string
+	Chain     string
+	Entry     operatorlog.Entry
+}
+
 type CapabilityChainRunner interface {
 	ExecuteCapabilityChain(context.Context, CapabilityChainRequest) (CapabilityChainResponse, error)
 }
@@ -2051,9 +2067,18 @@ func throwHandler(runtime Runtime) Handler {
 		}
 
 		throwStarted := time.Now()
+		var streamThrowLog func(...operatorlog.Entry)
+		if invocation.StreamLog != nil {
+			streamThrowLog = func(entries ...operatorlog.Entry) {
+				for _, entry := range entries {
+					invocation.StreamLog(entry)
+				}
+			}
+		}
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
 			_ = runtime.Session.AppendLogToChain(throw.Chain, throwHeader(throw.Chain))
 		}
+		emitStreamLog(streamThrowLog, throwHeader(throw.Chain))
 		var payload ThrowPayload
 		payload.Plan = plan.Payload()
 		payload.ThrowID = newThrowRecordID(plan, throwStarted)
@@ -2062,11 +2087,13 @@ func throwHandler(runtime Runtime) Handler {
 		if err := recordStructuredEvent(ctx, runtime, status.WorkspacePath, "hovel.throw.started", "throw started", plan, payload.ThrowID, "", event.LevelInfo, nil); err != nil {
 			return Result{}, err
 		}
+		planEntries := throwPlanEntries(payload, throwStarted)
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
-			_ = runtime.Session.AppendLogToChain(throw.Chain, throwPlanEntries(payload, throwStarted)...)
+			_ = runtime.Session.AppendLogToChain(throw.Chain, planEntries...)
 		}
+		emitStreamLog(streamThrowLog, planEntries...)
 		if len(throw.Steps) != 0 {
-			if err := executeCapabilityThrow(ctx, runtime, status.WorkspacePath, plan, throw, &payload, throwStarted); err != nil {
+			if err := executeCapabilityThrow(ctx, runtime, status.WorkspacePath, plan, throw, &payload, throwStarted, streamThrowLog); err != nil {
 				return Result{}, err
 			}
 		} else {
@@ -2075,13 +2102,13 @@ func throwHandler(runtime Runtime) Handler {
 				return Result{}, err
 			}
 			defer client.Close()
-			if err := executeLegacyThrow(ctx, runtime, client, status.WorkspacePath, plan, throw, &payload, throwStarted); err != nil {
+			if err := executeLegacyThrow(ctx, runtime, client, status.WorkspacePath, plan, throw, &payload, throwStarted, streamThrowLog); err != nil {
 				return Result{}, err
 			}
 		}
-		log := throwLog(payload, throwStarted)
+		completeEntries := throwCompleteEntries(payload, throwStarted)
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
-			_ = runtime.Session.AppendLogToChain(payload.Chain, throwCompleteEntries(payload, throwStarted)...)
+			_ = runtime.Session.AppendLogToChain(payload.Chain, completeEntries...)
 			if runtime.Throws != nil {
 				if err := runtime.Throws.RecordThrow(ctx, newThrowRecord(status.WorkspacePath, plan, payload, throwStarted, time.Now().UTC())); err != nil {
 					return Result{}, err
@@ -2092,8 +2119,11 @@ func throwHandler(runtime Runtime) Handler {
 			}); err != nil {
 				return Result{}, err
 			}
+			emitStreamLog(streamThrowLog, completeEntries...)
 			return Result{JSON: payload}, nil
 		}
+		emitStreamLog(streamThrowLog, completeEntries...)
+		log := throwLog(payload, throwStarted)
 		if runtime.Session != nil {
 			_ = runtime.Session.AppendLogToChain(payload.Chain, log.Entries()...)
 		}
@@ -2107,22 +2137,26 @@ func throwHandler(runtime Runtime) Handler {
 		}); err != nil {
 			return Result{}, err
 		}
-		return Result{
-			Human: fmt.Sprintf("Throw completed chain %s against %d target(s)", payload.Chain, len(payload.Targets)),
-			JSON:  payload,
-			Log:   log,
-		}, nil
+		result := Result{JSON: payload}
+		if invocation.StreamLog == nil {
+			result.Human = fmt.Sprintf("Throw completed chain %s against %d target(s)", payload.Chain, len(payload.Targets))
+			result.Log = log
+		}
+		return result, nil
 	}
 }
 
-func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, workspacePath string, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time) error {
+func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, workspacePath string, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time, streamLog func(...operatorlog.Entry)) error {
 	modules := legacyExecutionModuleIDs(moduleDB(runtime), throw.Modules)
 	for _, target := range throw.Targets {
 		for _, moduleID := range modules {
 			runIndex := len(payload.Results) + 1
+			startEntries := throwRunStartEntries(throw.Chain, target, moduleID, runIndex, len(throw.Targets)*len(modules), throwStarted)
 			if runtime.Session != nil && feedbackPublished(runtime.Session) {
-				_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunStartEntries(throw.Chain, target, moduleID, runIndex, len(throw.Targets)*len(modules), throwStarted)...)
+				_ = runtime.Session.AppendLogToChain(throw.Chain, startEntries...)
 			}
+			emitStreamLog(streamLog, startEntries...)
+			stopRunLogs, streamedRunLogs := startRunLogStream(ctx, client, planOperation(plan), throw.Chain, streamLog)
 			result, err := client.RunMockExploit(ctx, RunMockExploitRequest{
 				Operation:    planOperation(plan),
 				Chain:        throw.Chain,
@@ -2132,8 +2166,12 @@ func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, 
 				TargetConfig: throw.TargetConfigs[target],
 				ThrowStarted: throwStarted.Format(time.RFC3339Nano),
 			})
+			stopRunLogs()
 			if err != nil {
 				return err
+			}
+			if !streamedRunLogs {
+				emitStreamLog(streamLog, throwModuleLogEntries(result, throwStarted, throw.Chain)...)
 			}
 			payload.Results = append(payload.Results, runPayload(result))
 			if err := materializeRunArtifacts(ctx, runtime, workspacePath, plan, payload, moduleID, target, result.RunID); err != nil {
@@ -2142,21 +2180,25 @@ func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, 
 			if err := recordInstalledPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1); err != nil {
 				return err
 			}
+			resultEntries := throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(modules), throwStarted)
 			if runtime.Session != nil && feedbackPublished(runtime.Session) {
-				_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(modules), throwStarted)...)
+				_ = runtime.Session.AppendLogToChain(throw.Chain, resultEntries...)
 			}
+			emitStreamLog(streamLog, resultEntries...)
 		}
 	}
 	return nil
 }
 
-func executeCapabilityThrow(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time) error {
+func executeCapabilityThrow(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time, streamLog func(...operatorlog.Entry)) error {
 	for _, target := range throw.Targets {
 		runIndex := len(payload.Results) + 1
 		runID := fmt.Sprintf("%s-capability-%d", payload.ThrowID, runIndex)
+		startEntries := throwRunStartEntries(throw.Chain, target, "capability-chain", runIndex, len(throw.Targets), throwStarted)
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
-			_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunStartEntries(throw.Chain, target, "capability-chain", runIndex, len(throw.Targets), throwStarted)...)
+			_ = runtime.Session.AppendLogToChain(throw.Chain, startEntries...)
 		}
+		emitStreamLog(streamLog, startEntries...)
 		result, err := runtime.CapabilityChains.ExecuteCapabilityChain(ctx, CapabilityChainRequest{
 			Operation:    planOperation(plan),
 			Chain:        throw.Chain,
@@ -2178,11 +2220,67 @@ func executeCapabilityThrow(ctx context.Context, runtime Runtime, workspacePath 
 		if err := recordInstalledPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1); err != nil {
 			return err
 		}
+		resultEntries := throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets), throwStarted)
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
-			_ = runtime.Session.AppendLogToChain(throw.Chain, throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets), throwStarted)...)
+			_ = runtime.Session.AppendLogToChain(throw.Chain, resultEntries...)
 		}
+		emitStreamLog(streamLog, resultEntries...)
 	}
 	return nil
+}
+
+func emitStreamLog(streamLog func(...operatorlog.Entry), entries ...operatorlog.Entry) {
+	if streamLog == nil {
+		return
+	}
+	streamLog(entries...)
+}
+
+func startRunLogStream(ctx context.Context, client RunClient, operation, chain string, streamLog func(...operatorlog.Entry)) (func(), bool) {
+	if streamLog == nil {
+		return func() {}, false
+	}
+	poller, ok := client.(RunLogPoller)
+	if !ok {
+		return func() {}, false
+	}
+	initial, err := poller.PollOperationChainLogs(ctx, operation, chain, 0)
+	if err != nil {
+		return func() {}, false
+	}
+	cursor := initial.Last
+	pollCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pollCtx.Done():
+				return
+			case <-ticker.C:
+				cursor = pollRunLogs(pollCtx, poller, operation, chain, cursor, streamLog)
+			}
+		}
+	}()
+	stop := func() {
+		cancel()
+		<-done
+		cursor = pollRunLogs(ctx, poller, operation, chain, cursor, streamLog)
+	}
+	return stop, true
+}
+
+func pollRunLogs(ctx context.Context, poller RunLogPoller, operation, chain string, cursor uint64, streamLog func(...operatorlog.Entry)) uint64 {
+	result, err := poller.PollOperationChainLogs(ctx, operation, chain, cursor)
+	if err != nil {
+		return cursor
+	}
+	for _, log := range result.Logs {
+		emitStreamLog(streamLog, log.Entry)
+	}
+	return result.Last
 }
 
 func materializeRunArtifacts(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, payload *ThrowPayload, moduleID, target, runID string) error {
@@ -2626,7 +2724,7 @@ func sessionConnectHandler(runtime Runtime) Handler {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		return Result{}, fmt.Errorf("session connect is available in the interactive CLI; run hovel cli and use session connect %s", invocation.Positional("session"))
+		return Result{}, fmt.Errorf("session connect needs an interactive terminal; use hovel session connect %s or run hovel cli", invocation.Positional("session"))
 	}
 }
 
@@ -2642,7 +2740,10 @@ func sessionTailHandler(runtime Runtime) Handler {
 		if err != nil {
 			return Result{}, err
 		}
-		sessionID := invocation.Positional("session")
+		sessionID, err := resolveSessionID(ctx, client, invocation.Positional("session"))
+		if err != nil {
+			return Result{}, err
+		}
 		chunk, err := client.TailSession(ctx, sessionID, options)
 		if err != nil {
 			return Result{}, err
@@ -2666,7 +2767,10 @@ func sessionReadHandler(runtime Runtime) Handler {
 		}
 		defer closeClient()
 
-		sessionID := invocation.Positional("session")
+		sessionID, err := resolveSessionID(ctx, client, invocation.Positional("session"))
+		if err != nil {
+			return Result{}, err
+		}
 		var out []byte
 		closed := false
 		for {
@@ -2702,15 +2806,42 @@ func sessionReadHandler(runtime Runtime) Handler {
 		if invocation.Flag("tail") && !invocation.Flag("json") && invocation.Output != nil {
 			return Result{}, nil
 		}
+		payload := map[string]any{
+			"sessionId": sessionID,
+			"data":      string(out),
+			"closed":    closed,
+		}
+		if invocation.Flag("json") {
+			return Result{JSON: payload}, nil
+		}
 		return Result{
-			Raw: out,
-			JSON: map[string]any{
-				"sessionId": sessionID,
-				"data":      string(out),
-				"closed":    closed,
-			},
+			Human: sessionReadHuman(sessionID, out, closed),
+			JSON:  payload,
 		}, nil
 	}
+}
+
+func sessionReadHuman(sessionID string, data []byte, closed bool) string {
+	status := "open"
+	if closed {
+		status = "closed"
+	}
+	stats := fmt.Sprintf("Session %s read %d %s (%s)", sessionID, len(data), pluralize("byte", len(data)), status)
+	if len(data) == 0 {
+		return "\n" + stats
+	}
+	text := string(data)
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	return text + "\n" + stats
+}
+
+func pluralize(noun string, count int) string {
+	if count == 1 {
+		return noun
+	}
+	return noun + "s"
 }
 
 func sessionTailOptionsFromInvocation(invocation Invocation, defaultLines int) (SessionTailOptions, error) {
@@ -2765,7 +2896,10 @@ func sessionSendHandler(runtime Runtime) Handler {
 		}
 		defer closeClient()
 
-		sessionID := invocation.Positional("session")
+		sessionID, err := resolveSessionID(ctx, client, invocation.Positional("session"))
+		if err != nil {
+			return Result{}, err
+		}
 		payload := []byte(invocation.Positional("data"))
 		switch {
 		case invocation.Flag("no-newline") && invocation.Option("end") != "":
@@ -2795,12 +2929,32 @@ func sessionCloseHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		defer closeClient()
-		sessionID := invocation.Positional("session")
+		sessionID, err := resolveSessionID(ctx, client, invocation.Positional("session"))
+		if err != nil {
+			return Result{}, err
+		}
 		if err := client.CloseSession(ctx, sessionID); err != nil {
 			return Result{}, err
 		}
 		payload := map[string]string{"sessionId": sessionID, "status": "closed"}
 		return Result{Human: fmt.Sprintf("Session closed: %s", sessionID), JSON: payload}, nil
+	}
+}
+
+func resolveSessionID(ctx context.Context, client RunClient, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	switch requested {
+	case "latest", "@latest":
+		sessions, err := client.ListSessions(ctx)
+		if err != nil {
+			return "", err
+		}
+		if len(sessions) == 0 {
+			return "", fmt.Errorf("no sessions available")
+		}
+		return sessions[len(sessions)-1].ID, nil
+	default:
+		return requested, nil
 	}
 }
 
@@ -4239,6 +4393,21 @@ func throwRunResultEntries(payload ThrowPayload, result RunPayload, runIndex, ru
 			operatorlog.Field{Name: "kind", Value: session.Kind},
 			operatorlog.Field{Name: "state", Value: session.State},
 		).WithTarget(result.Target).WithRun(result.RunID), at, started, payload.Chain))
+	}
+	return entries
+}
+
+func throwModuleLogEntries(result RunMockExploitResponse, started time.Time, chain string) []operatorlog.Entry {
+	entries := make([]operatorlog.Entry, 0, len(result.Logs))
+	for _, log := range result.Logs {
+		at, err := time.Parse(time.RFC3339Nano, log.Time)
+		if err != nil || at.IsZero() {
+			at = time.Now()
+		}
+		entries = append(entries, elapsedAt(operatorlog.Info("module", log.Message, logFields(log)...).
+			WithTarget(result.Target).
+			WithRun(result.RunID).
+			WithModule(result.ModuleID), at, started, chain))
 	}
 	return entries
 }

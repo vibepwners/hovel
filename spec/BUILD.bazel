@@ -13,6 +13,7 @@ sh_test(
     srcs = ["//tools/tests:site_smoke_test.sh"],
     args = [
         "$(rootpath :index.html)",
+        "$(rootpath :user-guide.html)",
         "$(rootpath :introduction.html)",
         "$(rootpath :module-development.html)",
         "$(rootpath :module-protocol.html)",
@@ -32,5 +33,6 @@ sh_test(
         "module-rust.html",
         "reference/descriptors.html",
         "squatter-payload-provider.html",
+        "user-guide.html",
     ],
 )

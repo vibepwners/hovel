@@ -31,9 +31,10 @@ language-specific guides for [Python](spec/module-python.html),
 the stdio JSON-RPC contract, registration, safety tags, sessions, artifacts,
 installed payload records, and provider boundaries.
 
-`task docs` stages the full documentation site in `_site/`, including generated
-SDK API reference pages under `_site/api/sdk/` and an internal link check. GitHub
-Pages and GitLab Pages both run that task before publishing.
+`task docs` renders the terminal demos, stages the full documentation site in
+`_site/`, embeds the generated GIFs under `_site/assets/demos/`, generates SDK
+API reference pages under `_site/api/sdk/`, and runs an internal link check.
+GitHub Pages runs that task before uploading and deploying the site.
 
 ## Layout
 
@@ -64,6 +65,7 @@ or concrete module/service code.
 - [Task](https://taskfile.dev/) — the single entry point for every build command
 - [Bazel](https://bazel.build/) (via [bazelisk](https://github.com/bazelbuild/bazelisk); pinned by `.bazelversion`)
 - [uv](https://docs.astral.sh/uv/) for Python SDK lint/type/doc checks
+- [VHS](https://github.com/charmbracelet/vhs) plus `ttyd` and `ffmpeg` for demo and docs generation
 - [Lefthook](https://lefthook.dev/) (optional) for git hooks
 
 ## Quick start
@@ -108,8 +110,71 @@ Build & checks:
 | `task test` (`t`) | Run all tests (`task test -- //internal/...` for some). |
 | `task lint` (`l`) | Go formatting, Gazelle, Python, and Squatter C checks (read-only). |
 | `task fmt` | Auto-format Go source, regenerate `BUILD` metadata, and format Squatter C. |
-| `task check` (`ci`) | Lint, docs, build, and test. |
+| `task check` (`ci`) | Lint, demo-backed docs, build, and test. |
+| `task demos` | Generate VHS terminal demos into `demo/out/`. |
 | `task hooks:install` | Install git hooks via Lefthook. |
+
+## Terminal demos
+
+Scripted terminal demos live under [`demo/tapes`](demo/tapes). Hovel uses
+[Charmbracelet VHS](https://github.com/charmbracelet/vhs) to render them into
+GIF and MP4 artifacts under `demo/out/`; generated outputs are ignored by git.
+
+Install VHS locally with your package manager, for example:
+
+```sh
+brew install vhs
+```
+
+The CI job currently pins VHS `v0.11.0`; install that version directly with
+`go install github.com/charmbracelet/vhs@v0.11.0` if you want the same renderer
+locally. VHS requires `ttyd` and `ffmpeg` on `PATH`; install those too if your
+package manager does not include them with VHS.
+
+Generate the demos locally through Task:
+
+```sh
+task demos
+```
+
+`task docs` runs the demo generator before staging the site, then copies the
+generated GIFs and MP4s into `_site/assets/demos/` so the static HTML can embed
+them. The homepage masthead uses `mock-survey-exploit-cli-commands.gif`; the spec
+chapters use the other generated mock survey/exploit demos inline.
+
+The current demos cover both saved-chain execution and from-scratch chain
+construction against the Go mock survey and mock session-exploit modules. The
+saved-chain demos use the checked-in
+[`demo/chains/mock-survey-exploit.chain.yaml`](demo/chains/mock-survey-exploit.chain.yaml).
+The command-construction demos create the operation chain with `chain create`,
+`chain add`, `target add`, `target config set`, and `chain config set`, then
+save the configured chain before throwing it. The command-construction demos
+also list required chain and target config before setting values, then list the
+resolved config afterward. Each visible demo lists the resulting mock shell
+session, reads the prompt, sends `whoami`, reads the response, attaches with
+`session connect` for several typed commands, detaches, then reconnects to the
+same session. The generator first runs silent JSON throws and session
+interactions as e2e checks, then renders the visible VHS tapes without showing
+test harness output in the recordings. Demos that interact with sessions start
+an explicit daemon in hidden setup, because live module sessions belong to the
+daemon process; a CLI-owned managed daemon shuts down when that CLI exits.
+
+CI runs the `demos` job after the `build-test` job passes. That job installs VHS,
+runs `task demos`, and uploads the generated files as the `hovel-demos` workflow
+artifact. The CI docs job downloads that artifact and stages `_site` with
+`task docs:stage`; the GitHub Pages workflow runs after the CI workflow succeeds,
+regenerates the demos with `task docs`, uploads `_site`, and deploys it. The
+source GIF paths are:
+
+- `demo/out/mock-survey-exploit.gif`
+- `demo/out/mock-survey-exploit-cli.gif`
+- `demo/out/mock-survey-exploit-commands.gif`
+- `demo/out/mock-survey-exploit-cli-commands.gif`
+
+To add a demo, add a `.tape` file under `demo/tapes/`, put reusable demo fixtures
+such as configured chain files under `demo/`, and point each tape's `Output`
+directives at `demo/out/`. Keep setup and validation commands hidden in the tape
+or in `scripts/generate-demos.sh` so the GIF shows only the operator-facing flow.
 
 ## Front-end roles
 

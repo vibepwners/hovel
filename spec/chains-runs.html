@@ -25,6 +25,7 @@
       <p class="sidebar-section">Specification</p>
       <ul>
         <li><a href="index.html">Contents</a></li>
+        <li><a href="user-guide.html">User Guide</a></li>
         <li><a href="introduction.html">Introduction</a></li>
         <li><a href="safety.html">Safety and Scope</a></li>
         <li><a href="architecture.html">Architecture</a></li>
@@ -36,7 +37,6 @@
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
         <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
-        <li><a href="milestone-1-tdd-plan.html">Milestone 1 TDD Plan</a></li>
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
@@ -68,6 +68,10 @@
         <p>Operator-facing chain records are CRUD resources. A chain can be created, selected with <code>chain use</code>, renamed, inspected, listed, deleted, and then thrown against targets selected from the active operation. The active chain is client attachment state: it determines that client's prompt context, default chain for <code>throw</code>, and log topic subscription without changing another client's active chain.</p>
         <p>Targets are owned by operations in the operator workflow. A target added while <code>alpha</code> is active is still available when the same operation switches to <code>beta</code>; target config follows the target, not the chain. Target sets are named operation-owned groups used only to select targets conveniently at plan time. Chain logs remain chain-scoped: <code>chain logs</code> renders the active chain's operation-scoped topic only, and multi-client front ends attached to the same operation and chain observe the same topic.</p>
         <p>A throw binds a chain to a target source when planning. <code>throw --target &lt;id&gt;</code> is strict and blocks on an incompatible target. <code>throw --target-set &lt;name&gt;</code> and default operation-inventory throws filter out incompatible targets, report each skipped target, and proceed when at least one compatible target remains.</p>
+        <figure class="demo-figure">
+          <img src="../assets/demos/mock-survey-exploit-cli-commands.gif" alt="Hovel CLI demo creating a chain, showing target configuration, saving it, throwing it, and reconnecting to the session.">
+          <figcaption>Demo: interactive chain record to configured chain execution</figcaption>
+        </figure>
         <p>
           Payload-consuming chains are composed from typed capability steps rather than
           provider-before-exploit ordering alone. A module reports, over JSON-RPC, which
@@ -346,6 +350,10 @@ spec:
           <li>Confirmation records, including prompt confirmations and <code>--now</code> bypass confirmations.</li>
         </ol>
         <p><code>review</code> and <code>throw</code> share the same planning and review code path. <code>confirm</code> stops after recording a pre-confirmation. <code>review</code> always displays the reviewed plan, requires the operator to type <code>yes</code>, and records or refreshes the confirmation without starting execution. <code>throw</code> starts execution only after an existing confirmation, an inline typed <code>yes</code>, or an explicit <code>--now</code> bypass has produced a confirmation record.</p>
+        <figure class="demo-figure">
+          <img src="../assets/demos/mock-survey-exploit-commands.gif" alt="Direct command demo validating a configured mock chain, saving it, throwing it, and operating the resulting session.">
+          <figcaption>Demo: validate, save, throw, and operate results</figcaption>
+        </figure>
 
         <h2>Eventual Throw Runtime Requirements</h2>
         <p>The eventual chain runtime should support:</p>

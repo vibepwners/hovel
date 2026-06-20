@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -173,6 +174,71 @@ func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
 	}
 	if !hasEvent(events.events, "hovel.run.failed") {
 		t.Fatalf("events = %#v, want hovel.run.failed", events.events)
+	}
+}
+
+func TestDirectThrowStreamsModuleLogsBeforeCommandReturns(t *testing.T) {
+	t.Setenv("HOVEL_MODULE_CONFIG", testsupport.WritePythonModuleFixture(t, "slow-live", `
+import time
+
+while True:
+    request = json.loads(read().decode())
+    method = request.get("method")
+    response = {"jsonrpc": "2.0", "id": request.get("id")}
+    if method == "handshake":
+        response["result"] = {"name": "slow-live", "version": "v1", "moduleType": "exploit"}
+    elif method == "schema":
+        response["result"] = {}
+    elif method == "execute":
+        send({"jsonrpc": "2.0", "method": "module/log", "params": {"level": "info", "logger": "slow-live", "message": "live module log"}})
+        time.sleep(3)
+        response["result"] = {"status": "succeeded", "summary": "slow module completed", "findings": [], "artifacts": []}
+    elif method == "shutdown":
+        response["result"] = {}
+        send(response)
+        break
+    else:
+        response["error"] = {"message": "unknown method " + str(method)}
+    send(response)
+`))
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{
+		IDs:       &sequenceIDs{},
+		StartedAt: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+	})
+	stdout := newObservedWriter("live module log")
+	var stderr bytes.Buffer
+	done := make(chan int, 1)
+	started := time.Now()
+
+	go func() {
+		done <- Run(context.Background(), []string{"throw", "--chain", "slow-live", "--target", "mock://target", "--workspace", fixture.WorkspacePath, "--now"}, stdout, &stderr)
+	}()
+
+	select {
+	case <-stdout.seen:
+		if elapsed := time.Since(started); elapsed > 2500*time.Millisecond {
+			t.Fatalf("module log arrived after %s, likely from final output instead of live streaming; stdout=%s stderr=%s", elapsed, stdout.String(), stderr.String())
+		}
+		select {
+		case code := <-done:
+			t.Fatalf("throw returned before the first module log was observed, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+		default:
+		}
+	case code := <-done:
+		t.Fatalf("throw returned before streaming module log, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for streamed module log; stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+
+	code := <-done
+	if code != 0 {
+		t.Fatalf("exit code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
+	}
+	output := stdout.String()
+	for _, want := range []string{"HOVEL//THROW", "live module log", "slow module completed", "completed"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, output)
+		}
 	}
 }
 
@@ -447,4 +513,34 @@ func TestThrowMissingModuleConfigReturnsCommandError(t *testing.T) {
 	if !strings.Contains(stderr.String(), missingConfig) {
 		t.Fatalf("stderr = %q, want missing module config path", stderr.String())
 	}
+}
+
+type observedWriter struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+	needle string
+	seen   chan struct{}
+	once   sync.Once
+}
+
+func newObservedWriter(needle string) *observedWriter {
+	return &observedWriter{needle: needle, seen: make(chan struct{})}
+}
+
+func (w *observedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buffer.Write(p)
+	if strings.Contains(w.buffer.String(), w.needle) {
+		w.once.Do(func() {
+			close(w.seen)
+		})
+	}
+	return n, err
+}
+
+func (w *observedWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buffer.String()
 }

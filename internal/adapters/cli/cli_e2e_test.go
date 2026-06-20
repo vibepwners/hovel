@@ -467,10 +467,10 @@ func TestE2ESessionConnectHandlesRawTerminalCarriageReturn(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	input := strings.NewReader("whoami\rpwd\r" + string([]byte{sessionDetachByte}))
-	if err := ConnectSession(context.Background(), client, sessionID, input, &stdout); err != nil {
+	if err := ConnectSession(context.Background(), client, "latest", input, &stdout); err != nil {
 		t.Fatalf("session connect failed: %v", err)
 	}
-	for _, want := range []string{"Press Ctrl-] to detach", "mock$", "whoami", "mock-operator", "pwd", "/mock/session", "Detached from session"} {
+	for _, want := range []string{"Connected to session " + sessionID, "Press Ctrl-] to detach", "mock$", "whoami", "mock-operator", "pwd", "/mock/session", "Detached from session"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("session connect output missing %q:\n%s", want, stdout.String())
 		}

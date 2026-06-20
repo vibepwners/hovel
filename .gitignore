@@ -11,3 +11,5 @@ bazel-*
 sdk/python/.venv/
 __pycache__/
 tmp/
+demo/out/
+demo/tmp/

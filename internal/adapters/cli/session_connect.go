@@ -25,6 +25,12 @@ type SessionConnectOptions struct {
 	HistoryLimitChosen bool
 }
 
+type ParsedSessionConnect struct {
+	SessionID string
+	Workspace string
+	Options   SessionConnectOptions
+}
+
 func defaultSessionConnectOptions() SessionConnectOptions {
 	return SessionConnectOptions{HistoryLines: 20}
 }
@@ -34,6 +40,10 @@ func (a App) executeSessionConnect(ctx context.Context, sessionID string, option
 		fmt.Fprintln(stderr, "session connect needs an interactive daemon session; run hovel cli")
 		return 1
 	}
+	return RunSessionConnect(ctx, a.daemonClient, sessionID, options, stdout, stderr)
+}
+
+func RunSessionConnect(ctx context.Context, client *daemonrpc.Client, sessionID string, options SessionConnectOptions, stdout, stderr io.Writer) int {
 	input, cleanup, rawOutput, err := openSessionConnectInput()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -44,7 +54,7 @@ func (a App) executeSessionConnect(ctx context.Context, sessionID string, option
 	if rawOutput {
 		output = crlfWriter{writer: stdout}
 	}
-	if err := ConnectSession(ctx, a.daemonClient, sessionID, input, output, options); err != nil {
+	if err := ConnectSession(ctx, client, sessionID, input, output, options); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -59,6 +69,11 @@ func ConnectSession(ctx context.Context, client *daemonrpc.Client, sessionID str
 	if sessionID == "" {
 		return errors.New("session is required")
 	}
+	resolvedSessionID, err := resolveSessionConnectID(ctx, client, sessionID)
+	if err != nil {
+		return err
+	}
+	sessionID = resolvedSessionID
 
 	options := defaultSessionConnectOptions()
 	if len(connectOptions) > 0 {
@@ -94,6 +109,22 @@ func ConnectSession(ctx context.Context, client *daemonrpc.Client, sessionID str
 		}
 		fmt.Fprintf(output, "\nDetached from session %s\n", sessionID)
 		return nil
+	}
+}
+
+func resolveSessionConnectID(ctx context.Context, client *daemonrpc.Client, requested string) (string, error) {
+	switch strings.TrimSpace(requested) {
+	case "latest", "@latest":
+		sessions, err := client.ListSessions(ctx)
+		if err != nil {
+			return "", err
+		}
+		if len(sessions) == 0 {
+			return "", errors.New("no sessions are active")
+		}
+		return sessions[len(sessions)-1].ID, nil
+	default:
+		return requested, nil
 	}
 }
 
@@ -284,53 +315,83 @@ func parseSessionConnectID(line string) (string, error) {
 }
 
 func parseSessionConnect(line string) (string, SessionConnectOptions, error) {
-	fields := strings.Fields(line)
-	options := defaultSessionConnectOptions()
-	var sessionID string
+	parsed, err := ParseSessionConnectCommand(strings.Fields(line))
+	if err != nil {
+		return "", SessionConnectOptions{}, err
+	}
+	return parsed.SessionID, parsed.Options, nil
+}
+
+func ParseSessionConnectCommand(fields []string) (ParsedSessionConnect, error) {
+	parsed := ParsedSessionConnect{Options: defaultSessionConnectOptions()}
+	if len(fields) < 2 {
+		return ParsedSessionConnect{}, errors.New("session is required")
+	}
 	for i := 2; i < len(fields); i++ {
-		switch fields[i] {
-		case "-w", "--workspace":
-			i++
-			continue
-		case "--history-lines":
+		field := fields[i]
+		switch {
+		case field == "-w" || field == "--workspace":
 			value, ok := nextSessionConnectValue(fields, &i)
 			if !ok {
-				return "", SessionConnectOptions{}, errors.New("--history-lines requires a value")
+				return ParsedSessionConnect{}, errors.New("--workspace requires a value")
+			}
+			parsed.Workspace = value
+		case strings.HasPrefix(field, "--workspace="):
+			parsed.Workspace = strings.TrimPrefix(field, "--workspace=")
+		case field == "--history-lines":
+			value, ok := nextSessionConnectValue(fields, &i)
+			if !ok {
+				return ParsedSessionConnect{}, errors.New("--history-lines requires a value")
 			}
 			count, err := parseSessionConnectCount("--history-lines", value)
 			if err != nil {
-				return "", SessionConnectOptions{}, err
+				return ParsedSessionConnect{}, err
 			}
-			options.HistoryLines = count
-			options.HistoryBytes = 0
-			options.HistoryLimitChosen = true
-		case "--history-bytes":
+			parsed.Options.HistoryLines = count
+			parsed.Options.HistoryBytes = 0
+			parsed.Options.HistoryLimitChosen = true
+		case strings.HasPrefix(field, "--history-lines="):
+			count, err := parseSessionConnectCount("--history-lines", strings.TrimPrefix(field, "--history-lines="))
+			if err != nil {
+				return ParsedSessionConnect{}, err
+			}
+			parsed.Options.HistoryLines = count
+			parsed.Options.HistoryBytes = 0
+			parsed.Options.HistoryLimitChosen = true
+		case field == "--history-bytes":
 			value, ok := nextSessionConnectValue(fields, &i)
 			if !ok {
-				return "", SessionConnectOptions{}, errors.New("--history-bytes requires a value")
+				return ParsedSessionConnect{}, errors.New("--history-bytes requires a value")
 			}
 			count, err := parseSessionConnectCount("--history-bytes", value)
 			if err != nil {
-				return "", SessionConnectOptions{}, err
+				return ParsedSessionConnect{}, err
 			}
-			options.HistoryBytes = count
-			options.HistoryLines = 0
-			options.HistoryLimitChosen = true
-		case "--no-history":
-			options.NoHistory = true
+			parsed.Options.HistoryBytes = count
+			parsed.Options.HistoryLines = 0
+			parsed.Options.HistoryLimitChosen = true
+		case strings.HasPrefix(field, "--history-bytes="):
+			count, err := parseSessionConnectCount("--history-bytes", strings.TrimPrefix(field, "--history-bytes="))
+			if err != nil {
+				return ParsedSessionConnect{}, err
+			}
+			parsed.Options.HistoryBytes = count
+			parsed.Options.HistoryLines = 0
+			parsed.Options.HistoryLimitChosen = true
+		case field == "--no-history":
+			parsed.Options.NoHistory = true
+		case strings.HasPrefix(field, "-"):
+			continue
 		default:
-			if strings.HasPrefix(fields[i], "-") {
-				continue
-			}
-			if sessionID == "" {
-				sessionID = fields[i]
+			if parsed.SessionID == "" {
+				parsed.SessionID = field
 			}
 		}
 	}
-	if sessionID == "" {
-		return "", SessionConnectOptions{}, errors.New("session is required")
+	if parsed.SessionID == "" {
+		return ParsedSessionConnect{}, errors.New("session is required")
 	}
-	return sessionID, options, nil
+	return parsed, nil
 }
 
 func nextSessionConnectValue(fields []string, index *int) (string, bool) {

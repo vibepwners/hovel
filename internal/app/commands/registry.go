@@ -65,6 +65,7 @@ type Invocation struct {
 	Input          Input
 	Output         io.Writer
 	NonInteractive bool
+	StreamLog      func(operatorlog.Entry)
 }
 
 func (i Invocation) Positional(name string) string {

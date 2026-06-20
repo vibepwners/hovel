@@ -289,6 +289,115 @@ blockquote {
   box-shadow: -1px 0 0 rgba(255, 62, 224, 0.45);
 }
 
+.demo-figure {
+  margin: 1.2rem 0 1.4rem;
+  padding: 1rem;
+  background:
+    linear-gradient(180deg, rgba(255, 180, 84, 0.065), rgba(82, 240, 255, 0.035)),
+    var(--code-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--amber);
+  border-radius: 6px;
+  box-shadow: inset 0 0 30px rgba(255, 180, 84, 0.06), 0 0 0 1px rgba(255, 180, 84, 0.08);
+}
+.demo-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid rgba(82, 240, 255, 0.22);
+  border-radius: 4px;
+  background: var(--bg-deep);
+}
+.demo-figure figcaption {
+  margin: 0 0 0.55rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px dashed var(--border);
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.demo-figure figcaption {
+  margin: 0.7rem 0 0;
+  padding: 0.45rem 0 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 0;
+}
+.demo-open {
+  display: block;
+  border-bottom: 0;
+}
+.demo-open:hover {
+  border-bottom: 0;
+  text-shadow: none;
+}
+.homepage-demo {
+  width: 100%;
+  margin-top: 0;
+  border-left-color: var(--cyan);
+  box-shadow:
+    inset 0 0 34px rgba(82, 240, 255, 0.06),
+    0 0 34px rgba(82, 240, 255, 0.12),
+    0 0 70px rgba(255, 62, 224, 0.11);
+}
+.homepage-demo figcaption {
+  color: var(--cyan);
+}
+.demo-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: none;
+  place-items: center;
+  padding: 1.5rem;
+}
+.demo-modal:target {
+  display: grid;
+}
+.demo-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  border-bottom: 0;
+  background: rgba(5, 3, 16, 0.88);
+  backdrop-filter: blur(8px);
+}
+.demo-modal-content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 0.75rem;
+  max-width: min(96vw, 1600px);
+  max-height: 94vh;
+}
+.demo-modal-content img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(94vh - 3.5rem);
+  width: auto;
+  height: auto;
+  border: 1px solid rgba(82, 240, 255, 0.38);
+  border-radius: 5px;
+  background: var(--bg-deep);
+  box-shadow: 0 0 50px rgba(82, 240, 255, 0.22), 0 0 90px rgba(255, 62, 224, 0.16);
+}
+.demo-modal-close {
+  justify-self: end;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--cyan);
+  border-radius: 4px;
+  background: rgba(7, 4, 26, 0.9);
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.demo-modal-close:hover {
+  color: var(--magenta);
+  border-color: var(--magenta);
+}
+
 /* ---------- code ---------- */
 
 code, kbd, samp, pre {

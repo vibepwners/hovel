@@ -1775,7 +1775,7 @@ func TestExecuteLegacyThrowRunsSquatterProviderAfterEtroInstall(t *testing.T) {
 		},
 	}
 	payload := ThrowPayload{ThrowID: "throw-1", Chain: "alpha", Targets: []string{"t1"}}
-	err := executeLegacyThrow(context.Background(), Runtime{Modules: squatterCatalog()}, client, "", ThrowPlanRecord{Operation: "op1", Chain: "alpha"}, throw, &payload, time.Now())
+	err := executeLegacyThrow(context.Background(), Runtime{Modules: squatterCatalog()}, client, "", ThrowPlanRecord{Operation: "op1", Chain: "alpha"}, throw, &payload, time.Now(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2245,8 +2245,13 @@ func TestSessionReadDrainsBufferedOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := string(result.Raw); got != "first second" {
-		t.Fatalf("raw output = %q, want buffered session output", got)
+	if result.Raw != nil {
+		t.Fatalf("raw output = %q, want structured human output", string(result.Raw))
+	}
+	for _, want := range []string{"first second", "Session session-1 read 12 bytes (open)"} {
+		if !strings.Contains(result.Human, want) {
+			t.Fatalf("human output missing %q:\n%s", want, result.Human)
+		}
 	}
 }
 
@@ -2293,6 +2298,54 @@ func TestSessionTailAcceptsByteLimit(t *testing.T) {
 	}
 	if got := recorder.tails[0].options; got.MaxBytes != 128 || got.MaxLines != 0 {
 		t.Fatalf("tail options = %#v, want 128-byte tail", got)
+	}
+}
+
+func TestSessionCommandsResolveLatestSession(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{
+		reads: []SessionChunk{{SessionID: "session-1", Data: []byte("mock$ ")}},
+		tail:  SessionChunk{Data: []byte("tail")},
+	}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+
+	readDefinition, _ := registry.Find("session", "read")
+	readResult, err := readDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "latest"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"mock$ ", "Session session-1 read 6 bytes (open)"} {
+		if !strings.Contains(readResult.Human, want) {
+			t.Fatalf("read output missing %q:\n%s", want, readResult.Human)
+		}
+	}
+
+	tailDefinition, _ := registry.Find("session", "tail")
+	if _, err := tailDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "@latest"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := recorder.tails[0].sessionID; got != "session-1" {
+		t.Fatalf("tail session = %q, want session-1", got)
+	}
+
+	sendDefinition, _ := registry.Find("session", "send")
+	if _, err := sendDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "latest", "data": "whoami"},
+		Options:     map[string]string{},
+		Flags:       map[string]bool{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.writes) != 1 || recorder.writes[0].sessionID != "session-1" {
+		t.Fatalf("writes = %#v, want write to latest session", recorder.writes)
 	}
 }
 

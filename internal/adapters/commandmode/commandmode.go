@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
@@ -19,6 +20,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
@@ -209,6 +211,22 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 	parsed.Input = terminalInput{in: os.Stdin, out: stdout, echoAnswer: echoConfirmationAnswer}
 	parsed.Output = stdout
 	parsed.NonInteractive = stdinNonInteractive()
+	if !echoConfirmationAnswer && definition.PathString() == "throw" && !parsed.Flag("json") {
+		renderer := a.logs
+		if parsed.Flag("no-color") {
+			renderer = terminallog.NewPlainRenderer()
+		}
+		var renderMu sync.Mutex
+		parsed.StreamLog = func(entry operatorlog.Entry) {
+			rendered := renderer.Render(operatorlog.New("", "", []operatorlog.Entry{entry}))
+			if rendered == "" {
+				return
+			}
+			renderMu.Lock()
+			defer renderMu.Unlock()
+			fmt.Fprintln(stdout, rendered)
+		}
+	}
 	result, err := definition.Execute(ctx, parsed)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -815,6 +833,17 @@ func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMoc
 	}, nil
 }
 
+func (c daemonRunClient) PollOperationChainLogs(ctx context.Context, operation, chain string, since uint64) (commands.RunLogPollResult, error) {
+	result, err := c.client.PollOperationChainLogs(ctx, operation, chain, since)
+	if err != nil {
+		return commands.RunLogPollResult{}, err
+	}
+	return commands.RunLogPollResult{
+		Last: result.Last,
+		Logs: publishedLogsFromRPC(result.Logs),
+	}, nil
+}
+
 func (c daemonRunClient) ListSessions(ctx context.Context) ([]commands.SessionRef, error) {
 	sessions, err := c.client.ListSessions(ctx)
 	if err != nil {
@@ -950,6 +979,53 @@ func logsFromRPC(logs []daemonrpc.LogEntry) []commands.LogEntry {
 		})
 	}
 	return out
+}
+
+func publishedLogsFromRPC(logs []daemonrpc.PublishedLog) []commands.RunPublishedLog {
+	out := make([]commands.RunPublishedLog, 0, len(logs))
+	for _, log := range logs {
+		out = append(out, commands.RunPublishedLog{
+			Seq:       log.Seq,
+			Operation: log.Operation,
+			Chain:     log.Chain,
+			Entry:     operatorLogEntryFromRPC(log.Entry),
+		})
+	}
+	return out
+}
+
+func operatorLogEntryFromRPC(entry daemonrpc.OperatorLogEntry) operatorlog.Entry {
+	timestamp, _ := time.Parse(time.RFC3339Nano, entry.Time)
+	return operatorlog.Entry{
+		ID:             entry.ID,
+		Time:           timestamp,
+		Topic:          entry.Topic,
+		Kind:           operatorlog.Kind(entry.Kind),
+		Level:          operatorlog.Level(entry.Level),
+		Source:         entry.Source,
+		Message:        entry.Message,
+		ChainID:        entry.ChainID,
+		ChainName:      entry.ChainName,
+		RunID:          entry.RunID,
+		Target:         entry.Target,
+		ModuleID:       entry.ModuleID,
+		ElapsedSeconds: cloneFloat64(entry.ElapsedSeconds),
+		Fields:         fieldsFromMap(entry.Fields),
+		Attributes:     cloneStringMap(entry.Attributes),
+	}
+}
+
+func fieldsFromMap(values map[string]string) []operatorlog.Field {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	fields := make([]operatorlog.Field, 0, len(keys))
+	for _, key := range keys {
+		fields = append(fields, operatorlog.Field{Name: key, Value: values[key]})
+	}
+	return fields
 }
 
 func cloneFloat64(value *float64) *float64 {
