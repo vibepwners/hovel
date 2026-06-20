@@ -28,15 +28,33 @@ hovel_demo_configure_chain() {
   hovel run --workspace "$HOVEL_WORKSPACE" --op demo --chain "$chain" -- chain config set operator.confirmed_lab true >/dev/null
 }
 
+hovel_demo_daemon_ready() {
+  local socket_path="$1"
+
+  python3 - "$socket_path" >/dev/null 2>&1 <<'PY'
+import socket
+import sys
+
+sock = socket.socket(socket.AF_UNIX)
+sock.settimeout(0.2)
+try:
+    sock.connect(sys.argv[1])
+finally:
+    sock.close()
+PY
+}
+
 hovel_demo_setup() {
   local step="$1"
   local state="${2:-empty}"
   local chain="${3:-mock-survey-exploit-demo}"
   local repo_root="${HOVEL_REPO_ROOT:-$PWD}"
-  local bin_dir="$repo_root/demo/tmp/${step}-bin"
+  local step_id
+  step_id="$(printf '%s' "$step" | cksum | awk '{print $1}')"
+  local bin_dir="$repo_root/demo/tmp/b-$step_id"
 
   export HOVEL_MODULE_CONFIG="$repo_root/examples/hovel-modules.json"
-  export HOVEL_WORKSPACE="$repo_root/demo/tmp/${step}-workspace"
+  export HOVEL_WORKSPACE="$repo_root/demo/tmp/w-$step_id"
   export HOVEL_DEMO_CHAIN="$chain"
   export HOVEL_CLI_NO_WELCOME=1
 
@@ -50,7 +68,20 @@ hovel_demo_setup() {
   export HOVEL_DAEMON_PID
   trap hovel_demo_teardown EXIT
 
-  until hovel daemon status --workspace "$HOVEL_WORKSPACE" >/dev/null 2>&1; do
+  local socket_path="$HOVEL_WORKSPACE/hoveld.sock"
+  local attempts=0
+  until hovel_demo_daemon_ready "$socket_path"; do
+    if ! kill -0 "$HOVEL_DAEMON_PID" >/dev/null 2>&1; then
+      echo "hovel demo daemon exited before becoming ready" >&2
+      sed -n '1,120p' "$HOVEL_WORKSPACE/daemon.log" >&2 || true
+      return 1
+    fi
+    attempts=$((attempts + 1))
+    if [[ "$attempts" -ge 100 ]]; then
+      echo "timed out waiting for hovel demo daemon at $socket_path" >&2
+      sed -n '1,120p' "$HOVEL_WORKSPACE/daemon.log" >&2 || true
+      return 1
+    fi
     sleep 0.1
   done
 

@@ -26,13 +26,44 @@ cleanup_demo_daemons() {
 }
 trap cleanup_demo_daemons EXIT
 
+daemon_socket_ready() {
+  local socket_path="$1"
+
+  python3 - "$socket_path" >/dev/null 2>&1 <<'PY'
+import socket
+import sys
+
+sock = socket.socket(socket.AF_UNIX)
+sock.settimeout(0.2)
+try:
+    sock.connect(sys.argv[1])
+finally:
+    sock.close()
+PY
+}
+
 start_demo_daemon() {
   local workspace="$1"
   local hovel_bin="$2"
 
   "$hovel_bin" daemon serve --workspace "$workspace" >"$workspace/daemon.log" 2>&1 &
-  demo_daemon_pids+=("$!")
-  until "$hovel_bin" daemon status --workspace "$workspace" >/dev/null 2>&1; do
+  local daemon_pid="$!"
+  demo_daemon_pids+=("$daemon_pid")
+
+  local socket_path="$workspace/hoveld.sock"
+  local attempts=0
+  until daemon_socket_ready "$socket_path"; do
+    if ! kill -0 "$daemon_pid" >/dev/null 2>&1; then
+      echo "demo verification daemon exited before becoming ready" >&2
+      sed -n '1,120p' "$workspace/daemon.log" >&2 || true
+      exit 1
+    fi
+    attempts=$((attempts + 1))
+    if [[ "$attempts" -ge 100 ]]; then
+      echo "timed out waiting for demo verification daemon at $socket_path" >&2
+      sed -n '1,120p' "$workspace/daemon.log" >&2 || true
+      exit 1
+    fi
     sleep 0.1
   done
 }
@@ -56,7 +87,7 @@ if [[ ! -x "$hovel_bin" ]]; then
   exit 1
 fi
 
-workspace="$PWD/demo/tmp/mock-survey-exploit-verify"
+workspace="$PWD/demo/tmp/w-verify-saved"
 rm -rf "$workspace"
 mkdir -p "$workspace"
 
@@ -99,7 +130,7 @@ if [[ "$session_output" != *"mock-operator"* ]]; then
   exit 1
 fi
 
-constructed_workspace="$PWD/demo/tmp/mock-survey-exploit-commands-verify"
+constructed_workspace="$PWD/demo/tmp/w-verify-built"
 constructed_chain="mock-survey-exploit-commands-verify"
 rm -rf "$constructed_workspace"
 mkdir -p "$constructed_workspace"
