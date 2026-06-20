@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -93,7 +94,9 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	a = a.withDaemonSession(ctx, daemonClient)
 	a.surface = newPromptSurface(prompt.NewStdoutWriter())
 
-	fmt.Fprintln(stdout, a.WelcomeForWidth(session, terminalWidth(stdout)))
+	if cliWelcomeEnabled() {
+		fmt.Fprintln(stdout, a.WelcomeForWidth(session, terminalWidth(stdout)))
+	}
 	terminalState, err := capturePromptTerminalState()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -1287,6 +1290,11 @@ func terminalWidth(writer io.Writer) int {
 		return 0
 	}
 	return width
+}
+
+func cliWelcomeEnabled() bool {
+	value := strings.TrimSpace(os.Getenv("HOVEL_CLI_NO_WELCOME"))
+	return value == "" || value == "0" || strings.EqualFold(value, "false")
 }
 
 func (t Theme) detail(label, value string) string {

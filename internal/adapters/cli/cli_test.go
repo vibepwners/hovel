@@ -374,6 +374,23 @@ func TestPromptPrefixTracksActiveChain(t *testing.T) {
 	}
 }
 
+func TestCLIWelcomeCanBeSuppressedByEnvironment(t *testing.T) {
+	t.Setenv("HOVEL_CLI_NO_WELCOME", "")
+	if !cliWelcomeEnabled() {
+		t.Fatal("welcome disabled with empty environment")
+	}
+
+	t.Setenv("HOVEL_CLI_NO_WELCOME", "1")
+	if cliWelcomeEnabled() {
+		t.Fatal("welcome enabled when HOVEL_CLI_NO_WELCOME=1")
+	}
+
+	t.Setenv("HOVEL_CLI_NO_WELCOME", "false")
+	if !cliWelcomeEnabled() {
+		t.Fatal("welcome disabled when HOVEL_CLI_NO_WELCOME=false")
+	}
+}
+
 func TestChainCreateEntersContextAndRootAliasesOperateOnActiveChain(t *testing.T) {
 	app := newTestApp()
 	enterTestOperation(t, app)

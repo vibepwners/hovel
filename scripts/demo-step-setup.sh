@@ -38,6 +38,7 @@ hovel_demo_setup() {
   export HOVEL_MODULE_CONFIG="$repo_root/examples/hovel-modules.json"
   export HOVEL_WORKSPACE="$repo_root/demo/tmp/${step}-workspace"
   export HOVEL_DEMO_CHAIN="$chain"
+  export HOVEL_CLI_NO_WELCOME=1
 
   rm -rf "$HOVEL_WORKSPACE" "$bin_dir"
   mkdir -p "$HOVEL_WORKSPACE" "$bin_dir"
@@ -76,4 +77,6 @@ hovel_demo_setup() {
       return 2
       ;;
   esac
+
+  echo "HOVEL_DEMO_READY $step"
 }
