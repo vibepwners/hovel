@@ -1500,10 +1500,20 @@ func runGetfileCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCo
 		return hovel.PayloadCommandResult{}, fmt.Errorf("getfile requires remote path")
 	}
 	remote := req.Args[0]
-	var data bytes.Buffer
-	n, err := xfer.GetFile(conn, reader, 1, remote, &data)
+	file, err := os.CreateTemp("", "hovel-squatter-getfile-*")
 	if err != nil {
 		return hovel.PayloadCommandResult{}, err
+	}
+	path := file.Name()
+	n, err := xfer.GetFile(conn, reader, 1, remote, file)
+	closeErr := file.Close()
+	if err != nil {
+		_ = os.Remove(path)
+		return hovel.PayloadCommandResult{}, err
+	}
+	if closeErr != nil {
+		_ = os.Remove(path)
+		return hovel.PayloadCommandResult{}, closeErr
 	}
 	name := filepath.Base(strings.ReplaceAll(remote, "\\", "/"))
 	if name == "" || name == "." {
@@ -1513,7 +1523,7 @@ func runGetfileCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCo
 		Command: "getfile",
 		Summary: fmt.Sprintf("downloaded %d bytes from %s", n, remote),
 		Artifacts: []hovel.Artifact{
-			hovel.InlineArtifact(name, "application/octet-stream", data.String()),
+			hovel.FileArtifact(name, "application/octet-stream", path),
 		},
 		Fields: map[string]string{"remote": remote, "bytes": strconv.FormatInt(n, 10)},
 	}, nil

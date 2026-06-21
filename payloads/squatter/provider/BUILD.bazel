@@ -42,6 +42,7 @@ go_test(
     data = ["//payloads/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
     deps = [
+        "//payloads/squatter/client/wire",
         "//sdk/go/hovel",
         "//sdk/go/hoveltest",
     ],
