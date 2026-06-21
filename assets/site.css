@@ -332,14 +332,6 @@ blockquote {
   color: var(--cyan);
   font-weight: 700;
 }
-.demo-open {
-  display: block;
-  border-bottom: 0;
-}
-.demo-open:hover {
-  border-bottom: 0;
-  text-shadow: none;
-}
 .homepage-demo {
   width: 100%;
   margin-top: 0;
@@ -354,59 +346,6 @@ blockquote {
 }
 .homepage-demo-series {
   margin-top: 0;
-}
-.demo-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: none;
-  place-items: center;
-  padding: 1.5rem;
-}
-.demo-modal:target {
-  display: grid;
-}
-.demo-modal-backdrop {
-  position: absolute;
-  inset: 0;
-  border-bottom: 0;
-  background: rgba(5, 3, 16, 0.88);
-  backdrop-filter: blur(8px);
-}
-.demo-modal-content {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  gap: 0.75rem;
-  max-width: min(96vw, 1600px);
-  max-height: 94vh;
-}
-.demo-modal-content img {
-  display: block;
-  max-width: 100%;
-  max-height: calc(94vh - 3.5rem);
-  width: auto;
-  height: auto;
-  border: 1px solid rgba(82, 240, 255, 0.38);
-  border-radius: 5px;
-  background: var(--bg-deep);
-  box-shadow: 0 0 50px rgba(82, 240, 255, 0.22), 0 0 90px rgba(255, 62, 224, 0.16);
-}
-.demo-modal-close {
-  justify-self: end;
-  padding: 0.45rem 0.7rem;
-  border: 1px solid var(--cyan);
-  border-radius: 4px;
-  background: rgba(7, 4, 26, 0.9);
-  color: var(--cyan);
-  font-family: var(--mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-.demo-modal-close:hover {
-  color: var(--magenta);
-  border-color: var(--magenta);
 }
 
 /* ---------- code ---------- */
