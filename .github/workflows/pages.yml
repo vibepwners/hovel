@@ -19,7 +19,8 @@ concurrency:
 jobs:
   build:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,7 +57,7 @@ jobs:
       - name: Install VHS dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg ttyd fonts-dejavu-core
+          sudo apt-get install -y --no-install-recommends ffmpeg ttyd tmux fonts-dejavu-core
 
       - name: Install VHS
         run: |
@@ -65,6 +66,8 @@ jobs:
           "$(go env GOPATH)/bin/vhs" --version
           ffmpeg -version | head -n 1
           ttyd --version
+          tmux -V
+          docker version --format 'Docker server {{.Server.Version}}'
 
       - name: Stage site
         run: task docs

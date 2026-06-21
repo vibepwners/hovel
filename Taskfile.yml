@@ -141,8 +141,9 @@ tasks:
 
   docs:
     desc: Generate demos, then build and stage the static docs site.
-    deps: [demos]
     cmds:
+      - task: demos
+      - task: demo:squatter-wine
       - task: docs:stage
 
   docs:stage:

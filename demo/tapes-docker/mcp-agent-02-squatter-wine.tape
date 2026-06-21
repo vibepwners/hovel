@@ -20,10 +20,10 @@ Type "clear"
 Enter
 Show
 
-Type "HOVEL_DEMO_AGENT_SCENARIO=squatter scripts/demo-mcp-agent-tmux.sh"
+Type "HOVEL_DEMO_AGENT_SCENARIO=squatter HOVEL_DEMO_AGENT_DELAY=520ms HOVEL_DEMO_AGENT_TOKEN_DELAY=28ms scripts/demo-mcp-agent-tmux.sh"
 Enter
-Wait+Screen@75s /squatter-mcp-cmd-ok/
-Sleep 1000 ms
+Wait+Screen@90s /Squatter responded/
+Sleep 2500 ms
 
 Hide
 Type "hovel_demo_teardown"

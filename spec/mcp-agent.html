@@ -71,10 +71,17 @@ task mcp
 
         <h2>Demo Harness</h2>
         <p>The source tree includes a mock Codex-style agent harness at <code>//tools/demo/mcpagent:mcpagent</code>. It uses the official MCP Go SDK, lists the available tools, calls the identity/entity/operation/snapshot tools, then calls <code>hovel_throw_start</code> and renders a terminal agent panel from real structured MCP responses. The harness intentionally avoids a generic shell-command shortcut so the demo exercises the same typed MCP surface a model client would use.</p>
-        <p>The generated VHS demo uses a real three-pane tmux session: <code>hovel mcp</code> runs in the upper-left pane, <code>hovel cli</code> runs in the lower-left pane, and the mock agent runs full-height on the right with a prompt area and chat log. The MCP pane and agent pane communicate over named pipes. The CLI pane is placed on the same operation and chain before the mock agent starts, so the human-facing surface shows the relevant throw logs while the agent throws the exploit through the visible MCP server.</p>
-        <figure class="demo-figure">
-          <img src="../assets/demos/mcp-agent-01-throw.gif" alt="Three-pane tmux demo with hovel mcp, hovel cli, and a mock Codex-style MCP agent throwing the mock exploit.">
-        </figure>
+        <p>The generated VHS demos use real tmux sessions. <code>hovel mcp</code> and <code>hovel cli</code> stay visible while the mock agent runs on the right with a prompt area and chat log. The MCP pane and agent pane communicate over named pipes. The CLI pane is placed on the same operation and chain before the mock agent starts, so the human-facing surface shows the relevant throw logs while the agent throws the exploit through the visible MCP server.</p>
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mcp-agent-01-throw.gif" alt="Tmux demo with hovel mcp, hovel cli, and a mock Codex-style MCP agent throwing the mock exploit.">
+            <figcaption><strong>Throw</strong> mock exploit through MCP</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mcp-agent-02-squatter-wine.gif" alt="Tmux demo with hovel mcp, hovel cli, a shell pane, and a mock Codex-style MCP agent operating the Squatter payload and showing transferred files.">
+            <figcaption><strong>Exploit</strong> Squatter payload commands and file transfer through MCP</figcaption>
+          </figure>
+        </div>
 
         <h2>Entity Model</h2>
         <p>An entity is a live actor attached to <code>hoveld</code>. Entity records are daemon-owned and should include:</p>

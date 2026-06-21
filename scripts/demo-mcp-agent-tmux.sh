@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Render the MCP agent demo as a real three-pane tmux session for VHS.
+# Render the MCP agent demo as a real tmux session for VHS.
 set -euo pipefail
 
 : "${HOVEL_WORKSPACE:?HOVEL_WORKSPACE is required}"
@@ -42,6 +42,8 @@ log_replay="$tmpdir/log.replay"
 mcp_script="$tmpdir/mcp-pane.sh"
 cli_script="$tmpdir/cli-pane.sh"
 agent_script="$tmpdir/agent-pane.sh"
+shell_script="$tmpdir/shell-pane.sh"
+shell_done="$tmpdir/shell.done"
 session="hovel-mcp-demo-$$"
 
 cleanup() {
@@ -92,8 +94,10 @@ if [[ "${HOVEL_DEMO_AGENT_SCENARIO:-throw}" == "squatter" ]]; then
   printf 'Operation selected: %s\n' "$HOVEL_DEMO_OPERATION"
   printf '\033[35mh0v3l\033[0m [%s]> payloads installed\n' "$HOVEL_DEMO_OPERATION"
   hovel run --workspace "$HOVEL_WORKSPACE" --op "$HOVEL_DEMO_OPERATION" -- payloads installed --workspace "$HOVEL_WORKSPACE"
+  sleep 0.35
   printf '\033[35mh0v3l\033[0m [%s]> payloads inspect %s\n' "$HOVEL_DEMO_OPERATION" "$HOVEL_DEMO_PAYLOAD"
   hovel run --workspace "$HOVEL_WORKSPACE" --op "$HOVEL_DEMO_OPERATION" -- payloads inspect "$HOVEL_DEMO_PAYLOAD" --workspace "$HOVEL_WORKSPACE"
+  sleep 0.35
   printf '\033[35mh0v3l\033[0m [%s]> payloads commands %s\n' "$HOVEL_DEMO_OPERATION" "$HOVEL_DEMO_PAYLOAD"
   hovel run --workspace "$HOVEL_WORKSPACE" --op "$HOVEL_DEMO_OPERATION" -- payloads commands "$HOVEL_DEMO_PAYLOAD" --workspace "$HOVEL_WORKSPACE"
   touch "$HOVEL_DEMO_CLI_READY"
@@ -116,17 +120,22 @@ while [[ ! -f "$HOVEL_DEMO_LOG_REPLAY" ]]; do
 done
 printf '\033[35mh0v3l\033[0m [%s/%s] > chain logs\n' "$HOVEL_DEMO_OPERATION" "$HOVEL_DEMO_CHAIN"
 printf 'waiting for throw logs...\n'
+printed=0
 while true; do
   logs="$(hovel run \
     --workspace "$HOVEL_WORKSPACE" \
     --op "$HOVEL_DEMO_OPERATION" \
     --chain "$HOVEL_DEMO_CHAIN" \
     -- chain logs --no-color 2>&1 || true)"
-  if [[ "$logs" == *"HOVEL//THROW"* ]]; then
-    printf '%s\n' "$logs"
-    break
+  if [[ "$logs" != No\ logs* ]]; then
+    total="$(printf '%s\n' "$logs" | wc -l | tr -d ' ')"
+    if [[ "$total" -gt "$printed" ]]; then
+      printf '%s\n' "$logs" | tail -n +"$((printed + 1))"
+      printed="$total"
+    fi
+    [[ "$logs" == *"HOVEL//THROW"* ]] && break
   fi
-  sleep 0.4
+  sleep 0.25
 done
 sleep 600
 SH
@@ -169,7 +178,34 @@ printf '%s' "$status" >"$HOVEL_DEMO_AGENT_STATUS"
 sleep 600
 SH
 
-chmod +x "$mcp_script" "$cli_script" "$agent_script"
+cat >"$shell_script" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '\033[H\033[2J'
+printf 'shell\n'
+printf 'workspace: %s\n\n' "$HOVEL_WORKSPACE"
+printf '$ docker ps --filter name=%s --format "{{.Names}} {{.Ports}}"\n' "$HOVEL_SQUATTER_WINE_NAME"
+docker ps --filter "name=$HOVEL_SQUATTER_WINE_NAME" --format '{{.Names}} {{.Ports}}' || true
+printf '\nwaiting for file transfer artifacts...\n'
+while [[ ! -s "$HOVEL_DEMO_AGENT_STATUS" ]]; do
+  sleep 0.2
+done
+sleep 0.5
+printf '\n$ find "$HOVEL_WORKSPACE/artifacts" -type f -name agent-upload.txt\n'
+download="$(find "$HOVEL_WORKSPACE/artifacts" -type f -name agent-upload.txt | head -n1 || true)"
+if [[ -n "$download" ]]; then
+  printf '%s\n' "$download"
+  printf '\n$ cat "%s"\n' "$download"
+  cat "$download"
+  printf '\n'
+else
+  printf 'agent-upload.txt not found\n'
+fi
+touch "$HOVEL_DEMO_SHELL_DONE"
+sleep 600
+SH
+
+chmod +x "$mcp_script" "$cli_script" "$agent_script" "$shell_script"
 
 pane_env=(
   "HOVEL_WORKSPACE=$HOVEL_WORKSPACE"
@@ -184,7 +220,9 @@ pane_env=(
   "HOVEL_DEMO_AGENT_STATUS=$agent_status"
   "HOVEL_DEMO_AGENT_START=$agent_start"
   "HOVEL_DEMO_CLI_READY=$cli_ready"
+  "HOVEL_DEMO_SHELL_DONE=$shell_done"
   "HOVEL_DEMO_LOG_REPLAY=$log_replay"
+  "HOVEL_SQUATTER_WINE_NAME=${HOVEL_SQUATTER_WINE_NAME:-}"
   "HOVEL_MODULE_CONFIG=${HOVEL_MODULE_CONFIG:-}"
   "HOVEL_CLI_NO_WELCOME=${HOVEL_CLI_NO_WELCOME:-1}"
 )
@@ -193,10 +231,17 @@ tmux new-session -d -s "$session" -x "$width" -y "$height" "env ${pane_env[*]} '
 mcp_pane="$(tmux display-message -p -t "$session:0.0" '#{pane_id}')"
 agent_pane="$(tmux split-window -h -p 50 -t "$mcp_pane" -P -F '#{pane_id}' "env ${pane_env[*]} '$agent_script'")"
 cli_pane="$(tmux split-window -v -p 50 -t "$mcp_pane" -P -F '#{pane_id}' "env ${pane_env[*]} '$cli_script'")"
+shell_pane=""
+if [[ "$scenario" == "squatter" ]]; then
+  shell_pane="$(tmux split-window -v -p 45 -t "$cli_pane" -P -F '#{pane_id}' "env ${pane_env[*]} '$shell_script'")"
+fi
 
 tmux set-option -t "$session" -g pane-border-status top >/dev/null
 tmux select-pane -t "$mcp_pane" -T "hovel mcp"
 tmux select-pane -t "$cli_pane" -T "hovel cli"
+if [[ -n "$shell_pane" ]]; then
+  tmux select-pane -t "$shell_pane" -T "shell"
+fi
 tmux select-pane -t "$agent_pane" -T "mock agent"
 tmux select-pane -t "$agent_pane"
 
@@ -218,18 +263,23 @@ wait_for_pane_text() {
     [[ -f "$cli_ready" ]] && break
     sleep 0.1
   done
-  touch "$agent_start"
   if [[ "$scenario" == "squatter" ]]; then
+    touch "$agent_start"
     for _ in $(seq 1 120); do
       [[ -s "$agent_status" ]] && break
       sleep 0.2
     done
-    sleep 1.2
+    for _ in $(seq 1 80); do
+      [[ -f "$shell_done" ]] && break
+      sleep 0.2
+    done
+    sleep 2.0
     tmux kill-session -t "$session" >/dev/null 2>&1 || true
     exit 0
   fi
-  sleep 0.8
   touch "$log_replay"
+  sleep 0.5
+  touch "$agent_start"
   wait_for_pane_text "$cli_pane" "HOVEL//THROW" || sleep 1
   for _ in $(seq 1 80); do
     [[ -s "$agent_status" ]] && break
