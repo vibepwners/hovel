@@ -229,11 +229,11 @@ pane_env=(
 
 tmux new-session -d -s "$session" -x "$width" -y "$height" "env ${pane_env[*]} '$mcp_script'"
 mcp_pane="$(tmux display-message -p -t "$session:0.0" '#{pane_id}')"
-agent_pane="$(tmux split-window -h -p 50 -t "$mcp_pane" -P -F '#{pane_id}' "env ${pane_env[*]} '$agent_script'")"
-cli_pane="$(tmux split-window -v -p 50 -t "$mcp_pane" -P -F '#{pane_id}' "env ${pane_env[*]} '$cli_script'")"
+agent_pane="$(tmux split-window -h -l 50% -t "$mcp_pane" -P -F '#{pane_id}' "env ${pane_env[*]} '$agent_script'")"
+cli_pane="$(tmux split-window -v -l 50% -t "$mcp_pane" -P -F '#{pane_id}' "env ${pane_env[*]} '$cli_script'")"
 shell_pane=""
 if [[ "$scenario" == "squatter" ]]; then
-  shell_pane="$(tmux split-window -v -p 45 -t "$cli_pane" -P -F '#{pane_id}' "env ${pane_env[*]} '$shell_script'")"
+  shell_pane="$(tmux split-window -v -l 45% -t "$cli_pane" -P -F '#{pane_id}' "env ${pane_env[*]} '$shell_script'")"
 fi
 
 tmux set-option -t "$session" -g pane-border-status top >/dev/null
