@@ -9,16 +9,14 @@
 package hovel
 
 import (
-	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
-	"strconv"
-	"strings"
 	"sync"
+
+	"github.com/Vibe-Pwners/hovel/internal/protocol/framing"
 )
 
-const maxFrameBytes = 64 * 1024 * 1024
+const maxFrameBytes = framing.DefaultMaxBytes
 
 // frameError wraps a malformed or truncated frame on the wire.
 type frameError struct{ msg string }
@@ -27,56 +25,22 @@ func (e frameError) Error() string { return "hovel: " + e.msg }
 
 // frameReader decodes length-prefixed JSON-RPC messages from a stream.
 type frameReader struct {
-	reader *bufio.Reader
+	reader *framing.Reader
 }
 
 func newFrameReader(r io.Reader) *frameReader {
-	return &frameReader{reader: bufio.NewReader(r)}
+	return &frameReader{reader: framing.NewReader(r, maxFrameBytes)}
 }
 
 // read returns the next message, or io.EOF when the stream is closed cleanly
 // between frames.
 func (fr *frameReader) read() (map[string]json.RawMessage, error) {
-	contentLength := -1
-	sawHeader := false
-	for {
-		line, err := fr.reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF && !sawHeader && line == "" {
-				return nil, io.EOF
-			}
-			return nil, err
-		}
-		sawHeader = true
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
-		}
-		name, value, ok := strings.Cut(line, ":")
-		if !ok {
-			return nil, frameError{fmt.Sprintf("malformed frame header %q", line)}
-		}
-		if strings.EqualFold(strings.TrimSpace(name), "content-length") {
-			length, convErr := strconv.Atoi(strings.TrimSpace(value))
-			if convErr != nil || length < 0 {
-				return nil, frameError{"invalid Content-Length"}
-			}
-			if length > maxFrameBytes {
-				return nil, frameError{fmt.Sprintf("Content-Length %d exceeds maximum %d", length, maxFrameBytes)}
-			}
-			contentLength = length
-		}
-	}
-	if contentLength < 0 {
-		return nil, frameError{"missing Content-Length"}
-	}
-	body := make([]byte, contentLength)
-	if _, err := io.ReadFull(fr.reader, body); err != nil {
-		return nil, frameError{"truncated frame body"}
-	}
 	var message map[string]json.RawMessage
-	if err := json.Unmarshal(body, &message); err != nil {
-		return nil, frameError{"invalid JSON frame body"}
+	if err := fr.reader.ReadJSON(&message); err != nil {
+		if err == io.EOF {
+			return nil, io.EOF
+		}
+		return nil, frameError{err.Error()}
 	}
 	return message, nil
 }
@@ -93,15 +57,7 @@ func newFrameWriter(w io.Writer) *frameWriter {
 }
 
 func (fw *frameWriter) write(message any) error {
-	body, err := json.Marshal(message)
-	if err != nil {
-		return err
-	}
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
-	if _, err := fmt.Fprintf(fw.writer, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
-		return err
-	}
-	_, err = fw.writer.Write(body)
-	return err
+	return framing.WriteJSON(fw.writer, message)
 }

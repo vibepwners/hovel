@@ -20,7 +20,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/modules/mockexploit"
 )
 
-func TestClientRunsMockExploitThroughConnectRPC(t *testing.T) {
+func TestClientRunsMockExploitThroughDaemonRPC(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
 	runs := services.NewRunService(
 		mockexploit.Runner{},
@@ -64,7 +64,7 @@ func TestClientRunsMockExploitThroughConnectRPC(t *testing.T) {
 	}
 }
 
-func TestClientCanDialConnectRPCOverTCP(t *testing.T) {
+func TestClientCanDialDaemonRPCOverTCP(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

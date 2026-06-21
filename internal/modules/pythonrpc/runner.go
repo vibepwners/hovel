@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,11 +21,12 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/Vibe-Pwners/hovel/internal/protocol/framing"
 )
 
 const defaultTimeout = 60 * time.Second
 const stderrSettleTimeout = 50 * time.Millisecond
-const maxFrameBytes = 64 * 1024 * 1024
+const maxFrameBytes = framing.DefaultMaxBytes
 
 const ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
 
@@ -168,6 +168,64 @@ func (r Runner) ExecuteStep(ctx context.Context, request StepCallRequest) (map[s
 
 func (r Runner) CleanupStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
 	return r.callStep(ctx, request, "step.cleanup", "module failed while cleaning up step", "module step cleanup failed")
+}
+
+func (r Runner) ListPayloadCommands(ctx context.Context, moduleID string, request run.PayloadCommandListRequest) ([]run.PayloadCommand, error) {
+	result, err := r.callPayloadCommand(ctx, moduleID, "payload.command.list", request)
+	if err != nil {
+		return nil, err
+	}
+	var decoded struct {
+		Commands []run.PayloadCommand `json:"commands"`
+	}
+	if err := decodeRPCMap(result, &decoded); err != nil {
+		return nil, services.NewModuleExecutionFailure("module returned invalid payload command list", err)
+	}
+	return decoded.Commands, nil
+}
+
+func (r Runner) RunPayloadCommand(ctx context.Context, moduleID string, request run.PayloadCommandRequest) (run.PayloadCommandResult, error) {
+	result, err := r.callPayloadCommand(ctx, moduleID, "payload.command.run", request)
+	if err != nil {
+		return run.PayloadCommandResult{}, err
+	}
+	var decoded run.PayloadCommandResult
+	if err := decodeRPCMap(result, &decoded); err != nil {
+		return run.PayloadCommandResult{}, services.NewModuleExecutionFailure("module returned invalid payload command result", err)
+	}
+	return decoded, nil
+}
+
+func (r Runner) callPayloadCommand(ctx context.Context, moduleID, method string, params any) (map[string]any, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	process, err := r.start(ctx, moduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer process.killAndWait()
+	result, err := process.client.call(ctx, method, params)
+	if err != nil {
+		return nil, moduleFailure("module failed during payload command", "module payload command failed", err, process.stderrString())
+	}
+	_, _ = process.client.call(context.Background(), "shutdown", nil)
+	if err := process.wait(); err != nil {
+		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
+	}
+	return result, nil
+}
+
+func decodeRPCMap(value map[string]any, out any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
 }
 
 func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, summary, prefix string) (map[string]any, error) {
@@ -984,48 +1042,14 @@ type rpcSessionRef struct {
 }
 
 type frameDecoder struct {
-	reader *bufio.Reader
+	reader *framing.Reader
 }
 
 func newFrameDecoder(reader io.Reader) *frameDecoder {
-	return &frameDecoder{reader: bufio.NewReader(reader)}
+	return &frameDecoder{reader: framing.NewReader(reader, maxFrameBytes)}
 }
 
 func (d *frameDecoder) read() (rpcMessage, error) {
-	headers := map[string]string{}
-	for {
-		line, err := d.reader.ReadString('\n')
-		if err != nil {
-			return rpcMessage{}, err
-		}
-		line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if line == "" {
-			break
-		}
-		name, value, ok := strings.Cut(line, ":")
-		if !ok {
-			return rpcMessage{}, fmt.Errorf("malformed frame header %q", line)
-		}
-		headers[strings.ToLower(name)] = strings.TrimSpace(value)
-	}
-	lengthText := headers["content-length"]
-	if lengthText == "" {
-		return rpcMessage{}, errors.New("missing Content-Length header")
-	}
-	length, err := strconv.Atoi(lengthText)
-	if err != nil {
-		return rpcMessage{}, fmt.Errorf("invalid Content-Length header: %w", err)
-	}
-	if length < 0 {
-		return rpcMessage{}, errors.New("invalid Content-Length header")
-	}
-	if length > maxFrameBytes {
-		return rpcMessage{}, fmt.Errorf("Content-Length %d exceeds maximum %d", length, maxFrameBytes)
-	}
-	body := make([]byte, length)
-	if _, err := io.ReadFull(d.reader, body); err != nil {
-		return rpcMessage{}, err
-	}
 	var raw struct {
 		ID     *int            `json:"id"`
 		Method string          `json:"method"`
@@ -1033,7 +1057,7 @@ func (d *frameDecoder) read() (rpcMessage, error) {
 		Result json.RawMessage `json:"result"`
 		Error  *rpcError       `json:"error"`
 	}
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := d.reader.ReadJSON(&raw); err != nil {
 		return rpcMessage{}, err
 	}
 	message := rpcMessage{Method: raw.Method, Error: raw.Error}
@@ -1059,15 +1083,7 @@ func (d *frameDecoder) read() (rpcMessage, error) {
 }
 
 func writeFrame(writer io.Writer, message map[string]any) error {
-	body, err := json.Marshal(message)
-	if err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
-		return err
-	}
-	_, err = writer.Write(body)
-	return err
+	return framing.WriteJSON(writer, message)
 }
 
 func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (run.Result, error) {

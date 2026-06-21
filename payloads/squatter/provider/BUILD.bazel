@@ -2,6 +2,9 @@ load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# gazelle:exclude generate_main.go
+# gazelle:exclude provider_main.go
+
 go_library(
     name = "provider_lib",
     srcs = [
@@ -13,12 +16,22 @@ go_library(
     deps = [
         "//payloads/squatter/client/shell",
         "//payloads/squatter/client/smbpipe",
+        "//payloads/squatter/client/wire",
+        "//payloads/squatter/client/xfer",
         "//sdk/go/hovel",
     ],
 )
 
 go_binary(
     name = "squatter-provider",
+    srcs = ["provider_main.go"],
+    data = ["//payloads/squatter/windows:squatter_x86_exe"],
+    embed = [":provider_lib"],
+)
+
+go_binary(
+    name = "squatter-generate",
+    srcs = ["generate_main.go"],
     data = ["//payloads/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
 )

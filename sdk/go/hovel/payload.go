@@ -14,6 +14,14 @@ type PayloadProvider interface {
 	ReadPayloadChunk(ReadPayloadChunkRequest) (PayloadChunk, error)
 }
 
+// PayloadCommandProvider is an optional extension for provider-owned commands
+// against an installed payload. Hovel brokers the call; the provider owns the
+// transport and payload wire protocol.
+type PayloadCommandProvider interface {
+	ListPayloadCommands(PayloadCommandListRequest) ([]PayloadCommand, error)
+	RunPayloadCommand(PayloadCommandRequest) (PayloadCommandResult, error)
+}
+
 // PayloadQuery describes the payload variant requested by Hovel during
 // planning or execution.
 type PayloadQuery struct {
@@ -156,4 +164,52 @@ type PayloadChunk struct {
 	Data     string `json:"data"`
 	EOF      bool   `json:"eof"`
 	Encoding string `json:"encoding"`
+}
+
+type PayloadCommandListRequest struct {
+	InstalledPayloadID string                 `json:"installedPayloadId,omitempty"`
+	Target             string                 `json:"target,omitempty"`
+	PayloadID          string                 `json:"payloadId,omitempty"`
+	Config             map[string]string      `json:"config,omitempty"`
+	Reconnect          *PayloadProviderRecord `json:"reconnect,omitempty"`
+	Agent              *AgentContext          `json:"agentContext,omitempty"`
+}
+
+type PayloadCommand struct {
+	Name         string                   `json:"name"`
+	Summary      string                   `json:"summary,omitempty"`
+	Usage        string                   `json:"usage,omitempty"`
+	ReadOnly     bool                     `json:"readOnly,omitempty"`
+	Destructive  bool                     `json:"destructive,omitempty"`
+	Capabilities []string                 `json:"capabilities,omitempty"`
+	Arguments    []PayloadCommandArgument `json:"arguments,omitempty"`
+}
+
+type PayloadCommandArgument struct {
+	Name     string `json:"name"`
+	Help     string `json:"help,omitempty"`
+	Required bool   `json:"required,omitempty"`
+}
+
+type PayloadCommandRequest struct {
+	InstalledPayloadID string                 `json:"installedPayloadId,omitempty"`
+	Target             string                 `json:"target,omitempty"`
+	PayloadID          string                 `json:"payloadId,omitempty"`
+	Command            string                 `json:"command"`
+	Args               []string               `json:"args,omitempty"`
+	InputPath          string                 `json:"inputPath,omitempty"`
+	InputData          string                 `json:"inputData,omitempty"`
+	InputEncoding      string                 `json:"inputEncoding,omitempty"`
+	Config             map[string]string      `json:"config,omitempty"`
+	Reconnect          *PayloadProviderRecord `json:"reconnect,omitempty"`
+	Agent              *AgentContext          `json:"agentContext,omitempty"`
+}
+
+type PayloadCommandResult struct {
+	Command   string            `json:"command"`
+	Summary   string            `json:"summary,omitempty"`
+	Stdout    string            `json:"stdout,omitempty"`
+	Stderr    string            `json:"stderr,omitempty"`
+	Artifacts []Artifact        `json:"artifacts,omitempty"`
+	Fields    map[string]string `json:"fields,omitempty"`
 }

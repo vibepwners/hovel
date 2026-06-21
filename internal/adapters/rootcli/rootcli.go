@@ -164,20 +164,23 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 
 func newRootParser() *argparse.Parser {
 	parser := argparse.NewParser("hovel", "Hovel operator console.")
-	parser.NewCommand("op", "Create, select, and inspect operations.")
-	parser.NewCommand("chain", "Build and manage operator chains.")
-	parser.NewCommand("module", "Browse, search, and inspect modules.")
-	parser.NewCommand("artifact", "List and inspect materialized artifacts.")
-	parser.NewCommand("session", "List, connect, and close active sessions.")
-	parser.NewCommand("target", "Add and configure chain targets.")
-	parser.NewCommand("throw", "Execute the selected chain, or list and inspect throws.")
+	for _, definition := range commandmode.NewApp().Registry().FirstSegments() {
+		parser.NewCommand(definition.Path[0], definition.Summary)
+	}
 	parser.NewCommand("init", "Initialize a workspace.")
 	parser.NewCommand("status", "Inspect workspace and daemon status.")
-	parser.NewCommand("shell", "Launch the interactive prompt shell.")
-	parser.NewCommand("command", "Run one command from the shell. Compatibility alias for direct commands.")
-	parser.NewCommand("run", "Run one command against a daemon-backed operator session.")
-	parser.NewCommand("cli", "Launch the interactive prompt shell. Alias for shell.")
-	parser.NewCommand("mcp", "Launch the MCP agent interface.")
+	for _, role := range []struct {
+		name    string
+		summary string
+	}{
+		{"shell", "Launch the interactive prompt shell."},
+		{"command", "Run one command from the shell. Compatibility alias for direct commands."},
+		{"run", "Run one command against a daemon-backed operator session."},
+		{"cli", "Launch the interactive prompt shell. Alias for shell."},
+		{"mcp", "Launch the MCP agent interface."},
+	} {
+		parser.NewCommand(role.name, role.summary)
+	}
 	daemon := parser.NewCommand("daemon", "Run or inspect the daemon role.")
 	daemon.NewCommand("serve", "Run the daemon role.")
 	daemon.NewCommand("status", "Inspect daemon status.")

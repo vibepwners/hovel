@@ -8,9 +8,11 @@ go_library(
     deps = [
         "//internal/adapters/commandmode",
         "//internal/adapters/daemonrpc",
+        "//internal/adapters/storage/filesystem",
         "//internal/app/commands",
         "//internal/app/operatorsession",
         "//internal/domain/operator",
+        "//internal/domain/run",
         "//internal/domain/workspace",
         "//internal/infra/daemonmanager",
         "@com_github_modelcontextprotocol_go_sdk//mcp",

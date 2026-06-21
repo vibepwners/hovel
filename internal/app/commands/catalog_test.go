@@ -56,11 +56,16 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"module", "search"},
 		{"payloads", "available"},
 		{"payloads", "cleanup"},
+		{"payloads", "cmd"},
 		{"payloads", "connect"},
+		{"payloads", "commands"},
+		{"payloads", "getfile"},
 		{"payloads", "inspect"},
 		{"payloads", "installed"},
 		{"payloads", "mark-removed"},
+		{"payloads", "putfile"},
 		{"payloads", "refresh"},
+		{"payloads", "register-squatter"},
 		{"chain", "use"},
 		{"target", "add"},
 		{"target", "clear"},
@@ -3261,6 +3266,8 @@ type fakePayloadProviderService struct {
 	connected InstalledPayloadRecord
 	cleaned   InstalledPayloadRecord
 	refresh   func(InstalledPayloadRecord) InstalledPayloadRecord
+	commands  []PayloadCommand
+	result    PayloadCommandResult
 }
 
 func (s *fakePayloadProviderService) ListAvailablePayloads(context.Context) ([]AvailablePayload, error) {
@@ -3286,6 +3293,20 @@ func (s *fakePayloadProviderService) RefreshInstalledPayload(_ context.Context, 
 		return s.refresh(record), nil
 	}
 	return record, nil
+}
+
+func (s *fakePayloadProviderService) ListPayloadCommands(context.Context, InstalledPayloadRecord) ([]PayloadCommand, error) {
+	if s.commands == nil {
+		return []PayloadCommand{{Name: "cmd", Summary: "run one command through cmd.exe", Destructive: true}}, nil
+	}
+	return append([]PayloadCommand(nil), s.commands...), nil
+}
+
+func (s *fakePayloadProviderService) RunPayloadCommand(context.Context, InstalledPayloadRecord, PayloadCommandRequest) (PayloadCommandResult, error) {
+	if s.result.Command != "" {
+		return s.result, nil
+	}
+	return PayloadCommandResult{Command: "cmd", Summary: "command completed", Stdout: "ok\n"}, nil
 }
 
 func payloadRecordFixture(handle, state string) InstalledPayloadRecord {
@@ -3614,6 +3635,14 @@ func (c fakeRunClient) WriteSession(_ context.Context, sessionID string, data []
 
 func (fakeRunClient) CloseSession(context.Context, string) error {
 	return nil
+}
+
+func (fakeRunClient) ListPayloadCommands(context.Context, string, RunPayloadCommandListRequest) ([]PayloadCommand, error) {
+	return []PayloadCommand{{Name: "cmd", Summary: "run one command through cmd.exe", Destructive: true}}, nil
+}
+
+func (fakeRunClient) RunPayloadCommand(context.Context, RunPayloadCommandRunRequest) (PayloadCommandResult, error) {
+	return PayloadCommandResult{Command: "cmd", Summary: "command completed", Stdout: "ok\n"}, nil
 }
 
 func TestGuardDangerousModules(t *testing.T) {

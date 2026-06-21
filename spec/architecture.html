@@ -117,7 +117,7 @@ server mode: hovel daemon serve is explicitly launched and clients attach
         <ol>
           <li>One active <code>hoveld</code> per workspace.</li>
           <li>A workspace lock prevents duplicate daemons from owning the same database.</li>
-          <li>The daemon RPC contract uses ConnectRPC over HTTP with a JSON codec during alpha. It should move to generated protobuf message types once the service contract stabilizes.</li>
+          <li>The daemon RPC contract uses plain HTTP JSON over the local transport during alpha. It should move to a generated service contract only if the daemon API needs stronger cross-language compatibility.</li>
           <li>The local client transport must support <code>cli</code>, one-shot chain-file execution, <code>tui</code>, REST, and MCP attaching to the same daemon.</li>
           <li>Unix-like systems should prefer a Unix domain socket under a workspace or runtime directory with filesystem permissions.</li>
           <li>Explicit daemon serving may also bind TCP with an address such as <code>tcp://127.0.0.1:9090</code> for integration and remote-adapter development.</li>

@@ -198,13 +198,13 @@ func splitCommandLine(line string) ([]string, error) {
 }
 
 func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
-	parser := commandParser(definition)
+	parser, bindings := commandParser(definition)
 	if helpRequested(args) {
 		fmt.Fprint(stdout, usage(definition, parser, nil))
 		return 0
 	}
 
-	parsed, ok, code := parseDefinition(definition, parser, args, stdout, stderr)
+	parsed, ok, code := parseDefinition(definition, parser, bindings, args, stderr)
 	if !ok {
 		return code
 	}
@@ -395,10 +395,21 @@ func (a App) groupParser(prefix []string) *argparse.Parser {
 	return parser
 }
 
-func commandParser(definition commands.Definition) *argparse.Parser {
+type commandParserBindings struct {
+	positionals map[string]*string
+	options     map[string]*string
+	flags       map[string]*bool
+}
+
+func commandParser(definition commands.Definition) (*argparse.Parser, commandParserBindings) {
 	parser := argparse.NewParser("hovel command "+definition.PathString(), definition.Summary)
+	bindings := commandParserBindings{
+		positionals: make(map[string]*string, len(definition.Positionals)),
+		options:     make(map[string]*string),
+		flags:       make(map[string]*bool),
+	}
 	for _, positional := range definition.Positionals {
-		parser.StringPositional(&argparse.Options{
+		bindings.positionals[positional.Name] = parser.StringPositional(&argparse.Options{
 			Required: positional.Required,
 			Help:     positional.Help,
 		})
@@ -410,40 +421,16 @@ func commandParser(definition commands.Definition) *argparse.Parser {
 		}
 		switch option.Kind {
 		case commands.OptionBool:
-			parser.Flag(option.Short, option.Name, options)
+			bindings.flags[option.Name] = parser.Flag(option.Short, option.Name, options)
 		default:
-			parser.String(option.Short, option.Name, options)
+			bindings.options[option.Name] = parser.String(option.Short, option.Name, options)
 		}
 	}
-	return parser
+	return parser, bindings
 }
 
-func parseDefinition(definition commands.Definition, parser *argparse.Parser, args []string, _ io.Writer, stderr io.Writer) (commands.Invocation, bool, int) {
+func parseDefinition(definition commands.Definition, parser *argparse.Parser, bindings commandParserBindings, args []string, stderr io.Writer) (commands.Invocation, bool, int) {
 	parser.ExitOnHelp(false)
-	positionals := make(map[string]*string, len(definition.Positionals))
-	options := make(map[string]*string)
-	flags := make(map[string]*bool)
-
-	parser = argparse.NewParser("hovel command "+definition.PathString(), definition.Summary)
-	for _, positional := range definition.Positionals {
-		positionals[positional.Name] = parser.StringPositional(&argparse.Options{
-			Required: positional.Required,
-			Help:     positional.Help,
-		})
-	}
-	for _, option := range definition.Options {
-		optionsForArgparse := &argparse.Options{
-			Required: option.Required,
-			Help:     option.Help,
-		}
-		switch option.Kind {
-		case commands.OptionBool:
-			flags[option.Name] = parser.Flag(option.Short, option.Name, optionsForArgparse)
-		default:
-			options[option.Name] = parser.String(option.Short, option.Name, optionsForArgparse)
-		}
-	}
-
 	if err := parser.Parse(append([]string{"hovel"}, args...)); err != nil {
 		fmt.Fprint(stderr, usage(definition, parser, err))
 		return commands.Invocation{}, false, 2
@@ -455,14 +442,14 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, ar
 		Flags:       map[string]bool{},
 	}
 	for _, positional := range definition.Positionals {
-		invocation.Positionals[positional.Name] = strings.TrimSpace(*positionals[positional.Name])
+		invocation.Positionals[positional.Name] = strings.TrimSpace(*bindings.positionals[positional.Name])
 	}
 	for _, option := range definition.Options {
 		switch option.Kind {
 		case commands.OptionBool:
-			invocation.Flags[option.Name] = *flags[option.Name]
+			invocation.Flags[option.Name] = *bindings.flags[option.Name]
 		default:
-			invocation.Options[option.Name] = strings.TrimSpace(*options[option.Name])
+			invocation.Options[option.Name] = strings.TrimSpace(*bindings.options[option.Name])
 		}
 	}
 	return invocation, true, 0
@@ -535,7 +522,7 @@ func (e capabilityChainExecutor) ExecuteCapabilityChain(ctx context.Context, req
 			Capabilities:      capabilitiesToCommand(result.Capabilities),
 			Evidence:          evidenceToCommand(result.Evidence),
 			Sessions:          sessionsFromRun(result.Sessions),
-			InstalledPayloads: installedPayloadsFromChainRuntime(result.InstalledPayloads),
+			InstalledPayloads: installedPayloadsFromRun(result.InstalledPayloads),
 		}, err
 	}
 	return commands.CapabilityChainResponse{
@@ -546,7 +533,7 @@ func (e capabilityChainExecutor) ExecuteCapabilityChain(ctx context.Context, req
 		Capabilities:      capabilitiesToCommand(result.Capabilities),
 		Evidence:          evidenceToCommand(result.Evidence),
 		Sessions:          sessionsFromRun(result.Sessions),
-		InstalledPayloads: installedPayloadsFromChainRuntime(result.InstalledPayloads),
+		InstalledPayloads: installedPayloadsFromRun(result.InstalledPayloads),
 	}, nil
 }
 
@@ -626,7 +613,7 @@ func sessionsFromRun(sessions []run.SessionRef) []commands.SessionRef {
 	return out
 }
 
-func installedPayloadsFromChainRuntime(payloads []chainruntime.InstalledPayloadDescriptor) []commands.InstalledPayloadDescriptor {
+func installedPayloadsFromRun(payloads []run.InstalledPayloadDescriptor) []commands.InstalledPayloadDescriptor {
 	out := make([]commands.InstalledPayloadDescriptor, 0, len(payloads))
 	for _, payload := range payloads {
 		out = append(out, commands.InstalledPayloadDescriptor{
@@ -643,19 +630,31 @@ func installedPayloadsFromChainRuntime(payloads []chainruntime.InstalledPayloadD
 			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
 			SupportsReconnect:        payload.SupportsReconnect,
 			SupportsMultipleSessions: payload.SupportsMultipleSessions,
-			Reconnect:                payloadProviderRecordFromChainRuntime(payload.Reconnect),
-			Cleanup:                  payloadProviderRecordFromChainRuntime(payload.Cleanup),
+			Reconnect:                payloadProviderRecordFromRun(payload.Reconnect),
+			Cleanup:                  payloadProviderRecordFromRun(payload.Cleanup),
 			Metadata:                 cloneStringMap(payload.Metadata),
 		})
 	}
 	return out
 }
 
-func payloadProviderRecordFromChainRuntime(record *chainruntime.PayloadProviderRecord) *commands.PayloadProviderRecord {
+func payloadProviderRecordFromRun(record *run.PayloadProviderRecord) *commands.PayloadProviderRecord {
 	if record == nil {
 		return nil
 	}
 	return &commands.PayloadProviderRecord{
+		ProviderID:    record.ProviderID,
+		Schema:        record.Schema,
+		SchemaVersion: record.SchemaVersion,
+		Descriptor:    cloneAnyMap(record.Descriptor),
+	}
+}
+
+func payloadProviderRecordToRun(record *commands.PayloadProviderRecord) *run.PayloadProviderRecord {
+	if record == nil {
+		return nil
+	}
+	return &run.PayloadProviderRecord{
 		ProviderID:    record.ProviderID,
 		Schema:        record.Schema,
 		SchemaVersion: record.SchemaVersion,
@@ -757,6 +756,83 @@ func (s payloadProviderService) RefreshInstalledPayload(_ context.Context, recor
 	return record, nil
 }
 
+func (s payloadProviderService) ListPayloadCommands(ctx context.Context, record commands.InstalledPayloadRecord) ([]commands.PayloadCommand, error) {
+	client, moduleID, closeClient, err := s.payloadCommandClient(ctx, record)
+	if err != nil {
+		return nil, err
+	}
+	defer closeClient()
+	return client.ListPayloadCommands(ctx, moduleID, commandsPayloadListRequest(record))
+}
+
+func (s payloadProviderService) RunPayloadCommand(ctx context.Context, record commands.InstalledPayloadRecord, request commands.PayloadCommandRequest) (commands.PayloadCommandResult, error) {
+	client, moduleID, closeClient, err := s.payloadCommandClient(ctx, record)
+	if err != nil {
+		return commands.PayloadCommandResult{}, err
+	}
+	defer closeClient()
+	base := commandsPayloadCommandRequest(record)
+	base.Command = request.Command
+	base.Args = append([]string(nil), request.Args...)
+	base.InputPath = request.InputPath
+	base.InputData = request.InputData
+	base.InputEncoding = request.InputEncoding
+	if request.Config != nil {
+		base.Config = cloneStringMap(request.Config)
+	}
+	if request.Reconnect != nil {
+		base.Reconnect = request.Reconnect
+	}
+	return client.RunPayloadCommand(ctx, commands.RunPayloadCommandRunRequest{
+		Operation: record.Operation,
+		Chain:     record.Chain,
+		ModuleID:  moduleID,
+		Request:   base,
+	})
+}
+
+func (s payloadProviderService) payloadCommandClient(ctx context.Context, record commands.InstalledPayloadRecord) (commands.RunClient, string, func(), error) {
+	if s.daemons == nil || s.runs == nil {
+		return nil, "", func() {}, fmt.Errorf("daemon run service is not configured")
+	}
+	moduleID := payloadProviderModuleID(s.modules, record.Provider)
+	if moduleID == "" {
+		return nil, "", func() {}, fmt.Errorf("payload provider %s is not configured", record.Provider)
+	}
+	status, err := s.daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: record.Workspace})
+	if err != nil {
+		return nil, "", func() {}, err
+	}
+	if status.State != daemon.StateRunning {
+		return nil, "", func() {}, fmt.Errorf("daemon is not running for workspace %s", status.WorkspacePath)
+	}
+	client, err := s.runs.DialRunClient(status.Identity.SocketPath)
+	if err != nil {
+		return nil, "", func() {}, err
+	}
+	return client, moduleID, func() { _ = client.Close() }, nil
+}
+
+func commandsPayloadListRequest(record commands.InstalledPayloadRecord) commands.RunPayloadCommandListRequest {
+	return commands.RunPayloadCommandListRequest{
+		InstalledPayloadID: record.Handle,
+		Target:             record.Target,
+		PayloadID:          record.PayloadID,
+		Config:             installedPayloadReconnectConfig(record),
+		Reconnect:          payloadProviderRecordToRun(record.Reconnect),
+	}
+}
+
+func commandsPayloadCommandRequest(record commands.InstalledPayloadRecord) commands.PayloadCommandRequest {
+	return commands.PayloadCommandRequest{
+		InstalledPayloadID: record.Handle,
+		Target:             record.Target,
+		PayloadID:          record.PayloadID,
+		Config:             installedPayloadReconnectConfig(record),
+		Reconnect:          payloadProviderRecordToRun(record.Reconnect),
+	}
+}
+
 func payloadProviderModuleID(modules modulecatalog.Catalog, provider string) string {
 	if module, ok := modules.Find(provider); ok && module.Type == modulecatalog.TypePayloadProvider {
 		return module.ID
@@ -829,8 +905,32 @@ func (c daemonRunClient) RunMockExploit(ctx context.Context, req commands.RunMoc
 		Artifacts:         artifactsFromRPC(result.Artifacts),
 		Logs:              logsFromRPC(result.Logs),
 		Sessions:          sessionsFromRPC(result.Sessions),
-		InstalledPayloads: installedPayloadsFromRPC(result.InstalledPayloads),
+		InstalledPayloads: installedPayloadsFromRun(result.InstalledPayloads),
 	}, nil
+}
+
+func (c daemonRunClient) ListPayloadCommands(ctx context.Context, moduleID string, req commands.RunPayloadCommandListRequest) ([]commands.PayloadCommand, error) {
+	resp, err := c.client.ListPayloadCommands(ctx, daemonrpc.PayloadCommandListRequest{
+		ModuleID: moduleID,
+		Request:  req,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append([]commands.PayloadCommand(nil), resp.Commands...), nil
+}
+
+func (c daemonRunClient) RunPayloadCommand(ctx context.Context, req commands.RunPayloadCommandRunRequest) (commands.PayloadCommandResult, error) {
+	resp, err := c.client.RunPayloadCommand(ctx, daemonrpc.PayloadCommandRunRequest{
+		Operation: req.Operation,
+		Chain:     req.Chain,
+		ModuleID:  req.ModuleID,
+		Request:   req.Request,
+	})
+	if err != nil {
+		return commands.PayloadCommandResult{}, err
+	}
+	return resp, nil
 }
 
 func (c daemonRunClient) PollOperationChainLogs(ctx context.Context, operation, chain string, since uint64) (commands.RunLogPollResult, error) {
@@ -917,43 +1017,6 @@ func sessionsFromRPC(sessions []daemonrpc.SessionRef) []commands.SessionRef {
 		})
 	}
 	return out
-}
-
-func installedPayloadsFromRPC(payloads []daemonrpc.InstalledPayloadDescriptor) []commands.InstalledPayloadDescriptor {
-	out := make([]commands.InstalledPayloadDescriptor, 0, len(payloads))
-	for _, payload := range payloads {
-		out = append(out, commands.InstalledPayloadDescriptor{
-			Provider:                 payload.Provider,
-			PayloadID:                payload.PayloadID,
-			PayloadVersion:           payload.PayloadVersion,
-			Target:                   payload.Target,
-			TargetID:                 payload.TargetID,
-			State:                    payload.State,
-			Transport:                payload.Transport,
-			Endpoint:                 payload.Endpoint,
-			InstanceKey:              payload.InstanceKey,
-			StampID:                  payload.StampID,
-			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
-			SupportsReconnect:        payload.SupportsReconnect,
-			SupportsMultipleSessions: payload.SupportsMultipleSessions,
-			Reconnect:                payloadProviderRecordFromRPC(payload.Reconnect),
-			Cleanup:                  payloadProviderRecordFromRPC(payload.Cleanup),
-			Metadata:                 cloneStringMap(payload.Metadata),
-		})
-	}
-	return out
-}
-
-func payloadProviderRecordFromRPC(record *daemonrpc.PayloadProviderRecord) *commands.PayloadProviderRecord {
-	if record == nil {
-		return nil
-	}
-	return &commands.PayloadProviderRecord{
-		ProviderID:    record.ProviderID,
-		Schema:        record.Schema,
-		SchemaVersion: record.SchemaVersion,
-		Descriptor:    cloneAnyMap(record.Descriptor),
-	}
 }
 
 func logsFromRPC(logs []daemonrpc.LogEntry) []commands.LogEntry {

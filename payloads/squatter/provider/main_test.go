@@ -815,7 +815,7 @@ func TestProviderExecuteInstallSMBUploadsAndStartsWithCredentials(t *testing.T) 
 		BytesWritten:  1234,
 		ServiceStatus: 0,
 	}}
-	provider := Provider{lp: newPlaceholderLP(), smbInstaller: installer}
+	provider := Provider{lp: newPlaceholderLP(), installSMB: installer.InstallSMB}
 
 	result, err := provider.ExecuteStep(hovel.StepExecuteRequest{
 		RunID:  "run-1",

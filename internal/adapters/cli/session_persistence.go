@@ -3,7 +3,7 @@ package cli
 import (
 	"context"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
+	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 )
 
@@ -26,7 +26,7 @@ func (a App) loadWorkspaceSession(ctx context.Context) error {
 	if !ok || a.workspacePath == "" {
 		return nil
 	}
-	state, ok, err := filesystem.NewWorkspaceStore().LoadOperatorSession(ctx, a.workspacePath)
+	state, ok, err := sqlitestore.NewStore(a.workspacePath).LoadOperatorSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -45,5 +45,5 @@ func (a App) saveWorkspaceSession(ctx context.Context) error {
 	if !ok || a.workspacePath == "" {
 		return nil
 	}
-	return filesystem.NewWorkspaceStore().SaveOperatorSession(ctx, a.workspacePath, session.Export())
+	return sqlitestore.NewStore(a.workspacePath).SaveOperatorSession(ctx, session.Export())
 }

@@ -3,10 +3,14 @@ package commands
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
 const (
@@ -90,6 +94,11 @@ type InstalledPayloadEvent struct {
 	Fields    map[string]string `json:"fields,omitempty"`
 }
 
+type PayloadCommand = run.PayloadCommand
+type PayloadCommandArgument = run.PayloadCommandArgument
+type PayloadCommandRequest = run.PayloadCommandRequest
+type PayloadCommandResult = run.PayloadCommandResult
+
 type PayloadInspectPayload struct {
 	Record InstalledPayloadRecord  `json:"record"`
 	Events []InstalledPayloadEvent `json:"events,omitempty"`
@@ -120,6 +129,8 @@ type PayloadProviderService interface {
 	ConnectInstalledPayload(context.Context, InstalledPayloadRecord) (SessionRef, error)
 	CleanupInstalledPayload(context.Context, InstalledPayloadRecord, string) error
 	RefreshInstalledPayload(context.Context, InstalledPayloadRecord) (InstalledPayloadRecord, error)
+	ListPayloadCommands(context.Context, InstalledPayloadRecord) ([]PayloadCommand, error)
+	RunPayloadCommand(context.Context, InstalledPayloadRecord, PayloadCommandRequest) (PayloadCommandResult, error)
 }
 
 func payloadsAvailableHandler(runtime Runtime) Handler {
@@ -303,6 +314,167 @@ func payloadsRefreshHandler(runtime Runtime) Handler {
 	}
 }
 
+func payloadsRegisterSquatterHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if runtime.Payloads == nil {
+			return Result{}, fmt.Errorf("payload repository is not configured")
+		}
+		target := strings.TrimSpace(invocation.Positional("target"))
+		host := strings.TrimSpace(invocation.Option("host"))
+		if host == "" {
+			host = target
+		}
+		port := strings.TrimSpace(invocation.Option("port"))
+		if port == "" {
+			port = "9100"
+		}
+		if parsed, err := strconv.Atoi(port); err != nil || parsed < 1 || parsed > 65535 {
+			return Result{}, fmt.Errorf("port must be a TCP port: %q", port)
+		}
+		endpoint := host + ":" + port
+		record, err := runtime.Payloads.RecordInstalledPayload(ctx, InstalledPayloadRecord{
+			Workspace:                payloadWorkspace(invocation),
+			Provider:                 "squatter",
+			PayloadID:                "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+			PayloadVersion:           "v0.1.0",
+			Target:                   target,
+			State:                    PayloadStateInstalled,
+			Transport:                "tcp-bind",
+			Endpoint:                 endpoint,
+			InstanceKey:              "squatter:" + endpoint,
+			SupportsReconnect:        true,
+			SupportsMultipleSessions: true,
+			Reconnect: &PayloadProviderRecord{
+				ProviderID:    "squatter",
+				Schema:        "squatter.tcp_bind.reconnect",
+				SchemaVersion: "1",
+				Descriptor: map[string]any{
+					"target":    target,
+					"host":      host,
+					"port":      port,
+					"transport": "tcp-bind",
+				},
+			},
+			Cleanup: &PayloadProviderRecord{
+				ProviderID:    "squatter",
+				Schema:        "squatter.cleanup",
+				SchemaVersion: "1",
+				Descriptor:    map[string]any{"transport": "tcp-bind"},
+			},
+			Metadata: map[string]string{"source": "manual"},
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{
+			Human: fmt.Sprintf("Payload registered: %s squatter %s", record.Handle, endpoint),
+			JSON:  record,
+		}, nil
+	}
+}
+
+func payloadsCommandsHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if runtime.Payloads == nil {
+			return Result{}, fmt.Errorf("payload repository is not configured")
+		}
+		if runtime.PayloadProviders == nil {
+			return Result{}, fmt.Errorf("payload provider service is not configured")
+		}
+		record, err := runtime.Payloads.GetInstalledPayload(ctx, payloadWorkspace(invocation), invocation.Positional("payload"))
+		if err != nil {
+			return Result{}, err
+		}
+		commands, err := runtime.PayloadProviders.ListPayloadCommands(ctx, record)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Human: payloadCommandLines(commands), JSON: commands}, nil
+	}
+}
+
+func payloadsRunCommandHandler(runtime Runtime, command string) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if runtime.Payloads == nil {
+			return Result{}, fmt.Errorf("payload repository is not configured")
+		}
+		if runtime.PayloadProviders == nil {
+			return Result{}, fmt.Errorf("payload provider service is not configured")
+		}
+		workspacePath := payloadWorkspace(invocation)
+		record, err := runtime.Payloads.GetInstalledPayload(ctx, workspacePath, invocation.Positional("payload"))
+		if err != nil {
+			return Result{}, err
+		}
+		req, err := payloadCommandRequestFromInvocation(command, invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		result, err := runtime.PayloadProviders.RunPayloadCommand(ctx, record, req)
+		if err != nil {
+			_, _ = runtime.Payloads.UpdateInstalledPayloadState(ctx, workspacePath, record.Handle, PayloadStateUnreachable, err.Error())
+			return Result{}, err
+		}
+		if len(result.Artifacts) > 0 && runtime.Artifacts != nil {
+			result, err = materializePayloadCommandArtifacts(ctx, runtime, workspacePath, record, result)
+			if err != nil {
+				return Result{}, err
+			}
+		}
+		return Result{Human: payloadCommandResultHuman(result), JSON: result}, nil
+	}
+}
+
+func payloadCommandRequestFromInvocation(command string, invocation Invocation) (PayloadCommandRequest, error) {
+	req := PayloadCommandRequest{Command: command}
+	switch command {
+	case "getfile":
+		req.Args = []string{invocation.Positional("remote")}
+	case "putfile":
+		path, err := filepath.Abs(invocation.Positional("local"))
+		if err != nil {
+			return PayloadCommandRequest{}, err
+		}
+		req.InputPath = path
+		req.Args = []string{invocation.Positional("remote")}
+	case "cmd":
+		req.Args = []string{invocation.Positional("command")}
+	default:
+		return PayloadCommandRequest{}, fmt.Errorf("unsupported payload command %q", command)
+	}
+	return req, nil
+}
+
+func materializePayloadCommandArtifacts(ctx context.Context, runtime Runtime, workspacePath string, record InstalledPayloadRecord, result PayloadCommandResult) (PayloadCommandResult, error) {
+	if result.Fields == nil {
+		result.Fields = map[string]string{}
+	}
+	for index, artifact := range result.Artifacts {
+		materialized, err := runtime.Artifacts.MaterializeArtifact(ctx, ArtifactMaterialization{
+			Workspace: workspacePath,
+			ThrowID:   "payload-command",
+			RunID:     "payload-" + record.Handle + "-" + result.Command,
+			ModuleID:  "payload/" + record.Provider,
+			Target:    record.Target,
+			Artifact: Artifact{
+				Name: artifact.Name,
+				Kind: artifact.Kind,
+				Data: artifact.Data,
+				Path: artifact.Path,
+			},
+			CreatedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return PayloadCommandResult{}, err
+		}
+		result.Artifacts[index].Data = ""
+		result.Artifacts[index].Path = materialized.Path
+		result.Fields["artifactId"] = materialized.ID
+		result.Fields["artifactPath"] = materialized.Path
+	}
+	return result, nil
+}
+
 func listAvailablePayloads(ctx context.Context, runtime Runtime) ([]AvailablePayload, error) {
 	if runtime.PayloadProviders != nil {
 		payloads, err := runtime.PayloadProviders.ListAvailablePayloads(ctx)
@@ -401,6 +573,37 @@ func installedPayloadEventLines(events []InstalledPayloadEvent) []string {
 		))
 	}
 	return lines
+}
+
+func payloadCommandLines(commands []PayloadCommand) string {
+	if len(commands) == 0 {
+		return "No payload commands"
+	}
+	lines := []string{"COMMAND      EFFECT       SUMMARY"}
+	for _, command := range commands {
+		effect := "safe"
+		if command.Destructive {
+			effect = "destructive"
+		} else if !command.ReadOnly {
+			effect = "write"
+		}
+		lines = append(lines, fmt.Sprintf("%-12s %-12s %s", command.Name, effect, command.Summary))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func payloadCommandResultHuman(result PayloadCommandResult) string {
+	lines := []string{fmt.Sprintf("Payload command completed: %s", result.Command)}
+	if result.Summary != "" {
+		lines = append(lines, result.Summary)
+	}
+	if result.Stdout != "" {
+		lines = append(lines, strings.TrimSpace(result.Stdout))
+	}
+	if artifactID := result.Fields["artifactId"]; artifactID != "" {
+		lines = append(lines, "artifact "+artifactID+" "+result.Fields["artifactPath"])
+	}
+	return strings.Join(lines, "\n")
 }
 
 func sortAvailablePayloads(payloads []AvailablePayload) {

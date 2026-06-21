@@ -28,6 +28,10 @@ func NewWorkspaceStore() WorkspaceStore {
 	return WorkspaceStore{}
 }
 
+func (s WorkspaceStore) db(workspacePath string) sqlitestore.Store {
+	return sqlitestore.NewStore(workspacePath)
+}
+
 func (s WorkspaceStore) InitWorkspace(ctx context.Context, ws workspace.Workspace) (services.WorkspaceRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return services.WorkspaceRecord{}, err
@@ -134,7 +138,7 @@ func (s WorkspaceStore) RecordThrowPlan(ctx context.Context, plan commands.Throw
 	if plan.ID == "" {
 		return errors.New("throw plan id is required")
 	}
-	return sqlitestore.NewStore(workspacePath).RecordThrowPlan(ctx, plan)
+	return s.db(workspacePath).RecordThrowPlan(ctx, plan)
 }
 
 func (s WorkspaceStore) RecordThrowConfirmation(ctx context.Context, confirmation commands.ThrowConfirmationRecord) error {
@@ -145,7 +149,7 @@ func (s WorkspaceStore) RecordThrowConfirmation(ctx context.Context, confirmatio
 	if confirmation.ID == "" {
 		return errors.New("throw confirmation id is required")
 	}
-	return sqlitestore.NewStore(workspacePath).RecordThrowConfirmation(ctx, confirmation)
+	return s.db(workspacePath).RecordThrowConfirmation(ctx, confirmation)
 }
 
 func (s WorkspaceStore) RecordThrow(ctx context.Context, record commands.ThrowRecord) error {
@@ -156,7 +160,7 @@ func (s WorkspaceStore) RecordThrow(ctx context.Context, record commands.ThrowRe
 	if record.ID == "" {
 		return errors.New("throw id is required")
 	}
-	return sqlitestore.NewStore(workspacePath).RecordThrow(ctx, record)
+	return s.db(workspacePath).RecordThrow(ctx, record)
 }
 
 func (s WorkspaceStore) MaterializeArtifact(ctx context.Context, materialization commands.ArtifactMaterialization) (commands.ArtifactRecord, error) {
@@ -203,7 +207,7 @@ func (s WorkspaceStore) MaterializeArtifact(ctx context.Context, materialization
 		Size:      len(data),
 		CreatedAt: createdAt.UTC().Format(time.RFC3339Nano),
 	}
-	if err := sqlitestore.NewStore(workspacePath).RecordArtifact(ctx, record); err != nil {
+	if err := s.db(workspacePath).RecordArtifact(ctx, record); err != nil {
 		return commands.ArtifactRecord{}, err
 	}
 	return record, nil
@@ -262,7 +266,7 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 		Size:      int(written),
 		CreatedAt: createdAt.UTC().Format(time.RFC3339Nano),
 	}
-	if err := sqlitestore.NewStore(workspacePath).RecordArtifact(ctx, record); err != nil {
+	if err := s.db(workspacePath).RecordArtifact(ctx, record); err != nil {
 		return commands.ArtifactRecord{}, err
 	}
 	return record, nil
@@ -284,14 +288,14 @@ func (s WorkspaceStore) RecordEvent(ctx context.Context, workspacePath string, e
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return sqlitestore.NewStore(workspacePath).RecordEvent(ctx, evt)
+	return s.db(workspacePath).RecordEvent(ctx, evt)
 }
 
 func (s WorkspaceStore) ListThrowPlans(ctx context.Context, workspacePath string) ([]commands.ThrowPlanRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return sqlitestore.NewStore(workspacePath).ListThrowPlans(ctx)
+	return s.db(workspacePath).ListThrowPlans(ctx)
 }
 
 func (s WorkspaceStore) GetThrowPlan(ctx context.Context, workspacePath, id string) (commands.ThrowPlanRecord, error) {
@@ -301,7 +305,7 @@ func (s WorkspaceStore) GetThrowPlan(ctx context.Context, workspacePath, id stri
 	if id == "" {
 		return commands.ThrowPlanRecord{}, errors.New("throw id is required")
 	}
-	return sqlitestore.NewStore(workspacePath).GetThrowPlan(ctx, id)
+	return s.db(workspacePath).GetThrowPlan(ctx, id)
 }
 
 func (s WorkspaceStore) GetThrowConfirmation(ctx context.Context, workspacePath, planHash string) (commands.ThrowConfirmationRecord, bool, error) {
@@ -311,14 +315,14 @@ func (s WorkspaceStore) GetThrowConfirmation(ctx context.Context, workspacePath,
 	if planHash == "" {
 		return commands.ThrowConfirmationRecord{}, false, errors.New("throw confirmation plan hash is required")
 	}
-	return sqlitestore.NewStore(workspacePath).GetThrowConfirmation(ctx, planHash)
+	return s.db(workspacePath).GetThrowConfirmation(ctx, planHash)
 }
 
 func (s WorkspaceStore) ListArtifacts(ctx context.Context, workspacePath string) ([]commands.ArtifactRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return sqlitestore.NewStore(workspacePath).ListArtifacts(ctx)
+	return s.db(workspacePath).ListArtifacts(ctx)
 }
 
 func (s WorkspaceStore) GetArtifact(ctx context.Context, workspacePath, id string) (commands.ArtifactRecord, error) {
@@ -328,7 +332,7 @@ func (s WorkspaceStore) GetArtifact(ctx context.Context, workspacePath, id strin
 	if id == "" {
 		return commands.ArtifactRecord{}, errors.New("artifact id is required")
 	}
-	return sqlitestore.NewStore(workspacePath).GetArtifact(ctx, id)
+	return s.db(workspacePath).GetArtifact(ctx, id)
 }
 
 func (s WorkspaceStore) RecordInstalledPayload(ctx context.Context, record commands.InstalledPayloadRecord) (commands.InstalledPayloadRecord, error) {
@@ -337,14 +341,15 @@ func (s WorkspaceStore) RecordInstalledPayload(ctx context.Context, record comma
 	}
 	workspacePath := workspace.ResolvePath(record.Workspace)
 	record.Workspace = workspacePath
-	return sqlitestore.NewStore(workspacePath).RecordInstalledPayload(ctx, record)
+	return s.db(workspacePath).RecordInstalledPayload(ctx, record)
 }
 
 func (s WorkspaceStore) ListInstalledPayloads(ctx context.Context, workspacePath string, filter commands.InstalledPayloadFilter) ([]commands.InstalledPayloadRecord, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return sqlitestore.NewStore(workspace.ResolvePath(workspacePath)).ListInstalledPayloads(ctx, workspace.ResolvePath(workspacePath), filter)
+	workspacePath = workspace.ResolvePath(workspacePath)
+	return s.db(workspacePath).ListInstalledPayloads(ctx, workspacePath, filter)
 }
 
 func (s WorkspaceStore) GetInstalledPayload(ctx context.Context, workspacePath, ref string) (commands.InstalledPayloadRecord, error) {
@@ -354,7 +359,8 @@ func (s WorkspaceStore) GetInstalledPayload(ctx context.Context, workspacePath, 
 	if ref == "" {
 		return commands.InstalledPayloadRecord{}, errors.New("installed payload reference is required")
 	}
-	return sqlitestore.NewStore(workspace.ResolvePath(workspacePath)).GetInstalledPayload(ctx, workspace.ResolvePath(workspacePath), ref)
+	workspacePath = workspace.ResolvePath(workspacePath)
+	return s.db(workspacePath).GetInstalledPayload(ctx, workspacePath, ref)
 }
 
 func (s WorkspaceStore) UpdateInstalledPayloadState(ctx context.Context, workspacePath, ref, state, reason string) (commands.InstalledPayloadRecord, error) {
@@ -364,31 +370,33 @@ func (s WorkspaceStore) UpdateInstalledPayloadState(ctx context.Context, workspa
 	if ref == "" {
 		return commands.InstalledPayloadRecord{}, errors.New("installed payload reference is required")
 	}
-	return sqlitestore.NewStore(workspace.ResolvePath(workspacePath)).UpdateInstalledPayloadState(ctx, workspace.ResolvePath(workspacePath), ref, state, reason)
+	workspacePath = workspace.ResolvePath(workspacePath)
+	return s.db(workspacePath).UpdateInstalledPayloadState(ctx, workspacePath, ref, state, reason)
 }
 
 func (s WorkspaceStore) ListInstalledPayloadEvents(ctx context.Context, workspacePath, ref string) ([]commands.InstalledPayloadEvent, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return sqlitestore.NewStore(workspace.ResolvePath(workspacePath)).ListInstalledPayloadEvents(ctx, workspace.ResolvePath(workspacePath), ref)
+	workspacePath = workspace.ResolvePath(workspacePath)
+	return s.db(workspacePath).ListInstalledPayloadEvents(ctx, workspacePath, ref)
 }
 
 func (s WorkspaceStore) ListEvents(ctx context.Context, workspacePath string, filter event.Filter) ([]event.Event, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return sqlitestore.NewStore(workspacePath).ListEvents(ctx, filter)
+	return s.db(workspacePath).ListEvents(ctx, filter)
 }
 
 func (s WorkspaceStore) EnsureWorkspaceDatabase(ctx context.Context, workspacePath string) error {
-	return sqlitestore.NewStore(workspacePath).Ensure(ctx)
+	return s.db(workspacePath).Ensure(ctx)
 }
 
 func (s WorkspaceStore) SaveOperatorSession(ctx context.Context, workspacePath string, state operatorsession.PersistedState) error {
-	return sqlitestore.NewStore(workspacePath).SaveOperatorSession(ctx, state)
+	return s.db(workspacePath).SaveOperatorSession(ctx, state)
 }
 
 func (s WorkspaceStore) LoadOperatorSession(ctx context.Context, workspacePath string) (operatorsession.PersistedState, bool, error) {
-	return sqlitestore.NewStore(workspacePath).LoadOperatorSession(ctx)
+	return s.db(workspacePath).LoadOperatorSession(ctx)
 }

@@ -73,8 +73,7 @@ infra    -> app -> domain
 
 - New behavior needs tests. Coverage intent (see `spec/testing-roadmap.html`):
   domain 90%+, application services 85%+, Python SDK 85%+.
-- Production commands should exercise the daemon boundary; an in-process
-  engine harness (`internal/app/apptest`) is available for faster tests.
+- Production commands should exercise the daemon boundary.
 - Mock modules exist for tests and examples only and are not part of the
   shipped catalog.
 

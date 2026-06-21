@@ -20,6 +20,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
 type WorkspaceInitializer interface {
@@ -37,6 +38,8 @@ type RunClientFactory interface {
 type RunClient interface {
 	Close() error
 	RunMockExploit(context.Context, RunMockExploitRequest) (RunMockExploitResponse, error)
+	ListPayloadCommands(context.Context, string, RunPayloadCommandListRequest) ([]PayloadCommand, error)
+	RunPayloadCommand(context.Context, RunPayloadCommandRunRequest) (PayloadCommandResult, error)
 	ListSessions(context.Context) ([]SessionRef, error)
 	ReadSession(context.Context, string, time.Duration) (SessionChunk, error)
 	TailSession(context.Context, string, SessionTailOptions) (SessionChunk, error)
@@ -174,6 +177,15 @@ type RunMockExploitRequest struct {
 	ChainConfig  map[string]string
 	TargetConfig map[string]string
 	ThrowStarted string
+}
+
+type RunPayloadCommandListRequest = run.PayloadCommandListRequest
+
+type RunPayloadCommandRunRequest struct {
+	Operation string
+	Chain     string
+	ModuleID  string
+	Request   run.PayloadCommandRequest
 }
 
 type Finding struct {
@@ -877,6 +889,77 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: payloadsRefreshHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "register-squatter"},
+			Aliases: [][]string{{"payload", "register-squatter"}},
+			Summary: "Register a manually installed Squatter TCP-bind payload.",
+			Positionals: []Positional{
+				{Name: "target", Help: "Target host or label", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("host", "", "Reachable Squatter host"),
+				stringOption("port", "", "Squatter TCP bind port"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsRegisterSquatterHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "commands"},
+			Aliases: [][]string{{"payload", "commands"}},
+			Summary: "List provider-owned commands for an installed payload.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsCommandsHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "getfile"},
+			Aliases: [][]string{{"payload", "getfile"}},
+			Summary: "Download a file through an installed payload command.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+				{Name: "remote", Help: "Remote path", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsRunCommandHandler(runtime, "getfile"),
+		},
+		Definition{
+			Path:    []string{"payloads", "putfile"},
+			Aliases: [][]string{{"payload", "putfile"}},
+			Summary: "Upload a local file through an installed payload command.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+				{Name: "local", Help: "Local path", Required: true},
+				{Name: "remote", Help: "Remote path", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsRunCommandHandler(runtime, "putfile"),
+		},
+		Definition{
+			Path:    []string{"payloads", "cmd"},
+			Aliases: [][]string{{"payload", "cmd"}},
+			Summary: "Run one cmd.exe command through an installed payload command.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+				{Name: "command", Help: "Command line", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsRunCommandHandler(runtime, "cmd"),
 		},
 		Definition{
 			Path:    []string{"artifact", "list"},

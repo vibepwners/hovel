@@ -155,6 +155,11 @@ tasks:
     cmds:
       - bash scripts/generate-demos.sh
 
+  demo:squatter-wine:
+    desc: Generate the Docker/Wine Squatter MCP demo GIF.
+    cmds:
+      - bash scripts/generate-squatter-wine-demo.sh
+
   docs:api:
     desc: Generate language-native SDK API docs into _site/api/sdk.
     cmds:

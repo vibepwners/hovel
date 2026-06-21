@@ -33,7 +33,9 @@ func parseOptions(args []string) (Options, error) {
 		Delay:       defaultFrameDelay,
 		TokenDelay:  defaultTokenDelay,
 		Color:       os.Getenv("NO_COLOR") == "",
-		Prompt:      "Throw the configured mock exploit through Hovel MCP",
+		Prompt:      os.Getenv("HOVEL_DEMO_AGENT_PROMPT"),
+		Scenario:    envOrDefault("HOVEL_DEMO_AGENT_SCENARIO", "throw"),
+		Payload:     envOrDefault("HOVEL_DEMO_PAYLOAD", "p1"),
 	}
 
 	fs := flag.NewFlagSet("hovel-mock-agent", flag.ContinueOnError)
@@ -47,6 +49,8 @@ func parseOptions(args []string) (Options, error) {
 	fs.StringVar(&opts.MCPReadPath, "mcp-read", opts.MCPReadPath, "path to read MCP server JSON-RPC messages from")
 	fs.StringVar(&opts.MCPWritePath, "mcp-write", opts.MCPWritePath, "path to write MCP client JSON-RPC messages to")
 	fs.StringVar(&opts.Prompt, "prompt", opts.Prompt, "mock agent prompt text")
+	fs.StringVar(&opts.Scenario, "scenario", opts.Scenario, "demo scenario: throw or squatter")
+	fs.StringVar(&opts.Payload, "payload", opts.Payload, "installed payload handle for squatter scenario")
 	fs.DurationVar(&opts.Delay, "delay", opts.Delay, "delay between transcript frames")
 	fs.DurationVar(&opts.TokenDelay, "token-delay", opts.TokenDelay, "delay between simulated assistant tokens")
 	noColor := fs.Bool("no-color", false, "disable ANSI color")

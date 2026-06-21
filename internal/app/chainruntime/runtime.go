@@ -89,31 +89,8 @@ type StepExecuteResult struct {
 	AgentHints        []run.AgentHint
 }
 
-type PayloadProviderRecord struct {
-	ProviderID    string
-	Schema        string
-	SchemaVersion string
-	Descriptor    map[string]any
-}
-
-type InstalledPayloadDescriptor struct {
-	Provider                 string
-	PayloadID                string
-	PayloadVersion           string
-	Target                   string
-	TargetID                 string
-	State                    string
-	Transport                string
-	Endpoint                 string
-	InstanceKey              string
-	StampID                  string
-	ArtifactIDs              []string
-	SupportsReconnect        bool
-	SupportsMultipleSessions bool
-	Reconnect                *PayloadProviderRecord
-	Cleanup                  *PayloadProviderRecord
-	Metadata                 map[string]string
-}
+type PayloadProviderRecord = run.PayloadProviderRecord
+type InstalledPayloadDescriptor = run.InstalledPayloadDescriptor
 
 type PreparedValue struct {
 	Value    any
@@ -202,7 +179,7 @@ func (r Runtime) Execute(ctx context.Context, req Request) (result Result, err e
 		evidence = append(evidence, executed.Evidence...)
 		agentHints = append(agentHints, executed.AgentHints...)
 		sessions = append(sessions, cloneSessions(executed.Sessions)...)
-		installedPayloads = append(installedPayloads, cloneInstalledPayloads(executed.InstalledPayloads)...)
+		installedPayloads = append(installedPayloads, run.CloneInstalledPayloads(executed.InstalledPayloads)...)
 		capabilities = upsertCapabilities(capabilities, executed.Capabilities)
 		capabilities = applyTransitions(capabilities, executed.StateTransitions)
 		if executed.Status != "" && executed.Status != "succeeded" {
@@ -298,31 +275,6 @@ func confirmedPreparedValues(values map[string]PreparedValue) map[string]any {
 	return out
 }
 
-func cloneInstalledPayloads(payloads []InstalledPayloadDescriptor) []InstalledPayloadDescriptor {
-	out := make([]InstalledPayloadDescriptor, 0, len(payloads))
-	for _, payload := range payloads {
-		out = append(out, InstalledPayloadDescriptor{
-			Provider:                 payload.Provider,
-			PayloadID:                payload.PayloadID,
-			PayloadVersion:           payload.PayloadVersion,
-			Target:                   payload.Target,
-			TargetID:                 payload.TargetID,
-			State:                    payload.State,
-			Transport:                payload.Transport,
-			Endpoint:                 payload.Endpoint,
-			InstanceKey:              payload.InstanceKey,
-			StampID:                  payload.StampID,
-			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
-			SupportsReconnect:        payload.SupportsReconnect,
-			SupportsMultipleSessions: payload.SupportsMultipleSessions,
-			Reconnect:                clonePayloadProviderRecord(payload.Reconnect),
-			Cleanup:                  clonePayloadProviderRecord(payload.Cleanup),
-			Metadata:                 cloneStringMap(payload.Metadata),
-		})
-	}
-	return out
-}
-
 func cloneSessions(sessions []run.SessionRef) []run.SessionRef {
 	if len(sessions) == 0 {
 		return nil
@@ -335,34 +287,11 @@ func cloneSessions(sessions []run.SessionRef) []run.SessionRef {
 	return out
 }
 
-func clonePayloadProviderRecord(record *PayloadProviderRecord) *PayloadProviderRecord {
-	if record == nil {
-		return nil
-	}
-	return &PayloadProviderRecord{
-		ProviderID:    record.ProviderID,
-		Schema:        record.Schema,
-		SchemaVersion: record.SchemaVersion,
-		Descriptor:    cloneAnyMap(record.Descriptor),
-	}
-}
-
 func cloneAnyMap(values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return nil
 	}
 	out := make(map[string]any, len(values))
-	for key, value := range values {
-		out[key] = value
-	}
-	return out
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(values))
 	for key, value := range values {
 		out[key] = value
 	}

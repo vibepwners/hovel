@@ -14,6 +14,11 @@ type ModuleRunner interface {
 	Run(context.Context, run.Request) (run.Result, error)
 }
 
+type PayloadCommandRunner interface {
+	ListPayloadCommands(context.Context, string, run.PayloadCommandListRequest) ([]run.PayloadCommand, error)
+	RunPayloadCommand(context.Context, string, run.PayloadCommandRequest) (run.PayloadCommandResult, error)
+}
+
 type SessionBroker interface {
 	ListSessions(context.Context) ([]run.SessionRef, error)
 	WriteSession(context.Context, string, []byte) error
@@ -105,6 +110,41 @@ type ExecuteModuleRequest struct {
 	ThrowStarted time.Time
 }
 
+type PayloadCommandListRequest struct {
+	ModuleID string
+	Request  run.PayloadCommandListRequest
+}
+
+type PayloadCommandRunRequest struct {
+	Operation string
+	Chain     string
+	ModuleID  string
+	Request   run.PayloadCommandRequest
+}
+
+func (s RunService) ListPayloadCommands(ctx context.Context, req PayloadCommandListRequest) ([]run.PayloadCommand, error) {
+	runner, ok := s.runner.(PayloadCommandRunner)
+	if !ok {
+		return nil, errors.New("payload command runner is not configured")
+	}
+	return runner.ListPayloadCommands(ctx, req.ModuleID, req.Request)
+}
+
+func (s RunService) RunPayloadCommand(ctx context.Context, req PayloadCommandRunRequest) (run.PayloadCommandResult, error) {
+	runner, ok := s.runner.(PayloadCommandRunner)
+	if !ok {
+		return run.PayloadCommandResult{}, errors.New("payload command runner is not configured")
+	}
+	result, err := runner.RunPayloadCommand(ctx, req.ModuleID, req.Request)
+	if err != nil {
+		return run.PayloadCommandResult{}, err
+	}
+	if s.events != nil {
+		_ = s.appendPayloadCommandEvent(ctx, req, result)
+	}
+	return result, nil
+}
+
 func (s RunService) ExecuteModule(ctx context.Context, req ExecuteModuleRequest) (run.Result, error) {
 	runID := s.ids.NewID()
 	request, err := run.NewRequest(run.RequestArgs{
@@ -194,6 +234,45 @@ func (s RunService) appendRunEvent(ctx context.Context, typ, message string, req
 			RunID:     request.ID,
 			ModuleID:  request.ModuleID,
 			TargetID:  request.Target,
+		},
+		Fields: fields,
+	})
+	if err != nil {
+		return err
+	}
+	return s.events.Append(ctx, evt)
+}
+
+func (s RunService) appendPayloadCommandEvent(ctx context.Context, req PayloadCommandRunRequest, result run.PayloadCommandResult) error {
+	if s.ids == nil || s.clock == nil {
+		return nil
+	}
+	id, err := event.NewID(s.ids.NewID())
+	if err != nil {
+		return err
+	}
+	eventType, err := event.NewType("hovel.payload.command.completed")
+	if err != nil {
+		return err
+	}
+	fields := map[string]string{
+		"payload": req.Request.InstalledPayloadID,
+		"command": req.Request.Command,
+		"summary": result.Summary,
+	}
+	for key, value := range result.Fields {
+		fields[key] = value
+	}
+	evt, err := event.New(event.Args{
+		ID:        id,
+		Type:      eventType,
+		Message:   "payload command completed",
+		Timestamp: s.clock.Now(),
+		Refs: event.Refs{
+			Operation: req.Operation,
+			Chain:     req.Chain,
+			ModuleID:  req.ModuleID,
+			TargetID:  req.Request.Target,
 		},
 		Fields: fields,
 	})

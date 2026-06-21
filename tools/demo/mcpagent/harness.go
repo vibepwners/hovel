@@ -32,6 +32,8 @@ type Options struct {
 	MCPReadPath  string
 	MCPWritePath string
 	Prompt       string
+	Scenario     string
+	Payload      string
 	Delay        time.Duration
 	TokenDelay   time.Duration
 	Color        bool
@@ -77,8 +79,18 @@ func runWithConnect(ctx context.Context, opts Options, connect connectFunc) erro
 	if opts.Chain == "" {
 		opts.Chain = "mock-survey-exploit-demo"
 	}
+	if opts.Scenario == "" {
+		opts.Scenario = "throw"
+	}
 	if opts.Prompt == "" {
-		opts.Prompt = "Throw the configured mock exploit through Hovel MCP"
+		if opts.Scenario == "squatter" {
+			opts.Prompt = "Operate the registered Squatter implant through Hovel MCP"
+		} else {
+			opts.Prompt = "Throw the configured mock exploit through Hovel MCP"
+		}
+	}
+	if opts.Scenario == "squatter" {
+		return runSquatterWithConnect(ctx, opts, connect)
 	}
 
 	renderer := newTranscriptRenderer(opts.Out, opts.Color, opts.Delay, opts.TokenDelay, opts.Prompt)
@@ -167,6 +179,122 @@ func runWithConnect(ctx context.Context, opts Options, connect connectFunc) erro
 	}
 	renderer.tool("hovel_throw_start", summarizeThrow(throwOut))
 	renderer.assistant("Hovel throw completed. The mock exploit opened an interactive shell session and the result came back through structured MCP output.")
+	return nil
+}
+
+func runSquatterWithConnect(ctx context.Context, opts Options, connect connectFunc) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if opts.Out == nil {
+		opts.Out = io.Discard
+	}
+	if opts.Err == nil {
+		opts.Err = io.Discard
+	}
+	if opts.HovelPath == "" {
+		opts.HovelPath = "hovel"
+	}
+	if opts.Workspace == "" {
+		opts.Workspace = ".hovel"
+	}
+	if opts.Operation == "" {
+		opts.Operation = "demo"
+	}
+	if opts.Payload == "" {
+		opts.Payload = "p1"
+	}
+	if opts.Prompt == "" {
+		opts.Prompt = "Operate the registered Squatter implant through Hovel MCP"
+	}
+
+	renderer := newTranscriptRenderer(opts.Out, opts.Color, opts.Delay, opts.TokenDelay, opts.Prompt)
+	renderer.header("Mock Codex Agent", []string{
+		"model: mock-codex",
+		"transport: " + transportLabel(opts),
+		"workspace: " + opts.Workspace,
+		"operation: " + opts.Operation,
+		"payload: " + opts.Payload,
+	})
+	renderer.user(opts.Prompt)
+	renderer.assistant("I will use Hovel's payload-command tools so Squatter stays provider-owned and no raw session is exposed.")
+
+	session, stderr, err := connect(ctx, opts)
+	if err != nil {
+		if stderr != "" {
+			fmt.Fprintf(opts.Err, "%s\n", stderr)
+		}
+		return err
+	}
+	defer session.Close()
+
+	tools, err := session.ListTools(ctx, &mcpsdk.ListToolsParams{})
+	if err != nil {
+		return fmt.Errorf("list tools: %w", err)
+	}
+	names := toolNames(tools)
+	if err := requireTools(names, []string{
+		"hovel_operator_identity",
+		"hovel_workspace_snapshot",
+		"hovel_payload_command_list",
+		"hovel_payload_command_call",
+	}); err != nil {
+		return err
+	}
+	renderer.tool("tools/list", strings.Join(names, "\n"))
+
+	identity, err := callAndDecode[operatorIdentityOutput](ctx, session, "hovel_operator_identity", nil)
+	if err != nil {
+		return err
+	}
+	renderer.tool("hovel_operator_identity", fmt.Sprintf(
+		"entity: %s\nkind: %s\nagent: %t\noperation: %s",
+		identity.Entity.ID,
+		identity.Entity.Kind,
+		identity.Entity.Agent,
+		identity.Entity.Operation,
+	))
+
+	commands, err := callAndDecode[payloadCommandListOutput](ctx, session, "hovel_payload_command_list", map[string]any{
+		"payload": opts.Payload,
+	})
+	if err != nil {
+		return err
+	}
+	renderer.tool("hovel_payload_command_list", summarizePayloadCommands(commands))
+
+	cmdOut, err := callAndDecode[payloadCommandCallOutput](ctx, session, "hovel_payload_command_call", map[string]any{
+		"payload": opts.Payload,
+		"command": "cmd",
+		"args":    []string{"echo squatter-mcp-cmd-ok"},
+	})
+	if err != nil {
+		return err
+	}
+	renderer.tool("hovel_payload_command_call cmd", summarizePayloadCommandResult(cmdOut.Result))
+
+	putOut, err := callAndDecode[payloadCommandCallOutput](ctx, session, "hovel_payload_command_call", map[string]any{
+		"payload":       opts.Payload,
+		"command":       "putfile",
+		"args":          []string{"agent-upload.txt"},
+		"inputData":     "squatter mcp upload ok\n",
+		"inputEncoding": "utf-8",
+	})
+	if err != nil {
+		return err
+	}
+	renderer.tool("hovel_payload_command_call putfile", summarizePayloadCommandResult(putOut.Result))
+
+	getOut, err := callAndDecode[payloadCommandCallOutput](ctx, session, "hovel_payload_command_call", map[string]any{
+		"payload": opts.Payload,
+		"command": "getfile",
+		"args":    []string{"agent-upload.txt"},
+	})
+	if err != nil {
+		return err
+	}
+	renderer.tool("hovel_payload_command_call getfile", summarizePayloadCommandResult(getOut.Result))
+	renderer.assistant("Squatter responded through provider commands: cmd executed, putfile uploaded content, and getfile returned a Hovel artifact.")
 	return nil
 }
 
@@ -379,6 +507,37 @@ func summarizeThrow(out throwStartOutput) string {
 				lines = append(lines, "  name: "+session.Name)
 			}
 		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func summarizePayloadCommands(out payloadCommandListOutput) string {
+	lines := []string{
+		fmt.Sprintf("payload: %s %s", out.Payload.Handle, out.Payload.Endpoint),
+	}
+	for _, command := range out.Commands {
+		effect := "read"
+		if command.Destructive {
+			effect = "write"
+		}
+		lines = append(lines, fmt.Sprintf("- %s (%s) %s", command.Name, effect, command.Summary))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func summarizePayloadCommandResult(out payloadCommandResult) string {
+	lines := []string{
+		"command: " + out.Command,
+		"summary: " + out.Summary,
+	}
+	if strings.TrimSpace(out.Stdout) != "" {
+		lines = append(lines, "stdout: "+strings.TrimSpace(out.Stdout))
+	}
+	if artifactID := out.Fields["artifactId"]; artifactID != "" {
+		lines = append(lines, "artifact: "+artifactID)
+	}
+	if artifactPath := out.Fields["artifactPath"]; artifactPath != "" {
+		lines = append(lines, "path: "+artifactPath)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -840,6 +999,38 @@ type throwSessionOutput struct {
 	State        string   `json:"state"`
 	Transport    string   `json:"transport"`
 	Capabilities []string `json:"capabilities"`
+}
+
+type payloadCommandListOutput struct {
+	Payload  installedPayloadOutput `json:"payload"`
+	Commands []payloadCommand       `json:"commands"`
+}
+
+type payloadCommandCallOutput struct {
+	Payload installedPayloadOutput `json:"payload"`
+	Result  payloadCommandResult   `json:"result"`
+}
+
+type installedPayloadOutput struct {
+	Handle   string `json:"handle"`
+	Provider string `json:"provider"`
+	Target   string `json:"target"`
+	State    string `json:"state"`
+	Endpoint string `json:"endpoint"`
+}
+
+type payloadCommand struct {
+	Name        string `json:"name"`
+	Summary     string `json:"summary,omitempty"`
+	ReadOnly    bool   `json:"readOnly,omitempty"`
+	Destructive bool   `json:"destructive,omitempty"`
+}
+
+type payloadCommandResult struct {
+	Command string            `json:"command"`
+	Summary string            `json:"summary,omitempty"`
+	Stdout  string            `json:"stdout,omitempty"`
+	Fields  map[string]string `json:"fields,omitempty"`
 }
 
 type operationOutput struct {

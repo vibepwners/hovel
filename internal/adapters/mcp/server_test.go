@@ -141,7 +141,7 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 	names := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
-		if tool.Name == ToolThrowStart {
+		if tool.Name == ToolThrowStart || tool.Name == ToolPayloadCommandCall {
 			if tool.Annotations == nil || tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || !*tool.Annotations.DestructiveHint {
 				t.Fatalf("tool %s is missing destructive annotations", tool.Name)
 			}
@@ -152,7 +152,7 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 		}
 	}
 	sort.Strings(names)
-	wantNames := []string{ToolOperationList, ToolOperatorIdentity, ToolOperatorListEntities, ToolThrowStart, ToolWorkspaceSnapshot}
+	wantNames := []string{ToolOperationList, ToolOperatorIdentity, ToolOperatorListEntities, ToolPayloadCommandCall, ToolPayloadCommandList, ToolThrowStart, ToolWorkspaceSnapshot}
 	sort.Strings(wantNames)
 	if !reflect.DeepEqual(names, wantNames) {
 		t.Fatalf("tool names = %#v, want %#v", names, wantNames)
@@ -334,6 +334,14 @@ func (f *fakeDaemon) Snapshot(_ context.Context, req daemonrpc.SnapshotRequest) 
 	defer f.mu.Unlock()
 	f.snapshotRequests = append(f.snapshotRequests, req)
 	return f.snapshot, nil
+}
+
+func (f *fakeDaemon) ListPayloadCommands(context.Context, daemonrpc.PayloadCommandListRequest) (daemonrpc.PayloadCommandListResponse, error) {
+	return daemonrpc.PayloadCommandListResponse{}, nil
+}
+
+func (f *fakeDaemon) RunPayloadCommand(context.Context, daemonrpc.PayloadCommandRunRequest) (daemonrpc.PayloadCommandRunResponse, error) {
+	return daemonrpc.PayloadCommandRunResponse{}, nil
 }
 
 func (f *fakeDaemon) Close() error { return nil }

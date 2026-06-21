@@ -19,6 +19,8 @@ if ! command -v hovel-mock-agent >/dev/null 2>&1; then
 fi
 
 operation="${HOVEL_DEMO_OPERATION:-demo}"
+scenario="${HOVEL_DEMO_AGENT_SCENARIO:-throw}"
+payload="${HOVEL_DEMO_PAYLOAD:-p1}"
 width="${HOVEL_DEMO_TMUX_WIDTH:-$(tput cols 2>/dev/null || true)}"
 height="${HOVEL_DEMO_TMUX_HEIGHT:-$(tput lines 2>/dev/null || true)}"
 agent_delay="${HOVEL_DEMO_AGENT_DELAY:-160ms}"
@@ -58,6 +60,9 @@ printf 'hovel mcp\n'
 printf 'workspace: %s\n' "$HOVEL_WORKSPACE"
 printf 'operation: %s\n' "$HOVEL_DEMO_OPERATION"
 printf 'chain: %s\n\n' "$HOVEL_DEMO_CHAIN"
+if [[ "${HOVEL_DEMO_AGENT_SCENARIO:-throw}" == "squatter" ]]; then
+  printf 'payload: %s\n\n' "$HOVEL_DEMO_PAYLOAD"
+fi
 printf 'stdio JSON-RPC bridged over named pipes\n'
 printf 'operator entity: demo-mcp-pane\n\n'
 set +e
@@ -82,6 +87,24 @@ export HOVEL_CLI_NO_WELCOME=1
 printf '\033[H\033[2J'
 printf 'hovel cli\n'
 printf 'workspace: %s\n\n' "$HOVEL_WORKSPACE"
+if [[ "${HOVEL_DEMO_AGENT_SCENARIO:-throw}" == "squatter" ]]; then
+  printf '\033[35mh0v3l\033[0m> op use %s\n' "$HOVEL_DEMO_OPERATION"
+  printf 'Operation selected: %s\n' "$HOVEL_DEMO_OPERATION"
+  printf '\033[35mh0v3l\033[0m [%s]> payloads installed\n' "$HOVEL_DEMO_OPERATION"
+  hovel run --workspace "$HOVEL_WORKSPACE" --op "$HOVEL_DEMO_OPERATION" -- payloads installed --workspace "$HOVEL_WORKSPACE"
+  printf '\033[35mh0v3l\033[0m [%s]> payloads inspect %s\n' "$HOVEL_DEMO_OPERATION" "$HOVEL_DEMO_PAYLOAD"
+  hovel run --workspace "$HOVEL_WORKSPACE" --op "$HOVEL_DEMO_OPERATION" -- payloads inspect "$HOVEL_DEMO_PAYLOAD" --workspace "$HOVEL_WORKSPACE"
+  printf '\033[35mh0v3l\033[0m [%s]> payloads commands %s\n' "$HOVEL_DEMO_OPERATION" "$HOVEL_DEMO_PAYLOAD"
+  hovel run --workspace "$HOVEL_WORKSPACE" --op "$HOVEL_DEMO_OPERATION" -- payloads commands "$HOVEL_DEMO_PAYLOAD" --workspace "$HOVEL_WORKSPACE"
+  touch "$HOVEL_DEMO_CLI_READY"
+  while [[ ! -s "$HOVEL_DEMO_AGENT_STATUS" ]]; do
+    sleep 0.2
+  done
+  printf '\033[35mh0v3l\033[0m [%s]> artifact list\n' "$HOVEL_DEMO_OPERATION"
+  hovel run --workspace "$HOVEL_WORKSPACE" --op "$HOVEL_DEMO_OPERATION" -- artifact list --workspace "$HOVEL_WORKSPACE"
+  sleep 600
+  exit 0
+fi
 printf '\033[35mh0v3l\033[0m> op use %s\n' "$HOVEL_DEMO_OPERATION"
 printf 'Operation selected: %s\n' "$HOVEL_DEMO_OPERATION"
 printf '\033[35mh0v3l\033[0m [%s]> chain use %s\n' "$HOVEL_DEMO_OPERATION" "$HOVEL_DEMO_CHAIN"
@@ -121,6 +144,14 @@ while [[ ! -f "$HOVEL_DEMO_AGENT_START" ]]; do
 done
 printf '\033[H\033[2J'
 set +e
+prompt="${HOVEL_DEMO_AGENT_PROMPT:-}"
+if [[ -z "$prompt" ]]; then
+  if [[ "${HOVEL_DEMO_AGENT_SCENARIO:-throw}" == "squatter" ]]; then
+    prompt="Operate the registered Squatter implant through Hovel MCP"
+  else
+    prompt="Throw the configured mock exploit through Hovel MCP"
+  fi
+fi
 hovel-mock-agent \
   --workspace "$HOVEL_WORKSPACE" \
   --op "$HOVEL_DEMO_OPERATION" \
@@ -129,7 +160,9 @@ hovel-mock-agent \
   --mcp-write "$HOVEL_MCP_CLIENT_TO_SERVER" \
   --delay "$HOVEL_DEMO_AGENT_DELAY" \
   --token-delay "$HOVEL_DEMO_AGENT_TOKEN_DELAY" \
-  --prompt "Throw the configured mock exploit through Hovel MCP"
+  --scenario "$HOVEL_DEMO_AGENT_SCENARIO" \
+  --payload "$HOVEL_DEMO_PAYLOAD" \
+  --prompt "$prompt"
 status=$?
 set -e
 printf '%s' "$status" >"$HOVEL_DEMO_AGENT_STATUS"
@@ -142,6 +175,8 @@ pane_env=(
   "HOVEL_WORKSPACE=$HOVEL_WORKSPACE"
   "HOVEL_DEMO_OPERATION=$operation"
   "HOVEL_DEMO_CHAIN=$HOVEL_DEMO_CHAIN"
+  "HOVEL_DEMO_AGENT_SCENARIO=$scenario"
+  "HOVEL_DEMO_PAYLOAD=$payload"
   "HOVEL_MCP_CLIENT_TO_SERVER=$client_to_server"
   "HOVEL_MCP_SERVER_TO_CLIENT=$server_to_client"
   "HOVEL_DEMO_AGENT_DELAY=$agent_delay"
@@ -184,6 +219,15 @@ wait_for_pane_text() {
     sleep 0.1
   done
   touch "$agent_start"
+  if [[ "$scenario" == "squatter" ]]; then
+    for _ in $(seq 1 120); do
+      [[ -s "$agent_status" ]] && break
+      sleep 0.2
+    done
+    sleep 1.2
+    tmux kill-session -t "$session" >/dev/null 2>&1 || true
+    exit 0
+  fi
   sleep 0.8
   touch "$log_replay"
   wait_for_pane_text "$cli_pane" "HOVEL//THROW" || sleep 1

@@ -1,10 +1,12 @@
 package daemonrpc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -12,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/Vibe-Pwners/hovel/internal/app/launchkey"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
@@ -22,7 +23,6 @@ import (
 )
 
 const (
-	serviceName      = "Daemon"
 	serviceURLPrefix = "/hovel.daemon.v1.DaemonService/"
 )
 
@@ -141,31 +141,8 @@ type RunMockExploitResponse struct {
 
 type ExecuteModuleResponse = RunMockExploitResponse
 
-type PayloadProviderRecord struct {
-	ProviderID    string
-	Schema        string
-	SchemaVersion string
-	Descriptor    map[string]any
-}
-
-type InstalledPayloadDescriptor struct {
-	Provider                 string
-	PayloadID                string
-	PayloadVersion           string
-	Target                   string
-	TargetID                 string
-	State                    string
-	Transport                string
-	Endpoint                 string
-	InstanceKey              string
-	StampID                  string
-	ArtifactIDs              []string
-	SupportsReconnect        bool
-	SupportsMultipleSessions bool
-	Reconnect                *PayloadProviderRecord
-	Cleanup                  *PayloadProviderRecord
-	Metadata                 map[string]string
-}
+type PayloadProviderRecord = run.PayloadProviderRecord
+type InstalledPayloadDescriptor = run.InstalledPayloadDescriptor
 
 type OperatorEntity struct {
 	ID           string   `json:"id"`
@@ -245,6 +222,25 @@ type PendingThrowResponse struct {
 	MissingApproverIDs  []string `json:"missingApproverIds"`
 }
 
+type PayloadCommand = run.PayloadCommand
+type PayloadCommandListRequest struct {
+	ModuleID string                        `json:"moduleId"`
+	Request  run.PayloadCommandListRequest `json:"request"`
+}
+
+type PayloadCommandListResponse struct {
+	Commands []run.PayloadCommand `json:"commands"`
+}
+
+type PayloadCommandRunRequest struct {
+	Operation string                    `json:"operation,omitempty"`
+	Chain     string                    `json:"chain,omitempty"`
+	ModuleID  string                    `json:"moduleId"`
+	Request   run.PayloadCommandRequest `json:"request"`
+}
+
+type PayloadCommandRunResponse = run.PayloadCommandResult
+
 type operatorClock interface {
 	Now() time.Time
 }
@@ -317,6 +313,8 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[ConfirmPendingThrowRequest, PendingThrowResponse](mux, "ConfirmPendingThrow", rpcServer.confirmPendingThrowRPC)
 	registerUnary[PendingThrowRequest, PendingThrowResponse](mux, "RequirePendingThrowReady", rpcServer.requirePendingThrowReadyRPC)
 	registerUnary[PendingThrowRequest, EmptyResponse](mux, "CancelPendingThrow", rpcServer.cancelPendingThrowRPC)
+	registerUnary[PayloadCommandListRequest, PayloadCommandListResponse](mux, "ListPayloadCommands", rpcServer.listPayloadCommandsRPC)
+	registerUnary[PayloadCommandRunRequest, PayloadCommandRunResponse](mux, "RunPayloadCommand", rpcServer.runPayloadCommandRPC)
 	return nil
 }
 
@@ -328,33 +326,29 @@ func NewHandler(runs services.RunService, options ...ServerOption) (http.Handler
 	return mux, nil
 }
 
-type jsonCodec struct{}
-
-func (jsonCodec) Name() string {
-	return "json"
-}
-
-func (jsonCodec) Marshal(value any) ([]byte, error) {
-	return json.Marshal(value)
-}
-
-func (jsonCodec) Unmarshal(data []byte, value any) error {
-	return json.Unmarshal(data, value)
-}
-
 func registerUnary[Req, Res any](mux *http.ServeMux, method string, fn func(context.Context, Req) (Res, error)) {
 	path := serviceURLPrefix + method
-	mux.Handle(path, connect.NewUnaryHandler[Req, Res](
-		path,
-		func(ctx context.Context, req *connect.Request[Req]) (*connect.Response[Res], error) {
-			resp, err := fn(ctx, *req.Msg)
-			if err != nil {
-				return nil, connect.NewError(connect.CodeUnknown, err)
-			}
-			return connect.NewResponse(&resp), nil
-		},
-		connect.WithCodec(jsonCodec{}),
-	))
+	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		defer r.Body.Close()
+		var req Req
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		resp, err := fn(r.Context(), req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
 }
 
 type ServerOption func(*Server)
@@ -435,6 +429,26 @@ func (s Server) executeModule(ctx context.Context, req ExecuteModuleRequest, res
 	}
 	*resp = responseFromResult(result)
 	return nil
+}
+
+func (s *Server) listPayloadCommandsRPC(ctx context.Context, req PayloadCommandListRequest) (PayloadCommandListResponse, error) {
+	commands, err := s.runs.ListPayloadCommands(ctx, services.PayloadCommandListRequest{
+		ModuleID: req.ModuleID,
+		Request:  req.Request,
+	})
+	if err != nil {
+		return PayloadCommandListResponse{}, err
+	}
+	return PayloadCommandListResponse{Commands: commands}, nil
+}
+
+func (s *Server) runPayloadCommandRPC(ctx context.Context, req PayloadCommandRunRequest) (PayloadCommandRunResponse, error) {
+	return s.runs.RunPayloadCommand(ctx, services.PayloadCommandRunRequest{
+		Operation: req.Operation,
+		Chain:     req.Chain,
+		ModuleID:  req.ModuleID,
+		Request:   req.Request,
+	})
 }
 
 type SessionReadRequest struct {
@@ -1428,6 +1442,14 @@ func (c *Client) ExecuteModule(ctx context.Context, req ExecuteModuleRequest) (E
 	return invoke[ExecuteModuleRequest, ExecuteModuleResponse](c, ctx, "ExecuteModule", req)
 }
 
+func (c *Client) ListPayloadCommands(ctx context.Context, req PayloadCommandListRequest) (PayloadCommandListResponse, error) {
+	return invoke[PayloadCommandListRequest, PayloadCommandListResponse](c, ctx, "ListPayloadCommands", req)
+}
+
+func (c *Client) RunPayloadCommand(ctx context.Context, req PayloadCommandRunRequest) (PayloadCommandRunResponse, error) {
+	return invoke[PayloadCommandRunRequest, PayloadCommandRunResponse](c, ctx, "RunPayloadCommand", req)
+}
+
 func (c *Client) ListSessions(ctx context.Context) ([]SessionRef, error) {
 	resp, err := invoke[EmptyRequest, ListSessionsResponse](c, ctx, "ListSessions", EmptyRequest{})
 	if err != nil {
@@ -1723,16 +1745,32 @@ func invoke[Req, Res any](c *Client, ctx context.Context, method string, req Req
 	if c == nil || c.httpClient == nil || c.baseURL == "" {
 		return zero, errors.New("daemon rpc client is not configured")
 	}
-	client := connect.NewClient[Req, Res](
-		c.httpClient,
-		c.baseURL+serviceURLPrefix+method,
-		connect.WithCodec(jsonCodec{}),
-	)
-	resp, err := client.CallUnary(ctx, connect.NewRequest(&req))
+	body, err := json.Marshal(req)
+	if err != nil {
+		return zero, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+serviceURLPrefix+method, bytes.NewReader(body))
 	if err != nil {
 		return zero, fmt.Errorf("%s: %w", method, err)
 	}
-	return *resp.Msg, nil
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return zero, fmt.Errorf("%s: %w", method, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = resp.Status
+		}
+		return zero, fmt.Errorf("%s: %s", method, message)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&zero); err != nil {
+		return zero, fmt.Errorf("%s: %w", method, err)
+	}
+	return zero, nil
 }
 
 type Endpoint struct {
@@ -1910,7 +1948,7 @@ func responseFromResult(result run.Result) RunMockExploitResponse {
 		})
 	}
 	resp.Sessions = sessionRefsFromRun(result.Sessions)
-	resp.InstalledPayloads = installedPayloadsFromRun(result.InstalledPayloads)
+	resp.InstalledPayloads = run.CloneInstalledPayloads(result.InstalledPayloads)
 	for _, log := range result.Logs {
 		resp.Logs = append(resp.Logs, LogEntry{
 			ID:             log.ID,
@@ -1951,43 +1989,6 @@ func sessionRefsFromRun(sessions []run.SessionRef) []SessionRef {
 		})
 	}
 	return out
-}
-
-func installedPayloadsFromRun(payloads []run.InstalledPayloadDescriptor) []InstalledPayloadDescriptor {
-	out := make([]InstalledPayloadDescriptor, 0, len(payloads))
-	for _, payload := range payloads {
-		out = append(out, InstalledPayloadDescriptor{
-			Provider:                 payload.Provider,
-			PayloadID:                payload.PayloadID,
-			PayloadVersion:           payload.PayloadVersion,
-			Target:                   payload.Target,
-			TargetID:                 payload.TargetID,
-			State:                    payload.State,
-			Transport:                payload.Transport,
-			Endpoint:                 payload.Endpoint,
-			InstanceKey:              payload.InstanceKey,
-			StampID:                  payload.StampID,
-			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
-			SupportsReconnect:        payload.SupportsReconnect,
-			SupportsMultipleSessions: payload.SupportsMultipleSessions,
-			Reconnect:                payloadProviderRecordFromRun(payload.Reconnect),
-			Cleanup:                  payloadProviderRecordFromRun(payload.Cleanup),
-			Metadata:                 cloneStringMap(payload.Metadata),
-		})
-	}
-	return out
-}
-
-func payloadProviderRecordFromRun(record *run.PayloadProviderRecord) *PayloadProviderRecord {
-	if record == nil {
-		return nil
-	}
-	return &PayloadProviderRecord{
-		ProviderID:    record.ProviderID,
-		Schema:        record.Schema,
-		SchemaVersion: record.SchemaVersion,
-		Descriptor:    cloneAnyMap(record.Descriptor),
-	}
 }
 
 func sourceOrDefault(value, fallback string) string {

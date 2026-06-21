@@ -17,7 +17,7 @@ go_library(
     deps = [
         "//internal/adapters/commandmode",
         "//internal/adapters/daemonrpc",
-        "//internal/adapters/storage/filesystem",
+        "//internal/adapters/storage/sqlite",
         "//internal/adapters/terminallog",
         "//internal/app/commands",
         "//internal/app/modulecatalog",

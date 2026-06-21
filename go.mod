@@ -3,7 +3,6 @@ module github.com/Vibe-Pwners/hovel
 go 1.25.0
 
 require (
-	connectrpc.com/connect v1.19.2
 	github.com/akamensky/argparse v1.4.0
 	github.com/bazelbuild/rules_go v0.60.0
 	github.com/c-bata/go-prompt v0.2.6

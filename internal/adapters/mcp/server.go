@@ -16,9 +16,11 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -32,6 +34,8 @@ const (
 	ToolOperationList        = "hovel_operation_list"
 	ToolWorkspaceSnapshot    = "hovel_workspace_snapshot"
 	ToolThrowStart           = "hovel_throw_start"
+	ToolPayloadCommandList   = "hovel_payload_command_list"
+	ToolPayloadCommandCall   = "hovel_payload_command_call"
 
 	DefaultWorkspace         = ".hovel"
 	DefaultDisplayName       = "Hovel MCP"
@@ -44,6 +48,8 @@ type Daemon interface {
 	DetachEntity(context.Context, daemonrpc.DetachEntityRequest) error
 	ListEntities(context.Context, daemonrpc.ListEntitiesRequest) (daemonrpc.ListEntitiesResponse, error)
 	Snapshot(context.Context, daemonrpc.SnapshotRequest) (daemonrpc.SnapshotResponse, error)
+	ListPayloadCommands(context.Context, daemonrpc.PayloadCommandListRequest) (daemonrpc.PayloadCommandListResponse, error)
+	RunPayloadCommand(context.Context, daemonrpc.PayloadCommandRunRequest) (daemonrpc.PayloadCommandRunResponse, error)
 	Close() error
 }
 
@@ -241,6 +247,18 @@ func (s *Server) RegisterTools(server *mcpsdk.Server) {
 		Description: "Start a throw for the selected operation and chain after explicit MCP caller confirmation.",
 		Annotations: destructiveTool("Start Throw"),
 	}, s.throwStart)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        ToolPayloadCommandList,
+		Title:       "List Payload Commands",
+		Description: "List provider-owned commands available for an installed payload.",
+		Annotations: readOnlyTool("List Payload Commands"),
+	}, s.payloadCommandList)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        ToolPayloadCommandCall,
+		Title:       "Call Payload Command",
+		Description: "Call a provider-owned command against an installed payload without attaching to a raw session.",
+		Annotations: destructiveTool("Call Payload Command"),
+	}, s.payloadCommandCall)
 }
 
 type emptyInput struct{}
@@ -259,6 +277,18 @@ type throwStartInput struct {
 	Chain          string `json:"chain,omitempty" jsonschema:"Optional chain name. Defaults to this MCP operator's active chain."`
 	NowBypass      bool   `json:"nowBypass" jsonschema:"Must be true to bypass the typed local confirmation prompt; Hovel still records an auditable confirmation for the bypass."`
 	AllowDangerous bool   `json:"allowDangerous,omitempty" jsonschema:"Set true only when the caller explicitly authorized modules tagged dangerous."`
+}
+
+type payloadCommandListInput struct {
+	Payload string `json:"payload" jsonschema:"Installed payload handle or record ID."`
+}
+
+type payloadCommandCallInput struct {
+	Payload       string   `json:"payload" jsonschema:"Installed payload handle or record ID."`
+	Command       string   `json:"command" jsonschema:"Provider-owned payload command name."`
+	Args          []string `json:"args,omitempty" jsonschema:"Command arguments."`
+	InputData     string   `json:"inputData,omitempty" jsonschema:"Optional UTF-8 input data for upload-style commands."`
+	InputEncoding string   `json:"inputEncoding,omitempty" jsonschema:"Encoding for inputData; defaults to utf-8."`
 }
 
 type operatorIdentityOutput struct {
@@ -307,6 +337,16 @@ type throwStartOutput struct {
 	Chain     string                    `json:"chain"`
 	Targets   []string                  `json:"targets"`
 	Results   []commands.RunPayload     `json:"results"`
+}
+
+type payloadCommandListOutput struct {
+	Payload  commands.InstalledPayloadRecord `json:"payload"`
+	Commands []run.PayloadCommand            `json:"commands"`
+}
+
+type payloadCommandCallOutput struct {
+	Payload commands.InstalledPayloadRecord `json:"payload"`
+	Result  run.PayloadCommandResult        `json:"result"`
 }
 
 func (s *Server) operatorIdentity(ctx context.Context, _ *mcpsdk.CallToolRequest, _ emptyInput) (*mcpsdk.CallToolResult, operatorIdentityOutput, error) {
@@ -384,6 +424,51 @@ func (s *Server) throwStart(ctx context.Context, _ *mcpsdk.CallToolRequest, inpu
 		out.Chain = chain
 	}
 	return nil, out, nil
+}
+
+func (s *Server) payloadCommandList(ctx context.Context, _ *mcpsdk.CallToolRequest, input payloadCommandListInput) (*mcpsdk.CallToolResult, payloadCommandListOutput, error) {
+	if err := s.refresh(ctx); err != nil {
+		return nil, payloadCommandListOutput{}, err
+	}
+	record, err := filesystem.NewWorkspaceStore().GetInstalledPayload(ctx, s.workspace, input.Payload)
+	if err != nil {
+		return nil, payloadCommandListOutput{}, err
+	}
+	resp, err := s.daemon.ListPayloadCommands(ctx, daemonrpc.PayloadCommandListRequest{
+		ModuleID: record.Provider,
+		Request:  payloadCommandListRequest(record),
+	})
+	if err != nil {
+		return nil, payloadCommandListOutput{}, err
+	}
+	return nil, payloadCommandListOutput{Payload: record, Commands: resp.Commands}, nil
+}
+
+func (s *Server) payloadCommandCall(ctx context.Context, _ *mcpsdk.CallToolRequest, input payloadCommandCallInput) (*mcpsdk.CallToolResult, payloadCommandCallOutput, error) {
+	if err := s.refresh(ctx); err != nil {
+		return nil, payloadCommandCallOutput{}, err
+	}
+	record, err := filesystem.NewWorkspaceStore().GetInstalledPayload(ctx, s.workspace, input.Payload)
+	if err != nil {
+		return nil, payloadCommandCallOutput{}, err
+	}
+	req := payloadCommandRunRequest(record, input)
+	resp, err := s.daemon.RunPayloadCommand(ctx, daemonrpc.PayloadCommandRunRequest{
+		Operation: record.Operation,
+		Chain:     record.Chain,
+		ModuleID:  record.Provider,
+		Request:   req,
+	})
+	if err != nil {
+		return nil, payloadCommandCallOutput{}, err
+	}
+	if len(resp.Artifacts) > 0 {
+		resp, err = materializeMCPPayloadArtifacts(ctx, s.workspace, record, resp)
+		if err != nil {
+			return nil, payloadCommandCallOutput{}, err
+		}
+	}
+	return nil, payloadCommandCallOutput{Payload: record, Result: resp}, nil
 }
 
 func (s *Server) snapshot(ctx context.Context, input operationContextInput) (operatorsession.PersistedState, error) {
@@ -506,6 +591,96 @@ func commandModeThrowStarter(workspacePath string, client *daemonrpc.Client) Thr
 	}
 }
 
+func payloadCommandListRequest(record commands.InstalledPayloadRecord) run.PayloadCommandListRequest {
+	return run.PayloadCommandListRequest{
+		InstalledPayloadID: record.Handle,
+		Target:             record.Target,
+		PayloadID:          record.PayloadID,
+		Config:             installedPayloadConfig(record),
+		Reconnect:          payloadProviderRecordToRun(record.Reconnect),
+	}
+}
+
+func payloadCommandRunRequest(record commands.InstalledPayloadRecord, input payloadCommandCallInput) run.PayloadCommandRequest {
+	encoding := strings.TrimSpace(input.InputEncoding)
+	if encoding == "" && input.InputData != "" {
+		encoding = "utf-8"
+	}
+	return run.PayloadCommandRequest{
+		InstalledPayloadID: record.Handle,
+		Target:             record.Target,
+		PayloadID:          record.PayloadID,
+		Command:            strings.TrimSpace(input.Command),
+		Args:               append([]string(nil), input.Args...),
+		InputData:          input.InputData,
+		InputEncoding:      encoding,
+		Config:             installedPayloadConfig(record),
+		Reconnect:          payloadProviderRecordToRun(record.Reconnect),
+	}
+}
+
+func installedPayloadConfig(record commands.InstalledPayloadRecord) map[string]string {
+	config := map[string]string{}
+	if record.Reconnect != nil {
+		for key, value := range record.Reconnect.Descriptor {
+			text := fmt.Sprint(value)
+			if text != "" {
+				config[key] = text
+			}
+		}
+	}
+	if record.Transport != "" {
+		config["payload.transport"] = record.Transport
+	}
+	if record.Target != "" {
+		config["target.host"] = record.Target
+	}
+	return config
+}
+
+func payloadProviderRecordToRun(record *commands.PayloadProviderRecord) *run.PayloadProviderRecord {
+	if record == nil {
+		return nil
+	}
+	return &run.PayloadProviderRecord{
+		ProviderID:    record.ProviderID,
+		Schema:        record.Schema,
+		SchemaVersion: record.SchemaVersion,
+		Descriptor:    cloneAnyMap(record.Descriptor),
+	}
+}
+
+func materializeMCPPayloadArtifacts(ctx context.Context, workspacePath string, record commands.InstalledPayloadRecord, result run.PayloadCommandResult) (run.PayloadCommandResult, error) {
+	store := filesystem.NewWorkspaceStore()
+	if result.Fields == nil {
+		result.Fields = map[string]string{}
+	}
+	for index, artifact := range result.Artifacts {
+		materialized, err := store.MaterializeArtifact(ctx, commands.ArtifactMaterialization{
+			Workspace: workspacePath,
+			ThrowID:   "payload-command",
+			RunID:     "payload-" + record.Handle + "-" + result.Command,
+			ModuleID:  "payload/" + record.Provider,
+			Target:    record.Target,
+			Artifact: commands.Artifact{
+				Name: artifact.Name,
+				Kind: artifact.Kind,
+				Data: artifact.Data,
+				Path: artifact.Path,
+			},
+			CreatedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return run.PayloadCommandResult{}, err
+		}
+		result.Artifacts[index].Data = ""
+		result.Artifacts[index].Path = materialized.Path
+		result.Fields["artifactId"] = materialized.ID
+		result.Fields["artifactPath"] = materialized.Path
+	}
+	return result, nil
+}
+
 func operationOutputs(operations []operatorsession.PersistedOperation) []operationOutput {
 	out := make([]operationOutput, 0, len(operations))
 	for _, operation := range operations {
@@ -542,6 +717,8 @@ func defaultCapabilities() []string {
 		ToolOperationList,
 		ToolWorkspaceSnapshot,
 		ToolThrowStart,
+		ToolPayloadCommandList,
+		ToolPayloadCommandCall,
 	}
 }
 
@@ -644,6 +821,17 @@ func cloneStringMap(values map[string]string) map[string]string {
 		return nil
 	}
 	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneAnyMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(values))
 	for key, value := range values {
 		out[key] = value
 	}

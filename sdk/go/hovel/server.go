@@ -105,6 +105,10 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.cleanupPayload(params)
 	case "read_payload_chunk":
 		return s.readPayloadChunk(params)
+	case "payload.command.list":
+		return s.listPayloadCommands(params)
+	case "payload.command.run":
+		return s.runPayloadCommand(params)
 	case "step.describe":
 		return s.describeSteps()
 	case "step.prepare":
@@ -170,6 +174,14 @@ func (s *server) stepProvider() (StepProvider, error) {
 	provider, ok := s.module.(StepProvider)
 	if !ok {
 		return nil, fmt.Errorf("module %q is not a step provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func (s *server) payloadCommandProvider() (PayloadCommandProvider, error) {
+	provider, ok := s.module.(PayloadCommandProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q is not a payload command provider", s.module.Info().Name)
 	}
 	return provider, nil
 }
@@ -311,6 +323,34 @@ func (s *server) readPayloadChunk(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return provider.ReadPayloadChunk(req)
+}
+
+func (s *server) listPayloadCommands(params json.RawMessage) (any, error) {
+	provider, err := s.payloadCommandProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[PayloadCommandListRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	commands, err := provider.ListPayloadCommands(req)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"commands": commands}, nil
+}
+
+func (s *server) runPayloadCommand(params json.RawMessage) (any, error) {
+	provider, err := s.payloadCommandProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[PayloadCommandRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.RunPayloadCommand(req)
 }
 
 func requirementsToRPC(requirements []Requirement) []map[string]any {
