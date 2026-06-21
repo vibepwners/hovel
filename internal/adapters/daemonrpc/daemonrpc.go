@@ -7,14 +7,17 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/Vibe-Pwners/hovel/internal/app/launchkey"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
+	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
@@ -164,13 +167,105 @@ type InstalledPayloadDescriptor struct {
 	Metadata                 map[string]string
 }
 
+type OperatorEntity struct {
+	ID           string   `json:"id"`
+	Kind         string   `json:"kind"`
+	DisplayName  string   `json:"displayName"`
+	Agent        bool     `json:"agent"`
+	Operation    string   `json:"operation,omitempty"`
+	ActiveChain  string   `json:"activeChain,omitempty"`
+	ConnectedAt  string   `json:"connectedAt"`
+	LastSeenAt   string   `json:"lastSeenAt"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	PolicyTags   []string `json:"policyTags,omitempty"`
+}
+
+type AttachEntityRequest struct {
+	ID           string   `json:"id"`
+	Kind         string   `json:"kind"`
+	DisplayName  string   `json:"displayName,omitempty"`
+	Agent        bool     `json:"agent,omitempty"`
+	Operation    string   `json:"operation,omitempty"`
+	ActiveChain  string   `json:"activeChain,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	PolicyTags   []string `json:"policyTags,omitempty"`
+}
+
+type HeartbeatEntityRequest struct {
+	ID          string  `json:"id"`
+	Operation   *string `json:"operation,omitempty"`
+	ActiveChain *string `json:"activeChain,omitempty"`
+}
+
+type DetachEntityRequest struct {
+	ID string `json:"id"`
+}
+
+type ListEntitiesRequest struct {
+	Operation string `json:"operation,omitempty"`
+}
+
+type EntityResponse struct {
+	Entity OperatorEntity `json:"entity"`
+}
+
+type ListEntitiesResponse struct {
+	Entities []OperatorEntity `json:"entities"`
+}
+
+type CreatePendingThrowRequest struct {
+	ID             string `json:"id"`
+	Operation      string `json:"operation"`
+	PlanHash       string `json:"planHash"`
+	AllowDangerous bool   `json:"allowDangerous,omitempty"`
+	NowBypass      bool   `json:"nowBypass,omitempty"`
+}
+
+type ConfirmPendingThrowRequest struct {
+	ID             string `json:"id"`
+	EntityID       string `json:"entityId"`
+	PlanHash       string `json:"planHash"`
+	AllowDangerous bool   `json:"allowDangerous,omitempty"`
+	NowBypass      bool   `json:"nowBypass,omitempty"`
+}
+
+type PendingThrowRequest struct {
+	ID string `json:"id"`
+}
+
+type PendingThrowResponse struct {
+	ID                  string   `json:"id"`
+	Operation           string   `json:"operation"`
+	PlanHash            string   `json:"planHash"`
+	AllowDangerous      bool     `json:"allowDangerous,omitempty"`
+	NowBypass           bool     `json:"nowBypass,omitempty"`
+	CreatedAt           string   `json:"createdAt"`
+	Ready               bool     `json:"ready"`
+	RequiredApproverIDs []string `json:"requiredApproverIds"`
+	MissingApproverIDs  []string `json:"missingApproverIds"`
+}
+
+type operatorClock interface {
+	Now() time.Time
+}
+
+type systemOperatorClock struct{}
+
+func (systemOperatorClock) Now() time.Time {
+	return time.Now().UTC()
+}
+
 type Server struct {
-	runs           services.RunService
-	moduleSessions services.SessionBroker
-	session        *operatorsession.Session
-	logs           *LogBroker
-	persistSession func(operatorsession.PersistedState) error
-	mu             sync.Mutex
+	runs            services.RunService
+	moduleSessions  services.SessionBroker
+	session         *operatorsession.Session
+	logs            *LogBroker
+	entities        map[string]operatordomain.Entity
+	launchKeys      *launchkey.Coordinator
+	launchKeyPolicy operatordomain.LaunchKeyPolicy
+	clock           operatorClock
+	persistSession  func(operatorsession.PersistedState) error
+	mu              sync.Mutex
 }
 
 func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOption) error {
@@ -178,9 +273,12 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 		return errors.New("daemon rpc mux is required")
 	}
 	rpcServer := &Server{
-		runs:    runs,
-		session: operatorsession.New(),
-		logs:    NewLogBroker(),
+		runs:       runs,
+		session:    operatorsession.New(),
+		logs:       NewLogBroker(),
+		entities:   map[string]operatordomain.Entity{},
+		launchKeys: launchkey.NewCoordinator(),
+		clock:      systemOperatorClock{},
 	}
 	for _, option := range options {
 		option(rpcServer)
@@ -211,6 +309,14 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[ActiveLogsRequest, []OperatorLogEntry](mux, "ActiveLogs", rpcServer.activeLogsRPC)
 	registerUnary[AppendLogRequest, EmptyResponse](mux, "AppendLog", rpcServer.appendLogRPC)
 	registerUnary[PollLogsRequest, PollLogsResponse](mux, "PollLogs", rpcServer.pollLogsRPC)
+	registerUnary[AttachEntityRequest, EntityResponse](mux, "AttachEntity", rpcServer.attachEntityRPC)
+	registerUnary[HeartbeatEntityRequest, EntityResponse](mux, "HeartbeatEntity", rpcServer.heartbeatEntityRPC)
+	registerUnary[DetachEntityRequest, EmptyResponse](mux, "DetachEntity", rpcServer.detachEntityRPC)
+	registerUnary[ListEntitiesRequest, ListEntitiesResponse](mux, "ListEntities", rpcServer.listEntitiesRPC)
+	registerUnary[CreatePendingThrowRequest, PendingThrowResponse](mux, "CreatePendingThrow", rpcServer.createPendingThrowRPC)
+	registerUnary[ConfirmPendingThrowRequest, PendingThrowResponse](mux, "ConfirmPendingThrow", rpcServer.confirmPendingThrowRPC)
+	registerUnary[PendingThrowRequest, PendingThrowResponse](mux, "RequirePendingThrowReady", rpcServer.requirePendingThrowReadyRPC)
+	registerUnary[PendingThrowRequest, EmptyResponse](mux, "CancelPendingThrow", rpcServer.cancelPendingThrowRPC)
 	return nil
 }
 
@@ -278,6 +384,20 @@ func WithSessionPersistence(persist func(operatorsession.PersistedState) error) 
 func WithModuleSessions(sessions services.SessionBroker) ServerOption {
 	return func(server *Server) {
 		server.moduleSessions = sessions
+	}
+}
+
+func WithOperatorClock(clock operatorClock) ServerOption {
+	return func(server *Server) {
+		if clock != nil {
+			server.clock = clock
+		}
+	}
+}
+
+func WithLaunchKeyPolicy(policy operatordomain.LaunchKeyPolicy) ServerOption {
+	return func(server *Server) {
+		server.launchKeyPolicy = policy
 	}
 }
 
@@ -550,6 +670,159 @@ type ActiveLogsRequest struct {
 
 type OperationRequest struct {
 	Operation string
+}
+
+func (s *Server) AttachEntity(req AttachEntityRequest, resp *EntityResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	entity, err := operatordomain.NewEntity(operatordomain.EntityArgs{
+		ID:           req.ID,
+		Kind:         operatordomain.EntityKind(req.Kind),
+		DisplayName:  req.DisplayName,
+		Agent:        req.Agent,
+		Operation:    req.Operation,
+		ActiveChain:  req.ActiveChain,
+		ConnectedAt:  now,
+		LastSeenAt:   now,
+		Capabilities: req.Capabilities,
+		PolicyTags:   req.PolicyTags,
+	})
+	if err != nil {
+		return err
+	}
+	s.ensureEntitiesLocked()
+	s.entities[entity.ID] = entity
+	resp.Entity = operatorEntityFromDomain(entity)
+	return nil
+}
+
+func (s *Server) HeartbeatEntity(req HeartbeatEntityRequest, resp *EntityResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	req.ID = strings.TrimSpace(req.ID)
+	if req.ID == "" {
+		return errors.New("operator entity id is required")
+	}
+	s.ensureEntitiesLocked()
+	entity, ok := s.entities[req.ID]
+	if !ok {
+		return fmt.Errorf("operator entity %s is not attached", req.ID)
+	}
+	operation := entity.Operation
+	if req.Operation != nil {
+		operation = *req.Operation
+	}
+	activeChain := entity.ActiveChain
+	if req.ActiveChain != nil {
+		activeChain = *req.ActiveChain
+	}
+	next, err := operatordomain.NewEntity(operatordomain.EntityArgs{
+		ID:           entity.ID,
+		Kind:         entity.Kind,
+		DisplayName:  entity.DisplayName,
+		Agent:        entity.Agent,
+		Operation:    operation,
+		ActiveChain:  activeChain,
+		ConnectedAt:  entity.ConnectedAt,
+		LastSeenAt:   s.now(),
+		Capabilities: entity.Capabilities,
+		PolicyTags:   entity.PolicyTags,
+	})
+	if err != nil {
+		return err
+	}
+	s.entities[next.ID] = next
+	resp.Entity = operatorEntityFromDomain(next)
+	return nil
+}
+
+func (s *Server) DetachEntity(req DetachEntityRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	req.ID = strings.TrimSpace(req.ID)
+	if req.ID == "" {
+		return errors.New("operator entity id is required")
+	}
+	s.ensureEntitiesLocked()
+	delete(s.entities, req.ID)
+	return nil
+}
+
+func (s *Server) ListEntities(req ListEntitiesRequest, resp *ListEntitiesResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureEntitiesLocked()
+	operation := strings.TrimSpace(req.Operation)
+	entities := make([]operatordomain.Entity, 0, len(s.entities))
+	for _, entity := range s.entities {
+		if operation != "" && entity.Operation != operation {
+			continue
+		}
+		entities = append(entities, entity)
+	}
+	sort.Slice(entities, func(i, j int) bool {
+		return entities[i].ID < entities[j].ID
+	})
+	resp.Entities = make([]OperatorEntity, 0, len(entities))
+	for _, entity := range entities {
+		resp.Entities = append(resp.Entities, operatorEntityFromDomain(entity))
+	}
+	return nil
+}
+
+func (s *Server) CreatePendingThrow(req CreatePendingThrowRequest, resp *PendingThrowResponse) error {
+	entities, policy, now := s.launchKeyInputs()
+	snapshot, err := s.launchKeyCoordinator().CreatePending(launchkey.CreatePendingRequest{
+		ID:        req.ID,
+		Operation: operationOrDefault(req.Operation),
+		PlanHash:  req.PlanHash,
+		Flags:     approvalFlags(req.AllowDangerous, req.NowBypass),
+		Entities:  entities,
+		Policy:    policy,
+		Now:       now,
+	})
+	if err != nil {
+		return err
+	}
+	*resp = pendingThrowResponse(snapshot)
+	return nil
+}
+
+func (s *Server) ConfirmPendingThrow(req ConfirmPendingThrowRequest, resp *PendingThrowResponse) error {
+	snapshot, err := s.launchKeyCoordinator().Confirm(launchkey.ConfirmRequest{
+		PendingID:   req.ID,
+		EntityID:    req.EntityID,
+		PlanHash:    req.PlanHash,
+		Flags:       approvalFlags(req.AllowDangerous, req.NowBypass),
+		ConfirmedAt: s.now(),
+	})
+	if err != nil {
+		return err
+	}
+	*resp = pendingThrowResponse(snapshot)
+	return nil
+}
+
+func (s *Server) RequirePendingThrowReady(req PendingThrowRequest, resp *PendingThrowResponse) error {
+	snapshot, err := s.launchKeyCoordinator().RequireReady(req.ID)
+	if err != nil {
+		*resp = pendingThrowResponse(snapshot)
+		return err
+	}
+	*resp = pendingThrowResponse(snapshot)
+	return nil
+}
+
+func (s *Server) CancelPendingThrow(req PendingThrowRequest, resp *EmptyResponse) error {
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		return errors.New("pending throw id is required")
+	}
+	if !s.launchKeyCoordinator().Cancel(id) {
+		return fmt.Errorf("pending throw %s does not exist", id)
+	}
+	return nil
 }
 
 func (s *Server) CreateOperation(req OperationRequest, resp *EmptyResponse) error {
@@ -931,6 +1204,54 @@ func (s *Server) pollLogsRPC(_ context.Context, req PollLogsRequest) (PollLogsRe
 	return resp, err
 }
 
+func (s *Server) attachEntityRPC(_ context.Context, req AttachEntityRequest) (EntityResponse, error) {
+	var resp EntityResponse
+	err := s.AttachEntity(req, &resp)
+	return resp, err
+}
+
+func (s *Server) heartbeatEntityRPC(_ context.Context, req HeartbeatEntityRequest) (EntityResponse, error) {
+	var resp EntityResponse
+	err := s.HeartbeatEntity(req, &resp)
+	return resp, err
+}
+
+func (s *Server) detachEntityRPC(_ context.Context, req DetachEntityRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.DetachEntity(req, &resp)
+	return resp, err
+}
+
+func (s *Server) listEntitiesRPC(_ context.Context, req ListEntitiesRequest) (ListEntitiesResponse, error) {
+	var resp ListEntitiesResponse
+	err := s.ListEntities(req, &resp)
+	return resp, err
+}
+
+func (s *Server) createPendingThrowRPC(_ context.Context, req CreatePendingThrowRequest) (PendingThrowResponse, error) {
+	var resp PendingThrowResponse
+	err := s.CreatePendingThrow(req, &resp)
+	return resp, err
+}
+
+func (s *Server) confirmPendingThrowRPC(_ context.Context, req ConfirmPendingThrowRequest) (PendingThrowResponse, error) {
+	var resp PendingThrowResponse
+	err := s.ConfirmPendingThrow(req, &resp)
+	return resp, err
+}
+
+func (s *Server) requirePendingThrowReadyRPC(_ context.Context, req PendingThrowRequest) (PendingThrowResponse, error) {
+	var resp PendingThrowResponse
+	err := s.RequirePendingThrowReady(req, &resp)
+	return resp, err
+}
+
+func (s *Server) cancelPendingThrowRPC(_ context.Context, req PendingThrowRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.CancelPendingThrow(req, &resp)
+	return resp, err
+}
+
 func (s *Server) publish(operation, chain string, entries ...operatorlog.Entry) {
 	s.logs.Publish(operation, chain, entries...)
 }
@@ -980,6 +1301,79 @@ func operationOrDefault(operation string) string {
 		return operatorsession.DefaultOperation
 	}
 	return operation
+}
+
+func (s *Server) ensureEntitiesLocked() {
+	if s.entities == nil {
+		s.entities = map[string]operatordomain.Entity{}
+	}
+}
+
+func (s *Server) launchKeyInputs() ([]operatordomain.Entity, operatordomain.LaunchKeyPolicy, time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureEntitiesLocked()
+	entities := make([]operatordomain.Entity, 0, len(s.entities))
+	for _, entity := range s.entities {
+		entities = append(entities, entity)
+	}
+	return entities, s.launchKeyPolicy, s.now()
+}
+
+func (s *Server) launchKeyCoordinator() *launchkey.Coordinator {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.launchKeys == nil {
+		s.launchKeys = launchkey.NewCoordinator()
+	}
+	return s.launchKeys
+}
+
+func approvalFlags(allowDangerous, nowBypass bool) operatordomain.ApprovalFlags {
+	return operatordomain.ApprovalFlags{
+		AllowDangerous: allowDangerous,
+		NowBypass:      nowBypass,
+	}
+}
+
+func pendingThrowResponse(snapshot launchkey.PendingSnapshot) PendingThrowResponse {
+	createdAt := ""
+	if !snapshot.CreatedAt.IsZero() {
+		createdAt = snapshot.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return PendingThrowResponse{
+		ID:                  snapshot.ID,
+		Operation:           snapshot.Operation,
+		PlanHash:            snapshot.PlanHash,
+		AllowDangerous:      snapshot.Flags.AllowDangerous,
+		NowBypass:           snapshot.Flags.NowBypass,
+		CreatedAt:           createdAt,
+		Ready:               snapshot.Ready,
+		RequiredApproverIDs: append([]string(nil), snapshot.RequiredApproverIDs...),
+		MissingApproverIDs:  append([]string(nil), snapshot.MissingApproverIDs...),
+	}
+}
+
+func (s *Server) now() time.Time {
+	if s.clock == nil {
+		return time.Now().UTC()
+	}
+	return s.clock.Now().UTC()
+}
+
+func operatorEntityFromDomain(entity operatordomain.Entity) OperatorEntity {
+	return OperatorEntity{
+		ID:           entity.ID,
+		Kind:         string(entity.Kind),
+		DisplayName:  entity.DisplayName,
+		Agent:        entity.Agent,
+		Operation:    entity.Operation,
+		ActiveChain:  entity.ActiveChain,
+		ConnectedAt:  entity.ConnectedAt.UTC().Format(time.RFC3339Nano),
+		LastSeenAt:   entity.LastSeenAt.UTC().Format(time.RFC3339Nano),
+		Capabilities: append([]string(nil), entity.Capabilities...),
+		PolicyTags:   append([]string(nil), entity.PolicyTags...),
+	}
 }
 
 type Client struct {
@@ -1085,6 +1479,44 @@ func (c *Client) PollOperationChainLogs(ctx context.Context, operation, chain st
 
 func (c *Client) pollLogs(ctx context.Context, operation, chain string, since uint64) (PollLogsResponse, error) {
 	return invoke[PollLogsRequest, PollLogsResponse](c, ctx, "PollLogs", PollLogsRequest{Since: since, Operation: operation, Chain: chain})
+}
+
+func (c *Client) AttachEntity(ctx context.Context, req AttachEntityRequest) (EntityResponse, error) {
+	return invoke[AttachEntityRequest, EntityResponse](c, ctx, "AttachEntity", req)
+}
+
+func (c *Client) HeartbeatEntity(ctx context.Context, req HeartbeatEntityRequest) (EntityResponse, error) {
+	return invoke[HeartbeatEntityRequest, EntityResponse](c, ctx, "HeartbeatEntity", req)
+}
+
+func (c *Client) DetachEntity(ctx context.Context, req DetachEntityRequest) error {
+	_, err := invoke[DetachEntityRequest, EmptyResponse](c, ctx, "DetachEntity", req)
+	return err
+}
+
+func (c *Client) ListEntities(ctx context.Context, req ListEntitiesRequest) (ListEntitiesResponse, error) {
+	return invoke[ListEntitiesRequest, ListEntitiesResponse](c, ctx, "ListEntities", req)
+}
+
+func (c *Client) Snapshot(ctx context.Context, req SnapshotRequest) (SnapshotResponse, error) {
+	return invoke[SnapshotRequest, SnapshotResponse](c, ctx, "Snapshot", req)
+}
+
+func (c *Client) CreatePendingThrow(ctx context.Context, req CreatePendingThrowRequest) (PendingThrowResponse, error) {
+	return invoke[CreatePendingThrowRequest, PendingThrowResponse](c, ctx, "CreatePendingThrow", req)
+}
+
+func (c *Client) ConfirmPendingThrow(ctx context.Context, req ConfirmPendingThrowRequest) (PendingThrowResponse, error) {
+	return invoke[ConfirmPendingThrowRequest, PendingThrowResponse](c, ctx, "ConfirmPendingThrow", req)
+}
+
+func (c *Client) RequirePendingThrowReady(ctx context.Context, req PendingThrowRequest) (PendingThrowResponse, error) {
+	return invoke[PendingThrowRequest, PendingThrowResponse](c, ctx, "RequirePendingThrowReady", req)
+}
+
+func (c *Client) CancelPendingThrow(ctx context.Context, req PendingThrowRequest) error {
+	_, err := invoke[PendingThrowRequest, EmptyResponse](c, ctx, "CancelPendingThrow", req)
+	return err
 }
 
 type SessionClient struct {

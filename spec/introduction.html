@@ -35,6 +35,7 @@
         <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
         <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
       </ul>
@@ -81,7 +82,7 @@
         </ol>
 
         <h2>Product Shape</h2>
-        <p>Hovel exposes one engine through multiple front ends. In the current source, CLI and one-shot execution are implemented, <code>hovel tui</code> is an explicit not-implemented placeholder, and REST/OpenAPI and MCP have not landed yet:</p>
+        <p>Hovel exposes one engine through multiple front ends. In the current source, CLI, one-shot execution, daemon management, and the first stdio MCP inspection adapter are implemented. <code>hovel tui</code> is an explicit not-implemented placeholder, while REST/OpenAPI and MCP execution parity remain future work:</p>
         <figure class="diagram product-diagram" aria-label="Hovel front ends connect to hoveld application services, which orchestrate the domain core, module host, current provider module path, and planned service manager.">
           <figcaption>Product Shape</figcaption>
           <div class="product-tier product-frontends">
@@ -112,7 +113,7 @@
             <div class="diagram-node storage"><strong>Provider Outputs</strong><span>artifacts and evidence</span></div>
           </div>
         </figure>
-        <p>All front ends must call the same application services. As planned adapters land, the TUI must not contain business logic, the MCP adapter must not bypass validation, and the REST API must not become a second framework. One-shot execution and <code>cli</code> mode must not implement their own chain runners.</p>
+        <p>All front ends must call the same application services. As adapters evolve, the TUI must not contain business logic, the MCP adapter must not bypass validation, and the REST API must not become a second framework. One-shot execution and <code>cli</code> mode must not implement their own chain runners.</p>
 
         <h2>MVP Boundaries</h2>
         <p>The MVP should avoid pretending to be the final platform. Defer:</p>

@@ -14,6 +14,7 @@ require() {
 
 require python3
 require task
+require tmux
 require vhs
 
 demo_daemon_pids=()
@@ -79,11 +80,17 @@ mkdir -p demo/out demo/tmp/vhs-tmp
 export TMPDIR="$PWD/demo/tmp/vhs-tmp"
 
 task build -- //cmd/hovel
+task build -- //tools/demo/mcpagent:mcpagent
 task modules:build
 
 hovel_bin="$PWD/bazel-bin/cmd/hovel/hovel_/hovel"
 if [[ ! -x "$hovel_bin" ]]; then
   echo "expected built hovel binary at $hovel_bin" >&2
+  exit 1
+fi
+agent_bin="$PWD/bazel-bin/tools/demo/mcpagent/mcpagent_/mcpagent"
+if [[ ! -x "$agent_bin" ]]; then
+  echo "expected built mock agent binary at $agent_bin" >&2
   exit 1
 fi
 
@@ -151,6 +158,29 @@ if [[ "$session_output" != *"mock-operator"* ]]; then
   echo "constructed demo session interaction failed" >&2
   exit 1
 fi
+
+agent_workspace="$PWD/demo/tmp/w-verify-mcp-agent"
+agent_chain="mock-survey-exploit-agent-verify"
+rm -rf "$agent_workspace"
+mkdir -p "$agent_workspace"
+start_demo_daemon "$agent_workspace" "$hovel_bin"
+
+"$hovel_bin" run --workspace "$agent_workspace" --op demo -- chain create "$agent_chain"
+"$hovel_bin" run --workspace "$agent_workspace" --op demo --chain "$agent_chain" -- chain add mock-survey-go
+"$hovel_bin" run --workspace "$agent_workspace" --op demo --chain "$agent_chain" -- chain add mock-exploit-session-go
+"$hovel_bin" run --workspace "$agent_workspace" --op demo --chain "$agent_chain" -- target add mock://router-01
+"$hovel_bin" run --workspace "$agent_workspace" --op demo --chain "$agent_chain" -- target config set mock://router-01 target.host router-01
+"$hovel_bin" run --workspace "$agent_workspace" --op demo --chain "$agent_chain" -- target config set mock://router-01 target.port 443
+"$hovel_bin" run --workspace "$agent_workspace" --op demo --chain "$agent_chain" -- chain config set operator.confirmed_lab true
+
+agent_output="$("$agent_bin" --hovel "$hovel_bin" --workspace "$agent_workspace" --op demo --chain "$agent_chain" --no-color --delay 0)"
+for expected in "tool: hovel_workspace_snapshot" "tool: hovel_throw_start" "mock://router-01" "mock-survey-go@v0.0.0-example" "mock exploit opened an interactive shell session" "Hovel throw completed"; do
+  if [[ "$agent_output" != *"$expected"* ]]; then
+    echo "mock agent MCP verification did not include expected text: $expected" >&2
+    printf '%s\n' "$agent_output" >&2
+    exit 1
+  fi
+done
 
 for tape in "${tapes[@]}"; do
   vhs "$tape"

@@ -14,14 +14,16 @@ The practical contract is simple:
   methods after the operator has a persisted plan and confirmation.
 - return artifacts, sessions, findings, outputs, and installed payload records
   explicitly; do not hide important operator-controlled values.
+- agent context is optional. Modules can ignore it; modules that opt in may read
+  the SDK agent field and return `agentHints` with provenance.
 
 ## Choose a SDK
 
 | SDK | Use it when | Current surface |
 | --- | --- | --- |
-| [Python](python/README.md) | You want the fastest exploit or post-exploitation iteration loop. | Core modules, async/sync `run`, line shell sessions, step hooks, installed-payload records, framed RPC tests. |
-| [Go](go/README.md) | You want typed provider/step contracts or close alignment with the daemon. | Core modules, PTY sessions, payload-provider RPC methods, step-provider RPC methods, `hoveltest` helpers. |
-| [Rust](rust/README.md) | You want a small dependency-light module binary. | Core modules, line shell sessions, installed-payload records. No step/provider dispatch yet. |
+| [Python](python/README.md) | You want the fastest exploit or post-exploitation iteration loop. | Core modules, async/sync `run`, line shell sessions, step hooks, installed-payload records, optional agent context and hints, framed RPC tests. |
+| [Go](go/README.md) | You want typed provider/step contracts or close alignment with the daemon. | Core modules, PTY sessions, payload-provider RPC methods, step-provider RPC methods, optional agent context and hints, `hoveltest` helpers. |
+| [Rust](rust/README.md) | You want a small dependency-light module binary. | Core modules, line shell sessions, installed-payload records, raw optional agent context and hints. No step/provider dispatch yet. |
 
 The canonical module-author guide is the static spec page at
 [`../spec/module-development.html`](../spec/module-development.html). The

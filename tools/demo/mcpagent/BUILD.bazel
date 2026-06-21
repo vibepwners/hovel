@@ -1,0 +1,29 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "mcpagent_lib",
+    srcs = [
+        "harness.go",
+        "main.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/tools/demo/mcpagent",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_github_charmbracelet_lipgloss//:lipgloss",
+        "@com_github_charmbracelet_x_term//:term",
+        "@com_github_modelcontextprotocol_go_sdk//mcp",
+    ],
+)
+
+go_binary(
+    name = "mcpagent",
+    embed = [":mcpagent_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "mcpagent_test",
+    srcs = ["harness_test.go"],
+    embed = [":mcpagent_lib"],
+    deps = ["@com_github_modelcontextprotocol_go_sdk//mcp"],
+)

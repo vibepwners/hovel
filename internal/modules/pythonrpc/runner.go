@@ -279,14 +279,18 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 		return run.Result{}, moduleFailure("module failed while reporting metadata", "module metadata invalid", err, process.stderrString())
 	}
 	request.ModuleID = module.ID
-	executeResult, err := process.client.call(ctx, "execute", map[string]any{
+	executeParams := map[string]any{
 		"runId":        request.ID,
 		"moduleId":     request.ModuleID,
 		"target":       request.Target,
 		"inputs":       request.Inputs,
 		"chainConfig":  request.ChainConfig,
 		"targetConfig": request.TargetConfig,
-	})
+	}
+	if request.Agent != nil {
+		executeParams["agentContext"] = request.Agent
+	}
+	executeResult, err := process.client.call(ctx, "execute", executeParams)
 	if err != nil {
 		return run.Result{}, moduleFailure("module failed during execution", "module execute failed", err, process.stderrString())
 	}
@@ -1083,6 +1087,10 @@ func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (r
 	if err != nil {
 		return run.Result{}, err
 	}
+	agentHints, err := agentHintsFromRPC(values["agentHints"])
+	if err != nil {
+		return run.Result{}, err
+	}
 	args := run.ResultArgs{
 		Summary:           stringValue(values["summary"]),
 		Findings:          findings,
@@ -1090,6 +1098,7 @@ func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (r
 		Logs:              logsFromRPC(request, logs),
 		Sessions:          sessions,
 		InstalledPayloads: installedPayloads,
+		AgentHints:        agentHints,
 	}
 	if stringValue(values["status"]) == string(run.StateFailed) {
 		return run.Failed(request, args)
@@ -1787,6 +1796,42 @@ func installedPayloadsFromRPC(value any) ([]run.InstalledPayloadDescriptor, erro
 		payloads = append(payloads, payload)
 	}
 	return payloads, nil
+}
+
+func agentHintsFromRPC(value any) ([]run.AgentHint, error) {
+	items, err := rpcArray(value, "agentHints")
+	if err != nil {
+		return nil, err
+	}
+	hints := make([]run.AgentHint, 0, len(items))
+	for index, item := range items {
+		object, err := rpcObjectItem(item, "agentHints", index)
+		if err != nil {
+			return nil, err
+		}
+		appliesTo, err := stringMapFromRPC(object["appliesTo"], fmt.Sprintf("agentHints item %d appliesTo", index+1))
+		if err != nil {
+			return nil, err
+		}
+		provenance, err := stringMapFromRPC(object["provenance"], fmt.Sprintf("agentHints item %d provenance", index+1))
+		if err != nil {
+			return nil, err
+		}
+		hint := run.AgentHint{
+			Schema:     stringValue(object["schema"]),
+			Phase:      stringValue(object["phase"]),
+			Audience:   stringValue(object["audience"]),
+			Risk:       stringValue(object["risk"]),
+			AppliesTo:  appliesTo,
+			Text:       stringValue(object["text"]),
+			Provenance: provenance,
+		}
+		if hint.Schema == "" {
+			hint.Schema = "hovel.agent_hint.v1"
+		}
+		hints = append(hints, hint)
+	}
+	return hints, nil
 }
 
 func payloadProviderRecordFromRPC(value any, label string) (*run.PayloadProviderRecord, error) {

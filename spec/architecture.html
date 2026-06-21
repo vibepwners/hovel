@@ -35,6 +35,7 @@
         <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
         <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
       </ul>
@@ -193,6 +194,7 @@ CheckGuardrails(ctx, ActionRequest) (GuardrailResult, error)
           <li><code>review</code> always displays the current configuration review, requires the operator to type <code>yes</code>, and records or refreshes the confirmation without starting execution.</li>
         </ol>
         <p>Confirmations do not expire by time. A confirmation is invalidated by any change that changes the plan hash. The confirmation record should stay small: plan hash, timestamp, and client ID are required. Additional fields may be recorded when already available, but should not require heavyweight identity or account systems.</p>
+        <p>When launch-key policy is enabled, confirmation is entity-scoped. A pending throw snapshots the required live operation attachments and can start only after every required entity approves the same plan hash and policy flags. The agent-facing design is specified in <a href="mcp-agent.html">MCP and Agent Operation</a>.</p>
 
         <h2>Command Registry</h2>
         <p>Shared application command definitions live in a central registry. The registry owns command paths, aliases, options, help, validation, output modes, and handler bindings. The interactive CLI may add prompt-only affordances such as active-chain aliases and <code>chain config interactive</code>, but those affordances must delegate to the same session and application-service behavior.</p>

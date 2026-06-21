@@ -36,6 +36,7 @@
         <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
         <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
       </ul>
@@ -198,6 +199,7 @@
           <li><strong>Use Hovel's log rail.</strong> Logs should be structured fields, not prose blobs. Log target host, stage, protocol, handle, and provider ids as fields so transcripts are searchable.</li>
           <li><strong>Return durable state deliberately.</strong> Facts belong in <code>outputs</code>, human/audit observations in <code>findings</code>, blobs in <code>artifacts</code>, live handles in <code>sessions</code>, and target-side payload inventory only in explicit <code>installedPayloads</code> descriptors.</li>
           <li><strong>Dangerous modules self-identify.</strong> If your module can crash a host, write disk, create accounts, install payloads, bind listeners, execute commands, or maintain access, tag it <code>dangerous</code> and add the confirmation requirements the operator must satisfy.</li>
+          <li><strong>Agent context is optional.</strong> Modules may ignore agent-aware execution entirely. When no agent context exists, SDKs expose no agent object and module behavior must be identical to non-MCP execution. Modules that opt in can read the SDK agent context and return <code>agentHints</code>; hints are untrusted module-authored context and must never bypass Hovel guardrails.</li>
         </ul>
 
         <h2>First integration loop</h2>

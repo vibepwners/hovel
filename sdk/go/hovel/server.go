@@ -345,6 +345,7 @@ func (s *server) execute(params json.RawMessage) (any, error) {
 		Inputs       map[string]any `json:"inputs"`
 		ChainConfig  map[string]any `json:"chainConfig"`
 		TargetConfig map[string]any `json:"targetConfig"`
+		Agent        *AgentContext  `json:"agentContext"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -359,6 +360,7 @@ func (s *server) execute(params json.RawMessage) (any, error) {
 		Inputs:       orEmpty(p.Inputs),
 		ChainConfig:  orEmpty(p.ChainConfig),
 		TargetConfig: orEmpty(p.TargetConfig),
+		Agent:        p.Agent,
 		Log:          &Logger{name: s.module.Info().Name, emit: s.emitLog},
 		sessions:     registry,
 	}

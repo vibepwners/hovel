@@ -1,0 +1,30 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "mcp",
+    srcs = ["server.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/mcp",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/adapters/commandmode",
+        "//internal/adapters/daemonrpc",
+        "//internal/app/commands",
+        "//internal/app/operatorsession",
+        "//internal/domain/operator",
+        "//internal/domain/workspace",
+        "//internal/infra/daemonmanager",
+        "@com_github_modelcontextprotocol_go_sdk//mcp",
+    ],
+)
+
+go_test(
+    name = "mcp_test",
+    srcs = ["server_test.go"],
+    embed = [":mcp"],
+    deps = [
+        "//internal/adapters/daemonrpc",
+        "//internal/app/commands",
+        "//internal/app/operatorsession",
+        "@com_github_modelcontextprotocol_go_sdk//mcp",
+    ],
+)

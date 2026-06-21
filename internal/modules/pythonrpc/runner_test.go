@@ -145,6 +145,105 @@ while True:
 	}
 }
 
+func TestRunnerPassesOptionalAgentContextAndPreservesHints(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "agent-aware", "version": "v0.0.0-test",
+            "moduleType": "survey", "summary": "agent aware", "tags": []}})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "execute":
+        params = request.get("params") or {}
+        agent = params.get("agentContext")
+        hints = []
+        if agent:
+            hints.append({
+                "schema": "hovel.agent_hint.v1",
+                "phase": "execute",
+                "audience": "assistant",
+                "risk": "low",
+                "text": "Prefer read-only inspection before changing state.",
+                "provenance": {"moduleId": "agent-aware@v0.0.0-test"}
+            })
+        entity = (agent or {}).get("entity") or {}
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "status": "succeeded",
+            "summary": "agent " + (entity.get("kind") or "absent"),
+            "findings": [],
+            "artifacts": [],
+            "outputs": {},
+            "sessions": [],
+            "agentHints": hints}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	runner := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}
+
+	ordinary, err := run.NewRequest(run.RequestArgs{ID: "run-ordinary", ModuleID: "broken", Target: "mock://target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinaryResult, err := runner.Run(context.Background(), ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ordinaryResult.Summary != "agent absent" {
+		t.Fatalf("ordinary summary = %q, want agent absent", ordinaryResult.Summary)
+	}
+	if len(ordinaryResult.AgentHints) != 0 {
+		t.Fatalf("ordinary agent hints = %#v, want none", ordinaryResult.AgentHints)
+	}
+
+	agentRun, err := run.NewRequest(run.RequestArgs{
+		ID:       "run-agent",
+		ModuleID: "broken",
+		Target:   "mock://target",
+		Agent: &run.AgentContext{
+			Schema: "hovel.agent_context.v1",
+			Entity: run.AgentEntity{
+				ID:          "entity-mcp",
+				Kind:        "mcp",
+				DisplayName: "Codex",
+				Agent:       true,
+			},
+			Operation:     "redteam-lab",
+			Chain:         "alpha",
+			PlanID:        "plan-1",
+			PlanHash:      "hash-1",
+			ApprovalState: "pending",
+			Phase:         "execute",
+			Resources:     []string{"hovel://throw-plan/plan-1"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentResult, err := runner.Run(context.Background(), agentRun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agentResult.Summary != "agent mcp" {
+		t.Fatalf("agent summary = %q, want agent mcp", agentResult.Summary)
+	}
+	if len(agentResult.AgentHints) != 1 {
+		t.Fatalf("agent hints = %#v, want one", agentResult.AgentHints)
+	}
+	hint := agentResult.AgentHints[0]
+	if hint.Schema != "hovel.agent_hint.v1" || hint.Text == "" || hint.Provenance["moduleId"] != "agent-aware@v0.0.0-test" {
+		t.Fatalf("agent hint = %#v", hint)
+	}
+}
+
 func TestModuleEntriesResolvesCommandPaths(t *testing.T) {
 	root := t.TempDir()
 	config := ModuleConfig{Modules: []ModuleEntry{

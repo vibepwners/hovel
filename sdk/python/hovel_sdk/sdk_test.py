@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, ClassVar, cast
 
 from hovel_sdk import (
+    AgentHint,
     Artifact,
     Context,
     HovelModule,
@@ -153,6 +154,32 @@ class StepModule(HovelModule):
         return Result.ok(summary="not used")
 
 
+class AgentAwareModule(HovelModule):
+    name = "agent-aware"
+    module_type = "survey"
+
+    def run(self, ctx: Context) -> Result:
+        if ctx.agent is None:
+            return Result.ok({"agentPresent": False}, summary="agent absent")
+        return Result.ok(
+            {
+                "agentPresent": True,
+                "entityId": ctx.agent.entity.id,
+                "entityKind": ctx.agent.entity.kind,
+                "phase": ctx.agent.phase,
+            },
+            summary="agent present",
+        ).with_agent_hints(
+            AgentHint(
+                phase="execute",
+                audience="assistant",
+                risk="low",
+                text="Prefer read-only inspection before changing state.",
+                provenance={"moduleId": "agent-aware@v0.0.0-test"},
+            )
+        )
+
+
 class _FragmentingStream:
     def __init__(self) -> None:
         self._buffer = io.BytesIO()
@@ -268,6 +295,63 @@ class SDKTest(unittest.TestCase):
         assert message is not None
         self.assertEqual(message["result"]["chainConfig"][0]["key"], "operator.confirmed_lab")
         self.assertEqual(message["result"]["targetConfig"][0]["type"], "host")
+
+    def test_execute_exposes_optional_agent_context(self) -> None:
+        without_agent = io.BytesIO(
+            encode_message({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "execute",
+                "params": {"runId": "run-1", "moduleId": "agent-aware", "target": "mock://target"},
+            })
+        )
+        stdout = io.BytesIO()
+        JSONRPCServer(AgentAwareModule(), without_agent, stdout).serve_forever()
+        stdout.seek(0)
+        message = read_message(stdout)
+        self.assertIsNotNone(message)
+        assert message is not None
+        self.assertEqual(message["result"]["outputs"], {"agentPresent": False})
+        self.assertNotIn("agentHints", message["result"])
+
+        with_agent = io.BytesIO(
+            encode_message({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "execute",
+                "params": {
+                    "runId": "run-2",
+                    "moduleId": "agent-aware",
+                    "target": "mock://target",
+                    "agentContext": {
+                        "schema": "hovel.agent_context.v1",
+                        "entity": {
+                            "id": "entity-mcp",
+                            "kind": "mcp",
+                            "displayName": "Codex",
+                            "agent": True,
+                        },
+                        "operation": "redteam-lab",
+                        "chain": "alpha",
+                        "planId": "plan-1",
+                        "planHash": "hash-1",
+                        "approvalState": "pending",
+                        "phase": "execute",
+                        "resources": ["hovel://throw-plan/plan-1"],
+                    },
+                },
+            })
+        )
+        stdout = io.BytesIO()
+        JSONRPCServer(AgentAwareModule(), with_agent, stdout).serve_forever()
+        stdout.seek(0)
+        message = read_message(stdout)
+        self.assertIsNotNone(message)
+        assert message is not None
+        self.assertEqual(message["result"]["outputs"]["entityId"], "entity-mcp")
+        self.assertEqual(message["result"]["outputs"]["entityKind"], "mcp")
+        self.assertEqual(message["result"]["agentHints"][0]["schema"], "hovel.agent_hint.v1")
+        self.assertEqual(message["result"]["agentHints"][0]["provenance"]["moduleId"], "agent-aware@v0.0.0-test")
 
     def test_step_contract_methods_dispatch_over_json_rpc(self) -> None:
         stdin = io.BytesIO(

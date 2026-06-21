@@ -14,16 +14,17 @@ type StepRuntimeRunner struct {
 }
 
 func (r StepRuntimeRunner) PrepareStep(ctx context.Context, req chainruntime.StepPrepareRequest) (chainruntime.StepPrepareResult, error) {
-	result, err := r.Runner.PrepareStep(ctx, StepCallRequest{
-		ModuleID: req.ModuleID,
-		Params: map[string]any{
-			"preparedPlanId":         req.RunID,
-			"stepId":                 req.StepID,
-			"config":                 req.Config,
-			"inputs":                 capabilityRefsToRPC(req.Inputs),
-			"existingPreparedValues": preparedValuesToRPC(req.ExistingPreparedValues),
-		},
-	})
+	params := map[string]any{
+		"preparedPlanId":         req.RunID,
+		"stepId":                 req.StepID,
+		"config":                 req.Config,
+		"inputs":                 capabilityRefsToRPC(req.Inputs),
+		"existingPreparedValues": preparedValuesToRPC(req.ExistingPreparedValues),
+	}
+	if req.Agent != nil {
+		params["agentContext"] = req.Agent
+	}
+	result, err := r.Runner.PrepareStep(ctx, StepCallRequest{ModuleID: req.ModuleID, Params: params})
 	if err != nil {
 		return chainruntime.StepPrepareResult{}, err
 	}
@@ -31,16 +32,17 @@ func (r StepRuntimeRunner) PrepareStep(ctx context.Context, req chainruntime.Ste
 }
 
 func (r StepRuntimeRunner) ExecuteStep(ctx context.Context, req chainruntime.StepExecuteRequest) (chainruntime.StepExecuteResult, error) {
-	result, err := r.Runner.ExecuteStep(ctx, StepCallRequest{
-		ModuleID: req.ModuleID,
-		Params: map[string]any{
-			"runId":                   req.RunID,
-			"stepId":                  req.StepID,
-			"confirmedPreparedValues": req.ConfirmedPreparedValues,
-			"inputs":                  capabilityRefsToRPC(req.Inputs),
-			"runMetadata":             req.RunMetadata,
-		},
-	})
+	params := map[string]any{
+		"runId":                   req.RunID,
+		"stepId":                  req.StepID,
+		"confirmedPreparedValues": req.ConfirmedPreparedValues,
+		"inputs":                  capabilityRefsToRPC(req.Inputs),
+		"runMetadata":             req.RunMetadata,
+	}
+	if req.Agent != nil {
+		params["agentContext"] = req.Agent
+	}
+	result, err := r.Runner.ExecuteStep(ctx, StepCallRequest{ModuleID: req.ModuleID, Params: params})
 	if err != nil {
 		return chainruntime.StepExecuteResult{}, err
 	}
@@ -73,10 +75,15 @@ func stepPrepareResultFromRPC(result map[string]any) (chainruntime.StepPrepareRe
 	if err != nil {
 		return chainruntime.StepPrepareResult{}, err
 	}
+	agentHints, err := agentHintsFromRPC(result["agentHints"])
+	if err != nil {
+		return chainruntime.StepPrepareResult{}, err
+	}
 	return chainruntime.StepPrepareResult{
 		PlannedOutputs: plannedOutputs,
 		PreparedValues: preparedValues,
 		Evidence:       evidence,
+		AgentHints:     agentHints,
 	}, nil
 }
 
@@ -101,6 +108,10 @@ func stepExecuteResultFromRPC(req chainruntime.StepExecuteRequest, result map[st
 	if err != nil {
 		return chainruntime.StepExecuteResult{}, err
 	}
+	agentHints, err := agentHintsFromRPC(result["agentHints"])
+	if err != nil {
+		return chainruntime.StepExecuteResult{}, err
+	}
 	return chainruntime.StepExecuteResult{
 		Status:            stringValue(result["status"]),
 		Capabilities:      capabilities,
@@ -108,6 +119,7 @@ func stepExecuteResultFromRPC(req chainruntime.StepExecuteRequest, result map[st
 		Evidence:          evidence,
 		Sessions:          sessions,
 		InstalledPayloads: installedPayloads,
+		AgentHints:        agentHints,
 	}, nil
 }
 

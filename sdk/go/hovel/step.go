@@ -85,6 +85,7 @@ type StepPrepareRequest struct {
 	Config                 map[string]any           `json:"config,omitempty"`
 	Inputs                 []CapabilityRef          `json:"inputs,omitempty"`
 	ExistingPreparedValues map[string]PreparedValue `json:"existingPreparedValues,omitempty"`
+	Agent                  *AgentContext            `json:"agentContext,omitempty"`
 }
 
 type StepPrepareResult struct {
@@ -92,6 +93,7 @@ type StepPrepareResult struct {
 	PreparedValues  map[string]PreparedValue `json:"preparedValues,omitempty"`
 	OperatorSummary OperatorSummary          `json:"operatorSummary,omitempty"`
 	Evidence        []Evidence               `json:"evidence,omitempty"`
+	AgentHints      []AgentHint              `json:"agentHints,omitempty"`
 }
 
 type StepExecuteRequest struct {
@@ -100,6 +102,7 @@ type StepExecuteRequest struct {
 	ConfirmedPreparedValues map[string]any  `json:"confirmedPreparedValues,omitempty"`
 	Inputs                  []CapabilityRef `json:"inputs,omitempty"`
 	RunMetadata             map[string]any  `json:"runMetadata,omitempty"`
+	Agent                   *AgentContext   `json:"agentContext,omitempty"`
 }
 
 type StepExecuteResult struct {
@@ -109,19 +112,22 @@ type StepExecuteResult struct {
 	Evidence          []Evidence                   `json:"evidence,omitempty"`
 	Sessions          []SessionRef                 `json:"sessions,omitempty"`
 	InstalledPayloads []InstalledPayloadDescriptor `json:"installedPayloads,omitempty"`
+	AgentHints        []AgentHint                  `json:"agentHints,omitempty"`
 }
 
 type StepCleanupRequest struct {
-	RunID           string `json:"runId,omitempty"`
-	StepID          string `json:"stepId"`
-	CleanupHandleID string `json:"cleanupHandleId"`
-	Mode            string `json:"mode,omitempty"`
+	RunID           string        `json:"runId,omitempty"`
+	StepID          string        `json:"stepId"`
+	CleanupHandleID string        `json:"cleanupHandleId"`
+	Mode            string        `json:"mode,omitempty"`
+	Agent           *AgentContext `json:"agentContext,omitempty"`
 }
 
 type StepCleanupResult struct {
 	Status           string                 `json:"status"`
 	StateTransitions []CapabilityTransition `json:"stateTransitions,omitempty"`
 	Evidence         []Evidence             `json:"evidence,omitempty"`
+	AgentHints       []AgentHint            `json:"agentHints,omitempty"`
 }
 
 type CapabilityRef struct {

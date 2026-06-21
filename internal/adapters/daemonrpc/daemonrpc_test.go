@@ -15,6 +15,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	"github.com/Vibe-Pwners/hovel/internal/modules/mockexploit"
 )
@@ -570,6 +571,298 @@ func TestActiveLogsDoesNotPersistSnapshot(t *testing.T) {
 	}
 }
 
+func TestClientCanAttachHeartbeatAndDetachOperatorEntities(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	clock := &mutableClock{now: time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)}
+	serveTestDaemon(t, socketPath, runs, WithOperatorClock(clock))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	attached, err := client.AttachEntity(context.Background(), AttachEntityRequest{
+		ID:           "entity-mcp",
+		Kind:         "mcp",
+		DisplayName:  "codex",
+		Agent:        true,
+		Operation:    "redteam-lab",
+		ActiveChain:  "alpha",
+		Capabilities: []string{"tools", "resources"},
+		PolicyTags:   []string{"allow-plan"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attached.Entity.ID != "entity-mcp" || attached.Entity.Kind != "mcp" || !attached.Entity.Agent {
+		t.Fatalf("attached entity = %#v", attached.Entity)
+	}
+	if attached.Entity.ConnectedAt != "2026-06-20T12:00:00Z" || attached.Entity.LastSeenAt != "2026-06-20T12:00:00Z" {
+		t.Fatalf("attached times = %s/%s", attached.Entity.ConnectedAt, attached.Entity.LastSeenAt)
+	}
+
+	clock.now = clock.now.Add(30 * time.Second)
+	heartbeat, err := client.HeartbeatEntity(context.Background(), HeartbeatEntityRequest{
+		ID:          "entity-mcp",
+		Operation:   stringPtr("redteam-lab"),
+		ActiveChain: stringPtr("bravo"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if heartbeat.Entity.ConnectedAt != "2026-06-20T12:00:00Z" || heartbeat.Entity.LastSeenAt != "2026-06-20T12:00:30Z" {
+		t.Fatalf("heartbeat times = %s/%s", heartbeat.Entity.ConnectedAt, heartbeat.Entity.LastSeenAt)
+	}
+	if heartbeat.Entity.ActiveChain != "bravo" {
+		t.Fatalf("heartbeat active chain = %q, want bravo", heartbeat.Entity.ActiveChain)
+	}
+
+	entities, err := client.ListEntities(context.Background(), ListEntitiesRequest{Operation: "redteam-lab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := entityIDs(entities.Entities), []string{"entity-mcp"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("entities = %#v, want %#v", got, want)
+	}
+
+	cleared, err := client.HeartbeatEntity(context.Background(), HeartbeatEntityRequest{
+		ID:          "entity-mcp",
+		Operation:   stringPtr(""),
+		ActiveChain: stringPtr(""),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.Entity.Operation != "" || cleared.Entity.ActiveChain != "" {
+		t.Fatalf("cleared entity operation/chain = %q/%q, want empty", cleared.Entity.Operation, cleared.Entity.ActiveChain)
+	}
+
+	entities, err = client.ListEntities(context.Background(), ListEntitiesRequest{Operation: "redteam-lab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entities.Entities) != 0 {
+		t.Fatalf("entities after clearing operation = %#v, want none for redteam-lab", entities.Entities)
+	}
+
+	if err := client.DetachEntity(context.Background(), DetachEntityRequest{ID: "entity-mcp"}); err != nil {
+		t.Fatal(err)
+	}
+	entities, err = client.ListEntities(context.Background(), ListEntitiesRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entities.Entities) != 0 {
+		t.Fatalf("entities after detach = %#v, want none", entities.Entities)
+	}
+}
+
+func TestOperatorEntityAttachmentsDoNotPersistSessionSnapshots(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	var persisted []operatorsession.PersistedState
+	serveTestDaemon(t, socketPath, runs,
+		WithSession(operatorsession.New()),
+		WithOperatorClock(fixedClock{now: time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)}),
+		WithSessionPersistence(func(state operatorsession.PersistedState) error {
+			persisted = append(persisted, state)
+			return nil
+		}),
+	)
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-cli", Kind: "cli", Operation: "redteam-lab"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.HeartbeatEntity(context.Background(), HeartbeatEntityRequest{ID: "entity-cli", Operation: stringPtr("redteam-lab")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DetachEntity(context.Background(), DetachEntityRequest{ID: "entity-cli"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted) != 0 {
+		t.Fatalf("persisted snapshots = %#v, want none for live operator entity lifecycle", persisted)
+	}
+}
+
+func TestClientCoordinatesLaunchKeyApprovalsFromLiveEntities(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs,
+		WithOperatorClock(fixedClock{now: time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)}),
+		WithLaunchKeyPolicy(operatordomain.LaunchKeyPolicy{Enabled: true, HeartbeatTimeout: time.Minute}),
+	)
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-cli", Kind: "cli", Operation: "redteam-lab"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-mcp", Kind: "mcp", Agent: true, Operation: "redteam-lab"}); err != nil {
+		t.Fatal(err)
+	}
+
+	pending, err := client.CreatePendingThrow(context.Background(), CreatePendingThrowRequest{
+		ID:             "pending-1",
+		Operation:      "redteam-lab",
+		PlanHash:       "hash-1",
+		AllowDangerous: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Ready {
+		t.Fatalf("pending throw unexpectedly ready: %#v", pending)
+	}
+	if got, want := pending.MissingApproverIDs, []string{"entity-cli", "entity-mcp"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("missing approvers = %#v, want %#v", got, want)
+	}
+
+	if _, err := client.RequirePendingThrowReady(context.Background(), PendingThrowRequest{ID: "pending-1"}); err == nil {
+		t.Fatal("RequirePendingThrowReady returned nil error before approvals")
+	}
+
+	pending, err = client.ConfirmPendingThrow(context.Background(), ConfirmPendingThrowRequest{
+		ID:             "pending-1",
+		EntityID:       "entity-mcp",
+		PlanHash:       "hash-1",
+		AllowDangerous: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Ready || !reflect.DeepEqual(pending.MissingApproverIDs, []string{"entity-cli"}) {
+		t.Fatalf("pending after mcp approval = %#v, want entity-cli missing", pending)
+	}
+
+	pending, err = client.ConfirmPendingThrow(context.Background(), ConfirmPendingThrowRequest{
+		ID:             "pending-1",
+		EntityID:       "entity-cli",
+		PlanHash:       "hash-1",
+		AllowDangerous: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pending.Ready || len(pending.MissingApproverIDs) != 0 {
+		t.Fatalf("pending after all approvals = %#v, want ready", pending)
+	}
+	if ready, err := client.RequirePendingThrowReady(context.Background(), PendingThrowRequest{ID: "pending-1"}); err != nil || !ready.Ready {
+		t.Fatalf("RequirePendingThrowReady = %#v, %v; want ready", ready, err)
+	}
+}
+
+func TestLaunchKeyPendingThrowSnapshotsRequiredEntities(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs,
+		WithOperatorClock(fixedClock{now: time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)}),
+		WithLaunchKeyPolicy(operatordomain.LaunchKeyPolicy{Enabled: true, HeartbeatTimeout: time.Minute}),
+	)
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-cli", Kind: "cli", Operation: "redteam-lab"}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := client.CreatePendingThrow(context.Background(), CreatePendingThrowRequest{
+		ID:        "pending-1",
+		Operation: "redteam-lab",
+		PlanHash:  "hash-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := pending.RequiredApproverIDs, []string{"entity-cli"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("required approvers = %#v, want snapshot %#v", got, want)
+	}
+
+	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-mcp", Kind: "mcp", Agent: true, Operation: "redteam-lab"}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = client.ConfirmPendingThrow(context.Background(), ConfirmPendingThrowRequest{
+		ID:       "pending-1",
+		EntityID: "entity-cli",
+		PlanHash: "hash-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pending.Ready || !reflect.DeepEqual(pending.RequiredApproverIDs, []string{"entity-cli"}) {
+		t.Fatalf("pending after late attachment = %#v, want original snapshot ready", pending)
+	}
+}
+
+func TestClientCancelsPendingLaunchKeyThrow(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs)
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.CreatePendingThrow(context.Background(), CreatePendingThrowRequest{ID: "pending-1", Operation: "redteam-lab", PlanHash: "hash-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CancelPendingThrow(context.Background(), PendingThrowRequest{ID: "pending-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.RequirePendingThrowReady(context.Background(), PendingThrowRequest{ID: "pending-1"}); err == nil {
+		t.Fatal("RequirePendingThrowReady returned nil after cancel")
+	}
+}
+
+func entityIDs(entities []OperatorEntity) []string {
+	ids := make([]string, 0, len(entities))
+	for _, entity := range entities {
+		ids = append(ids, entity.ID)
+	}
+	return ids
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
 func TestSessionRPCPropagatesRequestContext(t *testing.T) {
 	server := &Server{moduleSessions: contextCheckingSessionBroker{}}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -685,5 +978,13 @@ type fixedClock struct {
 }
 
 func (c fixedClock) Now() time.Time {
+	return c.now
+}
+
+type mutableClock struct {
+	now time.Time
+}
+
+func (c *mutableClock) Now() time.Time {
 	return c.now
 }

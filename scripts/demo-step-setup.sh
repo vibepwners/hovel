@@ -61,6 +61,9 @@ hovel_demo_setup() {
   rm -rf "$HOVEL_WORKSPACE" "$bin_dir"
   mkdir -p "$HOVEL_WORKSPACE" "$bin_dir"
   ln -sf "$repo_root/bazel-bin/cmd/hovel/hovel_/hovel" "$bin_dir/hovel"
+  if [[ -x "$repo_root/bazel-bin/tools/demo/mcpagent/mcpagent_/mcpagent" ]]; then
+    ln -sf "$repo_root/bazel-bin/tools/demo/mcpagent/mcpagent_/mcpagent" "$bin_dir/hovel-mock-agent"
+  fi
   export PATH="$bin_dir:$PATH"
 
   hovel daemon serve --workspace "$HOVEL_WORKSPACE" >"$HOVEL_WORKSPACE/daemon.log" 2>&1 &

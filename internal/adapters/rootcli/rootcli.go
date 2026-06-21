@@ -10,6 +10,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/adapters/cli"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
+	mcpadapter "github.com/Vibe-Pwners/hovel/internal/adapters/mcp"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
@@ -35,6 +36,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDaemonCommand(ctx, args[1:], stdout, stderr)
 	case "cli", "shell":
 		return cli.Run(ctx, args[1:], stdout, stderr)
+	case "mcp":
+		return runMCP(ctx, args[1:], stdout, stderr)
 	case "daemon":
 		return runDaemon(ctx, args[1:], stdout, stderr)
 	case "tui":
@@ -174,6 +177,7 @@ func newRootParser() *argparse.Parser {
 	parser.NewCommand("command", "Run one command from the shell. Compatibility alias for direct commands.")
 	parser.NewCommand("run", "Run one command against a daemon-backed operator session.")
 	parser.NewCommand("cli", "Launch the interactive prompt shell. Alias for shell.")
+	parser.NewCommand("mcp", "Launch the MCP agent interface.")
 	daemon := parser.NewCommand("daemon", "Run or inspect the daemon role.")
 	daemon.NewCommand("serve", "Run the daemon role.")
 	daemon.NewCommand("status", "Inspect daemon status.")
@@ -357,6 +361,42 @@ func newDaemonParser() *argparse.Parser {
 	parser.NewCommand("serve", "Run the daemon role.")
 	parser.NewCommand("status", "Inspect daemon status.")
 	return parser
+}
+
+func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	parser := newMCPParser()
+	workspacePath := parser.String("w", "workspace", &argparse.Options{Help: "Workspace path"})
+	operation := parser.String("", "op", &argparse.Options{Help: "Operation context for this MCP operator"})
+	operationAlias := parser.String("", "operation", &argparse.Options{Help: "Alias for --op"})
+	chain := parser.String("c", "chain", &argparse.Options{Help: "Chain context for this MCP operator"})
+	entityID := parser.String("", "entity-id", &argparse.Options{Help: "Stable operator entity ID for launch-key approvals"})
+	displayName := parser.String("", "display-name", &argparse.Options{Help: "Human-readable operator entity name"})
+	if ok, code := parseArgs(parser, args, stdout, stderr); !ok {
+		return code
+	}
+	selectedOperation := *operation
+	if selectedOperation == "" {
+		selectedOperation = *operationAlias
+	}
+	if err := mcpadapter.Run(ctx, mcpadapter.Config{
+		Workspace:   *workspacePath,
+		Operation:   selectedOperation,
+		Chain:       *chain,
+		EntityID:    *entityID,
+		DisplayName: *displayName,
+		Output:      stdout,
+	}); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return 0
+		}
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func newMCPParser() *argparse.Parser {
+	return argparse.NewParser("hovel mcp", "Launch the MCP agent interface.")
 }
 
 func newTUIParser() *argparse.Parser {

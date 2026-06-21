@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "hovel",
     srcs = [
+        "agent.go",
         "context.go",
         "framing.go",
         "module.go",

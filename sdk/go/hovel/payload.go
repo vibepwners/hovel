@@ -58,6 +58,7 @@ type PrepareListenerRequest struct {
 	Target    string            `json:"target"`
 	PayloadID string            `json:"payloadId"`
 	Config    map[string]string `json:"config,omitempty"`
+	Agent     *AgentContext     `json:"agentContext,omitempty"`
 }
 
 type GeneratePayloadRequest struct {
@@ -67,6 +68,7 @@ type GeneratePayloadRequest struct {
 	Format    string            `json:"format"`
 	Config    map[string]string `json:"config,omitempty"`
 	Listener  *ListenerRef      `json:"listener,omitempty"`
+	Agent     *AgentContext     `json:"agentContext,omitempty"`
 }
 
 type PayloadArtifactSet struct {
@@ -125,6 +127,7 @@ type ConnectSessionRequest struct {
 	InstalledPayloadID string                 `json:"installedPayloadId,omitempty"`
 	Config             map[string]string      `json:"config,omitempty"`
 	Reconnect          *PayloadProviderRecord `json:"reconnect,omitempty"`
+	Agent              *AgentContext          `json:"agentContext,omitempty"`
 }
 
 type CleanupPayloadRequest struct {
@@ -134,6 +137,7 @@ type CleanupPayloadRequest struct {
 	InstalledPayloadID string                 `json:"installedPayloadId,omitempty"`
 	Reason             string                 `json:"reason,omitempty"`
 	Cleanup            *PayloadProviderRecord `json:"cleanup,omitempty"`
+	Agent              *AgentContext          `json:"agentContext,omitempty"`
 }
 
 type CleanupResult struct {

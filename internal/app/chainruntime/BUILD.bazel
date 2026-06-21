@@ -16,5 +16,8 @@ go_test(
     size = "small",
     srcs = ["runtime_test.go"],
     embed = [":chainruntime"],
-    deps = ["//internal/app/modulecatalog"],
+    deps = [
+        "//internal/app/modulecatalog",
+        "//internal/domain/run",
+    ],
 )

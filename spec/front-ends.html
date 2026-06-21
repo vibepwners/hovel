@@ -35,6 +35,7 @@
         <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html" aria-current="page">Front Ends</a></li>
+        <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
         <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
       </ul>
@@ -57,14 +58,16 @@
         <h1>Front Ends</h1>
 
         <p>Front ends are adapters over application services. They must share validation, planning, execution, structured logging rail subscriptions, scope guardrails, and audit behavior.</p>
-        <p>Hovel's implemented operator surfaces are <code>cli</code> mode for an interactive prompt shell, one-shot chain-file execution for shell workflows, daemon management, and an explicit <code>tui</code> placeholder that exits as not implemented. The product target also includes a full-screen TUI, REST/OpenAPI, and MCP. As those adapters land, they must attach to the same daemon and use the same application services.</p>
+        <p>Hovel's implemented operator surfaces are <code>cli</code> mode for an interactive prompt shell, one-shot chain-file execution for shell workflows, daemon management, and a first stdio MCP inspection slice. <code>hovel tui</code> remains an explicit placeholder that exits as not implemented. The product target also includes a full-screen TUI, REST/OpenAPI, and MCP execution parity. As those adapters land, they must attach to the same daemon and use the same application services.</p>
         <p>The production entrypoint is the <code>hovel</code> mono-binary. Top-level subcommands select the front-end or daemon role:</p>
 <pre data-lang="shell"><code>hovel cli ...
 hovel throw &lt;chain-file&gt;
 hovel daemon ...
+hovel mcp ...              # stdio agent inspection front end
 hovel tui ...              # explicit placeholder today
 </code></pre>
         <p>The root implementation also exposes compatibility and developer entrypoints such as <code>shell</code>, <code>command</code>, <code>run</code>, direct registry roots, <code>init</code>, and <code>status</code>. They should remain documented as compatibility/developer affordances rather than the durable product contract. The shell-facing product surface should be deliberately narrow: daemon management, help, and one-shot execution of a saved chain file.</p>
+        <p>The <code>hovel mcp</code> role is specified in <a href="mcp-agent.html">MCP and Agent Operation</a>. It is an agent-facing front end over the same daemon state and safety model, not a privileged execution shortcut.</p>
 
         <h2>Terminology</h2>
         <p>These terms are normative:</p>
@@ -259,13 +262,13 @@ quit
         <p>Requirements:</p>
         <ol>
           <li>Attaches to <code>hoveld</code>.</li>
-          <li>Consumes the same structured logging rail as one-shot execution, <code>cli</code>, and future API and MCP adapters.</li>
+          <li>Consumes the same structured logging rail as one-shot execution, <code>cli</code>, MCP, and the future API adapter.</li>
           <li>Works over SSH.</li>
           <li>Degrades gracefully on limited terminals.</li>
           <li>Supports multiple clients attached to the same engine.</li>
           <li>Uses Bubble Tea, Bubbles, and Lip Gloss.</li>
           <li>Shares theme tokens with <code>cli</code> mode.</li>
-          <li>Presents the same plans, confirmations, throws, sessions, listeners, artifacts, and structured events as <code>cli</code>, one-shot execution, and future MCP.</li>
+          <li>Presents the same plans, confirmations, throws, sessions, listeners, artifacts, and structured events as <code>cli</code>, one-shot execution, and MCP.</li>
           <li>Managed daemon lifecycle: attach to an existing daemon if one is running; otherwise start a background daemon owned by the <code>tui</code> session and shut it down on exit.</li>
         </ol>
         <p>Initial screens:</p>
@@ -362,10 +365,16 @@ Settings / Theme Selector
         <p>Event streaming may use Server-Sent Events or WebSockets.</p>
 
         <h2>MCP Adapter</h2>
-        <p>No MCP adapter is currently implemented. MCP is the planned agent-facing front end over the same application services.</p>
+        <p>An initial MCP adapter is implemented as <code>hovel mcp</code>. It uses stdio, attaches to <code>hoveld</code> as an MCP operator entity, heartbeats while connected, and exposes read-only typed tools for operator identity, live entity listing, operation listing, and workspace snapshots.</p>
         <p>MCP has eventual operator parity: anything a human can do through <code>cli</code>, one-shot execution, TUI, or API should be representable through MCP, subject to the same guardrail checks, confirmations, planning output, and audit trail. The implementation should ship inspection and planning tools before execution tools unless the shared confirmation and audit path is already complete.</p>
         <p>MCP should be treated as a peer front end, not as a privileged back door. It may expose workflows optimized for agents, but those workflows must produce the same plans, guardrail results, confirmations, structured events, artifacts, and throw records that a CLI or TUI operator would see.</p>
-        <p>Initial inspection and planning tools:</p>
+        <p>Implemented inspection tools:</p>
+<pre data-lang="tools"><code>hovel_operator_identity
+hovel_operator_list_entities
+hovel_operation_list
+hovel_workspace_snapshot
+</code></pre>
+        <p>Follow-on inspection and planning tools:</p>
 <pre data-lang="tools"><code>hovel_list_modules
 hovel_inspect_module
 hovel_list_services

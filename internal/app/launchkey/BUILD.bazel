@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "launchkey",
+    srcs = ["launchkey.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/app/launchkey",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/domain/operator"],
+)
+
+go_test(
+    name = "launchkey_test",
+    size = "small",
+    srcs = ["launchkey_test.go"],
+    embed = [":launchkey"],
+    deps = ["//internal/domain/operator"],
+)

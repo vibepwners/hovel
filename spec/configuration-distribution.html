@@ -35,6 +35,7 @@
         <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html" aria-current="page">Configuration &amp; Distribution</a></li>
         <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
       </ul>
@@ -110,6 +111,18 @@ guardrails:
   mcp:
     parity: true
     requirePlanReview: true
+    defaultAuthority: inspect_configure_validate_plan
+    allowStartThrow: false
+    allowSessionWrite: false
+    allowNowBypass: false
+agentContext:
+  enabled: true
+  includeModuleHints: true
+launchKey:
+  enabled: false
+  scope: operation
+  requiredApprovers: all_live_entities
+  disconnectPolicy: block_until_reconnect_or_timeout
 </code></pre>
         <p>
           Module and service descriptor schemas exist in source. Runtime module launch

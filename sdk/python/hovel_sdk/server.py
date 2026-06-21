@@ -6,7 +6,7 @@ import logging
 import sys
 from typing import Any, BinaryIO
 
-from hovel_sdk.context import Context
+from hovel_sdk.context import AgentContext, Context
 from hovel_sdk.framing import FrameError, MessageWriter, read_message
 from hovel_sdk.logging import setup_logging
 from hovel_sdk.module import HovelModule
@@ -115,6 +115,7 @@ class JSONRPCServer:
             inputs=dict(params.get("inputs") or {}),
             chain_config=dict(params.get("chainConfig") or {}),
             target_config=dict(params.get("targetConfig") or {}),
+            agent=AgentContext.from_rpc(params.get("agentContext")),
             log=logging.getLogger(self._module.name or "hovel.module"),
             sessions=sessions,
         )

@@ -27,6 +27,7 @@ type RequestArgs struct {
 	Inputs       map[string]string
 	ChainConfig  map[string]string
 	TargetConfig map[string]string
+	Agent        *AgentContext
 }
 
 type Request struct {
@@ -38,6 +39,7 @@ type Request struct {
 	Inputs       map[string]string
 	ChainConfig  map[string]string
 	TargetConfig map[string]string
+	Agent        *AgentContext
 }
 
 func NewRequest(args RequestArgs) (Request, error) {
@@ -62,7 +64,37 @@ func NewRequest(args RequestArgs) (Request, error) {
 		Inputs:       cloneStringMap(args.Inputs),
 		ChainConfig:  cloneStringMap(args.ChainConfig),
 		TargetConfig: cloneStringMap(args.TargetConfig),
+		Agent:        cloneAgentContext(args.Agent),
 	}, nil
+}
+
+type AgentEntity struct {
+	ID          string `json:"id,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	Agent       bool   `json:"agent,omitempty"`
+}
+
+type AgentContext struct {
+	Schema        string      `json:"schema,omitempty"`
+	Entity        AgentEntity `json:"entity,omitempty"`
+	Operation     string      `json:"operation,omitempty"`
+	Chain         string      `json:"chain,omitempty"`
+	PlanID        string      `json:"planId,omitempty"`
+	PlanHash      string      `json:"planHash,omitempty"`
+	ApprovalState string      `json:"approvalState,omitempty"`
+	Phase         string      `json:"phase,omitempty"`
+	Resources     []string    `json:"resources,omitempty"`
+}
+
+type AgentHint struct {
+	Schema     string            `json:"schema,omitempty"`
+	Phase      string            `json:"phase,omitempty"`
+	Audience   string            `json:"audience,omitempty"`
+	Risk       string            `json:"risk,omitempty"`
+	AppliesTo  map[string]string `json:"appliesTo,omitempty"`
+	Text       string            `json:"text,omitempty"`
+	Provenance map[string]string `json:"provenance,omitempty"`
 }
 
 type Finding struct {
@@ -129,6 +161,7 @@ type ResultArgs struct {
 	Logs              []LogEntry
 	Sessions          []SessionRef
 	InstalledPayloads []InstalledPayloadDescriptor
+	AgentHints        []AgentHint
 }
 
 type Result struct {
@@ -142,6 +175,7 @@ type Result struct {
 	Logs              []LogEntry
 	Sessions          []SessionRef
 	InstalledPayloads []InstalledPayloadDescriptor
+	AgentHints        []AgentHint
 }
 
 type PayloadProviderRecord struct {
@@ -195,7 +229,41 @@ func resultWithState(request Request, state State, args ResultArgs) (Result, err
 		InstalledPayloads: cloneInstalledPayloads(
 			args.InstalledPayloads,
 		),
+		AgentHints: cloneAgentHints(args.AgentHints),
 	}, nil
+}
+
+func cloneAgentContext(agent *AgentContext) *AgentContext {
+	if agent == nil {
+		return nil
+	}
+	return &AgentContext{
+		Schema:        agent.Schema,
+		Entity:        agent.Entity,
+		Operation:     agent.Operation,
+		Chain:         agent.Chain,
+		PlanID:        agent.PlanID,
+		PlanHash:      agent.PlanHash,
+		ApprovalState: agent.ApprovalState,
+		Phase:         agent.Phase,
+		Resources:     append([]string(nil), agent.Resources...),
+	}
+}
+
+func cloneAgentHints(hints []AgentHint) []AgentHint {
+	out := make([]AgentHint, 0, len(hints))
+	for _, hint := range hints {
+		out = append(out, AgentHint{
+			Schema:     hint.Schema,
+			Phase:      hint.Phase,
+			Audience:   hint.Audience,
+			Risk:       hint.Risk,
+			AppliesTo:  cloneStringMap(hint.AppliesTo),
+			Text:       hint.Text,
+			Provenance: cloneStringMap(hint.Provenance),
+		})
+	}
+	return out
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

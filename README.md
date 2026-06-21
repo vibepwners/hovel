@@ -9,9 +9,9 @@ dual-use automation. The local daemon role (`hovel daemon serve`, often called
 `hoveld` in internal docs and logs) owns the workspace database,
 module process lifecycle, a plan -> confirm -> throw safety pipeline, installed
 payload inventory, an artifact store, and a structured event/log rail. Operators
-drive it through an interactive CLI and one-shot saved chain files; the same
-application services are intended to back additional front ends (TUI, REST,
-MCP).
+drive it through an interactive CLI, one-shot saved chain files, and the first
+stdio MCP inspection front end; the same application services are intended to
+back the full front-end set (TUI, REST, MCP execution parity).
 
 > **Authorized red-team emulation only.** Use Hovel only in environments you
 > own or are explicitly authorized to assess, with written scope and approvals.
@@ -96,6 +96,7 @@ Run the app:
 | --- | --- |
 | `task start` (`dev`, `up`, `cli`) | Build and launch the interactive CLI. |
 | `task daemon` | Run `hoveld` in the foreground on the default socket. |
+| `task mcp` | Launch the stdio MCP inspection front end for the dev workspace. |
 | `task status` (`st`) | Show daemon status for the dev workspace. |
 | `task init` | Initialize the dev workspace (`./.hovel`). |
 | `task throw -- <chain.yaml>` | One-shot throw of a saved chain file. |
@@ -157,8 +158,11 @@ command-construction demos create the operation chain with `chain create`,
 save the configured chain. They also list required chain and target config
 before setting values, then list the resolved config afterward. The generator
 first runs silent JSON throws and session interactions for both saved and
-constructed chains as e2e checks, then renders the visible VHS tapes without
-showing test harness output in the recordings. Demos that interact with
+constructed chains as e2e checks. It also runs the mock Codex-style MCP agent
+harness against a real `hovel mcp` subprocess and verifies that it throws the
+mock exploit through MCP before rendering. Visible VHS tapes are rendered
+afterward without showing test harness output in the
+recordings. Demos that interact with
 sessions start an explicit daemon in hidden setup, because live module sessions
 belong to the daemon process; a CLI-owned managed daemon shuts down when that
 CLI exits. Each rendered GIF is capped at 15 seconds by the generator.
@@ -186,6 +190,7 @@ Pages workflow runs after the CI workflow succeeds, regenerates the demos with
 | Direct saved chain | Attach, detach, reconnect | `demo/out/mock-survey-exploit-04-session-connect.gif` |
 | CLI saved chain | Read and send session data | `demo/out/mock-survey-exploit-cli-02-session-io.gif` |
 | CLI saved chain | Attach, detach, reconnect | `demo/out/mock-survey-exploit-cli-03-session-connect.gif` |
+| MCP agent | Throw mock exploit through MCP | `demo/out/mcp-agent-01-throw.gif` |
 
 To add a demo, add a `.tape` file under `demo/tapes/`, put reusable demo fixtures
 such as configured chain files under `demo/`, and point the tape's GIF `Output`
