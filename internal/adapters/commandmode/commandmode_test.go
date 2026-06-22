@@ -49,6 +49,28 @@ func TestThrowHelpShowsChainTargetAndWorkspace(t *testing.T) {
 	}
 }
 
+func TestLeadingConfigOptionIsForwardedToCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"show"},
+		Summary: "Show config.",
+		Options: []commands.Option{
+			{Name: "config", Kind: commands.OptionString},
+		},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: invocation.Option("config")}, nil
+		},
+	})
+
+	code := NewAppWithRegistry(registry).Run(context.Background(), []string{"--config", "lab.yaml", "show"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "lab.yaml" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
 func TestDefaultRuntimeWiresCapabilityChainRunner(t *testing.T) {
 	runtime := defaultRuntime(nil)
 	if runtime.CapabilityChains == nil {

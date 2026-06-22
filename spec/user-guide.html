@@ -58,7 +58,7 @@
       <article>
         <h1>User Guide</h1>
 
-        <p>This guide is the shortest path from a clean checkout to an operator-visible Hovel workflow. It focuses on implemented alpha behavior: local workspaces, the managed daemon, interactive <code>cli</code> mode, one-shot configured chain throws, module discovery, validation, artifacts, payload inventory, and sessions.</p>
+        <p>This guide is the shortest path from a clean install to an operator-visible Hovel workflow. It covers local workspaces, config layering, module installation, the managed daemon, interactive <code>cli</code> mode, one-shot configured chain throws, validation, artifacts, payload inventory, and sessions.</p>
         <p>Hovel is for authorized security testing and lab validation. Use the example modules for public demos and local learning; they exercise orchestration without touching a real target.</p>
 
         <h2>Concepts</h2>
@@ -97,7 +97,60 @@
           </tbody>
         </table>
 
-        <h2>Start Hovel</h2>
+        <h2>Install Hovel</h2>
+        <p>The normal operator install is through PyPI. The <code>hovel</code> wheel contains the Go binary for the current platform and does not download anything at install time or first run.</p>
+<pre data-lang="shell"><code>pipx install hovel
+hovel status
+</code></pre>
+        <p>Python module authors install the SDK separately:</p>
+<pre data-lang="shell"><code>pipx install hovel
+python -m pip install hovel-sdk</code></pre>
+        <p>The <code>hovel</code> package includes no modules. Install only modules you trust; module install scripts and module execution are arbitrary code execution by design.</p>
+
+        <h2>Configure Hovel</h2>
+        <p>Hovel config is YAML. Built-in defaults are overridden by global config, then workspace config, then a single explicit <code>--config</code> file.</p>
+<pre data-lang="text"><code>$XDG_CONFIG_HOME/hovel/config.yaml
+$HOME/.config/hovel/config.yaml
+&lt;workspace&gt;/config.yaml
+hovel --config ./lab.yaml ...
+</code></pre>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+modules:
+  searchPaths:
+    - ./modules
+    - ~/.local/share/hovel/modules
+cache:
+  enabled: true
+runtime:
+  python:
+    pythonBuildStandalone:
+      release: 20260518</code></pre>
+        <p>Hovel is offline-ready. It never contacts internet URLs during daemon startup, listing, validation, throws, or runtime execution. Network access happens only when you explicitly install from a URL, use a URL index, bulk-install URL sources, or allow managed Python setup during install.</p>
+
+        <h2>Install Modules</h2>
+        <p>Modules are distributed as <code>.tgz</code> packages. Install from disk, absolute path, HTTPS URL, an explicit index, a bulk manifest, or a linked development directory.</p>
+<pre data-lang="shell"><code>hovel module install ./squatter-0.1.0.tgz
+hovel module install /opt/hovel/modules/etro-survey-1.0.0.tgz
+hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz --sha256 ...
+hovel module install squatter@0.1.0 --index ./module-index.yaml
+hovel module bulk-install ./lab-modules.yaml
+hovel module install --link /home/me/dev/my-module</code></pre>
+        <p>The default install target is the active workspace. Use <code>--global</code> for a user-level install. Workspace modules win over global modules. Reinstalling the same <code>name@version</code> with a different SHA-256 requires <code>--replace</code>.</p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModuleInstallSet
+modules:
+  - source: https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz
+    sha256: ...
+  - source: ./etro-survey-1.0.0.tgz
+  - source: ./etro-exploit-1.0.0.tgz</code></pre>
+        <p>Installed packages are recorded in the workspace module registry and <code>module-lock.yaml</code>. Cached downloads stay available for offline reinstall until explicitly cleaned.</p>
+        <figure class="demo-figure">
+          <img src="../assets/demos/module-package-install-01-link.gif" alt="Terminal demo installing a linked module package, listing the installed module, and showing module-lock.yaml.">
+          <figcaption>Linking a trusted development package records it in the workspace module lock.</figcaption>
+        </figure>
+
+        <h2>Start Hovel From Source</h2>
         <p>All build, test, run, and docs commands go through Task. The developer workspace defaults to <code>./.hovel</code>; set <code>HOVEL_WORKSPACE</code> when you want a separate local workspace.</p>
 <pre data-lang="shell"><code># Build staged example modules and launch the interactive CLI.
 task start
@@ -252,12 +305,11 @@ h0v3l [demo/mock-survey-exploit] &gt; chain load mock-survey-exploit.chain.yaml<
         </div>
 
         <h2>Write Or Register A Module</h2>
-        <p>Module authors should start with the language-specific examples, keep metadata paths cheap and side-effect free, declare every operator-controlled value, and use the SDK logging rail instead of stdout. Python modules run from source; Go and Rust examples are built and staged by Task.</p>
-<pre data-lang="shell"><code>export HOVEL_MODULE_CONFIG="$PWD/examples/hovel-modules.json"
-task modules:build
-task start</code></pre>
-<pre data-lang="cli"><code>h0v3l&gt; module list
-h0v3l&gt; module inspect mock-survey-go</code></pre>
+        <p>Module authors should start with the language-specific examples, keep metadata paths cheap and side-effect free, declare every operator-controlled value, and use the SDK logging rail instead of stdout. Package finished modules as <code>.tgz</code> archives with a <code>hovel-module.yaml</code> manifest.</p>
+<pre data-lang="shell"><code>task modules:build
+hovel module install --link "$PWD/examples/modules/mock-survey"
+hovel module list
+hovel module inspect mock-survey-go</code></pre>
 
         <figure class="demo-figure">
           <img src="../assets/demos/mock-survey-exploit-01-inspect.gif" alt="Direct terminal demo inspecting mock survey and exploit module metadata before running a saved chain.">

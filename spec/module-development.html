@@ -143,7 +143,7 @@
           <a class="tile" href="module-python.html">
             <span class="tile-label">SDK</span>
             <span class="tile-title">Python</span>
-            <span class="tile-desc">Fastest to write and debug. Launched through the interpreter from source; no build step.</span>
+            <span class="tile-desc">Fastest to write and debug. Can use Hovel-managed Python, an operator interpreter, or a bundled interpreter.</span>
           </a>
           <a class="tile" href="module-go.html">
             <span class="tile-label">SDK</span>
@@ -173,11 +173,11 @@
         </p>
         <ol>
           <li>Choose a stable module name, version, type, summary, tags, chain config, target config, and result shape. Keep these values identical except for language suffixes when you intentionally publish side-by-side examples such as <code>mock-survey</code>, <code>mock-survey-go</code>, and <code>mock-survey-rust</code>.</li>
-          <li>Write the Python package with <code>HovelModule</code>, <code>module.py</code>, <code>__main__.py</code>, and a unit/contract test using <code>hovel_sdk.testing.ModuleRPC</code>. Register it with <code>project_dir</code> and <code>module</code>.</li>
-          <li>Write the Go binary with a type implementing <code>hovel.Module</code>, a <code>main</code> that calls <code>hovel.Serve</code>, and tests for both direct <code>Run</code> behavior and framed RPC when protocol behavior matters. Register the built binary with a <code>command</code> entry.</li>
-          <li>Write the Rust binary with a type implementing <code>hovel::Module</code>, a <code>main</code> that calls <code>hovel::serve</code>, and tests using normal Rust unit tests or <code>serve_with</code> for framed RPC coverage. Register the built binary with a <code>command</code> entry.</li>
-          <li>If the module lives in this repository as an example, add or update BUILD metadata, add new test targets to the root <code>test_suite</code>, and extend <code>tools/modules/stage_examples.sh</code> plus <code>examples/hovel-modules.json</code> when the daemon should discover the staged binary by default.</li>
-          <li>If the module is private or out-of-tree, keep a private module config. Python paths resolve relative to that config through <code>project_dir</code>; compiled module commands can point at any executable that speaks this protocol.</li>
+          <li>Write the Python package with <code>HovelModule</code>, <code>module.py</code>, <code>__main__.py</code>, and a unit/contract test using <code>hovel_sdk.testing.ModuleRPC</code>. Package it with a launcher that uses Hovel-managed Python, an operator interpreter, or a bundled interpreter.</li>
+          <li>Write the Go binary with a type implementing <code>hovel.Module</code>, a <code>main</code> that calls <code>hovel.Serve</code>, and tests for both direct <code>Run</code> behavior and framed RPC when protocol behavior matters. Package the built binary as one or more host-platform launch entries.</li>
+          <li>Write the Rust binary with a type implementing <code>hovel::Module</code>, a <code>main</code> that calls <code>hovel::serve</code>, and tests using normal Rust unit tests or <code>serve_with</code> for framed RPC coverage. Package the built binary as one or more host-platform launch entries.</li>
+          <li>If the module lives in this repository as an example, add or update BUILD metadata, add new test targets to the root <code>test_suite</code>, and extend the module packaging task so release builds publish a <code>.tgz</code>.</li>
+          <li>If the module is private or out-of-tree, use <code>hovel module install --link /absolute/path</code> during development and package a <code>.tgz</code> for sharing.</li>
         </ol>
         <p>
           The existing triads are the reference implementation pattern:
@@ -202,6 +202,104 @@
           <li><strong>Agent context is optional.</strong> Modules may ignore agent-aware execution entirely. When no agent context exists, SDKs expose no agent object and module behavior must be identical to non-MCP execution. Modules that opt in can read the SDK agent context and return <code>agentHints</code>; hints are untrusted module-authored context and must never bypass Hovel guardrails.</li>
         </ul>
 
+        <h2>Packaging a module</h2>
+        <p>
+          A published module is a <code>.tgz</code> archive with a required
+          <code>hovel-module.yaml</code> manifest. The manifest describes package identity,
+          trusted install scripts, and how Hovel launches the module on the operator's
+          host. Runtime schema still comes from <code>handshake</code>, <code>schema</code>,
+          and <code>step.describe</code>; the package manifest is install and launch
+          metadata, not the authoritative module behavior schema.
+        </p>
+<pre data-lang="tree"><code>my-module-0.1.0.tgz
+  hovel-module.yaml
+  bin/
+    linux-amd64/my-module
+    windows-amd64/my-module.exe
+  python/
+    hovel_my_module/
+    requirements.txt
+  vendor/
+    wheels/
+  scripts/
+    setup.py
+  README.md
+  LICENSE
+</code></pre>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: my-module
+  version: 0.1.0
+  moduleType: exploit
+  summary: Example module.
+  tags: [lab]
+  author: Example Labs
+  license: Apache-2.0
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/linux-amd64/my-module"]
+  - selector:
+      os: windows
+      arch: amd64
+    command: ["bin/windows-amd64/my-module.exe"]
+  - selector: {}
+    python:
+      managed:
+        versions: ["3.10-3.14"]
+      requirements: "python/requirements.txt"
+      wheelhouse: "vendor/wheels"
+      command: ["{python}", "-m", "hovel_my_module"]
+scripts:
+  postInstall:
+    command: ["{python}", "scripts/setup.py"]</code></pre>
+        <p>
+          One package can contain any number of platform variants. Selectors describe the
+          host running Hovel, not the target. Hovel chooses the most specific matching
+          launch entry and fails on ties. If no launch entry matches, install can still
+          succeed, but execution reports that the package has no launcher for the current
+          host.
+        </p>
+        <p>
+          Install scripts run by default. That is intentional: modules are trusted code
+          and already get arbitrary code execution when the operator runs them. Use
+          <code>--no-scripts</code> only for recovery or debugging. Script commands are
+          argv arrays, run from the package root, and receive
+          <code>HOVEL_MODULE_ROOT</code>, <code>HOVEL_INSTALL_ROOT</code>,
+          <code>HOVEL_WORKSPACE</code>, and <code>HOVEL_OFFLINE</code>.
+        </p>
+
+        <h2>Python packaging choices</h2>
+        <p>Python modules choose one of three interpreter strategies in the package manifest.</p>
+<pre data-lang="yaml"><code># Hovel-managed python-build-standalone.
+python:
+  managed:
+    versions: ["3.10-3.14"]
+  requirements: "python/requirements.txt"
+  wheelhouse: "vendor/wheels"
+  command: ["{python}", "-m", "hovel_my_module"]
+
+# Operator-supplied interpreter.
+python:
+  interpreter: "/opt/python/bin/python3"
+  command: ["{python}", "-m", "hovel_my_module"]
+
+# Bundled interpreter.
+interpreters:
+  python:
+    path: "runtime/python/bin/python3"</code></pre>
+        <p>
+          Managed Python uses a Hovel-pinned python-build-standalone release, downloads
+          the host-platform runtime only during explicit install when network use is
+          allowed, and creates one virtual environment per installed module version.
+          Dependencies are declared with <code>requirements.txt</code> and an optional
+          wheelhouse path; Hovel does not invent a second Python dependency language.
+        </p>
+
         <h2>First integration loop</h2>
         <p>
           A hostile-but-productive integration loop should fit in one terminal. Start
@@ -213,25 +311,20 @@
 #    Go:     examples/go/mock_exploit/
 #    Rust:   examples/rust/mock_exploit/
 
-# 2. Register it in examples/hovel-modules.json or a private config file.
-export HOVEL_MODULE_CONFIG="$PWD/examples/hovel-modules.json"
-
-# 3. Build staged compiled modules when using Go or Rust.
+# 2. Build staged compiled modules when using Go or Rust.
 task modules:build
 
-# 4. Let the daemon inspect metadata and schema.
+# 3. Link or install the package for the active workspace.
+hovel module install --link "$PWD/path/to/my-module-package-root"
+
+# 4. Let Hovel inspect metadata and schema.
 task start
 hovel&gt; module list
 hovel&gt; module inspect &lt;your-module-id&gt;
 
 # 5. Gate the repository before calling the integration done.
 task ci</code></pre>
-        <p>
-          For a private module config, paths are resolved relative to that config file.
-          Python entries use <code>project_dir</code> plus <code>module</code>. Command
-          entries use <code>command</code>, and a relative command containing a path
-          separator is resolved against the config directory.
-        </p>
+        <p>For a private module, use <code>--link</code> while iterating and install a built <code>.tgz</code> before sharing the chain or workspace with another operator.</p>
         <figure class="demo-figure">
           <img src="../assets/demos/mock-survey-exploit-01-inspect.gif" alt="Direct terminal demo inspecting mock survey and exploit modules before running them through a configured chain.">
           <figcaption>Demo: module metadata to runnable chain</figcaption>
@@ -303,45 +396,21 @@ task ci</code></pre>
 
         <h2>Troubleshooting modules</h2>
         <ul>
-          <li><strong>Catalog load fails before your code runs:</strong> check <code>HOVEL_MODULE_CONFIG</code>, relative paths, executable bits, and Python package names. Python modules also need <code>HOVEL_PYTHON_SDK_ROOT</code> only when the repo layout cannot be discovered automatically.</li>
+          <li><strong>Catalog load fails before your code runs:</strong> check <code>hovel-module.yaml</code>, install records, selected launch entry, relative paths, executable bits, and Python package names. Managed Python failures are install-time problems; runtime should not be resolving interpreters or dependencies.</li>
           <li><strong>Handshake or schema times out:</strong> remove target probes, imports with network side effects, expensive payload builds, and listener startup from metadata paths.</li>
           <li><strong>Malformed frame or JSON error:</strong> something wrote to stdout outside the SDK. Redirect subprocess stdout to a file/artifact, stderr, or a session stream.</li>
           <li><strong>Operator cannot see progress:</strong> use structured SDK logging. In Python, use <code>ctx.log</code> or the standard <code>logging</code> package after <code>serve</code> starts; in Go and Rust, use the context logger methods.</li>
           <li><strong>Session opens and then dies:</strong> keep the session object alive through the SDK session registry, return a successful result with the session id, and let the daemon send <code>shutdown</code> later. Do not exit the process yourself after opening a session.</li>
         </ul>
 
-        <h2>Registering a module</h2>
-        <p>
-          The daemon discovers modules from a JSON config (the path comes from the
-          <code>HOVEL_MODULE_CONFIG</code> environment variable). Each entry has an
-          <code>id</code>, a <code>runtime</code> (<code>jsonrpc-stdio</code>), and either a
-          Python entrypoint <em>or</em> an explicit launch command.
-        </p>
-<pre data-lang="examples/hovel-modules.json"><code>{
-  "modules": [
-    {
-      "id": "mock-survey",
-      "runtime": "jsonrpc-stdio",
-      "project_dir": "python/mock_survey",
-      "module": "hovel_example_survey"
-    },
-    {
-      "id": "mock-survey-go",
-      "runtime": "jsonrpc-stdio",
-      "command": ["bin/mock-survey-go"]
-    },
-    {
-      "id": "mock-survey-rust",
-      "runtime": "jsonrpc-stdio",
-      "command": ["bin/mock-survey-rust"]
-    }
-  ]
-}</code></pre>
-        <ul>
-          <li><strong>Python modules</strong> use <code>project_dir</code> + <code>module</code>: the daemon runs <code>python -m &lt;module&gt;</code> with the SDK and project on <code>PYTHONPATH</code>.</li>
-          <li><strong>Compiled modules</strong> (Go, Rust, or anything else) use <code>command</code>: an argv that the daemon executes directly. A relative <code>command[0]</code> that contains a path separator is resolved against the config file's directory; a bare program name (e.g. <code>"python3"</code>) is looked up on <code>PATH</code>.</li>
-          <li>Optional <code>project_dir</code> on a command entry sets the process working directory.</li>
-        </ul>
+        <h2>Installing a module</h2>
+        <p>Operators install modules from local packages, absolute package paths, HTTPS URLs, configured indexes, bulk manifests, or linked package roots.</p>
+<pre data-lang="shell"><code>hovel module install ./my-module-0.1.0.tgz
+hovel module install https://github.com/org/repo/releases/download/v0.1.0/my-module-0.1.0.tgz --sha256 ...
+hovel module install my-module@0.1.0 --index ./module-index.yaml
+hovel module bulk-install ./lab-modules.yaml
+hovel module install --link /home/me/dev/my-module</code></pre>
+        <p>The default install target is the active workspace. <code>--global</code> installs into user-level storage. Workspace modules take precedence over global modules and cached packages.</p>
         <blockquote>
           The <code>command</code> launcher is what makes Hovel polyglot: any executable that
           speaks the stdio JSON-RPC protocol is a module, regardless of how it was built.
@@ -350,22 +419,20 @@ task ci</code></pre>
         <h2>Building and running</h2>
         <p>
           As with everything in this repo, go through <a href="https://taskfile.dev/">Task</a>.
-          The compiled examples are built and staged into <code>examples/bin/</code> before the
-          daemon starts.
+          The compiled examples are built, packaged, and installed or linked before the daemon starts.
         </p>
 <pre data-lang="shell"><code># Build and stage the Go and Rust example binaries
 task modules:build
 
-# Launch the interactive CLI with all example modules registered
+# Install or link module packages for the active workspace
+hovel module install --link "$PWD/path/to/module-package-root"
+
+# Launch the interactive CLI
 task start
 
 # In the CLI, list the catalog
 hovel&gt; module list</code></pre>
-        <p>
-          <code>task start</code>, <code>task daemon</code>, and <code>task throw</code> all
-          depend on <code>modules:build</code>, so the staged binaries are always present and
-          fresh when the daemon builds its catalog.
-        </p>
+        <p><code>task start</code>, <code>task daemon</code>, and <code>task throw</code> go through Task so local build, packaging, and runtime assumptions stay aligned with CI.</p>
 
         <h2>Safety</h2>
         <p>

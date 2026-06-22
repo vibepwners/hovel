@@ -1,0 +1,16 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "hovelconfig",
+    srcs = ["config.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/app/hovelconfig",
+    visibility = ["//:__subpackages__"],
+    deps = ["@in_gopkg_yaml_v3//:yaml_v3"],
+)
+
+go_test(
+    name = "hovelconfig_test",
+    size = "small",
+    srcs = ["config_test.go"],
+    embed = [":hovelconfig"],
+)

@@ -363,13 +363,13 @@ squatter.connect_smb
 
         <h3>Configuration and registration</h3>
         <p>
-          Each module is registered in the example catalog with its <code>project_dir</code> and
-          Python <code>module</code> name, exactly like the mock modules:
+          Each module ships as a package with a Python launch entry. Operators install
+          release packages or link local package roots while developing:
         </p>
-<pre data-lang="examples/hovel-modules.json"><code>{ "id": "etro-survey",  "runtime": "jsonrpc-stdio",
-  "project_dir": "python/etro_survey",  "module": "hovel_etro_survey" },
-{ "id": "etro-exploit", "runtime": "jsonrpc-stdio",
-  "project_dir": "python/etro_exploit", "module": "hovel_etro_exploit" }</code></pre>
+<pre data-lang="shell"><code>hovel module install ./etro-survey-1.0.0.tgz
+hovel module install ./etro-exploit-1.0.0.tgz
+hovel module install --link "$PWD/examples/python/etro_survey"
+hovel module install --link "$PWD/examples/python/etro_exploit"</code></pre>
         <p>A throw supplies the target configuration and the confirmation:</p>
 <pre data-lang="execute params"><code>{
   "target": "10.0.0.42",

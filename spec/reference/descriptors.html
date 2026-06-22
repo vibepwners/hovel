@@ -66,14 +66,118 @@
         </ol>
         <p>TOML is out of scope for the alpha and can be reconsidered after module, service, chain, event, provider, and run-plan schemas are stable.</p>
         <p>
-          The current throwable authoring format is the Chain descriptor. Module
-          and service descriptors are schema/domain contracts in source; the daemon's
-          current module discovery path is the JSON launch catalog pointed to by
-          <code>HOVEL_MODULE_CONFIG</code>, documented in
-          <a href="../module-development.html">Module Development</a>.
+          The primary human-authored descriptors are Hovel config, module packages,
+          module indexes, bulk install manifests, module locks, and chain files.
+          Runtime module schema is still reported by module RPC at catalog/inspect time.
         </p>
 
+        <h2>Hovel Config</h2>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+workspace: .hovel
+modules:
+  searchPaths:
+    - ./modules
+    - ~/.local/share/hovel/modules
+    - ~/.cache/hovel/modules/downloads
+  indexes:
+    - ./module-index.yaml
+cache:
+  enabled: true
+runtime:
+  python:
+    pythonBuildStandalone:
+      release: 20260518
+logging:
+  level: info
+</code></pre>
+        <p>Config precedence is defaults, global config, workspace config, then one explicit <code>--config</code> file. Maps merge, scalars override, and lists replace.</p>
+
+        <h2>Module Package Descriptor</h2>
+        <p>
+          <code>hovel-module.yaml</code> is required at the root of every module
+          <code>.tgz</code>. It describes package identity, launchers, scripts, and
+          optional tool extensions. It does not replace runtime <code>handshake</code>,
+          <code>schema</code>, or <code>step.describe</code>.
+        </p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: ssh-memory
+  version: 0.1.0
+  moduleType: exploit
+  summary: SSH memory execution module for authorized labs.
+  tags: [ssh, lab, dangerous]
+  author: Example Labs
+  license: Apache-2.0
+  homepage: https://example.invalid/hovel/ssh-memory
+  repository: https://example.invalid/hovel/ssh-memory.git
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/linux-amd64/ssh-memory"]
+  - selector:
+      os: windows
+      arch: amd64
+    command: ["bin/windows-amd64/ssh-memory.exe"]
+  - selector: {}
+    python:
+      managed:
+        versions: ["3.10-3.14"]
+      requirements: "python/requirements.txt"
+      wheelhouse: "vendor/wheels"
+      command: ["{python}", "-m", "hovel_ssh_memory"]
+scripts:
+  postInstall:
+    command: ["{python}", "scripts/setup.py"]
+x-third-party-sdk:
+  opaque: true</code></pre>
+        <p>
+          Selectors describe the operator host. Hovel uses Go platform names such as
+          <code>linux</code>, <code>darwin</code>, <code>windows</code>,
+          <code>amd64</code>, and <code>arm64</code>. Known core fields are strict;
+          extension fields use the <code>x-*</code> prefix.
+        </p>
+
+        <h2>Module Index</h2>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModuleIndex
+modules:
+  - name: squatter
+    version: 0.1.0
+    url: https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz
+    sha256: ...
+</code></pre>
+        <p>Hovel ships with no default internet index. Indexes are used only when configured or passed explicitly, and cached indexes remain available offline.</p>
+
+        <h2>Bulk Install Manifest</h2>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModuleInstallSet
+modules:
+  - source: https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz
+    sha256: ...
+  - source: ./etro-survey-1.0.0.tgz
+  - source: /opt/hovel/modules/etro-exploit-1.0.0.tgz
+</code></pre>
+        <p>Bulk install runs in order, stops on first failure, and does not roll back prior successful installs.</p>
+
+        <h2>Module Lock</h2>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModuleLock
+modules:
+  - name: squatter
+    version: 0.1.0
+    sha256: ...
+    source: https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz
+    installedAt: 2026-06-22T16:20:00Z
+</code></pre>
+        <p>The lock file is generated install state, not the editable source of truth. Operators edit config files and bulk install manifests.</p>
+
         <h2>Module Descriptor</h2>
+        <p>This shape describes runtime module metadata. Hovel obtains the authoritative version by launching the installed package and calling module RPC metadata methods.</p>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: Module
 metadata:
@@ -351,6 +455,11 @@ fields:
 
         <h2>Schema Files</h2>
 <pre data-lang="tree"><code>schemas/
+  hovel.config.schema.json
+  hovel.module-package.schema.json
+  hovel.module-index.schema.json
+  hovel.module-install-set.schema.json
+  hovel.module-lock.schema.json
   hovel.module.schema.json
   hovel.service.schema.json
   hovel.chain.schema.json
@@ -358,8 +467,7 @@ fields:
   hovel.event.schema.json
 </code></pre>
         <p>Schemas are hand-authored while the contracts are still moving. Generation from Go types can be reconsidered after the schema contracts stabilize.</p>
-        <p>Module, service, chain, throw-plan, and event schemas are present in source. A separate provider schema is not currently present; provider-facing shapes are documented in the module wire protocol and SDK APIs.</p>
-        <p>The current throw-plan schema covers plan identity, workspace, chain, targets, planned steps, review text, intent, and confirmation records including <code>typed_yes</code>, <code>preconfirmed</code>, <code>reviewed_yes</code>, and <code>now_bypass</code> methods. Future schema revisions should add resolved descriptor versions, risk labels, expected services, and expected providers once those fields are emitted by the planning path.</p>
+        <p>Provider-facing shapes are documented in the module wire protocol and SDK APIs. The throw-plan schema covers plan identity, workspace, chain, targets, planned steps, review text, intent, and confirmation records including <code>typed_yes</code>, <code>preconfirmed</code>, <code>reviewed_yes</code>, and <code>now_bypass</code> methods.</p>
       </article>
 
       <nav class="page-nav">

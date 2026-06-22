@@ -32,6 +32,29 @@ hovel_demo_configure_chain() {
   hovel run --workspace "$HOVEL_WORKSPACE" --op demo --chain "$chain" -- chain config set operator.confirmed_lab true >/dev/null
 }
 
+hovel_demo_create_link_package() {
+  export HOVEL_DEMO_PACKAGE="$HOVEL_WORKSPACE/packages/linked-demo"
+  mkdir -p "$HOVEL_DEMO_PACKAGE/bin"
+  cat >"$HOVEL_DEMO_PACKAGE/hovel-module.yaml" <<'YAML'
+apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: linked-demo
+  version: 0.1.0
+  moduleType: survey
+  summary: Linked demo module package
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/linked-demo"]
+YAML
+  printf '#!/bin/sh\n' >"$HOVEL_DEMO_PACKAGE/bin/linked-demo"
+  chmod +x "$HOVEL_DEMO_PACKAGE/bin/linked-demo"
+}
+
 hovel_demo_daemon_ready() {
   local socket_path="$1"
 

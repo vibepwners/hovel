@@ -6,15 +6,21 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/hovelconfig"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
@@ -478,6 +484,29 @@ type ModuleStepPayload struct {
 	Missing  []modulecatalog.MissingCapability     `json:"missing,omitempty"`
 }
 
+type ModuleInstallPayload struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Reference string `json:"reference"`
+	Source    string `json:"source"`
+	Workspace string `json:"workspace"`
+	Linked    bool   `json:"linked"`
+}
+
+type ModuleUninstallPayload struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Reference string `json:"reference"`
+	Source    string `json:"source"`
+	Workspace string `json:"workspace"`
+	Linked    bool   `json:"linked"`
+}
+
+type ModuleBulkInstallPayload struct {
+	Workspace string                 `json:"workspace"`
+	Installed []ModuleInstallPayload `json:"installed"`
+}
+
 type ChainFile struct {
 	APIVersion string            `json:"apiVersion"`
 	Kind       string            `json:"kind"`
@@ -776,9 +805,65 @@ func HovelRegistry(runtime Runtime) Registry {
 			Aliases: [][]string{{"modules", "list"}},
 			Summary: "List modules in the module database.",
 			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("global", "", "Use the global module install scope"),
 				stringOption("type", "t", "Module type filter"),
 			},
 			Handler: modulesListHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"module", "install"},
+			Aliases: [][]string{{"modules", "install"}},
+			Summary: "Install a trusted module package.",
+			Positionals: []Positional{
+				{Name: "source", Help: "Module .tgz package, package reference, or URL", Required: false},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("global", "", "Use the global module install scope"),
+				stringOption("link", "", "Link a development package root instead of copying a .tgz"),
+				stringOption("index", "", "Module index path for name@version installs"),
+				stringOption("sha256", "", "Expected SHA-256 for downloaded or copied packages"),
+				boolOption("no-scripts", "", "Skip trusted package install scripts"),
+				boolOption("offline", "", "Disable network use during install"),
+				boolOption("no-cache", "", "Do not store downloaded module packages"),
+				boolOption("replace", "", "Replace an installed module with the same name and version"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: modulesInstallHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"module", "bulk-install"},
+			Aliases: [][]string{{"modules", "bulk-install"}},
+			Summary: "Install trusted module packages from a bulk manifest.",
+			Positionals: []Positional{
+				{Name: "manifest", Help: "ModuleInstallSet YAML file", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("global", "", "Use the global module install scope"),
+				boolOption("no-scripts", "", "Skip trusted package install scripts"),
+				boolOption("offline", "", "Disable network use during install"),
+				boolOption("no-cache", "", "Do not store downloaded module packages"),
+				boolOption("replace", "", "Replace installed modules with the same name and version"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: modulesBulkInstallHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"module", "uninstall"},
+			Aliases: [][]string{{"modules", "uninstall"}},
+			Summary: "Uninstall a trusted module package.",
+			Positionals: []Positional{
+				{Name: "module", Help: "Installed module reference", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("global", "", "Use the global module install scope"),
+				boolOption("no-scripts", "", "Skip trusted package uninstall scripts"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: modulesUninstallHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"module", "inspect"},
@@ -788,6 +873,8 @@ func HovelRegistry(runtime Runtime) Registry {
 				{Name: "module", Help: "Module reference", Required: true},
 			},
 			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("global", "", "Use the global module install scope"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: modulesInspectHandler(runtime),
@@ -798,6 +885,10 @@ func HovelRegistry(runtime Runtime) Registry {
 			Summary: "Search modules in the module database.",
 			Positionals: []Positional{
 				{Name: "query", Help: "Search query", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("global", "", "Use the global module install scope"),
 			},
 			Handler: modulesSearchHandler(runtime),
 		},
@@ -1159,6 +1250,7 @@ func boolOption(name, short, help string) Option {
 
 func withCommonOptions(definitions ...Definition) []Definition {
 	common := []Option{
+		stringOption("config", "", "Config file path"),
 		boolOption("no-color", "", "Disable styled terminal output"),
 		boolOption("verbose", "v", "Emit verbose output"),
 		boolOption("debug", "", "Emit debug output"),
@@ -1397,12 +1489,16 @@ func chainAddHandler(runtime Runtime) Handler {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
+		db, err := moduleDBForInvocation(runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
 		moduleID := invocation.Positional("module")
 		if isSquatterBindAlias(moduleID) {
 			if runtime.Session == nil {
 				return Result{}, operatorSessionRequiredError("chain add")
 			}
-			module, ok := findSquatterProviderModule(moduleDB(runtime))
+			module, ok := findSquatterProviderModule(db)
 			if !ok {
 				return Result{}, fmt.Errorf("module squatter@v0.1.0 does not exist")
 			}
@@ -1419,7 +1515,7 @@ func chainAddHandler(runtime Runtime) Handler {
 			}
 			return Result{Human: fmt.Sprintf("Module added: %s as %s (%s=%s)", moduleID, step.ID, squatterTypeConfigKey, squatterTypeTCPBind)}, nil
 		}
-		module, ok := moduleDB(runtime).Find(moduleID)
+		module, ok := db.Find(moduleID)
 		if !ok {
 			return Result{}, fmt.Errorf("module %s does not exist", moduleID)
 		}
@@ -1543,8 +1639,12 @@ func chainValidateHandler(runtime Runtime) Handler {
 		if err != nil {
 			return Result{}, err
 		}
+		db, err := moduleDBForInvocation(runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
 		_ = runtime.Session.AppendLog(operatorlog.Info("validate", "validation started"))
-		validation := ValidateState(moduleDB(runtime), state)
+		validation := ValidateState(db, state)
 		payload := ValidationPayload{Valid: validation.Valid, Issues: validation.Issues}
 		if validation.Valid {
 			_ = runtime.Session.AppendLog(operatorlog.Success("validate", "validation completed"))
@@ -1678,7 +1778,11 @@ func chainConfigListHandler(runtime Runtime) Handler {
 		if err != nil {
 			return Result{}, err
 		}
-		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeChain)
+		db, err := moduleDBForInvocation(runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		requirements := requirementsByKey(db, state, modulecatalog.ScopeChain)
 		if len(state.Config) == 0 && len(requirements) == 0 {
 			return Result{Human: "No chain config set\n\nNext: config interactive"}, nil
 		}
@@ -1852,7 +1956,11 @@ func targetsConfigListHandler(runtime Runtime) Handler {
 		}
 		target := invocation.Positional("target")
 		config, ok := state.TargetConfigs[target]
-		requirements := requirementsByKey(moduleDB(runtime), state, modulecatalog.ScopeTarget)
+		db, err := moduleDBForInvocation(runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		requirements := requirementsByKey(db, state, modulecatalog.ScopeTarget)
 		if (!ok || len(config) == 0) && len(requirements) == 0 {
 			return Result{Human: fmt.Sprintf("No target config for %s\n\nNext: target config set %s <key> <value>", target, target)}, nil
 		}
@@ -1966,7 +2074,10 @@ func modulesListHandler(runtime Runtime) Handler {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		db := moduleDB(runtime)
+		db, err := moduleDBForInvocation(runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
 		var modules []modulecatalog.Module
 		if moduleType := invocation.Option("type"); moduleType != "" {
 			modules = db.ByType(modulecatalog.ModuleType(moduleType))
@@ -1980,13 +2091,329 @@ func modulesListHandler(runtime Runtime) Handler {
 	}
 }
 
+func modulesInstallHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		workspacePath := workspaceFromInvocation(invocation)
+		linkPath := strings.TrimSpace(invocation.Option("link"))
+		source := strings.TrimSpace(invocation.Positional("source"))
+		sha := invocation.Option("sha256")
+		if linkPath == "" {
+			var err error
+			source, sha, err = resolveInstallReference(workspacePath, source, sha, invocation)
+			if err != nil {
+				return Result{}, err
+			}
+		}
+		result, linked, err := installModuleSource(workspacePath, source, linkPath, sha, invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		payload := ModuleInstallPayload{
+			Name:      result.Name,
+			Version:   result.Version,
+			Reference: modulecatalog.CanonicalID(result.Name, result.Version),
+			Source:    result.Source,
+			Workspace: workspacePath,
+			Linked:    linked,
+		}
+		return Result{
+			Human: fmt.Sprintf("Installed module %s from %s", payload.Reference, payload.Source),
+			JSON:  payload,
+		}, nil
+	}
+}
+
+func modulesBulkInstallHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		workspacePath := workspaceFromInvocation(invocation)
+		manifestPath := invocation.Positional("manifest")
+		set, err := modulepackage.LoadInstallSet(manifestPath)
+		if err != nil {
+			return Result{}, err
+		}
+		baseDir := filepath.Dir(manifestPath)
+		payload := ModuleBulkInstallPayload{Workspace: workspacePath}
+		for _, item := range set.Modules {
+			source := resolveBulkInstallSource(baseDir, item.Source)
+			result, linked, err := installModuleSource(workspacePath, source, "", item.SHA256, invocation)
+			if err != nil {
+				return Result{}, err
+			}
+			payload.Installed = append(payload.Installed, ModuleInstallPayload{
+				Name:      result.Name,
+				Version:   result.Version,
+				Reference: modulecatalog.CanonicalID(result.Name, result.Version),
+				Source:    result.Source,
+				Workspace: workspacePath,
+				Linked:    linked,
+			})
+		}
+		return Result{
+			Human: fmt.Sprintf("Installed %d modules", len(payload.Installed)),
+			JSON:  payload,
+		}, nil
+	}
+}
+
+func modulesUninstallHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		workspacePath := workspaceFromInvocation(invocation)
+		name, version, hasVersion := modulecatalog.SplitID(invocation.Positional("module"))
+		if !hasVersion {
+			version = ""
+		}
+		result, err := modulepackage.Uninstall(modulepackage.UninstallOptions{
+			Workspace: workspacePath,
+			Name:      name,
+			Version:   version,
+			NoScripts: invocation.Flag("no-scripts"),
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		payload := ModuleUninstallPayload{
+			Name:      result.Name,
+			Version:   result.Version,
+			Reference: modulecatalog.CanonicalID(result.Name, result.Version),
+			Source:    result.Source,
+			Workspace: workspacePath,
+			Linked:    result.Linked,
+		}
+		return Result{
+			Human: fmt.Sprintf("Uninstalled module %s from %s", payload.Reference, payload.Source),
+			JSON:  payload,
+		}, nil
+	}
+}
+
+func installModuleSource(workspacePath, source, linkPath, sha string, invocation Invocation) (modulepackage.InstallResult, bool, error) {
+	base, err := moduleInstallOptions(workspacePath, invocation)
+	if err != nil {
+		return modulepackage.InstallResult{}, false, err
+	}
+	switch {
+	case linkPath != "" && source != "":
+		return modulepackage.InstallResult{}, false, fmt.Errorf("module install accepts either --link or source, not both")
+	case linkPath == "" && source == "":
+		return modulepackage.InstallResult{}, false, fmt.Errorf("module install requires --link or source")
+	case linkPath != "":
+		base.SourceDir = linkPath
+		result, err := modulepackage.InstallLink(base)
+		return result, true, err
+	case strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://"):
+		base.SourceURL = source
+		base.SHA256 = sha
+		result, err := modulepackage.InstallURL(base)
+		return result, false, err
+	default:
+		base.SourceArchive = source
+		base.SHA256 = sha
+		result, err := modulepackage.InstallArchive(base)
+		return result, false, err
+	}
+}
+
+func moduleInstallOptions(workspacePath string, invocation Invocation) (modulepackage.InstallOptions, error) {
+	config, _, err := hovelconfig.Load(hovelconfig.Options{
+		Workspace:    workspacePath,
+		ExplicitPath: invocation.Option("config"),
+	})
+	if err != nil {
+		return modulepackage.InstallOptions{}, err
+	}
+	return modulepackage.InstallOptions{
+		Workspace:                    workspacePath,
+		HostOS:                       goruntime.GOOS,
+		HostArch:                     goruntime.GOARCH,
+		NoScripts:                    invocation.Flag("no-scripts"),
+		Offline:                      invocation.Flag("offline"),
+		NoCache:                      invocation.Flag("no-cache") || !config.Cache.Enabled,
+		Replace:                      invocation.Flag("replace"),
+		PythonBuildStandaloneRelease: config.Runtime.Python.PythonBuildStandalone.Release,
+	}, nil
+}
+
+func resolveInstallReference(workspacePath, source, sha string, invocation Invocation) (string, string, error) {
+	if source == "" || strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") || strings.EqualFold(filepath.Ext(source), ".tgz") {
+		return source, sha, nil
+	}
+	indexPaths, err := moduleIndexPaths(workspacePath, invocation)
+	if err != nil {
+		return "", "", err
+	}
+	if len(indexPaths) == 0 {
+		return "", "", fmt.Errorf("module reference %s requires --index or configured index", source)
+	}
+	entry, indexPath, err := resolveIndexEntry(source, indexPaths, invocation.Flag("offline"))
+	if err != nil {
+		return "", "", err
+	}
+	resolved := entry.URL
+	if !strings.HasPrefix(resolved, "https://") && !strings.HasPrefix(resolved, "http://") && strings.HasPrefix(indexPath, "https://") {
+		base, err := url.Parse(indexPath)
+		if err != nil {
+			return "", "", err
+		}
+		relative, err := url.Parse(resolved)
+		if err != nil {
+			return "", "", err
+		}
+		resolved = base.ResolveReference(relative).String()
+	} else if !strings.HasPrefix(resolved, "https://") && !strings.HasPrefix(resolved, "http://") && !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(filepath.Dir(indexPath), resolved)
+	}
+	if sha == "" {
+		sha = entry.SHA256
+	}
+	return resolved, sha, nil
+}
+
+func moduleIndexPaths(workspacePath string, invocation Invocation) ([]string, error) {
+	config, _, err := hovelconfig.Load(hovelconfig.Options{
+		Workspace:    workspacePath,
+		ExplicitPath: invocation.Option("config"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	paths := append([]string(nil), config.Modules.Indexes...)
+	if explicit := strings.TrimSpace(invocation.Option("index")); explicit != "" {
+		paths = append(paths, explicit)
+	}
+	return paths, nil
+}
+
+func resolveIndexEntry(reference string, indexPaths []string, offline bool) (modulepackage.IndexEntry, string, error) {
+	name, version, hasVersion := modulecatalog.SplitID(reference)
+	var found modulepackage.IndexEntry
+	var foundIndex string
+	for _, indexPath := range indexPaths {
+		index, err := loadModuleIndex(indexPath, offline)
+		if err != nil {
+			return modulepackage.IndexEntry{}, "", err
+		}
+		for _, entry := range index.Modules {
+			if entry.Name != name {
+				continue
+			}
+			if hasVersion && entry.Version != version {
+				continue
+			}
+			if found.Name == "" || compareLooseSemver(entry.Version, found.Version) > 0 {
+				found = entry
+				foundIndex = indexPath
+			}
+		}
+	}
+	if found.Name == "" {
+		return modulepackage.IndexEntry{}, "", fmt.Errorf("module reference %s not found in configured indexes", reference)
+	}
+	return found, foundIndex, nil
+}
+
+func loadModuleIndex(indexPath string, offline bool) (modulepackage.Index, error) {
+	if strings.HasPrefix(indexPath, "https://") {
+		cached, cacheErr := moduleIndexCachePath(indexPath)
+		if offline {
+			if cacheErr != nil {
+				return modulepackage.Index{}, cacheErr
+			}
+			body, err := os.ReadFile(cached)
+			if err != nil {
+				return modulepackage.Index{}, fmt.Errorf("offline module install cannot load uncached URL index %s", indexPath)
+			}
+			return modulepackage.ParseIndex(body)
+		}
+		resp, err := http.Get(indexPath)
+		if err != nil {
+			return modulepackage.Index{}, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			return modulepackage.Index{}, fmt.Errorf("download index %s failed: %s", indexPath, resp.Status)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return modulepackage.Index{}, err
+		}
+		if cacheErr == nil {
+			if err := os.MkdirAll(filepath.Dir(cached), 0o755); err == nil {
+				_ = os.WriteFile(cached, body, 0o644)
+			}
+		}
+		return modulepackage.ParseIndex(body)
+	}
+	if strings.HasPrefix(indexPath, "http://") {
+		return modulepackage.Index{}, fmt.Errorf("module indexes require https: %s", indexPath)
+	}
+	return modulepackage.LoadIndex(indexPath)
+}
+
+func moduleIndexCachePath(indexURL string) (string, error) {
+	root, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(indexURL))
+	return filepath.Join(root, "hovel", "modules", "indexes", hex.EncodeToString(sum[:])+".yaml"), nil
+}
+
+func compareLooseSemver(left, right string) int {
+	leftParts := looseVersionParts(left)
+	rightParts := looseVersionParts(right)
+	for i := 0; i < len(leftParts) || i < len(rightParts); i++ {
+		var l, r int
+		if i < len(leftParts) {
+			l = leftParts[i]
+		}
+		if i < len(rightParts) {
+			r = rightParts[i]
+		}
+		if l != r {
+			return l - r
+		}
+	}
+	return strings.Compare(left, right)
+}
+
+func looseVersionParts(version string) []int {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	core := strings.SplitN(version, "-", 2)[0]
+	fields := strings.Split(core, ".")
+	parts := make([]int, 0, len(fields))
+	for _, field := range fields {
+		n, _ := strconv.Atoi(field)
+		parts = append(parts, n)
+	}
+	return parts
+}
+
+func resolveBulkInstallSource(baseDir, source string) string {
+	if strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") || filepath.IsAbs(source) {
+		return source
+	}
+	return filepath.Join(baseDir, source)
+}
+
 func modulesInspectHandler(runtime Runtime) Handler {
 	return func(ctx context.Context, invocation Invocation) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
 		moduleID := invocation.Positional("module")
-		db := moduleDB(runtime)
+		db, err := moduleDBForInvocation(runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
 		module, ok := db.Find(moduleID)
 		if !ok {
 			return Result{}, fmt.Errorf("module %s does not exist", moduleID)
@@ -2005,7 +2432,11 @@ func modulesSearchHandler(runtime Runtime) Handler {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		modules := moduleDB(runtime).Search(invocation.Positional("query"))
+		db, err := moduleDBForInvocation(runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		modules := db.Search(invocation.Positional("query"))
 		if len(modules) == 0 {
 			return Result{Human: "No modules"}, nil
 		}
@@ -2071,7 +2502,11 @@ func throwHandler(runtime Runtime) Handler {
 		if runtime.Daemons == nil {
 			return Result{}, fmt.Errorf("daemon service is not configured")
 		}
-		throw, err := throwInputs(ctx, runtime, invocation)
+		db, err := moduleDBForInvocation(runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		throw, err := throwInputsWithDB(ctx, runtime, invocation, db)
 		if err != nil {
 			return Result{}, err
 		}
@@ -2081,7 +2516,7 @@ func throwHandler(runtime Runtime) Handler {
 		if len(throw.Steps) != 0 && runtime.CapabilityChains == nil {
 			return Result{}, fmt.Errorf("capability chain runner is not configured")
 		}
-		if err := guardDangerousModules(runtime, throw.Modules, invocation.Flag("allow-dangerous")); err != nil {
+		if err := guardDangerousModulesWithDB(db, throw.Modules, invocation.Flag("allow-dangerous")); err != nil {
 			return Result{}, err
 		}
 		status, err := runtime.Daemons.Status(ctx, services.DaemonStatusRequest{
@@ -2185,7 +2620,7 @@ func throwHandler(runtime Runtime) Handler {
 				return Result{}, err
 			}
 			defer client.Close()
-			if err := executeLegacyThrow(ctx, runtime, client, status.WorkspacePath, plan, throw, &payload, throwStarted, streamThrowLog); err != nil {
+			if err := executeLegacyThrow(ctx, runtime, client, status.WorkspacePath, db, plan, throw, &payload, throwStarted, streamThrowLog); err != nil {
 				return Result{}, err
 			}
 		}
@@ -2229,8 +2664,8 @@ func throwHandler(runtime Runtime) Handler {
 	}
 }
 
-func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, workspacePath string, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time, streamLog func(...operatorlog.Entry)) error {
-	modules := legacyExecutionModuleIDs(moduleDB(runtime), throw.Modules)
+func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, workspacePath string, db ModuleDatabase, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time, streamLog func(...operatorlog.Entry)) error {
+	modules := legacyExecutionModuleIDs(db, throw.Modules)
 	for _, target := range throw.Targets {
 		for _, moduleID := range modules {
 			runIndex := len(payload.Results) + 1
@@ -2998,10 +3433,13 @@ type throwStepRef = CapabilityChainStepRef
 // leaves no records behind. Unknown module IDs are treated as not-dangerous here;
 // they fail later with a clearer "module does not exist" error.
 func guardDangerousModules(runtime Runtime, modules []string, allow bool) error {
+	return guardDangerousModulesWithDB(moduleDB(runtime), modules, allow)
+}
+
+func guardDangerousModulesWithDB(db ModuleDatabase, modules []string, allow bool) error {
 	if allow {
 		return nil
 	}
-	db := moduleDB(runtime)
 	var blocked []string
 	for _, moduleID := range modules {
 		if moduleID == "squatter.bind" {
@@ -3020,8 +3458,12 @@ func guardDangerousModules(runtime Runtime, modules []string, allow bool) error 
 }
 
 func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (throwExecution, error) {
+	return throwInputsWithDB(ctx, runtime, invocation, moduleDB(runtime))
+}
+
+func throwInputsWithDB(ctx context.Context, runtime Runtime, invocation Invocation, db ModuleDatabase) (throwExecution, error) {
 	if file := invocation.Positional("file"); strings.TrimSpace(file) != "" {
-		return throwInputsFromChainFile(ctx, runtime, invocation, file)
+		return throwInputsFromChainFileWithDB(ctx, runtime, invocation, file, db)
 	}
 	operation := operatorsession.DefaultOperation
 	chain := invocation.Option("chain")
@@ -3065,7 +3507,7 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 		}
 		chainConfig = cloneStringMap(selected.Config)
 		for _, step := range selected.Steps {
-			if step.StepID == "" && isSquatterTCPBindModule(moduleDB(runtime), step.ModuleID, chainConfig) {
+			if step.StepID == "" && isSquatterTCPBindModule(db, step.ModuleID, chainConfig) {
 				hasSquatterBind = true
 				break
 			}
@@ -3103,7 +3545,7 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 			return throwExecution{}, fmt.Errorf("chain %s has no modules; add one with chain add <module>", chain)
 		}
 		moduleRef := chain
-		if module, ok := moduleDB(runtime).Find(chain); ok {
+		if module, ok := db.Find(chain); ok {
 			moduleRef = module.ID
 		}
 		modules = append(modules, moduleRef)
@@ -3112,7 +3554,7 @@ func throwInputs(ctx context.Context, runtime Runtime, invocation Invocation) (t
 	var skipped []SkippedTarget
 	if validateTargetCompatibility {
 		var err error
-		targets, targetConfigs, skipped, err = compatibleThrowTargets(moduleDB(runtime), validationSteps(modules, steps), chainConfig, targetConfigs, targets, explicitTarget != "")
+		targets, targetConfigs, skipped, err = compatibleThrowTargets(db, validationSteps(modules, steps), chainConfig, targetConfigs, targets, explicitTarget != "")
 		if err != nil {
 			return throwExecution{}, err
 		}
@@ -3222,6 +3664,10 @@ func squatterPayloadPathCandidates() []string {
 }
 
 func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation Invocation, path string) (throwExecution, error) {
+	return throwInputsFromChainFileWithDB(ctx, runtime, invocation, path, moduleDB(runtime))
+}
+
+func throwInputsFromChainFileWithDB(ctx context.Context, runtime Runtime, invocation Invocation, path string, db ModuleDatabase) (throwExecution, error) {
 	if runtime.ChainFiles == nil {
 		return throwExecution{}, fmt.Errorf("chain file store is not configured")
 	}
@@ -3281,7 +3727,7 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 	if len(targets) == 0 {
 		return throwExecution{}, fmt.Errorf("target is required; configured chain files must include targets or pass --target")
 	}
-	if hasSquatterBindModule(modules) || chainFileHasSquatterTCPBindModule(moduleDB(runtime), file.Spec.Steps, file.Spec.Config) {
+	if hasSquatterBindModule(modules) || chainFileHasSquatterTCPBindModule(db, file.Spec.Steps, file.Spec.Config) {
 		targetConfigs = applySquatterBindTargetConfig(targets, targetConfigs, file.Spec.Config)
 	}
 	return throwExecution{
@@ -3615,6 +4061,173 @@ func moduleDB(runtime Runtime) ModuleDatabase {
 		return runtime.Modules
 	}
 	return modulecatalog.BuiltIns()
+}
+
+func moduleDBForInvocation(runtime Runtime, invocation Invocation) (ModuleDatabase, error) {
+	base := moduleDB(runtime)
+	workspacePath := workspaceFromInvocation(invocation)
+	config, _, err := hovelconfig.Load(hovelconfig.Options{
+		Workspace:    workspacePath,
+		ExplicitPath: invocation.Option("config"),
+	})
+	if err != nil {
+		return nil, err
+	}
+	searchPaths := append([]string(nil), config.Modules.SearchPaths...)
+	if config.Cache.Enabled {
+		cachePath, err := modulepackage.DownloadCacheDir("")
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(cachePath); err == nil {
+			searchPaths = append(searchPaths, cachePath)
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	configured, err := modulesFromSearchPaths(searchPaths)
+	if err != nil {
+		return nil, err
+	}
+	installed, err := installedPackageModules(workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	if len(configured) == 0 && len(installed) == 0 {
+		return base, nil
+	}
+	modules := base.List()
+	modules = append(modules, configured...)
+	modules = append(modules, installed...)
+	catalog := modulecatalog.New(modules...)
+	return catalog, nil
+}
+
+func modulesFromSearchPaths(paths []string) ([]modulecatalog.Module, error) {
+	var modules []modulecatalog.Module
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			module, ok, err := moduleFromSearchPathFile(path)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				modules = append(modules, module)
+			}
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(path, modulepackage.ManifestName)); err == nil {
+			pkg, err := modulepackage.LoadDir(path)
+			if err != nil {
+				return nil, err
+			}
+			modules = append(modules, moduleFromPackage(pkg))
+			continue
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			child := filepath.Join(path, entry.Name())
+			if entry.IsDir() {
+				if _, err := os.Stat(filepath.Join(child, modulepackage.ManifestName)); err != nil {
+					continue
+				}
+				pkg, err := modulepackage.LoadDir(child)
+				if err != nil {
+					return nil, err
+				}
+				modules = append(modules, moduleFromPackage(pkg))
+				continue
+			}
+			module, ok, err := moduleFromSearchPathFile(child)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				modules = append(modules, module)
+			}
+		}
+	}
+	return modules, nil
+}
+
+func moduleFromSearchPathFile(path string) (modulecatalog.Module, bool, error) {
+	if !strings.EqualFold(filepath.Ext(path), ".tgz") {
+		return modulecatalog.Module{}, false, nil
+	}
+	manifest, err := modulepackage.LoadManifestArchive(path)
+	if err != nil {
+		return modulecatalog.Module{}, false, err
+	}
+	return moduleFromManifest(manifest), true, nil
+}
+
+func installedPackageModules(workspacePath string) ([]modulecatalog.Module, error) {
+	lock, err := modulepackage.LoadLock(filepath.Join(workspacePath, "module-lock.yaml"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	modules := make([]modulecatalog.Module, 0, len(lock.Modules))
+	for _, record := range lock.Modules {
+		pkg, err := modulepackage.LoadDir(record.Source)
+		if err != nil {
+			return nil, fmt.Errorf("load installed module %s@%s: %w", record.Name, record.Version, err)
+		}
+		modules = append(modules, moduleFromPackage(pkg))
+	}
+	return modules, nil
+}
+
+func moduleFromPackage(pkg modulepackage.Package) modulecatalog.Module {
+	return moduleFromManifest(pkg.Manifest)
+}
+
+func moduleFromManifest(manifest modulepackage.Manifest) modulecatalog.Module {
+	return modulecatalog.Module{
+		ID:          manifest.Metadata.Name,
+		Name:        manifest.Metadata.Name,
+		Type:        modulecatalog.ModuleType(manifest.Metadata.ModuleType),
+		Version:     manifest.Metadata.Version,
+		Summary:     manifest.Metadata.Summary,
+		Tags:        append([]string(nil), manifest.Metadata.Tags...),
+		RuntimeKind: manifest.Runtime.Protocol,
+		Author:      manifest.Metadata.Author,
+		Enabled:     true,
+	}
+}
+
+func workspaceFromInvocation(invocation Invocation) string {
+	if invocation.Flag("global") {
+		return globalModuleWorkspace()
+	}
+	workspacePath := invocation.Option("workspace")
+	if workspacePath == "" {
+		return ".hovel"
+	}
+	return workspacePath
+}
+
+func globalModuleWorkspace() string {
+	if dataHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); dataHome != "" {
+		return filepath.Join(dataHome, "hovel", "modules")
+	}
+	if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
+		return filepath.Join(home, ".local", "share", "hovel", "modules")
+	}
+	return filepath.Join(".hovel-global")
 }
 
 func validationView(state operatorsession.State) modulecatalog.ConfigView {

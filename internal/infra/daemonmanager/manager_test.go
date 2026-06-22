@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,6 +77,58 @@ func TestEnsureWithModuleConfigPassesConfigToStartedDaemon(t *testing.T) {
 	args := <-argsSeen
 	if args.ModuleConfig != moduleConfig {
 		t.Fatalf("ModuleConfig = %q, want %q", args.ModuleConfig, moduleConfig)
+	}
+}
+
+func TestEnsureWithConfigPassesHovelConfigToStartedDaemon(t *testing.T) {
+	workspacePath := testsupport.TempDir(t)
+	hovelConfig := filepath.Join(testsupport.TempDir(t), "config.yaml")
+	argsSeen := make(chan daemonruntime.Args, 1)
+	manager := New()
+	manager.Serve = func(ctx context.Context, args daemonruntime.Args) error {
+		argsSeen <- args
+		identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+			WorkspacePath: args.WorkspacePath,
+			PID:           123,
+			SocketPath:    filepath.Join(args.WorkspacePath, "hoveld.sock"),
+			HovelConfig:   args.HovelConfig,
+			StartedAt:     time.Now().UTC(),
+			Health:        daemon.HealthHealthy,
+		})
+		if err != nil {
+			return err
+		}
+		if err := filesystem.NewWorkspaceStore().WriteDaemonStatus(ctx, identity); err != nil {
+			return err
+		}
+		<-ctx.Done()
+		_ = filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), args.WorkspacePath)
+		return ctx.Err()
+	}
+
+	session, err := manager.EnsureWithConfig(context.Background(), workspacePath, "", hovelConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	args := <-argsSeen
+	if args.HovelConfig != hovelConfig {
+		t.Fatalf("HovelConfig = %q, want %q", args.HovelConfig, hovelConfig)
+	}
+}
+
+func TestEnsureRejectsRunningDaemonWithDifferentHovelConfig(t *testing.T) {
+	firstConfig := filepath.Join(testsupport.TempDir(t), "first.yaml")
+	secondConfig := filepath.Join(testsupport.TempDir(t), "second.yaml")
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{HovelConfig: firstConfig})
+
+	session, err := New().EnsureWithConfig(context.Background(), fixture.WorkspacePath, "", secondConfig)
+	if err == nil {
+		session.Close()
+		t.Fatal("EnsureWithConfig succeeded, want config mismatch error")
+	}
+	if !strings.Contains(err.Error(), "different hovel config") {
+		t.Fatalf("error = %v, want config mismatch", err)
 	}
 }
 

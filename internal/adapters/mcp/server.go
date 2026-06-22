@@ -87,6 +87,7 @@ type Config struct {
 	Manager           *daemonmanager.Manager
 	Dial              DialFunc
 	CatalogPath       string
+	HovelConfig       string
 	ThrowStarter      ThrowStarter
 	CommandRunner     CommandRunner
 }
@@ -99,6 +100,7 @@ type Server struct {
 	activeChain   string
 	workspace     string
 	catalogPath   string
+	hovelConfig   string
 	throwStarter  ThrowStarter
 	commandRunner CommandRunner
 }
@@ -112,6 +114,7 @@ type OperatorOptions struct {
 	PolicyTags    []string
 	Workspace     string
 	CatalogPath   string
+	HovelConfig   string
 	ThrowStarter  ThrowStarter
 	CommandRunner CommandRunner
 }
@@ -125,7 +128,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.Manager != nil {
 		manager = *cfg.Manager
 	}
-	session, err := manager.EnsureWithModuleConfig(ctx, workspacePath, cfg.CatalogPath)
+	session, err := manager.EnsureWithConfig(ctx, workspacePath, cfg.CatalogPath, cfg.HovelConfig)
 	if err != nil {
 		return err
 	}
@@ -146,12 +149,12 @@ func Run(ctx context.Context, cfg Config) error {
 	commandRunner := cfg.CommandRunner
 	if throwStarter == nil {
 		if rpcClient, ok := client.(*daemonrpc.Client); ok {
-			throwStarter = commandModeThrowStarter(workspacePath, rpcClient, cfg.CatalogPath)
+			throwStarter = commandModeThrowStarter(workspacePath, rpcClient, cfg.CatalogPath, cfg.HovelConfig)
 		}
 	}
 	if commandRunner == nil {
 		if rpcClient, ok := client.(*daemonrpc.Client); ok {
-			commandRunner = commandModeCommandRunner(workspacePath, rpcClient, cfg.CatalogPath)
+			commandRunner = commandModeCommandRunner(workspacePath, rpcClient, cfg.CatalogPath, cfg.HovelConfig)
 		}
 	}
 
@@ -164,6 +167,7 @@ func Run(ctx context.Context, cfg Config) error {
 		PolicyTags:    cfg.PolicyTags,
 		Workspace:     workspacePath,
 		CatalogPath:   cfg.CatalogPath,
+		HovelConfig:   cfg.HovelConfig,
 		ThrowStarter:  throwStarter,
 		CommandRunner: commandRunner,
 	})
@@ -231,6 +235,7 @@ func Attach(ctx context.Context, daemon Daemon, opts OperatorOptions) (*Server, 
 		activeChain:   resp.Entity.ActiveChain,
 		workspace:     workspaceOrDefault(opts.Workspace),
 		catalogPath:   strings.TrimSpace(opts.CatalogPath),
+		hovelConfig:   strings.TrimSpace(opts.HovelConfig),
 		throwStarter:  opts.ThrowStarter,
 		commandRunner: opts.CommandRunner,
 	}, nil
@@ -1032,7 +1037,7 @@ func (s *Server) heartbeatLoop(ctx context.Context, interval time.Duration) {
 	}
 }
 
-func commandModeThrowStarter(workspacePath string, client *daemonrpc.Client, catalogPath string) ThrowStarter {
+func commandModeThrowStarter(workspacePath string, client *daemonrpc.Client, catalogPath, hovelConfig string) ThrowStarter {
 	return func(ctx context.Context, input throwStartInput) (throwStartOutput, error) {
 		if !input.NowBypass {
 			return throwStartOutput{}, errors.New("nowBypass=true is required")
@@ -1053,11 +1058,12 @@ func commandModeThrowStarter(workspacePath string, client *daemonrpc.Client, cat
 		}
 
 		args := []string{"throw", "--workspace", workspacePath, "--chain", chain, "--now", "--json"}
+		args = injectConfigForMCPCommand(args, hovelConfig)
 		if input.AllowDangerous {
 			args = append(args, "--allow-dangerous")
 		}
 		var stdout, stderr bytes.Buffer
-		catalog, err := mcpCommandCatalog(ctx, []string{"throw"}, catalogPath)
+		catalog, err := mcpCommandCatalog(ctx, []string{"throw"}, catalogPath, hovelConfig, workspacePath)
 		if err != nil {
 			return throwStartOutput{}, err
 		}
@@ -1088,7 +1094,7 @@ func commandModeThrowStarter(workspacePath string, client *daemonrpc.Client, cat
 	}
 }
 
-func commandModeCommandRunner(workspacePath string, client *daemonrpc.Client, catalogPath string) CommandRunner {
+func commandModeCommandRunner(workspacePath string, client *daemonrpc.Client, catalogPath, hovelConfig string) CommandRunner {
 	return func(ctx context.Context, input commandRunInput) (commandRunOutput, error) {
 		session := daemonrpc.NewSessionClient(ctx, client)
 		operation := strings.TrimSpace(input.Operation)
@@ -1105,7 +1111,8 @@ func commandModeCommandRunner(workspacePath string, client *daemonrpc.Client, ca
 		}
 
 		args := injectWorkspaceForMCPCommand(normalizeMCPCommandArgs(input.Args), workspacePath)
-		catalog, err := mcpCommandCatalog(ctx, args, catalogPath)
+		args = injectConfigForMCPCommand(args, hovelConfig)
+		catalog, err := mcpCommandCatalog(ctx, args, catalogPath, hovelConfig, workspacePath)
 		if err != nil {
 			return commandRunOutput{}, err
 		}
@@ -1166,13 +1173,22 @@ func injectWorkspaceForMCPCommand(args []string, workspacePath string) []string 
 	return append(out, "--workspace", workspacePath)
 }
 
-func (s *Server) mcpCommandCatalog(ctx context.Context, args []string) (modulecatalog.Catalog, error) {
-	return mcpCommandCatalog(ctx, args, s.catalogPath)
+func injectConfigForMCPCommand(args []string, configPath string) []string {
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" || hasConfigArg(args) {
+		return append([]string(nil), args...)
+	}
+	out := append([]string(nil), args...)
+	return append(out, "--config", configPath)
 }
 
-func mcpCommandCatalog(ctx context.Context, args []string, catalogPath string) (modulecatalog.Catalog, error) {
+func (s *Server) mcpCommandCatalog(ctx context.Context, args []string) (modulecatalog.Catalog, error) {
+	return mcpCommandCatalog(ctx, args, s.catalogPath, s.hovelConfig, s.workspace)
+}
+
+func mcpCommandCatalog(ctx context.Context, args []string, catalogPath, hovelConfig, workspacePath string) (modulecatalog.Catalog, error) {
 	needsModules := mcpCommandNeedsModules(args)
-	catalog, err := (pythonrpc.Runner{ConfigPath: catalogPath}).Catalog(ctx)
+	catalog, err := (pythonrpc.Runner{ConfigPath: catalogPath, HovelConfig: hovelConfig, WorkspacePath: workspacePath}).Catalog(ctx)
 	if err != nil {
 		if needsModules {
 			return modulecatalog.Catalog{}, fmt.Errorf("load module catalog: %w", err)
@@ -1226,6 +1242,18 @@ func hasWorkspaceArg(args []string) bool {
 			return i+1 < len(args)
 		}
 		if strings.HasPrefix(arg, "--workspace=") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasConfigArg(args []string) bool {
+	for i, arg := range args {
+		if arg == "--config" {
+			return i+1 < len(args)
+		}
+		if strings.HasPrefix(arg, "--config=") {
 			return true
 		}
 	}

@@ -275,6 +275,110 @@ func TestModuleEntriesResolvesCommandPaths(t *testing.T) {
 	}
 }
 
+func TestModuleEntriesIncludeWorkspaceModuleLock(t *testing.T) {
+	workspace := t.TempDir()
+	moduleRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: locked
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/locked"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(moduleRoot, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "bin", "locked"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock := `apiVersion: hovel.dev/v1alpha1
+kind: ModuleLock
+modules:
+  - name: locked
+    version: 0.1.0
+    source: ` + moduleRoot + `
+    linked: true
+    installedAt: "2026-06-22T18:00:00Z"
+`
+	if err := os.WriteFile(filepath.Join(workspace, "module-lock.yaml"), []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := (Runner{WorkspacePath: workspace, ConfigPath: configPath}).moduleEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v", entries)
+	}
+	if entries[0].ID != "locked@0.1.0" || entries[0].Command[0] != filepath.Join(moduleRoot, "bin", "locked") {
+		t.Fatalf("entry = %#v", entries[0])
+	}
+}
+
+func TestModuleEntriesIncludeHovelConfigSearchPaths(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	workspace := t.TempDir()
+	packageParent := filepath.Join(workspace, "packages")
+	moduleRoot := filepath.Join(packageParent, "configured")
+	if err := os.MkdirAll(filepath.Join(moduleRoot, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: configured
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - command: ["bin/configured"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "bin", "configured"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(workspace, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+modules:
+  searchPaths:
+    - `+packageParent+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacyConfigPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(legacyConfigPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := (Runner{WorkspacePath: workspace, ConfigPath: legacyConfigPath}).moduleEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v", entries)
+	}
+	if entries[0].ID != "configured@0.1.0" || entries[0].Command[0] != filepath.Join(moduleRoot, "bin", "configured") {
+		t.Fatalf("entry = %#v", entries[0])
+	}
+}
+
 func TestModuleEntriesRejectsInvalidEntries(t *testing.T) {
 	cases := []struct {
 		name         string

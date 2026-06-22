@@ -15,6 +15,7 @@ cp -r spec _site/
 find _site -name BUILD.bazel -delete
 
 demo_outputs=(
+  "module-package-install-01-link.gif"
   "mcp-agent-01-throw.gif"
   "mcp-agent-02-squatter-wine.gif"
   "mock-survey-exploit-01-inspect.gif"

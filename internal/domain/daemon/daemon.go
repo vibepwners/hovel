@@ -24,6 +24,7 @@ type IdentityArgs struct {
 	WorkspacePath string
 	PID           int
 	SocketPath    string
+	HovelConfig   string
 	StartedAt     time.Time
 	Health        Health
 }
@@ -32,6 +33,7 @@ type Identity struct {
 	WorkspacePath string
 	PID           int
 	SocketPath    string
+	HovelConfig   string
 	StartedAt     time.Time
 	Health        Health
 }
@@ -58,6 +60,7 @@ func NewIdentity(args IdentityArgs) (Identity, error) {
 		WorkspacePath: args.WorkspacePath,
 		PID:           args.PID,
 		SocketPath:    args.SocketPath,
+		HovelConfig:   strings.TrimSpace(args.HovelConfig),
 		StartedAt:     args.StartedAt,
 		Health:        args.Health,
 	}, nil

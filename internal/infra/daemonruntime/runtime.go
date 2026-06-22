@@ -29,6 +29,7 @@ type Args struct {
 	SocketPath     string
 	ListenAddress  string
 	ModuleConfig   string
+	HovelConfig    string
 	PID            int
 	StartedAt      time.Time
 	IDs            services.IDGenerator
@@ -105,11 +106,13 @@ func Serve(ctx context.Context, args Args) error {
 		pythonSessions := pythonrpc.NewSessionBroker()
 		sessionBroker = pythonSessions
 		runner = pythonrpc.Runner{
-			ConfigPath: args.ModuleConfig,
-			Events:     events,
-			IDs:        ids,
-			Clock:      clock,
-			Sessions:   pythonSessions,
+			ConfigPath:    args.ModuleConfig,
+			HovelConfig:   args.HovelConfig,
+			WorkspacePath: workspacePath,
+			Events:        events,
+			IDs:           ids,
+			Clock:         clock,
+			Sessions:      pythonSessions,
 		}
 	}
 
@@ -117,6 +120,7 @@ func Serve(ctx context.Context, args Args) error {
 		WorkspacePath: workspacePath,
 		PID:           pid,
 		SocketPath:    endpoint.String(),
+		HovelConfig:   args.HovelConfig,
 		StartedAt:     startedAt,
 		Health:        daemon.HealthHealthy,
 	})

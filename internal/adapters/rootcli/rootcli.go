@@ -20,6 +20,7 @@ import (
 )
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	args = normalizeLeadingConfig(args)
 	if len(args) == 0 || helpRequested(args) && (args[0] == "-h" || args[0] == "--help") {
 		parser := newRootParser()
 		if helpRequested(args) {
@@ -63,6 +64,33 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprint(stderr, newRootParser().Usage(fmt.Sprintf("unknown command or role %q", args[0])))
 		return 2
+	}
+}
+
+func normalizeLeadingConfig(args []string) []string {
+	if len(args) < 2 {
+		return args
+	}
+	switch {
+	case args[0] == "--config":
+		if len(args) < 3 {
+			return args
+		}
+		if args[2] == "run" {
+			out := []string{"run", "--config", args[1]}
+			return append(out, args[3:]...)
+		}
+		out := append([]string(nil), args[2:]...)
+		return append(out, "--config", args[1])
+	case strings.HasPrefix(args[0], "--config="):
+		if len(args) > 1 && args[1] == "run" {
+			out := []string{"run", "--config", strings.TrimPrefix(args[0], "--config=")}
+			return append(out, args[2:]...)
+		}
+		out := append([]string(nil), args[1:]...)
+		return append(out, "--config", strings.TrimPrefix(args[0], "--config="))
+	default:
+		return args
 	}
 }
 
@@ -143,6 +171,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 	workspacePath := parser.String("w", "workspace", &argparse.Options{Help: "Workspace path"})
 	socketPath := parser.String("s", "socket", &argparse.Options{Help: "Local RPC socket path"})
 	listenAddress := parser.String("", "listen", &argparse.Options{Help: "RPC listen endpoint, such as unix:/tmp/hoveld.sock or tcp://127.0.0.1:9090"})
+	configPath := parser.String("", "config", &argparse.Options{Help: "Hovel config file path"})
 	moduleConfig := parser.String("", "module-config", &argparse.Options{Help: "Module launch catalog path"})
 	if ok, code := parseArgs(parser, args, stdout, stderr); !ok {
 		return code
@@ -154,6 +183,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 		SocketPath:    *socketPath,
 		ListenAddress: *listenAddress,
 		ModuleConfig:  *moduleConfig,
+		HovelConfig:   *configPath,
 	}); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 0
@@ -192,6 +222,7 @@ func newRootParser() *argparse.Parser {
 
 type runCommandArgs struct {
 	Workspace string
+	Config    string
 	Operation string
 	Chain     string
 	Command   []string
@@ -202,7 +233,7 @@ func runDaemonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	if !ok {
 		return code
 	}
-	session, err := daemonmanager.New().Ensure(ctx, parsed.Workspace)
+	session, err := daemonmanager.New().EnsureWithConfig(ctx, parsed.Workspace, "", parsed.Config)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -230,6 +261,7 @@ func runDaemonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 		}
 	}
 	commandArgs := injectWorkspaceForDaemonCommand(normalizeRunCommand(parsed.Command), parsed.Workspace)
+	commandArgs = injectConfigForDaemonCommand(commandArgs, parsed.Config)
 	app := commandmode.NewAppWithSessionAndModules(operatorSession, pythonrpc.MustConfiguredCatalog())
 	return app.Run(ctx, commandArgs, stdout, stderr)
 }
@@ -261,6 +293,16 @@ func parseRunCommandArgs(args []string, stdout, stderr io.Writer) (runCommandArg
 			args = args[2:]
 		case strings.HasPrefix(arg, "--workspace="):
 			parsed.Workspace = strings.TrimPrefix(arg, "--workspace=")
+			args = args[1:]
+		case arg == "--config":
+			if len(args) < 2 {
+				fmt.Fprint(stderr, newRunParser().Usage(arg+" requires a value"))
+				return runCommandArgs{}, false, 2
+			}
+			parsed.Config = args[1]
+			args = args[2:]
+		case strings.HasPrefix(arg, "--config="):
+			parsed.Config = strings.TrimPrefix(arg, "--config=")
 			args = args[1:]
 		case arg == "--op" || arg == "--operation":
 			if len(args) < 2 {
@@ -307,6 +349,7 @@ func validateRunCommandArgs(parsed runCommandArgs, stderr io.Writer) (runCommand
 func newRunParser() *argparse.Parser {
 	parser := argparse.NewParser("hovel run", "Run one command against a daemon-backed operator session.")
 	parser.String("w", "workspace", &argparse.Options{Help: "Workspace path"})
+	parser.String("", "config", &argparse.Options{Help: "Hovel config file path"})
 	parser.String("", "op", &argparse.Options{Help: "Operation context to select before running the command"})
 	parser.String("", "operation", &argparse.Options{Help: "Operation context to select before running the command"})
 	parser.String("c", "chain", &argparse.Options{Help: "Chain context to select before running the command"})
@@ -320,6 +363,15 @@ func injectWorkspaceForDaemonCommand(args []string, workspace string) []string {
 	}
 	out := append([]string(nil), args...)
 	return append(out, "--workspace", workspace)
+}
+
+func injectConfigForDaemonCommand(args []string, configPath string) []string {
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" || hasConfigArg(args) {
+		return append([]string(nil), args...)
+	}
+	out := append([]string(nil), args...)
+	return append(out, "--config", configPath)
 }
 
 func normalizeRunCommand(args []string) []string {
@@ -349,12 +401,24 @@ func hasWorkspaceArg(args []string) bool {
 	return false
 }
 
+func hasConfigArg(args []string) bool {
+	for i, arg := range args {
+		if arg == "--config" {
+			return i+1 < len(args)
+		}
+		if strings.HasPrefix(arg, "--config=") {
+			return true
+		}
+	}
+	return false
+}
+
 func commandUsesWorkspace(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
 	switch args[0] {
-	case "throw", "throws", "confirm", "review", "artifact", "artifacts", "session", "sessions":
+	case "throw", "throws", "confirm", "review", "artifact", "artifacts", "module", "modules", "session", "sessions":
 		return true
 	default:
 		return false
@@ -376,6 +440,7 @@ func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	chain := parser.String("c", "chain", &argparse.Options{Help: "Chain context for this MCP operator"})
 	entityID := parser.String("", "entity-id", &argparse.Options{Help: "Stable operator entity ID for launch-key approvals"})
 	displayName := parser.String("", "display-name", &argparse.Options{Help: "Human-readable operator entity name"})
+	configPath := parser.String("", "config", &argparse.Options{Help: "Hovel config file path"})
 	moduleConfig := parser.String("", "module-config", &argparse.Options{Help: "Module launch catalog path for MCP tools"})
 	transport := parser.String("", "transport", &argparse.Options{Help: "MCP transport: stdio or http (default stdio)"})
 	httpAddr := parser.String("", "http-addr", &argparse.Options{Help: "HTTP MCP listen address when --transport=http (default 127.0.0.1:0)"})
@@ -405,6 +470,7 @@ func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Status:        stderr,
 		TransportMode: selectedTransport,
 		HTTPAddr:      *httpAddr,
+		HovelConfig:   *configPath,
 	}); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 0

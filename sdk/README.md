@@ -56,6 +56,13 @@ Build and stage the in-tree Go and Rust example binaries with:
 task modules:build
 ```
 
-The staged binaries are referenced by [`../examples/hovel-modules.json`](../examples/hovel-modules.json).
-Python examples are loaded from their `project_dir` and `module` fields instead
-of staged native binaries.
+Install or link a module package before running it:
+
+```sh
+hovel module install ./my-module-0.1.0.tgz
+hovel module install --link /absolute/path/to/module-package-root
+```
+
+Python modules can use Hovel-managed python-build-standalone, an operator
+interpreter, or a bundled interpreter declared in `hovel-module.yaml`; Go and
+Rust modules usually package compiled binaries as launch entries.
