@@ -10,6 +10,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/adapters/cli"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
+	mcpadapter "github.com/Vibe-Pwners/hovel/internal/adapters/mcp"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
@@ -35,6 +36,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDaemonCommand(ctx, args[1:], stdout, stderr)
 	case "cli", "shell":
 		return cli.Run(ctx, args[1:], stdout, stderr)
+	case "mcp":
+		return runMCP(ctx, args[1:], stdout, stderr)
 	case "daemon":
 		return runDaemon(ctx, args[1:], stdout, stderr)
 	case "tui":
@@ -140,6 +143,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 	workspacePath := parser.String("w", "workspace", &argparse.Options{Help: "Workspace path"})
 	socketPath := parser.String("s", "socket", &argparse.Options{Help: "Local RPC socket path"})
 	listenAddress := parser.String("", "listen", &argparse.Options{Help: "RPC listen endpoint, such as unix:/tmp/hoveld.sock or tcp://127.0.0.1:9090"})
+	moduleConfig := parser.String("", "module-config", &argparse.Options{Help: "Module launch catalog path"})
 	if ok, code := parseArgs(parser, args, stdout, stderr); !ok {
 		return code
 	}
@@ -149,6 +153,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 		WorkspacePath: *workspacePath,
 		SocketPath:    *socketPath,
 		ListenAddress: *listenAddress,
+		ModuleConfig:  *moduleConfig,
 	}); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 0
@@ -161,19 +166,23 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 
 func newRootParser() *argparse.Parser {
 	parser := argparse.NewParser("hovel", "Hovel operator console.")
-	parser.NewCommand("op", "Create, select, and inspect operations.")
-	parser.NewCommand("chain", "Build and manage operator chains.")
-	parser.NewCommand("module", "Browse, search, and inspect modules.")
-	parser.NewCommand("artifact", "List and inspect materialized artifacts.")
-	parser.NewCommand("session", "List, connect, and close active sessions.")
-	parser.NewCommand("target", "Add and configure chain targets.")
-	parser.NewCommand("throw", "Execute the selected chain, or list and inspect throws.")
+	for _, definition := range commandmode.NewApp().Registry().FirstSegments() {
+		parser.NewCommand(definition.Path[0], definition.Summary)
+	}
 	parser.NewCommand("init", "Initialize a workspace.")
 	parser.NewCommand("status", "Inspect workspace and daemon status.")
-	parser.NewCommand("shell", "Launch the interactive prompt shell.")
-	parser.NewCommand("command", "Run one command from the shell. Compatibility alias for direct commands.")
-	parser.NewCommand("run", "Run one command against a daemon-backed operator session.")
-	parser.NewCommand("cli", "Launch the interactive prompt shell. Alias for shell.")
+	for _, role := range []struct {
+		name    string
+		summary string
+	}{
+		{"shell", "Launch the interactive prompt shell."},
+		{"command", "Run one command from the shell. Compatibility alias for direct commands."},
+		{"run", "Run one command against a daemon-backed operator session."},
+		{"cli", "Launch the interactive prompt shell. Alias for shell."},
+		{"mcp", "Launch the MCP agent interface."},
+	} {
+		parser.NewCommand(role.name, role.summary)
+	}
 	daemon := parser.NewCommand("daemon", "Run or inspect the daemon role.")
 	daemon.NewCommand("serve", "Run the daemon role.")
 	daemon.NewCommand("status", "Inspect daemon status.")
@@ -357,6 +366,57 @@ func newDaemonParser() *argparse.Parser {
 	parser.NewCommand("serve", "Run the daemon role.")
 	parser.NewCommand("status", "Inspect daemon status.")
 	return parser
+}
+
+func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	parser := newMCPParser()
+	workspacePath := parser.String("w", "workspace", &argparse.Options{Help: "Workspace path"})
+	operation := parser.String("", "op", &argparse.Options{Help: "Operation context for this MCP operator"})
+	operationAlias := parser.String("", "operation", &argparse.Options{Help: "Alias for --op"})
+	chain := parser.String("c", "chain", &argparse.Options{Help: "Chain context for this MCP operator"})
+	entityID := parser.String("", "entity-id", &argparse.Options{Help: "Stable operator entity ID for launch-key approvals"})
+	displayName := parser.String("", "display-name", &argparse.Options{Help: "Human-readable operator entity name"})
+	moduleConfig := parser.String("", "module-config", &argparse.Options{Help: "Module launch catalog path for MCP tools"})
+	transport := parser.String("", "transport", &argparse.Options{Help: "MCP transport: stdio or http (default stdio)"})
+	httpAddr := parser.String("", "http-addr", &argparse.Options{Help: "HTTP MCP listen address when --transport=http (default 127.0.0.1:0)"})
+	if ok, code := parseArgs(parser, args, stdout, stderr); !ok {
+		return code
+	}
+	selectedTransport := strings.ToLower(strings.TrimSpace(*transport))
+	if selectedTransport == "" {
+		selectedTransport = mcpadapter.DefaultTransportMode
+	}
+	if selectedTransport != "stdio" && selectedTransport != "http" {
+		fmt.Fprintf(stderr, "unsupported MCP transport %q; use stdio or http\n", *transport)
+		return 2
+	}
+	selectedOperation := *operation
+	if selectedOperation == "" {
+		selectedOperation = *operationAlias
+	}
+	if err := mcpadapter.Run(ctx, mcpadapter.Config{
+		Workspace:     *workspacePath,
+		Operation:     selectedOperation,
+		Chain:         *chain,
+		EntityID:      *entityID,
+		DisplayName:   *displayName,
+		CatalogPath:   *moduleConfig,
+		Output:        stdout,
+		Status:        stderr,
+		TransportMode: selectedTransport,
+		HTTPAddr:      *httpAddr,
+	}); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return 0
+		}
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
+func newMCPParser() *argparse.Parser {
+	return argparse.NewParser("hovel mcp", "Launch the MCP agent interface.")
 }
 
 func newTUIParser() *argparse.Parser {

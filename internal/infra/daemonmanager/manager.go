@@ -35,6 +35,10 @@ func New() Manager {
 }
 
 func (m Manager) Ensure(ctx context.Context, workspacePath string) (*Session, error) {
+	return m.EnsureWithModuleConfig(ctx, workspacePath, "")
+}
+
+func (m Manager) EnsureWithModuleConfig(ctx context.Context, workspacePath, moduleConfig string) (*Session, error) {
 	m = m.withDefaults()
 	workspacePath = workspace.ResolvePath(workspacePath)
 	status, err := m.Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
@@ -57,7 +61,7 @@ func (m Manager) Ensure(ctx context.Context, workspacePath string) (*Session, er
 	daemonCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
-		done <- m.Serve(daemonCtx, daemonruntime.Args{WorkspacePath: workspacePath})
+		done <- m.Serve(daemonCtx, daemonruntime.Args{WorkspacePath: workspacePath, ModuleConfig: moduleConfig})
 	}()
 
 	status, err = m.waitRunning(ctx, workspacePath, done)

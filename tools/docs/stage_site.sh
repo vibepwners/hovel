@@ -15,6 +15,8 @@ cp -r spec _site/
 find _site -name BUILD.bazel -delete
 
 demo_outputs=(
+  "mcp-agent-01-throw.gif"
+  "mcp-agent-02-squatter-wine.gif"
   "mock-survey-exploit-01-inspect.gif"
   "mock-survey-exploit-02-throw.gif"
   "mock-survey-exploit-03-session-io.gif"
@@ -34,7 +36,7 @@ mkdir -p _site/assets/demos
 for output in "${demo_outputs[@]}"; do
   if [[ ! -s "demo/out/${output}" ]]; then
     echo "missing generated demo artifact: demo/out/${output}" >&2
-    echo "run task demos before staging docs" >&2
+    echo "run task docs before staging docs, or run task demos and task demo:squatter-wine" >&2
     exit 1
   fi
   cp "demo/out/${output}" "_site/assets/demos/${output}"

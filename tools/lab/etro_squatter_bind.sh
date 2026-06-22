@@ -30,8 +30,8 @@ fi
 
 generate_named_pipe_payload() {
   local out="$workspace/lab/squatter-${pipe_name}.exe"
-  HOVEL_MODULE_CONFIG="$module_config" task run -- //payloads/squatter/provider:squatter-provider -- \
-    generate --transport smb-named-pipe --pipe "\\\\.\\pipe\\${pipe_name}" --out "$out" >/dev/null
+  HOVEL_MODULE_CONFIG="$module_config" task run -- //payloads/squatter/provider:squatter-generate -- \
+    --transport smb-named-pipe --pipe "\\\\.\\pipe\\${pipe_name}" --out "$out" >/dev/null
   squatter_payload="$out"
 }
 

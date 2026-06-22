@@ -27,6 +27,7 @@ type RequestArgs struct {
 	Inputs       map[string]string
 	ChainConfig  map[string]string
 	TargetConfig map[string]string
+	Agent        *AgentContext
 }
 
 type Request struct {
@@ -38,6 +39,7 @@ type Request struct {
 	Inputs       map[string]string
 	ChainConfig  map[string]string
 	TargetConfig map[string]string
+	Agent        *AgentContext
 }
 
 func NewRequest(args RequestArgs) (Request, error) {
@@ -62,7 +64,37 @@ func NewRequest(args RequestArgs) (Request, error) {
 		Inputs:       cloneStringMap(args.Inputs),
 		ChainConfig:  cloneStringMap(args.ChainConfig),
 		TargetConfig: cloneStringMap(args.TargetConfig),
+		Agent:        cloneAgentContext(args.Agent),
 	}, nil
+}
+
+type AgentEntity struct {
+	ID          string `json:"id,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	Agent       bool   `json:"agent,omitempty"`
+}
+
+type AgentContext struct {
+	Schema        string      `json:"schema,omitempty"`
+	Entity        AgentEntity `json:"entity,omitempty"`
+	Operation     string      `json:"operation,omitempty"`
+	Chain         string      `json:"chain,omitempty"`
+	PlanID        string      `json:"planId,omitempty"`
+	PlanHash      string      `json:"planHash,omitempty"`
+	ApprovalState string      `json:"approvalState,omitempty"`
+	Phase         string      `json:"phase,omitempty"`
+	Resources     []string    `json:"resources,omitempty"`
+}
+
+type AgentHint struct {
+	Schema     string            `json:"schema,omitempty"`
+	Phase      string            `json:"phase,omitempty"`
+	Audience   string            `json:"audience,omitempty"`
+	Risk       string            `json:"risk,omitempty"`
+	AppliesTo  map[string]string `json:"appliesTo,omitempty"`
+	Text       string            `json:"text,omitempty"`
+	Provenance map[string]string `json:"provenance,omitempty"`
 }
 
 type Finding struct {
@@ -129,6 +161,7 @@ type ResultArgs struct {
 	Logs              []LogEntry
 	Sessions          []SessionRef
 	InstalledPayloads []InstalledPayloadDescriptor
+	AgentHints        []AgentHint
 }
 
 type Result struct {
@@ -142,32 +175,81 @@ type Result struct {
 	Logs              []LogEntry
 	Sessions          []SessionRef
 	InstalledPayloads []InstalledPayloadDescriptor
+	AgentHints        []AgentHint
 }
 
 type PayloadProviderRecord struct {
-	ProviderID    string
-	Schema        string
-	SchemaVersion string
-	Descriptor    map[string]any
+	ProviderID    string         `json:"providerId,omitempty"`
+	Schema        string         `json:"schema,omitempty"`
+	SchemaVersion string         `json:"schemaVersion,omitempty"`
+	Descriptor    map[string]any `json:"descriptor,omitempty"`
 }
 
 type InstalledPayloadDescriptor struct {
-	Provider                 string
-	PayloadID                string
-	PayloadVersion           string
-	Target                   string
-	TargetID                 string
-	State                    string
-	Transport                string
-	Endpoint                 string
-	InstanceKey              string
-	StampID                  string
-	ArtifactIDs              []string
-	SupportsReconnect        bool
-	SupportsMultipleSessions bool
-	Reconnect                *PayloadProviderRecord
-	Cleanup                  *PayloadProviderRecord
-	Metadata                 map[string]string
+	Provider                 string                 `json:"provider"`
+	PayloadID                string                 `json:"payloadId"`
+	PayloadVersion           string                 `json:"payloadVersion,omitempty"`
+	Target                   string                 `json:"target"`
+	TargetID                 string                 `json:"targetId,omitempty"`
+	State                    string                 `json:"state,omitempty"`
+	Transport                string                 `json:"transport,omitempty"`
+	Endpoint                 string                 `json:"endpoint,omitempty"`
+	InstanceKey              string                 `json:"instanceKey,omitempty"`
+	StampID                  string                 `json:"stampId,omitempty"`
+	ArtifactIDs              []string               `json:"artifactIds,omitempty"`
+	SupportsReconnect        bool                   `json:"supportsReconnect,omitempty"`
+	SupportsMultipleSessions bool                   `json:"supportsMultipleSessions,omitempty"`
+	Reconnect                *PayloadProviderRecord `json:"reconnect,omitempty"`
+	Cleanup                  *PayloadProviderRecord `json:"cleanup,omitempty"`
+	Metadata                 map[string]string      `json:"metadata,omitempty"`
+}
+
+type PayloadCommandListRequest struct {
+	InstalledPayloadID string                 `json:"installedPayloadId,omitempty"`
+	Target             string                 `json:"target,omitempty"`
+	PayloadID          string                 `json:"payloadId,omitempty"`
+	Config             map[string]string      `json:"config,omitempty"`
+	Reconnect          *PayloadProviderRecord `json:"reconnect,omitempty"`
+	Agent              *AgentContext          `json:"agentContext,omitempty"`
+}
+
+type PayloadCommand struct {
+	Name         string                   `json:"name"`
+	Summary      string                   `json:"summary,omitempty"`
+	Usage        string                   `json:"usage,omitempty"`
+	ReadOnly     bool                     `json:"readOnly,omitempty"`
+	Destructive  bool                     `json:"destructive,omitempty"`
+	Capabilities []string                 `json:"capabilities,omitempty"`
+	Arguments    []PayloadCommandArgument `json:"arguments,omitempty"`
+}
+
+type PayloadCommandArgument struct {
+	Name     string `json:"name"`
+	Help     string `json:"help,omitempty"`
+	Required bool   `json:"required,omitempty"`
+}
+
+type PayloadCommandRequest struct {
+	InstalledPayloadID string                 `json:"installedPayloadId,omitempty"`
+	Target             string                 `json:"target,omitempty"`
+	PayloadID          string                 `json:"payloadId,omitempty"`
+	Command            string                 `json:"command"`
+	Args               []string               `json:"args,omitempty"`
+	InputPath          string                 `json:"inputPath,omitempty"`
+	InputData          string                 `json:"inputData,omitempty"`
+	InputEncoding      string                 `json:"inputEncoding,omitempty"`
+	Config             map[string]string      `json:"config,omitempty"`
+	Reconnect          *PayloadProviderRecord `json:"reconnect,omitempty"`
+	Agent              *AgentContext          `json:"agentContext,omitempty"`
+}
+
+type PayloadCommandResult struct {
+	Command   string            `json:"command"`
+	Summary   string            `json:"summary,omitempty"`
+	Stdout    string            `json:"stdout,omitempty"`
+	Stderr    string            `json:"stderr,omitempty"`
+	Artifacts []Artifact        `json:"artifacts,omitempty"`
+	Fields    map[string]string `json:"fields,omitempty"`
 }
 
 func Succeeded(request Request, args ResultArgs) (Result, error) {
@@ -192,10 +274,44 @@ func resultWithState(request Request, state State, args ResultArgs) (Result, err
 		Artifacts: append([]Artifact(nil), args.Artifacts...),
 		Logs:      cloneLogs(args.Logs),
 		Sessions:  cloneSessions(args.Sessions),
-		InstalledPayloads: cloneInstalledPayloads(
+		InstalledPayloads: CloneInstalledPayloads(
 			args.InstalledPayloads,
 		),
+		AgentHints: cloneAgentHints(args.AgentHints),
 	}, nil
+}
+
+func cloneAgentContext(agent *AgentContext) *AgentContext {
+	if agent == nil {
+		return nil
+	}
+	return &AgentContext{
+		Schema:        agent.Schema,
+		Entity:        agent.Entity,
+		Operation:     agent.Operation,
+		Chain:         agent.Chain,
+		PlanID:        agent.PlanID,
+		PlanHash:      agent.PlanHash,
+		ApprovalState: agent.ApprovalState,
+		Phase:         agent.Phase,
+		Resources:     append([]string(nil), agent.Resources...),
+	}
+}
+
+func cloneAgentHints(hints []AgentHint) []AgentHint {
+	out := make([]AgentHint, 0, len(hints))
+	for _, hint := range hints {
+		out = append(out, AgentHint{
+			Schema:     hint.Schema,
+			Phase:      hint.Phase,
+			Audience:   hint.Audience,
+			Risk:       hint.Risk,
+			AppliesTo:  cloneStringMap(hint.AppliesTo),
+			Text:       hint.Text,
+			Provenance: cloneStringMap(hint.Provenance),
+		})
+	}
+	return out
 }
 
 func cloneStringMap(values map[string]string) map[string]string {
@@ -253,7 +369,7 @@ func cloneSessions(sessions []SessionRef) []SessionRef {
 	return out
 }
 
-func cloneInstalledPayloads(payloads []InstalledPayloadDescriptor) []InstalledPayloadDescriptor {
+func CloneInstalledPayloads(payloads []InstalledPayloadDescriptor) []InstalledPayloadDescriptor {
 	out := make([]InstalledPayloadDescriptor, 0, len(payloads))
 	for _, payload := range payloads {
 		out = append(out, InstalledPayloadDescriptor{
@@ -270,15 +386,15 @@ func cloneInstalledPayloads(payloads []InstalledPayloadDescriptor) []InstalledPa
 			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
 			SupportsReconnect:        payload.SupportsReconnect,
 			SupportsMultipleSessions: payload.SupportsMultipleSessions,
-			Reconnect:                clonePayloadProviderRecord(payload.Reconnect),
-			Cleanup:                  clonePayloadProviderRecord(payload.Cleanup),
+			Reconnect:                ClonePayloadProviderRecord(payload.Reconnect),
+			Cleanup:                  ClonePayloadProviderRecord(payload.Cleanup),
 			Metadata:                 cloneStringMap(payload.Metadata),
 		})
 	}
 	return out
 }
 
-func clonePayloadProviderRecord(record *PayloadProviderRecord) *PayloadProviderRecord {
+func ClonePayloadProviderRecord(record *PayloadProviderRecord) *PayloadProviderRecord {
 	if record == nil {
 		return nil
 	}

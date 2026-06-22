@@ -1,0 +1,27 @@
+FROM ubuntu:24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN dpkg --add-architecture i386 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates wget gnupg \
+    && install -d -m 0755 /etc/apt/keyrings \
+    && wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key \
+    && wget -qNP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
+    && apt-get update \
+    && apt-get install -y --install-recommends winehq-stable \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY entrypoint.sh /usr/local/bin/squatter-wine-entrypoint
+
+ENV WINEDEBUG=-all \
+    WINEPREFIX=/wine \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    SQUATTER_EXE=/payload/squatter.exe \
+    SQUATTER_PORT=9100
+
+WORKDIR /work
+EXPOSE 9100
+
+ENTRYPOINT ["/usr/local/bin/squatter-wine-entrypoint"]

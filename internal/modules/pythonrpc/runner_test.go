@@ -145,6 +145,105 @@ while True:
 	}
 }
 
+func TestRunnerPassesOptionalAgentContextAndPreservesHints(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "agent-aware", "version": "v0.0.0-test",
+            "moduleType": "survey", "summary": "agent aware", "tags": []}})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "execute":
+        params = request.get("params") or {}
+        agent = params.get("agentContext")
+        hints = []
+        if agent:
+            hints.append({
+                "schema": "hovel.agent_hint.v1",
+                "phase": "execute",
+                "audience": "assistant",
+                "risk": "low",
+                "text": "Prefer read-only inspection before changing state.",
+                "provenance": {"moduleId": "agent-aware@v0.0.0-test"}
+            })
+        entity = (agent or {}).get("entity") or {}
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "status": "succeeded",
+            "summary": "agent " + (entity.get("kind") or "absent"),
+            "findings": [],
+            "artifacts": [],
+            "outputs": {},
+            "sessions": [],
+            "agentHints": hints}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	runner := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}
+
+	ordinary, err := run.NewRequest(run.RequestArgs{ID: "run-ordinary", ModuleID: "broken", Target: "mock://target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinaryResult, err := runner.Run(context.Background(), ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ordinaryResult.Summary != "agent absent" {
+		t.Fatalf("ordinary summary = %q, want agent absent", ordinaryResult.Summary)
+	}
+	if len(ordinaryResult.AgentHints) != 0 {
+		t.Fatalf("ordinary agent hints = %#v, want none", ordinaryResult.AgentHints)
+	}
+
+	agentRun, err := run.NewRequest(run.RequestArgs{
+		ID:       "run-agent",
+		ModuleID: "broken",
+		Target:   "mock://target",
+		Agent: &run.AgentContext{
+			Schema: "hovel.agent_context.v1",
+			Entity: run.AgentEntity{
+				ID:          "entity-mcp",
+				Kind:        "mcp",
+				DisplayName: "Codex",
+				Agent:       true,
+			},
+			Operation:     "redteam-lab",
+			Chain:         "alpha",
+			PlanID:        "plan-1",
+			PlanHash:      "hash-1",
+			ApprovalState: "pending",
+			Phase:         "execute",
+			Resources:     []string{"hovel://throw-plan/plan-1"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentResult, err := runner.Run(context.Background(), agentRun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agentResult.Summary != "agent mcp" {
+		t.Fatalf("agent summary = %q, want agent mcp", agentResult.Summary)
+	}
+	if len(agentResult.AgentHints) != 1 {
+		t.Fatalf("agent hints = %#v, want one", agentResult.AgentHints)
+	}
+	hint := agentResult.AgentHints[0]
+	if hint.Schema != "hovel.agent_hint.v1" || hint.Text == "" || hint.Provenance["moduleId"] != "agent-aware@v0.0.0-test" {
+		t.Fatalf("agent hint = %#v", hint)
+	}
+}
+
 func TestModuleEntriesResolvesCommandPaths(t *testing.T) {
 	root := t.TempDir()
 	config := ModuleConfig{Modules: []ModuleEntry{
@@ -1103,8 +1202,12 @@ func TestRunnerCapturesModuleLogs(t *testing.T) {
 	}
 }
 
-func TestRunnerHasNoModulesWithoutConfig(t *testing.T) {
-	catalog, err := Runner{}.Catalog(context.Background())
+func TestRunnerHasNoModulesWithEmptyConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := Runner{ConfigPath: configPath}.Catalog(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1264,6 +1367,95 @@ func TestRPCClientTimeoutDoesNotCorruptNextCall(t *testing.T) {
 }
 
 const exampleModuleConfig = "examples/python/hovel-modules.json"
+
+func TestRunnerConfigPathDiscoversRepoDefault(t *testing.T) {
+	t.Setenv(ModuleConfigEnv, "")
+	root := t.TempDir()
+	configPath := filepath.Join(root, "examples", "hovel-modules.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Join(root, "examples"))
+
+	if got := (Runner{}).configPath(); got != configPath {
+		t.Fatalf("configPath() = %q, want %q", got, configPath)
+	}
+}
+
+func TestRunnerConfigPathPrefersFullExampleCatalogOverPythonFixture(t *testing.T) {
+	t.Setenv(ModuleConfigEnv, "")
+	root := t.TempDir()
+	pythonConfig := filepath.Join(root, "examples", "python", "hovel-modules.json")
+	fullConfig := filepath.Join(root, "examples", "hovel-modules.json")
+	if err := os.MkdirAll(filepath.Dir(pythonConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pythonConfig, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fullConfig, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := (Runner{ConfigPath: pythonConfig}).configPath(); got != fullConfig {
+		t.Fatalf("configPath() = %q, want %q", got, fullConfig)
+	}
+}
+
+func TestRunnerConfigPathKeepsPythonFixtureWhenFullCatalogBinaryIsMissing(t *testing.T) {
+	t.Setenv(ModuleConfigEnv, "")
+	root := t.TempDir()
+	pythonConfig := filepath.Join(root, "examples", "python", "hovel-modules.json")
+	fullConfig := filepath.Join(root, "examples", "hovel-modules.json")
+	if err := os.MkdirAll(filepath.Dir(pythonConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pythonConfig, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fullConfig, []byte(`{"modules":[{"id":"squatter","command":["bin/squatter-provider"]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := (Runner{ConfigPath: pythonConfig}).configPath(); got != pythonConfig {
+		t.Fatalf("configPath() = %q, want %q", got, pythonConfig)
+	}
+}
+
+func TestRunnerConfigPathUsesBuildWorkspaceCatalogBeforeRunfilesFixture(t *testing.T) {
+	t.Setenv(ModuleConfigEnv, "")
+	t.Setenv("HOVEL_REPO_ROOT", "")
+	sourceRoot := t.TempDir()
+	sourceConfig := filepath.Join(sourceRoot, "examples", "hovel-modules.json")
+	sourceProvider := filepath.Join(sourceRoot, "examples", "bin", "squatter-provider")
+	if err := os.MkdirAll(filepath.Dir(sourceProvider), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourceProvider, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourceConfig, []byte(`{"modules":[{"id":"squatter","command":["bin/squatter-provider"]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runfilesRoot := t.TempDir()
+	runfilesPythonConfig := filepath.Join(runfilesRoot, "examples", "python", "hovel-modules.json")
+	if err := os.MkdirAll(filepath.Dir(runfilesPythonConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(runfilesPythonConfig, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BUILD_WORKSPACE_DIRECTORY", sourceRoot)
+	t.Chdir(runfilesRoot)
+
+	if got := (Runner{}).configPath(); got != sourceConfig {
+		t.Fatalf("configPath() = %q, want %q", got, sourceConfig)
+	}
+}
 
 func writePythonModuleFixture(t *testing.T, body string) string {
 	t.Helper()

@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,11 +21,12 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/Vibe-Pwners/hovel/internal/protocol/framing"
 )
 
 const defaultTimeout = 60 * time.Second
 const stderrSettleTimeout = 50 * time.Millisecond
-const maxFrameBytes = 64 * 1024 * 1024
+const maxFrameBytes = framing.DefaultMaxBytes
 
 const ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
 
@@ -40,6 +40,11 @@ type ModuleEntry struct {
 	ProjectDir string   `json:"project_dir"`
 	Module     string   `json:"module"`
 	Command    []string `json:"command"`
+}
+
+type CatalogInfo struct {
+	ConfigPath string
+	Modules    []modulecatalog.Module
 }
 
 // usesCommand reports whether the entry launches an arbitrary executable
@@ -68,6 +73,25 @@ type StepCallRequest struct {
 
 func ConfiguredCatalog(ctx context.Context) (modulecatalog.Catalog, error) {
 	return Runner{}.Catalog(ctx)
+}
+
+func ConfiguredCatalogInfo(ctx context.Context) (CatalogInfo, error) {
+	return CatalogInfoForConfig(ctx, "")
+}
+
+func CatalogInfoForConfig(ctx context.Context, configPath string) (CatalogInfo, error) {
+	runner := Runner{ConfigPath: configPath}
+	path, pathErr := resolveConfigPath(runner.configPath())
+	info := CatalogInfo{ConfigPath: path}
+	if pathErr != nil {
+		return info, pathErr
+	}
+	catalog, err := runner.Catalog(ctx)
+	if err != nil {
+		return info, err
+	}
+	info.Modules = catalog.List()
+	return info, nil
 }
 
 func MustConfiguredCatalog() modulecatalog.Catalog {
@@ -168,6 +192,64 @@ func (r Runner) ExecuteStep(ctx context.Context, request StepCallRequest) (map[s
 
 func (r Runner) CleanupStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
 	return r.callStep(ctx, request, "step.cleanup", "module failed while cleaning up step", "module step cleanup failed")
+}
+
+func (r Runner) ListPayloadCommands(ctx context.Context, moduleID string, request run.PayloadCommandListRequest) ([]run.PayloadCommand, error) {
+	result, err := r.callPayloadCommand(ctx, moduleID, "payload.command.list", request)
+	if err != nil {
+		return nil, err
+	}
+	var decoded struct {
+		Commands []run.PayloadCommand `json:"commands"`
+	}
+	if err := decodeRPCMap(result, &decoded); err != nil {
+		return nil, services.NewModuleExecutionFailure("module returned invalid payload command list", err)
+	}
+	return decoded.Commands, nil
+}
+
+func (r Runner) RunPayloadCommand(ctx context.Context, moduleID string, request run.PayloadCommandRequest) (run.PayloadCommandResult, error) {
+	result, err := r.callPayloadCommand(ctx, moduleID, "payload.command.run", request)
+	if err != nil {
+		return run.PayloadCommandResult{}, err
+	}
+	var decoded run.PayloadCommandResult
+	if err := decodeRPCMap(result, &decoded); err != nil {
+		return run.PayloadCommandResult{}, services.NewModuleExecutionFailure("module returned invalid payload command result", err)
+	}
+	return decoded, nil
+}
+
+func (r Runner) callPayloadCommand(ctx context.Context, moduleID, method string, params any) (map[string]any, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	process, err := r.start(ctx, moduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer process.killAndWait()
+	result, err := process.client.call(ctx, method, params)
+	if err != nil {
+		return nil, moduleFailure("module failed during payload command", "module payload command failed", err, process.stderrString())
+	}
+	_, _ = process.client.call(context.Background(), "shutdown", nil)
+	if err := process.wait(); err != nil {
+		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
+	}
+	return result, nil
+}
+
+func decodeRPCMap(value map[string]any, out any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
 }
 
 func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, summary, prefix string) (map[string]any, error) {
@@ -279,14 +361,18 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 		return run.Result{}, moduleFailure("module failed while reporting metadata", "module metadata invalid", err, process.stderrString())
 	}
 	request.ModuleID = module.ID
-	executeResult, err := process.client.call(ctx, "execute", map[string]any{
+	executeParams := map[string]any{
 		"runId":        request.ID,
 		"moduleId":     request.ModuleID,
 		"target":       request.Target,
 		"inputs":       request.Inputs,
 		"chainConfig":  request.ChainConfig,
 		"targetConfig": request.TargetConfig,
-	})
+	}
+	if request.Agent != nil {
+		executeParams["agentContext"] = request.Agent
+	}
+	executeResult, err := process.client.call(ctx, "execute", executeParams)
 	if err != nil {
 		return run.Result{}, moduleFailure("module failed during execution", "module execute failed", err, process.stderrString())
 	}
@@ -548,9 +634,119 @@ func (r Runner) sdkRoot() (string, error) {
 
 func (r Runner) configPath() string {
 	if r.ConfigPath != "" {
-		return r.ConfigPath
+		return preferOperatorModuleConfig(r.ConfigPath)
 	}
-	return os.Getenv(ModuleConfigEnv)
+	if env := strings.TrimSpace(os.Getenv(ModuleConfigEnv)); env != "" {
+		return preferOperatorModuleConfig(env)
+	}
+	for _, candidate := range defaultModuleConfigCandidates() {
+		path, err := resolveConfigPath(candidate)
+		if err != nil || path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err == nil {
+			preferred := preferOperatorModuleConfig(path)
+			resolved, err := resolveConfigPath(preferred)
+			if err == nil && isFullExampleModuleConfig(resolved) && !operatorModuleConfigReady(resolved) {
+				continue
+			}
+			return preferred
+		}
+	}
+	return ""
+}
+
+func preferOperatorModuleConfig(configPath string) string {
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" {
+		return ""
+	}
+	resolved, err := resolveConfigPath(configPath)
+	if err != nil || resolved == "" {
+		return configPath
+	}
+	if filepath.Base(resolved) != "hovel-modules.json" {
+		return configPath
+	}
+	pythonDir := filepath.Dir(resolved)
+	if filepath.Base(pythonDir) != "python" {
+		return configPath
+	}
+	examplesDir := filepath.Dir(pythonDir)
+	if filepath.Base(examplesDir) != "examples" {
+		return configPath
+	}
+	fullConfig := filepath.Join(examplesDir, "hovel-modules.json")
+	if _, err := os.Stat(fullConfig); err != nil {
+		return configPath
+	}
+	if !operatorModuleConfigReady(fullConfig) {
+		return configPath
+	}
+	return fullConfig
+}
+
+func isFullExampleModuleConfig(configPath string) bool {
+	configPath = filepath.Clean(strings.TrimSpace(configPath))
+	if filepath.Base(configPath) != "hovel-modules.json" {
+		return false
+	}
+	return filepath.Base(filepath.Dir(configPath)) == "examples"
+}
+
+func operatorModuleConfigReady(configPath string) bool {
+	body, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+	var config ModuleConfig
+	if err := json.Unmarshal(body, &config); err != nil {
+		return false
+	}
+	baseDir := filepath.Dir(configPath)
+	for _, entry := range config.Modules {
+		if len(entry.Command) == 0 {
+			continue
+		}
+		command := strings.TrimSpace(entry.Command[0])
+		if command == "" {
+			return false
+		}
+		if !filepath.IsAbs(command) {
+			command = filepath.Join(baseDir, command)
+		}
+		if _, err := os.Stat(command); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func defaultModuleConfigCandidates() []string {
+	var candidates []string
+	add := func(path string) {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == path {
+				return
+			}
+		}
+		candidates = append(candidates, path)
+	}
+	for _, env := range []string{"HOVEL_REPO_ROOT", "BUILD_WORKSPACE_DIRECTORY", "BUILD_WORKING_DIRECTORY"} {
+		root := strings.TrimSpace(os.Getenv(env))
+		if root == "" {
+			continue
+		}
+		add(filepath.Join(root, "examples", "hovel-modules.json"))
+		add(filepath.Join(root, "examples", "python", "hovel-modules.json"))
+	}
+	add(filepath.Join("examples", "hovel-modules.json"))
+	add(filepath.Join("examples", "python", "hovel-modules.json"))
+	return candidates
 }
 
 func (r Runner) moduleEntry(moduleID string) (ModuleEntry, bool, error) {
@@ -980,48 +1176,14 @@ type rpcSessionRef struct {
 }
 
 type frameDecoder struct {
-	reader *bufio.Reader
+	reader *framing.Reader
 }
 
 func newFrameDecoder(reader io.Reader) *frameDecoder {
-	return &frameDecoder{reader: bufio.NewReader(reader)}
+	return &frameDecoder{reader: framing.NewReader(reader, maxFrameBytes)}
 }
 
 func (d *frameDecoder) read() (rpcMessage, error) {
-	headers := map[string]string{}
-	for {
-		line, err := d.reader.ReadString('\n')
-		if err != nil {
-			return rpcMessage{}, err
-		}
-		line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if line == "" {
-			break
-		}
-		name, value, ok := strings.Cut(line, ":")
-		if !ok {
-			return rpcMessage{}, fmt.Errorf("malformed frame header %q", line)
-		}
-		headers[strings.ToLower(name)] = strings.TrimSpace(value)
-	}
-	lengthText := headers["content-length"]
-	if lengthText == "" {
-		return rpcMessage{}, errors.New("missing Content-Length header")
-	}
-	length, err := strconv.Atoi(lengthText)
-	if err != nil {
-		return rpcMessage{}, fmt.Errorf("invalid Content-Length header: %w", err)
-	}
-	if length < 0 {
-		return rpcMessage{}, errors.New("invalid Content-Length header")
-	}
-	if length > maxFrameBytes {
-		return rpcMessage{}, fmt.Errorf("Content-Length %d exceeds maximum %d", length, maxFrameBytes)
-	}
-	body := make([]byte, length)
-	if _, err := io.ReadFull(d.reader, body); err != nil {
-		return rpcMessage{}, err
-	}
 	var raw struct {
 		ID     *int            `json:"id"`
 		Method string          `json:"method"`
@@ -1029,7 +1191,7 @@ func (d *frameDecoder) read() (rpcMessage, error) {
 		Result json.RawMessage `json:"result"`
 		Error  *rpcError       `json:"error"`
 	}
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := d.reader.ReadJSON(&raw); err != nil {
 		return rpcMessage{}, err
 	}
 	message := rpcMessage{Method: raw.Method, Error: raw.Error}
@@ -1055,15 +1217,7 @@ func (d *frameDecoder) read() (rpcMessage, error) {
 }
 
 func writeFrame(writer io.Writer, message map[string]any) error {
-	body, err := json.Marshal(message)
-	if err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(writer, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
-		return err
-	}
-	_, err = writer.Write(body)
-	return err
+	return framing.WriteJSON(writer, message)
 }
 
 func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (run.Result, error) {
@@ -1083,6 +1237,10 @@ func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (r
 	if err != nil {
 		return run.Result{}, err
 	}
+	agentHints, err := agentHintsFromRPC(values["agentHints"])
+	if err != nil {
+		return run.Result{}, err
+	}
 	args := run.ResultArgs{
 		Summary:           stringValue(values["summary"]),
 		Findings:          findings,
@@ -1090,6 +1248,7 @@ func resultFromRPC(request run.Request, values map[string]any, logs []rpcLog) (r
 		Logs:              logsFromRPC(request, logs),
 		Sessions:          sessions,
 		InstalledPayloads: installedPayloads,
+		AgentHints:        agentHints,
 	}
 	if stringValue(values["status"]) == string(run.StateFailed) {
 		return run.Failed(request, args)
@@ -1787,6 +1946,42 @@ func installedPayloadsFromRPC(value any) ([]run.InstalledPayloadDescriptor, erro
 		payloads = append(payloads, payload)
 	}
 	return payloads, nil
+}
+
+func agentHintsFromRPC(value any) ([]run.AgentHint, error) {
+	items, err := rpcArray(value, "agentHints")
+	if err != nil {
+		return nil, err
+	}
+	hints := make([]run.AgentHint, 0, len(items))
+	for index, item := range items {
+		object, err := rpcObjectItem(item, "agentHints", index)
+		if err != nil {
+			return nil, err
+		}
+		appliesTo, err := stringMapFromRPC(object["appliesTo"], fmt.Sprintf("agentHints item %d appliesTo", index+1))
+		if err != nil {
+			return nil, err
+		}
+		provenance, err := stringMapFromRPC(object["provenance"], fmt.Sprintf("agentHints item %d provenance", index+1))
+		if err != nil {
+			return nil, err
+		}
+		hint := run.AgentHint{
+			Schema:     stringValue(object["schema"]),
+			Phase:      stringValue(object["phase"]),
+			Audience:   stringValue(object["audience"]),
+			Risk:       stringValue(object["risk"]),
+			AppliesTo:  appliesTo,
+			Text:       stringValue(object["text"]),
+			Provenance: provenance,
+		}
+		if hint.Schema == "" {
+			hint.Schema = "hovel.agent_hint.v1"
+		}
+		hints = append(hints, hint)
+	}
+	return hints, nil
 }
 
 func payloadProviderRecordFromRPC(value any, label string) (*run.PayloadProviderRecord, error) {

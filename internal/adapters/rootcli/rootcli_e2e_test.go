@@ -187,6 +187,20 @@ func TestRunCommandCanListReadAndSendSessions(t *testing.T) {
 }
 
 func TestRunCommandPersistsSquatterAsModuleWithTypeConfig(t *testing.T) {
+	t.Setenv("HOVEL_MODULE_CONFIG", testsupport.WritePythonModuleFixtures(t,
+		testsupport.PythonModuleFixture{
+			ID:   "etro-survey",
+			Body: rootCLIModuleFixtureBody("etro-survey", "v0.1.0", "survey"),
+		},
+		testsupport.PythonModuleFixture{
+			ID:   "etro-exploit",
+			Body: rootCLIModuleFixtureBody("etro-exploit", "v1.0.0", "exploit"),
+		},
+		testsupport.PythonModuleFixture{
+			ID:   "squatter",
+			Body: rootCLIModuleFixtureBody("squatter", "v0.1.0", "payload_provider"),
+		},
+	))
 	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
 	ctx := context.Background()
 	run := func(args ...string) string {
@@ -218,6 +232,26 @@ func TestRunCommandPersistsSquatterAsModuleWithTypeConfig(t *testing.T) {
 	if !strings.Contains(configOutput, "squatter.type") || !strings.Contains(configOutput, "tcp-bind") {
 		t.Fatalf("chain config list missing Squatter type config:\n%s", configOutput)
 	}
+}
+
+func rootCLIModuleFixtureBody(name, version, moduleType string) string {
+	return `
+while True:
+    request = json.loads(read().decode())
+    method = request.get("method")
+    response = {"jsonrpc": "2.0", "id": request.get("id")}
+    if method == "handshake":
+        response["result"] = {"name": "` + name + `", "version": "` + version + `", "moduleType": "` + moduleType + `"}
+    elif method == "schema":
+        response["result"] = {}
+    elif method == "shutdown":
+        response["result"] = {}
+        send(response)
+        break
+    else:
+        response["error"] = {"message": "unknown method " + str(method)}
+    send(response)
+`
 }
 
 func TestDaemonServeStopsOnContextCancellationAndClearsWorkspaceState(t *testing.T) {

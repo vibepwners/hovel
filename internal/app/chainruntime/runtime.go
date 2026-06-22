@@ -26,6 +26,7 @@ type Request struct {
 	RunID        string
 	Steps        []StepRef
 	Capabilities []modulecatalog.Capability
+	Agent        *run.AgentContext
 }
 
 type StepRef struct {
@@ -41,6 +42,7 @@ type Result struct {
 	Evidence          []Evidence
 	Sessions          []run.SessionRef
 	InstalledPayloads []InstalledPayloadDescriptor
+	AgentHints        []run.AgentHint
 }
 
 type MissingStepRequirement struct {
@@ -56,6 +58,7 @@ type StepPrepareRequest struct {
 	Config                 map[string]any
 	Inputs                 []modulecatalog.CapabilityRef
 	ExistingPreparedValues map[string]PreparedValue
+	Agent                  *run.AgentContext
 }
 
 type StepPrepareResult struct {
@@ -63,6 +66,7 @@ type StepPrepareResult struct {
 	PreparedValues  map[string]PreparedValue
 	OperatorSummary OperatorSummary
 	Evidence        []Evidence
+	AgentHints      []run.AgentHint
 }
 
 type StepExecuteRequest struct {
@@ -72,6 +76,7 @@ type StepExecuteRequest struct {
 	ConfirmedPreparedValues map[string]any
 	Inputs                  []modulecatalog.CapabilityRef
 	RunMetadata             map[string]any
+	Agent                   *run.AgentContext
 }
 
 type StepExecuteResult struct {
@@ -81,33 +86,11 @@ type StepExecuteResult struct {
 	Evidence          []Evidence
 	Sessions          []run.SessionRef
 	InstalledPayloads []InstalledPayloadDescriptor
+	AgentHints        []run.AgentHint
 }
 
-type PayloadProviderRecord struct {
-	ProviderID    string
-	Schema        string
-	SchemaVersion string
-	Descriptor    map[string]any
-}
-
-type InstalledPayloadDescriptor struct {
-	Provider                 string
-	PayloadID                string
-	PayloadVersion           string
-	Target                   string
-	TargetID                 string
-	State                    string
-	Transport                string
-	Endpoint                 string
-	InstanceKey              string
-	StampID                  string
-	ArtifactIDs              []string
-	SupportsReconnect        bool
-	SupportsMultipleSessions bool
-	Reconnect                *PayloadProviderRecord
-	Cleanup                  *PayloadProviderRecord
-	Metadata                 map[string]string
-}
+type PayloadProviderRecord = run.PayloadProviderRecord
+type InstalledPayloadDescriptor = run.InstalledPayloadDescriptor
 
 type PreparedValue struct {
 	Value    any
@@ -152,15 +135,16 @@ func (r Runtime) Execute(ctx context.Context, req Request) (result Result, err e
 	var evidence []Evidence
 	var sessions []run.SessionRef
 	var installedPayloads []InstalledPayloadDescriptor
+	var agentHints []run.AgentHint
 	for _, stepRef := range req.Steps {
 		module, step, err := r.resolveStep(stepRef)
 		if err != nil {
-			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, err
+			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads, AgentHints: agentHints}, err
 		}
 		resolution := modulecatalog.ResolveStepInputs(step, capabilities)
 		if !resolution.Ready {
 			missing := missingStepRequirements(module.ID, step.ID, resolution.Missing)
-			return Result{Status: "blocked", Capabilities: capabilities, Missing: missing, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, fmt.Errorf("step %s missing %d requirement(s)", step.ID, len(missing))
+			return Result{Status: "blocked", Capabilities: capabilities, Missing: missing, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads, AgentHints: agentHints}, fmt.Errorf("step %s missing %d requirement(s)", step.ID, len(missing))
 		}
 		inputs := capabilityRefs(resolution.Bindings, capabilities)
 		prepared, err := r.runner.PrepareStep(ctx, StepPrepareRequest{
@@ -169,11 +153,13 @@ func (r Runtime) Execute(ctx context.Context, req Request) (result Result, err e
 			StepID:   step.ID,
 			Config:   cloneAnyMap(stepRef.Config),
 			Inputs:   inputs,
+			Agent:    req.Agent,
 		})
 		if err != nil {
-			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, err
+			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads, AgentHints: agentHints}, err
 		}
 		evidence = append(evidence, prepared.Evidence...)
+		agentHints = append(agentHints, prepared.AgentHints...)
 		capabilities = upsertCapabilities(capabilities, prepared.PlannedOutputs)
 
 		executed, err := r.runner.ExecuteStep(ctx, StepExecuteRequest{
@@ -185,20 +171,22 @@ func (r Runtime) Execute(ctx context.Context, req Request) (result Result, err e
 			RunMetadata: map[string]any{
 				"config": cloneAnyMap(stepRef.Config),
 			},
+			Agent: req.Agent,
 		})
 		if err != nil {
-			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, err
+			return Result{Status: "failed", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads, AgentHints: agentHints}, err
 		}
 		evidence = append(evidence, executed.Evidence...)
+		agentHints = append(agentHints, executed.AgentHints...)
 		sessions = append(sessions, cloneSessions(executed.Sessions)...)
-		installedPayloads = append(installedPayloads, cloneInstalledPayloads(executed.InstalledPayloads)...)
+		installedPayloads = append(installedPayloads, run.CloneInstalledPayloads(executed.InstalledPayloads)...)
 		capabilities = upsertCapabilities(capabilities, executed.Capabilities)
 		capabilities = applyTransitions(capabilities, executed.StateTransitions)
 		if executed.Status != "" && executed.Status != "succeeded" {
-			return Result{Status: executed.Status, Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, nil
+			return Result{Status: executed.Status, Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads, AgentHints: agentHints}, nil
 		}
 	}
-	return Result{Status: "succeeded", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads}, nil
+	return Result{Status: "succeeded", Capabilities: capabilities, Evidence: evidence, Sessions: sessions, InstalledPayloads: installedPayloads, AgentHints: agentHints}, nil
 }
 
 func (r Runtime) resolveStep(ref StepRef) (modulecatalog.Module, modulecatalog.StepContract, error) {
@@ -287,31 +275,6 @@ func confirmedPreparedValues(values map[string]PreparedValue) map[string]any {
 	return out
 }
 
-func cloneInstalledPayloads(payloads []InstalledPayloadDescriptor) []InstalledPayloadDescriptor {
-	out := make([]InstalledPayloadDescriptor, 0, len(payloads))
-	for _, payload := range payloads {
-		out = append(out, InstalledPayloadDescriptor{
-			Provider:                 payload.Provider,
-			PayloadID:                payload.PayloadID,
-			PayloadVersion:           payload.PayloadVersion,
-			Target:                   payload.Target,
-			TargetID:                 payload.TargetID,
-			State:                    payload.State,
-			Transport:                payload.Transport,
-			Endpoint:                 payload.Endpoint,
-			InstanceKey:              payload.InstanceKey,
-			StampID:                  payload.StampID,
-			ArtifactIDs:              append([]string(nil), payload.ArtifactIDs...),
-			SupportsReconnect:        payload.SupportsReconnect,
-			SupportsMultipleSessions: payload.SupportsMultipleSessions,
-			Reconnect:                clonePayloadProviderRecord(payload.Reconnect),
-			Cleanup:                  clonePayloadProviderRecord(payload.Cleanup),
-			Metadata:                 cloneStringMap(payload.Metadata),
-		})
-	}
-	return out
-}
-
 func cloneSessions(sessions []run.SessionRef) []run.SessionRef {
 	if len(sessions) == 0 {
 		return nil
@@ -324,34 +287,11 @@ func cloneSessions(sessions []run.SessionRef) []run.SessionRef {
 	return out
 }
 
-func clonePayloadProviderRecord(record *PayloadProviderRecord) *PayloadProviderRecord {
-	if record == nil {
-		return nil
-	}
-	return &PayloadProviderRecord{
-		ProviderID:    record.ProviderID,
-		Schema:        record.Schema,
-		SchemaVersion: record.SchemaVersion,
-		Descriptor:    cloneAnyMap(record.Descriptor),
-	}
-}
-
 func cloneAnyMap(values map[string]any) map[string]any {
 	if len(values) == 0 {
 		return nil
 	}
 	out := make(map[string]any, len(values))
-	for key, value := range values {
-		out[key] = value
-	}
-	return out
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(values))
 	for key, value := range values {
 		out[key] = value
 	}

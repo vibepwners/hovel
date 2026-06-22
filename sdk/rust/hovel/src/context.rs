@@ -172,6 +172,7 @@ pub struct Context<'a> {
     pub inputs: Value,
     pub chain_config: Value,
     pub target_config: Value,
+    pub agent: Option<Value>,
     module_name: String,
     emitter: &'a mut Emitter,
 }
@@ -190,6 +191,7 @@ impl<'a> Context<'a> {
             inputs: object("inputs"),
             chain_config: object("chainConfig"),
             target_config: object("targetConfig"),
+            agent: params.get("agentContext").cloned(),
             module_name: module_name.to_string(),
             emitter,
         }

@@ -35,6 +35,7 @@
         <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html" aria-current="page">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
         <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
       </ul>
@@ -57,7 +58,7 @@
         <h1>Operator Workflows</h1>
 
         <p>The operation is the root object of operator work. A chain is the throw path inside that operation: it is the shared workspace where clients collaborate, add modules, validate readiness, and throw against operation-owned targets.</p>
-        <p>An entity is any actor connected to <code>hoveld</code>: a human operator in the implemented <code>cli</code>, a future TUI session, a future MCP client, an AI agent, or another authorized user. Multiple entities may attach to the same operation. Each attachment has its own active chain, while chain state, operation target inventory, target sets, configuration, steps, and logs are daemon-owned shared state.</p>
+        <p>An entity is any actor connected to <code>hoveld</code>: a human operator in the implemented <code>cli</code>, an MCP client, a future TUI session, an AI agent, or another authorized user. Multiple entities may attach to the same operation. Each attachment has its own active chain, while chain state, operation target inventory, target sets, configuration, steps, and logs are daemon-owned shared state.</p>
 
         <h2>Operation Collaboration</h2>
         <p>Every chain owns an operation-scoped log topic:</p>

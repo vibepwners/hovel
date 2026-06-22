@@ -20,6 +20,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
 type WorkspaceInitializer interface {
@@ -37,6 +38,8 @@ type RunClientFactory interface {
 type RunClient interface {
 	Close() error
 	RunMockExploit(context.Context, RunMockExploitRequest) (RunMockExploitResponse, error)
+	ListPayloadCommands(context.Context, string, RunPayloadCommandListRequest) ([]PayloadCommand, error)
+	RunPayloadCommand(context.Context, RunPayloadCommandRunRequest) (PayloadCommandResult, error)
 	ListSessions(context.Context) ([]SessionRef, error)
 	ReadSession(context.Context, string, time.Duration) (SessionChunk, error)
 	TailSession(context.Context, string, SessionTailOptions) (SessionChunk, error)
@@ -174,6 +177,15 @@ type RunMockExploitRequest struct {
 	ChainConfig  map[string]string
 	TargetConfig map[string]string
 	ThrowStarted string
+}
+
+type RunPayloadCommandListRequest = run.PayloadCommandListRequest
+
+type RunPayloadCommandRunRequest struct {
+	Operation string
+	Chain     string
+	ModuleID  string
+	Request   run.PayloadCommandRequest
 }
 
 type Finding struct {
@@ -791,7 +803,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"payloads", "available"},
-			Aliases: [][]string{{"payload", "available"}},
+			Aliases: [][]string{{"payload", "available"}, {"payloads", "list"}, {"payload", "list"}},
 			Summary: "List payloads available from configured providers.",
 			Options: []Option{
 				boolOption("json", "j", "Emit JSON output"),
@@ -800,7 +812,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"payloads", "installed"},
-			Aliases: [][]string{{"payload", "installed"}, {"payloads", "list"}, {"payload", "list"}},
+			Aliases: [][]string{{"payload", "installed"}},
 			Summary: "List installed payload records.",
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
@@ -877,6 +889,77 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: payloadsRefreshHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "register-squatter"},
+			Aliases: [][]string{{"payload", "register-squatter"}},
+			Summary: "Register a manually installed Squatter TCP-bind payload.",
+			Positionals: []Positional{
+				{Name: "target", Help: "Target host or label", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("host", "", "Reachable Squatter host"),
+				stringOption("port", "", "Squatter TCP bind port"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsRegisterSquatterHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "commands"},
+			Aliases: [][]string{{"payload", "commands"}},
+			Summary: "List provider-owned commands for an installed payload.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsCommandsHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "getfile"},
+			Aliases: [][]string{{"payload", "getfile"}},
+			Summary: "Download a file through an installed payload command.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+				{Name: "remote", Help: "Remote path", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsRunCommandHandler(runtime, "getfile"),
+		},
+		Definition{
+			Path:    []string{"payloads", "putfile"},
+			Aliases: [][]string{{"payload", "putfile"}},
+			Summary: "Upload a local file through an installed payload command.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+				{Name: "local", Help: "Local path", Required: true},
+				{Name: "remote", Help: "Remote path", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsRunCommandHandler(runtime, "putfile"),
+		},
+		Definition{
+			Path:    []string{"payloads", "cmd"},
+			Aliases: [][]string{{"payload", "cmd"}},
+			Summary: "Run one cmd.exe command through an installed payload command.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+				{Name: "command", Help: "Command line", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsRunCommandHandler(runtime, "cmd"),
 		},
 		Definition{
 			Path:    []string{"artifact", "list"},
@@ -1319,7 +1402,11 @@ func chainAddHandler(runtime Runtime) Handler {
 			if runtime.Session == nil {
 				return Result{}, operatorSessionRequiredError("chain add")
 			}
-			moduleID = squatterProviderModuleID(moduleDB(runtime))
+			module, ok := findSquatterProviderModule(moduleDB(runtime))
+			if !ok {
+				return Result{}, fmt.Errorf("module squatter@v0.1.0 does not exist")
+			}
+			moduleID = module.ID
 			step, err := runtime.Session.AddModule(moduleID)
 			if err != nil {
 				return Result{}, withActiveChainHelp(err)
@@ -1334,15 +1421,7 @@ func chainAddHandler(runtime Runtime) Handler {
 		}
 		module, ok := moduleDB(runtime).Find(moduleID)
 		if !ok {
-			if !isSquatterProviderRef(moduleID) {
-				return Result{}, fmt.Errorf("module %s does not exist", moduleID)
-			}
-			module = modulecatalog.Module{
-				ID:      squatterProviderModuleID(moduleDB(runtime)),
-				Name:    "squatter",
-				Type:    modulecatalog.TypePayloadProvider,
-				Enabled: true,
-			}
+			return Result{}, fmt.Errorf("module %s does not exist", moduleID)
 		}
 		if runtime.Session == nil {
 			return Result{}, operatorSessionRequiredError("chain add")
@@ -1385,23 +1464,27 @@ func isSquatterProviderModule(module modulecatalog.Module) bool {
 	return strings.EqualFold(module.Name, "squatter") && module.Type == modulecatalog.TypePayloadProvider
 }
 
-func isSquatterProviderRef(moduleID string) bool {
-	ref := strings.ToLower(strings.TrimSpace(moduleID))
-	return ref == "squatter" || ref == "squatter@v0.1.0"
+func squatterProviderModuleID(db ModuleDatabase) string {
+	if module, ok := findSquatterProviderModule(db); ok {
+		return module.ID
+	}
+	return "squatter@v0.1.0"
 }
 
-func squatterProviderModuleID(db ModuleDatabase) string {
+func findSquatterProviderModule(db ModuleDatabase) (modulecatalog.Module, bool) {
 	if db != nil {
 		if module, ok := db.Find("squatter@v0.1.0"); ok {
-			return module.ID
+			if isSquatterProviderModule(module) {
+				return module, true
+			}
 		}
 		for _, module := range db.Search("squatter") {
 			if isSquatterProviderModule(module) {
-				return module.ID
+				return module, true
 			}
 		}
 	}
-	return "squatter@v0.1.0"
+	return modulecatalog.Module{}, false
 }
 
 func legacyExecutionModuleIDs(db ModuleDatabase, modules []string) []string {
@@ -1427,7 +1510,7 @@ func hasSquatterBindModule(modules []string) bool {
 
 func isSquatterTCPBindModule(db ModuleDatabase, moduleID string, config map[string]string) bool {
 	module, ok := db.Find(moduleID)
-	if (!ok || !isSquatterProviderModule(module)) && !isSquatterProviderRef(moduleID) {
+	if !ok || !isSquatterProviderModule(module) {
 		return false
 	}
 	transport := strings.TrimSpace(config["payload.transport"])

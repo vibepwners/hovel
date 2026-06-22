@@ -6,11 +6,12 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc",
     visibility = ["//visibility:public"],
     deps = [
+        "//internal/app/launchkey",
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",
+        "//internal/domain/operator",
         "//internal/domain/run",
-        "@com_connectrpc_connect//:connect",
     ],
 )
 
@@ -24,6 +25,7 @@ go_test(
         "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/event",
+        "//internal/domain/operator",
         "//internal/domain/run",
         "//internal/modules/mockexploit",
     ],

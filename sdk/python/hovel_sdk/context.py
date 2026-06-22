@@ -11,6 +11,57 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class AgentEntity:
+    id: str = ""
+    kind: str = ""
+    display_name: str = ""
+    agent: bool = False
+
+    @classmethod
+    def from_rpc(cls, value: Any) -> AgentEntity:
+        if not isinstance(value, dict):
+            return cls()
+        return cls(
+            id=str(value.get("id", "")),
+            kind=str(value.get("kind", "")),
+            display_name=str(value.get("displayName", "")),
+            agent=bool(value.get("agent", False)),
+        )
+
+
+@dataclass(frozen=True)
+class AgentContext:
+    schema: str = ""
+    entity: AgentEntity = field(default_factory=AgentEntity)
+    operation: str = ""
+    chain: str = ""
+    plan_id: str = ""
+    plan_hash: str = ""
+    approval_state: str = ""
+    phase: str = ""
+    resources: tuple[str, ...] = ()
+
+    @classmethod
+    def from_rpc(cls, value: Any) -> AgentContext | None:
+        if not isinstance(value, dict):
+            return None
+        resources = value.get("resources") or ()
+        if not isinstance(resources, (list, tuple)):
+            resources = ()
+        return cls(
+            schema=str(value.get("schema", "")),
+            entity=AgentEntity.from_rpc(value.get("entity")),
+            operation=str(value.get("operation", "")),
+            chain=str(value.get("chain", "")),
+            plan_id=str(value.get("planId", "")),
+            plan_hash=str(value.get("planHash", "")),
+            approval_state=str(value.get("approvalState", "")),
+            phase=str(value.get("phase", "")),
+            resources=tuple(str(item) for item in resources),
+        )
+
+
+@dataclass(frozen=True)
 class Context:
     run_id: str
     module_id: str
@@ -18,6 +69,7 @@ class Context:
     inputs: dict[str, Any] = field(default_factory=dict)
     chain_config: dict[str, Any] = field(default_factory=dict)
     target_config: dict[str, Any] = field(default_factory=dict)
+    agent: AgentContext | None = None
     log: logging.Logger = field(default_factory=lambda: logging.getLogger("hovel.module"))
     sessions: SessionRegistry | None = field(default=None, repr=False)
 

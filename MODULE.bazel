@@ -40,12 +40,12 @@ go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
 use_repo(
     go_deps,
-    "com_connectrpc_connect",
     "com_github_akamensky_argparse",
     "com_github_c_bata_go_prompt",
     "com_github_charmbracelet_lipgloss",
     "com_github_charmbracelet_x_term",
     "com_github_jfjallid_go_smb",
+    "com_github_modelcontextprotocol_go_sdk",
     "com_github_pkg_term",
     "in_gopkg_yaml_v3",
     "org_golang_x_sys",

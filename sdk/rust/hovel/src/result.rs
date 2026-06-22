@@ -293,6 +293,7 @@ pub struct Outcome {
     pub outputs: Vec<(String, Value)>,
     pub sessions: Vec<SessionRef>,
     pub installed_payloads: Vec<InstalledPayloadDescriptor>,
+    pub agent_hints: Vec<Value>,
 }
 
 impl Outcome {
@@ -306,6 +307,7 @@ impl Outcome {
             outputs,
             sessions: Vec::new(),
             installed_payloads: Vec::new(),
+            agent_hints: Vec::new(),
         }
     }
 
@@ -319,6 +321,7 @@ impl Outcome {
             outputs: Vec::new(),
             sessions: Vec::new(),
             installed_payloads: Vec::new(),
+            agent_hints: Vec::new(),
         }
     }
 
@@ -343,6 +346,12 @@ impl Outcome {
     /// Appends an explicit installed-payload descriptor to the outcome.
     pub fn with_installed_payload(mut self, payload: InstalledPayloadDescriptor) -> Outcome {
         self.installed_payloads.push(payload);
+        self
+    }
+
+    /// Appends module-authored guidance for agent-aware front ends.
+    pub fn with_agent_hint(mut self, hint: Value) -> Outcome {
+        self.agent_hints.push(hint);
         self
     }
 
@@ -373,6 +382,9 @@ impl Outcome {
                 "installedPayloads",
                 Value::Array(self.installed_payloads.iter().map(InstalledPayloadDescriptor::to_value).collect()),
             ));
+        }
+        if !self.agent_hints.is_empty() {
+            members.push(("agentHints", Value::Array(self.agent_hints.clone())));
         }
         Value::object(members)
     }

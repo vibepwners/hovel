@@ -9,6 +9,31 @@ from hovel_sdk.session import SessionRef
 
 
 @dataclass(frozen=True)
+class AgentHint:
+    phase: str
+    audience: str
+    risk: str
+    text: str
+    schema: str = "hovel.agent_hint.v1"
+    applies_to: dict[str, str] = field(default_factory=dict)
+    provenance: dict[str, str] = field(default_factory=dict)
+
+    def to_rpc(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "schema": self.schema,
+            "phase": self.phase,
+            "audience": self.audience,
+            "risk": self.risk,
+            "text": self.text,
+        }
+        if self.applies_to:
+            out["appliesTo"] = dict(self.applies_to)
+        if self.provenance:
+            out["provenance"] = dict(self.provenance)
+        return out
+
+
+@dataclass(frozen=True)
 class Finding:
     title: str
     severity: str = "info"
@@ -129,6 +154,7 @@ class Result:
     outputs: dict[str, Any] = field(default_factory=dict)
     sessions: list[SessionRef] = field(default_factory=list)
     installed_payloads: list[InstalledPayload | dict[str, Any]] = field(default_factory=list)
+    agent_hints: list[AgentHint | dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def ok(
@@ -171,6 +197,9 @@ class Result:
     def with_installed_payloads(self, *payloads: InstalledPayload | dict[str, Any]) -> Result:
         return replace(self, installed_payloads=[*self.installed_payloads, *payloads])
 
+    def with_agent_hints(self, *hints: AgentHint | dict[str, Any]) -> Result:
+        return replace(self, agent_hints=[*self.agent_hints, *hints])
+
     def to_rpc(self, *, sessions: list[SessionRef] | None = None) -> dict[str, Any]:
         session_refs = list(self.sessions)
         if sessions:
@@ -188,5 +217,10 @@ class Result:
             out["installedPayloads"] = [
                 payload.to_rpc() if hasattr(payload, "to_rpc") else dict(payload)
                 for payload in self.installed_payloads
+            ]
+        if self.agent_hints:
+            out["agentHints"] = [
+                hint.to_rpc() if hasattr(hint, "to_rpc") else dict(hint)
+                for hint in self.agent_hints
             ]
         return out

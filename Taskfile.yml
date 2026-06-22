@@ -56,6 +56,15 @@ tasks:
     cmds:
       - bazel run //cmd/hovel -- daemon serve --workspace "{{.WORKSPACE}}"
 
+  mcp:
+    desc: Launch the MCP agent interface for the dev workspace.
+    interactive: true
+    deps: [modules:build]
+    env:
+      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
+    cmds:
+      - bazel run //cmd/hovel -- mcp --workspace "{{.WORKSPACE}}" --transport http --http-addr 127.0.0.1:27166 --entity-id agent1
+
   status:
     aliases: [st]
     desc: Show daemon status for the dev workspace.
@@ -117,6 +126,13 @@ tasks:
     cmds:
       - bazel run {{.CLI_ARGS}}
 
+  go:deps:
+    desc: 'Add or update Go module dependencies: task go:deps -- module@version.'
+    cmds:
+      - 'test -n "{{.CLI_ARGS}}" || { echo "usage: task go:deps -- module@version"; exit 2; }'
+      - go get {{.CLI_ARGS}}
+      - go mod tidy
+
   modules:build:
     aliases: [modules]
     desc: Build the Go and Rust example modules and stage their binaries to examples/bin/.
@@ -125,8 +141,9 @@ tasks:
 
   docs:
     desc: Generate demos, then build and stage the static docs site.
-    deps: [demos]
     cmds:
+      - task: demos
+      - task: demo:squatter-wine
       - task: docs:stage
 
   docs:stage:
@@ -138,6 +155,11 @@ tasks:
     desc: Generate VHS terminal demos into demo/out/.
     cmds:
       - bash scripts/generate-demos.sh
+
+  demo:squatter-wine:
+    desc: Generate the Docker/Wine Squatter MCP demo GIF.
+    cmds:
+      - bash scripts/generate-squatter-wine-demo.sh
 
   docs:api:
     desc: Generate language-native SDK API docs into _site/api/sdk.

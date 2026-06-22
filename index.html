@@ -42,45 +42,31 @@
   <main class="content" style="max-width: 1080px; margin: 0 auto; padding: 2rem 2.5rem 3rem;">
     <div class="demo-series homepage-demo-series" id="homepage-demo">
       <figure class="demo-figure homepage-demo">
-        <a class="demo-open" href="#homepage-demo-create-modal" aria-label="Open Hovel terminal demo step 1 full screen">
-          <img src="assets/demos/mock-survey-exploit-cli-commands-01-create.gif" alt="Hovel CLI demo creating a mock survey and exploit chain.">
-        </a>
+        <img src="assets/demos/mock-survey-exploit-cli-commands-01-create.gif" alt="Hovel CLI demo creating a mock survey and exploit chain.">
         <figcaption><strong>Step 1</strong> create the operation chain</figcaption>
       </figure>
       <figure class="demo-figure homepage-demo">
-        <a class="demo-open" href="#homepage-demo-config-before-modal" aria-label="Open Hovel terminal demo step 2 full screen">
-          <img src="assets/demos/mock-survey-exploit-cli-commands-02-config-before.gif" alt="Hovel CLI demo listing required chain and target config before changes.">
-        </a>
+        <img src="assets/demos/mock-survey-exploit-cli-commands-02-config-before.gif" alt="Hovel CLI demo listing required chain and target config before changes.">
         <figcaption><strong>Step 2</strong> inspect required config</figcaption>
       </figure>
       <figure class="demo-figure homepage-demo">
-        <a class="demo-open" href="#homepage-demo-config-apply-modal" aria-label="Open Hovel terminal demo step 3 full screen">
-          <img src="assets/demos/mock-survey-exploit-cli-commands-03-config-apply.gif" alt="Hovel CLI demo applying chain and target config values.">
-        </a>
+        <img src="assets/demos/mock-survey-exploit-cli-commands-03-config-apply.gif" alt="Hovel CLI demo applying chain and target config values.">
         <figcaption><strong>Step 3</strong> apply and verify config</figcaption>
       </figure>
       <figure class="demo-figure homepage-demo">
-        <a class="demo-open" href="#homepage-demo-save-modal" aria-label="Open Hovel terminal demo step 4 full screen">
-          <img src="assets/demos/mock-survey-exploit-cli-commands-04-save.gif" alt="Hovel CLI demo validating and saving the configured chain.">
-        </a>
+        <img src="assets/demos/mock-survey-exploit-cli-commands-04-save.gif" alt="Hovel CLI demo validating and saving the configured chain.">
         <figcaption><strong>Step 4</strong> validate and save</figcaption>
       </figure>
       <figure class="demo-figure homepage-demo">
-        <a class="demo-open" href="#homepage-demo-throw-modal" aria-label="Open Hovel terminal demo step 5 full screen">
-          <img src="assets/demos/mock-survey-exploit-02-throw.gif" alt="Hovel terminal demo throwing the saved mock survey and exploit chain with live logs.">
-        </a>
+        <img src="assets/demos/mock-survey-exploit-02-throw.gif" alt="Hovel terminal demo throwing the saved mock survey and exploit chain with live logs.">
         <figcaption><strong>Step 5</strong> throw with live logs</figcaption>
       </figure>
       <figure class="demo-figure homepage-demo">
-        <a class="demo-open" href="#homepage-demo-session-io-modal" aria-label="Open Hovel terminal demo step 6 full screen">
-          <img src="assets/demos/mock-survey-exploit-cli-02-session-io.gif" alt="Hovel CLI demo listing, reading, sending to, and reading from a mock shell session.">
-        </a>
+        <img src="assets/demos/mock-survey-exploit-cli-02-session-io.gif" alt="Hovel CLI demo listing, reading, sending to, and reading from a mock shell session.">
         <figcaption><strong>Step 6</strong> read and send session data</figcaption>
       </figure>
       <figure class="demo-figure homepage-demo">
-        <a class="demo-open" href="#homepage-demo-session-connect-modal" aria-label="Open Hovel terminal demo step 7 full screen">
-          <img src="assets/demos/mock-survey-exploit-cli-03-session-connect.gif" alt="Hovel CLI demo attaching to a mock shell session, detaching, and reconnecting.">
-        </a>
+        <img src="assets/demos/mock-survey-exploit-cli-03-session-connect.gif" alt="Hovel CLI demo attaching to a mock shell session, detaching, and reconnecting.">
         <figcaption><strong>Step 7</strong> attach, detach, and reconnect</figcaption>
       </figure>
     </div>
@@ -109,8 +95,9 @@
       The central runtime is a local engine, <code>hoveld</code>, which owns throws,
       module processes, managed services, provider state, installed payload records,
       sessions, events, artifacts, and workspace storage. Interactive
-      <code>cli</code> mode, one-shot chain-file execution, the TUI, REST, and MCP
-      are clients over the same application services.
+      <code>cli</code> mode, one-shot chain-file execution, and the first MCP
+      inspection adapter are implemented clients over the same application
+      services; the TUI, REST, and MCP execution parity remain planned extensions.
     </p>
 
     <h2>Start here</h2>
@@ -172,61 +159,5 @@ task ci      # lint + demo-backed docs + build + test</code></pre>
   <footer class="sitefoot">
     <p>Hovel · authorized security research · <a href="LICENSE">LICENSE</a> · <a href="https://github.com/Vibe-Pwners/hovel">github.com/Vibe-Pwners/hovel</a></p>
   </footer>
-
-  <div class="demo-modal" id="homepage-demo-create-modal" role="dialog" aria-label="Hovel terminal demo step 1">
-    <a class="demo-modal-backdrop" href="#homepage-demo" aria-label="Close demo"></a>
-    <div class="demo-modal-content">
-      <a class="demo-modal-close" href="#homepage-demo" aria-label="Close demo">Close</a>
-      <img src="assets/demos/mock-survey-exploit-cli-commands-01-create.gif" alt="Hovel CLI demo creating a mock survey and exploit chain.">
-    </div>
-  </div>
-
-  <div class="demo-modal" id="homepage-demo-config-before-modal" role="dialog" aria-label="Hovel terminal demo step 2">
-    <a class="demo-modal-backdrop" href="#homepage-demo" aria-label="Close demo"></a>
-    <div class="demo-modal-content">
-      <a class="demo-modal-close" href="#homepage-demo" aria-label="Close demo">Close</a>
-      <img src="assets/demos/mock-survey-exploit-cli-commands-02-config-before.gif" alt="Hovel CLI demo listing required chain and target config before changes.">
-    </div>
-  </div>
-
-  <div class="demo-modal" id="homepage-demo-config-apply-modal" role="dialog" aria-label="Hovel terminal demo step 3">
-    <a class="demo-modal-backdrop" href="#homepage-demo" aria-label="Close demo"></a>
-    <div class="demo-modal-content">
-      <a class="demo-modal-close" href="#homepage-demo" aria-label="Close demo">Close</a>
-      <img src="assets/demos/mock-survey-exploit-cli-commands-03-config-apply.gif" alt="Hovel CLI demo applying chain and target config values.">
-    </div>
-  </div>
-
-  <div class="demo-modal" id="homepage-demo-save-modal" role="dialog" aria-label="Hovel terminal demo step 4">
-    <a class="demo-modal-backdrop" href="#homepage-demo" aria-label="Close demo"></a>
-    <div class="demo-modal-content">
-      <a class="demo-modal-close" href="#homepage-demo" aria-label="Close demo">Close</a>
-      <img src="assets/demos/mock-survey-exploit-cli-commands-04-save.gif" alt="Hovel CLI demo validating and saving the configured chain.">
-    </div>
-  </div>
-
-  <div class="demo-modal" id="homepage-demo-throw-modal" role="dialog" aria-label="Hovel terminal demo step 5">
-    <a class="demo-modal-backdrop" href="#homepage-demo" aria-label="Close demo"></a>
-    <div class="demo-modal-content">
-      <a class="demo-modal-close" href="#homepage-demo" aria-label="Close demo">Close</a>
-      <img src="assets/demos/mock-survey-exploit-02-throw.gif" alt="Hovel terminal demo throwing the saved mock survey and exploit chain with live logs.">
-    </div>
-  </div>
-
-  <div class="demo-modal" id="homepage-demo-session-io-modal" role="dialog" aria-label="Hovel terminal demo step 6">
-    <a class="demo-modal-backdrop" href="#homepage-demo" aria-label="Close demo"></a>
-    <div class="demo-modal-content">
-      <a class="demo-modal-close" href="#homepage-demo" aria-label="Close demo">Close</a>
-      <img src="assets/demos/mock-survey-exploit-cli-02-session-io.gif" alt="Hovel CLI demo listing, reading, sending to, and reading from a mock shell session.">
-    </div>
-  </div>
-
-  <div class="demo-modal" id="homepage-demo-session-connect-modal" role="dialog" aria-label="Hovel terminal demo step 7">
-    <a class="demo-modal-backdrop" href="#homepage-demo" aria-label="Close demo"></a>
-    <div class="demo-modal-content">
-      <a class="demo-modal-close" href="#homepage-demo" aria-label="Close demo">Close</a>
-      <img src="assets/demos/mock-survey-exploit-cli-03-session-connect.gif" alt="Hovel CLI demo attaching to a mock shell session, detaching, and reconnecting.">
-    </div>
-  </div>
 </body>
 </html>

@@ -28,6 +28,7 @@ type Args struct {
 	WorkspacePath  string
 	SocketPath     string
 	ListenAddress  string
+	ModuleConfig   string
 	PID            int
 	StartedAt      time.Time
 	IDs            services.IDGenerator
@@ -104,10 +105,11 @@ func Serve(ctx context.Context, args Args) error {
 		pythonSessions := pythonrpc.NewSessionBroker()
 		sessionBroker = pythonSessions
 		runner = pythonrpc.Runner{
-			Events:   events,
-			IDs:      ids,
-			Clock:    clock,
-			Sessions: pythonSessions,
+			ConfigPath: args.ModuleConfig,
+			Events:     events,
+			IDs:        ids,
+			Clock:      clock,
+			Sessions:   pythonSessions,
 		}
 	}
 

@@ -53,6 +53,7 @@ type Context struct {
 	Inputs       map[string]any
 	ChainConfig  map[string]any
 	TargetConfig map[string]any
+	Agent        *AgentContext
 	Log          *Logger
 
 	sessions *sessionRegistry

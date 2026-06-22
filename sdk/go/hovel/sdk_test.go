@@ -209,6 +209,39 @@ func (fakeStepModule) CleanupStep(StepCleanupRequest) (StepCleanupResult, error)
 	return StepCleanupResult{Status: "cleanup_verified"}, nil
 }
 
+type agentAwareModule struct{}
+
+func (agentAwareModule) Info() Info {
+	return Info{Name: "agent-aware", Version: "v0.0.0-test", Type: TypeSurvey, Summary: "agent aware"}
+}
+
+func (agentAwareModule) Schema() Schema { return Schema{} }
+
+func (agentAwareModule) Run(ctx *Context) (Result, error) {
+	if ctx.Agent == nil {
+		return Ok(map[string]any{"agentPresent": false}, WithSummary("agent absent")), nil
+	}
+	return Ok(
+		map[string]any{
+			"agentPresent": true,
+			"entityID":     ctx.Agent.Entity.ID,
+			"entityKind":   ctx.Agent.Entity.Kind,
+			"phase":        ctx.Agent.Phase,
+		},
+		WithSummary("agent present"),
+		WithAgentHints(AgentHint{
+			Schema:   "hovel.agent_hint.v1",
+			Phase:    "execute",
+			Audience: "assistant",
+			Risk:     "low",
+			Text:     "Prefer read-only inspection before changing state.",
+			Provenance: map[string]string{
+				"moduleId": "agent-aware@v0.0.0-test",
+			},
+		}),
+	), nil
+}
+
 func fakePayloadInfo() PayloadInfo {
 	return PayloadInfo{
 		ID:           "fake/windows/x86/reverse-tcp/pe-exe",
@@ -453,6 +486,58 @@ func TestServeHandshakeSchemaExecute(t *testing.T) {
 	findings, _ := result["findings"].([]any)
 	if len(findings) != 1 {
 		t.Fatalf("findings = %#v", result["findings"])
+	}
+}
+
+func TestServeExecuteExposesOptionalAgentContext(t *testing.T) {
+	conn := newRPCConn(t, agentAwareModule{})
+	defer conn.close()
+
+	withoutAgent := conn.call("execute", map[string]any{
+		"runId":    "run-1",
+		"moduleId": "agent-aware",
+		"target":   "mock://host",
+	})
+	outputs, _ := withoutAgent["outputs"].(map[string]any)
+	if outputs["agentPresent"] != false {
+		t.Fatalf("without agent outputs = %#v", outputs)
+	}
+	if _, ok := withoutAgent["agentHints"]; ok {
+		t.Fatalf("agentHints should be omitted without opt-in: %#v", withoutAgent["agentHints"])
+	}
+
+	withAgent := conn.call("execute", map[string]any{
+		"runId":    "run-2",
+		"moduleId": "agent-aware",
+		"target":   "mock://host",
+		"agentContext": map[string]any{
+			"schema": "hovel.agent_context.v1",
+			"entity": map[string]any{
+				"id":          "entity-mcp",
+				"kind":        "mcp",
+				"displayName": "Codex",
+				"agent":       true,
+			},
+			"operation":     "redteam-lab",
+			"chain":         "alpha",
+			"planId":        "plan-1",
+			"planHash":      "hash-1",
+			"approvalState": "pending",
+			"phase":         "execute",
+			"resources":     []any{"hovel://throw-plan/plan-1"},
+		},
+	})
+	outputs, _ = withAgent["outputs"].(map[string]any)
+	if outputs["entityID"] != "entity-mcp" || outputs["entityKind"] != "mcp" || outputs["phase"] != "execute" {
+		t.Fatalf("with agent outputs = %#v", outputs)
+	}
+	hints, _ := withAgent["agentHints"].([]any)
+	if len(hints) != 1 {
+		t.Fatalf("agentHints = %#v, want one", withAgent["agentHints"])
+	}
+	hint, _ := hints[0].(map[string]any)
+	if hint["schema"] != "hovel.agent_hint.v1" || hint["text"] == "" {
+		t.Fatalf("agent hint = %#v", hint)
 	}
 }
 

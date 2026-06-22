@@ -13,12 +13,6 @@ import (
 	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
 )
 
-type listeningPost interface {
-	PrepareListener(hovel.PrepareListenerRequest) (hovel.ListenerRef, error)
-	ConnectSession(hovel.ConnectSessionRequest) (hovel.SessionRef, error)
-	Cleanup(hovel.CleanupPayloadRequest) (hovel.CleanupResult, error)
-}
-
 type placeholderLP struct {
 	mu        sync.Mutex
 	listeners map[string]hovel.ListenerRef

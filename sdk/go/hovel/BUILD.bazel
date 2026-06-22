@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "hovel",
     srcs = [
+        "agent.go",
         "context.go",
         "framing.go",
         "module.go",
@@ -17,7 +18,9 @@ go_library(
     ],
     importpath = "github.com/Vibe-Pwners/hovel/sdk/go/hovel",
     visibility = ["//visibility:public"],
-    deps = select({
+    deps = [
+        "//internal/protocol/framing",
+    ] + select({
         "@rules_go//go/platform:android": [
             "@org_golang_x_sys//unix",
         ],

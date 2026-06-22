@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
 func TestRuntimeExecutesCapabilityStepsInOrder(t *testing.T) {
@@ -169,6 +170,68 @@ func TestRuntimeAppliesCapabilityStateTransitions(t *testing.T) {
 	}
 }
 
+func TestRuntimePassesAgentContextAndAggregatesAgentHints(t *testing.T) {
+	catalog := modulecatalog.New(modulecatalog.Module{
+		ID:      "agent-step@v1",
+		Enabled: true,
+		StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{{
+			ID:   "agent.execute",
+			Kind: "survey.agent",
+		}}},
+	})
+	agent := &run.AgentContext{
+		Schema: "hovel.agent_context.v1",
+		Entity: run.AgentEntity{
+			ID:    "entity-mcp",
+			Kind:  "mcp",
+			Agent: true,
+		},
+		Phase: "execute",
+	}
+	runner := &fakeStepRunner{
+		prepare: map[string]StepPrepareResult{
+			"agent-step@v1/agent.execute": {
+				AgentHints: []run.AgentHint{{
+					Schema: "hovel.agent_hint.v1",
+					Phase:  "prepare",
+					Text:   "Review generated values before approval.",
+				}},
+			},
+		},
+		execute: map[string]StepExecuteResult{
+			"agent-step@v1/agent.execute": {
+				Status: "succeeded",
+				AgentHints: []run.AgentHint{{
+					Schema: "hovel.agent_hint.v1",
+					Phase:  "execute",
+					Text:   "Prefer read-only inspection before changing state.",
+				}},
+			},
+		},
+	}
+
+	result, err := New(catalog, runner).Execute(context.Background(), Request{
+		RunID: "run-1",
+		Steps: []StepRef{{
+			ModuleID: "agent-step",
+			StepID:   "agent.execute",
+		}},
+		Agent: agent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 2 || runner.calls[0].agent != agent || runner.calls[1].agent != agent {
+		t.Fatalf("calls = %#v, want agent propagated", runner.calls)
+	}
+	if got, want := len(result.AgentHints), 2; got != want {
+		t.Fatalf("agent hints = %#v, want %d", result.AgentHints, want)
+	}
+	if result.AgentHints[0].Phase != "prepare" || result.AgentHints[1].Phase != "execute" {
+		t.Fatalf("agent hints = %#v", result.AgentHints)
+	}
+}
+
 type fakeStepRunner struct {
 	prepare map[string]StepPrepareResult
 	execute map[string]StepExecuteResult
@@ -180,15 +243,16 @@ type stepCall struct {
 	moduleID string
 	stepID   string
 	inputs   []modulecatalog.CapabilityRef
+	agent    *run.AgentContext
 }
 
 func (r *fakeStepRunner) PrepareStep(_ context.Context, req StepPrepareRequest) (StepPrepareResult, error) {
-	r.calls = append(r.calls, stepCall{phase: "prepare", moduleID: req.ModuleID, stepID: req.StepID, inputs: req.Inputs})
+	r.calls = append(r.calls, stepCall{phase: "prepare", moduleID: req.ModuleID, stepID: req.StepID, inputs: req.Inputs, agent: req.Agent})
 	return r.prepare[key(req.ModuleID, req.StepID)], nil
 }
 
 func (r *fakeStepRunner) ExecuteStep(_ context.Context, req StepExecuteRequest) (StepExecuteResult, error) {
-	r.calls = append(r.calls, stepCall{phase: "execute", moduleID: req.ModuleID, stepID: req.StepID, inputs: req.Inputs})
+	r.calls = append(r.calls, stepCall{phase: "execute", moduleID: req.ModuleID, stepID: req.StepID, inputs: req.Inputs, agent: req.Agent})
 	return r.execute[key(req.ModuleID, req.StepID)], nil
 }
 

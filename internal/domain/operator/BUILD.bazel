@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "operator",
+    srcs = ["operator.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/domain/operator",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "operator_test",
+    size = "small",
+    srcs = ["operator_test.go"],
+    embed = [":operator"],
+)

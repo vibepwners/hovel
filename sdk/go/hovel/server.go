@@ -105,6 +105,10 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.cleanupPayload(params)
 	case "read_payload_chunk":
 		return s.readPayloadChunk(params)
+	case "payload.command.list":
+		return s.listPayloadCommands(params)
+	case "payload.command.run":
+		return s.runPayloadCommand(params)
 	case "step.describe":
 		return s.describeSteps()
 	case "step.prepare":
@@ -170,6 +174,14 @@ func (s *server) stepProvider() (StepProvider, error) {
 	provider, ok := s.module.(StepProvider)
 	if !ok {
 		return nil, fmt.Errorf("module %q is not a step provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func (s *server) payloadCommandProvider() (PayloadCommandProvider, error) {
+	provider, ok := s.module.(PayloadCommandProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q is not a payload command provider", s.module.Info().Name)
 	}
 	return provider, nil
 }
@@ -313,6 +325,34 @@ func (s *server) readPayloadChunk(params json.RawMessage) (any, error) {
 	return provider.ReadPayloadChunk(req)
 }
 
+func (s *server) listPayloadCommands(params json.RawMessage) (any, error) {
+	provider, err := s.payloadCommandProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[PayloadCommandListRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	commands, err := provider.ListPayloadCommands(req)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"commands": commands}, nil
+}
+
+func (s *server) runPayloadCommand(params json.RawMessage) (any, error) {
+	provider, err := s.payloadCommandProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[PayloadCommandRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.RunPayloadCommand(req)
+}
+
 func requirementsToRPC(requirements []Requirement) []map[string]any {
 	out := make([]map[string]any, 0, len(requirements))
 	for _, req := range requirements {
@@ -345,6 +385,7 @@ func (s *server) execute(params json.RawMessage) (any, error) {
 		Inputs       map[string]any `json:"inputs"`
 		ChainConfig  map[string]any `json:"chainConfig"`
 		TargetConfig map[string]any `json:"targetConfig"`
+		Agent        *AgentContext  `json:"agentContext"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
@@ -359,6 +400,7 @@ func (s *server) execute(params json.RawMessage) (any, error) {
 		Inputs:       orEmpty(p.Inputs),
 		ChainConfig:  orEmpty(p.ChainConfig),
 		TargetConfig: orEmpty(p.TargetConfig),
+		Agent:        p.Agent,
 		Log:          &Logger{name: s.module.Info().Name, emit: s.emitLog},
 		sessions:     registry,
 	}

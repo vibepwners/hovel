@@ -151,6 +151,49 @@ impl Module for FakeModule {
     }
 }
 
+struct AgentAwareModule;
+
+impl Module for AgentAwareModule {
+    fn info(&self) -> Info {
+        Info {
+            name: "agent-aware-rust".into(),
+            version: "v0.0.0-test".into(),
+            module_type: ModuleType::Survey,
+            summary: "agent aware".into(),
+            description: String::new(),
+            tags: Vec::new(),
+        }
+    }
+
+    fn schema(&self) -> Schema {
+        Schema::default()
+    }
+
+    fn run(&self, ctx: &mut Context) -> Outcome {
+        let entity_kind = ctx
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.get("entity"))
+            .and_then(|entity| entity.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let mut outcome = Outcome::ok(vec![
+            ("agentPresent".into(), Value::Bool(ctx.agent.is_some())),
+            ("entityKind".into(), Value::from(entity_kind)),
+        ]);
+        if ctx.agent.is_some() {
+            outcome = outcome.with_agent_hint(Value::object(vec![
+                ("schema", Value::from("hovel.agent_hint.v1")),
+                ("phase", Value::from("execute")),
+                ("audience", Value::from("assistant")),
+                ("risk", Value::from("low")),
+                ("text", Value::from("Prefer read-only inspection before changing state.")),
+            ]));
+        }
+        outcome
+    }
+}
+
 fn frame(value: Value) -> Vec<u8> {
     let body = value.to_string();
     let mut out = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
@@ -174,7 +217,7 @@ fn framing_rejects_oversized_frame_before_body_read() {
     assert!(err.to_string().contains("exceeds maximum"), "{err}");
 }
 
-fn run_session(input: Vec<u8>, module: FakeModule) -> Vec<Value> {
+fn run_session<M: Module>(input: Vec<u8>, module: M) -> Vec<Value> {
     let captured = SharedBuf(Rc::new(RefCell::new(Vec::new())));
     let mut reader = Cursor::new(input);
     serve_with(&module, &mut reader, Box::new(captured.clone())).expect("serve");
@@ -218,6 +261,67 @@ fn serve_handshake_schema_execute() {
     let execute = responses[2].get("result").unwrap();
     assert_eq!(execute.get("status").and_then(Value::as_str), Some("succeeded"));
     assert_eq!(execute.get("summary").and_then(Value::as_str), Some("surveyed example.test"));
+}
+
+#[test]
+fn serve_execute_exposes_optional_agent_context() {
+    let mut input = Vec::new();
+    input.extend(frame(request(
+        1,
+        "execute",
+        Value::object(vec![("runId", Value::from("run-1")), ("target", Value::from("mock://host"))]),
+    )));
+    input.extend(frame(request(
+        2,
+        "execute",
+        Value::object(vec![
+            ("runId", Value::from("run-2")),
+            ("target", Value::from("mock://host")),
+            (
+                "agentContext",
+                Value::object(vec![
+                    ("schema", Value::from("hovel.agent_context.v1")),
+                    (
+                        "entity",
+                        Value::object(vec![
+                            ("id", Value::from("entity-mcp")),
+                            ("kind", Value::from("mcp")),
+                            ("displayName", Value::from("Codex")),
+                            ("agent", Value::Bool(true)),
+                        ]),
+                    ),
+                    ("phase", Value::from("execute")),
+                ]),
+            ),
+        ]),
+    )));
+    input.extend(frame(request(3, "shutdown", Value::Object(vec![]))));
+
+    let messages = run_session(input, AgentAwareModule);
+    let responses = responses(&messages);
+    let without_agent = responses[0].get("result").unwrap();
+    assert_eq!(
+        without_agent
+            .get("outputs")
+            .and_then(|outputs| outputs.get("agentPresent"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert!(without_agent.get("agentHints").is_none());
+
+    let with_agent = responses[1].get("result").unwrap();
+    assert_eq!(
+        with_agent
+            .get("outputs")
+            .and_then(|outputs| outputs.get("entityKind"))
+            .and_then(Value::as_str),
+        Some("mcp")
+    );
+    let hints = match with_agent.get("agentHints") {
+        Some(Value::Array(items)) => items,
+        other => panic!("missing agent hints: {other:?}"),
+    };
+    assert_eq!(hints[0].get("schema").and_then(Value::as_str), Some("hovel.agent_hint.v1"));
 }
 
 #[test]

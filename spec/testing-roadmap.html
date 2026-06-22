@@ -35,6 +35,7 @@
         <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
         <li><a href="testing-roadmap.html" aria-current="page">Testing &amp; Roadmap</a></li>
       </ul>
@@ -107,6 +108,8 @@
           <li><code>chain save &lt;file&gt;</code> and <code>chain load &lt;file&gt;</code> preserve both targetless chain templates and configured chains with target config.</li>
           <li>Two daemon clients attached to the same operation share operation target inventory while keeping active chains, logs, and prompt context separate.</li>
           <li>One-shot execution of a saved chain file does not mutate another client's active chain.</li>
+          <li>The shared throw-control application service records a persisted plan, requires exact plan-hash confirmation, and gates throw start on confirmation and launch-key readiness.</li>
+          <li>Go, Python, and Rust SDKs expose optional agent context only when supplied and omit <code>agentHints</code> unless a module opts in.</li>
         </ol>
         <p>Follow-on integration tests:</p>
         <ol>
@@ -116,8 +119,12 @@
           <li>Service health check passes.</li>
           <li>Service provides payload or listener resource.</li>
           <li>Provider version or reconnect-schema incompatibility keeps installed payload records visible while marking reconnect unavailable.</li>
+          <li>The MCP adapter attaches to <code>hoveld</code> as an MCP operator entity, supports stdio and streamable HTTP transports, heartbeats, exposes typed inspection/setup/throw/payload tools, and detaches on shutdown.</li>
           <li>MCP can inspect and plan the same throw as one-shot execution and <code>cli</code> through shared guardrails.</li>
           <li>MCP can execute only through the shared confirmation path.</li>
+          <li>CLI and one-shot throw execution use the shared throw-control service instead of parallel planning or confirmation logic.</li>
+          <li>Launch-key mode blocks a pending throw until every required live operation entity approves the same plan hash.</li>
+          <li>End-to-end daemon execution persists agent hints with provenance and presents them through MCP resources or prompt material without granting authority.</li>
           <li>TUI consumes the structured logging rail.</li>
         </ol>
 
@@ -133,7 +140,7 @@ Python SDK: 85%+
 </code></pre>
 
         <h2>Milestones</h2>
-        <p>The milestone list is a planning roadmap, not a live feature matrix. Some later slices are already present in source, while service lifecycle management, the TUI, REST, MCP, and richer chain-control features remain future work.</p>
+        <p>The milestone list is a planning roadmap, not a live feature matrix. Some later slices are already present in source, including the MCP agent adapter. Service lifecycle management, the TUI, REST, richer MCP resources/prompts, and richer chain-control features remain future work.</p>
 
         <h3>Milestone 1: Skeleton</h3>
         <ol>

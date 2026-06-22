@@ -51,6 +51,7 @@ type Result struct {
 	Outputs           map[string]any
 	Sessions          []SessionRef
 	InstalledPayloads []InstalledPayloadDescriptor
+	AgentHints        []AgentHint
 }
 
 // ResultOption customizes a Result built by [Ok] or [Failed].
@@ -75,6 +76,11 @@ func WithArtifacts(artifacts ...Artifact) ResultOption {
 // module result. Hovel persists these records only when a module returns them.
 func WithInstalledPayloads(payloads ...InstalledPayloadDescriptor) ResultOption {
 	return func(r *Result) { r.InstalledPayloads = append(r.InstalledPayloads, payloads...) }
+}
+
+// WithAgentHints appends module-authored guidance for agent-aware front ends.
+func WithAgentHints(hints ...AgentHint) ResultOption {
+	return func(r *Result) { r.AgentHints = append(r.AgentHints, hints...) }
 }
 
 // Ok builds a succeeded result carrying the given outputs.
@@ -145,7 +151,7 @@ func (r Result) toRPC(sessions []SessionRef) map[string]any {
 	if status == "" {
 		status = "succeeded"
 	}
-	return map[string]any{
+	out := map[string]any{
 		"status":            status,
 		"summary":           r.Summary,
 		"findings":          findings,
@@ -154,4 +160,8 @@ func (r Result) toRPC(sessions []SessionRef) map[string]any {
 		"sessions":          refs,
 		"installedPayloads": r.InstalledPayloads,
 	}
+	if len(r.AgentHints) > 0 {
+		out["agentHints"] = r.AgentHints
+	}
+	return out
 }

@@ -1,17 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf16"
 
+	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/wire"
 	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
 	"github.com/Vibe-Pwners/hovel/sdk/go/hoveltest"
 )
@@ -365,6 +369,58 @@ func TestProviderSatisfiesPayloadProviderRPCContract(t *testing.T) {
 			"library.rundll",
 		},
 	})
+}
+
+func TestRunGetfileCommandReturnsBinaryFileArtifact(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	want := []byte{0x4d, 0x5a, 0x00, 0xff, 0xfe, 0x80}
+	done := make(chan error, 1)
+	go func() {
+		kind, streamID, _, err := wire.ReadFrame(serverConn)
+		if err != nil {
+			done <- err
+			return
+		}
+		if kind != wire.KindOpen || streamID != 1 {
+			done <- fmt.Errorf("open frame kind=%d stream=%d", kind, streamID)
+			return
+		}
+		if err := wire.WriteFrame(serverConn, wire.KindData, 1, append([]byte{'S'}, []byte("OK 6")...)); err != nil {
+			done <- err
+			return
+		}
+		if err := wire.WriteFrame(serverConn, wire.KindData, 1, append([]byte{'D'}, want...)); err != nil {
+			done <- err
+			return
+		}
+		if err := wire.WriteFrame(serverConn, wire.KindData, 1, []byte{'E'}); err != nil {
+			done <- err
+			return
+		}
+		done <- wire.WriteFrame(serverConn, wire.KindClose, 1, nil)
+	}()
+
+	result, err := runGetfileCommand(clientConn, bufio.NewReader(clientConn), hovel.PayloadCommandRequest{Args: []string{`C:\Temp\payload.exe`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Artifacts) != 1 || result.Artifacts[0].Data != "" || result.Artifacts[0].Path == "" {
+		t.Fatalf("artifact = %#v, want file artifact without inline data", result.Artifacts)
+	}
+	t.Cleanup(func() { _ = os.Remove(result.Artifacts[0].Path) })
+	got, err := os.ReadFile(result.Artifacts[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("artifact bytes = %x, want %x", got, want)
+	}
 }
 
 func TestPlaceholderLPReverseTCPPreparesListener(t *testing.T) {
@@ -815,7 +871,7 @@ func TestProviderExecuteInstallSMBUploadsAndStartsWithCredentials(t *testing.T) 
 		BytesWritten:  1234,
 		ServiceStatus: 0,
 	}}
-	provider := Provider{lp: newPlaceholderLP(), smbInstaller: installer}
+	provider := Provider{lp: newPlaceholderLP(), installSMB: installer.InstallSMB}
 
 	result, err := provider.ExecuteStep(hovel.StepExecuteRequest{
 		RunID:  "run-1",
