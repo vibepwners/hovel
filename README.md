@@ -9,9 +9,9 @@ dual-use automation. The local daemon role (`hovel daemon serve`, often called
 `hoveld` in internal docs and logs) owns the workspace database,
 module process lifecycle, a plan -> confirm -> throw safety pipeline, installed
 payload inventory, an artifact store, and a structured event/log rail. Operators
-drive it through an interactive CLI, one-shot saved chain files, and the first
-stdio MCP inspection front end; the same application services are intended to
-back the full front-end set (TUI, REST, MCP execution parity).
+drive it through an interactive CLI, one-shot saved chain files, and the MCP
+agent front end; the same application services are intended to back the full
+front-end set, including TUI, REST, and richer MCP resources.
 
 > **Authorized red-team emulation only.** Use Hovel only in environments you
 > own or are explicitly authorized to assess, with written scope and approvals.
@@ -96,7 +96,7 @@ Run the app:
 | --- | --- |
 | `task start` (`dev`, `up`, `cli`) | Build and launch the interactive CLI. |
 | `task daemon` | Run `hoveld` in the foreground on the default socket. |
-| `task mcp` | Launch the stdio MCP inspection front end for the dev workspace. |
+| `task mcp` | Launch the MCP agent front end for the dev workspace; `hovel mcp --transport http` serves streamable HTTP. |
 | `task status` (`st`) | Show daemon status for the dev workspace. |
 | `task init` | Initialize the dev workspace (`./.hovel`). |
 | `task throw -- <chain.yaml>` | One-shot throw of a saved chain file. |
@@ -214,6 +214,14 @@ hovel tui ...              # not implemented yet
 `cli` auto-starts or attaches to a local daemon for the workspace. A daemon
 started by an interactive session is owned by it and shuts down on exit; a
 pre-existing daemon is left running.
+
+`hovel mcp` exposes typed catalog, workspace, chain-apply, throw, installed
+payload, and payload-command tools. Agents should start with
+`hovel_catalog_snapshot` and `hovel_workspace_snapshot`, use
+`hovel_chain_apply` to create or update chain state, call `hovel_throw_start`,
+then use `hovel_installed_payload_list` and `hovel_payload_cmd` for commands
+such as `systeminfo`. `hovel_command_run` remains an escape hatch for command
+registry verbs without typed MCP tools.
 
 Root help also exposes compatibility and developer entrypoints such as `shell`,
 `command`, `run`, direct registry roots (`module`, `chain`, `op`, ...), `init`,

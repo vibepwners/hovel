@@ -162,7 +162,7 @@ func payloadsInstalledHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		if len(records) == 0 {
-			return Result{Human: "No installed payloads", JSON: records}, nil
+			return Result{Human: "No installed payloads\nUse payloads list for provider-buildable payloads, or chain add squatter@v0.1.0 to install Squatter during a throw.", JSON: records}, nil
 		}
 		return Result{Human: installedPayloadLines(records), JSON: records}, nil
 	}

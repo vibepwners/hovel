@@ -63,7 +63,7 @@ tasks:
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run //cmd/hovel -- mcp --workspace "{{.WORKSPACE}}"
+      - bazel run //cmd/hovel -- mcp --workspace "{{.WORKSPACE}}" --transport http --http-addr 127.0.0.1:27166 --entity-id agent1
 
   status:
     aliases: [st]

@@ -1202,8 +1202,12 @@ func TestRunnerCapturesModuleLogs(t *testing.T) {
 	}
 }
 
-func TestRunnerHasNoModulesWithoutConfig(t *testing.T) {
-	catalog, err := Runner{}.Catalog(context.Background())
+func TestRunnerHasNoModulesWithEmptyConfig(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := Runner{ConfigPath: configPath}.Catalog(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1363,6 +1367,95 @@ func TestRPCClientTimeoutDoesNotCorruptNextCall(t *testing.T) {
 }
 
 const exampleModuleConfig = "examples/python/hovel-modules.json"
+
+func TestRunnerConfigPathDiscoversRepoDefault(t *testing.T) {
+	t.Setenv(ModuleConfigEnv, "")
+	root := t.TempDir()
+	configPath := filepath.Join(root, "examples", "hovel-modules.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Join(root, "examples"))
+
+	if got := (Runner{}).configPath(); got != configPath {
+		t.Fatalf("configPath() = %q, want %q", got, configPath)
+	}
+}
+
+func TestRunnerConfigPathPrefersFullExampleCatalogOverPythonFixture(t *testing.T) {
+	t.Setenv(ModuleConfigEnv, "")
+	root := t.TempDir()
+	pythonConfig := filepath.Join(root, "examples", "python", "hovel-modules.json")
+	fullConfig := filepath.Join(root, "examples", "hovel-modules.json")
+	if err := os.MkdirAll(filepath.Dir(pythonConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pythonConfig, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fullConfig, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := (Runner{ConfigPath: pythonConfig}).configPath(); got != fullConfig {
+		t.Fatalf("configPath() = %q, want %q", got, fullConfig)
+	}
+}
+
+func TestRunnerConfigPathKeepsPythonFixtureWhenFullCatalogBinaryIsMissing(t *testing.T) {
+	t.Setenv(ModuleConfigEnv, "")
+	root := t.TempDir()
+	pythonConfig := filepath.Join(root, "examples", "python", "hovel-modules.json")
+	fullConfig := filepath.Join(root, "examples", "hovel-modules.json")
+	if err := os.MkdirAll(filepath.Dir(pythonConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pythonConfig, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fullConfig, []byte(`{"modules":[{"id":"squatter","command":["bin/squatter-provider"]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := (Runner{ConfigPath: pythonConfig}).configPath(); got != pythonConfig {
+		t.Fatalf("configPath() = %q, want %q", got, pythonConfig)
+	}
+}
+
+func TestRunnerConfigPathUsesBuildWorkspaceCatalogBeforeRunfilesFixture(t *testing.T) {
+	t.Setenv(ModuleConfigEnv, "")
+	t.Setenv("HOVEL_REPO_ROOT", "")
+	sourceRoot := t.TempDir()
+	sourceConfig := filepath.Join(sourceRoot, "examples", "hovel-modules.json")
+	sourceProvider := filepath.Join(sourceRoot, "examples", "bin", "squatter-provider")
+	if err := os.MkdirAll(filepath.Dir(sourceProvider), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourceProvider, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourceConfig, []byte(`{"modules":[{"id":"squatter","command":["bin/squatter-provider"]}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runfilesRoot := t.TempDir()
+	runfilesPythonConfig := filepath.Join(runfilesRoot, "examples", "python", "hovel-modules.json")
+	if err := os.MkdirAll(filepath.Dir(runfilesPythonConfig), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(runfilesPythonConfig, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BUILD_WORKSPACE_DIRECTORY", sourceRoot)
+	t.Chdir(runfilesRoot)
+
+	if got := (Runner{}).configPath(); got != sourceConfig {
+		t.Fatalf("configPath() = %q, want %q", got, sourceConfig)
+	}
+}
 
 func writePythonModuleFixture(t *testing.T, body string) string {
 	t.Helper()

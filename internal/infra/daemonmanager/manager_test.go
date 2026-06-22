@@ -43,6 +43,42 @@ func TestEnsureStartsAndStopsOwnedDaemon(t *testing.T) {
 	})
 }
 
+func TestEnsureWithModuleConfigPassesConfigToStartedDaemon(t *testing.T) {
+	workspacePath := testsupport.TempDir(t)
+	moduleConfig := filepath.Join(testsupport.TempDir(t), "modules.json")
+	argsSeen := make(chan daemonruntime.Args, 1)
+	manager := New()
+	manager.Serve = func(ctx context.Context, args daemonruntime.Args) error {
+		argsSeen <- args
+		identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+			WorkspacePath: args.WorkspacePath,
+			PID:           123,
+			SocketPath:    filepath.Join(args.WorkspacePath, "hoveld.sock"),
+			StartedAt:     time.Now().UTC(),
+			Health:        daemon.HealthHealthy,
+		})
+		if err != nil {
+			return err
+		}
+		if err := filesystem.NewWorkspaceStore().WriteDaemonStatus(ctx, identity); err != nil {
+			return err
+		}
+		<-ctx.Done()
+		_ = filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), args.WorkspacePath)
+		return ctx.Err()
+	}
+
+	session, err := manager.EnsureWithModuleConfig(context.Background(), workspacePath, moduleConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	args := <-argsSeen
+	if args.ModuleConfig != moduleConfig {
+		t.Fatalf("ModuleConfig = %q, want %q", args.ModuleConfig, moduleConfig)
+	}
+}
+
 func TestEnsureAttachesToExistingDaemonAndLeavesItRunning(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntime.Args{
 		PID:       12345,

@@ -119,7 +119,7 @@
           <li>Service health check passes.</li>
           <li>Service provides payload or listener resource.</li>
           <li>Provider version or reconnect-schema incompatibility keeps installed payload records visible while marking reconnect unavailable.</li>
-          <li>The stdio MCP adapter attaches to <code>hoveld</code> as an MCP operator entity, heartbeats, exposes typed read-only inspection tools, and detaches on shutdown.</li>
+          <li>The MCP adapter attaches to <code>hoveld</code> as an MCP operator entity, supports stdio and streamable HTTP transports, heartbeats, exposes typed inspection/setup/throw/payload tools, and detaches on shutdown.</li>
           <li>MCP can inspect and plan the same throw as one-shot execution and <code>cli</code> through shared guardrails.</li>
           <li>MCP can execute only through the shared confirmation path.</li>
           <li>CLI and one-shot throw execution use the shared throw-control service instead of parallel planning or confirmation logic.</li>
@@ -140,7 +140,7 @@ Python SDK: 85%+
 </code></pre>
 
         <h2>Milestones</h2>
-        <p>The milestone list is a planning roadmap, not a live feature matrix. Some later slices are already present in source, including a first MCP inspection adapter. Service lifecycle management, the TUI, REST, MCP execution parity, and richer chain-control features remain future work.</p>
+        <p>The milestone list is a planning roadmap, not a live feature matrix. Some later slices are already present in source, including the MCP agent adapter. Service lifecycle management, the TUI, REST, richer MCP resources/prompts, and richer chain-control features remain future work.</p>
 
         <h3>Milestone 1: Skeleton</h3>
         <ol>

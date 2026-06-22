@@ -803,7 +803,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"payloads", "available"},
-			Aliases: [][]string{{"payload", "available"}},
+			Aliases: [][]string{{"payload", "available"}, {"payloads", "list"}, {"payload", "list"}},
 			Summary: "List payloads available from configured providers.",
 			Options: []Option{
 				boolOption("json", "j", "Emit JSON output"),
@@ -812,7 +812,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"payloads", "installed"},
-			Aliases: [][]string{{"payload", "installed"}, {"payloads", "list"}, {"payload", "list"}},
+			Aliases: [][]string{{"payload", "installed"}},
 			Summary: "List installed payload records.",
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
@@ -1402,7 +1402,11 @@ func chainAddHandler(runtime Runtime) Handler {
 			if runtime.Session == nil {
 				return Result{}, operatorSessionRequiredError("chain add")
 			}
-			moduleID = squatterProviderModuleID(moduleDB(runtime))
+			module, ok := findSquatterProviderModule(moduleDB(runtime))
+			if !ok {
+				return Result{}, fmt.Errorf("module squatter@v0.1.0 does not exist")
+			}
+			moduleID = module.ID
 			step, err := runtime.Session.AddModule(moduleID)
 			if err != nil {
 				return Result{}, withActiveChainHelp(err)
@@ -1417,15 +1421,7 @@ func chainAddHandler(runtime Runtime) Handler {
 		}
 		module, ok := moduleDB(runtime).Find(moduleID)
 		if !ok {
-			if !isSquatterProviderRef(moduleID) {
-				return Result{}, fmt.Errorf("module %s does not exist", moduleID)
-			}
-			module = modulecatalog.Module{
-				ID:      squatterProviderModuleID(moduleDB(runtime)),
-				Name:    "squatter",
-				Type:    modulecatalog.TypePayloadProvider,
-				Enabled: true,
-			}
+			return Result{}, fmt.Errorf("module %s does not exist", moduleID)
 		}
 		if runtime.Session == nil {
 			return Result{}, operatorSessionRequiredError("chain add")
@@ -1468,23 +1464,27 @@ func isSquatterProviderModule(module modulecatalog.Module) bool {
 	return strings.EqualFold(module.Name, "squatter") && module.Type == modulecatalog.TypePayloadProvider
 }
 
-func isSquatterProviderRef(moduleID string) bool {
-	ref := strings.ToLower(strings.TrimSpace(moduleID))
-	return ref == "squatter" || ref == "squatter@v0.1.0"
+func squatterProviderModuleID(db ModuleDatabase) string {
+	if module, ok := findSquatterProviderModule(db); ok {
+		return module.ID
+	}
+	return "squatter@v0.1.0"
 }
 
-func squatterProviderModuleID(db ModuleDatabase) string {
+func findSquatterProviderModule(db ModuleDatabase) (modulecatalog.Module, bool) {
 	if db != nil {
 		if module, ok := db.Find("squatter@v0.1.0"); ok {
-			return module.ID
+			if isSquatterProviderModule(module) {
+				return module, true
+			}
 		}
 		for _, module := range db.Search("squatter") {
 			if isSquatterProviderModule(module) {
-				return module.ID
+				return module, true
 			}
 		}
 	}
-	return "squatter@v0.1.0"
+	return modulecatalog.Module{}, false
 }
 
 func legacyExecutionModuleIDs(db ModuleDatabase, modules []string) []string {
@@ -1510,7 +1510,7 @@ func hasSquatterBindModule(modules []string) bool {
 
 func isSquatterTCPBindModule(db ModuleDatabase, moduleID string, config map[string]string) bool {
 	module, ok := db.Find(moduleID)
-	if (!ok || !isSquatterProviderModule(module)) && !isSquatterProviderRef(moduleID) {
+	if !ok || !isSquatterProviderModule(module) {
 		return false
 	}
 	transport := strings.TrimSpace(config["payload.transport"])

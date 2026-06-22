@@ -143,6 +143,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 	workspacePath := parser.String("w", "workspace", &argparse.Options{Help: "Workspace path"})
 	socketPath := parser.String("s", "socket", &argparse.Options{Help: "Local RPC socket path"})
 	listenAddress := parser.String("", "listen", &argparse.Options{Help: "RPC listen endpoint, such as unix:/tmp/hoveld.sock or tcp://127.0.0.1:9090"})
+	moduleConfig := parser.String("", "module-config", &argparse.Options{Help: "Module launch catalog path"})
 	if ok, code := parseArgs(parser, args, stdout, stderr); !ok {
 		return code
 	}
@@ -152,6 +153,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 		WorkspacePath: *workspacePath,
 		SocketPath:    *socketPath,
 		ListenAddress: *listenAddress,
+		ModuleConfig:  *moduleConfig,
 	}); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 0
@@ -374,20 +376,35 @@ func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	chain := parser.String("c", "chain", &argparse.Options{Help: "Chain context for this MCP operator"})
 	entityID := parser.String("", "entity-id", &argparse.Options{Help: "Stable operator entity ID for launch-key approvals"})
 	displayName := parser.String("", "display-name", &argparse.Options{Help: "Human-readable operator entity name"})
+	moduleConfig := parser.String("", "module-config", &argparse.Options{Help: "Module launch catalog path for MCP tools"})
+	transport := parser.String("", "transport", &argparse.Options{Help: "MCP transport: stdio or http (default stdio)"})
+	httpAddr := parser.String("", "http-addr", &argparse.Options{Help: "HTTP MCP listen address when --transport=http (default 127.0.0.1:0)"})
 	if ok, code := parseArgs(parser, args, stdout, stderr); !ok {
 		return code
+	}
+	selectedTransport := strings.ToLower(strings.TrimSpace(*transport))
+	if selectedTransport == "" {
+		selectedTransport = mcpadapter.DefaultTransportMode
+	}
+	if selectedTransport != "stdio" && selectedTransport != "http" {
+		fmt.Fprintf(stderr, "unsupported MCP transport %q; use stdio or http\n", *transport)
+		return 2
 	}
 	selectedOperation := *operation
 	if selectedOperation == "" {
 		selectedOperation = *operationAlias
 	}
 	if err := mcpadapter.Run(ctx, mcpadapter.Config{
-		Workspace:   *workspacePath,
-		Operation:   selectedOperation,
-		Chain:       *chain,
-		EntityID:    *entityID,
-		DisplayName: *displayName,
-		Output:      stdout,
+		Workspace:     *workspacePath,
+		Operation:     selectedOperation,
+		Chain:         *chain,
+		EntityID:      *entityID,
+		DisplayName:   *displayName,
+		CatalogPath:   *moduleConfig,
+		Output:        stdout,
+		Status:        stderr,
+		TransportMode: selectedTransport,
+		HTTPAddr:      *httpAddr,
 	}); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 0

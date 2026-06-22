@@ -58,12 +58,12 @@
         <h1>Front Ends</h1>
 
         <p>Front ends are adapters over application services. They must share validation, planning, execution, structured logging rail subscriptions, scope guardrails, and audit behavior.</p>
-        <p>Hovel's implemented operator surfaces are <code>cli</code> mode for an interactive prompt shell, one-shot chain-file execution for shell workflows, daemon management, and a first stdio MCP inspection slice. <code>hovel tui</code> remains an explicit placeholder that exits as not implemented. The product target also includes a full-screen TUI, REST/OpenAPI, and MCP execution parity. As those adapters land, they must attach to the same daemon and use the same application services.</p>
+        <p>Hovel's implemented operator surfaces are <code>cli</code> mode for an interactive prompt shell, one-shot chain-file execution for shell workflows, daemon management, and an MCP agent slice with stdio and streamable HTTP transports. <code>hovel tui</code> remains an explicit placeholder that exits as not implemented. The product target also includes a full-screen TUI, REST/OpenAPI, and fuller MCP resources/prompts. As those adapters land, they must attach to the same daemon and use the same application services.</p>
         <p>The production entrypoint is the <code>hovel</code> mono-binary. Top-level subcommands select the front-end or daemon role:</p>
 <pre data-lang="shell"><code>hovel cli ...
 hovel throw &lt;chain-file&gt;
 hovel daemon ...
-hovel mcp ...              # stdio agent inspection front end
+hovel mcp ...              # agent inspection front end
 hovel tui ...              # explicit placeholder today
 </code></pre>
         <p>The root implementation also exposes compatibility and developer entrypoints such as <code>shell</code>, <code>command</code>, <code>run</code>, direct registry roots, <code>init</code>, and <code>status</code>. They should remain documented as compatibility/developer affordances rather than the durable product contract. The shell-facing product surface should be deliberately narrow: daemon management, help, and one-shot execution of a saved chain file.</p>
@@ -365,14 +365,22 @@ Settings / Theme Selector
         <p>Event streaming may use Server-Sent Events or WebSockets.</p>
 
         <h2>MCP Adapter</h2>
-        <p>An initial MCP adapter is implemented as <code>hovel mcp</code>. It uses stdio, attaches to <code>hoveld</code> as an MCP operator entity, heartbeats while connected, and exposes read-only typed tools for operator identity, live entity listing, operation listing, and workspace snapshots.</p>
+        <p>An initial MCP adapter is implemented as <code>hovel mcp</code>. It defaults to stdio, supports streamable HTTP with <code>--transport http</code>, accepts an explicit <code>--module-config</code>, attaches to <code>hoveld</code> as an MCP operator entity, heartbeats while connected, and exposes typed tools for operator identity, live entity listing, operation listing, workspace snapshots, catalog snapshots, idempotent chain apply, throw start, installed payload listing, and provider-owned payload commands.</p>
         <p>MCP has eventual operator parity: anything a human can do through <code>cli</code>, one-shot execution, TUI, or API should be representable through MCP, subject to the same guardrail checks, confirmations, planning output, and audit trail. The implementation should ship inspection and planning tools before execution tools unless the shared confirmation and audit path is already complete.</p>
         <p>MCP should be treated as a peer front end, not as a privileged back door. It may expose workflows optimized for agents, but those workflows must produce the same plans, guardrail results, confirmations, structured events, artifacts, and throw records that a CLI or TUI operator would see.</p>
-        <p>Implemented inspection tools:</p>
+        <p>Implemented tools:</p>
 <pre data-lang="tools"><code>hovel_operator_identity
 hovel_operator_list_entities
 hovel_operation_list
 hovel_workspace_snapshot
+hovel_catalog_snapshot
+hovel_chain_apply
+hovel_command_run
+hovel_throw_start
+hovel_installed_payload_list
+hovel_payload_cmd
+hovel_payload_command_list
+hovel_payload_command_call
 </code></pre>
         <p>Follow-on inspection and planning tools:</p>
 <pre data-lang="tools"><code>hovel_list_modules
@@ -387,14 +395,12 @@ hovel_get_artifact
 hovel_list_targets
 hovel_resolve_payload
 hovel_list_available_payloads
-hovel_list_installed_payloads
 hovel_inspect_installed_payload
 hovel_list_listeners
 hovel_list_sessions
 </code></pre>
         <p>Execution tools should be added only after confirmation records and guardrail checks are shared with CLI and REST:</p>
 <pre data-lang="tools"><code>hovel_confirm_action
-hovel_start_throw
 hovel_connect_installed_payload
 hovel_cleanup_installed_payload
 hovel_mark_payload_removed

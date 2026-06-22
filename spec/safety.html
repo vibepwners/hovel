@@ -64,7 +64,7 @@
         <h2>Caller Trust Model</h2>
         <p>Hovel does not treat human operators, AI agents, CLI clients, TUI clients, REST clients, or MCP clients as inherently trusted. Every caller uses the same application services, validation model, scope guardrails, and audit trail.</p>
         <p>MCP should eventually be able to do everything an operator can do. Safety should come from shared guardrails, explicit confirmations, descriptor metadata, module-level validation, throw planning, and auditability, not from giving MCP a weaker private API.</p>
-        <p>MCP execution parity should be phased. Inspection and planning tools may ship first. Execution tools should require the same plan review, explicit confirmation records, and audit events as CLI and REST before they are enabled.</p>
+        <p>Full MCP execution parity should be phased. Inspection and planning tools may ship first. Execution tools require the same plan review, explicit confirmation records, and audit events as CLI and REST.</p>
         <p>Launch-key policy is the optional multi-entity gate for throws. In that mode, an agent can prepare a throw, but starting it requires every required operation entity to approve the exact reviewed plan hash according to daemon policy.</p>
         <p>Third-party modules and services are explicitly supported. Hovel cannot prove arbitrary third-party code is safe; it provides descriptors, process supervision, scope guardrails, logs, artifacts, and replayable records so operators can make informed decisions.</p>
 

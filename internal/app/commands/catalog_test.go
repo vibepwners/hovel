@@ -664,7 +664,7 @@ func TestPayloadsAvailableUsesProviderService(t *testing.T) {
 		Modules:          exampleCatalog(),
 		PayloadProviders: providers,
 	})
-	definition, _ := registry.Find("payloads", "available")
+	definition, _ := registry.Find("payloads", "list")
 
 	result, err := definition.Execute(context.Background(), Invocation{})
 	if err != nil {
@@ -675,6 +675,24 @@ func TestPayloadsAvailableUsesProviderService(t *testing.T) {
 	}
 	if !reflect.DeepEqual(result.JSON, providers.available) {
 		t.Fatalf("available json = %#v, want %#v", result.JSON, providers.available)
+	}
+}
+
+func TestPayloadsInstalledEmptyOutputPointsToProviderModules(t *testing.T) {
+	registry := HovelRegistry(Runtime{
+		Modules:  exampleCatalog(),
+		Payloads: newFakePayloadRepository(nil),
+	})
+	definition, _ := registry.Find("payloads", "installed")
+
+	result, err := definition.Execute(context.Background(), Invocation{Options: map[string]string{"workspace": ".hovel"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "No installed payloads") ||
+		!strings.Contains(result.Human, "payloads list") ||
+		!strings.Contains(result.Human, "chain add squatter@v0.1.0") {
+		t.Fatalf("installed output = %q", result.Human)
 	}
 }
 
@@ -1574,7 +1592,7 @@ func TestThrowInputsSquatterTypeDerivesEtroInstallConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	throw, err := throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{})
+	throw, err := throwInputs(context.Background(), Runtime{Session: session, Modules: squatterCatalog()}, Invocation{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1601,7 +1619,7 @@ func TestThrowInputsSquatterTypeDerivesEtroInstallConfig(t *testing.T) {
 	if err := session.SetChainConfig("squatter.remote_path", `C:\Windows\Temp\hovel-fixed.exe`); err != nil {
 		t.Fatal(err)
 	}
-	throw, err = throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{})
+	throw, err = throwInputs(context.Background(), Runtime{Session: session, Modules: squatterCatalog()}, Invocation{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1669,7 +1687,7 @@ func TestThrowInputsFromChainFileSquatterTypeDerivesInstallConfig(t *testing.T) 
 		},
 	}
 
-	throw, err := throwInputs(context.Background(), Runtime{ChainFiles: store}, Invocation{
+	throw, err := throwInputs(context.Background(), Runtime{ChainFiles: store, Modules: squatterCatalog()}, Invocation{
 		Positionals: map[string]string{"file": "etro-squatter.chain.yaml"},
 	})
 	if err != nil {
@@ -1758,6 +1776,25 @@ func TestChainAddVersionedSquatterSetsTypeConfig(t *testing.T) {
 	}
 	if got := state.Config["squatter.type"]; got != "tcp-bind" {
 		t.Fatalf("squatter.type = %q, want tcp-bind", got)
+	}
+}
+
+func TestChainAddSquatterRequiresLoadedProvider(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := chainAddHandler(Runtime{Session: session, Modules: exampleCatalog()})(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "squatter@v0.1.0"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "module squatter@v0.1.0 does not exist") {
+		t.Fatalf("err = %v, want missing squatter provider", err)
+	}
+	if got := session.Snapshot().Steps; len(got) != 0 {
+		t.Fatalf("steps = %#v, want no partial Squatter step", got)
 	}
 }
 

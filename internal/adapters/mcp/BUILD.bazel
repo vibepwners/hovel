@@ -10,11 +10,13 @@ go_library(
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
         "//internal/app/commands",
+        "//internal/app/modulecatalog",
         "//internal/app/operatorsession",
         "//internal/domain/operator",
         "//internal/domain/run",
         "//internal/domain/workspace",
         "//internal/infra/daemonmanager",
+        "//internal/modules/pythonrpc",
         "@com_github_modelcontextprotocol_go_sdk//mcp",
     ],
 )
@@ -22,11 +24,19 @@ go_library(
 go_test(
     name = "mcp_test",
     srcs = ["server_test.go"],
+    data = [
+        "//examples/python:sources",
+        "//sdk/python:sources",
+    ],
     embed = [":mcp"],
     deps = [
         "//internal/adapters/daemonrpc",
+        "//internal/adapters/storage/filesystem",
         "//internal/app/commands",
         "//internal/app/operatorsession",
+        "//internal/domain/run",
+        "//internal/infra/daemonruntime",
+        "//internal/testsupport",
         "@com_github_modelcontextprotocol_go_sdk//mcp",
     ],
 )

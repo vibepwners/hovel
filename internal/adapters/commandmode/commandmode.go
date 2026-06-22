@@ -55,18 +55,15 @@ func NewAppWithSession(session commands.OperatorSession) App {
 }
 
 func NewAppWithSessionAndModules(session commands.OperatorSession, modules modulecatalog.Catalog) App {
-	runtime := defaultRuntime(session)
-	runtime.Modules = modules
-	if executor, ok := runtime.CapabilityChains.(capabilityChainExecutor); ok {
-		executor.catalog = modules
-		runtime.CapabilityChains = executor
-	}
-	return NewAppWithRuntime(runtime)
+	return NewAppWithRuntime(defaultRuntimeWithCatalog(session, modules))
 }
 
 func defaultRuntime(session commands.OperatorSession) commands.Runtime {
+	return defaultRuntimeWithCatalog(session, pythonrpc.MustConfiguredCatalog())
+}
+
+func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulecatalog.Catalog) commands.Runtime {
 	store := filesystem.NewWorkspaceStore()
-	catalog := pythonrpc.MustConfiguredCatalog()
 	pythonSessions := pythonrpc.NewSessionBroker()
 	stepProcesses := pythonrpc.NewStepProcessBroker()
 	stepRunner := pythonrpc.StepRuntimeRunner{Runner: pythonrpc.Runner{

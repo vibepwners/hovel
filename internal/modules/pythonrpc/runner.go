@@ -42,6 +42,11 @@ type ModuleEntry struct {
 	Command    []string `json:"command"`
 }
 
+type CatalogInfo struct {
+	ConfigPath string
+	Modules    []modulecatalog.Module
+}
+
 // usesCommand reports whether the entry launches an arbitrary executable
 // (any language that speaks the stdio JSON-RPC protocol) rather than the
 // built-in Python interpreter path.
@@ -68,6 +73,25 @@ type StepCallRequest struct {
 
 func ConfiguredCatalog(ctx context.Context) (modulecatalog.Catalog, error) {
 	return Runner{}.Catalog(ctx)
+}
+
+func ConfiguredCatalogInfo(ctx context.Context) (CatalogInfo, error) {
+	return CatalogInfoForConfig(ctx, "")
+}
+
+func CatalogInfoForConfig(ctx context.Context, configPath string) (CatalogInfo, error) {
+	runner := Runner{ConfigPath: configPath}
+	path, pathErr := resolveConfigPath(runner.configPath())
+	info := CatalogInfo{ConfigPath: path}
+	if pathErr != nil {
+		return info, pathErr
+	}
+	catalog, err := runner.Catalog(ctx)
+	if err != nil {
+		return info, err
+	}
+	info.Modules = catalog.List()
+	return info, nil
 }
 
 func MustConfiguredCatalog() modulecatalog.Catalog {
@@ -610,9 +634,119 @@ func (r Runner) sdkRoot() (string, error) {
 
 func (r Runner) configPath() string {
 	if r.ConfigPath != "" {
-		return r.ConfigPath
+		return preferOperatorModuleConfig(r.ConfigPath)
 	}
-	return os.Getenv(ModuleConfigEnv)
+	if env := strings.TrimSpace(os.Getenv(ModuleConfigEnv)); env != "" {
+		return preferOperatorModuleConfig(env)
+	}
+	for _, candidate := range defaultModuleConfigCandidates() {
+		path, err := resolveConfigPath(candidate)
+		if err != nil || path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err == nil {
+			preferred := preferOperatorModuleConfig(path)
+			resolved, err := resolveConfigPath(preferred)
+			if err == nil && isFullExampleModuleConfig(resolved) && !operatorModuleConfigReady(resolved) {
+				continue
+			}
+			return preferred
+		}
+	}
+	return ""
+}
+
+func preferOperatorModuleConfig(configPath string) string {
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" {
+		return ""
+	}
+	resolved, err := resolveConfigPath(configPath)
+	if err != nil || resolved == "" {
+		return configPath
+	}
+	if filepath.Base(resolved) != "hovel-modules.json" {
+		return configPath
+	}
+	pythonDir := filepath.Dir(resolved)
+	if filepath.Base(pythonDir) != "python" {
+		return configPath
+	}
+	examplesDir := filepath.Dir(pythonDir)
+	if filepath.Base(examplesDir) != "examples" {
+		return configPath
+	}
+	fullConfig := filepath.Join(examplesDir, "hovel-modules.json")
+	if _, err := os.Stat(fullConfig); err != nil {
+		return configPath
+	}
+	if !operatorModuleConfigReady(fullConfig) {
+		return configPath
+	}
+	return fullConfig
+}
+
+func isFullExampleModuleConfig(configPath string) bool {
+	configPath = filepath.Clean(strings.TrimSpace(configPath))
+	if filepath.Base(configPath) != "hovel-modules.json" {
+		return false
+	}
+	return filepath.Base(filepath.Dir(configPath)) == "examples"
+}
+
+func operatorModuleConfigReady(configPath string) bool {
+	body, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+	var config ModuleConfig
+	if err := json.Unmarshal(body, &config); err != nil {
+		return false
+	}
+	baseDir := filepath.Dir(configPath)
+	for _, entry := range config.Modules {
+		if len(entry.Command) == 0 {
+			continue
+		}
+		command := strings.TrimSpace(entry.Command[0])
+		if command == "" {
+			return false
+		}
+		if !filepath.IsAbs(command) {
+			command = filepath.Join(baseDir, command)
+		}
+		if _, err := os.Stat(command); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func defaultModuleConfigCandidates() []string {
+	var candidates []string
+	add := func(path string) {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == path {
+				return
+			}
+		}
+		candidates = append(candidates, path)
+	}
+	for _, env := range []string{"HOVEL_REPO_ROOT", "BUILD_WORKSPACE_DIRECTORY", "BUILD_WORKING_DIRECTORY"} {
+		root := strings.TrimSpace(os.Getenv(env))
+		if root == "" {
+			continue
+		}
+		add(filepath.Join(root, "examples", "hovel-modules.json"))
+		add(filepath.Join(root, "examples", "python", "hovel-modules.json"))
+	}
+	add(filepath.Join("examples", "hovel-modules.json"))
+	add(filepath.Join("examples", "python", "hovel-modules.json"))
+	return candidates
 }
 
 func (r Runner) moduleEntry(moduleID string) (ModuleEntry, bool, error) {

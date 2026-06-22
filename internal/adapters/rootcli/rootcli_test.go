@@ -92,10 +92,22 @@ func TestMCPHelpShowsOptions(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"hovel mcp", "--workspace", "--op", "--operation", "--chain", "--entity-id", "--display-name"} {
+	for _, want := range []string{"hovel mcp", "--workspace", "--op", "--operation", "--chain", "--entity-id", "--display-name", "--module-config", "--transport", "--http-addr"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestMCPRejectsUnsupportedTransportBeforeDaemonStartup(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := Run(context.Background(), []string{"mcp", "--transport", "banana"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "unsupported MCP transport") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 
