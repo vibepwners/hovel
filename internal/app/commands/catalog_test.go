@@ -577,6 +577,9 @@ func TestThrowConfirmationPromptDisplaysReviewableConfiguration(t *testing.T) {
 
 	prompt := throwConfirmationPrompt(plan, "throw")
 
+	if got := promptFieldValue(prompt, "operation"); got != operatorsession.DefaultOperation {
+		t.Fatalf("operation field = %q", got)
+	}
 	if got := promptFieldValue(prompt, "plan hash"); got != plan.PlanHash[:10] {
 		t.Fatalf("plan hash field = %q, want short hash %q", got, plan.PlanHash[:10])
 	}
@@ -977,6 +980,9 @@ func TestThrowChainFileUsesFileConfigWithoutSessionMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := operatorsession.New()
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.UseChain("interactive"); err != nil {
 		t.Fatal(err)
 	}
@@ -1014,7 +1020,7 @@ func TestThrowChainFileUsesFileConfigWithoutSessionMutation(t *testing.T) {
 		t.Fatalf("run requests = %#v, want one", recorder.requests)
 	}
 	wantRequest := RunMockExploitRequest{
-		Operation:    operatorsession.DefaultOperation,
+		Operation:    "redteam-lab",
 		Chain:        "alpha",
 		ModuleID:     "mock-exploit@v0.0.0-example",
 		Target:       "mock://target",
@@ -1026,7 +1032,7 @@ func TestThrowChainFileUsesFileConfigWithoutSessionMutation(t *testing.T) {
 		t.Fatalf("run request = %#v, want %#v", recorder.requests[0], wantRequest)
 	}
 	state := session.Snapshot()
-	if state.ActiveChain != "interactive" || len(state.Targets) != 0 || state.Steps[0].ModuleID != "mock-survey@v0.0.0-example" {
+	if state.ActiveOperation != "redteam-lab" || state.ActiveChain != "interactive" || len(state.Targets) != 0 || state.Steps[0].ModuleID != "mock-survey@v0.0.0-example" {
 		t.Fatalf("session mutated by file throw: %#v", state)
 	}
 }
@@ -1447,6 +1453,8 @@ func TestThrowPlanHashIncludesReviewedConfigAndSteps(t *testing.T) {
 	changedConfig.ChainConfig = map[string]string{"operator.confirmed_lab": "false"}
 	changedStep := base
 	changedStep.Modules = []string{"mock-survey@v0.0.0-example"}
+	changedOperation := base
+	changedOperation.Operation = "redteam-lab"
 
 	baseHash := newThrowPlanForExecution(".hovel", base).PlanHash
 	if baseHash == newThrowPlanForExecution(".hovel", changedConfig).PlanHash {
@@ -1454,6 +1462,9 @@ func TestThrowPlanHashIncludesReviewedConfigAndSteps(t *testing.T) {
 	}
 	if baseHash == newThrowPlanForExecution(".hovel", changedStep).PlanHash {
 		t.Fatal("plan hash did not change when step modules changed")
+	}
+	if baseHash == newThrowPlanForExecution(".hovel", changedOperation).PlanHash {
+		t.Fatal("plan hash did not change when operation changed")
 	}
 	if newThrowPlanForExecution(".hovel", base).ID == newThrowPlanForExecution(".hovel", changedConfig).ID {
 		t.Fatal("plan id did not change when reviewed config changed")

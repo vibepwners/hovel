@@ -2542,6 +2542,7 @@ func throwConfirmationPrompt(plan ThrowPlanRecord, action string) ConfirmationPr
 		RequiredLiteral: "yes",
 		Plan:            plan,
 		Fields: []ConfirmationField{
+			{Label: "operation", Value: planOperation(plan)},
 			{Label: "chain", Value: plan.Chain},
 			{Label: "targets", Value: strings.Join(plan.Targets, ", ")},
 			{Label: "modules", Value: formatReviewList(plan.Modules)},
@@ -2898,7 +2899,12 @@ func planHash(chain string, targets []string) string {
 }
 
 func planHashForExecution(throw throwExecution) string {
+	operation := strings.TrimSpace(throw.Operation)
+	if operation == "" {
+		operation = operatorsession.DefaultOperation
+	}
 	review := struct {
+		Operation     string                       `json:"operation"`
 		Chain         string                       `json:"chain"`
 		Targets       []string                     `json:"targets"`
 		Modules       []string                     `json:"modules"`
@@ -2906,6 +2912,7 @@ func planHashForExecution(throw throwExecution) string {
 		ChainConfig   map[string]string            `json:"chainConfig,omitempty"`
 		TargetConfigs map[string]map[string]string `json:"targetConfigs,omitempty"`
 	}{
+		Operation:     operation,
 		Chain:         throw.Chain,
 		Targets:       append([]string(nil), throw.Targets...),
 		Modules:       append([]string(nil), throw.Modules...),
@@ -3218,6 +3225,12 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 	if runtime.ChainFiles == nil {
 		return throwExecution{}, fmt.Errorf("chain file store is not configured")
 	}
+	operation := operatorsession.DefaultOperation
+	if runtime.Session != nil {
+		if state := runtime.Session.Snapshot(); state.ActiveOperation != "" {
+			operation = state.ActiveOperation
+		}
+	}
 	file, err := runtime.ChainFiles.ReadChainFile(ctx, path)
 	if err != nil {
 		return throwExecution{}, err
@@ -3272,7 +3285,7 @@ func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation I
 		targetConfigs = applySquatterBindTargetConfig(targets, targetConfigs, file.Spec.Config)
 	}
 	return throwExecution{
-		Operation:     operatorsession.DefaultOperation,
+		Operation:     operation,
 		Chain:         file.Metadata.Name,
 		Targets:       targets,
 		Modules:       modules,
