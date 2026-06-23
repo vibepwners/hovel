@@ -19,6 +19,36 @@ go_binary(
     visibility = ["//visibility:public"],
 )
 
+go_binary(
+    name = "hovel_linux_amd64",
+    out = "hovel-linux-amd64",
+    embed = [":hovel_lib"],
+    goarch = "amd64",
+    goos = "linux",
+    pure = "on",
+    visibility = ["//visibility:public"],
+)
+
+go_binary(
+    name = "hovel_darwin_arm64",
+    out = "hovel-darwin-arm64",
+    embed = [":hovel_lib"],
+    goarch = "arm64",
+    goos = "darwin",
+    pure = "on",
+    visibility = ["//visibility:public"],
+)
+
+go_binary(
+    name = "hovel_windows_amd64",
+    out = "hovel-windows-amd64.exe",
+    embed = [":hovel_lib"],
+    goarch = "amd64",
+    goos = "windows",
+    pure = "on",
+    visibility = ["//visibility:public"],
+)
+
 sh_test(
     name = "binary_e2e_test",
     size = "small",

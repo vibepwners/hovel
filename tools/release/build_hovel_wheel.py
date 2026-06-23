@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import base64
 import csv
 import hashlib
@@ -38,15 +39,12 @@ def main() -> None:
 
 
 def main() -> int:
+    args = parse_args()
     root = Path(__file__).resolve().parents[2]
     version = release_version(root)
-    platform_tag = os.environ.get("HOVEL_WHEEL_PLATFORM_TAG") or default_platform_tag()
-    binary_name = "hovel.exe" if os.name == "nt" else "hovel"
-    candidates = [
-        root / "bazel-bin" / "cmd" / "hovel" / "hovel_" / binary_name,
-        root / "bazel-bin" / "cmd" / "hovel" / binary_name,
-    ]
-    binary = next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+    platform_tag = args.platform_tag or os.environ.get("HOVEL_WHEEL_PLATFORM_TAG") or default_platform_tag()
+    binary_name = args.binary_name or ("hovel.exe" if os.name == "nt" else "hovel")
+    binary = release_binary(root, args.binary)
     if not binary.exists():
         print(f"missing built binary: {binary}", file=sys.stderr)
         return 2
@@ -62,7 +60,7 @@ def main() -> int:
 
     add("hovel/__init__.py", f'__version__ = "{version}"\n'.encode())
     add("hovel/__main__.py", LAUNCHER.encode())
-    add(f"hovel/bin/{binary.name}", binary.read_bytes(), 0o755)
+    add(f"hovel/bin/{binary_name}", binary.read_bytes(), 0o755)
     add(
         f"{dist_info}/METADATA",
         f"""Metadata-Version: 2.1
@@ -101,6 +99,30 @@ Tag: py3-none-{platform_tag}
 
     print(wheel)
     return 0
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build a platform wheel that wraps a Hovel binary.")
+    parser.add_argument(
+        "--binary",
+        type=Path,
+        help="Path to the already-built Hovel binary. Relative paths resolve from the repository root.",
+    )
+    parser.add_argument("--platform-tag", help="Wheel platform tag, such as macosx_11_0_arm64.")
+    parser.add_argument("--binary-name", help="Name to store under hovel/bin/ inside the wheel.")
+    return parser.parse_args()
+
+
+def release_binary(root: Path, binary: Path | None) -> Path:
+    if binary is not None:
+        return binary if binary.is_absolute() else root / binary
+
+    binary_name = "hovel.exe" if os.name == "nt" else "hovel"
+    candidates = [
+        root / "bazel-bin" / "cmd" / "hovel" / "hovel_" / binary_name,
+        root / "bazel-bin" / "cmd" / "hovel" / binary_name,
+    ]
+    return next((candidate for candidate in candidates if candidate.exists()), candidates[0])
 
 
 def release_version(root: Path) -> str:

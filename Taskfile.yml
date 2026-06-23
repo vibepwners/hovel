@@ -191,6 +191,16 @@ tasks:
       - task build -- //cmd/hovel
       - python3 tools/release/build_hovel_wheel.py
 
+  release:hovel-wheels:
+    desc: Cross-build all Hovel PyPI wheels from Linux through Bazel.
+    cmds:
+      - task build -- //cmd/hovel:hovel_linux_amd64
+      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-linux-amd64 --platform-tag manylinux_2_28_x86_64 --binary-name hovel
+      - task build -- //cmd/hovel:hovel_darwin_arm64
+      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-darwin-arm64 --platform-tag macosx_11_0_arm64 --binary-name hovel
+      - task build -- //cmd/hovel:hovel_windows_amd64
+      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-windows-amd64.exe --platform-tag win_amd64 --binary-name hovel.exe
+
   release:hovel-sdk-dist:
     desc: Build the hovel-sdk PyPI wheel and sdist.
     cmds:

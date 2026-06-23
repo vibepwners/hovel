@@ -10,18 +10,8 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.name }} wheel
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux-x86_64
-            os: ubuntu-latest
-          - name: macos-arm64
-            os: macos-14
-          - name: windows-x86_64
-            os: windows-latest
+    name: Build Hovel wheels
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -53,12 +43,12 @@ jobs:
           echo "Publishing hovel ${version} from committed VERSION"
 
       - name: Build wheel
-        run: task release:hovel-wheel
+        run: task release:hovel-wheels
 
-      - name: Upload wheel
+      - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: hovel-wheel-${{ matrix.name }}
+          name: hovel-wheels
           path: dist/*.whl
           if-no-files-found: error
 
@@ -125,9 +115,8 @@ jobs:
       - name: Download wheels
         uses: actions/download-artifact@v4
         with:
-          pattern: hovel-wheel-*
+          name: hovel-wheels
           path: dist
-          merge-multiple: true
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
