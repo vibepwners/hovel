@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -39,6 +41,33 @@ func TestDirectCommandDelegatesToCommandAdapter(t *testing.T) {
 	}
 }
 
+func TestLeadingConfigOptionDelegatesToDirectCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	configPath := writeRootCLIModuleConfig(t)
+
+	code := Run(context.Background(), []string{"--config", configPath, "module", "list"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "root-config-survey@0.1.0") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestLeadingConfigOptionMovesBeforeRunCommand(t *testing.T) {
+	args := normalizeLeadingConfig([]string{"--config", "lab.yaml", "run", "module", "list"})
+	want := []string{"run", "--config", "lab.yaml", "module", "list"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+
+	args = normalizeLeadingConfig([]string{"--config=lab.yaml", "run", "module", "list"})
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
 func TestInitAliasDelegatesToControlInit(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -55,6 +84,42 @@ func TestInitAliasDelegatesToControlInit(t *testing.T) {
 	if !payload.Created {
 		t.Fatal("created = false, want true")
 	}
+}
+
+func writeRootCLIModuleConfig(t *testing.T) string {
+	t.Helper()
+	searchRoot := t.TempDir()
+	moduleRoot := filepath.Join(searchRoot, "root-config-survey")
+	if err := os.MkdirAll(moduleRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: root-config-survey
+  version: 0.1.0
+  moduleType: survey
+  summary: Root config module
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/root-config-survey"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+modules:
+  searchPaths:
+    - `+searchRoot+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return configPath
 }
 
 func TestCLIRoleRejectsOneShotCommandArguments(t *testing.T) {
@@ -130,7 +195,7 @@ func TestRunCommandInjectsWorkspaceForDaemonCommands(t *testing.T) {
 		t.Fatalf("args = %#v, want %#v", args, want)
 	}
 	args = injectWorkspaceForDaemonCommand([]string{"module", "list"}, "/tmp/hovel")
-	want = []string{"module", "list"}
+	want = []string{"module", "list", "--workspace", "/tmp/hovel"}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("args = %#v, want %#v", args, want)
 	}

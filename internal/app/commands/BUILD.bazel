@@ -4,6 +4,7 @@ go_library(
     name = "commands",
     srcs = [
         "catalog.go",
+        "module_check.go",
         "payload_inventory.go",
         "registry.go",
         "session_commands.go",
@@ -11,7 +12,9 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/app/commands",
     visibility = ["//:__subpackages__"],
     deps = [
+        "//internal/app/hovelconfig",
         "//internal/app/modulecatalog",
+        "//internal/app/modulepackage",
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",
@@ -31,6 +34,7 @@ go_test(
     embed = [":commands"],
     deps = [
         "//internal/app/modulecatalog",
+        "//internal/app/modulepackage",
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",

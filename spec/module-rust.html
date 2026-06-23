@@ -270,13 +270,13 @@ task test -- //sdk/rust/hovel:hovel_test</code></pre>
           for an authorized lab; CI should stay offline and deterministic.
         </p>
 
-        <h2>Build, stage, and register</h2>
+        <h2>Build, package, and run</h2>
         <p>
           Rust is wired into Bazel via <code>rules_rust</code> (declared in
           <code>MODULE.bazel</code>), so <code>task build</code> and <code>task ci</code> cover
           it alongside Go and Python. BUILD files are hand-written
-          (<code>rust_binary</code> + <code>rust_test</code>); the example binaries are staged
-          to <code>examples/bin/</code> by <code>task modules:build</code>.
+          (<code>rust_binary</code> + <code>rust_test</code>); release packages carry the
+          compiled binaries and host-platform launch entries.
         </p>
 <pre data-lang="examples/rust/mock_survey/BUILD.bazel"><code>rust_binary(
     name = "mock-survey-rust",
@@ -284,12 +284,21 @@ task test -- //sdk/rust/hovel:hovel_test</code></pre>
     edition = "2021",
     deps = ["//sdk/rust/hovel"],
 )</code></pre>
-<pre data-lang="examples/hovel-modules.json"><code>{
-  "id": "mock-survey-rust",
-  "runtime": "jsonrpc-stdio",
-  "command": ["bin/mock-survey-rust"]
-}</code></pre>
-<pre data-lang="shell"><code>task modules:build   # compiles and stages examples/bin/mock-survey-rust
+<pre data-lang="hovel-module.yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: mock-survey-rust
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/linux-amd64/mock-survey-rust"]</code></pre>
+<pre data-lang="shell"><code>task modules:build
+hovel module install --link "$PWD/examples/rust/mock_survey"
 task start
 hovel&gt; module list   # ... mock-survey-rust, mock-exploit-rust, mock-exploit-session-rust</code></pre>
         <p>

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
@@ -39,6 +40,10 @@ func (m Manager) Ensure(ctx context.Context, workspacePath string) (*Session, er
 }
 
 func (m Manager) EnsureWithModuleConfig(ctx context.Context, workspacePath, moduleConfig string) (*Session, error) {
+	return m.EnsureWithConfig(ctx, workspacePath, moduleConfig, "")
+}
+
+func (m Manager) EnsureWithConfig(ctx context.Context, workspacePath, moduleConfig, hovelConfig string) (*Session, error) {
 	m = m.withDefaults()
 	workspacePath = workspace.ResolvePath(workspacePath)
 	status, err := m.Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
@@ -48,20 +53,29 @@ func (m Manager) EnsureWithModuleConfig(ctx context.Context, workspacePath, modu
 	if status.State == daemon.StateRunning {
 		status = normalizeStatus(status, workspacePath)
 		if socketReachable(ctx, status.Identity.SocketPath) {
+			if err := ensureSameHovelConfig(status.Identity.HovelConfig, hovelConfig); err != nil {
+				return nil, err
+			}
 			return &Session{status: status}, nil
 		}
 		_ = filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), workspacePath)
 		if status, ok := m.statusFromReachableSocket(ctx, workspacePath); ok {
+			if err := ensureSameHovelConfig(status.Identity.HovelConfig, hovelConfig); err != nil {
+				return nil, err
+			}
 			return &Session{status: status}, nil
 		}
 	} else if status, ok := m.statusFromReachableSocket(ctx, workspacePath); ok {
+		if err := ensureSameHovelConfig(status.Identity.HovelConfig, hovelConfig); err != nil {
+			return nil, err
+		}
 		return &Session{status: status}, nil
 	}
 
 	daemonCtx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
-		done <- m.Serve(daemonCtx, daemonruntime.Args{WorkspacePath: workspacePath, ModuleConfig: moduleConfig})
+		done <- m.Serve(daemonCtx, daemonruntime.Args{WorkspacePath: workspacePath, ModuleConfig: moduleConfig, HovelConfig: hovelConfig})
 	}()
 
 	status, err = m.waitRunning(ctx, workspacePath, done)
@@ -85,6 +99,26 @@ func (m Manager) EnsureWithModuleConfig(ctx context.Context, workspacePath, modu
 	}, nil
 }
 
+func ensureSameHovelConfig(running, requested string) error {
+	running = normalizeConfigPath(running)
+	requested = normalizeConfigPath(requested)
+	if running != requested {
+		return errors.New("daemon is already running with a different hovel config; stop it before changing --config")
+	}
+	return nil
+}
+
+func normalizeConfigPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return filepath.Clean(path)
+}
+
 func normalizeStatus(status daemon.Status, workspacePath string) daemon.Status {
 	if status.State != daemon.StateRunning || filepath.IsAbs(status.Identity.SocketPath) || isEndpointAddress(status.Identity.SocketPath) {
 		return status
@@ -93,6 +127,7 @@ func normalizeStatus(status daemon.Status, workspacePath string) daemon.Status {
 		WorkspacePath: workspacePath,
 		PID:           status.Identity.PID,
 		SocketPath:    filepath.Join(filepath.Dir(workspacePath), status.Identity.SocketPath),
+		HovelConfig:   status.Identity.HovelConfig,
 		StartedAt:     status.Identity.StartedAt,
 		Health:        status.Identity.Health,
 	})

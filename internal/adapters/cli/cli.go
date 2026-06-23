@@ -728,7 +728,7 @@ func (a App) positionalSuggestions(definition commands.Definition, commandWordCo
 			return a.chainSuggestions(prefix), true
 		}
 		return nil, true
-	case "chain add", "chains add", "module inspect", "modules inspect":
+	case "chain add", "chains add", "module inspect", "modules inspect", "module check", "modules check":
 		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.moduleSuggestions), true
 	case "chain config set", "chains config set", "chain config unset", "chains config unset":
 		if provided == 0 || provided == 1 && !endsWithSpace {

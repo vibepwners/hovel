@@ -64,8 +64,10 @@ test_suite(
         "//internal/adapters/terminallog:terminallog_test",
         "//internal/app/chainruntime:chainruntime_test",
         "//internal/app/commands:commands_test",
+        "//internal/app/hovelconfig:hovelconfig_test",
         "//internal/app/launchkey:launchkey_test",
         "//internal/app/modulecatalog:modulecatalog_test",
+        "//internal/app/modulepackage:modulepackage_test",
         "//internal/app/operatorlog:operatorlog_test",
         "//internal/app/operatorsession:operatorsession_test",
         "//internal/app/services:services_test",
@@ -97,5 +99,6 @@ test_suite(
         "//sdk/rust/hovel:hovel_test",
         "//spec:site_smoke_test",
         "//tools/demo/mcpagent:mcpagent_test",
+        "//tools/modules:check_in_repo_modules_test",
     ],
 )

@@ -12,12 +12,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/hovelconfig"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
@@ -58,6 +61,8 @@ type Runner struct {
 	PythonPath    string
 	SDKRoot       string
 	ConfigPath    string
+	HovelConfig   string
+	WorkspacePath string
 	Events        services.EventSink
 	IDs           services.IDGenerator
 	Clock         services.Clock
@@ -130,13 +135,29 @@ func (r Runner) Catalog(ctx context.Context) (modulecatalog.Catalog, error) {
 }
 
 func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Module, error) {
+	return r.inspect(ctx, moduleID, func(ctx context.Context) (*moduleProcess, error) {
+		return r.start(ctx, moduleID)
+	})
+}
+
+func (r Runner) InspectEntry(ctx context.Context, entry ModuleEntry) (modulecatalog.Module, error) {
+	entry.ID = strings.TrimSpace(entry.ID)
+	if entry.ID == "" {
+		return modulecatalog.Module{}, errors.New("module id is required")
+	}
+	return r.inspect(ctx, entry.ID, func(ctx context.Context) (*moduleProcess, error) {
+		return r.startEntry(ctx, entry)
+	})
+}
+
+func (r Runner) inspect(ctx context.Context, moduleID string, start func(context.Context) (*moduleProcess, error)) (modulecatalog.Module, error) {
 	timeout := r.Timeout
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	process, err := r.start(ctx, moduleID)
+	process, err := start(ctx)
 	if err != nil {
 		return modulecatalog.Module{}, err
 	}
@@ -412,7 +433,29 @@ func (r Runner) start(ctx context.Context, moduleID string) (*moduleProcess, err
 	if !ok {
 		return nil, fmt.Errorf("unknown module %q", moduleID)
 	}
+	return r.startEntry(ctx, entrypoint)
+}
 
+func (r Runner) startEntry(ctx context.Context, entrypoint ModuleEntry) (*moduleProcess, error) {
+	entrypoint.ID = strings.TrimSpace(entrypoint.ID)
+	entrypoint.Runtime = strings.TrimSpace(entrypoint.Runtime)
+	if entrypoint.ID == "" {
+		return nil, errors.New("module id is required")
+	}
+	if entrypoint.Runtime == "" {
+		entrypoint.Runtime = modulecatalog.RuntimeJSONRPCStdio
+	}
+	if entrypoint.Runtime != modulecatalog.RuntimeJSONRPCStdio {
+		return nil, fmt.Errorf("module %q uses unsupported runtime %q", entrypoint.ID, entrypoint.Runtime)
+	}
+	if entrypoint.usesCommand() {
+		entrypoint.Command[0] = strings.TrimSpace(entrypoint.Command[0])
+		if entrypoint.Command[0] == "" {
+			return nil, fmt.Errorf("module %q command[0] is required", entrypoint.ID)
+		}
+	} else if entrypoint.ProjectDir == "" || entrypoint.Module == "" {
+		return nil, fmt.Errorf("module %q missing project_dir or module", entrypoint.ID)
+	}
 	cmd, err := r.command(ctx, entrypoint)
 	if err != nil {
 		return nil, err
@@ -764,12 +807,20 @@ func (r Runner) moduleEntry(moduleID string) (ModuleEntry, bool, error) {
 }
 
 func (r Runner) moduleEntries() ([]ModuleEntry, error) {
+	installed, err := r.installedModuleEntries()
+	if err != nil {
+		return nil, err
+	}
+	configured, err := r.configuredModuleEntries()
+	if err != nil {
+		return nil, err
+	}
 	path, err := resolveConfigPath(r.configPath())
 	if err != nil {
 		return nil, err
 	}
 	if path == "" {
-		return nil, nil
+		return append(installed, configured...), nil
 	}
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -816,7 +867,109 @@ func (r Runner) moduleEntries() ([]ModuleEntry, error) {
 		}
 		entries = append(entries, entry)
 	}
+	out := append(installed, configured...)
+	return append(out, entries...), nil
+}
+
+func (r Runner) installedModuleEntries() ([]ModuleEntry, error) {
+	workspacePath := strings.TrimSpace(r.WorkspacePath)
+	if workspacePath == "" {
+		return nil, nil
+	}
+	lock, err := modulepackage.LoadLock(filepath.Join(workspacePath, "module-lock.yaml"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	entries := make([]ModuleEntry, 0, len(lock.Modules))
+	for _, record := range lock.Modules {
+		pkg, err := modulepackage.LoadDir(record.Source)
+		if err != nil {
+			return nil, err
+		}
+		launch, err := pkg.LaunchEntry(runtime.GOOS, runtime.GOARCH)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, ModuleEntry{
+			ID:      modulecatalog.CanonicalID(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version),
+			Runtime: launch.Runtime,
+			Command: append([]string(nil), launch.Command...),
+		})
+	}
 	return entries, nil
+}
+
+func (r Runner) configuredModuleEntries() ([]ModuleEntry, error) {
+	if strings.TrimSpace(r.WorkspacePath) == "" && strings.TrimSpace(r.HovelConfig) == "" {
+		return nil, nil
+	}
+	config, _, err := hovelconfig.Load(hovelconfig.Options{
+		Workspace:    r.WorkspacePath,
+		ExplicitPath: r.HovelConfig,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var entries []ModuleEntry
+	for _, root := range config.Modules.SearchPaths {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		info, err := os.Stat(root)
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, modulepackage.ManifestName)); err == nil {
+			entry, err := moduleEntryFromPackageRoot(root)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, entry)
+			continue
+		}
+		children, err := os.ReadDir(root)
+		if err != nil {
+			return nil, err
+		}
+		for _, child := range children {
+			if !child.IsDir() {
+				continue
+			}
+			childRoot := filepath.Join(root, child.Name())
+			if _, err := os.Stat(filepath.Join(childRoot, modulepackage.ManifestName)); err != nil {
+				continue
+			}
+			entry, err := moduleEntryFromPackageRoot(childRoot)
+			if err != nil {
+				return nil, err
+			}
+			entries = append(entries, entry)
+		}
+	}
+	return entries, nil
+}
+
+func moduleEntryFromPackageRoot(root string) (ModuleEntry, error) {
+	pkg, err := modulepackage.LoadDir(root)
+	if err != nil {
+		return ModuleEntry{}, err
+	}
+	launch, err := pkg.LaunchEntry(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return ModuleEntry{}, err
+	}
+	return ModuleEntry{
+		ID:      modulecatalog.CanonicalID(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version),
+		Runtime: launch.Runtime,
+		Command: append([]string(nil), launch.Command...),
+	}, nil
 }
 
 func resolveConfigPath(path string) (string, error) {

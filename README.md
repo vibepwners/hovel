@@ -28,13 +28,46 @@ Module authors should start with the
 [Module Development](spec/module-development.html) guide, then use the
 language-specific guides for [Python](spec/module-python.html),
 [Go](spec/module-go.html), or [Rust](spec/module-rust.html). Those pages cover
-the stdio JSON-RPC contract, registration, safety tags, sessions, artifacts,
+the stdio JSON-RPC contract, module packages, safety tags, sessions, artifacts,
 installed payload records, and provider boundaries.
+
+## Install
+
+The operator install is the `hovel` PyPI package, which contains the
+platform-specific Go binary and does not download the binary at install time:
+
+```sh
+pipx install hovel
+hovel status
+```
+
+The Python module SDK ships separately:
+
+```sh
+python -m pip install hovel-sdk
+```
+
+The `hovel` package includes no modules by default. Install trusted module
+packages explicitly:
+
+```sh
+hovel module install ./squatter-0.1.0.tgz
+hovel module install --link /absolute/path/to/module-package-root
+hovel module install squatter@0.1.0 --index ./dist/modules/module-index.yaml
+hovel module uninstall squatter@0.1.0
+```
+
+Use `--global` on module commands to install/list/uninstall from the user module
+scope instead of the active workspace. Downloaded module packages are cached and
+can be discovered offline.
 
 `task docs` renders the terminal demos, stages the full documentation site in
 `_site/`, embeds the generated GIFs under `_site/assets/demos/`, generates SDK
 API reference pages under `_site/api/sdk/`, and runs an internal link check.
 GitHub Pages runs that task before uploading and deploying the site.
+
+`task modules:package` builds the example module `.tgz` packages, a module
+index, and `SHA256SUMS` under `dist/modules/` for GitHub Release publishing.
 
 ## Layout
 
@@ -112,6 +145,7 @@ Build & checks:
 | `task lint` (`l`) | Go formatting, Gazelle, Python, and Squatter C checks (read-only). |
 | `task fmt` | Auto-format Go source, regenerate `BUILD` metadata, and format Squatter C. |
 | `task check` (`ci`) | Lint, demo-backed docs, build, and test. |
+| `task upver -- 0.2.0` | Update the shared Hovel and hovel-sdk release version. |
 | `task demos` | Generate VHS terminal demos into `demo/out/`. |
 | `task demo:squatter-wine` | Generate the Docker/Wine Squatter MCP demo GIF. |
 | `task hooks:install` | Install git hooks via Lefthook. |
@@ -192,6 +226,7 @@ Pages workflow runs after the CI workflow succeeds, regenerates the demos with
 | Direct saved chain | Attach, detach, reconnect | `demo/out/mock-survey-exploit-04-session-connect.gif` |
 | CLI saved chain | Read and send session data | `demo/out/mock-survey-exploit-cli-02-session-io.gif` |
 | CLI saved chain | Attach, detach, reconnect | `demo/out/mock-survey-exploit-cli-03-session-connect.gif` |
+| Module packages | Link, list, and inspect lock state | `demo/out/module-package-install-01-link.gif` |
 | MCP agent | Throw mock exploit through MCP | `demo/out/mcp-agent-01-throw.gif` |
 | MCP agent | Operate Squatter payload through MCP | `demo/out/mcp-agent-02-squatter-wine.gif` |
 

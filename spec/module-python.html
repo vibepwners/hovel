@@ -377,18 +377,28 @@ task test -- //examples/python:mock_exploit_session_test</code></pre>
           offline, then reserve live target checks for an authorized lab.
         </p>
 
-        <h2>Register and run</h2>
-        <p>Add the module to the config with <code>project_dir</code> and <code>module</code>; the daemon puts the SDK and project on <code>PYTHONPATH</code> automatically.</p>
-<pre data-lang="examples/hovel-modules.json"><code>{
-  "id": "mock-survey",
-  "runtime": "jsonrpc-stdio",
-  "project_dir": "python/mock_survey",
-  "module": "hovel_example_survey"
-}</code></pre>
-<pre data-lang="shell"><code>task start          # launch the CLI with the example catalog
+        <h2>Package and run</h2>
+        <p>Package or link the module with a <code>hovel-module.yaml</code> manifest. Python launchers can use Hovel-managed python-build-standalone, an operator-supplied interpreter, or a bundled interpreter.</p>
+<pre data-lang="hovel-module.yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: mock-survey
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector: {}
+    python:
+      managed:
+        versions: ["3.10-3.14"]
+      command: ["{python}", "-m", "hovel_example_survey"]</code></pre>
+<pre data-lang="shell"><code>hovel module install --link "$PWD/examples/python/mock_survey"
+hovel module check mock-survey
+task start
 hovel&gt; module list  # mock-survey, mock-exploit, mock-exploit-session ...</code></pre>
         <p>
-          Python modules need no <code>task modules:build</code> — they run from source. See
+          Python modules need no native compile step. See
           the <a href="module-go.html">Go</a> and <a href="module-rust.html">Rust</a> guides
           for the same three modules as compiled binaries.
         </p>

@@ -90,10 +90,11 @@ func (i Invocation) Flag(name string) bool {
 }
 
 type Result struct {
-	Human string
-	Raw   []byte
-	JSON  any
-	Log   operatorlog.Log
+	Human    string
+	Raw      []byte
+	JSON     any
+	Log      operatorlog.Log
+	ExitCode int
 }
 
 type Input interface {

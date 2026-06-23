@@ -64,11 +64,11 @@
         <h2>Implementation Posture</h2>
         <p>The Go implementation uses the official <code>github.com/modelcontextprotocol/go-sdk</code>. The adapter lives in <code>internal/adapters/mcp</code> and is exposed by the mono-binary as:</p>
 <pre data-lang="shell"><code>hovel mcp --workspace .hovel
-hovel mcp --workspace .hovel --module-config examples/hovel-modules.json
+hovel mcp --workspace .hovel --config lab.yaml
 hovel mcp --transport http --workspace .hovel
 task mcp
 </code></pre>
-        <p>The default transport is MCP stdio. Stdio keeps the local trust boundary tight: the MCP client launches <code>hovel mcp</code> as a subprocess, Hovel writes MCP JSON-RPC only to stdout, and diagnostic logs go to stderr. <code>--transport http</code> serves streamable HTTP on localhost by default; use <code>--http-addr</code> to pin the listen address. <code>task mcp</code> builds the example modules and sets the full example module catalog; direct launches can pass <code>--module-config</code> to avoid inheriting a narrow catalog that omits payload providers.</p>
+        <p>The default transport is MCP stdio. Stdio keeps the local trust boundary tight: the MCP client launches <code>hovel mcp</code> as a subprocess, Hovel writes MCP JSON-RPC only to stdout, and diagnostic logs go to stderr. <code>--transport http</code> serves streamable HTTP on localhost by default; use <code>--http-addr</code> to pin the listen address. <code>task mcp</code> builds and installs or links the example modules for the dev workspace; direct launches can pass <code>--config</code> to select the same module search paths and indexes as other front ends.</p>
         <p><code>hovel mcp</code> attaches to <code>hoveld</code> over the local daemon channel, registers as an MCP operator entity, heartbeats while connected, and detaches on shutdown. <code>hoveld</code> should not expose MCP directly in the MVP. Direct daemon-hosted MCP is a future team or remote-deployment shape once authorization, session binding, and remote operator identity are source-backed.</p>
 
         <h2>Demo Harness</h2>
@@ -118,7 +118,7 @@ hovel_payload_cmd
 hovel_payload_command_list
 hovel_payload_command_call
 </code></pre>
-        <p>Agents should start with <code>hovel_catalog_snapshot</code> and <code>hovel_workspace_snapshot</code>. The catalog snapshot returns the active module-config path, loaded module IDs, payload-provider modules, and load errors. The workspace snapshot returns operations, chains, steps, config, target config, installed payload records, and provider readiness.</p>
+        <p>Agents should start with <code>hovel_catalog_snapshot</code> and <code>hovel_workspace_snapshot</code>. The catalog snapshot returns the effective config source, loaded module IDs, payload-provider modules, package sources, checksums, and load errors. The workspace snapshot returns operations, chains, steps, config, target config, installed payload records, and provider readiness.</p>
         <p><code>hovel_chain_apply</code> is the normal setup tool. It creates or selects the operation and chain, adds missing modules, adds targets, sets chain and target config, fills safe defaults such as <code>target.host=&lt;target&gt;</code> and module-declared required defaults, and validates. A representative Etro-to-Squatter TCP bind apply call uses modules <code>etro-survey@v0.1.0</code>, <code>etro-exploit@v1.0.0</code>, and <code>squatter@v0.1.0</code>; target <code>192.168.122.142</code>; chain config <code>operator.confirmed_lab=true</code>; and optional chain config <code>squatter.bind_port=9100</code>. The Squatter provider step is explicit, but Hovel derives the ETRO payload file and target-side payload config during planning and execution.</p>
         <p>After <code>hovel_throw_start</code>, the throw output includes installed payload readiness records with handles such as <code>p1</code>, provider readiness, provider errors, and next typed actions. Agents should call <code>hovel_installed_payload_list</code> when they need the current inventory, and <code>hovel_payload_cmd</code> for direct <code>cmd.exe</code> commands such as <code>systeminfo</code>. <code>hovel_payload_command_list</code> and <code>hovel_payload_command_call</code> remain available for provider-specific command surfaces.</p>
         <p>Tool names should stay simple MCP identifiers with a <code>hovel_</code> prefix. The full parity surface should grow through domain verbs:</p>

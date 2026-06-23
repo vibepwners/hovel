@@ -1,8 +1,12 @@
 package commands
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
@@ -52,8 +57,11 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"chain", "save"},
 		{"chain", "validate"},
 		{"module", "inspect"},
+		{"module", "install"},
+		{"module", "check"},
 		{"module", "list"},
 		{"module", "search"},
+		{"module", "uninstall"},
 		{"payloads", "available"},
 		{"payloads", "cleanup"},
 		{"payloads", "cmd"},
@@ -1790,6 +1798,71 @@ func TestChainAddVersionedSquatterSetsTypeConfig(t *testing.T) {
 	}
 }
 
+func TestChainAddUsesConfigSearchPathModule(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://target"); err != nil {
+		t.Fatal(err)
+	}
+	searchRoot := t.TempDir()
+	moduleRoot := filepath.Join(searchRoot, "configured-chain-module")
+	if err := os.MkdirAll(moduleRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: configured-chain-module
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - command: ["bin/configured-chain-module"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+modules:
+  searchPaths:
+    - `+searchRoot+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := chainAddHandler(Runtime{Session: session, Modules: modulecatalog.New()})(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "configured-chain-module"},
+		Options:     map[string]string{"config": configPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "configured-chain-module") {
+		t.Fatalf("human = %q", result.Human)
+	}
+	state := session.Snapshot()
+	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "configured-chain-module@0.1.0" {
+		t.Fatalf("steps = %#v, want configured module", state.Steps)
+	}
+	validate, err := chainValidateHandler(Runtime{Session: session, Modules: modulecatalog.New()})(context.Background(), Invocation{
+		Options: map[string]string{"config": configPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(validate.Human, "Chain alpha valid") {
+		t.Fatalf("validate human = %q", validate.Human)
+	}
+}
+
 func TestChainAddSquatterRequiresLoadedProvider(t *testing.T) {
 	session := operatorsession.New()
 	if err := session.UseOperation("op1"); err != nil {
@@ -1828,7 +1901,7 @@ func TestExecuteLegacyThrowRunsSquatterProviderAfterEtroInstall(t *testing.T) {
 		},
 	}
 	payload := ThrowPayload{ThrowID: "throw-1", Chain: "alpha", Targets: []string{"t1"}}
-	err := executeLegacyThrow(context.Background(), Runtime{Modules: squatterCatalog()}, client, "", ThrowPlanRecord{Operation: "op1", Chain: "alpha"}, throw, &payload, time.Now(), nil)
+	err := executeLegacyThrow(context.Background(), Runtime{Modules: squatterCatalog()}, client, "", squatterCatalog(), ThrowPlanRecord{Operation: "op1", Chain: "alpha"}, throw, &payload, time.Now(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2202,6 +2275,472 @@ func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 	}
 	if !strings.Contains(searchResult.Human, "mock-survey") {
 		t.Fatalf("search result = %q", searchResult.Human)
+	}
+}
+
+func TestModuleInstallLinkWritesLockAndListIncludesPackage(t *testing.T) {
+	workspace := t.TempDir()
+	moduleRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: linked-survey
+  version: 0.1.0
+  moduleType: survey
+  summary: Linked module package
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/linked-survey"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
+	})
+	installDefinition, _ := registry.Find("module", "install")
+	listDefinition, _ := registry.Find("module", "list")
+
+	installResult, err := installDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": workspace,
+			"link":      moduleRoot,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(installResult.Human, "linked-survey@0.1.0") {
+		t.Fatalf("install result = %q", installResult.Human)
+	}
+	lockPath := filepath.Join(workspace, "module-lock.yaml")
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("module lock was not written: %v", err)
+	}
+
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"linked-survey", "survey", "Linked module package"} {
+		if !strings.Contains(listResult.Human, want) {
+			t.Fatalf("module list missing %q:\n%s", want, listResult.Human)
+		}
+	}
+}
+
+func TestModuleInstallAndUninstallGlobalUseUserDataScope(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dataHome := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dataHome)
+	moduleRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: global-survey
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/global-survey"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	installDefinition, _ := registry.Find("module", "install")
+	uninstallDefinition, _ := registry.Find("module", "uninstall")
+	listDefinition, _ := registry.Find("module", "list")
+
+	if _, err := installDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"link": moduleRoot,
+		},
+		Flags: map[string]bool{"global": true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	globalWorkspace := filepath.Join(dataHome, "hovel", "modules")
+	if _, err := os.Stat(filepath.Join(globalWorkspace, "module-lock.yaml")); err != nil {
+		t.Fatalf("global module lock missing: %v", err)
+	}
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+		Flags: map[string]bool{"global": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listResult.Human, "global-survey@0.1.0") {
+		t.Fatalf("module list = %q", listResult.Human)
+	}
+	if _, err := uninstallDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "global-survey@0.1.0"},
+		Flags:       map[string]bool{"global": true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	listResult, err = listDefinition.Execute(context.Background(), Invocation{
+		Flags: map[string]bool{"global": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(listResult.Human, "global-survey@0.1.0") {
+		t.Fatalf("module list still includes uninstalled global module:\n%s", listResult.Human)
+	}
+}
+
+func TestModuleCheckReportsFailureWithExitCode(t *testing.T) {
+	checks := fakeModuleChecker{reports: map[string]ModuleCheckReport{
+		"broken": {
+			Subject: "broken",
+			Status:  ModuleCheckFail,
+			Checks: []ModuleCheckItem{{
+				Name:    "rpc discovery",
+				Status:  ModuleCheckFail,
+				Message: "module handshake failed",
+			}},
+		},
+	}}
+	registry := HovelRegistry(Runtime{
+		Modules:      modulecatalog.New(),
+		ModuleChecks: checks,
+	})
+	definition, _ := registry.Find("module", "check")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "broken"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", result.ExitCode)
+	}
+	if !strings.Contains(result.Human, "MODULE CHECK broken") || !strings.Contains(result.Human, "❌ FAIL rpc discovery") {
+		t.Fatalf("human report = %q", result.Human)
+	}
+}
+
+func TestModuleCheckWarningsAsErrors(t *testing.T) {
+	checks := fakeModuleChecker{reports: map[string]ModuleCheckReport{
+		"warn-only": {
+			Subject: "warn-only",
+			Status:  ModuleCheckWarn,
+			Checks: []ModuleCheckItem{{
+				Name:    "metadata",
+				Status:  ModuleCheckWarn,
+				Message: "metadata.author is recommended",
+			}},
+		},
+	}}
+	registry := HovelRegistry(Runtime{
+		Modules:      modulecatalog.New(),
+		ModuleChecks: checks,
+	})
+	definition, _ := registry.Find("module", "check")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "warn-only"},
+		Flags:       map[string]bool{"warnings-as-errors": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", result.ExitCode)
+	}
+}
+
+func TestModuleListIncludesCachedDownloads(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cacheHome := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+	cacheDir, err := modulepackage.DownloadCacheDir("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := writeCommandModuleArchive(t, cacheDir, "cached-survey")
+	sum, err := modulepackage.FileSHA256(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(archive, filepath.Join(cacheDir, sum+".tgz")); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	listDefinition, _ := registry.Find("module", "list")
+
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listResult.Human, "cached-survey@0.1.0") {
+		t.Fatalf("module list = %q", listResult.Human)
+	}
+}
+
+func TestModuleListLoadsConfigSearchPaths(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	searchRoot := t.TempDir()
+	moduleRoot := filepath.Join(searchRoot, "configured-survey")
+	if err := os.MkdirAll(moduleRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: configured-survey
+  version: 0.2.0
+  moduleType: survey
+  summary: Configured search path module
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/configured-survey"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "lab.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+modules:
+  searchPaths:
+    - `+searchRoot+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	listDefinition, _ := registry.Find("module", "list")
+
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"config": configPath},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"configured-survey@0.2.0", "survey", "Configured search path module"} {
+		if !strings.Contains(listResult.Human, want) {
+			t.Fatalf("module list missing %q:\n%s", want, listResult.Human)
+		}
+	}
+}
+
+func TestModuleBulkInstallInstallsRelativeArchives(t *testing.T) {
+	workspace := t.TempDir()
+	manifestDir := t.TempDir()
+	first := writeCommandModuleArchive(t, manifestDir, "bulk-one")
+	second := writeCommandModuleArchive(t, manifestDir, "bulk-two")
+	firstSHA, err := modulepackage.FileSHA256(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSHA, err := modulepackage.FileSHA256(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(manifestDir, "modules.yaml")
+	if err := os.WriteFile(manifestPath, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModuleInstallSet
+modules:
+  - source: `+filepath.Base(first)+`
+    sha256: `+firstSHA+`
+  - source: `+filepath.Base(second)+`
+    sha256: `+secondSHA+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	bulkDefinition, _ := registry.Find("module", "bulk-install")
+	listDefinition, _ := registry.Find("module", "list")
+
+	result, err := bulkDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"manifest": manifestPath},
+		Options:     map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "Installed 2 modules") {
+		t.Fatalf("bulk result = %q", result.Human)
+	}
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"bulk-one@0.1.0", "bulk-two@0.1.0"} {
+		if !strings.Contains(listResult.Human, want) {
+			t.Fatalf("module list missing %q:\n%s", want, listResult.Human)
+		}
+	}
+}
+
+func TestModuleInstallResolvesExplicitIndex(t *testing.T) {
+	workspace := t.TempDir()
+	indexDir := t.TempDir()
+	archive := writeCommandModuleArchive(t, indexDir, "indexed-survey")
+	sum, err := modulepackage.FileSHA256(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(indexDir, "index.yaml")
+	if err := os.WriteFile(indexPath, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModuleIndex
+modules:
+  - name: indexed-survey
+    version: 0.1.0
+    url: `+filepath.Base(archive)+`
+    sha256: `+sum+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	installDefinition, _ := registry.Find("module", "install")
+	listDefinition, _ := registry.Find("module", "list")
+
+	result, err := installDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"source": "indexed-survey@0.1.0"},
+		Options: map[string]string{
+			"workspace": workspace,
+			"index":     indexPath,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "indexed-survey@0.1.0") {
+		t.Fatalf("install result = %q", result.Human)
+	}
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listResult.Human, "indexed-survey@0.1.0") {
+		t.Fatalf("module list = %q", listResult.Human)
+	}
+}
+
+func TestModuleInstallResolvesHTTPSIndex(t *testing.T) {
+	workspace := t.TempDir()
+	archive := writeCommandModuleArchive(t, t.TempDir(), "remote-indexed")
+	body, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum, err := modulepackage.FileSHA256(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var server *httptest.Server
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleIndex\nmodules:\n  - name: remote-indexed\n    version: 0.1.0\n    url: remote-indexed.tgz\n    sha256: %s\n", sum)
+		case "/remote-indexed.tgz":
+			_, _ = w.Write(body)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	oldClient := http.DefaultClient
+	http.DefaultClient = server.Client()
+	t.Cleanup(func() { http.DefaultClient = oldClient })
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	installDefinition, _ := registry.Find("module", "install")
+
+	result, err := installDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"source": "remote-indexed@0.1.0"},
+		Options: map[string]string{
+			"workspace": workspace,
+			"index":     server.URL + "/index.yaml",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "remote-indexed@0.1.0") {
+		t.Fatalf("install result = %q", result.Human)
+	}
+}
+
+func TestResolveIndexEntryPicksNewestVersion(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "index.yaml")
+	if err := os.WriteFile(indexPath, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModuleIndex
+modules:
+  - name: newest-survey
+    version: 1.2.0
+    url: newest-survey-1.2.0.tgz
+  - name: newest-survey
+    version: 1.10.0
+    url: newest-survey-1.10.0.tgz
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entry, _, err := resolveIndexEntry("newest-survey", []string{indexPath}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Version != "1.10.0" {
+		t.Fatalf("version = %q, want 1.10.0", entry.Version)
+	}
+}
+
+func TestModuleUninstallRemovesInstalledPackage(t *testing.T) {
+	workspace := t.TempDir()
+	archive := writeCommandModuleArchive(t, t.TempDir(), "uninstallable-survey")
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	installDefinition, _ := registry.Find("module", "install")
+	uninstallDefinition, _ := registry.Find("module", "uninstall")
+	listDefinition, _ := registry.Find("module", "list")
+
+	if _, err := installDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"source": archive},
+		Options:     map[string]string{"workspace": workspace},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := uninstallDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "uninstallable-survey@0.1.0"},
+		Options:     map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "Uninstalled module uninstallable-survey@0.1.0") {
+		t.Fatalf("uninstall result = %q", result.Human)
+	}
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(listResult.Human, "uninstallable-survey@0.1.0") {
+		t.Fatalf("module still listed after uninstall:\n%s", listResult.Human)
 	}
 }
 
@@ -3582,6 +4121,21 @@ type fakeRunClientFactory struct {
 	recorder *fakeRunRecorder
 }
 
+type fakeModuleChecker struct {
+	reports map[string]ModuleCheckReport
+}
+
+func (f fakeModuleChecker) CheckModule(_ context.Context, request ModuleCheckRequest) (ModuleCheckReport, error) {
+	if report, ok := f.reports[request.Reference]; ok {
+		return report, nil
+	}
+	return ModuleCheckReport{
+		Subject: request.Reference,
+		Status:  ModuleCheckPass,
+		Checks:  []ModuleCheckItem{{Name: "fake", Status: ModuleCheckPass, Message: "ok"}},
+	}, nil
+}
+
 func (f fakeRunClientFactory) DialRunClient(socketPath string) (RunClient, error) {
 	if f.recorder != nil {
 		f.recorder.socketPath = socketPath
@@ -3691,6 +4245,53 @@ func (fakeRunClient) ListPayloadCommands(context.Context, string, RunPayloadComm
 
 func (fakeRunClient) RunPayloadCommand(context.Context, RunPayloadCommandRunRequest) (PayloadCommandResult, error) {
 	return PayloadCommandResult{Command: "cmd", Summary: "command completed", Stdout: "ok\n"}, nil
+}
+
+func writeCommandModuleArchive(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name+".tgz")
+	out, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(out)
+	tw := tar.NewWriter(gz)
+	manifest := `apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: ` + name + `
+  version: 0.1.0
+  moduleType: survey
+  summary: Bulk module ` + name + `
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/` + name + `"]
+`
+	for file, body := range map[string]string{
+		"hovel-module.yaml": manifest,
+		"bin/" + name:       "#!/bin/sh\n",
+	} {
+		if err := tw.WriteHeader(&tar.Header{Name: file, Mode: 0o755, Size: int64(len(body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestGuardDangerousModules(t *testing.T) {

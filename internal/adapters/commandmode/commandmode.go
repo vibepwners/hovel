@@ -95,6 +95,7 @@ func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulec
 		ChainFiles:         chainFileDiskStore{},
 		Session:            session,
 		Modules:            catalog,
+		ModuleChecks:       moduleChecker{},
 		Payloads:           store,
 		PayloadProviders:   payloadProviderService{daemons: services.NewDaemonService(store), runs: daemonRunClients{}, modules: catalog},
 	}
@@ -113,6 +114,7 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 }
 
 func (a App) run(ctx context.Context, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
+	args = normalizeLeadingConfig(args)
 	if len(args) == 0 || topLevelHelpRequested(args) {
 		parser := a.rootParser()
 		if topLevelHelpRequested(args) {
@@ -133,6 +135,25 @@ func (a App) run(ctx context.Context, args []string, stdout, stderr io.Writer, e
 		return 2
 	}
 	return a.runDefinition(ctx, definition, commandArgs, stdout, stderr, echoConfirmationAnswer)
+}
+
+func normalizeLeadingConfig(args []string) []string {
+	if len(args) < 2 {
+		return args
+	}
+	switch {
+	case args[0] == "--config":
+		if len(args) < 3 {
+			return args
+		}
+		out := append([]string(nil), args[2:]...)
+		return append(out, "--config", args[1])
+	case strings.HasPrefix(args[0], "--config="):
+		out := append([]string(nil), args[1:]...)
+		return append(out, "--config", strings.TrimPrefix(args[0], "--config="))
+	default:
+		return args
+	}
 }
 
 func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
@@ -234,7 +255,7 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		return 0
+		return resultCode(result)
 	}
 	if !result.Log.Empty() {
 		renderer := a.logs
@@ -242,17 +263,24 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 			renderer = terminallog.NewPlainRenderer()
 		}
 		fmt.Fprintln(stdout, renderer.Render(result.Log))
-		return 0
+		return resultCode(result)
 	}
 	if len(result.Raw) > 0 {
 		if _, err := stdout.Write(result.Raw); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		return 0
+		return resultCode(result)
 	}
 	if result.Human != "" {
 		fmt.Fprintln(stdout, result.Human)
+	}
+	return resultCode(result)
+}
+
+func resultCode(result commands.Result) int {
+	if result.ExitCode != 0 {
+		return result.ExitCode
 	}
 	return 0
 }

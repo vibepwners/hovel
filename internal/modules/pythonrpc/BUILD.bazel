@@ -11,7 +11,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//internal/app/chainruntime",
+        "//internal/app/hovelconfig",
         "//internal/app/modulecatalog",
+        "//internal/app/modulepackage",
         "//internal/app/services",
         "//internal/domain/event",
         "//internal/domain/run",

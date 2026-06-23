@@ -14,7 +14,25 @@ cp -r assets _site/
 cp -r spec _site/
 find _site -name BUILD.bazel -delete
 
+version="$(tr -d '[:space:]' < VERSION)"
+python3 - "${version}" <<'PY'
+import sys
+from pathlib import Path
+
+version = sys.argv[1]
+replacements = {
+    "{{HOVEL_VERSION}}": version,
+    "{{HOVEL_RELEASE_TAG}}": "v" + version,
+}
+for path in Path("_site").rglob("*.html"):
+    text = path.read_text(encoding="utf-8")
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    path.write_text(text, encoding="utf-8")
+PY
+
 demo_outputs=(
+  "module-package-install-01-link.gif"
   "mcp-agent-01-throw.gif"
   "mcp-agent-02-squatter-wine.gif"
   "mock-survey-exploit-01-inspect.gif"

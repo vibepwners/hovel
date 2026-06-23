@@ -38,6 +38,7 @@ func (s WorkspaceStore) DaemonStatus(ctx context.Context, workspacePath string) 
 		WorkspacePath: file.WorkspacePath,
 		PID:           file.PID,
 		SocketPath:    file.SocketPath,
+		HovelConfig:   file.HovelConfig,
 		StartedAt:     startedAt,
 		Health:        daemon.Health(file.Health),
 	})
@@ -59,6 +60,7 @@ func (s WorkspaceStore) WriteDaemonStatus(ctx context.Context, identity daemon.I
 		WorkspacePath: identity.WorkspacePath,
 		PID:           identity.PID,
 		SocketPath:    identity.SocketPath,
+		HovelConfig:   identity.HovelConfig,
 		StartedAt:     identity.StartedAt.Format(time.RFC3339Nano),
 		Health:        string(identity.Health),
 	}
@@ -85,6 +87,7 @@ type daemonFile struct {
 	WorkspacePath string `json:"workspacePath"`
 	PID           int    `json:"pid"`
 	SocketPath    string `json:"socketPath"`
+	HovelConfig   string `json:"hovelConfig,omitempty"`
 	StartedAt     string `json:"startedAt"`
 	Health        string `json:"health"`
 }

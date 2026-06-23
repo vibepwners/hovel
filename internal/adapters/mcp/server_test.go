@@ -371,7 +371,7 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 		EntityID:      "mcp-command-daemon-test",
 		DisplayName:   "MCP command daemon test",
 		Workspace:     fixture.WorkspacePath,
-		CommandRunner: commandModeCommandRunner(fixture.WorkspacePath, client, ""),
+		CommandRunner: commandModeCommandRunner(fixture.WorkspacePath, client, "", ""),
 	})
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
@@ -458,7 +458,7 @@ func TestMCPChainApplyBuildsEtroSquatterWithoutCLIProbing(t *testing.T) {
 		DisplayName:   "MCP chain apply test",
 		Workspace:     fixture.WorkspacePath,
 		CatalogPath:   configPath,
-		CommandRunner: commandModeCommandRunner(fixture.WorkspacePath, client, configPath),
+		CommandRunner: commandModeCommandRunner(fixture.WorkspacePath, client, configPath, ""),
 	})
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
@@ -649,10 +649,10 @@ func TestMCPCommandCatalogRejectsEmptyCatalogForModuleCommands(t *testing.T) {
 	}
 	t.Setenv("HOVEL_MODULE_CONFIG", configPath)
 
-	if _, err := mcpCommandCatalog(context.Background(), []string{"module", "list"}, ""); err == nil || !strings.Contains(err.Error(), "module catalog is empty") {
+	if _, err := mcpCommandCatalog(context.Background(), []string{"module", "list"}, "", "", ""); err == nil || !strings.Contains(err.Error(), "module catalog is empty") {
 		t.Fatalf("module command catalog error = %v, want empty catalog error", err)
 	}
-	catalog, err := mcpCommandCatalog(context.Background(), []string{"op", "use", "lab"}, "")
+	catalog, err := mcpCommandCatalog(context.Background(), []string{"op", "use", "lab"}, "", "", "")
 	if err != nil {
 		t.Fatalf("non-module command catalog returned error: %v", err)
 	}
