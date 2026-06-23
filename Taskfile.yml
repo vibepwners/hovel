@@ -145,6 +145,16 @@ tasks:
     cmds:
       - python3 tools/modules/package_examples.py
 
+  upver:
+    desc: 'Update Hovel and hovel-sdk versions: task upver -- 0.2.0.'
+    cmds:
+      - python3 tools/release/upver.py {{.CLI_ARGS}}
+
+  upver:test:
+    desc: Check the version updater.
+    cmds:
+      - python3 tools/release/upver_test.py
+
   docs:
     desc: Generate demos, then build and stage the static docs site.
     cmds:
@@ -193,6 +203,7 @@ tasks:
     desc: Run lint, docs, build, and test.
     cmds:
       - task: lint
+      - task: upver:test
       - task: docs
       - task: build
       - task: test

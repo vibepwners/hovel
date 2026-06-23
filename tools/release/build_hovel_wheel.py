@@ -39,7 +39,7 @@ def main() -> None:
 
 def main() -> int:
     root = Path(__file__).resolve().parents[2]
-    version = os.environ.get("HOVEL_VERSION", "0.0.0").removeprefix("v")
+    version = release_version(root)
     platform_tag = os.environ.get("HOVEL_WHEEL_PLATFORM_TAG") or default_platform_tag()
     binary_name = "hovel.exe" if os.name == "nt" else "hovel"
     candidates = [
@@ -101,6 +101,12 @@ Tag: py3-none-{platform_tag}
 
     print(wheel)
     return 0
+
+
+def release_version(root: Path) -> str:
+    if version := os.environ.get("HOVEL_VERSION"):
+        return version.removeprefix("v")
+    return (root / "VERSION").read_text(encoding="utf-8").strip().removeprefix("v")
 
 
 def default_platform_tag() -> str:

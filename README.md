@@ -145,6 +145,7 @@ Build & checks:
 | `task lint` (`l`) | Go formatting, Gazelle, Python, and Squatter C checks (read-only). |
 | `task fmt` | Auto-format Go source, regenerate `BUILD` metadata, and format Squatter C. |
 | `task check` (`ci`) | Lint, demo-backed docs, build, and test. |
+| `task upver -- 0.2.0` | Update the shared Hovel and hovel-sdk release version. |
 | `task demos` | Generate VHS terminal demos into `demo/out/`. |
 | `task demo:squatter-wine` | Generate the Docker/Wine Squatter MCP demo GIF. |
 | `task hooks:install` | Install git hooks via Lefthook. |

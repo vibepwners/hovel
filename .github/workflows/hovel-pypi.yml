@@ -4,10 +4,6 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      version:
-        description: Version to publish, without the leading v
-        required: true
 
 permissions:
   contents: read
@@ -46,11 +42,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Resolve version
+      - name: Check committed version
         shell: bash
         run: |
-          version="${{ inputs.version || github.ref_name }}"
-          echo "HOVEL_VERSION=${version#v}" >> "$GITHUB_ENV"
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ "${{ github.event_name }}" == "release" && "${GITHUB_REF_NAME#v}" != "${version}" ]]; then
+            echo "::error::release tag ${GITHUB_REF_NAME} does not match committed VERSION ${version}"
+            exit 1
+          fi
+          echo "Publishing hovel ${version} from committed VERSION"
 
       - name: Build wheel
         run: task release:hovel-wheel
@@ -87,11 +87,16 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: Resolve version
+      - name: Check committed version
         shell: bash
         run: |
-          version="${{ inputs.version || github.ref_name }}"
-          echo "HOVEL_MODULE_VERSION=${version#v}" >> "$GITHUB_ENV"
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ "${{ github.event_name }}" == "release" && "${GITHUB_REF_NAME#v}" != "${version}" ]]; then
+            echo "::error::release tag ${GITHUB_REF_NAME} does not match committed VERSION ${version}"
+            exit 1
+          fi
+          echo "HOVEL_MODULE_VERSION=${version}" >> "$GITHUB_ENV"
+          echo "Packaging release modules ${version} from committed VERSION"
 
       - name: Build module packages
         run: task modules:package

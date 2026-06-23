@@ -148,7 +148,7 @@ kind: ModuleIndex
 modules:
   - name: squatter
     version: 0.1.0
-    url: https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz
+    url: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz
     sha256: ...
 </code></pre>
         <p>Hovel ships with no default internet index. Indexes are used only when configured or passed explicitly, and cached indexes remain available offline.</p>
@@ -157,7 +157,7 @@ modules:
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleInstallSet
 modules:
-  - source: https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz
+  - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz
     sha256: ...
   - source: ./etro-survey-1.0.0.tgz
   - source: /opt/hovel/modules/etro-exploit-1.0.0.tgz
@@ -171,7 +171,7 @@ modules:
   - name: squatter
     version: 0.1.0
     sha256: ...
-    source: https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz
+    source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz
     installedAt: 2026-06-22T16:20:00Z
 </code></pre>
         <p>The lock file is generated install state, not the editable source of truth. Operators edit config files and bulk install manifests.</p>

@@ -132,7 +132,7 @@ runtime:
         <p>Modules are distributed as <code>.tgz</code> packages. Install from disk, absolute path, HTTPS URL, an explicit index, a bulk manifest, or a linked development directory.</p>
 <pre data-lang="shell"><code>hovel module install ./squatter-0.1.0.tgz
 hovel module install /opt/hovel/modules/etro-survey-1.0.0.tgz
-hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz --sha256 ...
+hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz --sha256 ...
 hovel module install squatter@0.1.0 --index ./module-index.yaml
 hovel module bulk-install ./lab-modules.yaml
 hovel module install --link /home/me/dev/my-module</code></pre>
@@ -140,7 +140,7 @@ hovel module install --link /home/me/dev/my-module</code></pre>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleInstallSet
 modules:
-  - source: https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz
+  - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz
     sha256: ...
   - source: ./etro-survey-1.0.0.tgz
   - source: ./etro-exploit-1.0.0.tgz</code></pre>

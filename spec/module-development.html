@@ -406,7 +406,7 @@ task ci</code></pre>
         <h2>Installing a module</h2>
         <p>Operators install modules from local packages, absolute package paths, HTTPS URLs, configured indexes, bulk manifests, or linked package roots.</p>
 <pre data-lang="shell"><code>hovel module install ./my-module-0.1.0.tgz
-hovel module install https://github.com/org/repo/releases/download/v0.1.0/my-module-0.1.0.tgz --sha256 ...
+hovel module install https://github.com/org/repo/releases/download/{{HOVEL_RELEASE_TAG}}/my-module-0.1.0.tgz --sha256 ...
 hovel module install my-module@0.1.0 --index ./module-index.yaml
 hovel module bulk-install ./lab-modules.yaml
 hovel module install --link /home/me/dev/my-module</code></pre>

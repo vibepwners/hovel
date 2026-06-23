@@ -28,11 +28,12 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
+	"github.com/Vibe-Pwners/hovel/internal/version"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
-	Version = "0.1.0"
+	Version = version.Version
 
 	ToolOperatorIdentity     = "hovel_operator_identity"
 	ToolOperatorListEntities = "hovel_operator_list_entities"

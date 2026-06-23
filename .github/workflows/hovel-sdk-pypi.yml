@@ -4,10 +4,6 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      version:
-        description: Version to publish, without the leading v
-        required: true
 
 permissions:
   contents: read
@@ -27,17 +23,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Resolve version
+      - name: Check committed version
         shell: bash
         run: |
-          version="${{ inputs.version || github.ref_name }}"
-          version="${version#v}"
-          python - <<PY
-          from pathlib import Path
-          path = Path("sdk/python/pyproject.toml")
-          text = path.read_text()
-          path.write_text(text.replace('version = "0.0.0"', 'version = "${version}"'))
-          PY
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ "${{ github.event_name }}" == "release" && "${GITHUB_REF_NAME#v}" != "${version}" ]]; then
+            echo "::error::release tag ${GITHUB_REF_NAME} does not match committed VERSION ${version}"
+            exit 1
+          fi
+          echo "Publishing hovel-sdk ${version} from committed VERSION"
 
       - name: Build dist
         run: task release:hovel-sdk-dist

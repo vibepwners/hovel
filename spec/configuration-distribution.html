@@ -214,7 +214,7 @@ interpreters:
         <p>Modules install from disk, absolute paths, HTTPS URLs, configured indexes, or bulk manifests.</p>
 <pre data-lang="shell"><code>hovel module install ./ssh-memory-0.1.0.tgz
 hovel module install /opt/hovel/modules/ssh-memory-0.1.0.tgz
-hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz --sha256 ...
+hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz --sha256 ...
 hovel module install squatter@0.1.0 --index ./module-index.yaml
 hovel module bulk-install ./modules.yaml
 hovel module install --link /home/me/dev/my-module
@@ -230,13 +230,13 @@ kind: ModuleIndex
 modules:
   - name: squatter
     version: 0.1.0
-    url: https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz
+    url: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz
     sha256: ...
 </code></pre>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleInstallSet
 modules:
-  - source: https://github.com/Vibe-Pwners/hovel/releases/download/v0.1.0/squatter-0.1.0.tgz
+  - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz
     sha256: ...
   - source: ./etro-survey-1.0.0.tgz
   - source: /opt/hovel/modules/etro-exploit-1.0.0.tgz</code></pre>
