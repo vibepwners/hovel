@@ -1,0 +1,31 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+sh_test(
+    name = "check_in_repo_modules_test",
+    size = "medium",
+    srcs = ["check_in_repo_modules_test.sh"],
+    args = [
+        "$(rootpath //cmd/hovel:hovel)",
+        "$(rootpath //examples/go/mock_survey:mock_survey)",
+        "$(rootpath //examples/go/mock_exploit:mock_exploit)",
+        "$(rootpath //examples/go/mock_exploit_session:mock_exploit_session)",
+        "$(rootpath //examples/rust/mock_survey:mock-survey-rust)",
+        "$(rootpath //examples/rust/mock_exploit:mock-exploit-rust)",
+        "$(rootpath //examples/rust/mock_exploit_session:mock-exploit-session-rust)",
+        "$(rootpath //payloads/squatter/provider:squatter-provider)",
+    ],
+    data = [
+        "//cmd/hovel",
+        "//examples/go/mock_exploit",
+        "//examples/go/mock_exploit_session",
+        "//examples/go/mock_survey",
+        "//examples/python:sources",
+        "//examples/rust/mock_exploit:mock-exploit-rust",
+        "//examples/rust/mock_exploit_session:mock-exploit-session-rust",
+        "//examples/rust/mock_survey:mock-survey-rust",
+        "//payloads/squatter/provider:squatter-provider",
+        "//sdk/python:sources",
+    ],
+)

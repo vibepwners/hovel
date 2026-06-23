@@ -95,6 +95,7 @@ func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulec
 		ChainFiles:         chainFileDiskStore{},
 		Session:            session,
 		Modules:            catalog,
+		ModuleChecks:       moduleChecker{},
 		Payloads:           store,
 		PayloadProviders:   payloadProviderService{daemons: services.NewDaemonService(store), runs: daemonRunClients{}, modules: catalog},
 	}
@@ -254,7 +255,7 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		return 0
+		return resultCode(result)
 	}
 	if !result.Log.Empty() {
 		renderer := a.logs
@@ -262,17 +263,24 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 			renderer = terminallog.NewPlainRenderer()
 		}
 		fmt.Fprintln(stdout, renderer.Render(result.Log))
-		return 0
+		return resultCode(result)
 	}
 	if len(result.Raw) > 0 {
 		if _, err := stdout.Write(result.Raw); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		return 0
+		return resultCode(result)
 	}
 	if result.Human != "" {
 		fmt.Fprintln(stdout, result.Human)
+	}
+	return resultCode(result)
+}
+
+func resultCode(result commands.Result) int {
+	if result.ExitCode != 0 {
+		return result.ExitCode
 	}
 	return 0
 }

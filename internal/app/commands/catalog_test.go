@@ -58,6 +58,7 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"chain", "validate"},
 		{"module", "inspect"},
 		{"module", "install"},
+		{"module", "check"},
 		{"module", "list"},
 		{"module", "search"},
 		{"module", "uninstall"},
@@ -2400,6 +2401,68 @@ launch:
 	}
 }
 
+func TestModuleCheckReportsFailureWithExitCode(t *testing.T) {
+	checks := fakeModuleChecker{reports: map[string]ModuleCheckReport{
+		"broken": {
+			Subject: "broken",
+			Status:  ModuleCheckFail,
+			Checks: []ModuleCheckItem{{
+				Name:    "rpc discovery",
+				Status:  ModuleCheckFail,
+				Message: "module handshake failed",
+			}},
+		},
+	}}
+	registry := HovelRegistry(Runtime{
+		Modules:      modulecatalog.New(),
+		ModuleChecks: checks,
+	})
+	definition, _ := registry.Find("module", "check")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "broken"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", result.ExitCode)
+	}
+	if !strings.Contains(result.Human, "MODULE CHECK broken") || !strings.Contains(result.Human, "❌ FAIL rpc discovery") {
+		t.Fatalf("human report = %q", result.Human)
+	}
+}
+
+func TestModuleCheckWarningsAsErrors(t *testing.T) {
+	checks := fakeModuleChecker{reports: map[string]ModuleCheckReport{
+		"warn-only": {
+			Subject: "warn-only",
+			Status:  ModuleCheckWarn,
+			Checks: []ModuleCheckItem{{
+				Name:    "metadata",
+				Status:  ModuleCheckWarn,
+				Message: "metadata.author is recommended",
+			}},
+		},
+	}}
+	registry := HovelRegistry(Runtime{
+		Modules:      modulecatalog.New(),
+		ModuleChecks: checks,
+	})
+	definition, _ := registry.Find("module", "check")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "warn-only"},
+		Flags:       map[string]bool{"warnings-as-errors": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", result.ExitCode)
+	}
+}
+
 func TestModuleListIncludesCachedDownloads(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cacheHome := t.TempDir()
@@ -4056,6 +4119,21 @@ func (i *fakeInput) Confirm(_ context.Context, prompt ConfirmationPrompt) (Confi
 
 type fakeRunClientFactory struct {
 	recorder *fakeRunRecorder
+}
+
+type fakeModuleChecker struct {
+	reports map[string]ModuleCheckReport
+}
+
+func (f fakeModuleChecker) CheckModule(_ context.Context, request ModuleCheckRequest) (ModuleCheckReport, error) {
+	if report, ok := f.reports[request.Reference]; ok {
+		return report, nil
+	}
+	return ModuleCheckReport{
+		Subject: request.Reference,
+		Status:  ModuleCheckPass,
+		Checks:  []ModuleCheckItem{{Name: "fake", Status: ModuleCheckPass, Message: "ok"}},
+	}, nil
 }
 
 func (f fakeRunClientFactory) DialRunClient(socketPath string) (RunClient, error) {

@@ -161,6 +161,7 @@ type Runtime struct {
 	ChainFiles         ChainFileStore
 	Session            OperatorSession
 	Modules            ModuleDatabase
+	ModuleChecks       ModuleChecker
 	Payloads           PayloadRepository
 	PayloadProviders   PayloadProviderService
 }
@@ -878,6 +879,22 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: modulesInspectHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"module", "check"},
+			Aliases: [][]string{{"modules", "check"}},
+			Summary: "Run a non-executing validation suite against a module.",
+			Positionals: []Positional{
+				{Name: "module", Help: "Module reference, package directory, or .tgz package", Required: false},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("global", "", "Use the global module install scope"),
+				boolOption("all", "", "Check every module in the module database"),
+				boolOption("warnings-as-errors", "", "Return exit code 1 when warnings are present"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: modulesCheckHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"module", "search"},

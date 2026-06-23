@@ -135,13 +135,29 @@ func (r Runner) Catalog(ctx context.Context) (modulecatalog.Catalog, error) {
 }
 
 func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Module, error) {
+	return r.inspect(ctx, moduleID, func(ctx context.Context) (*moduleProcess, error) {
+		return r.start(ctx, moduleID)
+	})
+}
+
+func (r Runner) InspectEntry(ctx context.Context, entry ModuleEntry) (modulecatalog.Module, error) {
+	entry.ID = strings.TrimSpace(entry.ID)
+	if entry.ID == "" {
+		return modulecatalog.Module{}, errors.New("module id is required")
+	}
+	return r.inspect(ctx, entry.ID, func(ctx context.Context) (*moduleProcess, error) {
+		return r.startEntry(ctx, entry)
+	})
+}
+
+func (r Runner) inspect(ctx context.Context, moduleID string, start func(context.Context) (*moduleProcess, error)) (modulecatalog.Module, error) {
 	timeout := r.Timeout
 	if timeout == 0 {
 		timeout = defaultTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	process, err := r.start(ctx, moduleID)
+	process, err := start(ctx)
 	if err != nil {
 		return modulecatalog.Module{}, err
 	}
@@ -417,7 +433,29 @@ func (r Runner) start(ctx context.Context, moduleID string) (*moduleProcess, err
 	if !ok {
 		return nil, fmt.Errorf("unknown module %q", moduleID)
 	}
+	return r.startEntry(ctx, entrypoint)
+}
 
+func (r Runner) startEntry(ctx context.Context, entrypoint ModuleEntry) (*moduleProcess, error) {
+	entrypoint.ID = strings.TrimSpace(entrypoint.ID)
+	entrypoint.Runtime = strings.TrimSpace(entrypoint.Runtime)
+	if entrypoint.ID == "" {
+		return nil, errors.New("module id is required")
+	}
+	if entrypoint.Runtime == "" {
+		entrypoint.Runtime = modulecatalog.RuntimeJSONRPCStdio
+	}
+	if entrypoint.Runtime != modulecatalog.RuntimeJSONRPCStdio {
+		return nil, fmt.Errorf("module %q uses unsupported runtime %q", entrypoint.ID, entrypoint.Runtime)
+	}
+	if entrypoint.usesCommand() {
+		entrypoint.Command[0] = strings.TrimSpace(entrypoint.Command[0])
+		if entrypoint.Command[0] == "" {
+			return nil, fmt.Errorf("module %q command[0] is required", entrypoint.ID)
+		}
+	} else if entrypoint.ProjectDir == "" || entrypoint.Module == "" {
+		return nil, fmt.Errorf("module %q missing project_dir or module", entrypoint.ID)
+	}
 	cmd, err := r.command(ctx, entrypoint)
 	if err != nil {
 		return nil, err

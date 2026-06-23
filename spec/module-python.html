@@ -394,6 +394,7 @@ launch:
         versions: ["3.10-3.14"]
       command: ["{python}", "-m", "hovel_example_survey"]</code></pre>
 <pre data-lang="shell"><code>hovel module install --link "$PWD/examples/python/mock_survey"
+hovel module check mock-survey
 task start
 hovel&gt; module list  # mock-survey, mock-exploit, mock-exploit-session ...</code></pre>
         <p>

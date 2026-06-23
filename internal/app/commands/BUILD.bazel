@@ -4,6 +4,7 @@ go_library(
     name = "commands",
     srcs = [
         "catalog.go",
+        "module_check.go",
         "payload_inventory.go",
         "registry.go",
         "session_commands.go",

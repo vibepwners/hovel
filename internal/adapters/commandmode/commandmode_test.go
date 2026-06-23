@@ -71,6 +71,28 @@ func TestLeadingConfigOptionIsForwardedToCommand(t *testing.T) {
 	}
 }
 
+func TestResultExitCodeIsReturnedAfterPrintingReport(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"check"},
+		Summary: "Check something.",
+		Handler: func(_ context.Context, _ commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: "check failed", ExitCode: 1}, nil
+		},
+	})
+
+	code := NewAppWithRegistry(registry).Run(context.Background(), []string{"check"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if strings.TrimSpace(stdout.String()) != "check failed" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestDefaultRuntimeWiresCapabilityChainRunner(t *testing.T) {
 	runtime := defaultRuntime(nil)
 	if runtime.CapabilityChains == nil {

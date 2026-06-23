@@ -317,9 +317,10 @@ task modules:build
 # 3. Link or install the package for the active workspace.
 hovel module install --link "$PWD/path/to/my-module-package-root"
 
-# 4. Let Hovel inspect metadata and schema.
+# 4. Let Hovel validate package shape and runtime metadata without executing.
 task start
 hovel&gt; module list
+hovel&gt; module check &lt;your-module-id&gt;
 hovel&gt; module inspect &lt;your-module-id&gt;
 
 # 5. Gate the repository before calling the integration done.
@@ -329,6 +330,46 @@ task ci</code></pre>
           <img src="../assets/demos/mock-survey-exploit-01-inspect.gif" alt="Direct terminal demo inspecting mock survey and exploit modules before running them through a configured chain.">
           <figcaption>Demo: module metadata to runnable chain</figcaption>
         </figure>
+
+        <h2>Validate with module check</h2>
+        <p>
+          <code>hovel module check</code> is the module author's fast CI check. It validates
+          module shape and implementation metadata without running <code>execute</code>,
+          starting a throw, touching a target, preparing payloads, or contacting the
+          internet. Success exits <code>0</code>. Any failure exits <code>1</code>. Warnings
+          exit <code>0</code> unless the caller passes <code>--warnings-as-errors</code>.
+        </p>
+<pre data-lang="shell"><code>hovel module check etro-exploit@v1.0.0
+hovel module check --all
+hovel module check --warnings-as-errors ./dist/modules/my-module-0.1.0.tgz
+hovel run --workspace .hovel -- module check mock-survey</code></pre>
+        <p>
+          Installed module references run the non-executing JSON-RPC discovery path:
+          <code>handshake</code>, <code>schema</code>, <code>step.describe</code>, and
+          <code>shutdown</code>. The report then shows the validated runtime protocol,
+          parsed metadata, chain and target config schema counts, and provider step
+          contract count.
+        </p>
+<pre data-lang="text"><code>MODULE CHECK etro-exploit@v1.0.0
+status  ✅ PASS
+module  etro-exploit@v1.0.0
+
+CHECK   NAME                         MESSAGE
+-----   ----                         -------
+✅ PASS rpc discovery                handshake, schema, step.describe, and shutdown completed
+✅ PASS runtime                      jsonrpc-stdio
+✅ PASS metadata                     etro-exploit@v1.0.0 exploit v1.0.0
+✅ PASS config schema                1 chain requirements, 3 target requirements
+✅ PASS step contracts               0 provider steps</code></pre>
+        <p>
+          Package roots also validate <code>hovel-module.yaml</code>, host launcher
+          selection, launcher command availability, and then run the same runtime
+          discovery when the selected launcher is already runnable. Package archives are
+          checked for manifest shape and host-launch selection only; archive checks do not
+          extract the package or run module code, so runtime discovery is reported as a
+          warning. Managed-Python packages whose interpreter has not been installed also
+          warn instead of downloading anything.
+        </p>
 
         <h2>SDK support matrix</h2>
         <table>
