@@ -82,9 +82,11 @@ func checkModulePackageDir(ctx context.Context, root string, report commands.Mod
 		return report, nil
 	}
 	rpcEntry := pythonrpc.ModuleEntry{
-		ID:      report.Module,
-		Runtime: entry.Runtime,
-		Command: append([]string(nil), entry.Command...),
+		ID:         report.Module,
+		Runtime:    entry.Runtime,
+		ProjectDir: entry.ProjectDir,
+		Module:     entry.Module,
+		Command:    append([]string(nil), entry.Command...),
 	}
 	if err := commandAvailable(rpcEntry.Command); err != nil {
 		if launch.Python != nil && launch.Python.Managed != nil {

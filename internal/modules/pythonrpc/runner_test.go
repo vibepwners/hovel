@@ -379,6 +379,62 @@ modules:
 	}
 }
 
+func TestModuleEntriesPreserveInstalledPythonPackageRoot(t *testing.T) {
+	workspace := t.TempDir()
+	moduleRoot := filepath.Join(workspace, "modules", "installed-python", "0.1.0")
+	if err := os.MkdirAll(filepath.Join(moduleRoot, "installed_python"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: installed-python
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    python:
+      interpreter: /usr/bin/python3
+      command: ["{python}", "-m", "installed_python"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "installed_python", "__main__.py"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "module-lock.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModuleLock
+modules:
+  - name: installed-python
+    version: 0.1.0
+    source: `+moduleRoot+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := (Runner{WorkspacePath: workspace, ConfigPath: configPath}).moduleEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v", entries)
+	}
+	if entries[0].ID != "installed-python@0.1.0" {
+		t.Fatalf("entry ID = %q", entries[0].ID)
+	}
+	if entries[0].ProjectDir != moduleRoot || entries[0].Module != "installed_python" {
+		t.Fatalf("entry = %#v, want project dir %q and module installed_python", entries[0], moduleRoot)
+	}
+}
+
 func TestModuleEntriesRejectsInvalidEntries(t *testing.T) {
 	cases := []struct {
 		name         string

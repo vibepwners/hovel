@@ -379,8 +379,9 @@ func (p Package) LaunchEntry(goos, goarch string) (LaunchEntry, error) {
 		return LaunchEntry{}, err
 	}
 	entry := LaunchEntry{
-		ID:      p.Manifest.Metadata.Name,
-		Runtime: p.Manifest.Runtime.Protocol,
+		ID:         p.Manifest.Metadata.Name,
+		Runtime:    p.Manifest.Runtime.Protocol,
+		ProjectDir: p.Root,
 	}
 	if len(launch.Command) != 0 {
 		entry.Command = resolveCommand(p.Root, launch.Command)
@@ -392,9 +393,19 @@ func (p Package) LaunchEntry(goos, goarch string) (LaunchEntry, error) {
 			return LaunchEntry{}, err
 		}
 		entry.Command = command
+		entry.Module = pythonModuleName(command)
 		return entry, nil
 	}
 	return LaunchEntry{}, errors.New("launch entry has no command")
+}
+
+func pythonModuleName(command []string) string {
+	for i, arg := range command {
+		if arg == "-m" && i+1 < len(command) {
+			return strings.TrimSpace(command[i+1])
+		}
+	}
+	return ""
 }
 
 func (p Package) pythonCommand(py Python, goos string) ([]string, error) {

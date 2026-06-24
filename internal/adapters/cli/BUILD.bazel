@@ -21,6 +21,7 @@ go_library(
         "//internal/adapters/terminallog",
         "//internal/app/commands",
         "//internal/app/modulecatalog",
+        "//internal/app/modulepackage",
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/domain/run",

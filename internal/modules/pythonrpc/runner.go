@@ -894,9 +894,11 @@ func (r Runner) installedModuleEntries() ([]ModuleEntry, error) {
 			return nil, err
 		}
 		entries = append(entries, ModuleEntry{
-			ID:      modulecatalog.CanonicalID(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version),
-			Runtime: launch.Runtime,
-			Command: append([]string(nil), launch.Command...),
+			ID:         modulecatalog.CanonicalID(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version),
+			Runtime:    launch.Runtime,
+			ProjectDir: launch.ProjectDir,
+			Module:     launch.Module,
+			Command:    append([]string(nil), launch.Command...),
 		})
 	}
 	return entries, nil
@@ -966,9 +968,11 @@ func moduleEntryFromPackageRoot(root string) (ModuleEntry, error) {
 		return ModuleEntry{}, err
 	}
 	return ModuleEntry{
-		ID:      modulecatalog.CanonicalID(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version),
-		Runtime: launch.Runtime,
-		Command: append([]string(nil), launch.Command...),
+		ID:         modulecatalog.CanonicalID(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version),
+		Runtime:    launch.Runtime,
+		ProjectDir: launch.ProjectDir,
+		Module:     launch.Module,
+		Command:    append([]string(nil), launch.Command...),
 	}, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
@@ -92,6 +94,10 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	}
 	defer daemonClient.Close()
 	a = a.withDaemonSession(ctx, daemonClient)
+	if err := a.refreshWorkspaceModules(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	a.surface = newPromptSurface(prompt.NewStdoutWriter())
 
 	if cliWelcomeEnabled() {
@@ -131,6 +137,67 @@ func (a App) withDaemonSession(ctx context.Context, client *daemonrpc.Client) Ap
 	a.commands = commandmode.NewAppWithSessionAndModules(session, a.modules)
 	a.wizard = newInteractiveConfigWizard(session, a.modules)
 	return a
+}
+
+func (a *App) refreshWorkspaceModules() error {
+	workspacePath := strings.TrimSpace(a.workspacePath)
+	if workspacePath == "" {
+		return nil
+	}
+	installed, err := installedWorkspaceModules(workspacePath)
+	if err != nil {
+		return err
+	}
+	if len(installed) == 0 {
+		return nil
+	}
+	a.modules = mergeModuleCatalogs(a.modules, modulecatalog.New(installed...))
+	a.commands = commandmode.NewAppWithSessionAndModules(a.session, a.modules)
+	if a.wizard == nil {
+		a.wizard = newInteractiveConfigWizard(a.session, a.modules)
+	} else {
+		a.wizard.session = a.session
+		a.wizard.modules = a.modules
+	}
+	a.moduleCount = len(a.modules.List())
+	return nil
+}
+
+func installedWorkspaceModules(workspacePath string) ([]modulecatalog.Module, error) {
+	lock, err := modulepackage.LoadLock(filepath.Join(workspacePath, "module-lock.yaml"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	modules := make([]modulecatalog.Module, 0, len(lock.Modules))
+	for _, record := range lock.Modules {
+		pkg, err := modulepackage.LoadDir(record.Source)
+		if err != nil {
+			return nil, fmt.Errorf("load installed module %s@%s: %w", record.Name, record.Version, err)
+		}
+		modules = append(modules, modulecatalog.Module{
+			ID:          pkg.Manifest.Metadata.Name,
+			Name:        pkg.Manifest.Metadata.Name,
+			Type:        modulecatalog.ModuleType(pkg.Manifest.Metadata.ModuleType),
+			Version:     pkg.Manifest.Metadata.Version,
+			Summary:     pkg.Manifest.Metadata.Summary,
+			Tags:        append([]string(nil), pkg.Manifest.Metadata.Tags...),
+			RuntimeKind: pkg.Manifest.Runtime.Protocol,
+			Author:      pkg.Manifest.Metadata.Author,
+			Enabled:     true,
+		})
+	}
+	return modules, nil
+}
+
+func mergeModuleCatalogs(catalogs ...modulecatalog.Catalog) modulecatalog.Catalog {
+	var modules []modulecatalog.Module
+	for _, catalog := range catalogs {
+		modules = append(modules, catalog.List()...)
+	}
+	return modulecatalog.New(modules...)
 }
 
 func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surface *promptSurface, fallback io.Writer) func() {
@@ -317,7 +384,7 @@ func commandLineUsesWorkspace(line string) bool {
 		return false
 	}
 	switch fields[0] {
-	case "throw", "throws", "confirm", "review", "artifact", "artifacts", "session", "sessions":
+	case "throw", "throws", "confirm", "review", "artifact", "artifacts", "session", "sessions", "module", "modules":
 		return true
 	default:
 		return false
@@ -921,6 +988,10 @@ func (a App) moduleSuggestions(prefix string) []prompt.Suggest {
 }
 
 func (a App) ConfigureInteractive(stdout, stderr io.Writer) int {
+	if err := a.refreshWorkspaceModules(); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	if a.wizard == nil {
 		a.wizard = newInteractiveConfigWizard(a.session, a.modules)
 	}

@@ -14,6 +14,7 @@ import (
 	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 	prompt "github.com/c-bata/go-prompt"
@@ -624,6 +625,72 @@ func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndRedactsSe
 	}
 	if state.TargetConfigs["mock://router-01"]["target.port"] != "22" {
 		t.Fatalf("target config = %#v", state.TargetConfigs)
+	}
+}
+
+func TestInteractiveConfigSeesInstalledWorkspaceModule(t *testing.T) {
+	workspace := t.TempDir()
+	moduleRoot := filepath.Join(t.TempDir(), "installed-rpc")
+	if err := os.MkdirAll(filepath.Join(moduleRoot, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: installed-rpc
+  version: 0.1.0
+  moduleType: exploit
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/installed-rpc"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "bin", "installed-rpc"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := modulepackage.InstallLink(modulepackage.InstallOptions{
+		Workspace: workspace,
+		SourceDir: moduleRoot,
+		HostOS:    "linux",
+		HostArch:  "amd64",
+		NoScripts: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	session := operatorsession.New()
+	if err := session.UseOperation("test-op"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("lab"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("installed-rpc@0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://target-1"); err != nil {
+		t.Fatal(err)
+	}
+	app := newAppWithSessionAndModules(session, modulecatalog.New())
+	app.workspacePath = workspace
+
+	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(context.Background(), "chain config interactive", &stdout, &stderr); code != 0 {
+		t.Fatalf("interactive exit code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
+	}
+	if code := app.ExecuteLine(context.Background(), "c", &stdout, &stderr); code != 0 {
+		t.Fatalf("continue exit code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Chain lab configuration complete") {
+		t.Fatalf("interactive output missing completion:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "module installed-rpc@0.1.0 does not exist") {
+		t.Fatalf("interactive output rejected installed module:\n%s", stdout.String())
 	}
 }
 
