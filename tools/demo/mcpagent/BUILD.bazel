@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/tools/demo/mcpagent",
     visibility = ["//visibility:private"],
     deps = [
+        "//internal/domain/workspace",
         "@com_github_charmbracelet_lipgloss//:lipgloss",
         "@com_github_charmbracelet_x_term//:term",
         "@com_github_modelcontextprotocol_go_sdk//mcp",

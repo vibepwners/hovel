@@ -576,6 +576,11 @@ func TestMCPWorkspaceInjectionSkipsPayloadsAvailable(t *testing.T) {
 	if got, want := injectWorkspaceForMCPCommand([]string{"payloads", "installed"}, "/tmp/hovel"), []string{"payloads", "installed", "--workspace", "/tmp/hovel"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("payloads installed args = %#v, want %#v", got, want)
 	}
+	workdir := t.TempDir()
+	t.Setenv("BUILD_WORKING_DIRECTORY", workdir)
+	if got, want := injectWorkspaceForMCPCommand([]string{"payloads", "installed"}, ""), []string{"payloads", "installed", "--workspace", filepath.Join(workdir, ".hovel")}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("payloads installed default args = %#v, want %#v", got, want)
+	}
 }
 
 func recordInstalledPayload(t *testing.T, workspace, provider string) commands.InstalledPayloadRecord {

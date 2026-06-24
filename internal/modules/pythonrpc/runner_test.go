@@ -18,6 +18,24 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
+func TestMain(m *testing.M) {
+	defaultWorkspaceRoot, err := os.MkdirTemp("", "hovel-pythonrpc-default-workspace-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	previous, hadPrevious := os.LookupEnv("BUILD_WORKING_DIRECTORY")
+	_ = os.Setenv("BUILD_WORKING_DIRECTORY", defaultWorkspaceRoot)
+	code := m.Run()
+	if hadPrevious {
+		_ = os.Setenv("BUILD_WORKING_DIRECTORY", previous)
+	} else {
+		_ = os.Unsetenv("BUILD_WORKING_DIRECTORY")
+	}
+	_ = os.RemoveAll(defaultWorkspaceRoot)
+	os.Exit(code)
+}
+
 func TestRunnerExecutesPythonMockModule(t *testing.T) {
 	request, err := run.NewRequest(run.RequestArgs{
 		ID:       "run-1",
@@ -325,6 +343,65 @@ modules:
 		t.Fatalf("entries = %#v", entries)
 	}
 	if entries[0].ID != "locked@0.1.0" || entries[0].Command[0] != filepath.Join(moduleRoot, "bin", "locked") {
+		t.Fatalf("entry = %#v", entries[0])
+	}
+}
+
+func TestModuleEntriesUseDefaultWorkspaceModuleLock(t *testing.T) {
+	workdir := t.TempDir()
+	t.Setenv("BUILD_WORKING_DIRECTORY", workdir)
+	workspace := filepath.Join(workdir, ".hovel")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	moduleRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: default-locked
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/default-locked"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(moduleRoot, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "bin", "default-locked"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock := `apiVersion: hovel.dev/v1alpha1
+kind: ModuleLock
+modules:
+  - name: default-locked
+    version: 0.1.0
+    source: ` + moduleRoot + `
+    linked: true
+    installedAt: "2026-06-22T18:00:00Z"
+`
+	if err := os.WriteFile(filepath.Join(workspace, "module-lock.yaml"), []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := (Runner{ConfigPath: configPath}).moduleEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries = %#v", entries)
+	}
+	if entries[0].ID != "default-locked@0.1.0" || entries[0].Command[0] != filepath.Join(moduleRoot, "bin", "default-locked") {
 		t.Fatalf("entry = %#v", entries[0])
 	}
 }

@@ -17,6 +17,7 @@ go_library(
         "//internal/app/services",
         "//internal/domain/event",
         "//internal/domain/run",
+        "//internal/domain/workspace",
         "//internal/protocol/framing",
     ],
 )

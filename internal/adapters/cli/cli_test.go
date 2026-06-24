@@ -963,6 +963,18 @@ func TestExecuteLineInjectsShellWorkspaceForWorkspaceCommands(t *testing.T) {
 	if capturedWorkspace != "explicit" {
 		t.Fatalf("explicit workspace = %q, want explicit", capturedWorkspace)
 	}
+	stdout.Reset()
+	stderr.Reset()
+
+	workdir := t.TempDir()
+	t.Setenv("BUILD_WORKING_DIRECTORY", workdir)
+	app.workspacePath = ""
+	if code := app.ExecuteLine(context.Background(), "throw demo.chain --now", &stdout, &stderr); code != 0 {
+		t.Fatalf("throw default workspace exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if want := filepath.Join(workdir, ".hovel"); capturedWorkspace != want {
+		t.Fatalf("default workspace = %q, want %q", capturedWorkspace, want)
+	}
 }
 
 func TestWorkspaceSessionIsSharedAcrossCLIInstances(t *testing.T) {

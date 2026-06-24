@@ -363,10 +363,10 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 }
 
 func (a App) withWorkspaceArgument(line string) string {
-	if a.workspacePath == "" || commandLineHasWorkspaceArg(line) || !commandLineUsesWorkspace(line) {
+	if commandLineHasWorkspaceArg(line) || !commandLineUsesWorkspace(line) {
 		return line
 	}
-	return line + " --workspace " + quoteCommandArg(a.workspacePath)
+	return line + " --workspace " + quoteCommandArg(workspace.ResolvePath(a.workspacePath))
 }
 
 func commandLineHasWorkspaceArg(line string) bool {

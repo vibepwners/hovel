@@ -12,6 +12,7 @@ go_library(
         "//internal/adapters/mcp",
         "//internal/app/services",
         "//internal/domain/daemon",
+        "//internal/domain/workspace",
         "//internal/infra/daemonmanager",
         "//internal/infra/daemonruntime",
         "//internal/modules/pythonrpc",
