@@ -136,6 +136,11 @@ func LoadDir(root string) (Package, error) {
 	if root == "." || root == "" {
 		return Package{}, errors.New("module package root is required")
 	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return Package{}, err
+	}
+	root = absRoot
 	body, err := os.ReadFile(filepath.Join(root, ManifestName))
 	if err != nil {
 		return Package{}, err
@@ -470,11 +475,14 @@ type UninstallResult struct {
 }
 
 func InstallLink(opts InstallOptions) (InstallResult, error) {
-	workspace := filepath.Clean(strings.TrimSpace(opts.Workspace))
-	if workspace == "." || workspace == "" {
-		return InstallResult{}, errors.New("workspace is required")
+	workspace, err := requiredAbsPath(opts.Workspace, "workspace is required")
+	if err != nil {
+		return InstallResult{}, err
 	}
-	source := filepath.Clean(strings.TrimSpace(opts.SourceDir))
+	source, err := requiredAbsPath(opts.SourceDir, "module package root is required")
+	if err != nil {
+		return InstallResult{}, err
+	}
 	pkg, err := LoadDir(source)
 	if err != nil {
 		return InstallResult{}, err
@@ -489,13 +497,17 @@ func InstallLink(opts InstallOptions) (InstallResult, error) {
 }
 
 func InstallArchive(opts InstallOptions) (InstallResult, error) {
-	workspace := filepath.Clean(strings.TrimSpace(opts.Workspace))
-	if workspace == "." || workspace == "" {
-		return InstallResult{}, errors.New("workspace is required")
+	workspace, err := requiredAbsPath(opts.Workspace, "workspace is required")
+	if err != nil {
+		return InstallResult{}, err
 	}
 	source := filepath.Clean(strings.TrimSpace(opts.SourceArchive))
 	if !strings.EqualFold(filepath.Ext(source), ".tgz") {
 		return InstallResult{}, errors.New("module package archive must use .tgz")
+	}
+	source, err = filepath.Abs(source)
+	if err != nil {
+		return InstallResult{}, err
 	}
 	sum, err := FileSHA256(source)
 	if err != nil {
@@ -632,9 +644,9 @@ func InstallURL(opts InstallOptions) (InstallResult, error) {
 }
 
 func Uninstall(opts UninstallOptions) (UninstallResult, error) {
-	workspace := filepath.Clean(strings.TrimSpace(opts.Workspace))
-	if workspace == "." || workspace == "" {
-		return UninstallResult{}, errors.New("workspace is required")
+	workspace, err := requiredAbsPath(opts.Workspace, "workspace is required")
+	if err != nil {
+		return UninstallResult{}, err
 	}
 	name := strings.TrimSpace(opts.Name)
 	version := strings.TrimSpace(opts.Version)
@@ -673,6 +685,18 @@ func Uninstall(opts UninstallOptions) (UninstallResult, error) {
 		return UninstallResult{}, err
 	}
 	return UninstallResult{Name: record.Name, Version: record.Version, Source: record.Source, Linked: record.Linked}, nil
+}
+
+func requiredAbsPath(value, message string) (string, error) {
+	path := filepath.Clean(strings.TrimSpace(value))
+	if path == "." || path == "" {
+		return "", errors.New(message)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return abs, nil
 }
 
 func preparePackageRuntime(pkg Package, opts InstallOptions) error {

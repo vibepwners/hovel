@@ -293,6 +293,91 @@ launch:
 	}
 }
 
+func TestInstallArchiveManagedPythonRequirementsWorksWithRelativeWorkspace(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workdir := t.TempDir()
+	if err := os.Chdir(workdir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(cwd); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+	archive := packageArchive(t, map[string]string{
+		"hovel-module.yaml": `apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: python-reqs
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    python:
+      managed:
+        versions: ["3.10-3.14"]
+      requirements: requirements.txt
+      command: ["{python}", "-m", "python_reqs"]
+`,
+		"requirements.txt": "hovel-sdk\n",
+	})
+	pbs := packageArchive(t, map[string]string{
+		"python/bin/python3": `#!/bin/sh
+if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
+  mkdir -p "$3/bin"
+  cat > "$3/bin/python" <<'PY'
+#!/bin/sh
+if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then
+  req=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "-r" ]; then
+      shift
+      req="$1"
+      break
+    fi
+    shift
+  done
+  if [ -z "$req" ] || [ ! -f "$req" ]; then
+    echo "ERROR: Could not open requirements file: $req" >&2
+    exit 1
+  fi
+  exit 0
+fi
+exit 1
+PY
+  chmod +x "$3/bin/python"
+  exit 0
+fi
+exit 1
+`,
+	})
+
+	result, err := InstallArchive(InstallOptions{
+		Workspace:                     ".hovel",
+		SourceArchive:                 archive,
+		HostOS:                        "linux",
+		HostArch:                      "amd64",
+		PythonBuildStandaloneArchive:  pbs,
+		PythonBuildStandaloneCacheDir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "python-reqs" || result.Version != "0.1.0" {
+		t.Fatalf("result = %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(workdir, ".hovel", "modules", "python-reqs", "0.1.0", "requirements.txt")); err != nil {
+		t.Fatalf("requirements.txt missing from installed package: %v", err)
+	}
+}
+
 func TestUninstallRunsScriptsRemovesExtractedPackageAndUpdatesLock(t *testing.T) {
 	workspace := t.TempDir()
 	archive := packageArchive(t, map[string]string{
