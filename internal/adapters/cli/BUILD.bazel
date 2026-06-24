@@ -25,6 +25,7 @@ go_library(
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/domain/run",
+        "//internal/domain/workspace",
         "//internal/infra/daemonmanager",
         "//internal/modules/pythonrpc",
         "@com_github_c_bata_go_prompt//:go-prompt",
