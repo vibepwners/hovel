@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 	prompt "github.com/c-bata/go-prompt"
@@ -627,6 +629,85 @@ func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndRedactsSe
 	}
 }
 
+func TestInteractiveConfigSeesInstalledWorkspaceModule(t *testing.T) {
+	workspace := t.TempDir()
+	installRPCModulePackage(t, workspace, "installed-rpc", "exploit", emptyRPCSchema, emptyRPCSteps)
+
+	session := operatorsession.New()
+	if err := session.UseOperation("test-op"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("lab"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("installed-rpc@0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://target-1"); err != nil {
+		t.Fatal(err)
+	}
+	app := newAppWithSessionAndModules(session, modulecatalog.New())
+	app.workspacePath = workspace
+
+	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(context.Background(), "chain config interactive", &stdout, &stderr); code != 0 {
+		t.Fatalf("interactive exit code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
+	}
+	if code := app.ExecuteLine(context.Background(), "c", &stdout, &stderr); code != 0 {
+		t.Fatalf("continue exit code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Chain lab configuration complete") {
+		t.Fatalf("interactive output missing completion:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "module installed-rpc@0.1.0 does not exist") {
+		t.Fatalf("interactive output rejected installed module:\n%s", stdout.String())
+	}
+}
+
+func TestInteractiveConfigRefreshUsesDefaultWorkspace(t *testing.T) {
+	workdir := t.TempDir()
+	t.Chdir(workdir)
+	installRPCModulePackage(t, ".hovel", "default-rpc", "exploit", emptyRPCSchema, emptyRPCSteps)
+
+	app := newAppWithSessionAndModules(operatorsession.New(), modulecatalog.New())
+	if err := app.refreshWorkspaceModules(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := app.modules.Find("default-rpc@0.1.0"); !ok {
+		t.Fatalf("modules = %#v, want default-rpc from .hovel/module-lock.yaml", app.modules.List())
+	}
+}
+
+func TestInstalledWorkspaceModulesAreInspected(t *testing.T) {
+	workspace := t.TempDir()
+	installRPCModulePackage(t, workspace, "configured-rpc", "exploit", `{
+  "chainConfig": [{"key": "operator.confirmed_lab", "type": "bool", "required": true}],
+  "targetConfig": [{"key": "target.host", "type": "host", "required": true}],
+  "outputs": {}
+}`, `{
+  "version": "contracts-v1",
+  "steps": [{"id": "collect", "kind": "action", "requires": [], "produces": []}]
+}`)
+
+	modules, err := installedWorkspaceModules(context.Background(), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modules) != 1 {
+		t.Fatalf("modules = %#v", modules)
+	}
+	module := modules[0]
+	if len(module.ChainConfig) != 1 || module.ChainConfig[0].Key != "operator.confirmed_lab" {
+		t.Fatalf("chain config = %#v", module.ChainConfig)
+	}
+	if len(module.TargetConfig) != 1 || module.TargetConfig[0].Key != "target.host" {
+		t.Fatalf("target config = %#v", module.TargetConfig)
+	}
+	if module.StepContracts.Version != "contracts-v1" || len(module.StepContracts.Steps) != 1 || module.StepContracts.Steps[0].ID != "collect" {
+		t.Fatalf("step contracts = %#v", module.StepContracts)
+	}
+}
+
 func TestInteractiveConfigWizardUsesEffectiveValidationForSquatterBind(t *testing.T) {
 	session := operatorsession.New()
 	modules := modulecatalog.New(
@@ -681,6 +762,98 @@ func TestInteractiveConfigWizardUsesEffectiveValidationForSquatterBind(t *testin
 		if strings.Contains(stdout.String(), "missing chain config "+unexpected) {
 			t.Fatalf("interactive output surfaced raw Squatter provider requirement %s:\n%s", unexpected, stdout.String())
 		}
+	}
+}
+
+const (
+	emptyRPCSchema = `{"chainConfig": [], "targetConfig": [], "outputs": {}}`
+	emptyRPCSteps  = `{"steps": []}`
+)
+
+func installRPCModulePackage(t *testing.T, workspace, name, moduleType, schemaJSON, stepsJSON string) {
+	t.Helper()
+	moduleRoot := filepath.Join(t.TempDir(), name)
+	if err := os.MkdirAll(filepath.Join(moduleRoot, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: `+name+`
+  version: 0.1.0
+  moduleType: `+moduleType+`
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/`+name+`"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/usr/bin/env python3
+import json
+import sys
+
+INFO = {
+    "name": ` + strconv.Quote(name) + `,
+    "version": "0.1.0",
+    "moduleType": ` + strconv.Quote(moduleType) + `,
+    "summary": "installed test module",
+    "tags": [],
+}
+SCHEMA = json.loads(` + strconv.Quote(schemaJSON) + `)
+STEPS = json.loads(` + strconv.Quote(stepsJSON) + `)
+
+def read():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line in (b"\r\n", b"\n", b""):
+            break
+        key, value = line.decode().split(":", 1)
+        headers[key.lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    if length == 0:
+        return None
+    return json.loads(sys.stdin.buffer.read(length))
+
+def send(message):
+    body = json.dumps(message).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body))
+    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.flush()
+
+while True:
+    request = read()
+    if not request:
+        break
+    method = request.get("method")
+    rid = request.get("id")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": INFO})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": SCHEMA})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "result": STEPS})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+    else:
+        send({"jsonrpc": "2.0", "id": rid, "error": {"message": "unknown method " + str(method)}})
+`
+	if err := os.WriteFile(filepath.Join(moduleRoot, "bin", name), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := modulepackage.InstallLink(modulepackage.InstallOptions{
+		Workspace: workspace,
+		SourceDir: moduleRoot,
+		HostOS:    "linux",
+		HostArch:  "amd64",
+		NoScripts: true,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
