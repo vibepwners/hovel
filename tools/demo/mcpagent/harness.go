@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -71,7 +72,7 @@ func runWithConnect(ctx context.Context, opts Options, connect connectFunc) erro
 		opts.HovelPath = "hovel"
 	}
 	if opts.Workspace == "" {
-		opts.Workspace = ".hovel"
+		opts.Workspace = workspace.DefaultPath
 	}
 	if opts.Operation == "" {
 		opts.Operation = "demo"
@@ -196,7 +197,7 @@ func runSquatterWithConnect(ctx context.Context, opts Options, connect connectFu
 		opts.HovelPath = "hovel"
 	}
 	if opts.Workspace == "" {
-		opts.Workspace = ".hovel"
+		opts.Workspace = workspace.DefaultPath
 	}
 	if opts.Operation == "" {
 		opts.Operation = "demo"

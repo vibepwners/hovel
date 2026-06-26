@@ -11,6 +11,7 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 )
 
 const (
@@ -499,11 +500,7 @@ func listAvailablePayloads(ctx context.Context, runtime Runtime) ([]AvailablePay
 }
 
 func payloadWorkspace(invocation Invocation) string {
-	workspacePath := invocation.Option("workspace")
-	if workspacePath == "" {
-		return ".hovel"
-	}
-	return workspacePath
+	return workspacepath.ResolvePath(invocation.Option("workspace"))
 }
 
 func availablePayloadLines(payloads []AvailablePayload) string {

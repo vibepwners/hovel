@@ -24,6 +24,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/protocol/framing"
 )
 
@@ -872,10 +873,7 @@ func (r Runner) moduleEntries() ([]ModuleEntry, error) {
 }
 
 func (r Runner) installedModuleEntries() ([]ModuleEntry, error) {
-	workspacePath := strings.TrimSpace(r.WorkspacePath)
-	if workspacePath == "" {
-		return nil, nil
-	}
+	workspacePath := workspacepath.ResolvePath(r.WorkspacePath)
 	lock, err := modulepackage.LoadLock(filepath.Join(workspacePath, "module-lock.yaml"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

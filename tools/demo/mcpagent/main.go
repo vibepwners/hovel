@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 )
 
 func main() {
@@ -25,7 +27,7 @@ func main() {
 func parseOptions(args []string) (Options, error) {
 	opts := Options{
 		HovelPath:   envOrDefault("HOVEL_BIN", "hovel"),
-		Workspace:   envOrDefault("HOVEL_WORKSPACE", ".hovel"),
+		Workspace:   envOrDefault("HOVEL_WORKSPACE", workspace.DefaultPath),
 		Operation:   envOrDefault("HOVEL_DEMO_OPERATION", "demo"),
 		Chain:       os.Getenv("HOVEL_DEMO_CHAIN"),
 		EntityID:    "demo-mock-agent",

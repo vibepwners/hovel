@@ -27,6 +27,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 )
 
 type WorkspaceInitializer interface {
@@ -1298,10 +1299,7 @@ func initHandler(runtime Runtime) Handler {
 		if runtime.Workspaces == nil {
 			return Result{}, fmt.Errorf("workspace service is not configured")
 		}
-		path := invocation.Option("workspace")
-		if path == "" {
-			path = ".hovel"
-		}
+		path := workspacepath.ResolvePath(invocation.Option("workspace"))
 		name := invocation.Option("name")
 		if name == "" {
 			name = defaultWorkspaceName(path)
@@ -1339,7 +1337,7 @@ func daemonStatusHandler(runtime Runtime) Handler {
 			return Result{}, fmt.Errorf("daemon service is not configured")
 		}
 		status, err := runtime.Daemons.Status(ctx, services.DaemonStatusRequest{
-			WorkspacePath: invocation.Option("workspace"),
+			WorkspacePath: workspacepath.ResolvePath(invocation.Option("workspace")),
 		})
 		if err != nil {
 			return Result{}, err
@@ -2466,10 +2464,7 @@ func artifactsListHandler(runtime Runtime) Handler {
 		if runtime.ArtifactRecords == nil {
 			return Result{}, fmt.Errorf("artifact repository is not configured")
 		}
-		workspacePath := invocation.Option("workspace")
-		if workspacePath == "" {
-			workspacePath = ".hovel"
-		}
+		workspacePath := workspacepath.ResolvePath(invocation.Option("workspace"))
 		artifacts, err := runtime.ArtifactRecords.ListArtifacts(ctx, workspacePath)
 		if err != nil {
 			return Result{}, err
@@ -2490,10 +2485,7 @@ func artifactsInspectHandler(runtime Runtime) Handler {
 		if runtime.ArtifactRecords == nil {
 			return Result{}, fmt.Errorf("artifact repository is not configured")
 		}
-		workspacePath := invocation.Option("workspace")
-		if workspacePath == "" {
-			workspacePath = ".hovel"
-		}
+		workspacePath := workspacepath.ResolvePath(invocation.Option("workspace"))
 		artifact, err := runtime.ArtifactRecords.GetArtifact(ctx, workspacePath, invocation.Positional("artifact"))
 		if err != nil {
 			return Result{}, err
@@ -2537,7 +2529,7 @@ func throwHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		status, err := runtime.Daemons.Status(ctx, services.DaemonStatusRequest{
-			WorkspacePath: invocation.Option("workspace"),
+			WorkspacePath: workspacepath.ResolvePath(invocation.Option("workspace")),
 		})
 		if err != nil {
 			return Result{}, err
@@ -3075,10 +3067,7 @@ func recordThrowPlan(ctx context.Context, runtime Runtime, invocation Invocation
 	if err != nil {
 		return ThrowPlanRecord{}, err
 	}
-	workspacePath := invocation.Option("workspace")
-	if workspacePath == "" {
-		workspacePath = ".hovel"
-	}
+	workspacePath := workspacepath.ResolvePath(invocation.Option("workspace"))
 	plan := newThrowPlanForExecution(workspacePath, throw)
 	if err := runtime.Plans.RecordThrowPlan(ctx, plan); err != nil {
 		return ThrowPlanRecord{}, err
@@ -3102,10 +3091,7 @@ func throwsListHandler(runtime Runtime) Handler {
 		if runtime.ThrowPlans == nil {
 			return Result{}, fmt.Errorf("throw plan repository is not configured")
 		}
-		workspacePath := invocation.Option("workspace")
-		if workspacePath == "" {
-			workspacePath = ".hovel"
-		}
+		workspacePath := workspacepath.ResolvePath(invocation.Option("workspace"))
 		plans, err := runtime.ThrowPlans.ListThrowPlans(ctx, workspacePath)
 		if err != nil {
 			return Result{}, err
@@ -3126,10 +3112,7 @@ func throwsInspectHandler(runtime Runtime) Handler {
 		if runtime.ThrowPlans == nil {
 			return Result{}, fmt.Errorf("throw plan repository is not configured")
 		}
-		workspacePath := invocation.Option("workspace")
-		if workspacePath == "" {
-			workspacePath = ".hovel"
-		}
+		workspacePath := workspacepath.ResolvePath(invocation.Option("workspace"))
 		plan, err := runtime.ThrowPlans.GetThrowPlan(ctx, workspacePath, invocation.Positional("throw"))
 		if err != nil {
 			return Result{}, err
@@ -3240,7 +3223,7 @@ func dialDaemonRunClient(ctx context.Context, runtime Runtime, workspacePath str
 	if runtime.Runs == nil {
 		return nil, nil, fmt.Errorf("run client factory is not configured")
 	}
-	status, err := runtime.Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
+	status, err := runtime.Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacepath.ResolvePath(workspacePath)})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -4230,11 +4213,7 @@ func workspaceFromInvocation(invocation Invocation) string {
 	if invocation.Flag("global") {
 		return globalModuleWorkspace()
 	}
-	workspacePath := invocation.Option("workspace")
-	if workspacePath == "" {
-		return ".hovel"
-	}
-	return workspacePath
+	return workspacepath.ResolvePath(invocation.Option("workspace"))
 }
 
 func globalModuleWorkspace() string {

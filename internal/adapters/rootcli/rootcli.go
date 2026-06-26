@@ -13,6 +13,7 @@ import (
 	mcpadapter "github.com/Vibe-Pwners/hovel/internal/adapters/mcp"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
@@ -113,10 +114,7 @@ func runDirectSessionConnect(ctx context.Context, args []string, stdout, stderr 
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	workspacePath := parsed.Workspace
-	if workspacePath == "" {
-		workspacePath = ".hovel"
-	}
+	workspacePath := workspacepath.ResolvePath(parsed.Workspace)
 	status, err := daemonmanager.New().Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -276,7 +274,7 @@ func parseRunCommandArgs(args []string, stdout, stderr io.Writer) (runCommandArg
 		fmt.Fprint(stderr, parser.Usage("command is required"))
 		return runCommandArgs{}, false, 2
 	}
-	parsed := runCommandArgs{Workspace: ".hovel"}
+	parsed := runCommandArgs{Workspace: workspacepath.ResolvePath("")}
 	for len(args) > 0 {
 		arg := args[0]
 		switch {
@@ -540,12 +538,9 @@ func throwWorkspaceArg(args []string) string {
 			return strings.TrimPrefix(arg, "--workspace=")
 		}
 	}
-	return ".hovel"
+	return workspacepath.ResolvePath("")
 }
 
 func displayWorkspace(path string) string {
-	if path == "" {
-		return ".hovel"
-	}
-	return path
+	return workspacepath.ResolvePath(path)
 }

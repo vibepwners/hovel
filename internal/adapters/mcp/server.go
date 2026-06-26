@@ -48,7 +48,7 @@ const (
 	ToolPayloadCommandList   = "hovel_payload_command_list"
 	ToolPayloadCommandCall   = "hovel_payload_command_call"
 
-	DefaultWorkspace         = ".hovel"
+	DefaultWorkspace         = workspace.DefaultPath
 	DefaultDisplayName       = "Hovel MCP"
 	DefaultHeartbeatInterval = 15 * time.Second
 	DefaultTransportMode     = "stdio"
@@ -1167,11 +1167,11 @@ func normalizeMCPCommandArgs(args []string) []string {
 }
 
 func injectWorkspaceForMCPCommand(args []string, workspacePath string) []string {
-	if workspacePath == "" || hasWorkspaceArg(args) || !mcpCommandUsesWorkspace(args) {
+	if hasWorkspaceArg(args) || !mcpCommandUsesWorkspace(args) {
 		return append([]string(nil), args...)
 	}
 	out := append([]string(nil), args...)
-	return append(out, "--workspace", workspacePath)
+	return append(out, "--workspace", workspace.ResolvePath(workspacePath))
 }
 
 func injectConfigForMCPCommand(args []string, configPath string) []string {

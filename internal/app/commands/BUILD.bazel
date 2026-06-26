@@ -21,6 +21,7 @@ go_library(
         "//internal/domain/daemon",
         "//internal/domain/event",
         "//internal/domain/run",
+        "//internal/domain/workspace",
     ],
 )
 
