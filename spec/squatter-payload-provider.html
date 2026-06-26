@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Squatter Payload Provider — Hovel spec</title>
+  <title>Squatter Payload Provider — Hovel book</title>
   <link rel="icon" type="image/png" href="../assets/hovel.png">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
@@ -12,17 +12,17 @@
     <a class="brand" href="../index.html">
       <img src="../assets/hovel.png" alt="" class="brand-mark">
       <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// spec</span>
+      <span class="brand-tag">// book</span>
     </a>
     <nav class="top-nav">
       <a href="../index.html">Home</a>
-      <a href="index.html" aria-current="page">Spec</a>
+      <a href="index.html" aria-current="page">Book</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
-      <p class="sidebar-section">Specification</p>
+      <p class="sidebar-section">Book</p>
       <ul>
         <li><a href="index.html">Contents</a></li>
         <li><a href="user-guide.html">User Guide</a></li>
@@ -37,7 +37,7 @@
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
-        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="testing-roadmap.html">Testing Strategy</a></li>
         <li><a href="squatter-payload-provider.html" aria-current="page">Squatter Payload Provider</a></li>
       </ul>
       <p class="sidebar-section">Reference</p>
@@ -59,10 +59,13 @@
         <h1>Squatter Payload Provider</h1>
         <p>
           Squatter is Hovel's first core payload provider. It is a lab and
-          demonstration payload system for authorized environments. The first target is
-          Windows XP SP3 x86. The provider is a normal Hovel
-          <code>payload_provider</code> module that speaks JSON-RPC over stdio; the
-          Windows payload binary is opaque payload code produced by that provider.
+          demonstration payload system for authorized environments. The provider is a
+          normal Hovel <code>payload_provider</code> module that speaks JSON-RPC over
+          stdio; the Windows payload binary is opaque payload code produced by that
+          provider. The current provider metadata reports Windows x86 with a Windows 7
+          compatibility floor. The Windows C payload keeps XP SP3 as a low-level lab
+          support floor in its headers, but Hovel should not claim XP compatibility
+          until provider metadata and tests do.
         </p>
         <p>
           Hovel must not learn Squatter's implant wire protocol, command grammar, PE
@@ -99,24 +102,38 @@
     BUILD.bazel
     provider/
       main.go
-      BUILD.bazel
+      lp.go
+      generate_main.go
+    client/
+      cmd/
+        squatterctl/
+        smbadminctl/
+      shell/
+      smbpipe/
+      wire/
+      xfer/
+    tests/
     windows/
       BUILD.bazel
+      pe_inspect_test.py
+      source_contract_test.py
       src/
-        main.c
-        command/
-        transport/
-        winapi/
-tools/
-  windows_toolchain/
-    repositories.bzl
-    defs.bzl
+        squatter.c
+        base/
+        iocpserver/
+        modules/
+        nocrt/
+        runtime/
+        sqlog/
+        wire/
 </code></pre>
         <p>
           The provider is written in Go using Hovel's Go SDK. The Windows payload is C
-          code built with a pinned MinGW cross toolchain. The first implementation may
-          produce a nonfunctional minimal PE placeholder, but it must exercise the real
-          Windows build path.
+          code built with a pinned MinGW cross toolchain. The current payload includes
+          the mux runtime, TCP bind, reverse TCP, SMB named-pipe support, interactive
+          and one-shot <code>cmd.exe</code> execution, <code>echo</code>,
+          <code>getfile</code>, and <code>putfile</code>. PE and source-contract tests
+          protect the no-import-table payload shape and the expected source layout.
         </p>
 
         <h2>Module Contract</h2>
@@ -178,13 +195,13 @@ squatter.agent.max_chunk_size = 65536
           orchestration.
         </p>
 <pre data-lang="json"><code>{
-  "id": "squatter/windows/x86/xp-sp3/smb-named-pipe/pe-exe",
+  "id": "squatter/windows/x86/windows-7/smb-named-pipe/pe-exe",
   "name": "squatter",
   "version": "0.1.0",
   "platform": "windows",
   "arch": "x86",
-  "minOS": "windows-xp-sp3",
-  "testedOS": ["windows-xp-sp3"],
+  "minOS": "windows-7",
+  "testedOS": ["windows-7"],
   "formats": ["pe-exe"],
   "capabilities": [
     "file.get",
@@ -431,27 +448,37 @@ capabilities        file.get, file.put, process.exec, process.tasklist, library.
 
         <h2>Build Contract</h2>
         <p>
-          Squatter is part of Hovel's default build graph. <code>task build</code> should
-          build the provider and the Windows payload target, and <code>task ci</code>
-          should eventually validate both through the root build and test suites.
+          Squatter is part of Hovel's default build graph. <code>task build</code>
+          builds the provider and the Windows payload target through
+          <code>//payloads/squatter:build</code>. <code>task test</code> includes
+          provider tests, PE/source-contract tests, and platform-compatible Squatter
+          tests. CI also runs <code>task squatter:test:wine</code> for the Windows C++
+          and functional tests that need Wine.
         </p>
         <p>
-          The Windows payload uses a repo-local Bazel rule or macro over a pinned MinGW
-          archive:
+          The Windows payload uses repo-local Bazel rules over a pinned MinGW archive:
         </p>
 <pre data-lang="starlark"><code>url = "https://github.com/Vibe-Pwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64.tar.xz"
 sha256 = "&lt;recorded checksum&gt;"
 </code></pre>
         <p>
-          The first build helper should be narrow, for example
-          <code>mingw_pe_binary(...)</code>, instead of introducing a broad C/C++
-          toolchain integration before multiple payloads need it.
+          The helper stays intentionally narrow so Squatter can build PE payloads
+          without turning the repository into a general Windows C/C++ toolchain
+          abstraction.
         </p>
-<pre data-lang="starlark"><code>mingw_pe_binary(
-    name = "squatter_x86_exe",
-    srcs = ["src/main.c"],
-    out = "squatter.exe",
-    entry = "squatter_entry",
+<pre data-lang="starlark"><code>cc_binary(
+    name = "squatter.exe",
+    srcs = ["squatter.c"],
+    linkopts = [
+        "-nostdlib",
+        "-Wl,-e,_sq_nocrt_entry",
+        "-Wl,--subsystem,console",
+    ],
+)
+
+windows_multiplatform(
+    name = "squatter_all",
+    binary = ":squatter.exe",
 )</code></pre>
         <p>
           Defaults should encode the intended no-CRT/no-import posture:
@@ -463,61 +490,45 @@ sha256 = "&lt;recorded checksum&gt;"
 -nodefaultlibs
 -Wl,--entry,&lt;entry&gt;</code></pre>
         <p>
-          A PE inspection test should verify the produced placeholder is i386, has the
-          expected subsystem and entry point, and has no unexpected import table. That test
-          protects the XP SP3 portability goal before the real PEB-based resolver exists.
+          PE inspection verifies the produced payload is i386, has the expected
+          subsystem and entry point, embeds Hovel/Squatter markers, and has no
+          unexpected import table or CRT dependency.
         </p>
 
         <h2>Windows Payload Contract</h2>
         <p>
-          The Windows payload is not cross-platform code. The first target is XP SP3 x86.
-          The implementation should eventually resolve Win32 APIs through the PEB rather
-          than relying on a normal import table or CRT startup. The provider should report
-          conservative compatibility until broader Windows versions are tested.
+          The Windows payload is not cross-platform code. The current payload is i386,
+          uses a no-CRT entry path, resolves Win32 APIs through the PEB, and keeps
+          Windows-specific headers centralized under <code>base/win.h</code>. The
+          provider reports conservative compatibility until broader Windows versions are
+          tested.
         </p>
-        <p>Base Squatter payload capabilities:</p>
+        <p>Provider-reported Squatter capabilities:</p>
         <ol>
           <li>Get a file from the target.</li>
           <li>Put a file onto the target.</li>
-          <li>Drop and run an EXE.</li>
-          <li>Drop and run a DLL through rundll-style semantics.</li>
-          <li>Return a task list.</li>
+          <li>Run a process through <code>cmd.exe</code>.</li>
+          <li>Report process/task-list capability.</li>
+          <li>Report DLL/rundll capability.</li>
         </ol>
         <p>
-          IOCP/threading, the event loop, the agent command implementation, the LP
-          network protocol, and the PEB API resolver are intentionally deferred until the
-          provider interface and build system are documented and scaffolded.
+          The concrete provider-owned payload commands currently exposed through Hovel
+          are <code>getfile</code>, <code>putfile</code>, and <code>cmd</code>. The
+          payload also includes an <code>echo</code> module for mux and functional tests.
         </p>
 
-        <h2>Sprint Implementation Plan</h2>
-        <p>
-          This sprint turns Squatter from a payload byte generator into a representative
-          chain participant with install, connect, operate, reconnect, and cleanup
-          semantics.
-        </p>
-        <p>
-          The current operator-facing bridge is <code>squatter.bind</code>. Adding that
-          step to a chain makes Squatter a real chain participant and moves bind-mode
-          payload configuration to chain scope. The planner derives ETRO's legacy
-          install inputs per selected target until ETRO and Squatter execute through a
-          fully capability-native provider chain.
-        </p>
-        <p>The implementation pass should include:</p>
+        <h2>Current Implementation Status</h2>
+        <p>The current source-backed Squatter path includes:</p>
         <ol>
-          <li>Implemented: core capability schema names for <code>RemoteExecutionCapability</code>, <code>CredentialCapability</code>, <code>PayloadArtifact</code>, <code>PayloadInstance</code>, <code>TransportEndpoint</code>, <code>SessionRef</code>, and <code>CleanupHandle</code>.</li>
-          <li>Implemented: generic step JSON-RPC dispatch: <code>step.describe</code>, <code>step.prepare</code>, <code>step.execute</code>, and <code>step.cleanup</code>.</li>
-          <li>Partially implemented: live contract planning now resolves enabled module steps to capability bindings or typed missing requirements; contract snapshot persistence and post-confirmation drift blocking remain pending.</li>
-          <li>Partially implemented: Squatter SMB install prepare materializes random neutral service names, staged filenames, pipe names, endpoint config, and planned cleanup handles. Credential creation remains a separate module step.</li>
-          <li>Partially implemented: SMB named-pipe connect uses <code>go-smb</code> with explicit credentials and emits a <code>SessionRef</code> capability. Full Hovel interactive session brokering over that pipe remains pending.</li>
-          <li>Partially implemented: TCP bind payload generation patches an explicit bind port, the provider can actively connect to that endpoint, and <code>squatter.connect_tcp_bind</code> emits a <code>SessionRef</code> capability.</li>
-          <li>Partially implemented: TCP callback listener and connector steps start a provider listener, adopt an accepted payload connection, and emit a <code>SessionRef</code> capability.</li>
-          <li>Final Squatter artifact generation during execute, with hash and artifact evidence.</li>
-          <li>A module for connecting to an already-installed Squatter over SMB with operator-supplied credentials.</li>
-          <li>Durable installed payload inventory with <code>p1</code>-style handles, provider-owned reconnect descriptors, and detach/reconnect behavior.</li>
-          <li>Warning-state reporting for installed-but-unreachable Squatter agents with exact CLI evidence.</li>
-          <li>Cleanup handles for created credentials, staged files, services, listeners, and payload instances, with retry and verification where possible.</li>
+          <li>Core capability schema names for <code>RemoteExecutionCapability</code>, <code>CredentialCapability</code>, <code>PayloadArtifact</code>, <code>PayloadInstance</code>, <code>TransportEndpoint</code>, <code>SessionRef</code>, and <code>CleanupHandle</code>.</li>
+          <li>Generic step JSON-RPC dispatch through <code>step.describe</code>, <code>step.prepare</code>, <code>step.execute</code>, and <code>step.cleanup</code>.</li>
+          <li>Live contract planning that resolves enabled module steps to capability bindings or typed missing requirements. Full contract snapshot persistence and post-confirmation drift blocking remain future safety work.</li>
+          <li>SMB install preparation for neutral service names, staged filenames, pipe names, endpoint config, and planned cleanup handles. Credential creation remains a separate module step.</li>
+          <li>SMB named-pipe connect through explicit credentials, TCP bind connect, and TCP callback listener/connect paths that can emit <code>SessionRef</code> capability records.</li>
+          <li>Durable installed payload inventory with short handles, provider-owned reconnect descriptors, provider-owned cleanup descriptors, and Hovel-owned persistence.</li>
+          <li>Provider-owned payload command surfaces for <code>getfile</code>, <code>putfile</code>, and <code>cmd</code>, exposed through CLI and MCP payload-command flows.</li>
         </ol>
-        <p>The implementation pass should not include:</p>
+        <p>The Squatter path still avoids:</p>
         <ol>
           <li>Etro-specific Squatter protocol handling.</li>
           <li>Hidden helper-step insertion by the planner.</li>
@@ -535,14 +546,14 @@ sha256 = "&lt;recorded checksum&gt;"
       </article>
 
       <nav class="page-nav">
-        <a class="prev" href="testing-roadmap.html">← Testing &amp; Roadmap</a>
+        <a class="prev" href="testing-roadmap.html">← Testing Strategy</a>
         <span class="spacer"></span>
         <a class="next" href="module-development.html">Module Development →</a>
       </nav>
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

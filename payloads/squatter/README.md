@@ -2,7 +2,10 @@
 
 Squatter is Hovel's first core payload provider. The provider is a Go
 `payload_provider` module that speaks Hovel JSON-RPC over stdio. The Windows
-payload is a separate C payload target built for Windows XP SP3 x86.
+payload is a separate C payload target for Windows x86. The provider currently
+reports a Windows 7 compatibility floor; the C payload keeps XP SP3 as a
+low-level lab support floor in its headers, but Hovel should not claim XP
+compatibility until provider metadata and tests do.
 
 Squatter installs are intended to become durable Hovel installed payload
 records. Install steps return explicit descriptors naming the Squatter provider,

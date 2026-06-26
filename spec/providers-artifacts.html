@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Providers, Artifacts, and Structured Logging — Hovel spec</title>
+  <title>Providers, Artifacts, and Structured Logging — Hovel book</title>
   <link rel="icon" type="image/png" href="../assets/hovel.png">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
@@ -12,17 +12,17 @@
     <a class="brand" href="../index.html">
       <img src="../assets/hovel.png" alt="" class="brand-mark">
       <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// spec</span>
+      <span class="brand-tag">// book</span>
     </a>
     <nav class="top-nav">
       <a href="../index.html">Home</a>
-      <a href="index.html" aria-current="page">Spec</a>
+      <a href="index.html" aria-current="page">Book</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
-      <p class="sidebar-section">Specification</p>
+      <p class="sidebar-section">Book</p>
       <ul>
         <li><a href="index.html">Contents</a></li>
         <li><a href="user-guide.html">User Guide</a></li>
@@ -37,7 +37,7 @@
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
-        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="testing-roadmap.html">Testing Strategy</a></li>
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
@@ -66,14 +66,14 @@
         </p>
         <p>The consuming module should not care whether the payload came from a local file, a build step, an artifact cache, another module, a managed service, or an external project.</p>
 
-        <h2>MVP Provider Scope</h2>
-        <p>The first provider implementation should stay narrow:</p>
+        <h2>Current Provider Scope</h2>
+        <p>The implemented provider path is intentionally narrow:</p>
         <ol>
           <li><code>ArtifactProvider</code> records file-like outputs, hashes, metadata, and run associations.</li>
           <li><code>PayloadProvider</code> resolves tagged bytes, records hashes or artifact refs before execution, validates reconnect descriptors for installed payloads it owns, and should be the eventual live-discovery source for richer payload catalogs. Today, <code>payloads available</code> projects configured payload-provider modules until live discovery is wired through the operator command.</li>
           <li>The structured logging rail reports provider resolution and artifact creation, but is not itself a provider.</li>
         </ol>
-        <p><code>FactProvider</code>, <code>CredentialProvider</code>, <code>ListenerProvider</code>, and <code>SessionProvider</code> remain part of the domain model, but should not block the first useful execution loop. Facts can start as module outputs, credentials can start as explicit run inputs or module-produced capabilities, and listeners/sessions can arrive with the managed-service milestone.</p>
+        <p><code>FactProvider</code>, <code>CredentialProvider</code>, <code>ListenerProvider</code>, and <code>SessionProvider</code> remain part of the domain model, but they do not block the current execution loop. Facts can start as module outputs, credentials can start as explicit run inputs or module-produced capabilities, and richer listener/session providers can arrive with the managed-service runtime.</p>
 
         <h2>Capability Records</h2>
         <p>
@@ -132,14 +132,14 @@ capabilities:
   - session.shell
 </code></pre>
         <p>Payload metadata response:</p>
-<pre data-lang="yaml"><code>id: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
+<pre data-lang="yaml"><code>id: squatter/windows/x86/windows-7/tcp-bind/pe-exe
 name: Squatter TCP bind PE
 version: 0.1.0
 platform: windows
 arch: x86
-minOS: Windows XP SP3
+minOS: Windows 7
 testedOS:
-  - Windows XP SP3
+  - Windows 7
 formats:
   - pe-exe
 capabilities:
@@ -196,7 +196,7 @@ artifacts: []
         </p>
 <pre data-lang="yaml"><code>stampId: payload-stamp-uuid
 provider: squatter
-payloadId: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
+payloadId: squatter/windows/x86/windows-7/tcp-bind/pe-exe
 targetId: t1
 transport: tcp-bind
 primaryArtifact: artifact-uuid
@@ -271,7 +271,7 @@ requires:
         <p>An external provider may be a local service, a Python package wrapper, a binary, or a pre-existing process. For example, <a href="https://github.com/williamkborn/pic"><code>pic</code></a> can be wrapped as a provider for PIC payload bytes, but Hovel must treat it as a replaceable provider implementation rather than a core dependency. The only Hovel requirement is that the provider returns tagged payload bytes through the provider interface.</p>
 
         <h2>Listener Provider</h2>
-        <p>Listener providers are an early-alpha capability, not a first-slice MVP requirement.</p>
+        <p>Listener providers are part of the target model. The current source uses module-backed provider behavior for payloads, steps, installed payloads, and sessions; richer managed listener providers remain future work.</p>
         <p>Listener providers expose managed listener capabilities.</p>
         <p>Listener query:</p>
 <pre data-lang="yaml"><code>name: sshplant-lp
@@ -293,7 +293,7 @@ capabilities:
 </code></pre>
 
         <h2>Provider Storage</h2>
-        <p>MVP provider data may live in SQLite and local files. Current workspace initialization creates <code>workspace.json</code>, <code>workspace.db</code>, and the <code>artifacts/</code>, <code>logs/</code>, <code>modules/</code>, <code>throws/</code>, and <code>services/</code> directories. Provider-specific directories can be added when a provider needs file-shaped state.</p>
+        <p>Current provider data lives in SQLite and workspace-owned files. Workspace initialization creates <code>workspace.json</code>, <code>workspace.db</code>, and the <code>artifacts/</code>, <code>logs/</code>, <code>modules/</code>, <code>throws/</code>, and <code>services/</code> directories. Provider-specific directories can be added when a provider needs file-shaped state.</p>
 <pre data-lang="tree"><code>.hovel/
   workspace.json
   workspace.db
@@ -451,7 +451,7 @@ hovel.error.raised
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

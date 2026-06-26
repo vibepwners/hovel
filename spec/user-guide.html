@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>User Guide — Hovel spec</title>
+  <title>User Guide — Hovel book</title>
   <link rel="icon" type="image/png" href="../assets/hovel.png">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
@@ -12,18 +12,18 @@
     <a class="brand" href="../index.html">
       <img src="../assets/hovel.png" alt="" class="brand-mark">
       <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// spec</span>
+      <span class="brand-tag">// book</span>
     </a>
     <nav class="top-nav">
       <a href="../index.html">Home</a>
-      <a href="index.html" aria-current="page">Spec</a>
+      <a href="index.html" aria-current="page">Book</a>
       <a href="../api/sdk/index.html">API Docs</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
-      <p class="sidebar-section">Specification</p>
+      <p class="sidebar-section">Book</p>
       <ul>
         <li><a href="index.html">Contents</a></li>
         <li><a href="user-guide.html" aria-current="page">User Guide</a></li>
@@ -38,7 +38,7 @@
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
-        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="testing-roadmap.html">Testing Strategy</a></li>
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
@@ -125,22 +125,22 @@ cache:
 runtime:
   python:
     pythonBuildStandalone:
-      release: 20260518</code></pre>
+      release: 20260610</code></pre>
         <p>Hovel is offline-ready. It never contacts internet URLs during daemon startup, listing, validation, throws, or runtime execution. Network access happens only when you explicitly install from a URL, use a URL index, bulk-install URL sources, or allow managed Python setup during install.</p>
 
         <h2>Install Modules</h2>
         <p>Modules are distributed as <code>.tgz</code> packages. Install from disk, absolute path, HTTPS URL, an explicit index, a bulk manifest, or a linked development directory.</p>
-<pre data-lang="shell"><code>hovel module install ./squatter-0.1.0.tgz
+<pre data-lang="shell"><code>hovel module install ./squatter-{{HOVEL_VERSION}}.tgz
 hovel module install /opt/hovel/modules/etro-survey-1.0.0.tgz
-hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz --sha256 ...
-hovel module install squatter@0.1.0 --index ./module-index.yaml
+hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
+hovel module install squatter@{{HOVEL_VERSION}} --index ./module-index.yaml
 hovel module bulk-install ./lab-modules.yaml
 hovel module install --link /home/me/dev/my-module</code></pre>
         <p>The default install target is the active workspace. Use <code>--global</code> for a user-level install. Workspace modules win over global modules. Reinstalling the same <code>name@version</code> with a different SHA-256 requires <code>--replace</code>.</p>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleInstallSet
 modules:
-  - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz
+  - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
     sha256: ...
   - source: ./etro-survey-1.0.0.tgz
   - source: ./etro-exploit-1.0.0.tgz</code></pre>
@@ -326,7 +326,7 @@ hovel module inspect mock-survey-go</code></pre>
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
   </footer>
 </body>
 </html>
