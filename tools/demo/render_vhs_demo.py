@@ -24,6 +24,7 @@ def main() -> int:
     parser.add_argument("--setup-script", required=True, type=Path)
     parser.add_argument("--tmux-script", required=True, type=Path)
     parser.add_argument("--duration-checker", required=True, type=Path)
+    parser.add_argument("--vhs-bin", required=True, type=Path)
     parser.add_argument("--vhs-version-file", type=Path)
     parser.add_argument("--squatter-provider", type=Path)
     parser.add_argument("--squatter-exe", type=Path)
@@ -33,7 +34,7 @@ def main() -> int:
     parser.add_argument("--wine", action="store_true")
     args = parser.parse_args()
 
-    vhs = find_command("vhs")
+    vhs = executable_path(args.vhs_bin)
     verify_vhs_version(vhs, args.vhs_version_file)
     require_command("tmux")
     if args.wine:
@@ -51,7 +52,7 @@ def main() -> int:
             "HOVEL_REPO_ROOT": str(repo),
             "HOVEL_DEMO_HOVEL_BIN": str(repo / "demo/tmp/hovel"),
             "HOVEL_DEMO_AGENT_BIN": str(repo / "demo/tmp/hovel-mock-agent"),
-            "PATH": tool_path(),
+            "PATH": tool_path(Path(vhs).parent),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         subprocess.run([vhs, args.tape_rel], cwd=repo, env=env, check=True)
@@ -162,29 +163,15 @@ def require_command(name: str) -> None:
         raise SystemExit(f"{name} is required for VHS demo rendering")
 
 
-def find_command(name: str) -> str:
-    resolved = shutil.which(name)
-    if not resolved:
-        candidates: list[Path] = []
-        home = os.environ.get("HOME")
-        gopath = os.environ.get("GOPATH")
-        if home:
-            candidates.append(Path(home) / "go/bin" / name)
-        if gopath:
-            candidates.append(Path(gopath) / "bin" / name)
-        candidates.extend([
-            Path("/home/runner/go/bin") / name,
-            Path("/home/user/go/bin") / name,
-        ])
-        for candidate in candidates:
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return str(candidate)
-        raise SystemExit(f"missing required command: {name}")
-    return resolved
+def executable_path(path: Path) -> str:
+    if path.is_file() and os.access(path, os.X_OK):
+        return str(path.resolve())
+    raise SystemExit(f"missing executable: {path}")
 
 
-def tool_path() -> str:
+def tool_path(*prepend: Path) -> str:
     entries = [
+        *[str(path) for path in prepend],
         "/usr/local/bin",
         "/usr/bin",
         "/bin",

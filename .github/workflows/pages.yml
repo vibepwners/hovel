@@ -46,29 +46,19 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: false
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.84.0
 
-      - name: Install VHS dependencies
+      - name: Install demo host tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg ttyd tmux fonts-dejavu-core
 
-      - name: Install VHS
+      - name: Verify demo host tools
         run: |
-          VHS_VERSION="$(cat tools/demo/vhs_version.txt)"
-          go install "github.com/charmbracelet/vhs@${VHS_VERSION}"
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          "$(go env GOPATH)/bin/vhs" --version
           ffmpeg -version | head -n 1
           ttyd --version
           tmux -V

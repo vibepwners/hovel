@@ -63,6 +63,23 @@ lint_pip.parse(
 )
 use_repo(lint_pip, "lint_pypi")
 
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "vhs_linux_x86_64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "vhs_bin",
+    srcs = ["vhs"],
+)
+""",
+    sha256 = "99cb634587eaae0473c1ea377db80c3a048c27f99fe0a7febb1a1e8cb7ee5009",
+    strip_prefix = "vhs_0.11.0_Linux_x86_64",
+    urls = ["https://github.com/charmbracelet/vhs/releases/download/v0.11.0/vhs_0.11.0_Linux_x86_64.tar.gz"],
+)
+
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",

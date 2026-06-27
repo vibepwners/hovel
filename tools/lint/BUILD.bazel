@@ -28,6 +28,7 @@ py_binary(
     name = "run_squatter_complexity",
     srcs = ["run_squatter_complexity.py"],
     python_version = "PY3",
+    deps = ["@lint_pypi//lizard"],
 )
 
 py_binary(
@@ -43,11 +44,27 @@ py_binary(
     deps = ["@lint_pypi//clang_format"],
 )
 
+py_binary(
+    name = "ruff",
+    srcs = ["run_ruff.py"],
+    data = ["@lint_pypi//ruff:extracted_whl_files"],
+    main = "run_ruff.py",
+    python_version = "PY3",
+)
+
 py_test(
     name = "python_check_test",
     size = "medium",
     srcs = ["run_python_check.py"],
+    args = [
+        "--ruff=$(rootpath :ruff)",
+        "--mypy=$(rootpath :mypy)",
+        "--pydoclint=$(rootpath :pydoclint)",
+    ],
     data = [
+        ":mypy",
+        ":pydoclint",
+        ":ruff",
         "//examples/python:sources",
         "//sdk/python:pyproject.toml",
         "//sdk/python:sources",
@@ -62,4 +79,18 @@ py_console_script_binary(
     pkg = "@lint_pypi//clang_format",
     python_version = "3.12",
     script = "clang-format",
+)
+
+py_console_script_binary(
+    name = "mypy",
+    pkg = "@lint_pypi//mypy",
+    python_version = "3.12",
+    script = "mypy",
+)
+
+py_console_script_binary(
+    name = "pydoclint",
+    pkg = "@lint_pypi//pydoclint",
+    python_version = "3.12",
+    script = "pydoclint",
 )

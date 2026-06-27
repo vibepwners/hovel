@@ -42,6 +42,7 @@ def _vhs_demo_impl(ctx):
     args.add("--setup-script", ctx.file.setup_script)
     args.add("--tmux-script", ctx.file.tmux_script)
     args.add("--duration-checker", ctx.file.duration_checker)
+    args.add("--vhs-bin", ctx.file._vhs)
     args.add("--vhs-version-file", ctx.file.vhs_version)
 
     inputs = [
@@ -58,6 +59,7 @@ def _vhs_demo_impl(ctx):
         files, transitive = _runfiles_for(ctx, attr_name)
         tools.extend(files)
         transitive_tools.extend(transitive)
+    tools.append(ctx.file._vhs)
 
     if ctx.attr.wine:
         args.add("--wine")
@@ -106,6 +108,11 @@ _vhs_demo_rule = rule(
         "tape": attr.label(allow_single_file = True, mandatory = True),
         "tape_rel": attr.string(mandatory = True),
         "tmux_script": attr.label(allow_single_file = True, mandatory = True),
+        "_vhs": attr.label(
+            default = "@vhs_linux_x86_64//:vhs_bin",
+            allow_single_file = True,
+            cfg = "exec",
+        ),
         "vhs_version": attr.label(allow_single_file = True, mandatory = True),
         "wine": attr.bool(default = False),
     },
