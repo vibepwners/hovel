@@ -1,8 +1,96 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 load("@rules_python//python/entry_points:py_console_script_binary.bzl", "py_console_script_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "format_squatter_c",
+    srcs = ["format_squatter_c.py"],
+    python_version = "PY3",
+    deps = ["@lint_pypi//clang_format"],
+)
+
+py_binary(
+    name = "gofmt_workspace",
+    srcs = ["gofmt_workspace.py"],
+    args = ["--gofmt=$(rootpath @go_sdk//:bin/gofmt)"],
+    data = ["@go_sdk//:bin/gofmt"],
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "run_squatter_clang_tidy",
+    srcs = ["run_squatter_clang_tidy.py"],
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "run_squatter_complexity",
+    srcs = ["run_squatter_complexity.py"],
+    python_version = "PY3",
+    deps = ["@lint_pypi//lizard"],
+)
+
+py_binary(
+    name = "run_squatter_cppcheck",
+    srcs = ["run_squatter_cppcheck.py"],
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "run_squatter_format_check",
+    srcs = ["run_squatter_format_check.py"],
+    python_version = "PY3",
+    deps = ["@lint_pypi//clang_format"],
+)
+
+py_binary(
+    name = "ruff",
+    srcs = ["run_ruff.py"],
+    data = ["@lint_pypi//ruff:extracted_whl_files"],
+    main = "run_ruff.py",
+    python_version = "PY3",
+)
+
+py_test(
+    name = "python_check_test",
+    size = "medium",
+    srcs = ["run_python_check.py"],
+    args = [
+        "--ruff=$(rootpath :ruff)",
+        "--mypy=$(rootpath :mypy)",
+        "--pydoclint=$(rootpath :pydoclint)",
+    ],
+    data = [
+        ":mypy",
+        ":pydoclint",
+        ":ruff",
+        "//examples/python:sources",
+        "//sdk/python:pyproject.toml",
+        "//sdk/python:sources",
+        "//sdk/python:uv.lock",
+    ],
+    main = "run_python_check.py",
+    python_version = "PY3",
+)
 
 py_console_script_binary(
     name = "clang_format",
     pkg = "@lint_pypi//clang_format",
     python_version = "3.12",
     script = "clang-format",
+)
+
+py_console_script_binary(
+    name = "mypy",
+    pkg = "@lint_pypi//mypy",
+    python_version = "3.12",
+    script = "mypy",
+)
+
+py_console_script_binary(
+    name = "pydoclint",
+    pkg = "@lint_pypi//pydoclint",
+    python_version = "3.12",
+    script = "pydoclint",
 )

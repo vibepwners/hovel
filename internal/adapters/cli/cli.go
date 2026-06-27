@@ -574,6 +574,7 @@ func (a App) contextualRootDefinitions() []commands.Definition {
 		return filterDefinitions(firstSegments, map[string]bool{
 			"chain":    true,
 			"control":  true,
+			"module":   true,
 			"op":       true,
 			"payload":  true,
 			"payloads": true,
@@ -582,6 +583,7 @@ func (a App) contextualRootDefinitions() []commands.Definition {
 	}
 	return filterDefinitions(firstSegments, map[string]bool{
 		"control":  true,
+		"module":   true,
 		"op":       true,
 		"payload":  true,
 		"payloads": true,
@@ -595,7 +597,7 @@ func (a App) contextualChildren(path []string, children []commands.Definition) [
 	}
 	if !a.inOperationContext() {
 		switch strings.Join(path, " ") {
-		case "chain", "chains", "chain config", "chains config", "module", "modules", "target", "target config", "target set", "targets", "targets config", "targets set":
+		case "chain", "chains", "chain config", "chains config", "target", "target config", "target set", "targets", "targets config", "targets set":
 			return nil
 		default:
 			return children
@@ -610,7 +612,7 @@ func (a App) contextualChildren(path []string, children []commands.Definition) [
 			"rename": true,
 			"use":    true,
 		})
-	case "chain config", "chains config", "module", "modules":
+	case "chain config", "chains config":
 		return nil
 	default:
 		return children
@@ -645,7 +647,7 @@ func operationContextRequired(path string) bool {
 		return false
 	}
 	switch fields[0] {
-	case "chain", "chains", "module", "modules", "target", "targets":
+	case "chain", "chains", "target", "targets":
 		return true
 	case "throw":
 		return len(fields) == 1
@@ -660,8 +662,6 @@ func chainContextRequired(path string) bool {
 		return false
 	}
 	switch fields[0] {
-	case "module", "modules":
-		return true
 	case "throw":
 		return len(fields) == 1
 	}

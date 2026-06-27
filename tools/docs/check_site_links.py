@@ -17,7 +17,11 @@ def main() -> None:
     parser.add_argument("site_root", type=Path)
     args = parser.parse_args()
 
-    site_root = args.site_root.resolve()
+    check_site(args.site_root.resolve())
+
+
+def check_site(site_root: Path) -> None:
+    site_root = site_root.resolve()
     missing: list[str] = []
     for page in sorted(site_root.rglob("*.html")):
         text = page.read_text()

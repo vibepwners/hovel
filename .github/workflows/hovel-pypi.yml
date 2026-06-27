@@ -52,6 +52,12 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
 
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: task actions:summary -- publish-hovel-build
+
   modules:
     name: Build module release packages
     runs-on: ubuntu-latest
@@ -85,8 +91,7 @@ jobs:
             echo "::error::release tag ${GITHUB_REF_NAME} does not match committed VERSION ${version}"
             exit 1
           fi
-          echo "HOVEL_MODULE_VERSION=${version}" >> "$GITHUB_ENV"
-          echo "Packaging release modules ${version} from committed VERSION"
+          echo "Packaging release module artifacts from committed VERSION ${version}"
 
       - name: Build module packages
         run: task modules:package
@@ -104,6 +109,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$GITHUB_REF_NAME" dist/modules/* --clobber
 
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: task actions:summary -- publish-hovel-modules
+
   publish:
     needs: build
     runs-on: ubuntu-latest
@@ -120,3 +131,17 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Publish Hovel to PyPI"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Status | ${{ job.status }} |"
+            echo "| Environment | pypi |"
+            echo "| Artifact | hovel-wheels |"
+            echo "| Publisher | pypa/gh-action-pypi-publish@release/v1 |"
+          } >> "$GITHUB_STEP_SUMMARY"

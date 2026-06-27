@@ -80,7 +80,6 @@ modules:
   searchPaths:
     - ./modules
     - ~/.local/share/hovel/modules
-    - ~/.cache/hovel/modules/downloads
   indexes:
     - ./module-index.yaml
 cache:
@@ -105,7 +104,7 @@ hovel --config ./lab.yaml ...
         <p>Explicit internet actions are:</p>
         <ol>
           <li><code>hovel module install https://...</code></li>
-          <li><code>hovel module install --index https://... name@version</code></li>
+          <li><code>hovel module install name</code> or <code>name@version</code> when resolution reaches a configured HTTPS index</li>
           <li><code>hovel module bulk-install</code> when a source or index is a URL</li>
           <li>install-time managed Python setup for a package that declares python-build-standalone and is not run with <code>--offline</code></li>
         </ol>
@@ -211,20 +210,23 @@ interpreters:
         <p>For managed Python, Hovel pins a known-good python-build-standalone release per Hovel release and downloads the host-platform archive only during explicit install when network use is allowed. The current built-in default is <code>20260610</code>, and operators may override it with <code>runtime.python.pythonBuildStandalone.release</code>. It creates one virtual environment per installed module version. Dependencies are declared by pointing at <code>requirements.txt</code> and an optional wheelhouse; Hovel does not re-model Python packaging inside its manifest.</p>
 
         <h2>Module Install</h2>
-        <p>Modules install from disk, absolute paths, HTTPS URLs, configured indexes, or bulk manifests.</p>
+        <p>Modules install from disk, absolute paths, HTTPS URLs, cached packages, configured package roots, index-backed package references, configured indexes, or bulk manifests.</p>
 <pre data-lang="shell"><code>hovel module install ./ssh-memory-0.1.0.tgz
 hovel module install /opt/hovel/modules/ssh-memory-0.1.0.tgz
 hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
-hovel module install squatter@{{HOVEL_VERSION}} --index ./module-index.yaml
+hovel module install ssh-memory
+hovel module install squatter@{{HOVEL_VERSION}}
 hovel module bulk-install ./modules.yaml
 hovel module install --link /home/me/dev/my-module
+hovel module available
+hovel module installed
 hovel module uninstall squatter@{{HOVEL_VERSION}}
 </code></pre>
         <p>The default install target is the active workspace. <code>--global</code> installs into the user data directory. A normal install copies or extracts into Hovel-managed storage; <code>--link</code> records an absolute module directory for development.</p>
         <p>Installing the same <code>name@version</code> with a different SHA-256 fails unless <code>--replace</code> is supplied. Bulk install runs in order, stops on the first failure, and does not roll back earlier successful installs.</p>
 
         <h2>Indexes And Bulk Manifests</h2>
-        <p>Hovel has no default internet index. An operator may configure or pass an index explicitly. Cached indexes are available offline after the first explicit fetch.</p>
+        <p>Hovel has no default internet index. An operator may configure or pass an index explicitly. Source-tree development also discovers the local <code>dist/modules/module-index.yaml</code> produced by <code>task modules:package</code> when <code>HOVEL_MODULE_CONFIG</code> points at the in-repo examples catalog. Cached HTTPS indexes are available offline after the first explicit fetch.</p>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleIndex
 modules:
@@ -258,11 +260,11 @@ modules:
 ~/.cache/hovel/modules/downloads/
 ~/.cache/hovel/python-build-standalone/
 </code></pre>
-        <p>Downloaded packages are cached by SHA-256 when caching is enabled and cached package archives participate in module discovery. HTTPS indexes are cached by URL hash after an explicit fetch and can be reused with <code>--offline</code>. Uninstall removes installed records and extracted package state, not cached downloads or shared Python runtimes. Cache cleanup is explicit.</p>
+        <p>Downloaded packages are cached by SHA-256 when caching is enabled and cached package archives participate in <code>module available</code>. HTTPS indexes are cached by URL hash after an explicit fetch and can be reused with <code>--offline</code>. Uninstall removes installed records and extracted package state, not cached downloads or shared Python runtimes. Cache cleanup is explicit.</p>
 
         <h2>Resolution</h2>
-        <p>Module search paths are not recursive. Each search path contains package roots or <code>.tgz</code> files directly. Discovery can list uninstalled packages as available, but execution uses installed or linked packages.</p>
-        <p>Module references keep the existing <code>name@version</code> form. Exact versions win. Bare <code>name</code> resolves to the highest semver installed version. If duplicate candidates remain after version and precedence resolution, Hovel errors instead of guessing. Workspace-installed modules beat global modules and cache entries.</p>
+        <p><code>module available</code> is local-only discovery: installed records, configured package roots, local <code>.tgz</code> files, cached downloads, and locally reusable index entries. It never contacts the internet. <code>module installed</code> reads completed install records from <code>module-lock.yaml</code>. Module search paths are not recursive. Each search path contains package roots or <code>.tgz</code> files directly. Discovery can list uninstalled packages as available, but execution uses installed or linked packages.</p>
+        <p>Module references keep the existing <code>name@version</code> form. During install, an exact <code>name@version</code> or bare <code>name</code> checks cached package archives first, then configured package roots and archives, then the source-tree module index when present, then configured or explicit indexes. Package roots install as links; archives and URLs install into managed workspace storage. Bare install references choose the newest semver package in the first matching source tier. During execution, bare <code>name</code> resolves to the highest semver installed version. If duplicate candidates remain after version and precedence resolution, Hovel errors instead of guessing. Workspace-installed modules beat global modules and cache entries.</p>
         <p>Chains never auto-download missing modules. If a configured index knows a missing module, the error may include the install command.</p>
 
         <h2>Build Strategy</h2>
@@ -299,13 +301,13 @@ hovel-windows-amd64.exe
 <pre data-lang="bash"><code>uvx hovel throw ./ssh-memory.chain.yaml
 uvx hovel throw ./ssh-memory.chain.yaml --now
 </code></pre>
-        <p>The package includes no modules by default. In-tree modules such as EternalRomance, Squatter, and the mock modules are built as separate <code>.tgz</code> artifacts and published on the GitHub Release page.</p>
+        <p>The package includes no modules by default. In-tree modules such as EternalRomance, Squatter, and the mock modules are built as separate <code>.tgz</code> artifacts with their module-declared versions and published on the GitHub Release page.</p>
         <p>Release artifact authority:</p>
         <ol>
           <li>GitHub Releases own native binaries, module packages, checksums, and immutable source archives.</li>
           <li><code>hovel</code> PyPI wheels contain the matching Go binary and launcher.</li>
           <li><code>hovel-sdk</code> PyPI releases contain the Python SDK.</li>
-          <li>Hovel and Hovel SDK versions are released together. In-tree example modules published by the release workflow use the Hovel release version; third-party module versions remain independent.</li>
+          <li>Hovel and Hovel SDK versions are released together. Module package versions come from each module's descriptor; third-party module versions remain independent.</li>
         </ol>
         <p>Package names may include version and platform for clarity, such as <code>squatter-{{HOVEL_VERSION}}.tgz</code> or <code>squatter-{{HOVEL_VERSION}}-linux-amd64.tgz</code>, but the manifest is authoritative.</p>
 

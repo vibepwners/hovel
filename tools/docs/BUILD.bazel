@@ -1,0 +1,15 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "stage_site",
+    srcs = [
+        "check_site_links.py",
+        "generate_sdk_api_docs.py",
+        "stage_site.py",
+    ],
+    data = ["//demo:all_gif_manifest"],
+    main = "stage_site.py",
+    python_version = "PY3",
+)

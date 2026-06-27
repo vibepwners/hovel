@@ -23,7 +23,7 @@ Enter
 Wait+Screen /Installed module linked-demo@0.1.0/
 Sleep 250 ms
 
-Type "hovel module list --workspace $HOVEL_WORKSPACE"
+Type "hovel module installed --workspace $HOVEL_WORKSPACE"
 Enter
 Wait+Screen /linked-demo@0.1.0/
 Sleep 250 ms

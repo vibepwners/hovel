@@ -19,6 +19,9 @@ version: '3'
 #   task reset                  wipe local state and relaunch fresh
 # The dev workspace defaults to ./.hovel; override with HOVEL_WORKSPACE.
 
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
 vars:
   # Absolute so the daemon resolves the config (and its relative project_dir /
   # command paths) against the source tree rather than the bazel runfiles tree,
@@ -27,6 +30,12 @@ vars:
     sh: echo "$PWD/examples/hovel-modules.json"
   WORKSPACE:
     sh: echo "${HOVEL_WORKSPACE:-$PWD/.hovel}"
+  # Optional Bazel startup and command options for CI wrappers. Leave unset for
+  # local development; repo-local auth overrides belong in ignored rc files.
+  BAZEL_STARTUP_ARGS:
+    sh: echo "${HOVEL_BAZEL_STARTUP_ARGS:-}"
+  BAZEL_ARGS:
+    sh: echo "${HOVEL_BAZEL_ARGS:-}"
 
 tasks:
   default:
@@ -41,48 +50,48 @@ tasks:
     aliases: [dev, up, cli]
     desc: Build and launch the interactive Hovel CLI (auto-starts a daemon).
     interactive: true
-    deps: [modules:build]
+    deps: [modules:package]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run //cmd/hovel -- cli --workspace "{{.WORKSPACE}}"
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- cli --workspace "{{.WORKSPACE}}"
 
   daemon:
     desc: Run hoveld in the foreground on the default Unix socket.
     interactive: true
-    deps: [modules:build]
+    deps: [modules:package]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run //cmd/hovel -- daemon serve --workspace "{{.WORKSPACE}}"
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- daemon serve --workspace "{{.WORKSPACE}}"
 
   mcp:
     desc: Launch the MCP agent interface for the dev workspace.
     interactive: true
-    deps: [modules:build]
+    deps: [modules:package]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run //cmd/hovel -- mcp --workspace "{{.WORKSPACE}}" --transport http --http-addr 127.0.0.1:27166 --entity-id agent1
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- mcp --workspace "{{.WORKSPACE}}" --transport http --http-addr 127.0.0.1:27166 --entity-id agent1
 
   status:
     aliases: [st]
     desc: Show daemon status for the dev workspace.
     cmds:
-      - bazel run //cmd/hovel -- status --workspace "{{.WORKSPACE}}"
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- status --workspace "{{.WORKSPACE}}"
 
   init:
     desc: Initialize the dev workspace (./.hovel).
     cmds:
-      - bazel run //cmd/hovel -- init --workspace "{{.WORKSPACE}}"
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- init --workspace "{{.WORKSPACE}}"
 
   throw:
     desc: 'One-shot throw of a saved chain file: task throw -- path/to/chain.yaml.'
-    deps: [modules:build]
+    deps: [modules:package]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run //cmd/hovel -- throw {{.CLI_ARGS}} --workspace "{{.WORKSPACE}}"
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- throw {{.CLI_ARGS}} --workspace "{{.WORKSPACE}}"
 
   lab:etro-squatter-bind:
     desc: Throw the representative Etro -> Squatter TCP bind lab chain against HOVEL_LAB_TARGET_HOST.
@@ -111,20 +120,20 @@ tasks:
     aliases: [b]
     desc: Build Bazel targets (default //...; e.g. task build -- //cmd/hovel).
     cmds:
-      - bazel build {{.CLI_ARGS | default "//..."}}
+      - bazel {{.BAZEL_STARTUP_ARGS}} build {{.BAZEL_ARGS}} {{.CLI_ARGS | default "//..."}}
 
   test:
     aliases: [t]
     desc: Run Bazel tests (default //...; e.g. task test -- //internal/domain/...).
     cmds:
-      - bazel test {{.CLI_ARGS | default "//..."}}
+      - bazel {{.BAZEL_STARTUP_ARGS}} test {{.BAZEL_ARGS}} {{.CLI_ARGS | default "//..."}}
 
   run:
     desc: 'Run any Bazel target: task run -- //cmd/hovel -- daemon status.'
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run {{.CLI_ARGS}}
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
 
   go:deps:
     desc: 'Add or update Go module dependencies: task go:deps -- module@version.'
@@ -137,11 +146,21 @@ tasks:
     aliases: [modules]
     desc: Build the Go and Rust example modules and stage their binaries to examples/bin/.
     cmds:
-      - bash tools/modules/stage_examples.sh
+      - task: run
+        vars:
+          CLI_ARGS: //tools/modules:stage_examples
 
   modules:package:
     desc: Build example module .tgz packages and a module index into dist/modules/.
     deps: [modules:build]
+    sources:
+      - tools/modules/package_examples.py
+      - examples/bin/*
+      - examples/python/**/*
+    generates:
+      - dist/modules/module-index.yaml
+      - dist/modules/*.tgz
+      - dist/modules/SHA256SUMS
     cmds:
       - python3 tools/modules/package_examples.py
 
@@ -156,26 +175,38 @@ tasks:
       - python3 tools/release/upver_test.py
 
   docs:
-    desc: Generate demos, then build and stage the static docs site.
+    desc: Build cached demos, then build and stage the static docs site.
     cmds:
-      - task: demos
-      - task: demo:squatter-wine
+      - task: demos:all
       - task: docs:stage
 
   docs:stage:
     desc: Build and stage the static docs site from existing demo outputs.
     cmds:
-      - bash tools/docs/stage_site.sh
+      - task: run
+        vars:
+          CLI_ARGS: //tools/docs:stage_site
 
   demos:
-    desc: Generate VHS terminal demos into demo/out/.
+    desc: Materialize Bazel-cached VHS terminal demos into demo/out/.
     cmds:
-      - bash scripts/generate-demos.sh
+      - task: run
+        vars:
+          CLI_ARGS: //tools/demo:materialize_standard_demo_outputs
 
   demo:squatter-wine:
-    desc: Generate the Docker/Wine Squatter MCP demo GIF.
+    desc: Materialize the Bazel-cached Docker/Wine Squatter MCP demo GIF.
     cmds:
-      - bash scripts/generate-squatter-wine-demo.sh
+      - task: run
+        vars:
+          CLI_ARGS: //tools/demo:materialize_squatter_wine_demo_outputs
+
+  demos:all:
+    desc: Materialize all Bazel-cached VHS demos into demo/out/.
+    cmds:
+      - task: run
+        vars:
+          CLI_ARGS: --jobs=1 //tools/demo:materialize_all_demo_outputs
 
   docs:api:
     desc: Generate language-native SDK API docs into _site/api/sdk.
@@ -214,12 +245,23 @@ tasks:
     cmds:
       - task: lint
       - task: upver:test
+      - task: actions:summary:test
       - task: docs
       - task: build
-      - task: test
-      - task: test:race
-      - task: fuzz:smoke
+        vars:
+          CLI_ARGS: //:build
+      - task: test:ci
       - task: coverage
+
+  actions:summary:
+    desc: Append a GitHub Actions job summary for a named workflow job.
+    cmds:
+      - python3 tools/ci/job_summary.py {{.CLI_ARGS}}
+
+  actions:summary:test:
+    desc: Check the GitHub Actions job summary renderer.
+    cmds:
+      - python3 tools/ci/job_summary_test.py
 
   coverage:
     desc: Run coverage ratchets for domain, app, and Python SDK layers.
@@ -229,22 +271,28 @@ tasks:
   coverage:go:
     desc: Run Bazel merged LCOV coverage for Go targets.
     cmds:
-      - bazel coverage --combined_report=lcov {{.CLI_ARGS}}
+      - bazel {{.BAZEL_STARTUP_ARGS}} coverage {{.BAZEL_ARGS}} --combined_report=lcov {{.CLI_ARGS}}
 
   test:race:
     desc: Run Go race-detector tests for the application service layer.
     cmds:
       - task: test
         vars:
-          CLI_ARGS: --@rules_go//go/config:race //internal/app/...
+          CLI_ARGS: //:race_test
+
+  test:ci:
+    desc: Run CI tests, race tests, and fuzz smoke not already exercised by coverage ratchets.
+    cmds:
+      - task: test
+        vars:
+          CLI_ARGS: //:ci_test //:race_test //:fuzz_smoke_test
 
   fuzz:smoke:
     desc: Run short fuzz smoke coverage for pure domain parsers.
     cmds:
-      - mkdir -p /tmp/hovel-fuzz-cache
       - task: test
         vars:
-          CLI_ARGS: --test_arg=-test.fuzz=FuzzNewTypeNeverAcceptsUntrimmedOrSingleSegmentValues --test_arg=-test.fuzztime=5s --test_arg=-test.fuzzcachedir=/tmp/hovel-fuzz-cache //internal/domain/event:event_test
+          CLI_ARGS: //:fuzz_smoke_test
 
   lint:
     aliases: [l]
@@ -268,35 +316,40 @@ tasks:
   gofmt:
     desc: Format Go files in place.
     cmds:
-      - bash tools/lint/gofmt_all.sh
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=write
 
   gofmt:check:
     desc: Check Go formatting.
     cmds:
-      - bash tools/lint/check_gofmt.sh
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=check
 
   gazelle:
     desc: Update Go BUILD metadata with Gazelle.
     cmds:
-      - bazel run //:gazelle
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //:gazelle
 
   gazelle:check:
     desc: Check that Go BUILD metadata is up to date.
     cmds:
-      - bazel run //:gazelle -- -mode=diff
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //:gazelle -- -mode=diff
 
   python:check:
     desc: Run Python lint, type, and doc checks.
     cmds:
-      - bash tools/lint/check_python.sh
+      - task: test
+        vars:
+          CLI_ARGS: //tools/lint:python_check_test
 
   squatter:check:
     desc: Run Squatter C static analysis.
     cmds:
-      - task: squatter:format:check
-      - task: squatter:complexity
-      - task: squatter:cppcheck
-      - task: squatter:clang-tidy
+      - task: build
+        vars:
+          CLI_ARGS: //payloads/squatter/windows/src:static_analysis
 
   squatter:test:wine:
     desc: Run Squatter Windows C++ and functional tests under Wine.
@@ -311,34 +364,37 @@ tasks:
   squatter:format:
     desc: Format Squatter C sources with clang-format.
     cmds:
-      - |
-        sources="$(tools/lint/squatter_sources.sh | sed "s#^#$PWD/#")"
-        bazel run //tools/lint:clang_format -- -i $sources
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:format_squatter_c
 
   squatter:format:check:
     desc: Check Squatter C formatting with clang-format.
     cmds:
-      - |
-        sources="$(tools/lint/squatter_sources.sh | sed "s#^#$PWD/#")"
-        bazel run //tools/lint:clang_format -- --dry-run --Werror $sources
+      - task: build
+        vars:
+          CLI_ARGS: //payloads/squatter/windows/src:format_check
 
   squatter:complexity:
     desc: Check Squatter C cyclomatic complexity with lizard (CCN <= 10).
     cmds:
-      - bash tools/lint/check_squatter_complexity.sh
+      - task: build
+        vars:
+          CLI_ARGS: //payloads/squatter/windows/src:complexity
 
   squatter:cppcheck:
     desc: Run cppcheck over Squatter C sources.
     cmds:
-      - bash tools/lint/check_squatter_cppcheck.sh
+      - task: build
+        vars:
+          CLI_ARGS: //payloads/squatter/windows/src:cppcheck
 
   squatter:clang-tidy:
     desc: Run clang-tidy over Squatter C sources.
     cmds:
       - task: build
         vars:
-          CLI_ARGS: //payloads/squatter/windows/src:squatter_all
-      - bash tools/lint/check_squatter_clang_tidy.sh
+          CLI_ARGS: //payloads/squatter/windows/src:clang_tidy
 
   # --- Git hooks ----------------------------------------------------------
 

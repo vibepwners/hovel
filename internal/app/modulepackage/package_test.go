@@ -188,6 +188,39 @@ touch script-ran
 	}
 }
 
+func TestInstallLinkPostInstallFailureDoesNotWriteLock(t *testing.T) {
+	workspace := t.TempDir()
+	root := packageDir(t, `apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: broken-script
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/broken-script"]
+scripts:
+  postInstall:
+    command: ["/bin/sh", "-c", "exit 42"]
+`)
+
+	if _, err := InstallLink(InstallOptions{
+		Workspace: workspace,
+		SourceDir: root,
+		HostOS:    "linux",
+		HostArch:  "amd64",
+	}); err == nil {
+		t.Fatal("InstallLink succeeded, want postInstall failure")
+	}
+	if _, err := LoadLock(filepath.Join(workspace, "module-lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("lock exists after failed install or stat failed unexpectedly: %v", err)
+	}
+}
+
 func TestInstallLinkCreatesManagedPythonVenv(t *testing.T) {
 	workspace := t.TempDir()
 	root := packageDir(t, `apiVersion: hovel.dev/v1alpha1
@@ -289,6 +322,56 @@ launch:
 		t.Fatal(err)
 	}
 	if len(lock.Modules) != 1 || lock.Modules[0].SHA256 != sum || lock.Modules[0].Linked {
+		t.Fatalf("lock modules = %#v", lock.Modules)
+	}
+}
+
+func TestInstallArchivePostInstallFailureCleansExtractedPackageAndPreservesOldInstall(t *testing.T) {
+	workspace := t.TempDir()
+	first := packageArchive(t, map[string]string{
+		"hovel-module.yaml":  minimalManifest("replace-script"),
+		"bin/replace-script": "first\n",
+	})
+	if _, err := InstallArchive(InstallOptions{Workspace: workspace, SourceArchive: first, HostOS: "linux", HostArch: "amd64"}); err != nil {
+		t.Fatal(err)
+	}
+	installedRoot := filepath.Join(workspace, "modules", "replace-script", "0.1.0")
+	second := packageArchive(t, map[string]string{
+		"hovel-module.yaml": `apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: replace-script
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/replace-script"]
+scripts:
+  postInstall:
+    command: ["/bin/sh", "-c", "exit 42"]
+`,
+		"bin/replace-script": "second\n",
+	})
+
+	if _, err := InstallArchive(InstallOptions{Workspace: workspace, SourceArchive: second, HostOS: "linux", HostArch: "amd64", Replace: true}); err == nil {
+		t.Fatal("InstallArchive succeeded, want postInstall failure")
+	}
+	body, err := os.ReadFile(filepath.Join(installedRoot, "bin", "replace-script"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "first\n" {
+		t.Fatalf("installed package body = %q, want original install", string(body))
+	}
+	lock, err := LoadLock(filepath.Join(workspace, "module-lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lock.Modules) != 1 || lock.Modules[0].Name != "replace-script" {
 		t.Fatalf("lock modules = %#v", lock.Modules)
 	}
 }

@@ -51,7 +51,10 @@ trust:
 ```sh
 hovel module install ./path/to/module.tgz
 hovel module install --link /absolute/path/to/module-package-root
-hovel module install name@version --index ./module-index.yaml
+hovel module install name          # newest local package, then configured indexes
+hovel module install name@version  # exact local package, then configured indexes
+hovel module available   # locally installable packages and caches
+hovel module installed   # modules whose install process completed
 ```
 
 ## Develop
@@ -76,7 +79,7 @@ Useful tasks:
 | `task build` | Build all targets. |
 | `task test` | Run all Bazel tests. |
 | `task lint` | Run Go, Gazelle, Python, and Squatter C checks. |
-| `task docs` | Generate demos, stage the Pages site, generate SDK API docs, and check internal links. |
+| `task docs` | Build cached demos, stage the Pages site, generate SDK API docs, and check internal links. |
 | `task coverage` | Run domain, application, and Python SDK coverage ratchets. |
 | `task ci` | Run the local gate: lint, version-update tests, docs, build, tests, race, fuzz smoke, and coverage. |
 

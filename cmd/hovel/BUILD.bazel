@@ -1,5 +1,5 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library")
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@rules_python//python:defs.bzl", "py_test")
 
 go_library(
     name = "hovel_lib",
@@ -49,15 +49,16 @@ go_binary(
     visibility = ["//visibility:public"],
 )
 
-sh_test(
+py_test(
     name = "binary_e2e_test",
     size = "small",
-    srcs = ["binary_e2e_test.sh"],
+    srcs = ["binary_e2e_test.py"],
     args = ["$(location :hovel)"],
     data = [
         ":hovel",
         "//examples/python:sources",
         "//sdk/python:sources",
     ],
+    python_version = "PY3",
     tags = ["e2e"],
 )

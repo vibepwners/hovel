@@ -1,10 +1,23 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//payloads/squatter/bazel:copts.bzl", "SQ_COPTS")
 load("//payloads/squatter/bazel:transitions.bzl", "windows_multiplatform")
+load("//tools/lint:squatter_clang_tidy.bzl", "squatter_clang_tidy")
+load(
+    "//tools/lint:static_checks.bzl",
+    "squatter_complexity",
+    "squatter_cppcheck",
+    "squatter_format_check",
+)
 
 # gazelle:exclude wire
 
 package(default_visibility = ["//visibility:public"])
+
+_SQUATTER_C_SRCS = glob(["**/*.c"])
+
+_SQUATTER_HDRS = glob(["**/*.h"])
+
+_SQUATTER_FORMAT_SRCS = _SQUATTER_C_SRCS + _SQUATTER_HDRS
 
 filegroup(
     name = "source_files",
@@ -278,4 +291,40 @@ windows_multiplatform(
 windows_multiplatform(
     name = "squatter_checked_gui_all",
     binary = ":squatter_checked_gui.exe",
+)
+
+squatter_clang_tidy(
+    name = "clang_tidy",
+    srcs = _SQUATTER_C_SRCS,
+    hdrs = _SQUATTER_HDRS,
+)
+
+squatter_format_check(
+    name = "format_check",
+    srcs = _SQUATTER_FORMAT_SRCS,
+    tags = ["manual"],
+)
+
+squatter_complexity(
+    name = "complexity",
+    srcs = _SQUATTER_FORMAT_SRCS,
+    tags = ["manual"],
+)
+
+squatter_cppcheck(
+    name = "cppcheck",
+    srcs = _SQUATTER_C_SRCS,
+    hdrs = _SQUATTER_HDRS,
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "static_analysis",
+    srcs = [
+        ":clang_tidy",
+        ":complexity",
+        ":cppcheck",
+        ":format_check",
+    ],
+    tags = ["manual"],
 )

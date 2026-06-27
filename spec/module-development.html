@@ -319,7 +319,7 @@ hovel module install --link "$PWD/path/to/my-module-package-root"
 
 # 4. Let Hovel validate package shape and runtime metadata without executing.
 task start
-hovel&gt; module list
+hovel&gt; module installed
 hovel&gt; module check &lt;your-module-id&gt;
 hovel&gt; module inspect &lt;your-module-id&gt;
 
@@ -445,13 +445,14 @@ CHECK   NAME                         MESSAGE
         </ul>
 
         <h2>Installing a module</h2>
-        <p>Operators install modules from local packages, absolute package paths, HTTPS URLs, configured indexes, bulk manifests, or linked package roots.</p>
+        <p>Operators install modules from local packages, absolute package paths, HTTPS URLs, cached packages, configured package roots, index-backed package references, bulk manifests, or linked package roots.</p>
 <pre data-lang="shell"><code>hovel module install ./my-module-0.1.0.tgz
 hovel module install https://github.com/org/repo/releases/download/{{HOVEL_RELEASE_TAG}}/my-module-0.1.0.tgz --sha256 ...
-hovel module install my-module@0.1.0 --index ./module-index.yaml
+hovel module install my-module
+hovel module install my-module@0.1.0
 hovel module bulk-install ./lab-modules.yaml
 hovel module install --link /home/me/dev/my-module</code></pre>
-        <p>The default install target is the active workspace. <code>--global</code> installs into user-level storage. Workspace modules take precedence over global modules and cached packages.</p>
+        <p>Bare install references choose the newest semver package from the first matching local source tier: download cache, configured package roots and archives, then the source-tree module index when present. Hovel consults configured indexes after local sources. The default install target is the active workspace. <code>--global</code> installs into user-level storage. Workspace modules take precedence over global modules and cached packages.</p>
         <blockquote>
           The <code>command</code> launcher is what makes Hovel polyglot: any executable that
           speaks the stdio JSON-RPC protocol is a module, regardless of how it was built.
@@ -471,8 +472,8 @@ hovel module install --link "$PWD/path/to/module-package-root"
 # Launch the interactive CLI
 task start
 
-# In the CLI, list the catalog
-hovel&gt; module list</code></pre>
+# In the CLI, list installed modules for the workspace
+hovel&gt; module installed</code></pre>
         <p><code>task start</code>, <code>task daemon</code>, and <code>task throw</code> go through Task so local build, packaging, and runtime assumptions stay aligned with CI.</p>
 
         <h2>Safety</h2>

@@ -1,0 +1,65 @@
+load("@rules_python//python:defs.bzl", "py_test")
+load(":demo_defs.bzl", "STANDARD_DEMOS", "demo_manifest", "vhs_demo_targets")
+
+package(default_visibility = ["//visibility:public"])
+
+vhs_demo_targets()
+
+filegroup(
+    name = "standard_gifs",
+    srcs = [":" + name + "_gif" for name, _ in STANDARD_DEMOS],
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "squatter_wine_gif",
+    srcs = [":mcp-agent-02-squatter-wine_gif"],
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "all_gifs",
+    srcs = [
+        ":squatter_wine_gif",
+        ":standard_gifs",
+    ],
+    tags = ["manual"],
+)
+
+demo_manifest(
+    name = "standard_gif_manifest",
+    outputs = ["demo/out/" + name + ".gif" for name, _ in STANDARD_DEMOS],
+)
+
+demo_manifest(
+    name = "squatter_wine_gif_manifest",
+    outputs = ["demo/out/mcp-agent-02-squatter-wine.gif"],
+)
+
+demo_manifest(
+    name = "all_gif_manifest",
+    outputs = ["demo/out/" + name + ".gif" for name, _ in STANDARD_DEMOS] + ["demo/out/mcp-agent-02-squatter-wine.gif"],
+)
+
+py_test(
+    name = "standard_verification_test",
+    size = "medium",
+    srcs = ["//tools/demo:verify_standard_demos.py"],
+    args = [
+        "$(rootpath //cmd/hovel:hovel)",
+        "$(rootpath //tools/demo/mcpagent:mcpagent)",
+        "$(rootpath //examples/go/mock_survey:mock_survey)",
+        "$(rootpath //examples/go/mock_exploit_session:mock_exploit_session)",
+        "$(rootpath :chains/mock-survey-exploit.chain.yaml)",
+    ],
+    data = [
+        ":chains/mock-survey-exploit.chain.yaml",
+        "//cmd/hovel",
+        "//examples/go/mock_exploit_session",
+        "//examples/go/mock_survey",
+        "//tools/demo/mcpagent",
+    ],
+    main = "verify_standard_demos.py",
+    python_version = "PY3",
+    tags = ["e2e"],
+)

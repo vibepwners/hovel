@@ -1,3 +1,6 @@
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["site_smoke_test.sh"])
+exports_files([
+    "event_type_fuzz_smoke_test.py",
+    "site_smoke_test.py",
+])

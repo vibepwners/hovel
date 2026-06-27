@@ -314,7 +314,7 @@ launch:
 <pre data-lang="shell"><code>task modules:build
 hovel module install --link "$PWD/examples/go/mock_survey"
 task start
-hovel&gt; module list   # ... mock-survey-go, mock-exploit-go, mock-exploit-session-go</code></pre>
+hovel&gt; module installed   # ... mock-survey-go, mock-exploit-go, mock-exploit-session-go</code></pre>
         <p>
           Add new test targets to the <code>test_suite</code> in the root
           <code>BUILD.bazel</code>, then gate with <code>task ci</code>.

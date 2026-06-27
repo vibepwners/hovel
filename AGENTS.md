@@ -15,6 +15,28 @@ rather than running the underlying tool ad hoc — then use the task.
 
 Run `task --list` to see everything available.
 
+## Shell in the build graph
+
+Do not add shell scripts to the build, lint, test, docs, or demo pipeline by
+default. Hovel uses Bazel/Starlark for declared build actions and Python for
+non-trivial repository tooling. Shell is acceptable only when the shell itself
+is the thing being demonstrated or operated, such as VHS terminal recordings,
+Docker entrypoints, or one-off lab operator scripts.
+
+When a check can be cached, model it as a Bazel target with explicit inputs and
+outputs instead of discovering files from shell at execution time. When a task
+must materialize generated artifacts back into the working tree (`_site/`,
+`demo/out/`, `examples/bin/`), prefer a `bazel run` Python materializer with
+declared data dependencies. Do not call `bazel` from helper scripts.
+
+Build, test, lint, docs, and demo tools should be Bazel-managed execution
+inputs whenever practical: pinned archives, pip wheels, Go/Rust toolchains, or
+custom toolchains/rules. Do not add new `PATH` lookups, `go install`, `uv tool
+install`, Homebrew, or apt-installed CLIs for tools that can reasonably be
+declared in Bazel. Host tools are acceptable only for real host services or
+system boundaries that Bazel should not own, such as Docker, Wine, tmux, ttyd,
+or ffmpeg until they have a pinned execution toolchain.
+
 ## Common tasks
 
 | Task | What it does |

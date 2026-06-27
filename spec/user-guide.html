@@ -129,14 +129,17 @@ runtime:
         <p>Hovel is offline-ready. It never contacts internet URLs during daemon startup, listing, validation, throws, or runtime execution. Network access happens only when you explicitly install from a URL, use a URL index, bulk-install URL sources, or allow managed Python setup during install.</p>
 
         <h2>Install Modules</h2>
-        <p>Modules are distributed as <code>.tgz</code> packages. Install from disk, absolute path, HTTPS URL, an explicit index, a bulk manifest, or a linked development directory.</p>
+        <p>Modules are distributed as <code>.tgz</code> packages. Install from disk, absolute path, HTTPS URL, a local package reference, an index-backed reference, a bulk manifest, or a linked development directory.</p>
 <pre data-lang="shell"><code>hovel module install ./squatter-{{HOVEL_VERSION}}.tgz
 hovel module install /opt/hovel/modules/etro-survey-1.0.0.tgz
 hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
-hovel module install squatter@{{HOVEL_VERSION}} --index ./module-index.yaml
+hovel module install etro-survey
+hovel module install squatter@{{HOVEL_VERSION}}
 hovel module bulk-install ./lab-modules.yaml
-hovel module install --link /home/me/dev/my-module</code></pre>
-        <p>The default install target is the active workspace. Use <code>--global</code> for a user-level install. Workspace modules win over global modules. Reinstalling the same <code>name@version</code> with a different SHA-256 requires <code>--replace</code>.</p>
+hovel module install --link /home/me/dev/my-module
+hovel module available
+hovel module installed</code></pre>
+        <p>For <code>module install name</code>, Hovel installs the newest matching local package before consulting configured module indexes. Local resolution checks the download cache, configured package roots and archives, and the source-tree <code>dist/modules/module-index.yaml</code> when it exists. Exact <code>name@version</code> references use the same local-first path. Use <code>--index</code> to add an index for one install when it is not already configured. The default install target is the active workspace. Use <code>--global</code> for a user-level install. Workspace modules win over global modules. Reinstalling the same <code>name@version</code> with a different SHA-256 requires <code>--replace</code>.</p>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleInstallSet
 modules:
@@ -144,7 +147,7 @@ modules:
     sha256: ...
   - source: ./etro-survey-1.0.0.tgz
   - source: ./etro-exploit-1.0.0.tgz</code></pre>
-        <p>Installed packages are recorded in the workspace module registry and <code>module-lock.yaml</code>. Cached downloads stay available for offline reinstall until explicitly cleaned.</p>
+        <p>Installed packages are recorded in <code>module-lock.yaml</code> only after the install process completes. Cached downloads stay visible through <code>module available</code> for offline reinstall until explicitly cleaned; they are not installed modules.</p>
         <figure class="demo-figure">
           <img src="../assets/demos/module-package-install-01-link.gif" alt="Terminal demo installing a linked module package, listing the installed module, and showing module-lock.yaml.">
           <figcaption>Linking a trusted development package records it in the workspace module lock.</figcaption>
@@ -308,7 +311,7 @@ h0v3l [demo/mock-survey-exploit] &gt; chain load mock-survey-exploit.chain.yaml<
         <p>Module authors should start with the language-specific examples, keep metadata paths cheap and side-effect free, declare every operator-controlled value, and use the SDK logging rail instead of stdout. Package finished modules as <code>.tgz</code> archives with a <code>hovel-module.yaml</code> manifest.</p>
 <pre data-lang="shell"><code>task modules:build
 hovel module install --link "$PWD/examples/modules/mock-survey"
-hovel module list
+hovel module installed
 hovel module inspect mock-survey-go</code></pre>
 
         <figure class="demo-figure">

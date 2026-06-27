@@ -1,4 +1,4 @@
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@rules_python//python:defs.bzl", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -7,10 +7,10 @@ filegroup(
     srcs = glob(["**/*.html"]),
 )
 
-sh_test(
+py_test(
     name = "site_smoke_test",
     size = "small",
-    srcs = ["//tools/tests:site_smoke_test.sh"],
+    srcs = ["//tools/tests:site_smoke_test.py"],
     args = [
         "$(rootpath :index.html)",
         "$(rootpath :user-guide.html)",
@@ -37,4 +37,5 @@ sh_test(
         "squatter-payload-provider.html",
         "user-guide.html",
     ],
+    python_version = "PY3",
 )

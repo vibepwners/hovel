@@ -32,9 +32,13 @@ jobs:
           path: |
             ~/.cache/bazel
             ~/.cache/bazelisk
-          key: bazel-pages-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}
+          key: bazel-pages-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.event.workflow_run.head_sha || github.sha }}
           restore-keys: |
+            bazel-demos-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.event.workflow_run.head_sha || github.sha }}
+            bazel-pages-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-
+            bazel-demos-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-
             bazel-pages-${{ runner.os }}-
+            bazel-demos-${{ runner.os }}-
 
       - name: Install Task
         uses: arduino/setup-task@v2
@@ -54,16 +58,13 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.84.0
 
-      - name: Install VHS dependencies
+      - name: Install demo host tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg ttyd tmux fonts-dejavu-core
 
-      - name: Install VHS
+      - name: Verify demo host tools
         run: |
-          go install github.com/charmbracelet/vhs@v0.11.0
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          "$(go env GOPATH)/bin/vhs" --version
           ffmpeg -version | head -n 1
           ttyd --version
           tmux -V
@@ -78,6 +79,12 @@ jobs:
         with:
           path: _site
 
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: task actions:summary -- pages-build
+
   deploy:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     needs: build
@@ -88,3 +95,16 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Pages Deploy"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Status | ${{ job.status }} |"
+            echo "| Environment | github-pages |"
+            echo "| URL | ${{ steps.deployment.outputs.page_url }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

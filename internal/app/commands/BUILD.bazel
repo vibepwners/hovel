@@ -44,3 +44,25 @@ go_test(
         "//internal/domain/workspace",
     ],
 )
+
+go_test(
+    name = "commands_race_test",
+    size = "small",
+    srcs = [
+        "catalog_test.go",
+        "registry_test.go",
+    ],
+    embed = [":commands"],
+    race = "on",
+    tags = ["manual"],
+    deps = [
+        "//internal/app/modulecatalog",
+        "//internal/app/modulepackage",
+        "//internal/app/operatorlog",
+        "//internal/app/operatorsession",
+        "//internal/app/services",
+        "//internal/domain/daemon",
+        "//internal/domain/event",
+        "//internal/domain/workspace",
+    ],
+)

@@ -14,3 +14,12 @@ go_test(
     srcs = ["package_test.go"],
     embed = [":modulepackage"],
 )
+
+go_test(
+    name = "modulepackage_race_test",
+    size = "small",
+    srcs = ["package_test.go"],
+    embed = [":modulepackage"],
+    race = "on",
+    tags = ["manual"],
+)

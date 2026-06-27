@@ -21,3 +21,16 @@ go_test(
         "//internal/domain/run",
     ],
 )
+
+go_test(
+    name = "chainruntime_race_test",
+    size = "small",
+    srcs = ["runtime_test.go"],
+    embed = [":chainruntime"],
+    race = "on",
+    tags = ["manual"],
+    deps = [
+        "//internal/app/modulecatalog",
+        "//internal/domain/run",
+    ],
+)

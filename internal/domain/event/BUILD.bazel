@@ -1,4 +1,5 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
+load("@rules_python//python:defs.bzl", "py_test")
 
 go_library(
     name = "event",
@@ -12,4 +13,14 @@ go_test(
     size = "small",
     srcs = ["event_test.go"],
     embed = [":event"],
+)
+
+py_test(
+    name = "event_type_fuzz_smoke_test",
+    size = "medium",
+    srcs = ["//tools/tests:event_type_fuzz_smoke_test.py"],
+    args = ["$(rootpath :event_test)"],
+    data = [":event_test"],
+    python_version = "PY3",
+    tags = ["manual"],
 )

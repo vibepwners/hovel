@@ -147,9 +147,10 @@ hovel_demo_setup() {
 
   rm -rf "$HOVEL_WORKSPACE" "$bin_dir"
   mkdir -p "$HOVEL_WORKSPACE" "$bin_dir"
-  ln -sf "$repo_root/bazel-bin/cmd/hovel/hovel_/hovel" "$bin_dir/hovel"
-  if [[ -x "$repo_root/bazel-bin/tools/demo/mcpagent/mcpagent_/mcpagent" ]]; then
-    ln -sf "$repo_root/bazel-bin/tools/demo/mcpagent/mcpagent_/mcpagent" "$bin_dir/hovel-mock-agent"
+  ln -sf "${HOVEL_DEMO_HOVEL_BIN:-$repo_root/bazel-bin/cmd/hovel/hovel_/hovel}" "$bin_dir/hovel"
+  local agent_bin="${HOVEL_DEMO_AGENT_BIN:-$repo_root/bazel-bin/tools/demo/mcpagent/mcpagent_/mcpagent}"
+  if [[ -x "$agent_bin" ]]; then
+    ln -sf "$agent_bin" "$bin_dir/hovel-mock-agent"
   fi
   export PATH="$bin_dir:$PATH"
 
