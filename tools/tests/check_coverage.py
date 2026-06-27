@@ -72,8 +72,9 @@ def main() -> int:
 
 
 def run_go_coverage(name: str, minimum: float, targets: tuple[str, ...]) -> CoverageResult:
-    run(["task", "test", "--", "--collect_code_coverage", *targets])
     report = ROOT / "bazel-out/_coverage/_coverage_report.dat"
+    report.unlink(missing_ok=True)
+    run(["task", "coverage:go", "--", *targets])
     if not report.exists():
         raise SystemExit(f"coverage report not found: {report}")
     covered, total = parse_lcov(report)

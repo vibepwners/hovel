@@ -226,6 +226,11 @@ tasks:
     cmds:
       - python3 tools/tests/check_coverage.py
 
+  coverage:go:
+    desc: Run Bazel merged LCOV coverage for Go targets.
+    cmds:
+      - bazel coverage --combined_report=lcov {{.CLI_ARGS}}
+
   test:race:
     desc: Run Go race-detector tests for the application service layer.
     cmds:

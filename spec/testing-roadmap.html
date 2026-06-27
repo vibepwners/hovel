@@ -138,7 +138,7 @@
         </ol>
 
         <h2>Coverage Metrics</h2>
-        <p>Coverage is a ratchet, not a vanity number. <code>task coverage</code> runs Bazel LCOV coverage for the Go domain and application layers, then runs Python SDK coverage through the standard-library trace module. It writes generated reports to <code>coverage/</code>.</p>
+        <p>Coverage is a ratchet, not a vanity number. <code>task coverage</code> runs Bazel merged LCOV coverage for the Go domain and application layers through <code>task coverage:go</code>, then runs Python SDK coverage through the standard-library trace module. It writes generated reports to <code>coverage/</code>.</p>
 <pre data-lang="targets"><code>Domain ratchet: 75%
 Application ratchet: 65%
 Python SDK ratchet: 80%
