@@ -55,7 +55,7 @@ def main() -> int:
             "PATH": tool_path(Path(vhs).parent),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
-        subprocess.run([vhs, args.tape_rel], cwd=repo, env=env, check=True)
+        run_vhs(vhs, args.tape_rel, repo, env)
         rendered = rendered_output(repo, repo / args.tape_rel)
         if not rendered.is_file() or rendered.stat().st_size == 0:
             raise SystemExit(f"expected demo output was not generated: {rendered}")
@@ -63,6 +63,38 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(rendered, args.output)
     return 0
+
+
+def run_vhs(vhs: str, tape_rel: str, repo: Path, env: dict[str, str]) -> None:
+    result = subprocess.run(
+        [vhs, tape_rel],
+        cwd=repo,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+    if result.stdout:
+        sys.stderr.write(result.stdout)
+        if not result.stdout.endswith("\n"):
+            sys.stderr.write("\n")
+    print_demo_diagnostics(repo)
+    raise SystemExit(f"vhs failed rendering {tape_rel} with exit code {result.returncode}")
+
+
+def print_demo_diagnostics(repo: Path) -> None:
+    logs = sorted((repo / "demo/tmp").rglob("*.log"))
+    for log in logs[:10]:
+        rel = log.relative_to(repo)
+        sys.stderr.write(f"\n--- {rel} ---\n")
+        lines = log.read_text(errors="replace").splitlines()
+        for line in lines[:120]:
+            sys.stderr.write(line + "\n")
+        if len(lines) > 120:
+            sys.stderr.write(f"... omitted {len(lines) - 120} line(s) ...\n")
 
 
 def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:

@@ -30,6 +30,7 @@ py_binary(
     ],
     main = "materialize_demo_outputs.py",
     python_version = "PY3",
+    tags = ["manual"],
 )
 
 py_binary(
@@ -48,6 +49,7 @@ py_binary(
     ],
     main = "materialize_demo_outputs.py",
     python_version = "PY3",
+    tags = ["manual"],
 )
 
 py_binary(
@@ -66,4 +68,5 @@ py_binary(
     ],
     main = "materialize_demo_outputs.py",
     python_version = "PY3",
+    tags = ["manual"],
 )
