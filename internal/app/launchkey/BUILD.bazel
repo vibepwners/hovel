@@ -15,3 +15,13 @@ go_test(
     embed = [":launchkey"],
     deps = ["//internal/domain/operator"],
 )
+
+go_test(
+    name = "launchkey_race_test",
+    size = "small",
+    srcs = ["launchkey_test.go"],
+    embed = [":launchkey"],
+    race = "on",
+    tags = ["manual"],
+    deps = ["//internal/domain/operator"],
+)

@@ -13,3 +13,12 @@ go_test(
     srcs = ["log_test.go"],
     embed = [":operatorlog"],
 )
+
+go_test(
+    name = "operatorlog_race_test",
+    size = "small",
+    srcs = ["log_test.go"],
+    embed = [":operatorlog"],
+    race = "on",
+    tags = ["manual"],
+)

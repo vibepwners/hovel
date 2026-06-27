@@ -6,12 +6,12 @@ from __future__ import annotations
 import argparse
 import io
 import pathlib
-import shutil
 import subprocess
 import sys
 import trace
 import unittest
 from dataclasses import dataclass
+from typing import Iterable
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -36,9 +36,9 @@ class CoverageResult:
         return self.percent >= self.minimum
 
 
-GO_LAYERS = (
-    ("domain", 75.0, ("//internal/domain/...",)),
-    ("app", 65.0, ("//internal/app/...",)),
+GO_LAYERS: tuple[tuple[str, float, tuple[str, ...], str], ...] = (
+    ("domain", 75.0, ("//internal/domain/...",), "internal/domain/"),
+    ("app", 65.0, ("//internal/app/...",), "internal/app/"),
 )
 
 PYTHON_SDK_MINIMUM = 80.0
@@ -53,8 +53,7 @@ def main() -> int:
     COVERAGE_DIR.mkdir(exist_ok=True)
     results: list[CoverageResult] = []
     if not args.skip_go:
-        for name, minimum, targets in GO_LAYERS:
-            results.append(run_go_coverage(name, minimum, targets))
+        results.extend(run_go_coverage_layers())
     if not args.skip_python:
         results.append(run_python_sdk_coverage())
 
@@ -72,29 +71,73 @@ def main() -> int:
     return 0
 
 
-def run_go_coverage(name: str, minimum: float, targets: tuple[str, ...]) -> CoverageResult:
+def run_go_coverage_layers() -> list[CoverageResult]:
     report = ROOT / "bazel-out/_coverage/_coverage_report.dat"
     report.unlink(missing_ok=True)
+    targets = tuple(target for _, _, layer_targets, _ in GO_LAYERS for target in layer_targets)
     run(["task", "coverage:go", "--", *targets])
     if not report.exists():
         raise SystemExit(f"coverage report not found: {report}")
-    covered, total = parse_lcov(report)
-    shutil.copyfile(report, COVERAGE_DIR / f"{name}.lcov")
-    return CoverageResult(name=name, covered=covered, total=total, minimum=minimum)
+    records = list(read_lcov_records(report))
+    results: list[CoverageResult] = []
+    for name, minimum, _, prefix in GO_LAYERS:
+        layer_records = [record for record in records if source_in_prefix(record_source(record), prefix)]
+        if not layer_records:
+            raise SystemExit(f"coverage report contained no records for {prefix}")
+        covered, total = parse_lcov_records(layer_records)
+        write_lcov_records(COVERAGE_DIR / f"{name}.lcov", layer_records)
+        results.append(CoverageResult(name=name, covered=covered, total=total, minimum=minimum))
+    return results
 
 
 def parse_lcov(path: pathlib.Path) -> tuple[int, int]:
+    return parse_lcov_records(read_lcov_records(path))
+
+
+def read_lcov_records(path: pathlib.Path) -> list[list[str]]:
+    records: list[list[str]] = []
+    record: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        record.append(line)
+        if line == "end_of_record":
+            records.append(record)
+            record = []
+    if record:
+        records.append(record)
+    return records
+
+
+def source_in_prefix(source: str, prefix: str) -> bool:
+    if source.startswith(str(ROOT) + "/"):
+        source = source[len(str(ROOT)) + 1 :]
+    return source.startswith(prefix)
+
+
+def record_source(record: list[str]) -> str:
+    for line in record:
+        if line.startswith("SF:"):
+            return line.removeprefix("SF:")
+    return ""
+
+
+def parse_lcov_records(records: Iterable[list[str]]) -> tuple[int, int]:
     covered = 0
     total = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("DA:"):
-            continue
-        total += 1
-        _, payload = line.split(":", 1)
-        _, hits = payload.split(",", 1)
-        if int(hits) > 0:
-            covered += 1
+    for record in records:
+        for line in record:
+            if not line.startswith("DA:"):
+                continue
+            total += 1
+            _, payload = line.split(":", 1)
+            _, hits = payload.split(",", 1)
+            if int(hits) > 0:
+                covered += 1
     return covered, total
+
+
+def write_lcov_records(path: pathlib.Path, records: list[list[str]]) -> None:
+    lines = [line for record in records for line in record]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def run_python_sdk_coverage() -> CoverageResult:

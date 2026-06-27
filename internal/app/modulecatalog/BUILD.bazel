@@ -17,3 +17,12 @@ go_test(
     srcs = ["catalog_test.go"],
     embed = [":modulecatalog"],
 )
+
+go_test(
+    name = "modulecatalog_race_test",
+    size = "small",
+    srcs = ["catalog_test.go"],
+    embed = [":modulecatalog"],
+    race = "on",
+    tags = ["manual"],
+)

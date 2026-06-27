@@ -14,3 +14,12 @@ go_test(
     srcs = ["config_test.go"],
     embed = [":hovelconfig"],
 )
+
+go_test(
+    name = "hovelconfig_race_test",
+    size = "small",
+    srcs = ["config_test.go"],
+    embed = [":hovelconfig"],
+    race = "on",
+    tags = ["manual"],
+)

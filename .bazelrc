@@ -2,8 +2,10 @@ common --announce_rc
 
 build --color=yes
 build --curses=yes
+build --action_env=PYTHONDONTWRITEBYTECODE=1
 
 test --test_output=errors
+test --test_env=PYTHONDONTWRITEBYTECODE=1
 
 build:win64 --platforms=@windows_toolchains//platforms:windows_x64
 build:win64 --platform_suffix=win-x64

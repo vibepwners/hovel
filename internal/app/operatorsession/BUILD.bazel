@@ -15,3 +15,13 @@ go_test(
     embed = [":operatorsession"],
     deps = ["//internal/app/operatorlog"],
 )
+
+go_test(
+    name = "operatorsession_race_test",
+    size = "small",
+    srcs = ["session_test.go"],
+    embed = [":operatorsession"],
+    race = "on",
+    tags = ["manual"],
+    deps = ["//internal/app/operatorlog"],
+)

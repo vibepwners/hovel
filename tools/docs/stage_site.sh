@@ -4,7 +4,54 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${repo_root}"
 
-bazel build //spec:site
+fingerprint="$(
+  python3 - <<'PY'
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+paths: set[Path] = {
+    Path("LICENSE"),
+    Path("VERSION"),
+    Path("go.mod"),
+    Path("go.sum"),
+    Path("index.html"),
+    Path("sdk/python/pyproject.toml"),
+    Path("sdk/python/uv.lock"),
+    Path("tools/docs/check_site_links.py"),
+    Path("tools/docs/generate_sdk_api_docs.py"),
+    Path("tools/docs/stage_site.sh"),
+}
+
+for pattern in (
+    "assets/**/*",
+    "demo/out/*.gif",
+    "sdk/go/**/*.go",
+    "sdk/python/hovel_sdk/**/*.py",
+    "sdk/rust/hovel/src/**/*.rs",
+    "spec/**/*.html",
+    "tools/docs/python_api/**/*",
+):
+    paths.update(Path(".").glob(pattern))
+
+digest = hashlib.sha256()
+for path in sorted(path for path in paths if path.is_file()):
+    digest.update(path.as_posix().encode())
+    digest.update(b"\0")
+    digest.update(path.read_bytes())
+    digest.update(b"\0")
+print(digest.hexdigest())
+PY
+)"
+
+stamp="_site/.hovel_docs_inputs.sha256"
+if [[ -f "$stamp" ]] && [[ -f _site/.nojekyll ]] && [[ "$(tr -d '[:space:]' < "$stamp")" == "$fingerprint" ]]; then
+  echo "docs site is current: _site"
+  exit 0
+fi
+
+task build -- //spec:site
 
 rm -rf _site
 mkdir -p _site
@@ -69,3 +116,4 @@ python3 tools/docs/check_site_links.py "${repo_root}/_site"
 
 # Pages serves _site/ as the document root. Nothing here needs Jekyll.
 touch _site/.nojekyll
+printf '%s\n' "$fingerprint" > "$stamp"

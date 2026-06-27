@@ -19,6 +19,9 @@ version: '3'
 #   task reset                  wipe local state and relaunch fresh
 # The dev workspace defaults to ./.hovel; override with HOVEL_WORKSPACE.
 
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
 vars:
   # Absolute so the daemon resolves the config (and its relative project_dir /
   # command paths) against the source tree rather than the bazel runfiles tree,
@@ -158,8 +161,7 @@ tasks:
   docs:
     desc: Build cached demos, then build and stage the static docs site.
     cmds:
-      - task: demos
-      - task: demo:squatter-wine
+      - task: demos:all
       - task: docs:stage
 
   docs:stage:
@@ -176,6 +178,15 @@ tasks:
     desc: Materialize the Bazel-cached Docker/Wine Squatter MCP demo GIF.
     cmds:
       - bash scripts/generate-squatter-wine-demo.sh
+
+  demos:all:
+    desc: Materialize all Bazel-cached VHS demos into demo/out/.
+    cmds:
+      - task: build
+        vars:
+          CLI_ARGS: --jobs=1 //demo:all_gifs
+      - bash tools/demo/materialize_demo_outputs.sh standard
+      - bash tools/demo/materialize_demo_outputs.sh squatter-wine
 
   docs:api:
     desc: Generate language-native SDK API docs into _site/api/sdk.
@@ -217,9 +228,9 @@ tasks:
       - task: actions:summary:test
       - task: docs
       - task: build
-      - task: test
-      - task: test:race
-      - task: fuzz:smoke
+        vars:
+          CLI_ARGS: //:build
+      - task: test:ci
       - task: coverage
 
   actions:summary:
@@ -247,15 +258,21 @@ tasks:
     cmds:
       - task: test
         vars:
-          CLI_ARGS: --@rules_go//go/config:race //internal/app/...
+          CLI_ARGS: //:race_test
+
+  test:ci:
+    desc: Run CI tests, race tests, and fuzz smoke not already exercised by coverage ratchets.
+    cmds:
+      - task: test
+        vars:
+          CLI_ARGS: //:ci_test //:race_test //:fuzz_smoke_test
 
   fuzz:smoke:
     desc: Run short fuzz smoke coverage for pure domain parsers.
     cmds:
-      - mkdir -p /tmp/hovel-fuzz-cache
       - task: test
         vars:
-          CLI_ARGS: --test_arg=-test.fuzz=FuzzNewTypeNeverAcceptsUntrimmedOrSingleSegmentValues --test_arg=-test.fuzztime=5s --test_arg=-test.fuzzcachedir=/tmp/hovel-fuzz-cache //internal/domain/event:event_test
+          CLI_ARGS: //:fuzz_smoke_test
 
   lint:
     aliases: [l]
@@ -345,13 +362,10 @@ tasks:
 
   squatter:clang-tidy:
     desc: Run clang-tidy over Squatter C sources.
-    vars:
-      CLANG_TIDY_VERSION:
-        sh: clang-tidy --version | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
     cmds:
       - task: build
         vars:
-          CLI_ARGS: --action_env=HOVEL_CLANG_TIDY_VERSION={{.CLANG_TIDY_VERSION}} //payloads/squatter/windows/src:clang_tidy
+          CLI_ARGS: //payloads/squatter/windows/src:clang_tidy
 
   # --- Git hooks ----------------------------------------------------------
 
