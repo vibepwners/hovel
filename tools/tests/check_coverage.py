@@ -65,6 +65,7 @@ def main() -> int:
         status = "ok" if result.ok else "FAIL"
         print(f"{result.name:<11} {result.covered:>5}/{result.total:<7} {result.percent:>7.2f}% {result.minimum:>6.2f}% {status}")
         failed = failed or not result.ok
+    write_markdown_summary(results)
     if failed:
         print("\nCoverage fell below the ratchet floor. Add tests or intentionally adjust the Task-backed floor.")
         return 1
@@ -138,6 +139,19 @@ def run_python_sdk_tests(sdk: pathlib.Path) -> unittest.result.TestResult:
 
 def line_count(counts: dict[tuple[str, int], int], path: pathlib.Path, line: int) -> int:
     return counts.get((str(path), line), 0) + counts.get((str(path.resolve()), line), 0)
+
+
+def write_markdown_summary(results: list[CoverageResult]) -> None:
+    lines = [
+        "### Coverage Ratchets",
+        "",
+        "| Layer | Covered | Coverage | Floor | Status |",
+        "| --- | ---: | ---: | ---: | --- |",
+    ]
+    for result in results:
+        status = "pass" if result.ok else "fail"
+        lines.append(f"| {result.name} | {result.covered}/{result.total} | {result.percent:.2f}% | {result.minimum:.2f}% | {status} |")
+    (COVERAGE_DIR / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def run(cmd: list[str]) -> None:

@@ -214,12 +214,23 @@ tasks:
     cmds:
       - task: lint
       - task: upver:test
+      - task: actions:summary:test
       - task: docs
       - task: build
       - task: test
       - task: test:race
       - task: fuzz:smoke
       - task: coverage
+
+  actions:summary:
+    desc: Append a GitHub Actions job summary for a named workflow job.
+    cmds:
+      - python3 tools/ci/job_summary.py {{.CLI_ARGS}}
+
+  actions:summary:test:
+    desc: Check the GitHub Actions job summary renderer.
+    cmds:
+      - python3 tools/ci/job_summary_test.py
 
   coverage:
     desc: Run coverage ratchets for domain, app, and Python SDK layers.

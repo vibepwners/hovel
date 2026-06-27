@@ -78,6 +78,12 @@ jobs:
         with:
           path: _site
 
+      - name: Job summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: task actions:summary -- pages-build
+
   deploy:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     needs: build
@@ -88,3 +94,16 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Pages Deploy"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Status | ${{ job.status }} |"
+            echo "| Environment | github-pages |"
+            echo "| URL | ${{ steps.deployment.outputs.page_url }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
