@@ -283,7 +283,7 @@ modules:
 task test
 task fmt     # gofmt + Gazelle + Squatter C format
 task modules:package
-task ci      # lint + docs + build + test
+task ci      # full local gate
 </code></pre>
         <p><code>Taskfile.yml</code> is the one correct way to build, test, lint, format, and run; contributors, CI, and tooling never invoke Bazel, gofmt, uv, or lefthook directly. Tasks are thin wrappers over Bazel targets, not an alternate build system.</p>
 

@@ -63,12 +63,12 @@
         <p>All checks run through <a href="https://taskfile.dev/">Task</a>. The local gate is:</p>
 <pre data-lang="bash"><code>task ci
 </code></pre>
-        <p><code>task ci</code> runs lint, version-updater tests, demo-backed documentation staging, build, and tests. The docs step generates demos, stages the GitHub Pages site, generates SDK API pages, and runs the internal link checker.</p>
+        <p><code>task ci</code> runs lint, version-updater tests, demo-backed documentation staging, build, tests, the Go race gate, fuzz smoke, and coverage ratchets. The docs step generates demos, stages the GitHub Pages site, generates SDK API pages, and runs the internal link checker.</p>
 
         <h2>CI Gate</h2>
         <p>The GitHub Actions workflow is split so slow or environment-specific work is visible:</p>
         <ol>
-          <li><code>build-test</code>: <code>task build</code>, release-wheel build, and <code>task test</code>.</li>
+          <li><code>build-test</code>: <code>task build</code>, release-wheel build, <code>task test</code>, <code>task test:race</code>, <code>task fuzz:smoke</code>, and <code>task coverage</code>.</li>
           <li><code>demos</code>: generated terminal demos and the Docker/Wine Squatter MCP demo.</li>
           <li><code>docs</code>: stages the Pages site from the generated demo artifacts with <code>task docs:stage</code>.</li>
           <li><code>squatter-wine</code>: runs Squatter Windows C++ and functional tests through <code>task squatter:test:wine</code>.</li>
@@ -86,6 +86,8 @@
           <li>Squatter provider tests, PE/source-contract tests, mux/protocol integration tests, client shell tests, SMB pipe tests, file transfer tests, and Wine-backed functional tests in CI.</li>
           <li>Module packaging tests for in-repo example modules and workspace installation.</li>
           <li>Demo harness tests, including the MCP agent demo harness.</li>
+          <li>Shared throw-audit contract assertions reused by command mode, CLI, and MCP tests.</li>
+          <li>A fuzz smoke target for pure domain parsing behavior.</li>
         </ol>
 
         <h2>What Each Layer Protects</h2>
@@ -130,19 +132,21 @@
           <li>A throw cannot start without a persisted plan and matching confirmation record.</li>
           <li><code>throw --now</code> skips the prompt but still persists an auditable bypass confirmation.</li>
           <li>Dangerous modules require the explicit dangerous-module allowance before execution.</li>
-          <li>CLI, one-shot execution, MCP, and future adapters must use the same planning, confirmation, guardrail, event, artifact, and persistence paths.</li>
+          <li>CLI, one-shot execution, MCP, and future adapters must use the same planning, confirmation, guardrail, event, artifact, and persistence paths. The shared audit contract asserts durable plan, now-bypass confirmation, and throw lifecycle events after real front-end execution.</li>
           <li>Installed payload records are created only from explicit provider descriptors and remain visible when reconnect or cleanup fails.</li>
           <li>Operator-controlled configuration values are not silently redacted or dropped.</li>
         </ol>
 
-        <h2>Coverage Goals</h2>
-        <p>The documented coverage goals are directional until a Task-backed coverage gate exists:</p>
-<pre data-lang="targets"><code>Domain: 90%+
-Application services: 85%+
-Python SDK: 85%+
-Adapters: practical coverage focused on behavior and contracts
+        <h2>Coverage Metrics</h2>
+        <p>Coverage is a ratchet, not a vanity number. <code>task coverage</code> runs Bazel LCOV coverage for the Go domain and application layers, then runs Python SDK coverage through the standard-library trace module. It writes generated reports to <code>coverage/</code>.</p>
+<pre data-lang="targets"><code>Domain ratchet: 75%
+Application ratchet: 65%
+Python SDK ratchet: 80%
 </code></pre>
-        <p>There is currently no repository-wide coverage threshold, race gate, or fuzz gate in <code>Taskfile.yml</code>. Those should be added as explicit Task targets before they are described as enforced requirements.</p>
+        <p>The ratchets start below the existing baselines so the gate fails on regressions without pretending the first enforced number is the long-term target. Run <code>task coverage</code> for the current measured values. The intended long-term goals remain domain 90%+, application services 85%+, Python SDK 85%+, and adapter coverage judged primarily by contract behavior rather than raw line count.</p>
+
+        <h2>Stress Gates</h2>
+        <p><code>task test:race</code> runs the application service layer with the Go race detector through rules_go. <code>task fuzz:smoke</code> runs a short fuzz campaign against the domain event type parser. Both are part of <code>task ci</code> and the GitHub Actions <code>build-test</code> job.</p>
 
         <h2>Future Coverage</h2>
         <p>New product surfaces should bring their own contract tests before becoming durable product promises:</p>
@@ -151,7 +155,7 @@ Adapters: practical coverage focused on behavior and contracts
           <li>REST/OpenAPI should verify generated API contracts, authorization/session binding, and parity with application services.</li>
           <li>The general service process runtime should have lifecycle, health-check, supervision, logging, and shutdown tests.</li>
           <li>Richer MCP resources and prompts should verify that they expose context without granting authority or bypassing confirmation.</li>
-          <li>Coverage, race, and fuzz tasks should be introduced through Task when they become part of the supported gate.</li>
+          <li>Coverage ratchets should tighten as focused tests land, rather than jumping directly to aspirational percentages.</li>
         </ol>
       </article>
 

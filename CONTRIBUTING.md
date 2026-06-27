@@ -22,7 +22,7 @@ Then:
 
 ```sh
 task hooks:install   # optional: run checks on commit
-task ci              # lint + docs + build + test — must pass before you push
+task ci              # full local gate: lint, docs, build, tests, race, fuzz, coverage
 ```
 
 ## Before you open a PR
@@ -34,7 +34,8 @@ task ci
 ```
 
 That is `task lint` (gofmt, Gazelle up-to-date, Python ruff/mypy/pydoclint,
-and Squatter C static checks), then `task docs`, `task build`, and `task test`. CI
+and Squatter C static checks), then `task docs`, `task build`, `task test`,
+`task test:race`, `task fuzz:smoke`, and `task coverage`. CI
 (`.github/workflows/ci.yml`) runs the same checks on every pull request.
 
 If you add, move, or remove Go files or imports, regenerate formatting and
@@ -71,8 +72,8 @@ infra    -> app -> domain
 
 ## Tests
 
-- New behavior needs tests. Coverage intent (see `spec/testing-roadmap.html`):
-  domain 90%+, application services 85%+, Python SDK 85%+.
+- New behavior needs tests. Coverage ratchets and long-term goals are documented
+  in `spec/testing-roadmap.html`; run `task coverage` for the current floors.
 - Production commands should exercise the daemon boundary.
 - Mock modules exist for tests and examples only and are not part of the
   shipped catalog.

@@ -77,7 +77,8 @@ Useful tasks:
 | `task test` | Run all Bazel tests. |
 | `task lint` | Run Go, Gazelle, Python, and Squatter C checks. |
 | `task docs` | Generate demos, stage the Pages site, generate SDK API docs, and check internal links. |
-| `task ci` | Run the local gate: lint, version-update tests, docs, build, and tests. |
+| `task coverage` | Run domain, application, and Python SDK coverage ratchets. |
+| `task ci` | Run the local gate: lint, version-update tests, docs, build, tests, race, fuzz smoke, and coverage. |
 
 ## Repository Map
 
@@ -102,7 +103,8 @@ or concrete module/service code.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Changes should pass `task ci`; CI uses
-the same Task-backed build, docs, lint, and test entry points.
+the same Task-backed build, docs, lint, test, race, fuzz smoke, and coverage
+entry points.
 
 ## License
 
