@@ -7,7 +7,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//internal/adapters/storage/filesystem",
+        "//internal/app/commands",
         "//internal/domain/daemon",
+        "//internal/domain/event",
         "//internal/infra/daemonruntime",
     ],
 )

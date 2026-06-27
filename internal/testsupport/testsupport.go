@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
+	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 )
 
@@ -153,6 +155,16 @@ type DaemonFixture struct {
 	errs          chan error
 }
 
+type ThrowAuditObservation struct {
+	PlanID         string
+	PlanHash       string
+	ConfirmationID string
+	ThrowID        string
+	Chain          string
+	Targets        []string
+	ExpectedMethod string
+}
+
 func StartDaemon(t testing.TB, args daemonruntime.Args) DaemonFixture {
 	t.Helper()
 	if args.WorkspacePath == "" {
@@ -204,6 +216,91 @@ func (f DaemonFixture) Stop(t testing.TB) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("daemon did not stop within 2s for workspace %s", f.WorkspacePath)
 	}
+}
+
+func AssertThrowAuditTrail(t testing.TB, workspacePath string, observation ThrowAuditObservation) {
+	t.Helper()
+	if observation.ExpectedMethod == "" {
+		observation.ExpectedMethod = "now_bypass"
+	}
+	store := filesystem.NewWorkspaceStore()
+	ctx := context.Background()
+	plan, err := store.GetThrowPlan(ctx, workspacePath, observation.PlanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertThrowPlan(t, workspacePath, plan, observation)
+	confirmation, ok, err := store.GetThrowConfirmation(ctx, workspacePath, observation.PlanHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatalf("throw confirmation for plan hash %s was not persisted", observation.PlanHash)
+	}
+	if confirmation.ID != observation.ConfirmationID || confirmation.PlanID != observation.PlanID || confirmation.PlanHash != observation.PlanHash || confirmation.Method != observation.ExpectedMethod {
+		t.Fatalf("throw confirmation = %#v, observation = %#v", confirmation, observation)
+	}
+	if confirmation.Workspace != workspacePath {
+		t.Fatalf("throw confirmation workspace = %q, want %q", confirmation.Workspace, workspacePath)
+	}
+	events, err := store.ListEvents(ctx, workspacePath, event.Filter{PlanHash: observation.PlanHash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEventTypes(t, events, []string{
+		"hovel.throw.planned",
+		"hovel.throw.confirmed",
+		"hovel.throw.started",
+		"hovel.throw.completed",
+	})
+	if observation.ThrowID != "" {
+		if !hasEventWithThrowID(events, observation.ThrowID) {
+			t.Fatalf("events for plan %s did not reference throw %s: %#v", observation.PlanHash, observation.ThrowID, events)
+		}
+	}
+}
+
+func assertThrowPlan(t testing.TB, workspacePath string, plan commands.ThrowPlanRecord, observation ThrowAuditObservation) {
+	t.Helper()
+	if plan.ID != observation.PlanID || plan.PlanHash != observation.PlanHash || plan.ConfirmationID != observation.ConfirmationID || plan.Chain != observation.Chain {
+		t.Fatalf("throw plan = %#v, observation = %#v", plan, observation)
+	}
+	if plan.Workspace != workspacePath {
+		t.Fatalf("throw plan workspace = %q, want %q", plan.Workspace, workspacePath)
+	}
+	if strings.Join(plan.Targets, ",") != strings.Join(observation.Targets, ",") {
+		t.Fatalf("throw plan targets = %#v, want %#v", plan.Targets, observation.Targets)
+	}
+	if plan.Intent == "" || plan.Review == "" {
+		t.Fatalf("throw plan missing reviewable audit fields: %#v", plan)
+	}
+}
+
+func assertEventTypes(t testing.TB, events []event.Event, want []string) {
+	t.Helper()
+	for _, typ := range want {
+		if !hasEventType(events, typ) {
+			t.Fatalf("events missing %s: %#v", typ, events)
+		}
+	}
+}
+
+func hasEventType(events []event.Event, typ string) bool {
+	for _, evt := range events {
+		if evt.Type.String() == typ {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEventWithThrowID(events []event.Event, throwID string) bool {
+	for _, evt := range events {
+		if evt.Refs.ThrowID == throwID {
+			return true
+		}
+	}
+	return false
 }
 
 type PythonModuleFixture struct {

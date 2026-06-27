@@ -53,6 +53,15 @@ func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
 	}
 
 	var payload struct {
+		Plan struct {
+			ID             string   `json:"id"`
+			ConfirmationID string   `json:"confirmationId"`
+			PlanHash       string   `json:"planHash"`
+			Chain          string   `json:"chain"`
+			Targets        []string `json:"targets"`
+			Review         string   `json:"review"`
+		} `json:"plan"`
+		ThrowID string   `json:"throwId"`
 		Chain   string   `json:"chain"`
 		Targets []string `json:"targets"`
 		Results []struct {
@@ -96,6 +105,14 @@ func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
 	if len(result.Artifacts) != 1 {
 		t.Fatalf("artifact count = %d, want 1", len(result.Artifacts))
 	}
+	testsupport.AssertThrowAuditTrail(t, workspacePath, testsupport.ThrowAuditObservation{
+		PlanID:         payload.Plan.ID,
+		PlanHash:       payload.Plan.PlanHash,
+		ConfirmationID: payload.Plan.ConfirmationID,
+		ThrowID:        payload.ThrowID,
+		Chain:          "mock-exploit",
+		Targets:        []string{"mock://target"},
+	})
 }
 
 func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
@@ -122,10 +139,12 @@ func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
 		Plan struct {
 			ID             string   `json:"id"`
 			ConfirmationID string   `json:"confirmationId"`
+			PlanHash       string   `json:"planHash"`
 			Chain          string   `json:"chain"`
 			Targets        []string `json:"targets"`
 			Review         string   `json:"review"`
 		} `json:"plan"`
+		ThrowID string   `json:"throwId"`
 		Chain   string   `json:"chain"`
 		Targets []string `json:"targets"`
 		Results []struct {
@@ -165,13 +184,14 @@ func TestThrowBrokenPythonModuleJSONRecordsFailedRun(t *testing.T) {
 	if !strings.Contains(detail, "module handshake failed") || !strings.Contains(detail, "malformed frame") {
 		t.Fatalf("log detail = %q", detail)
 	}
-	plan, err := filesystem.NewWorkspaceStore().GetThrowPlan(context.Background(), fixture.WorkspacePath, payload.Plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.ID != payload.Plan.ID || plan.ConfirmationID != payload.Plan.ConfirmationID || plan.Chain != "broken" || plan.Workspace != fixture.WorkspacePath {
-		t.Fatalf("persisted plan = %#v, payload plan = %#v", plan, payload.Plan)
-	}
+	testsupport.AssertThrowAuditTrail(t, fixture.WorkspacePath, testsupport.ThrowAuditObservation{
+		PlanID:         payload.Plan.ID,
+		PlanHash:       payload.Plan.PlanHash,
+		ConfirmationID: payload.Plan.ConfirmationID,
+		ThrowID:        payload.ThrowID,
+		Chain:          "broken",
+		Targets:        []string{"mock://target"},
+	})
 	if !hasEvent(events.events, "hovel.run.failed") {
 		t.Fatalf("events = %#v, want hovel.run.failed", events.events)
 	}
@@ -283,6 +303,14 @@ while True:
 		t.Fatalf("broken throw exit code = %d, stderr = %s", code, stderr.String())
 	}
 	var failed struct {
+		Plan struct {
+			ID             string   `json:"id"`
+			ConfirmationID string   `json:"confirmationId"`
+			PlanHash       string   `json:"planHash"`
+			Chain          string   `json:"chain"`
+			Targets        []string `json:"targets"`
+		} `json:"plan"`
+		ThrowID string `json:"throwId"`
 		Results []struct {
 			State   string `json:"state"`
 			Summary string `json:"summary"`
@@ -294,6 +322,14 @@ while True:
 	if len(failed.Results) != 1 || failed.Results[0].State != "failed" {
 		t.Fatalf("broken results = %#v, want failed result", failed.Results)
 	}
+	testsupport.AssertThrowAuditTrail(t, fixture.WorkspacePath, testsupport.ThrowAuditObservation{
+		PlanID:         failed.Plan.ID,
+		PlanHash:       failed.Plan.PlanHash,
+		ConfirmationID: failed.Plan.ConfirmationID,
+		ThrowID:        failed.ThrowID,
+		Chain:          "broken",
+		Targets:        []string{"mock://target"},
+	})
 
 	stdout.Reset()
 	stderr.Reset()

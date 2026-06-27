@@ -27,7 +27,8 @@ Run `task --list` to see everything available.
 | `task run -- //cmd/hovel -- daemon status` | Run an arbitrary target. |
 | `task lint` | Go formatting + Gazelle + Python + Squatter C checks (read-only). |
 | `task fmt` | Auto-format: rewrite Go source, regenerate BUILD files, and format Squatter C. |
-| `task check` (`task ci`) | Lint, docs, build, and test — the full gate. |
+| `task coverage` | Run domain, application, and Python SDK coverage ratchets. |
+| `task check` (`task ci`) | Lint, docs, build, test, race, fuzz smoke, and coverage — the full gate. |
 | `task start` (`cli`) / `task daemon` | Launch the interactive CLI / the daemon. |
 | `task status` / `task init` / `task reset` | Dev workspace: status, init, wipe-and-relaunch. |
 | `task modules:build` | Build the Go/Rust example modules and stage binaries to `examples/bin/`. |
@@ -37,7 +38,8 @@ Run `task --list` to see everything available.
 ## Definition of done
 
 Before considering a code change complete, run **`task ci`** and make sure it
-passes. This is the full local gate: lint, docs, build, and test. CI
+passes. This is the full local gate: lint, docs, build, test, race, fuzz smoke,
+and coverage. CI
 (`.github/workflows/ci.yml`) runs the same suite; the git hooks split the same
 Task-backed checks across pre-commit (`task precommit`) and pre-push
 (`task prepush`).

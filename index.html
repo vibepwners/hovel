@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hovel — authorized security research framework</title>
-  <meta name="description" content="A Go-hosted framework for authorized security research, adversary emulation, lab exploitation, defensive validation, and operator workflow automation.">
+  <title>Hovel — authorized red-team emulation framework</title>
+  <meta name="description" content="A Go-hosted framework for authorized red-team emulation, controlled lab exercises, defensive validation, and operator workflow automation.">
   <link rel="icon" type="image/png" href="assets/hovel.png">
   <link rel="stylesheet" href="assets/site.css">
 </head>
@@ -17,7 +17,7 @@
     </a>
     <nav class="top-nav">
       <a href="index.html" aria-current="page">Home</a>
-      <a href="spec/index.html">Spec</a>
+      <a href="spec/index.html">Book</a>
       <a href="api/sdk/index.html">API Docs</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
@@ -28,11 +28,11 @@
       <p class="hero-tag">// authorized security research</p>
       <h1>Hovel</h1>
       <p class="hero-lede">
-        A Go-hosted framework for authorized security research, adversary emulation,
-        lab exploitation, defensive validation, and operator workflow automation.
+        A Go-hosted framework for authorized red-team emulation, controlled lab
+        exercises, defensive validation, and operator workflow automation.
       </p>
       <p>
-        <a class="cta" href="spec/introduction.html">Read the spec →</a>
+        <a class="cta" href="spec/introduction.html">Read the book →</a>
         <a class="cta ghost" href="spec/module-development.html">Write a module</a>
       </p>
     </div>
@@ -75,7 +75,7 @@
     <blockquote>
       <p>
         As a red-team operator, I want one local engine to manage modules,
-        services, providers, runs, events, and artifacts.
+        providers, throws, events, artifacts, installed payloads, and sessions.
       </p>
       <p>
         As an exploit developer or module author, I want a clear descriptor
@@ -92,12 +92,14 @@
       and operator experience that make third-party modules acceptable to run and inspect.
     </p>
     <p>
-      The central runtime is a local engine, <code>hoveld</code>, which owns throws,
-      module processes, managed services, provider state, installed payload records,
-      sessions, events, artifacts, and workspace storage. Interactive
-      <code>cli</code> mode, one-shot chain-file execution, and the first MCP
-      inspection adapter are implemented clients over the same application
-      services; the TUI, REST, and MCP execution parity remain planned extensions.
+      The central runtime is a local engine, <code>hoveld</code>, which owns
+      operations, chains, throws, module processes, provider-backed payload
+      state, installed payload records, sessions, events, artifacts, and
+      workspace storage. Interactive <code>cli</code> mode, one-shot chain-file
+      execution, and the MCP agent front end are implemented clients over the
+      same application services. <code>hovel tui</code> is an explicit
+      not-implemented role; REST/OpenAPI, general managed-service processes, and
+      richer MCP resources and prompts remain future work.
     </p>
 
     <h2>Start here</h2>
@@ -110,7 +112,7 @@
       <a class="tile" href="spec/introduction.html">
         <span class="tile-label">01 // Read</span>
         <span class="tile-title">Introduction</span>
-        <span class="tile-desc">Core decisions, product shape, MVP boundaries.</span>
+        <span class="tile-desc">What Hovel is, what is implemented, and what remains future work.</span>
       </a>
       <a class="tile" href="spec/architecture.html">
         <span class="tile-label">02 // Read</span>
@@ -124,12 +126,12 @@
       </a>
       <a class="tile" href="spec/testing-roadmap.html">
         <span class="tile-label">04 // Read</span>
-        <span class="tile-title">Testing &amp; roadmap</span>
-        <span class="tile-desc">Contract tests, coverage targets, milestones 1–8.</span>
+        <span class="tile-title">Testing strategy</span>
+        <span class="tile-desc">Task-backed local gates, CI jobs, test layers, and coverage goals.</span>
       </a>
       <a class="tile" href="spec/index.html">
         <span class="tile-label">// Full</span>
-        <span class="tile-title">Spec index</span>
+        <span class="tile-title">Book index</span>
         <span class="tile-desc">Every chapter, in order.</span>
       </a>
       <a class="tile" href="spec/safety.html">
@@ -153,7 +155,7 @@
     <p>Everything goes through <a href="https://taskfile.dev/">Task</a> — the single entry point. Run <code>task --list</code> to see all commands.</p>
     <pre data-lang="bash"><code>task build
 task test
-task ci      # lint + demo-backed docs + build + test</code></pre>
+task ci      # local gate: lint + docs + build + test</code></pre>
   </main>
 
   <footer class="sitefoot">

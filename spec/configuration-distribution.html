@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Configuration and Distribution — Hovel spec</title>
+  <title>Configuration and Distribution — Hovel book</title>
   <link rel="icon" type="image/png" href="../assets/hovel.png">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
@@ -12,17 +12,17 @@
     <a class="brand" href="../index.html">
       <img src="../assets/hovel.png" alt="" class="brand-mark">
       <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// spec</span>
+      <span class="brand-tag">// book</span>
     </a>
     <nav class="top-nav">
       <a href="../index.html">Home</a>
-      <a href="index.html" aria-current="page">Spec</a>
+      <a href="index.html" aria-current="page">Book</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
-      <p class="sidebar-section">Specification</p>
+      <p class="sidebar-section">Book</p>
       <ul>
         <li><a href="index.html">Contents</a></li>
         <li><a href="user-guide.html">User Guide</a></li>
@@ -37,7 +37,7 @@
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html" aria-current="page">Configuration &amp; Distribution</a></li>
-        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="testing-roadmap.html">Testing Strategy</a></li>
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
@@ -88,7 +88,7 @@ cache:
 runtime:
   python:
     pythonBuildStandalone:
-      release: 20260518
+      release: 20260610
 logging:
   level: info
 </code></pre>
@@ -214,11 +214,11 @@ interpreters:
         <p>Modules install from disk, absolute paths, HTTPS URLs, configured indexes, or bulk manifests.</p>
 <pre data-lang="shell"><code>hovel module install ./ssh-memory-0.1.0.tgz
 hovel module install /opt/hovel/modules/ssh-memory-0.1.0.tgz
-hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz --sha256 ...
-hovel module install squatter@0.1.0 --index ./module-index.yaml
+hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
+hovel module install squatter@{{HOVEL_VERSION}} --index ./module-index.yaml
 hovel module bulk-install ./modules.yaml
 hovel module install --link /home/me/dev/my-module
-hovel module uninstall squatter@0.1.0
+hovel module uninstall squatter@{{HOVEL_VERSION}}
 </code></pre>
         <p>The default install target is the active workspace. <code>--global</code> installs into the user data directory. A normal install copies or extracts into Hovel-managed storage; <code>--link</code> records an absolute module directory for development.</p>
         <p>Installing the same <code>name@version</code> with a different SHA-256 fails unless <code>--replace</code> is supplied. Bulk install runs in order, stops on the first failure, and does not roll back earlier successful installs.</p>
@@ -229,14 +229,14 @@ hovel module uninstall squatter@0.1.0
 kind: ModuleIndex
 modules:
   - name: squatter
-    version: 0.1.0
-    url: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz
+    version: {{HOVEL_VERSION}}
+    url: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
     sha256: ...
 </code></pre>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleInstallSet
 modules:
-  - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-0.1.0.tgz
+  - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
     sha256: ...
   - source: ./etro-survey-1.0.0.tgz
   - source: /opt/hovel/modules/etro-exploit-1.0.0.tgz</code></pre>
@@ -283,7 +283,7 @@ modules:
 task test
 task fmt     # gofmt + Gazelle + Squatter C format
 task modules:package
-task ci      # lint + docs + build + test
+task ci      # full local gate
 </code></pre>
         <p><code>Taskfile.yml</code> is the one correct way to build, test, lint, format, and run; contributors, CI, and tooling never invoke Bazel, gofmt, uv, or lefthook directly. Tasks are thin wrappers over Bazel targets, not an alternate build system.</p>
 
@@ -305,14 +305,14 @@ uvx hovel throw ./ssh-memory.chain.yaml --now
           <li>GitHub Releases own native binaries, module packages, checksums, and immutable source archives.</li>
           <li><code>hovel</code> PyPI wheels contain the matching Go binary and launcher.</li>
           <li><code>hovel-sdk</code> PyPI releases contain the Python SDK.</li>
-          <li>Hovel and Hovel SDK versions are released together. Module versions are independent.</li>
+          <li>Hovel and Hovel SDK versions are released together. In-tree example modules published by the release workflow use the Hovel release version; third-party module versions remain independent.</li>
         </ol>
-        <p>Package names may include version and platform for clarity, such as <code>squatter-0.1.0.tgz</code> or <code>squatter-0.1.0-linux-amd64.tgz</code>, but the manifest is authoritative.</p>
+        <p>Package names may include version and platform for clarity, such as <code>squatter-{{HOVEL_VERSION}}.tgz</code> or <code>squatter-{{HOVEL_VERSION}}-linux-amd64.tgz</code>, but the manifest is authoritative.</p>
 
         <h2>Terminal Libraries And Theming</h2>
-        <p>The interactive <code>cli</code> shell should use go-prompt for prompt input, history, suggestions, and completions. The <code>cli</code> shell and TUI should share a small theme system without making theme work part of the critical MVP path. Lip Gloss is the styling engine for terminal presentation, with shared tokens for colors, borders, severity, focus, muted text, success, warning, danger, and active throw state.</p>
+        <p>The interactive <code>cli</code> shell should use go-prompt for prompt input, history, suggestions, and completions. The <code>cli</code> shell and TUI should share a small theme system without making theme work part of the critical path. Lip Gloss is the styling engine for terminal presentation, with shared tokens for colors, borders, severity, focus, muted text, success, warning, danger, and active throw state.</p>
         <p>Initial theme names:</p>
-<pre data-lang="themes"><code>31337
+<pre data-lang="themes"><code>operator
 acid
 bloodmoon
 ghost
@@ -321,18 +321,18 @@ paperhovel
 midnight
 amberterm
 </code></pre>
-        <p>The visual target is a readable 1337 operator console with high contrast, tight navigation, and clear live status. The look should feel distinctive, but output must remain usable in low-color terminals, over SSH, in logs, and with <code>--no-color</code>. Animation should clarify state changes, not compete with the work.</p>
+        <p>The visual target is a readable operator console with high contrast, tight navigation, and clear live status. The look should feel distinctive, but output must remain usable in low-color terminals, over SSH, in logs, and with <code>--no-color</code>. Animation should clarify state changes, not compete with the work.</p>
       </article>
 
       <nav class="page-nav">
         <a class="prev" href="front-ends.html">← Front Ends</a>
         <span class="spacer"></span>
-        <a class="next" href="testing-roadmap.html">Testing &amp; Roadmap →</a>
+        <a class="next" href="testing-roadmap.html">Testing Strategy →</a>
       </nav>
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

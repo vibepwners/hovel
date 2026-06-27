@@ -2,6 +2,7 @@ package event
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -132,4 +133,31 @@ func TestTypeRejectsInvalidValues(t *testing.T) {
 			t.Fatalf("NewType(%q) returned nil error", value)
 		}
 	}
+}
+
+func FuzzNewTypeNeverAcceptsUntrimmedOrSingleSegmentValues(f *testing.F) {
+	for _, seed := range []string{
+		"",
+		" ",
+		"workspace.initialized",
+		" hovel.throw.started",
+		"hovel.throw.started ",
+		"workspace initialized",
+		"workspace/initialized",
+		"UPPER.case",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		typ, err := NewType(value)
+		if err != nil {
+			return
+		}
+		if typ.String() != strings.TrimSpace(value) {
+			t.Fatalf("NewType(%q) accepted an untrimmed value as %q", value, typ.String())
+		}
+		if !strings.Contains(typ.String(), ".") {
+			t.Fatalf("NewType(%q) accepted single-segment type %q", value, typ.String())
+		}
+	})
 }

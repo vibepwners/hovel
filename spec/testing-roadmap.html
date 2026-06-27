@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Testing and Roadmap — Hovel spec</title>
+  <title>Testing Strategy — Hovel book</title>
   <link rel="icon" type="image/png" href="../assets/hovel.png">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
@@ -12,17 +12,17 @@
     <a class="brand" href="../index.html">
       <img src="../assets/hovel.png" alt="" class="brand-mark">
       <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// spec</span>
+      <span class="brand-tag">// book</span>
     </a>
     <nav class="top-nav">
       <a href="../index.html">Home</a>
-      <a href="index.html" aria-current="page">Spec</a>
+      <a href="index.html" aria-current="page">Book</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
-      <p class="sidebar-section">Specification</p>
+      <p class="sidebar-section">Book</p>
       <ul>
         <li><a href="index.html">Contents</a></li>
         <li><a href="user-guide.html">User Guide</a></li>
@@ -37,7 +37,7 @@
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
-        <li><a href="testing-roadmap.html" aria-current="page">Testing &amp; Roadmap</a></li>
+        <li><a href="testing-roadmap.html" aria-current="page">Testing Strategy</a></li>
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
@@ -55,206 +55,107 @@
     </aside>
     <main class="content">
       <article>
-        <h1>Testing and Roadmap</h1>
+        <h1>Testing Strategy</h1>
 
-        <p>Testing should focus on contracts first. The risk is not only individual functions breaking; it is adapters disagreeing about the same operation, chain, throw, service, provider, or event.</p>
+        <p>Hovel tests contracts first. The main risk is not only that a function breaks; it is that CLI, one-shot execution, MCP, daemon RPC, module hosts, storage, and SDKs disagree about the same operation, chain, throw, provider, payload, session, artifact, or event.</p>
 
-        <h2>Go Host Tests</h2>
-        <p>Require:</p>
-        <ol>
-          <li>Unit tests for domain logic.</li>
-          <li>Application service tests.</li>
-          <li>Adapter tests with fake services.</li>
-          <li>Module protocol contract tests.</li>
-          <li>Service protocol contract tests once the general service process runtime exists.</li>
-          <li>Supervisor tests for daemon and module process ownership, plus service supervision when that runtime lands.</li>
-          <li>Golden tests for one-shot chain-file output.</li>
-          <li>CLI prompt model, completion, and render tests.</li>
-          <li>TUI model/update tests.</li>
-        </ol>
-
-        <h2>Python SDK Tests</h2>
-        <p>Require:</p>
-        <ol>
-          <li>Logging handler tests.</li>
-          <li>RPC protocol tests.</li>
-          <li><code>HovelModule</code> metadata, schema, and class-attribute tests.</li>
-          <li>Step hook dispatch tests for <code>step.describe</code>, <code>step.prepare</code>, <code>step.execute</code>, and <code>step.cleanup</code>.</li>
-          <li>Session and installed-payload descriptor serialization tests.</li>
-          <li>Packaging tests.</li>
-        </ol>
-
-        <h2>Integration Tests</h2>
-        <p>First-slice integration tests:</p>
-        <ol>
-          <li>Host launches Python module.</li>
-          <li>Module handshakes.</li>
-          <li>Module emits logs.</li>
-          <li>Module returns result.</li>
-          <li>Host treats module stdout as the framed RPC transport, records SDK <code>module/log</code> notifications as structured events, and preserves stderr as failure diagnostics.</li>
-          <li>Host records malformed protocol output as a failed module execution.</li>
-          <li>One-shot chain-file execution displays throw results.</li>
-          <li><code>hovel</code> starts or attaches to <code>hoveld</code>.</li>
-          <li>One-shot chain-file execution crosses the daemon boundary.</li>
-          <li>Throw plan, confirmation record, events, artifacts, and final throw state are persisted.</li>
-          <li>Explicit installed-payload descriptors persist current-state rows and append-only state events.</li>
-          <li><code>payloads installed</code> reads SQLite inventory without probing targets.</li>
-          <li><code>payloads connect &lt;id&gt;</code> uses the provider reconnect descriptor and creates a normal Hovel session on success.</li>
-          <li>Interactive <code>throw</code>, <code>review</code>, <code>confirm</code>, and one-shot chain-file execution share the same planning path, while <code>review</code> and prompted <code>throw</code> share the same typed review path.</li>
-          <li><code>throw --now</code> persists an auditable bypass confirmation record.</li>
-          <li>If <code>cli</code> or <code>tui</code> starts a managed daemon, it stops that daemon on exit.</li>
-          <li>If <code>cli</code> or <code>tui</code> attaches to an existing daemon, it leaves that daemon running on exit.</li>
-          <li>A <code>cli</code> session can select an operation and chain, add operation targets, and issue <code>throw</code> using attachment state.</li>
-          <li><code>chain save &lt;file&gt;</code> and <code>chain load &lt;file&gt;</code> preserve both targetless chain templates and configured chains with target config.</li>
-          <li>Two daemon clients attached to the same operation share operation target inventory while keeping active chains, logs, and prompt context separate.</li>
-          <li>One-shot execution of a saved chain file does not mutate another client's active chain.</li>
-          <li>The shared throw-control application service records a persisted plan, requires exact plan-hash confirmation, and gates throw start on confirmation and launch-key readiness.</li>
-          <li>Go, Python, and Rust SDKs expose optional agent context only when supplied and omit <code>agentHints</code> unless a module opts in.</li>
-        </ol>
-        <p>Follow-on integration tests:</p>
-        <ol>
-          <li>Module requests a provider resource.</li>
-          <li>Host launches managed service.</li>
-          <li>Service handshakes.</li>
-          <li>Service health check passes.</li>
-          <li>Service provides payload or listener resource.</li>
-          <li>Provider version or reconnect-schema incompatibility keeps installed payload records visible while marking reconnect unavailable.</li>
-          <li>The MCP adapter attaches to <code>hoveld</code> as an MCP operator entity, supports stdio and streamable HTTP transports, heartbeats, exposes typed inspection/setup/throw/payload tools, and detaches on shutdown.</li>
-          <li>MCP can inspect and plan the same throw as one-shot execution and <code>cli</code> through shared guardrails.</li>
-          <li>MCP can execute only through the shared confirmation path.</li>
-          <li>CLI and one-shot throw execution use the shared throw-control service instead of parallel planning or confirmation logic.</li>
-          <li>Launch-key mode blocks a pending throw until every required live operation entity approves the same plan hash.</li>
-          <li>End-to-end daemon execution persists agent hints with provenance and presents them through MCP resources or prompt material without granting authority.</li>
-          <li>TUI consumes the structured logging rail.</li>
-        </ol>
-
-        <h2>Coverage Targets</h2>
-        <p>Initial targets:</p>
-<pre data-lang="targets"><code>Domain: 90%+
-Application services: 85%+
-Adapters: practical coverage, not vanity coverage
-Python SDK: 85%+
+        <h2>Local Gate</h2>
+        <p>All checks run through <a href="https://taskfile.dev/">Task</a>. The local gate is:</p>
+<pre data-lang="bash"><code>task ci
 </code></pre>
-        <p>Eventually:</p>
-<pre data-lang="targets"><code>Strict branch coverage gates for core packages.
+        <p><code>task ci</code> runs lint, version-updater tests, demo-backed documentation staging, build, tests, the Go race gate, fuzz smoke, and coverage ratchets. The docs step generates demos, stages the GitHub Pages site, generates SDK API pages, and runs the internal link checker.</p>
+
+        <h2>CI Gate</h2>
+        <p>The GitHub Actions workflow is split so slow or environment-specific work is visible:</p>
+        <ol>
+          <li><code>build-test</code>: <code>task build</code>, release-wheel build, <code>task test</code>, <code>task test:race</code>, <code>task fuzz:smoke</code>, and <code>task coverage</code>.</li>
+          <li><code>demos</code>: generated terminal demos and the Docker/Wine Squatter MCP demo.</li>
+          <li><code>docs</code>: stages the Pages site from the generated demo artifacts with <code>task docs:stage</code>.</li>
+          <li><code>squatter-wine</code>: runs Squatter Windows C++ and functional tests through <code>task squatter:test:wine</code>.</li>
+          <li><code>lint</code>: <code>task lint</code>.</li>
+        </ol>
+        <p>GitHub Pages deploys only after the CI workflow succeeds, then runs <code>task docs</code> again before publishing the staged site.</p>
+
+        <h2>Test Inventory</h2>
+        <p>The root Bazel test suite covers the main product surfaces:</p>
+        <ol>
+          <li>Go host tests for domain packages, application services, command registry, daemon runtime, daemon manager, storage, descriptors, CLI, command mode, root CLI, daemon RPC, and MCP.</li>
+          <li>Module-runtime tests for Python RPC, Go SDK, Python SDK, Rust SDK, and Go/Python/Rust example modules.</li>
+          <li>Chain, throw, confirmation, launch-key, artifact, event, installed-payload, session, and operator-session behavior through application and adapter tests.</li>
+          <li>Schema smoke tests and documentation smoke tests.</li>
+          <li>Squatter provider tests, PE/source-contract tests, mux/protocol integration tests, client shell tests, SMB pipe tests, file transfer tests, and Wine-backed functional tests in CI.</li>
+          <li>Module packaging tests for in-repo example modules and workspace installation.</li>
+          <li>Demo harness tests, including the MCP agent demo harness.</li>
+          <li>Shared throw-audit contract assertions reused by command mode, CLI, and MCP tests.</li>
+          <li>A fuzz smoke target for pure domain parsing behavior.</li>
+        </ol>
+
+        <h2>What Each Layer Protects</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>What it protects</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Domain</td>
+              <td>Validated value objects, state transitions, IDs, and safety-sensitive invariants without adapter imports.</td>
+            </tr>
+            <tr>
+              <td>Application services</td>
+              <td>Planning, confirmation, throw control, chain runtime, operator session state, installed payload records, artifacts, events, and launch-key behavior.</td>
+            </tr>
+            <tr>
+              <td>Adapters</td>
+              <td>CLI, one-shot command mode, root commands, daemon RPC, MCP tools, terminal logging, descriptor loading, and filesystem storage.</td>
+            </tr>
+            <tr>
+              <td>SDKs and modules</td>
+              <td>JSON-RPC framing, handshake/schema paths, logging, step hooks, sessions, provider methods, packaging, and language-specific helper APIs.</td>
+            </tr>
+            <tr>
+              <td>Squatter</td>
+              <td>Provider behavior, Windows PE shape, no-import-table constraints, mux framing, process/file modules, transports, and Wine-backed payload operation.</td>
+            </tr>
+            <tr>
+              <td>Docs and demos</td>
+              <td>Generated operator demos, staged Pages content, SDK API docs, and internal links.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>Safety-Sensitive Contracts</h2>
+        <p>Tests around throw execution must preserve these rules:</p>
+        <ol>
+          <li>A throw cannot start without a persisted plan and matching confirmation record.</li>
+          <li><code>throw --now</code> skips the prompt but still persists an auditable bypass confirmation.</li>
+          <li>Dangerous modules require the explicit dangerous-module allowance before execution.</li>
+          <li>CLI, one-shot execution, MCP, and future adapters must use the same planning, confirmation, guardrail, event, artifact, and persistence paths. The shared audit contract asserts durable plan, now-bypass confirmation, and throw lifecycle events after real front-end execution.</li>
+          <li>Installed payload records are created only from explicit provider descriptors and remain visible when reconnect or cleanup fails.</li>
+          <li>Operator-controlled configuration values are not silently redacted or dropped.</li>
+        </ol>
+
+        <h2>Coverage Metrics</h2>
+        <p>Coverage is a ratchet, not a vanity number. <code>task coverage</code> runs Bazel merged LCOV coverage for the Go domain and application layers through <code>task coverage:go</code>, then runs Python SDK coverage through the standard-library trace module. It writes generated reports to <code>coverage/</code>.</p>
+<pre data-lang="targets"><code>Domain ratchet: 75%
+Application ratchet: 65%
+Python SDK ratchet: 80%
 </code></pre>
+        <p>The ratchets start below the existing baselines so the gate fails on regressions without pretending the first enforced number is the long-term target. Run <code>task coverage</code> for the current measured values. The intended long-term goals remain domain 90%+, application services 85%+, Python SDK 85%+, and adapter coverage judged primarily by contract behavior rather than raw line count.</p>
 
-        <h2>Milestones</h2>
-        <p>The milestone list is a planning roadmap, not a live feature matrix. Some later slices are already present in source, including the MCP agent adapter. Service lifecycle management, the TUI, REST, richer MCP resources/prompts, and richer chain-control features remain future work.</p>
+        <h2>Stress Gates</h2>
+        <p><code>task test:race</code> runs the application service layer with the Go race detector through rules_go. <code>task fuzz:smoke</code> runs a short fuzz campaign against the domain event type parser. Both are part of <code>task ci</code> and the GitHub Actions <code>build-test</code> job.</p>
 
-        <h3>Milestone 1: Skeleton</h3>
+        <h2>Future Coverage</h2>
+        <p>New product surfaces should bring their own contract tests before becoming durable product promises:</p>
         <ol>
-          <li>Create Go repo skeleton.</li>
-          <li>Add <code>hovel</code> mono-binary root.</li>
-          <li>Add <code>hovel daemon</code> engine skeleton.</li>
-          <li>Add domain packages.</li>
-          <li>Add event model.</li>
-          <li>Add module descriptor schema.</li>
-          <li>Add service descriptor schema.</li>
-          <li>Add local workspace initialization under <code>control init</code>.</li>
-          <li>Add in-process application service test harness.</li>
-          <li>Add daemon status under <code>control daemon status</code> and workspace locking contract.</li>
-        </ol>
-
-        <h3>Milestone 2: Module Runtime</h3>
-        <ol>
-          <li>Implement JSON-RPC-over-stdio module host with <code>Content-Length</code> framing.</li>
-          <li>Implement Python SDK handshake.</li>
-          <li>Implement Python logging handler.</li>
-          <li>Run a toy Python module from Go.</li>
-          <li>Stream logs into one-shot execution and <code>cli</code>.</li>
-          <li>Persist module execution events.</li>
-          <li>Treat malformed frames and unexpected stdout bytes as module failures.</li>
-        </ol>
-
-        <h3>Milestone 3: Throw and Artifact Persistence</h3>
-        <ol>
-          <li>Implement persisted throw plans.</li>
-          <li>Implement minimal confirmation records keyed by plan hash.</li>
-          <li>Implement throw state persistence.</li>
-          <li>Implement artifact provider.</li>
-          <li>Hash-track artifacts and payload-like bytes, storing large artifact bytes outside SQLite.</li>
-          <li>Inspect throws and artifacts from <code>cli</code> and supported API surfaces.</li>
-        </ol>
-
-        <h3>Milestone 4: Providers</h3>
-        <ol>
-          <li>Implement payload provider interface.</li>
-          <li>Add local payload registry.</li>
-          <li>Resolve tagged bytes from local or stub providers.</li>
-          <li>Persist payload metadata and hashes before execution when practical.</li>
-          <li>Return payload refs to Python modules.</li>
-          <li>Implement stamped payload artifact records and explicit installed-payload descriptor persistence.</li>
-          <li>Add <code>payloads available</code>, <code>payloads installed</code>, <code>payloads inspect</code>, <code>payloads connect</code>, <code>payloads cleanup</code>, and <code>payloads mark-removed</code>.</li>
-          <li>Add the Squatter stub provider, provider RPC contract tests, pinned Windows PE build target, and PE inspection test before wiring full throw orchestration.</li>
-        </ol>
-
-        <h3>Milestone 5: Service Manager</h3>
-        <ol>
-          <li>Implement supervised service process manager.</li>
-          <li>Implement service descriptor loading.</li>
-          <li>Implement service handshake.</li>
-          <li>Implement service health checks.</li>
-          <li>Implement toy service that emits logs.</li>
-        </ol>
-
-        <h3>Milestone 6: Chain Thrower</h3>
-        <ol>
-          <li>Implement simple sequential chain runner.</li>
-          <li>Add phases and steps.</li>
-          <li>Add chain template and configured chain save/load.</li>
-          <li>Add service start/stop steps.</li>
-          <li>Add structured logging rail.</li>
-          <li>Add per-target throw state.</li>
-          <li>Add cancellation hooks.</li>
-          <li>Support only simple input and step-output references at first.</li>
-        </ol>
-
-        <h3>Milestone 7: Conceptual Chain Demo</h3>
-        <ol>
-          <li>Implement a survey module against controlled lab inputs.</li>
-          <li>Resolve a tagged byte payload from a local or stub provider.</li>
-          <li>Exercise one managed service placeholder.</li>
-          <li>Implement delivery strategy selection without project-owned exploit code.</li>
-          <li>Capture transcript artifact.</li>
-          <li>Produce full throw result.</li>
-        </ol>
-
-        <h3>Milestone 8: TUI Alpha</h3>
-        <ol>
-          <li>Add Bubble Tea app.</li>
-          <li>Add dashboard.</li>
-          <li>Add live throw view.</li>
-          <li>Add log panel.</li>
-          <li>Add service panel.</li>
-          <li>Add listener/session panel.</li>
-          <li>Add target matrix.</li>
-          <li>Add theme selector.</li>
-          <li>Add README demo.</li>
-          <li>Cut alpha release.</li>
-        </ol>
-
-        <h2>Hard Rules</h2>
-        <ol>
-          <li><code>cli</code> and one-shot chain-file execution first, TUI second.</li>
-          <li><code>hoveld</code> is mandatory and owns operations, chains, throws, module processes, structured events, module-backed providers, installed payload inventory, artifacts, and sessions. General service lifecycle ownership starts when the service runtime lands.</li>
-          <li>TUI calls application services only.</li>
-          <li>MCP calls application services only.</li>
-          <li>REST calls application services only.</li>
-          <li>MCP has eventual operator parity through the same guardrail and audit model.</li>
-          <li>Throw execution requires a persisted plan and confirmation record.</li>
-          <li>Python module authors should not need to see transport internals.</li>
-          <li>Future Python service authors should not need to see transport internals.</li>
-          <li>All module logs flow through the host.</li>
-          <li>All future service logs flow through the host.</li>
-          <li>Providers are typed.</li>
-          <li>First-slice providers are artifact and payload only.</li>
-          <li>Payload provider outputs are tagged bytes with minimal framework validation.</li>
-          <li>Installed payload records are created only from explicit descriptors and persisted by Hovel core.</li>
-          <li>Services are lifecycle-managed once the service runtime lands.</li>
-          <li>Payloads are content-addressed or hash-tracked.</li>
-          <li>Chain throws are replay-inspectable.</li>
-          <li>Public demos are authorized and lab-safe.</li>
+          <li>The TUI should have model/update tests, rendering tests, and daemon-boundary integration tests.</li>
+          <li>REST/OpenAPI should verify generated API contracts, authorization/session binding, and parity with application services.</li>
+          <li>The general service process runtime should have lifecycle, health-check, supervision, logging, and shutdown tests.</li>
+          <li>Richer MCP resources and prompts should verify that they expose context without granting authority or bypassing confirmation.</li>
+          <li>Coverage ratchets should tighten as focused tests land, rather than jumping directly to aspirational percentages.</li>
         </ol>
       </article>
 
@@ -266,7 +167,7 @@ Python SDK: 85%+
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

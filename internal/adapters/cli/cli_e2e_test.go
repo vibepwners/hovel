@@ -55,7 +55,14 @@ func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
 	if len(payload.Results) != 1 || payload.Results[0].State != "succeeded" {
 		t.Fatalf("results = %#v", payload.Results)
 	}
-	assertPersistedPlan(t, workspacePath, payload.Plan)
+	testsupport.AssertThrowAuditTrail(t, workspacePath, testsupport.ThrowAuditObservation{
+		PlanID:         payload.Plan.ID,
+		PlanHash:       payload.Plan.PlanHash,
+		ConfirmationID: payload.Plan.ConfirmationID,
+		ThrowID:        payload.ThrowID,
+		Chain:          "lab",
+		Targets:        []string{"mock://target"},
+	})
 }
 
 func TestDaemonLogSubscriptionOnlyShowsActiveChain(t *testing.T) {
@@ -354,7 +361,14 @@ func TestE2EExamplePayloadExploitChainUsesPythonModules(t *testing.T) {
 	if !hasPayloadLog(exploit.Logs, "example exploit started") {
 		t.Fatalf("logs = %#v, want example exploit started", exploit.Logs)
 	}
-	assertPersistedPlan(t, workspacePath, payload.Plan)
+	testsupport.AssertThrowAuditTrail(t, workspacePath, testsupport.ThrowAuditObservation{
+		PlanID:         payload.Plan.ID,
+		PlanHash:       payload.Plan.PlanHash,
+		ConfirmationID: payload.Plan.ConfirmationID,
+		ThrowID:        payload.ThrowID,
+		Chain:          "survey-exploit",
+		Targets:        []string{"mock://router-01"},
+	})
 }
 
 func TestE2EChainFileSaveLoadRoundTripThenThrows(t *testing.T) {
@@ -768,10 +782,12 @@ type e2eThrowPayload struct {
 	Plan struct {
 		ID             string   `json:"id"`
 		ConfirmationID string   `json:"confirmationId"`
+		PlanHash       string   `json:"planHash"`
 		Chain          string   `json:"chain"`
 		Targets        []string `json:"targets"`
 		Review         string   `json:"review"`
 	} `json:"plan"`
+	ThrowID string   `json:"throwId"`
 	Chain   string   `json:"chain"`
 	Targets []string `json:"targets"`
 	Results []struct {
@@ -856,32 +872,6 @@ func hasPayloadLog(logs []struct {
 		}
 	}
 	return false
-}
-
-func assertPersistedPlan(t *testing.T, workspacePath string, plan struct {
-	ID             string   `json:"id"`
-	ConfirmationID string   `json:"confirmationId"`
-	Chain          string   `json:"chain"`
-	Targets        []string `json:"targets"`
-	Review         string   `json:"review"`
-}) {
-	t.Helper()
-	record, err := filesystem.NewWorkspaceStore().GetThrowPlan(context.Background(), workspacePath, plan.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if record.ID != plan.ID || record.ConfirmationID != plan.ConfirmationID || record.Chain != plan.Chain || record.Review != plan.Review {
-		t.Fatalf("persisted plan = %#v, payload plan = %#v", record, plan)
-	}
-	if strings.Join(record.Targets, ",") != strings.Join(plan.Targets, ",") {
-		t.Fatalf("persisted plan target = %#v, payload target = %#v", record.Targets, plan.Targets)
-	}
-	if record.Workspace != workspacePath {
-		t.Fatalf("persisted plan workspace = %q, want %q", record.Workspace, workspacePath)
-	}
-	if record.Intent == "" {
-		t.Fatalf("persisted plan intent is empty: %#v", record)
-	}
 }
 
 func daemonruntimeArgs() daemonruntime.Args {

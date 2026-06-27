@@ -210,13 +210,41 @@ tasks:
 
   check:
     aliases: [ci]
-    desc: Run lint, docs, build, and test.
+    desc: Run lint, docs, build, test, race, fuzz smoke, and coverage.
     cmds:
       - task: lint
       - task: upver:test
       - task: docs
       - task: build
       - task: test
+      - task: test:race
+      - task: fuzz:smoke
+      - task: coverage
+
+  coverage:
+    desc: Run coverage ratchets for domain, app, and Python SDK layers.
+    cmds:
+      - python3 tools/tests/check_coverage.py
+
+  coverage:go:
+    desc: Run Bazel merged LCOV coverage for Go targets.
+    cmds:
+      - bazel coverage --combined_report=lcov {{.CLI_ARGS}}
+
+  test:race:
+    desc: Run Go race-detector tests for the application service layer.
+    cmds:
+      - task: test
+        vars:
+          CLI_ARGS: --@rules_go//go/config:race //internal/app/...
+
+  fuzz:smoke:
+    desc: Run short fuzz smoke coverage for pure domain parsers.
+    cmds:
+      - mkdir -p /tmp/hovel-fuzz-cache
+      - task: test
+        vars:
+          CLI_ARGS: --test_arg=-test.fuzz=FuzzNewTypeNeverAcceptsUntrimmedOrSingleSegmentValues --test_arg=-test.fuzztime=5s --test_arg=-test.fuzzcachedir=/tmp/hovel-fuzz-cache //internal/domain/event:event_test
 
   lint:
     aliases: [l]

@@ -495,6 +495,65 @@ func TestMCPChainApplyBuildsEtroSquatterWithoutCLIProbing(t *testing.T) {
 	}
 }
 
+func TestMCPThrowStartPersistsNowBypassAuditTrail(t *testing.T) {
+	testsupport.UseExampleModuleConfig(t)
+	configPath := testsupport.ExampleModuleConfigPath()
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
+	client, err := daemonrpc.Dial(fixture.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	attached, err := Attach(context.Background(), client, OperatorOptions{
+		EntityID:      "mcp-throw-contract",
+		DisplayName:   "MCP throw contract",
+		Operation:     "mcp-contract",
+		ActiveChain:   "lab",
+		Workspace:     fixture.WorkspacePath,
+		CatalogPath:   configPath,
+		CommandRunner: commandModeCommandRunner(fixture.WorkspacePath, client, configPath, ""),
+		ThrowStarter:  commandModeThrowStarter(fixture.WorkspacePath, client, configPath, ""),
+	})
+	if err != nil {
+		t.Fatalf("Attach returned error: %v", err)
+	}
+	defer attached.Detach(context.Background())
+
+	_, applyOut, err := attached.chainApply(context.Background(), nil, chainApplyInput{
+		Operation: "mcp-contract",
+		Chain:     "lab",
+		Modules:   []string{"mock-exploit"},
+		Targets:   []string{"mock://target"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !applyOut.Validation.OK {
+		t.Fatalf("chain validation = %#v", applyOut.Validation)
+	}
+
+	_, throwOut, err := attached.throwStart(context.Background(), nil, throwStartInput{
+		Operation: "mcp-contract",
+		Chain:     "lab",
+		NowBypass: true,
+	})
+	if err != nil {
+		t.Fatalf("throwStart returned error: %v", err)
+	}
+	if throwOut.Chain != "lab" || len(throwOut.Results) != 1 || throwOut.Results[0].State != "succeeded" {
+		t.Fatalf("throw output = %#v", throwOut)
+	}
+	testsupport.AssertThrowAuditTrail(t, fixture.WorkspacePath, testsupport.ThrowAuditObservation{
+		PlanID:         throwOut.Plan.ID,
+		PlanHash:       throwOut.Plan.PlanHash,
+		ConfirmationID: throwOut.Plan.ConfirmationID,
+		ThrowID:        throwOut.ThrowID,
+		Chain:          "lab",
+		Targets:        []string{"mock://target"},
+	})
+}
+
 func TestMCPInstalledPayloadListReportsProviderReadiness(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "modules.json")
 	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {

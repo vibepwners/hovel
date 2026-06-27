@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MCP and Agent Operation — Hovel spec</title>
+  <title>MCP and Agent Operation — Hovel book</title>
   <link rel="icon" type="image/png" href="../assets/hovel.png">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
@@ -12,18 +12,18 @@
     <a class="brand" href="../index.html">
       <img src="../assets/hovel.png" alt="" class="brand-mark">
       <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// spec</span>
+      <span class="brand-tag">// book</span>
     </a>
     <nav class="top-nav">
       <a href="../index.html">Home</a>
-      <a href="index.html" aria-current="page">Spec</a>
+      <a href="index.html" aria-current="page">Book</a>
       <a href="../api/sdk/index.html">API Docs</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
-      <p class="sidebar-section">Specification</p>
+      <p class="sidebar-section">Book</p>
       <ul>
         <li><a href="index.html">Contents</a></li>
         <li><a href="user-guide.html">User Guide</a></li>
@@ -38,7 +38,7 @@
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="mcp-agent.html" aria-current="page">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
-        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="testing-roadmap.html">Testing Strategy</a></li>
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
@@ -69,7 +69,7 @@ hovel mcp --transport http --workspace .hovel
 task mcp
 </code></pre>
         <p>The default transport is MCP stdio. Stdio keeps the local trust boundary tight: the MCP client launches <code>hovel mcp</code> as a subprocess, Hovel writes MCP JSON-RPC only to stdout, and diagnostic logs go to stderr. <code>--transport http</code> serves streamable HTTP on localhost by default; use <code>--http-addr</code> to pin the listen address. <code>task mcp</code> builds and installs or links the example modules for the dev workspace; direct launches can pass <code>--config</code> to select the same module search paths and indexes as other front ends.</p>
-        <p><code>hovel mcp</code> attaches to <code>hoveld</code> over the local daemon channel, registers as an MCP operator entity, heartbeats while connected, and detaches on shutdown. <code>hoveld</code> should not expose MCP directly in the MVP. Direct daemon-hosted MCP is a future team or remote-deployment shape once authorization, session binding, and remote operator identity are source-backed.</p>
+        <p><code>hovel mcp</code> attaches to <code>hoveld</code> over the local daemon channel, registers as an MCP operator entity, heartbeats while connected, and detaches on shutdown. The current local-first model keeps MCP in the adapter process instead of exposing MCP directly from <code>hoveld</code>. Direct daemon-hosted MCP is a future team or remote-deployment shape once authorization, session binding, and remote operator identity are source-backed.</p>
 
         <h2>Demo Harness</h2>
         <p>The source tree includes a mock Codex-style agent harness at <code>//tools/demo/mcpagent:mcpagent</code>. It uses the official MCP Go SDK, lists the available tools, calls the identity/entity/operation/snapshot tools, then calls <code>hovel_throw_start</code> and renders a terminal agent panel from real structured MCP responses. The harness intentionally avoids an OS shell-command shortcut so the demo exercises the Hovel MCP surface a model client would use.</p>
@@ -307,7 +307,7 @@ hovel.agent_hint.v1
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Architecture — Hovel spec</title>
+  <title>Architecture — Hovel book</title>
   <link rel="icon" type="image/png" href="../assets/hovel.png">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
@@ -12,17 +12,17 @@
     <a class="brand" href="../index.html">
       <img src="../assets/hovel.png" alt="" class="brand-mark">
       <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// spec</span>
+      <span class="brand-tag">// book</span>
     </a>
     <nav class="top-nav">
       <a href="../index.html">Home</a>
-      <a href="index.html" aria-current="page">Spec</a>
+      <a href="index.html" aria-current="page">Book</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
-      <p class="sidebar-section">Specification</p>
+      <p class="sidebar-section">Book</p>
       <ul>
         <li><a href="index.html">Contents</a></li>
         <li><a href="user-guide.html">User Guide</a></li>
@@ -37,7 +37,7 @@
         <li><a href="front-ends.html">Front Ends</a></li>
         <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
-        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="testing-roadmap.html">Testing Strategy</a></li>
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
@@ -86,34 +86,33 @@
           <li>Chain execution.</li>
           <li>Module process lifecycle.</li>
           <li>Provider-backed payload and step behavior through module RPC.</li>
-          <li>Service descriptor contracts; general service lifecycle management is planned.</li>
+          <li>Service descriptor contracts; general service lifecycle management remains future work.</li>
           <li>Installed payload inventory.</li>
           <li>Artifact store.</li>
           <li>Event bus.</li>
           <li>Logging pipeline.</li>
-          <li>REST/OpenAPI endpoint when enabled.</li>
-          <li>MCP endpoint or adapter when enabled.</li>
-          <li>Future TUI attachment endpoint.</li>
+          <li>Daemon-backed client attachment state for CLI, one-shot execution, and MCP.</li>
+          <li>Future TUI and REST/OpenAPI attachment paths over the same application-service boundary.</li>
         </ol>
         <p>The primary executable is one <code>hovel</code> binary with these product roles:</p>
 <pre data-lang="shell"><code>hovel cli ...
 hovel throw &lt;chain-file&gt;
 hovel daemon serve ...
 hovel daemon status
-hovel tui ...              # explicit placeholder today
+hovel tui ...              # not implemented yet
 </code></pre>
         <p><code>hovel tui</code> is part of the product contract but may remain an explicit "not implemented yet" role until the TUI milestone. The production operator surface should center on <code>hovel cli</code> for stateful work and on a narrow one-shot shell surface for throwing a saved chain file.</p>
         <p><code>cli</code> and, once implemented, <code>tui</code> must auto-start or attach to the daemon role in local mode. The root CLI also accepts compatibility and developer entrypoints such as <code>shell</code>, <code>command</code>, <code>run</code>, direct registry roots, <code>init</code>, and <code>status</code>, but they are not the durable product contract. Shell one-shot execution is limited to saved chain files and daemon-management commands.</p>
 <pre data-lang="modes"><code>managed local mode: hovel cli starts or uses a local daemon
-planned TUI mode:    hovel tui will start or use a local daemon when implemented
+future TUI mode:     hovel tui will start or use a local daemon when implemented
 one-shot mode:      hovel throw &lt;chain-file&gt; prompts for confirmation unless --now is passed
 server mode: hovel daemon serve is explicitly launched and clients attach
 </code></pre>
-        <p>MVP should implement local mode first.</p>
+        <p>Local managed-daemon mode is the implemented default for operator workflows.</p>
 
         <h2>Daemon Contract</h2>
         <p>Daemon-backed <code>hovel</code> operations must resolve a workspace, locate the matching local daemon, wait until it is healthy, then execute through application services. <code>cli</code> and, once implemented, <code>tui</code> may start a managed daemon when none exists. One-shot chain-file execution may start or attach to a local daemon, but it must use the same planning, confirmation, event, artifact, and persistence path as interactive execution.</p>
-        <p>MVP daemon rules:</p>
+        <p>Daemon rules:</p>
         <ol>
           <li>One active <code>hoveld</code> per workspace.</li>
           <li>A workspace lock prevents duplicate daemons from owning the same database.</li>
@@ -268,58 +267,48 @@ hovel throw &lt;chain-file&gt; --now
         <p>Command handlers receive validated invocation objects from the registry layer. They must not parse raw shell strings or argv themselves.</p>
 
         <h2>Package Layout</h2>
-        <p>Recommended initial Go layout:</p>
+        <p>The current repository keeps the domain core, application services, adapters, infrastructure, SDKs, examples, payloads, schemas, docs, and release tooling in one tree:</p>
 <pre data-lang="tree"><code>hovel/
   cmd/
     hovel/
   internal/
     app/
-      services/
-      commands/
-      queries/
     domain/
-      target/
-      module/
-      service/
-      chain/
-      provider/
-      payload/
-      listener/
-      session/
-      throw/
-      artifact/
-      event/
     adapters/
-      oneshot/
       cli/
-      tui/
-      rest/
       mcp/
-      modulerpc/
-      servicerpc/
+      daemonrpc/
+      rootcli/
       storage/
-      logging/
-    ui/
-      terminaltheme/
-      prompt/
+      commandmode/
+      terminallog/
+      descriptor/
     infra/
       daemonmanager/
-      process/
-      rpc/
-      sqlite/
-      filesystem/
-      scheduler/
-      supervisor/
-      network/
-  sdks/
+      daemonruntime/
+    modules/
+      pythonrpc/
+      mockexploit/
+  sdk/
+    go/
     python/
-      hovel_sdk/
-  modules/
-    in_tree/
-    examples/
-  services/
-    examples/
+    rust/
+  examples/
+    go/
+    python/
+    rust/
+  payloads/
+    squatter/
+      provider/
+      client/
+      windows/
   schemas/
+  spec/
+  tools/
+    docs/
+    lint/
+    modules/
+    release/
 </code></pre>
 
         <h2>Multi-Client Attach</h2>
@@ -360,7 +349,7 @@ hovel throw &lt;chain-file&gt; --now
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

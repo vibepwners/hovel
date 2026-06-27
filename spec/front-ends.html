@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Front Ends — Hovel spec</title>
+  <title>Front Ends — Hovel book</title>
   <link rel="icon" type="image/png" href="../assets/hovel.png">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
@@ -12,17 +12,17 @@
     <a class="brand" href="../index.html">
       <img src="../assets/hovel.png" alt="" class="brand-mark">
       <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// spec</span>
+      <span class="brand-tag">// book</span>
     </a>
     <nav class="top-nav">
       <a href="../index.html">Home</a>
-      <a href="index.html" aria-current="page">Spec</a>
+      <a href="index.html" aria-current="page">Book</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
-      <p class="sidebar-section">Specification</p>
+      <p class="sidebar-section">Book</p>
       <ul>
         <li><a href="index.html">Contents</a></li>
         <li><a href="user-guide.html">User Guide</a></li>
@@ -37,7 +37,7 @@
         <li><a href="front-ends.html" aria-current="page">Front Ends</a></li>
         <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
         <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
-        <li><a href="testing-roadmap.html">Testing &amp; Roadmap</a></li>
+        <li><a href="testing-roadmap.html">Testing Strategy</a></li>
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
@@ -58,13 +58,13 @@
         <h1>Front Ends</h1>
 
         <p>Front ends are adapters over application services. They must share validation, planning, execution, structured logging rail subscriptions, scope guardrails, and audit behavior.</p>
-        <p>Hovel's implemented operator surfaces are <code>cli</code> mode for an interactive prompt shell, one-shot chain-file execution for shell workflows, daemon management, and an MCP agent slice with stdio and streamable HTTP transports. <code>hovel tui</code> remains an explicit placeholder that exits as not implemented. The product target also includes a full-screen TUI, REST/OpenAPI, and fuller MCP resources/prompts. As those adapters land, they must attach to the same daemon and use the same application services.</p>
+        <p>Hovel's implemented operator surfaces are <code>cli</code> mode for an interactive prompt shell, one-shot chain-file execution for shell workflows, daemon management, and an MCP agent slice with stdio and streamable HTTP transports. <code>hovel tui</code> remains an explicit not-implemented role. The product target also includes a full-screen TUI, REST/OpenAPI, and fuller MCP resources/prompts. As those adapters land, they must attach to the same daemon and use the same application services.</p>
         <p>The production entrypoint is the <code>hovel</code> mono-binary. Top-level subcommands select the front-end or daemon role:</p>
 <pre data-lang="shell"><code>hovel cli ...
 hovel throw &lt;chain-file&gt;
 hovel daemon ...
-hovel mcp ...              # agent inspection front end
-hovel tui ...              # explicit placeholder today
+hovel mcp ...              # agent front end
+hovel tui ...              # not implemented yet
 </code></pre>
         <p>The root implementation also exposes compatibility and developer entrypoints such as <code>shell</code>, <code>command</code>, <code>run</code>, direct registry roots, <code>init</code>, and <code>status</code>. They should remain documented as compatibility/developer affordances rather than the durable product contract. The shell-facing product surface should be deliberately narrow: daemon management, help, and one-shot execution of a saved chain file.</p>
         <p>The <code>hovel mcp</code> role is specified in <a href="mcp-agent.html">MCP and Agent Operation</a>. It is an agent-facing front end over the same daemon state and safety model, not a privileged execution shortcut.</p>
@@ -255,7 +255,7 @@ quit
         <p><code>review</code> and <code>throw</code> share the same review rendering. <code>confirm</code> records a pre-confirmation and stops. <code>review</code> always displays the current plan, requires the operator to type <code>yes</code>, records or refreshes the confirmation, and stops. <code>throw</code> starts execution if the current plan hash already has a matching confirmation; otherwise it shows the review, asks the operator to type <code>yes</code>, records the confirmation, and starts execution. Confirmations do not expire by time. They become invalid when the reviewed plan hash changes. <code>throw --now</code> skips the prompt but records the bypass in the confirmation record.</p>
         <p>Chains own their operation-scoped log topic. A chain topic is addressable as <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>, and <code>chain logs</code> shows only the logs for the active chain. In multi-client sessions, an implemented <code>cli</code> client and future TUI or MCP clients attached to an operation and chain subscribe to that chain topic; clients attached to the same operation and chain see the same logs, while clients attached to other chains do not see them by default.</p>
         <p>Operational setup commands such as workspace initialization and daemon inspection must be grouped under <code>control</code> in the registry exposed to <code>cli</code>. The old top-level <code>run</code> command should not be the durable operator contract; <code>throw</code> is the execution verb for the selected chain and target set.</p>
-        <p>The visual goal is "1337 af" but maintainable: high contrast, sharp prompt styling, clear context, readable tables, severe/status colors, and deterministic render tests. Styling should be centralized in the shared terminal theme package rather than scattered across command handlers.</p>
+        <p>The visual goal is a maintainable high-contrast operator console: sharp prompt styling, clear context, readable tables, severity and status colors, and deterministic render tests. Styling should be centralized in the shared terminal theme package rather than scattered across command handlers.</p>
 
         <h2>TUI</h2>
         <p>The TUI is the planned visual identity of the project, but it should remain a client over <code>hoveld</code>. Today <code>hovel tui</code> is only an explicit not-implemented role.</p>
@@ -307,7 +307,7 @@ Settings / Theme Selector
           <li>High-contrast operator console, not a generic dashboard.</li>
           <li>Dense but legible layouts.</li>
           <li>Lip Gloss borders, tables, tabs, status bars, and severity styling.</li>
-          <li>Built-in themes with a 31337 aesthetic, while preserving accessibility and <code>--no-color</code> or low-color fallbacks.</li>
+          <li>Built-in themes with a distinctive operator-console aesthetic, while preserving accessibility and <code>--no-color</code> or low-color fallbacks.</li>
           <li>Keyboard-first navigation with clear focus states.</li>
           <li>Motion only where it clarifies live state.</li>
         </ol>
@@ -419,7 +419,7 @@ hovel_stream_throw_events
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel spec · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

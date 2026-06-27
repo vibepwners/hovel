@@ -50,6 +50,15 @@ jobs:
       - name: Test
         run: task test
 
+      - name: Race tests
+        run: task test:race
+
+      - name: Fuzz smoke
+        run: task fuzz:smoke
+
+      - name: Coverage
+        run: task coverage
+
       - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@v4
