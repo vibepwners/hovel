@@ -230,14 +230,14 @@ func TestDaemonSessionKeepsInjectedModuleCatalog(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	if code := app.ExecuteLine(context.Background(), "module list", &stdout, &stderr); code != 0 {
-		t.Fatalf("module list exit code = %d, stderr = %s", code, stderr.String())
+	if code := app.ExecuteLine(context.Background(), "module available", &stdout, &stderr); code != 0 {
+		t.Fatalf("module available exit code = %d, stderr = %s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "custom-module@v1") {
-		t.Fatalf("module list output = %q, want injected custom module", stdout.String())
+		t.Fatalf("module available output = %q, want injected custom module", stdout.String())
 	}
 	if strings.Contains(stdout.String(), "mock-exploit") {
-		t.Fatalf("module list output leaked default catalog: %q", stdout.String())
+		t.Fatalf("module available output leaked default catalog: %q", stdout.String())
 	}
 }
 

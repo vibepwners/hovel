@@ -509,6 +509,25 @@ type ModuleBulkInstallPayload struct {
 	Installed []ModuleInstallPayload `json:"installed"`
 }
 
+type ModuleInventoryPayload struct {
+	Modules []ModuleInventoryRecord `json:"modules"`
+}
+
+type ModuleInventoryRecord struct {
+	ID          string                   `json:"id"`
+	Name        string                   `json:"name"`
+	Version     string                   `json:"version"`
+	Type        modulecatalog.ModuleType `json:"type,omitempty"`
+	Summary     string                   `json:"summary,omitempty"`
+	Scope       string                   `json:"scope"`
+	SourceKind  string                   `json:"sourceKind"`
+	Source      string                   `json:"source"`
+	SHA256      string                   `json:"sha256,omitempty"`
+	Linked      bool                     `json:"linked,omitempty"`
+	Installed   bool                     `json:"installed"`
+	InstalledAt string                   `json:"installedAt,omitempty"`
+}
+
 type ChainFile struct {
 	APIVersion string            `json:"apiVersion"`
 	Kind       string            `json:"kind"`
@@ -803,15 +822,32 @@ func HovelRegistry(runtime Runtime) Registry {
 			Handler: targetSetInspectHandler(runtime),
 		},
 		Definition{
-			Path:    []string{"module", "list"},
-			Aliases: [][]string{{"modules", "list"}},
-			Summary: "List modules in the module database.",
+			Path:    []string{"module", "installed"},
+			Aliases: [][]string{{"modules", "installed"}, {"module", "list"}, {"modules", "list"}},
+			Summary: "List modules installed in the selected module scope.",
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
 				boolOption("global", "", "Use the global module install scope"),
 				stringOption("type", "t", "Module type filter"),
+				boolOption("json", "j", "Emit JSON output"),
 			},
-			Handler: modulesListHandler(runtime),
+			Handler: modulesInstalledHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"module", "available"},
+			Aliases: [][]string{{"modules", "available"}, {"module", "search"}, {"modules", "search"}},
+			Summary: "List locally available modules from installed records, configured paths, and caches.",
+			Positionals: []Positional{
+				{Name: "query", Help: "Search query", Required: false},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("global", "", "Use the global module install scope"),
+				stringOption("type", "t", "Module type filter"),
+				stringOption("index", "", "Additional local module index path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: modulesAvailableHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"module", "install"},
@@ -896,19 +932,6 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: modulesCheckHandler(runtime),
-		},
-		Definition{
-			Path:    []string{"module", "search"},
-			Aliases: [][]string{{"modules", "search"}},
-			Summary: "Search modules in the module database.",
-			Positionals: []Positional{
-				{Name: "query", Help: "Search query", Required: true},
-			},
-			Options: []Option{
-				stringOption("workspace", "w", "Workspace path"),
-				boolOption("global", "", "Use the global module install scope"),
-			},
-			Handler: modulesSearchHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"payloads", "available"},
@@ -2084,25 +2107,21 @@ func targetSetInspectHandler(runtime Runtime) Handler {
 	}
 }
 
-func modulesListHandler(runtime Runtime) Handler {
+func modulesInstalledHandler(runtime Runtime) Handler {
 	return func(ctx context.Context, invocation Invocation) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		db, err := moduleDBForInvocation(runtime, invocation)
+		records, err := installedModuleRecordsForInvocation(invocation)
 		if err != nil {
 			return Result{}, err
 		}
-		var modules []modulecatalog.Module
-		if moduleType := invocation.Option("type"); moduleType != "" {
-			modules = db.ByType(modulecatalog.ModuleType(moduleType))
-		} else {
-			modules = db.List()
+		records = filterModuleInventoryRecords(records, invocation.Positional("query"), modulecatalog.ModuleType(invocation.Option("type")))
+		payload := ModuleInventoryPayload{Modules: records}
+		if len(records) == 0 {
+			return Result{Human: "No installed modules", JSON: payload}, nil
 		}
-		if len(modules) == 0 {
-			return Result{Human: "No modules"}, nil
-		}
-		return Result{Human: moduleLines(modules)}, nil
+		return Result{Human: moduleInventoryLines(records), JSON: payload}, nil
 	}
 }
 
@@ -2442,20 +2461,21 @@ func modulesInspectHandler(runtime Runtime) Handler {
 	}
 }
 
-func modulesSearchHandler(runtime Runtime) Handler {
+func modulesAvailableHandler(runtime Runtime) Handler {
 	return func(ctx context.Context, invocation Invocation) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		db, err := moduleDBForInvocation(runtime, invocation)
+		records, err := availableModuleRecordsForInvocation(runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
-		modules := db.Search(invocation.Positional("query"))
-		if len(modules) == 0 {
-			return Result{Human: "No modules"}, nil
+		records = filterModuleInventoryRecords(records, invocation.Positional("query"), modulecatalog.ModuleType(invocation.Option("type")))
+		payload := ModuleInventoryPayload{Modules: records}
+		if len(records) == 0 {
+			return Result{Human: "No available modules", JSON: payload}, nil
 		}
-		return Result{Human: moduleLines(modules)}, nil
+		return Result{Human: moduleInventoryLines(records), JSON: payload}, nil
 	}
 }
 
@@ -4038,7 +4058,7 @@ func activeChainRequiredError() error {
 }
 
 func operatorSessionRequiredError(command string) error {
-	return fmt.Errorf("%s needs an operator session\n\nUse the interactive shell:\n  hovel shell\n\nOr keep using one-shot commands that do not depend on selected chain state, such as:\n  hovel module list\n  hovel throw --chain <chain> --target <target>", command)
+	return fmt.Errorf("%s needs an operator session\n\nUse the interactive shell:\n  hovel shell\n\nOr keep using one-shot commands that do not depend on selected chain state, such as:\n  hovel module installed\n  hovel module available\n  hovel throw --chain <chain> --target <target>", command)
 }
 
 func withActiveChainHelp(err error) error {
@@ -4054,6 +4074,348 @@ func displayValue(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func installedModuleRecordsForInvocation(invocation Invocation) ([]ModuleInventoryRecord, error) {
+	workspacePath := workspaceFromInvocation(invocation)
+	scope := "workspace"
+	if invocation.Flag("global") {
+		scope = "global"
+	}
+	return installedModuleRecords(workspacePath, scope)
+}
+
+func installedModuleRecords(workspacePath, scope string) ([]ModuleInventoryRecord, error) {
+	lock, err := modulepackage.LoadLock(filepath.Join(workspacePath, "module-lock.yaml"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	records := make([]ModuleInventoryRecord, 0, len(lock.Modules))
+	for _, lockRecord := range lock.Modules {
+		pkg, err := modulepackage.LoadDir(lockRecord.Source)
+		if err != nil {
+			return nil, fmt.Errorf("load installed module %s@%s: %w", lockRecord.Name, lockRecord.Version, err)
+		}
+		record := moduleInventoryRecordFromManifest(pkg.Manifest, scope, "installed", lockRecord.Source)
+		record.SHA256 = lockRecord.SHA256
+		record.Linked = lockRecord.Linked
+		record.Installed = true
+		record.InstalledAt = lockRecord.InstalledAt
+		records = append(records, record)
+	}
+	sortModuleInventoryRecords(records)
+	return records, nil
+}
+
+func availableModuleRecordsForInvocation(runtime Runtime, invocation Invocation) ([]ModuleInventoryRecord, error) {
+	workspacePath := workspaceFromInvocation(invocation)
+	config, _, err := hovelconfig.Load(hovelconfig.Options{
+		Workspace:    workspacePath,
+		ExplicitPath: invocation.Option("config"),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var records []ModuleInventoryRecord
+	for _, module := range moduleDB(runtime).List() {
+		records = append(records, moduleInventoryRecordFromModule(module, "runtime", "catalog", "configured catalog"))
+	}
+	installed, err := installedModuleRecordsForInvocation(invocation)
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, installed...)
+	searchRecords, err := moduleInventoryRecordsFromSearchPaths(config.Modules.SearchPaths, "local", "search-path")
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, searchRecords...)
+	if config.Cache.Enabled {
+		cachePath, err := modulepackage.DownloadCacheDir("")
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Stat(cachePath); err == nil {
+			cacheRecords, err := moduleInventoryRecordsFromSearchPaths([]string{cachePath}, "cache", "cache")
+			if err != nil {
+				return nil, err
+			}
+			records = append(records, cacheRecords...)
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	indexRecords, err := moduleInventoryRecordsFromIndexes(moduleInventoryIndexPaths(config, invocation), config.Cache.Enabled)
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, indexRecords...)
+	records = dedupeModuleInventoryRecords(records)
+	sortModuleInventoryRecords(records)
+	return records, nil
+}
+
+func moduleInventoryIndexPaths(config hovelconfig.Config, invocation Invocation) []string {
+	paths := append([]string(nil), config.Modules.Indexes...)
+	if explicit := strings.TrimSpace(invocation.Option("index")); explicit != "" {
+		paths = append(paths, explicit)
+	}
+	return paths
+}
+
+func moduleInventoryRecordsFromSearchPaths(paths []string, scope, sourceKind string) ([]ModuleInventoryRecord, error) {
+	var records []ModuleInventoryRecord
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			record, ok, err := moduleInventoryRecordFromPackageFile(path, scope, sourceKind)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				records = append(records, record)
+			}
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(path, modulepackage.ManifestName)); err == nil {
+			pkg, err := modulepackage.LoadDir(path)
+			if err != nil {
+				return nil, err
+			}
+			records = append(records, moduleInventoryRecordFromManifest(pkg.Manifest, scope, sourceKind, pkg.Root))
+			continue
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			child := filepath.Join(path, entry.Name())
+			if entry.IsDir() {
+				if _, err := os.Stat(filepath.Join(child, modulepackage.ManifestName)); err != nil {
+					continue
+				}
+				pkg, err := modulepackage.LoadDir(child)
+				if err != nil {
+					return nil, err
+				}
+				records = append(records, moduleInventoryRecordFromManifest(pkg.Manifest, scope, sourceKind, pkg.Root))
+				continue
+			}
+			record, ok, err := moduleInventoryRecordFromPackageFile(child, scope, sourceKind)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				records = append(records, record)
+			}
+		}
+	}
+	return records, nil
+}
+
+func moduleInventoryRecordsFromIndexes(indexPaths []string, cacheEnabled bool) ([]ModuleInventoryRecord, error) {
+	var records []ModuleInventoryRecord
+	for _, indexPath := range indexPaths {
+		indexPath = strings.TrimSpace(indexPath)
+		if indexPath == "" {
+			continue
+		}
+		index, err := loadLocalModuleIndex(indexPath)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range index.Modules {
+			archive, sourceKind, ok, err := archiveForIndexEntry(indexPath, entry, cacheEnabled)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+			record, ok, err := moduleInventoryRecordFromPackageFile(archive, "local", sourceKind)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				records = append(records, record)
+			}
+		}
+	}
+	return records, nil
+}
+
+func loadLocalModuleIndex(indexPath string) (modulepackage.Index, error) {
+	if strings.HasPrefix(indexPath, "https://") {
+		index, err := loadModuleIndex(indexPath, true)
+		if err != nil {
+			return modulepackage.Index{}, nil
+		}
+		return index, nil
+	}
+	if strings.HasPrefix(indexPath, "http://") {
+		return modulepackage.Index{}, nil
+	}
+	return modulepackage.LoadIndex(indexPath)
+}
+
+func archiveForIndexEntry(indexPath string, entry modulepackage.IndexEntry, cacheEnabled bool) (string, string, bool, error) {
+	source := strings.TrimSpace(entry.URL)
+	if source == "" {
+		return "", "", false, nil
+	}
+	if !strings.HasPrefix(source, "https://") && !strings.HasPrefix(source, "http://") {
+		if !filepath.IsAbs(source) {
+			source = filepath.Join(filepath.Dir(indexPath), source)
+		}
+		if _, err := os.Stat(source); err == nil {
+			return source, "index", true, nil
+		} else if !os.IsNotExist(err) {
+			return "", "", false, err
+		}
+	}
+	if !cacheEnabled || strings.TrimSpace(entry.SHA256) == "" {
+		return "", "", false, nil
+	}
+	cachePath, err := modulepackage.DownloadCacheDir("")
+	if err != nil {
+		return "", "", false, err
+	}
+	archive := filepath.Join(cachePath, strings.ToLower(strings.TrimSpace(entry.SHA256))+".tgz")
+	if _, err := os.Stat(archive); err == nil {
+		return archive, "cache", true, nil
+	} else if !os.IsNotExist(err) {
+		return "", "", false, err
+	}
+	return "", "", false, nil
+}
+
+func moduleInventoryRecordFromPackageFile(path, scope, sourceKind string) (ModuleInventoryRecord, bool, error) {
+	if !strings.EqualFold(filepath.Ext(path), ".tgz") {
+		return ModuleInventoryRecord{}, false, nil
+	}
+	manifest, err := modulepackage.LoadManifestArchive(path)
+	if err != nil {
+		return ModuleInventoryRecord{}, false, err
+	}
+	record := moduleInventoryRecordFromManifest(manifest, scope, sourceKind, path)
+	if sum, err := modulepackage.FileSHA256(path); err == nil {
+		record.SHA256 = sum
+	}
+	return record, true, nil
+}
+
+func moduleInventoryRecordFromModule(module modulecatalog.Module, scope, sourceKind, source string) ModuleInventoryRecord {
+	name, version, _ := modulecatalog.SplitID(module.ID)
+	if name == "" {
+		name = module.Name
+	}
+	if version == "" {
+		version = module.Version
+	}
+	return ModuleInventoryRecord{
+		ID:         module.ID,
+		Name:       name,
+		Version:    version,
+		Type:       module.Type,
+		Summary:    module.Summary,
+		Scope:      scope,
+		SourceKind: sourceKind,
+		Source:     source,
+	}
+}
+
+func moduleInventoryRecordFromManifest(manifest modulepackage.Manifest, scope, sourceKind, source string) ModuleInventoryRecord {
+	return ModuleInventoryRecord{
+		ID:         modulecatalog.CanonicalID(manifest.Metadata.Name, manifest.Metadata.Version),
+		Name:       manifest.Metadata.Name,
+		Version:    manifest.Metadata.Version,
+		Type:       modulecatalog.ModuleType(manifest.Metadata.ModuleType),
+		Summary:    manifest.Metadata.Summary,
+		Scope:      scope,
+		SourceKind: sourceKind,
+		Source:     source,
+	}
+}
+
+func filterModuleInventoryRecords(records []ModuleInventoryRecord, query string, moduleType modulecatalog.ModuleType) []ModuleInventoryRecord {
+	query = strings.ToLower(strings.TrimSpace(query))
+	filtered := make([]ModuleInventoryRecord, 0, len(records))
+	for _, record := range records {
+		if moduleType != "" && record.Type != moduleType {
+			continue
+		}
+		if query != "" {
+			haystack := strings.ToLower(record.ID + " " + record.Name + " " + record.Summary + " " + record.SourceKind + " " + record.Source)
+			if !strings.Contains(haystack, query) {
+				continue
+			}
+		}
+		filtered = append(filtered, record)
+	}
+	return filtered
+}
+
+func dedupeModuleInventoryRecords(records []ModuleInventoryRecord) []ModuleInventoryRecord {
+	byID := map[string]ModuleInventoryRecord{}
+	for _, record := range records {
+		if strings.TrimSpace(record.ID) == "" {
+			continue
+		}
+		if existing, ok := byID[record.ID]; ok && moduleInventoryRecordRank(existing) >= moduleInventoryRecordRank(record) {
+			continue
+		}
+		byID[record.ID] = record
+	}
+	out := make([]ModuleInventoryRecord, 0, len(byID))
+	for _, record := range byID {
+		out = append(out, record)
+	}
+	return out
+}
+
+func moduleInventoryRecordRank(record ModuleInventoryRecord) int {
+	if record.Installed {
+		if record.Scope == "workspace" {
+			return 100
+		}
+		return 90
+	}
+	switch record.SourceKind {
+	case "catalog":
+		return 80
+	case "search-path":
+		return 60
+	case "index":
+		return 50
+	case "cache":
+		return 40
+	default:
+		return 10
+	}
+}
+
+func sortModuleInventoryRecords(records []ModuleInventoryRecord) {
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].ID != records[j].ID {
+			return records[i].ID < records[j].ID
+		}
+		if records[i].Scope != records[j].Scope {
+			return records[i].Scope < records[j].Scope
+		}
+		return records[i].Source < records[j].Source
+	})
 }
 
 func moduleDB(runtime Runtime) ModuleDatabase {
@@ -4074,17 +4436,6 @@ func moduleDBForInvocation(runtime Runtime, invocation Invocation) (ModuleDataba
 		return nil, err
 	}
 	searchPaths := append([]string(nil), config.Modules.SearchPaths...)
-	if config.Cache.Enabled {
-		cachePath, err := modulepackage.DownloadCacheDir("")
-		if err != nil {
-			return nil, err
-		}
-		if _, err := os.Stat(cachePath); err == nil {
-			searchPaths = append(searchPaths, cachePath)
-		} else if !os.IsNotExist(err) {
-			return nil, err
-		}
-	}
 	configured, err := modulesFromSearchPaths(searchPaths)
 	if err != nil {
 		return nil, err
@@ -4115,13 +4466,6 @@ func modulesFromSearchPaths(paths []string) ([]modulecatalog.Module, error) {
 			return nil, err
 		}
 		if !info.IsDir() {
-			module, ok, err := moduleFromSearchPathFile(path)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				modules = append(modules, module)
-			}
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(path, modulepackage.ManifestName)); err == nil {
@@ -4149,27 +4493,9 @@ func modulesFromSearchPaths(paths []string) ([]modulecatalog.Module, error) {
 				modules = append(modules, moduleFromPackage(pkg))
 				continue
 			}
-			module, ok, err := moduleFromSearchPathFile(child)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				modules = append(modules, module)
-			}
 		}
 	}
 	return modules, nil
-}
-
-func moduleFromSearchPathFile(path string) (modulecatalog.Module, bool, error) {
-	if !strings.EqualFold(filepath.Ext(path), ".tgz") {
-		return modulecatalog.Module{}, false, nil
-	}
-	manifest, err := modulepackage.LoadManifestArchive(path)
-	if err != nil {
-		return modulecatalog.Module{}, false, err
-	}
-	return moduleFromManifest(manifest), true, nil
 }
 
 func installedPackageModules(workspacePath string) ([]modulecatalog.Module, error) {
@@ -4458,6 +4784,21 @@ func moduleLines(modules []modulecatalog.Module) string {
 	}
 	for _, module := range modules {
 		lines = append(lines, fmt.Sprintf("%-26s %-17s %s", module.ID, module.Type, module.Summary))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func moduleInventoryLines(records []ModuleInventoryRecord) string {
+	lines := []string{
+		"ID                         TYPE              SCOPE      SOURCE       SUMMARY",
+		"--                         ----              -----      ------       -------",
+	}
+	for _, record := range records {
+		source := record.SourceKind
+		if record.Installed {
+			source = "installed"
+		}
+		lines = append(lines, fmt.Sprintf("%-26s %-17s %-10s %-12s %s", record.ID, record.Type, record.Scope, source, record.Summary))
 	}
 	return strings.Join(lines, "\n")
 }

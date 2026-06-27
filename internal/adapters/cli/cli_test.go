@@ -29,10 +29,13 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 		t.Fatalf("root suggestions = %#v, want no chain suggestions before operation", root)
 	}
 	root = app.Suggestions("")
-	for _, hidden := range []string{"add", "chain", "module", "target", "throw", "validate"} {
+	for _, hidden := range []string{"add", "chain", "target", "throw", "validate"} {
 		if containsSuggestion(root, hidden) {
 			t.Fatalf("root suggestions = %#v, should hide %s outside chain context", root, hidden)
 		}
+	}
+	if !containsSuggestion(root, "module") {
+		t.Fatalf("root suggestions = %#v, want module before operation context", root)
 	}
 	if !containsSuggestion(root, "payloads") {
 		t.Fatalf("root suggestions = %#v, want payloads before operation context", root)
@@ -73,8 +76,15 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 			t.Fatalf("chain suggestions = %#v, should hide active-chain command %s", chainNames, hidden)
 		}
 	}
-	if moduleChildren := app.Suggestions("module "); len(moduleChildren) != 0 {
-		t.Fatalf("module suggestions = %#v, want none before chain context", moduleChildren)
+	moduleChildren := app.Suggestions("module ")
+	var moduleNames []string
+	for _, suggestion := range moduleChildren {
+		moduleNames = append(moduleNames, suggestion.Text)
+	}
+	for _, want := range []string{"available", "installed", "install", "list", "search"} {
+		if !contains(moduleNames, want) {
+			t.Fatalf("module suggestions = %#v, missing %s before chain context", moduleNames, want)
+		}
 	}
 
 	configChildren := app.Suggestions("chain config ")
@@ -97,12 +107,12 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 		}
 	}
 
-	moduleChildren := app.Suggestions("module ")
-	var moduleNames []string
+	moduleChildren = app.Suggestions("module ")
+	moduleNames = nil
 	for _, suggestion := range moduleChildren {
 		moduleNames = append(moduleNames, suggestion.Text)
 	}
-	for _, want := range []string{"inspect", "list", "search"} {
+	for _, want := range []string{"available", "installed", "inspect", "list", "search"} {
 		if !contains(moduleNames, want) {
 			t.Fatalf("module suggestions = %#v, missing %s", moduleNames, want)
 		}
@@ -128,11 +138,11 @@ func TestExecuteLineEnforcesOperationThenChainFlow(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	if code := app.ExecuteLine(context.Background(), "module list", &stdout, &stderr); code != 1 {
-		t.Fatalf("module before chain exit code = %d, want 1", code)
+	if code := app.ExecuteLine(context.Background(), "module list", &stdout, &stderr); code != 0 {
+		t.Fatalf("module before chain exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "select a chain first") {
-		t.Fatalf("module before chain stderr = %q", stderr.String())
+	if !strings.Contains(stdout.String(), "No installed modules") {
+		t.Fatalf("module before chain stdout = %q", stdout.String())
 	}
 	stdout.Reset()
 	stderr.Reset()

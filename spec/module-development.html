@@ -319,7 +319,7 @@ hovel module install --link "$PWD/path/to/my-module-package-root"
 
 # 4. Let Hovel validate package shape and runtime metadata without executing.
 task start
-hovel&gt; module list
+hovel&gt; module installed
 hovel&gt; module check &lt;your-module-id&gt;
 hovel&gt; module inspect &lt;your-module-id&gt;
 
@@ -471,8 +471,8 @@ hovel module install --link "$PWD/path/to/module-package-root"
 # Launch the interactive CLI
 task start
 
-# In the CLI, list the catalog
-hovel&gt; module list</code></pre>
+# In the CLI, list installed modules for the workspace
+hovel&gt; module installed</code></pre>
         <p><code>task start</code>, <code>task daemon</code>, and <code>task throw</code> go through Task so local build, packaging, and runtime assumptions stay aligned with CI.</p>
 
         <h2>Safety</h2>

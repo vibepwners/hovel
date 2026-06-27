@@ -2234,25 +2234,25 @@ func TestOperationHandlersSegmentChainState(t *testing.T) {
 	}
 }
 
-func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
+func TestModuleCommandsAvailableInspectAndSearchBuiltIns(t *testing.T) {
 	registry := HovelRegistry(Runtime{
 		Workspaces: fakeWorkspaceService{},
 		Daemons:    fakeDaemonService{},
 		Runs:       fakeRunClientFactory{},
 		Modules:    exampleCatalog(),
 	})
-	listDefinition, _ := registry.Find("module", "list")
+	availableDefinition, _ := registry.Find("module", "available")
 	inspectDefinition, _ := registry.Find("module", "inspect")
 	searchDefinition, _ := registry.Find("module", "search")
 
-	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+	availableResult, err := availableDefinition.Execute(context.Background(), Invocation{
 		Options: map[string]string{"type": "survey"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(listResult.Human, "mock-survey") || !strings.Contains(listResult.Human, "survey") {
-		t.Fatalf("module list = %q", listResult.Human)
+	if !strings.Contains(availableResult.Human, "mock-survey") || !strings.Contains(availableResult.Human, "survey") {
+		t.Fatalf("module available = %q", availableResult.Human)
 	}
 
 	inspectResult, err := inspectDefinition.Execute(context.Background(), Invocation{
@@ -2278,7 +2278,7 @@ func TestModuleCommandsListInspectAndSearchBuiltIns(t *testing.T) {
 	}
 }
 
-func TestModuleInstallLinkWritesLockAndListIncludesPackage(t *testing.T) {
+func TestModuleInstallLinkWritesLockAndInstalledIncludesPackage(t *testing.T) {
 	workspace := t.TempDir()
 	moduleRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
@@ -2306,6 +2306,7 @@ launch:
 	})
 	installDefinition, _ := registry.Find("module", "install")
 	listDefinition, _ := registry.Find("module", "list")
+	installedDefinition, _ := registry.Find("module", "installed")
 
 	installResult, err := installDefinition.Execute(context.Background(), Invocation{
 		Options: map[string]string{
@@ -2334,6 +2335,25 @@ launch:
 		if !strings.Contains(listResult.Human, want) {
 			t.Fatalf("module list missing %q:\n%s", want, listResult.Human)
 		}
+	}
+	installedResult, err := installedDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(installedResult.Human, "linked-survey@0.1.0") || !strings.Contains(installedResult.Human, "installed") {
+		t.Fatalf("module installed = %q", installedResult.Human)
+	}
+	filteredResult, err := installedDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"query": "does-not-match"},
+		Options:     map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filteredResult.Human != "No installed modules" {
+		t.Fatalf("filtered module installed = %q", filteredResult.Human)
 	}
 }
 
@@ -2463,7 +2483,7 @@ func TestModuleCheckWarningsAsErrors(t *testing.T) {
 	}
 }
 
-func TestModuleListIncludesCachedDownloads(t *testing.T) {
+func TestModuleAvailableIncludesCachedDownloadsAndInstalledDoesNot(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cacheHome := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cacheHome)
@@ -2483,18 +2503,63 @@ func TestModuleListIncludesCachedDownloads(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
-	listDefinition, _ := registry.Find("module", "list")
+	availableDefinition, _ := registry.Find("module", "available")
+	installedDefinition, _ := registry.Find("module", "installed")
 
-	listResult, err := listDefinition.Execute(context.Background(), Invocation{})
+	availableResult, err := availableDefinition.Execute(context.Background(), Invocation{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(listResult.Human, "cached-survey@0.1.0") {
-		t.Fatalf("module list = %q", listResult.Human)
+	if !strings.Contains(availableResult.Human, "cached-survey@0.1.0") || !strings.Contains(availableResult.Human, "cache") {
+		t.Fatalf("module available = %q", availableResult.Human)
+	}
+	installedResult, err := installedDefinition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(installedResult.Human, "cached-survey@0.1.0") {
+		t.Fatalf("module installed included cache-only package:\n%s", installedResult.Human)
 	}
 }
 
-func TestModuleListLoadsConfigSearchPaths(t *testing.T) {
+func TestChainAddDoesNotUseCacheOnlyAvailableModule(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cacheHome := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+	cacheDir, err := modulepackage.DownloadCacheDir("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := writeCommandModuleArchive(t, cacheDir, "cache-only")
+	sum, err := modulepackage.FileSHA256(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(archive, filepath.Join(cacheDir, sum+".tgz")); err != nil {
+		t.Fatal(err)
+	}
+	session := operatorsession.New()
+	if err := session.UseOperation("engagement"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("lab"); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{Session: session, Modules: modulecatalog.New()})
+	addDefinition, _ := registry.Find("chain", "add")
+
+	_, err = addDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "cache-only"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "module cache-only does not exist") {
+		t.Fatalf("chain add error = %v, want cache-only module to be unavailable for execution", err)
+	}
+}
+
+func TestModuleAvailableLoadsConfigSearchPaths(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	searchRoot := t.TempDir()
 	moduleRoot := filepath.Join(searchRoot, "configured-survey")
@@ -2528,17 +2593,17 @@ modules:
 		t.Fatal(err)
 	}
 	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
-	listDefinition, _ := registry.Find("module", "list")
+	availableDefinition, _ := registry.Find("module", "available")
 
-	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+	availableResult, err := availableDefinition.Execute(context.Background(), Invocation{
 		Options: map[string]string{"config": configPath},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"configured-survey@0.2.0", "survey", "Configured search path module"} {
-		if !strings.Contains(listResult.Human, want) {
-			t.Fatalf("module list missing %q:\n%s", want, listResult.Human)
+		if !strings.Contains(availableResult.Human, want) {
+			t.Fatalf("module available missing %q:\n%s", want, availableResult.Human)
 		}
 	}
 }

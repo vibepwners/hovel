@@ -32,7 +32,7 @@ func TestCommandRoleDelegatesToCommandAdapter(t *testing.T) {
 func TestDirectCommandDelegatesToCommandAdapter(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run(context.Background(), []string{"module", "list"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"module", "available"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -46,7 +46,7 @@ func TestLeadingConfigOptionDelegatesToDirectCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	configPath := writeRootCLIModuleConfig(t)
 
-	code := Run(context.Background(), []string{"--config", configPath, "module", "list"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"--config", configPath, "module", "available"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}

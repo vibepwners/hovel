@@ -80,7 +80,6 @@ modules:
   searchPaths:
     - ./modules
     - ~/.local/share/hovel/modules
-    - ~/.cache/hovel/modules/downloads
   indexes:
     - ./module-index.yaml
 cache:
@@ -218,6 +217,8 @@ hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HO
 hovel module install squatter@{{HOVEL_VERSION}} --index ./module-index.yaml
 hovel module bulk-install ./modules.yaml
 hovel module install --link /home/me/dev/my-module
+hovel module available
+hovel module installed
 hovel module uninstall squatter@{{HOVEL_VERSION}}
 </code></pre>
         <p>The default install target is the active workspace. <code>--global</code> installs into the user data directory. A normal install copies or extracts into Hovel-managed storage; <code>--link</code> records an absolute module directory for development.</p>
@@ -258,10 +259,10 @@ modules:
 ~/.cache/hovel/modules/downloads/
 ~/.cache/hovel/python-build-standalone/
 </code></pre>
-        <p>Downloaded packages are cached by SHA-256 when caching is enabled and cached package archives participate in module discovery. HTTPS indexes are cached by URL hash after an explicit fetch and can be reused with <code>--offline</code>. Uninstall removes installed records and extracted package state, not cached downloads or shared Python runtimes. Cache cleanup is explicit.</p>
+        <p>Downloaded packages are cached by SHA-256 when caching is enabled and cached package archives participate in <code>module available</code>. HTTPS indexes are cached by URL hash after an explicit fetch and can be reused with <code>--offline</code>. Uninstall removes installed records and extracted package state, not cached downloads or shared Python runtimes. Cache cleanup is explicit.</p>
 
         <h2>Resolution</h2>
-        <p>Module search paths are not recursive. Each search path contains package roots or <code>.tgz</code> files directly. Discovery can list uninstalled packages as available, but execution uses installed or linked packages.</p>
+        <p><code>module available</code> is local-only discovery: installed records, configured package roots, local <code>.tgz</code> files, cached downloads, and locally reusable index entries. It never contacts the internet. <code>module installed</code> reads completed install records from <code>module-lock.yaml</code>. Module search paths are not recursive. Each search path contains package roots or <code>.tgz</code> files directly. Discovery can list uninstalled packages as available, but execution uses installed or linked packages.</p>
         <p>Module references keep the existing <code>name@version</code> form. Exact versions win. Bare <code>name</code> resolves to the highest semver installed version. If duplicate candidates remain after version and precedence resolution, Hovel errors instead of guessing. Workspace-installed modules beat global modules and cache entries.</p>
         <p>Chains never auto-download missing modules. If a configured index knows a missing module, the error may include the install command.</p>
 

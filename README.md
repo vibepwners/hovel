@@ -52,6 +52,8 @@ trust:
 hovel module install ./path/to/module.tgz
 hovel module install --link /absolute/path/to/module-package-root
 hovel module install name@version --index ./module-index.yaml
+hovel module available   # local packages and caches
+hovel module installed   # modules whose install process completed
 ```
 
 ## Develop

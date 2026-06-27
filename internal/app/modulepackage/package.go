@@ -556,20 +556,38 @@ func InstallArchive(opts InstallOptions) (InstallResult, error) {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return InstallResult{}, err
 	}
+	var backup string
+	var backupParent string
 	if _, err := os.Stat(dest); err == nil {
-		if err := os.RemoveAll(dest); err != nil {
+		backupParent, err = os.MkdirTemp(filepath.Dir(dest), ".replace-*")
+		if err != nil {
 			return InstallResult{}, err
 		}
+		backup = filepath.Join(backupParent, filepath.Base(dest))
+		if err := os.Rename(dest, backup); err != nil {
+			_ = os.RemoveAll(backupParent)
+			return InstallResult{}, err
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return InstallResult{}, err
 	}
 	if err := os.Rename(temp, dest); err != nil {
+		restoreInstallBackup(dest, backup, backupParent)
 		return InstallResult{}, err
 	}
 	pkg, err = LoadDir(dest)
 	if err != nil {
+		_ = os.RemoveAll(dest)
+		restoreInstallBackup(dest, backup, backupParent)
 		return InstallResult{}, err
 	}
 	if err := installPackage(pkg, workspace, dest, sum, false, opts); err != nil {
+		_ = os.RemoveAll(dest)
+		restoreInstallBackup(dest, backup, backupParent)
 		return InstallResult{}, err
+	}
+	if backupParent != "" {
+		_ = os.RemoveAll(backupParent)
 	}
 	return InstallResult{Name: pkg.Manifest.Metadata.Name, Version: pkg.Manifest.Metadata.Version, Source: dest}, nil
 }
@@ -652,6 +670,17 @@ func InstallURL(opts InstallOptions) (InstallResult, error) {
 	opts.SourceArchive = archive
 	opts.SHA256 = sum
 	return InstallArchive(opts)
+}
+
+func restoreInstallBackup(dest, backup, backupParent string) {
+	if backup == "" {
+		return
+	}
+	_ = os.RemoveAll(dest)
+	_ = os.Rename(backup, dest)
+	if backupParent != "" {
+		_ = os.RemoveAll(backupParent)
+	}
 }
 
 func Uninstall(opts UninstallOptions) (UninstallResult, error) {
@@ -1078,6 +1107,11 @@ func installPackage(pkg Package, workspace, source, sha string, linked bool, opt
 	if existing, ok := lock.find(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version); ok && existing.SHA256 != "" && existing.SHA256 != sha && !opts.Replace {
 		return fmt.Errorf("module %s@%s is already installed with a different sha256; use --replace", pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version)
 	}
+	if !opts.NoScripts {
+		if err := runScript(pkg.Root, pkg.Manifest.Scripts.PostInstall, env); err != nil {
+			return err
+		}
+	}
 	lock.APIVersion = APIVersion
 	lock.Kind = LockKind
 	lock.upsert(LockRecord{
@@ -1090,11 +1124,6 @@ func installPackage(pkg Package, workspace, source, sha string, linked bool, opt
 	})
 	if err := WriteLock(lockPath, lock); err != nil {
 		return err
-	}
-	if !opts.NoScripts {
-		if err := runScript(pkg.Root, pkg.Manifest.Scripts.PostInstall, env); err != nil {
-			return err
-		}
 	}
 	return nil
 }

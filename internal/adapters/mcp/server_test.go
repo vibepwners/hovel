@@ -392,9 +392,9 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 
 	run("op", "use", "mcp-e2e")
 	run("chain", "create", "etro")
-	modules := run("modules", "list")
+	modules := run("modules", "available")
 	if !strings.Contains(modules.Stdout, "etro-exploit@v1.0.0") {
-		t.Fatalf("modules list missing configured catalog:\n%s", modules.Stdout)
+		t.Fatalf("modules available missing configured catalog:\n%s", modules.Stdout)
 	}
 	run("target", "add", "192.168.122.142")
 	run("target", "config", "set", "192.168.122.142", "target.host", "192.168.122.142")
