@@ -2,6 +2,14 @@ load("@gazelle//:def.bzl", "gazelle")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files([
+    "scripts/demo-mcp-agent-tmux.sh",
+    "scripts/demo-step-setup.sh",
+    "tools/docker/squatter-wine/Dockerfile",
+    "tools/docker/squatter-wine/entrypoint.sh",
+    "tools/docker/squatter-wine/run.sh",
+])
+
 gazelle(
     name = "gazelle",
     prefix = "github.com/Vibe-Pwners/hovel",
@@ -40,6 +48,7 @@ test_suite(
     name = "test",
     tests = [
         "//cmd/hovel:binary_e2e_test",
+        "//demo:standard_verification_test",
         "//examples/go/mock_exploit:mock_exploit_test",
         "//examples/go/mock_exploit_session:mock_exploit_session_test",
         "//examples/go/mock_survey:mock_survey_test",

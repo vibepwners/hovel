@@ -156,7 +156,7 @@ tasks:
       - python3 tools/release/upver_test.py
 
   docs:
-    desc: Generate demos, then build and stage the static docs site.
+    desc: Build cached demos, then build and stage the static docs site.
     cmds:
       - task: demos
       - task: demo:squatter-wine
@@ -168,12 +168,12 @@ tasks:
       - bash tools/docs/stage_site.sh
 
   demos:
-    desc: Generate VHS terminal demos into demo/out/.
+    desc: Materialize Bazel-cached VHS terminal demos into demo/out/.
     cmds:
       - bash scripts/generate-demos.sh
 
   demo:squatter-wine:
-    desc: Generate the Docker/Wine Squatter MCP demo GIF.
+    desc: Materialize the Bazel-cached Docker/Wine Squatter MCP demo GIF.
     cmds:
       - bash scripts/generate-squatter-wine-demo.sh
 

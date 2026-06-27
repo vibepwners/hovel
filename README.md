@@ -76,7 +76,7 @@ Useful tasks:
 | `task build` | Build all targets. |
 | `task test` | Run all Bazel tests. |
 | `task lint` | Run Go, Gazelle, Python, and Squatter C checks. |
-| `task docs` | Generate demos, stage the Pages site, generate SDK API docs, and check internal links. |
+| `task docs` | Build cached demos, stage the Pages site, generate SDK API docs, and check internal links. |
 | `task coverage` | Run domain, application, and Python SDK coverage ratchets. |
 | `task ci` | Run the local gate: lint, version-update tests, docs, build, tests, race, fuzz smoke, and coverage. |
 

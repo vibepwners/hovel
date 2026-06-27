@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "check_gif_duration.py",
+    "materialize_demo_outputs.sh",
+    "render_vhs_demo.sh",
+    "vhs_version.txt",
+    "verify_standard_demos.sh",
+])

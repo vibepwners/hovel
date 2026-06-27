@@ -86,8 +86,9 @@ jobs:
           path: |
             ~/.cache/bazel
             ~/.cache/bazelisk
-          key: bazel-demos-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}
+          key: bazel-demos-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.sha }}
           restore-keys: |
+            bazel-demos-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-
             bazel-demos-${{ runner.os }}-
             bazel-${{ runner.os }}-
 
@@ -110,7 +111,8 @@ jobs:
 
       - name: Install VHS
         run: |
-          go install github.com/charmbracelet/vhs@v0.11.0
+          VHS_VERSION="$(cat tools/demo/vhs_version.txt)"
+          go install "github.com/charmbracelet/vhs@${VHS_VERSION}"
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/vhs" --version
           ffmpeg -version | head -n 1
