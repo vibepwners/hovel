@@ -1,6 +1,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("//payloads/squatter/bazel:copts.bzl", "SQ_COPTS")
 load("//payloads/squatter/bazel:transitions.bzl", "windows_multiplatform")
+load("//tools/lint:squatter_clang_tidy.bzl", "squatter_clang_tidy")
 
 # gazelle:exclude wire
 
@@ -278,4 +279,10 @@ windows_multiplatform(
 windows_multiplatform(
     name = "squatter_checked_gui_all",
     binary = ":squatter_checked_gui.exe",
+)
+
+squatter_clang_tidy(
+    name = "clang_tidy",
+    srcs = glob(["**/*.c"]),
+    hdrs = glob(["**/*.h"]),
 )

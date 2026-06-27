@@ -345,11 +345,13 @@ tasks:
 
   squatter:clang-tidy:
     desc: Run clang-tidy over Squatter C sources.
+    vars:
+      CLANG_TIDY_VERSION:
+        sh: clang-tidy --version | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
     cmds:
       - task: build
         vars:
-          CLI_ARGS: //payloads/squatter/windows/src:squatter_all
-      - bash tools/lint/check_squatter_clang_tidy.sh
+          CLI_ARGS: --action_env=HOVEL_CLANG_TIDY_VERSION={{.CLANG_TIDY_VERSION}} //payloads/squatter/windows/src:clang_tidy
 
   # --- Git hooks ----------------------------------------------------------
 
