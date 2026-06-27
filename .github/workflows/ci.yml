@@ -35,6 +35,26 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Configure BuildBuddy cache
+        shell: bash
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          set +x
+          if [[ -z "${BUILDBUDDY_API_KEY}" ]]; then
+            echo "BuildBuddy cache disabled: BUILDBUDDY_API_KEY is not available."
+            exit 0
+          fi
+          echo "::add-mask::${BUILDBUDDY_API_KEY}"
+          buildbuddy_bazelrc="${RUNNER_TEMP}/buildbuddy.bazelrc"
+          {
+            echo "common --noannounce_rc"
+            echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
+          } > "${buildbuddy_bazelrc}"
+          chmod 600 "${buildbuddy_bazelrc}"
+          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${buildbuddy_bazelrc}" >> "$GITHUB_ENV"
+          echo "HOVEL_BAZEL_ARGS=--config=ci" >> "$GITHUB_ENV"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -98,6 +118,26 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Configure BuildBuddy cache
+        shell: bash
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          set +x
+          if [[ -z "${BUILDBUDDY_API_KEY}" ]]; then
+            echo "BuildBuddy cache disabled: BUILDBUDDY_API_KEY is not available."
+            exit 0
+          fi
+          echo "::add-mask::${BUILDBUDDY_API_KEY}"
+          buildbuddy_bazelrc="${RUNNER_TEMP}/buildbuddy.bazelrc"
+          {
+            echo "common --noannounce_rc"
+            echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
+          } > "${buildbuddy_bazelrc}"
+          chmod 600 "${buildbuddy_bazelrc}"
+          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${buildbuddy_bazelrc}" >> "$GITHUB_ENV"
+          echo "HOVEL_BAZEL_ARGS=--config=ci" >> "$GITHUB_ENV"
+
       - name: Install demo host tools
         run: |
           sudo apt-get update
@@ -150,6 +190,26 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Configure BuildBuddy cache
+        shell: bash
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          set +x
+          if [[ -z "${BUILDBUDDY_API_KEY}" ]]; then
+            echo "BuildBuddy cache disabled: BUILDBUDDY_API_KEY is not available."
+            exit 0
+          fi
+          echo "::add-mask::${BUILDBUDDY_API_KEY}"
+          buildbuddy_bazelrc="${RUNNER_TEMP}/buildbuddy.bazelrc"
+          {
+            echo "common --noannounce_rc"
+            echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
+          } > "${buildbuddy_bazelrc}"
+          chmod 600 "${buildbuddy_bazelrc}"
+          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${buildbuddy_bazelrc}" >> "$GITHUB_ENV"
+          echo "HOVEL_BAZEL_ARGS=--config=ci" >> "$GITHUB_ENV"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -198,6 +258,26 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Configure BuildBuddy cache
+        shell: bash
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          set +x
+          if [[ -z "${BUILDBUDDY_API_KEY}" ]]; then
+            echo "BuildBuddy cache disabled: BUILDBUDDY_API_KEY is not available."
+            exit 0
+          fi
+          echo "::add-mask::${BUILDBUDDY_API_KEY}"
+          buildbuddy_bazelrc="${RUNNER_TEMP}/buildbuddy.bazelrc"
+          {
+            echo "common --noannounce_rc"
+            echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
+          } > "${buildbuddy_bazelrc}"
+          chmod 600 "${buildbuddy_bazelrc}"
+          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${buildbuddy_bazelrc}" >> "$GITHUB_ENV"
+          echo "HOVEL_BAZEL_ARGS=--config=ci" >> "$GITHUB_ENV"
+
       - name: Install Wine
         run: |
           sudo apt-get update
@@ -241,6 +321,26 @@ jobs:
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure BuildBuddy cache
+        shell: bash
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          set +x
+          if [[ -z "${BUILDBUDDY_API_KEY}" ]]; then
+            echo "BuildBuddy cache disabled: BUILDBUDDY_API_KEY is not available."
+            exit 0
+          fi
+          echo "::add-mask::${BUILDBUDDY_API_KEY}"
+          buildbuddy_bazelrc="${RUNNER_TEMP}/buildbuddy.bazelrc"
+          {
+            echo "common --noannounce_rc"
+            echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
+          } > "${buildbuddy_bazelrc}"
+          chmod 600 "${buildbuddy_bazelrc}"
+          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${buildbuddy_bazelrc}" >> "$GITHUB_ENV"
+          echo "HOVEL_BAZEL_ARGS=--config=ci" >> "$GITHUB_ENV"
 
       - name: Set up Go
         uses: actions/setup-go@v5

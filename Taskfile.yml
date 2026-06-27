@@ -30,6 +30,12 @@ vars:
     sh: echo "$PWD/examples/hovel-modules.json"
   WORKSPACE:
     sh: echo "${HOVEL_WORKSPACE:-$PWD/.hovel}"
+  # Optional Bazel startup and command options for CI wrappers. Leave unset for
+  # local development; repo-local auth overrides belong in ignored rc files.
+  BAZEL_STARTUP_ARGS:
+    sh: echo "${HOVEL_BAZEL_STARTUP_ARGS:-}"
+  BAZEL_ARGS:
+    sh: echo "${HOVEL_BAZEL_ARGS:-}"
 
 tasks:
   default:
@@ -44,48 +50,48 @@ tasks:
     aliases: [dev, up, cli]
     desc: Build and launch the interactive Hovel CLI (auto-starts a daemon).
     interactive: true
-    deps: [modules:build]
+    deps: [modules:package]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run //cmd/hovel -- cli --workspace "{{.WORKSPACE}}"
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- cli --workspace "{{.WORKSPACE}}"
 
   daemon:
     desc: Run hoveld in the foreground on the default Unix socket.
     interactive: true
-    deps: [modules:build]
+    deps: [modules:package]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run //cmd/hovel -- daemon serve --workspace "{{.WORKSPACE}}"
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- daemon serve --workspace "{{.WORKSPACE}}"
 
   mcp:
     desc: Launch the MCP agent interface for the dev workspace.
     interactive: true
-    deps: [modules:build]
+    deps: [modules:package]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run //cmd/hovel -- mcp --workspace "{{.WORKSPACE}}" --transport http --http-addr 127.0.0.1:27166 --entity-id agent1
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- mcp --workspace "{{.WORKSPACE}}" --transport http --http-addr 127.0.0.1:27166 --entity-id agent1
 
   status:
     aliases: [st]
     desc: Show daemon status for the dev workspace.
     cmds:
-      - bazel run //cmd/hovel -- status --workspace "{{.WORKSPACE}}"
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- status --workspace "{{.WORKSPACE}}"
 
   init:
     desc: Initialize the dev workspace (./.hovel).
     cmds:
-      - bazel run //cmd/hovel -- init --workspace "{{.WORKSPACE}}"
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- init --workspace "{{.WORKSPACE}}"
 
   throw:
     desc: 'One-shot throw of a saved chain file: task throw -- path/to/chain.yaml.'
-    deps: [modules:build]
+    deps: [modules:package]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run //cmd/hovel -- throw {{.CLI_ARGS}} --workspace "{{.WORKSPACE}}"
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- throw {{.CLI_ARGS}} --workspace "{{.WORKSPACE}}"
 
   lab:etro-squatter-bind:
     desc: Throw the representative Etro -> Squatter TCP bind lab chain against HOVEL_LAB_TARGET_HOST.
@@ -114,20 +120,20 @@ tasks:
     aliases: [b]
     desc: Build Bazel targets (default //...; e.g. task build -- //cmd/hovel).
     cmds:
-      - bazel build {{.CLI_ARGS | default "//..."}}
+      - bazel {{.BAZEL_STARTUP_ARGS}} build {{.BAZEL_ARGS}} {{.CLI_ARGS | default "//..."}}
 
   test:
     aliases: [t]
     desc: Run Bazel tests (default //...; e.g. task test -- //internal/domain/...).
     cmds:
-      - bazel test {{.CLI_ARGS | default "//..."}}
+      - bazel {{.BAZEL_STARTUP_ARGS}} test {{.BAZEL_ARGS}} {{.CLI_ARGS | default "//..."}}
 
   run:
     desc: 'Run any Bazel target: task run -- //cmd/hovel -- daemon status.'
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel run {{.CLI_ARGS}}
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
 
   go:deps:
     desc: 'Add or update Go module dependencies: task go:deps -- module@version.'
@@ -147,6 +153,14 @@ tasks:
   modules:package:
     desc: Build example module .tgz packages and a module index into dist/modules/.
     deps: [modules:build]
+    sources:
+      - tools/modules/package_examples.py
+      - examples/bin/*
+      - examples/python/**/*
+    generates:
+      - dist/modules/module-index.yaml
+      - dist/modules/*.tgz
+      - dist/modules/SHA256SUMS
     cmds:
       - python3 tools/modules/package_examples.py
 
@@ -257,7 +271,7 @@ tasks:
   coverage:go:
     desc: Run Bazel merged LCOV coverage for Go targets.
     cmds:
-      - bazel coverage --combined_report=lcov {{.CLI_ARGS}}
+      - bazel {{.BAZEL_STARTUP_ARGS}} coverage {{.BAZEL_ARGS}} --combined_report=lcov {{.CLI_ARGS}}
 
   test:race:
     desc: Run Go race-detector tests for the application service layer.
@@ -316,12 +330,12 @@ tasks:
   gazelle:
     desc: Update Go BUILD metadata with Gazelle.
     cmds:
-      - bazel run //:gazelle
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //:gazelle
 
   gazelle:check:
     desc: Check that Go BUILD metadata is up to date.
     cmds:
-      - bazel run //:gazelle -- -mode=diff
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //:gazelle -- -mode=diff
 
   python:check:
     desc: Run Python lint, type, and doc checks.

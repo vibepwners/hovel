@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -836,7 +837,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		Definition{
 			Path:    []string{"module", "available"},
 			Aliases: [][]string{{"modules", "available"}, {"module", "search"}, {"modules", "search"}},
-			Summary: "List locally available modules from installed records, configured paths, and caches.",
+			Summary: "List locally available modules from installed records, package paths, caches, and local indexes.",
 			Positionals: []Positional{
 				{Name: "query", Help: "Search query", Required: false},
 			},
@@ -860,7 +861,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("workspace", "w", "Workspace path"),
 				boolOption("global", "", "Use the global module install scope"),
 				stringOption("link", "", "Link a development package root instead of copying a .tgz"),
-				stringOption("index", "", "Module index path for name@version installs"),
+				stringOption("index", "", "Additional module index path for named installs"),
 				stringOption("sha256", "", "Expected SHA-256 for downloaded or copied packages"),
 				boolOption("no-scripts", "", "Skip trusted package install scripts"),
 				boolOption("offline", "", "Disable network use during install"),
@@ -2136,7 +2137,7 @@ func modulesInstallHandler(runtime Runtime) Handler {
 		sha := invocation.Option("sha256")
 		if linkPath == "" {
 			var err error
-			source, sha, err = resolveInstallReference(workspacePath, source, sha, invocation)
+			source, linkPath, sha, err = resolveInstallReference(workspacePath, source, sha, invocation)
 			if err != nil {
 				return Result{}, err
 			}
@@ -2276,30 +2277,66 @@ func moduleInstallOptions(workspacePath string, invocation Invocation) (modulepa
 	}, nil
 }
 
-func resolveInstallReference(workspacePath, source, sha string, invocation Invocation) (string, string, error) {
+func resolveInstallReference(workspacePath, source, sha string, invocation Invocation) (string, string, string, error) {
 	if source == "" || strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") || strings.EqualFold(filepath.Ext(source), ".tgz") {
-		return source, sha, nil
+		return source, "", sha, nil
 	}
-	indexPaths, err := moduleIndexPaths(workspacePath, invocation)
+	config, _, err := hovelconfig.Load(hovelconfig.Options{
+		Workspace:    workspacePath,
+		ExplicitPath: invocation.Option("config"),
+	})
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
+	if config.Cache.Enabled && !invocation.Flag("no-cache") {
+		cachePath, err := modulepackage.DownloadCacheDir("")
+		if err != nil {
+			return "", "", "", err
+		}
+		candidate, ok, err := resolveModuleSourceCandidate(source, []string{cachePath}, true)
+		if err != nil {
+			return "", "", "", err
+		}
+		if ok {
+			if sha == "" {
+				sha = candidate.SHA256
+			}
+			if candidate.Linked {
+				return "", candidate.Source, sha, nil
+			}
+			return candidate.Source, "", sha, nil
+		}
+	}
+	candidate, ok, err := resolveModuleSourceCandidate(source, config.Modules.SearchPaths, false)
+	if err != nil {
+		return "", "", "", err
+	}
+	if ok {
+		if sha == "" {
+			sha = candidate.SHA256
+		}
+		if candidate.Linked {
+			return "", candidate.Source, sha, nil
+		}
+		return candidate.Source, "", sha, nil
+	}
+	indexPaths := moduleInventoryIndexPaths(config, invocation)
 	if len(indexPaths) == 0 {
-		return "", "", fmt.Errorf("module reference %s requires --index or configured index", source)
+		return "", "", "", fmt.Errorf("module reference %s was not found in local module packages, caches, or configured indexes", source)
 	}
 	entry, indexPath, err := resolveIndexEntry(source, indexPaths, invocation.Flag("offline"))
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	resolved := entry.URL
 	if !strings.HasPrefix(resolved, "https://") && !strings.HasPrefix(resolved, "http://") && strings.HasPrefix(indexPath, "https://") {
 		base, err := url.Parse(indexPath)
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		relative, err := url.Parse(resolved)
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
 		resolved = base.ResolveReference(relative).String()
 	} else if !strings.HasPrefix(resolved, "https://") && !strings.HasPrefix(resolved, "http://") && !filepath.IsAbs(resolved) {
@@ -2308,22 +2345,142 @@ func resolveInstallReference(workspacePath, source, sha string, invocation Invoc
 	if sha == "" {
 		sha = entry.SHA256
 	}
-	return resolved, sha, nil
+	return resolved, "", sha, nil
 }
 
-func moduleIndexPaths(workspacePath string, invocation Invocation) ([]string, error) {
-	config, _, err := hovelconfig.Load(hovelconfig.Options{
-		Workspace:    workspacePath,
-		ExplicitPath: invocation.Option("config"),
-	})
+type moduleInstallSourceCandidate struct {
+	Name    string
+	Version string
+	Source  string
+	SHA256  string
+	Linked  bool
+}
+
+func resolveModuleSourceCandidate(reference string, paths []string, missingOK bool) (moduleInstallSourceCandidate, bool, error) {
+	var found moduleInstallSourceCandidate
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			if missingOK && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return moduleInstallSourceCandidate{}, false, err
+		}
+		if !info.IsDir() {
+			candidate, ok, err := moduleSourceCandidate(reference, path)
+			if err != nil {
+				return moduleInstallSourceCandidate{}, false, err
+			}
+			if ok && betterModuleSourceCandidate(candidate, found) {
+				found = candidate
+			}
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(path, modulepackage.ManifestName)); err == nil {
+			candidate, ok, err := moduleSourceCandidate(reference, path)
+			if err != nil {
+				return moduleInstallSourceCandidate{}, false, err
+			}
+			if ok && betterModuleSourceCandidate(candidate, found) {
+				found = candidate
+			}
+			continue
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return moduleInstallSourceCandidate{}, false, err
+		}
+		for _, entry := range entries {
+			candidate, ok, err := moduleSourceCandidate(reference, filepath.Join(path, entry.Name()))
+			if err != nil {
+				return moduleInstallSourceCandidate{}, false, err
+			}
+			if ok && betterModuleSourceCandidate(candidate, found) {
+				found = candidate
+			}
+		}
+	}
+	return found, found.Name != "", nil
+}
+
+func moduleSourceCandidate(reference, path string) (moduleInstallSourceCandidate, bool, error) {
+	info, err := os.Stat(path)
 	if err != nil {
-		return nil, err
+		return moduleInstallSourceCandidate{}, false, err
 	}
-	paths := append([]string(nil), config.Modules.Indexes...)
-	if explicit := strings.TrimSpace(invocation.Option("index")); explicit != "" {
-		paths = append(paths, explicit)
+	if info.IsDir() {
+		return modulePackageDirCandidate(reference, path)
 	}
-	return paths, nil
+	return modulePackageArchiveCandidate(reference, path)
+}
+
+func modulePackageDirCandidate(reference, path string) (moduleInstallSourceCandidate, bool, error) {
+	if _, err := os.Stat(filepath.Join(path, modulepackage.ManifestName)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return moduleInstallSourceCandidate{}, false, nil
+		}
+		return moduleInstallSourceCandidate{}, false, err
+	}
+	pkg, err := modulepackage.LoadDir(path)
+	if err != nil {
+		return moduleInstallSourceCandidate{}, false, err
+	}
+	candidate := moduleInstallSourceCandidate{
+		Name:    pkg.Manifest.Metadata.Name,
+		Version: pkg.Manifest.Metadata.Version,
+		Source:  pkg.Root,
+		Linked:  true,
+	}
+	if !moduleSourceCandidateMatches(reference, candidate) {
+		return moduleInstallSourceCandidate{}, false, nil
+	}
+	return candidate, true, nil
+}
+
+func modulePackageArchiveCandidate(reference, path string) (moduleInstallSourceCandidate, bool, error) {
+	if !strings.EqualFold(filepath.Ext(path), ".tgz") {
+		return moduleInstallSourceCandidate{}, false, nil
+	}
+	manifest, err := modulepackage.LoadManifestArchive(path)
+	if err != nil {
+		return moduleInstallSourceCandidate{}, false, err
+	}
+	candidate := moduleInstallSourceCandidate{
+		Name:    manifest.Metadata.Name,
+		Version: manifest.Metadata.Version,
+		Source:  path,
+	}
+	if !moduleSourceCandidateMatches(reference, candidate) {
+		return moduleInstallSourceCandidate{}, false, nil
+	}
+	sum, err := modulepackage.FileSHA256(path)
+	if err != nil {
+		return moduleInstallSourceCandidate{}, false, err
+	}
+	candidate.SHA256 = sum
+	return candidate, true, nil
+}
+
+func moduleSourceCandidateMatches(reference string, candidate moduleInstallSourceCandidate) bool {
+	name, version, hasVersion := modulecatalog.SplitID(reference)
+	if candidate.Name != name {
+		return false
+	}
+	return !hasVersion || sameLooseVersion(candidate.Version, version)
+}
+
+func betterModuleSourceCandidate(candidate, current moduleInstallSourceCandidate) bool {
+	if current.Name == "" {
+		return true
+	}
+	if cmp := compareLooseSemver(candidate.Version, current.Version); cmp != 0 {
+		return cmp > 0
+	}
+	return candidate.Source > current.Source
 }
 
 func resolveIndexEntry(reference string, indexPaths []string, offline bool) (modulepackage.IndexEntry, string, error) {
@@ -2339,7 +2496,7 @@ func resolveIndexEntry(reference string, indexPaths []string, offline bool) (mod
 			if entry.Name != name {
 				continue
 			}
-			if hasVersion && entry.Version != version {
+			if hasVersion && !sameLooseVersion(entry.Version, version) {
 				continue
 			}
 			if found.Name == "" || compareLooseSemver(entry.Version, found.Version) > 0 {
@@ -2399,6 +2556,14 @@ func moduleIndexCachePath(indexURL string) (string, error) {
 	}
 	sum := sha256.Sum256([]byte(indexURL))
 	return filepath.Join(root, "hovel", "modules", "indexes", hex.EncodeToString(sum[:])+".yaml"), nil
+}
+
+func sameLooseVersion(left, right string) bool {
+	return normalizeLooseVersion(left) == normalizeLooseVersion(right)
+}
+
+func normalizeLooseVersion(version string) string {
+	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(version)), "v")
 }
 
 func compareLooseSemver(left, right string) int {
@@ -4160,11 +4325,66 @@ func availableModuleRecordsForInvocation(runtime Runtime, invocation Invocation)
 }
 
 func moduleInventoryIndexPaths(config hovelconfig.Config, invocation Invocation) []string {
-	paths := append([]string(nil), config.Modules.Indexes...)
+	paths := defaultLocalModuleIndexPaths()
+	paths = append(paths, config.Modules.Indexes...)
 	if explicit := strings.TrimSpace(invocation.Option("index")); explicit != "" {
 		paths = append(paths, explicit)
 	}
-	return paths
+	return dedupeStrings(paths)
+}
+
+func defaultLocalModuleIndexPaths() []string {
+	var paths []string
+	addRoot := func(root string) {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return
+		}
+		if abs, err := filepath.Abs(root); err == nil {
+			root = abs
+		}
+		path := filepath.Join(root, "dist", "modules", "module-index.yaml")
+		if _, err := os.Stat(path); err != nil {
+			return
+		}
+		paths = append(paths, path)
+	}
+
+	if configPath := strings.TrimSpace(os.Getenv("HOVEL_MODULE_CONFIG")); configPath != "" {
+		if resolved, err := filepath.Abs(configPath); err == nil {
+			configPath = resolved
+		}
+		dir := filepath.Dir(configPath)
+		switch filepath.Base(dir) {
+		case "examples":
+			addRoot(filepath.Dir(dir))
+		case "python":
+			if filepath.Base(filepath.Dir(dir)) == "examples" {
+				addRoot(filepath.Dir(filepath.Dir(dir)))
+			}
+		}
+	}
+	if root := strings.TrimSpace(os.Getenv("HOVEL_REPO_ROOT")); root != "" {
+		addRoot(root)
+	}
+	if root := strings.TrimSpace(os.Getenv("BUILD_WORKSPACE_DIRECTORY")); root != "" {
+		addRoot(root)
+	}
+	return dedupeStrings(paths)
+}
+
+func dedupeStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }
 
 func moduleInventoryRecordsFromSearchPaths(paths []string, scope, sourceKind string) ([]ModuleInventoryRecord, error) {
@@ -4370,19 +4590,40 @@ func filterModuleInventoryRecords(records []ModuleInventoryRecord, query string,
 func dedupeModuleInventoryRecords(records []ModuleInventoryRecord) []ModuleInventoryRecord {
 	byID := map[string]ModuleInventoryRecord{}
 	for _, record := range records {
-		if strings.TrimSpace(record.ID) == "" {
+		key := moduleInventoryRecordKey(record)
+		if key == "" {
 			continue
 		}
-		if existing, ok := byID[record.ID]; ok && moduleInventoryRecordRank(existing) >= moduleInventoryRecordRank(record) {
+		if existing, ok := byID[key]; ok && moduleInventoryRecordRank(existing) >= moduleInventoryRecordRank(record) {
 			continue
 		}
-		byID[record.ID] = record
+		byID[key] = record
 	}
 	out := make([]ModuleInventoryRecord, 0, len(byID))
 	for _, record := range byID {
 		out = append(out, record)
 	}
 	return out
+}
+
+func moduleInventoryRecordKey(record ModuleInventoryRecord) string {
+	name := strings.TrimSpace(record.Name)
+	version := normalizeLooseVersion(record.Version)
+	if name != "" {
+		if version != "" {
+			return name + "@" + version
+		}
+		return name
+	}
+	id := strings.TrimSpace(record.ID)
+	if id == "" {
+		return ""
+	}
+	name, version, hasVersion := modulecatalog.SplitID(id)
+	if !hasVersion {
+		return id
+	}
+	return name + "@" + normalizeLooseVersion(version)
 }
 
 func moduleInventoryRecordRank(record ModuleInventoryRecord) int {
@@ -4393,14 +4634,14 @@ func moduleInventoryRecordRank(record ModuleInventoryRecord) int {
 		return 90
 	}
 	switch record.SourceKind {
-	case "catalog":
-		return 80
 	case "search-path":
-		return 60
-	case "index":
-		return 50
+		return 80
 	case "cache":
-		return 40
+		return 70
+	case "index":
+		return 60
+	case "catalog":
+		return 10
 	default:
 		return 10
 	}

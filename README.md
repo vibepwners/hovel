@@ -51,8 +51,9 @@ trust:
 ```sh
 hovel module install ./path/to/module.tgz
 hovel module install --link /absolute/path/to/module-package-root
-hovel module install name@version --index ./module-index.yaml
-hovel module available   # local packages and caches
+hovel module install name          # newest local package, then configured indexes
+hovel module install name@version  # exact local package, then configured indexes
+hovel module available   # locally installable packages and caches
 hovel module installed   # modules whose install process completed
 ```
 

@@ -2522,6 +2522,167 @@ func TestModuleAvailableIncludesCachedDownloadsAndInstalledDoesNot(t *testing.T)
 	}
 }
 
+func TestModuleInstallBareNameResolvesNewestCachedArchive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cacheHome := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+	cacheDir, err := modulepackage.DownloadCacheDir("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []string{"1.2.0", "1.10.0"} {
+		archive := writeCommandModuleArchiveVersion(t, t.TempDir(), "cached-install", version)
+		sum, err := modulepackage.FileSHA256(archive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(archive, filepath.Join(cacheDir, sum+".tgz")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workspace := t.TempDir()
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	installDefinition, _ := registry.Find("module", "install")
+
+	result, err := installDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"source": "cached-install"},
+		Options:     map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "cached-install@1.10.0") {
+		t.Fatalf("install result = %q", result.Human)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "modules", "cached-install", "1.10.0")); err != nil {
+		t.Fatalf("newest cached module was not installed: %v", err)
+	}
+}
+
+func TestModuleInstallBareNameResolvesDefaultLocalModuleIndex(t *testing.T) {
+	repo := t.TempDir()
+	examplesDir := filepath.Join(repo, "examples")
+	distDir := filepath.Join(repo, "dist", "modules")
+	if err := os.MkdirAll(examplesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(distDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(examplesDir, "hovel-modules.json")
+	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOVEL_MODULE_CONFIG", configPath)
+	archive := writeCommandModuleArchive(t, distDir, "default-indexed")
+	sum, err := modulepackage.FileSHA256(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(distDir, "module-index.yaml")
+	if err := os.WriteFile(indexPath, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModuleIndex
+modules:
+  - name: default-indexed
+    version: 0.1.0
+    url: default-indexed.tgz
+    sha256: `+sum+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	availableDefinition, _ := registry.Find("module", "available")
+	installDefinition, _ := registry.Find("module", "install")
+
+	availableResult, err := availableDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(availableResult.Human, "default-indexed@0.1.0") || !strings.Contains(availableResult.Human, "index") {
+		t.Fatalf("module available = %q", availableResult.Human)
+	}
+	installResult, err := installDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"source": "default-indexed"},
+		Options:     map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(installResult.Human, "default-indexed@0.1.0") {
+		t.Fatalf("install result = %q", installResult.Human)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "modules", "default-indexed", "0.1.0")); err != nil {
+		t.Fatalf("default local indexed module was not installed: %v", err)
+	}
+}
+
+func TestModuleInstallBareNameResolvesConfiguredPackageRoot(t *testing.T) {
+	workspace := t.TempDir()
+	searchRoot := t.TempDir()
+	moduleRoot := writeCommandModuleRoot(t, filepath.Join(searchRoot, "root-install"), "root-install", "0.2.0")
+	configPath := filepath.Join(t.TempDir(), "lab.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+modules:
+  searchPaths:
+    - `+searchRoot+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	availableDefinition, _ := registry.Find("module", "available")
+	installDefinition, _ := registry.Find("module", "install")
+
+	availableResult, err := availableDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": workspace,
+			"config":    configPath,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(availableResult.Human, "root-install@0.2.0") || !strings.Contains(availableResult.Human, "search-path") {
+		t.Fatalf("module available = %q", availableResult.Human)
+	}
+	installResult, err := installDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"source": "root-install"},
+		Options: map[string]string{
+			"workspace": workspace,
+			"config":    configPath,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(installResult.Human, "root-install@0.2.0") {
+		t.Fatalf("install result = %q", installResult.Human)
+	}
+	lock, err := modulepackage.LoadLock(filepath.Join(workspace, "module-lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record modulepackage.LockRecord
+	for _, item := range lock.Modules {
+		if item.Name == "root-install" && item.Version == "0.2.0" {
+			record = item
+			break
+		}
+	}
+	if record.Name == "" {
+		t.Fatalf("lock = %#v, want root-install@0.2.0", lock.Modules)
+	}
+	if !record.Linked || record.Source != moduleRoot {
+		t.Fatalf("lock record = %#v, want linked package root %s", record, moduleRoot)
+	}
+}
+
 func TestChainAddDoesNotUseCacheOnlyAvailableModule(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cacheHome := t.TempDir()
@@ -2736,7 +2897,7 @@ func TestModuleInstallResolvesHTTPSIndex(t *testing.T) {
 	installDefinition, _ := registry.Find("module", "install")
 
 	result, err := installDefinition.Execute(context.Background(), Invocation{
-		Positionals: map[string]string{"source": "remote-indexed@0.1.0"},
+		Positionals: map[string]string{"source": "remote-indexed"},
 		Options: map[string]string{
 			"workspace": workspace,
 			"index":     server.URL + "/index.yaml",
@@ -4314,7 +4475,17 @@ func (fakeRunClient) RunPayloadCommand(context.Context, RunPayloadCommandRunRequ
 
 func writeCommandModuleArchive(t *testing.T, dir, name string) string {
 	t.Helper()
-	path := filepath.Join(dir, name+".tgz")
+	return writeCommandModuleArchiveVersioned(t, dir, name, "0.1.0", name+".tgz")
+}
+
+func writeCommandModuleArchiveVersion(t *testing.T, dir, name, version string) string {
+	t.Helper()
+	return writeCommandModuleArchiveVersioned(t, dir, name, version, name+"-"+version+".tgz")
+}
+
+func writeCommandModuleArchiveVersioned(t *testing.T, dir, name, version, fileName string) string {
+	t.Helper()
+	path := filepath.Join(dir, fileName)
 	out, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
@@ -4325,7 +4496,7 @@ func writeCommandModuleArchive(t *testing.T, dir, name string) string {
 kind: ModulePackage
 metadata:
   name: ` + name + `
-  version: 0.1.0
+  version: ` + version + `
   moduleType: survey
   summary: Bulk module ` + name + `
 runtime:
@@ -4357,6 +4528,34 @@ launch:
 		t.Fatal(err)
 	}
 	return path
+}
+
+func writeCommandModuleRoot(t *testing.T, dir, name, version string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, modulepackage.ManifestName), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: `+name+`
+  version: `+version+`
+  moduleType: survey
+  summary: Package root module `+name+`
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/`+name+`"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bin", name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func TestGuardDangerousModules(t *testing.T) {

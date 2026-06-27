@@ -8,6 +8,7 @@ bazel-*
 .worktrees/
 .mypy_cache/
 .ruff_cache/
+.bazelrc.user
 *.egg-info/
 sdk/python/.venv/
 __pycache__/
