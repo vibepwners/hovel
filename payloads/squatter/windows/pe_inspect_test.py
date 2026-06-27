@@ -13,7 +13,7 @@ SQUATTER_TRANSPORTS = 0x00000007
 
 class PETest(unittest.TestCase):
     def test_payload_is_i386_console_pe_with_hovel_markers(self):
-        with open(sys.argv[1], "rb") as handle:
+        with open(i686_payload_path(), "rb") as handle:
             data = handle.read()
 
         self.assertGreaterEqual(len(data), 0x40)
@@ -60,6 +60,16 @@ class PETest(unittest.TestCase):
         ]
         for needle in forbidden_runtime_imports:
             self.assertNotIn(needle, data)
+
+
+def i686_payload_path():
+    candidates = []
+    for arg in sys.argv[1:]:
+        candidates.extend(part for part in arg.split() if part)
+    matches = [path for path in candidates if path.endswith("-i686.exe")]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one i686 payload, got {matches!r} from {candidates!r}")
+    return matches[0]
 
 
 def u16(data, offset):

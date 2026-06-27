@@ -11,7 +11,6 @@ bazel_dep(name = "rules_go", version = "0.60.0")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
 bazel_dep(name = "rules_python", version = "1.8.4")
 bazel_dep(name = "rules_rust", version = "0.70.0")
-bazel_dep(name = "rules_shell", version = "0.8.0")
 bazel_dep(name = "windows_toolchains", version = "0.1.0")
 
 git_override(

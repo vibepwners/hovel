@@ -1,29 +1,21 @@
 load("@rules_python//python:defs.bzl", "py_test")
+load(":select_file.bzl", "select_file")
 
 package(default_visibility = ["//visibility:public"])
 
-genrule(
+select_file(
     name = "squatter_x86_exe",
     srcs = ["//payloads/squatter/windows/src:squatter_all"],
-    outs = ["squatter.exe"],
-    cmd = """
-set -euo pipefail
-for src in $(SRCS); do
-  case "$$src" in
-    *-i686.exe) cp "$$src" "$@"; exit 0 ;;
-  esac
-done
-echo "missing i686 squatter.exe in inputs: $(SRCS)" >&2
-exit 1
-""",
+    output_name = "squatter.exe",
+    suffix = "-i686.exe",
 )
 
 py_test(
     name = "squatter_x86_exe_pe_test",
     size = "small",
     srcs = ["pe_inspect_test.py"],
-    args = ["$(location :squatter_x86_exe)"],
-    data = [":squatter_x86_exe"],
+    args = ["$(locations //payloads/squatter/windows/src:squatter_all)"],
+    data = ["//payloads/squatter/windows/src:squatter_all"],
     main = "pe_inspect_test.py",
     python_version = "PY3",
 )

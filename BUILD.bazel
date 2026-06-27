@@ -3,6 +3,7 @@ load("@gazelle//:def.bzl", "gazelle")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    ".clang-format",
     "scripts/demo-mcp-agent-tmux.sh",
     "scripts/demo-step-setup.sh",
     "tools/docker/squatter-wine/Dockerfile",

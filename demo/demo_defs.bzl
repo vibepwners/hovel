@@ -19,57 +19,137 @@ STANDARD_DEMOS = [
     ("mock-survey-exploit-commands-04-save", "tapes/mock-survey-exploit-commands-04-save.tape"),
 ]
 
-def _vhs_demo(name, tape, wine = False):
-    srcs = [
-        tape,
-        "chains/mock-survey-exploit.chain.yaml",
-        "//:scripts/demo-step-setup.sh",
-        "//:scripts/demo-mcp-agent-tmux.sh",
-        "//tools/demo:check_gif_duration.py",
-        "//tools/demo:vhs_version.txt",
+def _runfiles_for(ctx, attr_name):
+    target = getattr(ctx.attr, attr_name)
+    executable = getattr(ctx.executable, attr_name)
+    return [executable], [
+        target[DefaultInfo].files,
+        target[DefaultInfo].default_runfiles.files,
+        target[DefaultInfo].data_runfiles.files,
     ]
-    tools = [
-        "//tools/demo:render_vhs_demo.sh",
-        "//cmd/hovel:hovel",
-        "//tools/demo/mcpagent:mcpagent",
-        "//examples/go/mock_survey:mock_survey",
-        "//examples/go/mock_exploit_session:mock_exploit_session",
+
+def _vhs_demo_impl(ctx):
+    out = ctx.actions.declare_file("out/" + ctx.attr.demo_name + ".gif")
+    args = ctx.actions.args()
+    args.add("--tape", ctx.file.tape)
+    args.add("--tape-rel", "demo/" + ctx.attr.tape_rel)
+    args.add("--output", out)
+    args.add("--hovel-bin", ctx.executable.hovel)
+    args.add("--agent-bin", ctx.executable.agent)
+    args.add("--mock-survey-go", ctx.executable.mock_survey_go)
+    args.add("--mock-exploit-session-go", ctx.executable.mock_exploit_session_go)
+    args.add("--chain-file", ctx.file.chain)
+    args.add("--setup-script", ctx.file.setup_script)
+    args.add("--tmux-script", ctx.file.tmux_script)
+    args.add("--duration-checker", ctx.file.duration_checker)
+    args.add("--vhs-version-file", ctx.file.vhs_version)
+
+    inputs = [
+        ctx.file.tape,
+        ctx.file.chain,
+        ctx.file.setup_script,
+        ctx.file.tmux_script,
+        ctx.file.duration_checker,
+        ctx.file.vhs_version,
     ]
-    cmd = """
-set -euo pipefail
-$(execpath //tools/demo:render_vhs_demo.sh) \
-  --tape "$(execpath :{tape})" \
-  --tape-rel "demo/{tape}" \
-  --output "$@" \
-  --hovel-bin "$(execpath //cmd/hovel:hovel)" \
-  --agent-bin "$(execpath //tools/demo/mcpagent:mcpagent)" \
-  --mock-survey-go "$(execpath //examples/go/mock_survey:mock_survey)" \
-  --mock-exploit-session-go "$(execpath //examples/go/mock_exploit_session:mock_exploit_session)" \
-  --vhs-version-file "$(execpath //tools/demo:vhs_version.txt)"{wine_args}
-""".format(
-        tape = tape,
-        wine_args = "" if not wine else """ \
-  --squatter-provider "$(execpath //payloads/squatter/provider:squatter-provider)" \
-  --squatter-exe "$(execpath //payloads/squatter/windows:squatter_x86_exe)" \
-  --wine""",
+    tools = []
+    transitive_tools = []
+    for attr_name in ("runner", "hovel", "agent", "mock_survey_go", "mock_exploit_session_go"):
+        files, transitive = _runfiles_for(ctx, attr_name)
+        tools.extend(files)
+        transitive_tools.extend(transitive)
+
+    if ctx.attr.wine:
+        args.add("--wine")
+        args.add("--squatter-provider", ctx.executable.squatter_provider)
+        args.add("--squatter-exe", ctx.file.squatter_exe)
+        args.add("--dockerfile", ctx.file.dockerfile)
+        args.add("--docker-entrypoint", ctx.file.docker_entrypoint)
+        args.add("--docker-runner", ctx.file.docker_runner)
+        inputs.extend([ctx.file.squatter_exe, ctx.file.dockerfile, ctx.file.docker_entrypoint, ctx.file.docker_runner])
+        files, transitive = _runfiles_for(ctx, "squatter_provider")
+        tools.extend(files)
+        transitive_tools.extend(transitive)
+
+    ctx.actions.run(
+        executable = ctx.executable.runner,
+        arguments = [args],
+        inputs = inputs,
+        outputs = [out],
+        tools = depset(tools, transitive = transitive_tools),
+        mnemonic = "VhsDemo",
+        progress_message = "Rendering VHS demo %{label}",
     )
+    return [DefaultInfo(files = depset([out]))]
+
+_vhs_demo_rule = rule(
+    implementation = _vhs_demo_impl,
+    attrs = {
+        "agent": attr.label(executable = True, cfg = "exec", mandatory = True),
+        "chain": attr.label(allow_single_file = True, mandatory = True),
+        "demo_name": attr.string(mandatory = True),
+        "docker_entrypoint": attr.label(allow_single_file = True),
+        "docker_runner": attr.label(allow_single_file = True),
+        "dockerfile": attr.label(allow_single_file = True),
+        "duration_checker": attr.label(allow_single_file = True, mandatory = True),
+        "hovel": attr.label(executable = True, cfg = "exec", mandatory = True),
+        "mock_exploit_session_go": attr.label(executable = True, cfg = "exec", mandatory = True),
+        "mock_survey_go": attr.label(executable = True, cfg = "exec", mandatory = True),
+        "runner": attr.label(
+            default = "//tools/demo:render_vhs_demo",
+            executable = True,
+            cfg = "exec",
+        ),
+        "setup_script": attr.label(allow_single_file = True, mandatory = True),
+        "squatter_exe": attr.label(allow_single_file = True),
+        "squatter_provider": attr.label(executable = True, cfg = "exec"),
+        "tape": attr.label(allow_single_file = True, mandatory = True),
+        "tape_rel": attr.string(mandatory = True),
+        "tmux_script": attr.label(allow_single_file = True, mandatory = True),
+        "vhs_version": attr.label(allow_single_file = True, mandatory = True),
+        "wine": attr.bool(default = False),
+    },
+)
+
+def _demo_manifest_impl(ctx):
+    out = ctx.actions.declare_file(ctx.attr.name + ".txt")
+    ctx.actions.write(out, "\n".join(ctx.attr.outputs) + "\n")
+    return [DefaultInfo(files = depset([out]))]
+
+demo_manifest = rule(
+    implementation = _demo_manifest_impl,
+    attrs = {
+        "outputs": attr.string_list(mandatory = True),
+    },
+)
+
+def _vhs_demo(name, tape, wine = False):
+    kwargs = {}
     if wine:
-        srcs.extend([
-            "//:tools/docker/squatter-wine/Dockerfile",
-            "//:tools/docker/squatter-wine/entrypoint.sh",
-            "//:tools/docker/squatter-wine/run.sh",
-        ])
-        tools.extend([
-            "//payloads/squatter/provider:squatter-provider",
-            "//payloads/squatter/windows:squatter_x86_exe",
-        ])
-    native.genrule(
+        kwargs = {
+            "docker_entrypoint": "//:tools/docker/squatter-wine/entrypoint.sh",
+            "docker_runner": "//:tools/docker/squatter-wine/run.sh",
+            "dockerfile": "//:tools/docker/squatter-wine/Dockerfile",
+            "squatter_exe": "//payloads/squatter/windows:squatter_x86_exe",
+            "squatter_provider": "//payloads/squatter/provider:squatter-provider",
+        }
+    _vhs_demo_rule(
         name = name + "_gif",
-        srcs = srcs,
-        outs = ["out/" + name + ".gif"],
-        cmd = cmd,
+        demo_name = name,
+        tape = tape,
+        tape_rel = tape,
+        chain = "chains/mock-survey-exploit.chain.yaml",
+        setup_script = "//:scripts/demo-step-setup.sh",
+        tmux_script = "//:scripts/demo-mcp-agent-tmux.sh",
+        duration_checker = "//tools/demo:check_gif_duration.py",
+        vhs_version = "//tools/demo:vhs_version.txt",
+        hovel = "//cmd/hovel:hovel",
+        agent = "//tools/demo/mcpagent:mcpagent",
+        mock_survey_go = "//examples/go/mock_survey:mock_survey",
+        mock_exploit_session_go = "//examples/go/mock_exploit_session:mock_exploit_session",
         tags = ["manual"],
-        tools = tools,
+        wine = wine,
+        **kwargs
     )
 
 def vhs_demo_targets():

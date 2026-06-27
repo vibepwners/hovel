@@ -53,10 +53,17 @@ def main() -> None:
     parser.add_argument("--repo-root", default=".", type=Path)
     args = parser.parse_args()
 
-    repo = args.repo_root.resolve()
-    site_root = args.site_root.resolve()
-    output = args.output.resolve()
+    main_with_paths(
+        repo_root=args.repo_root.resolve(),
+        site_root=args.site_root.resolve(),
+        output=args.output.resolve(),
+    )
 
+
+def main_with_paths(repo_root: Path, site_root: Path, output: Path) -> None:
+    repo = repo_root.resolve()
+    site_root = site_root.resolve()
+    output = output.resolve()
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)

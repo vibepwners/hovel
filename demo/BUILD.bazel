@@ -1,5 +1,5 @@
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load(":demo_defs.bzl", "STANDARD_DEMOS", "vhs_demo_targets")
+load("@rules_python//python:defs.bzl", "py_test")
+load(":demo_defs.bzl", "STANDARD_DEMOS", "demo_manifest", "vhs_demo_targets")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -26,10 +26,25 @@ filegroup(
     tags = ["manual"],
 )
 
-sh_test(
+demo_manifest(
+    name = "standard_gif_manifest",
+    outputs = ["demo/out/" + name + ".gif" for name, _ in STANDARD_DEMOS],
+)
+
+demo_manifest(
+    name = "squatter_wine_gif_manifest",
+    outputs = ["demo/out/mcp-agent-02-squatter-wine.gif"],
+)
+
+demo_manifest(
+    name = "all_gif_manifest",
+    outputs = ["demo/out/" + name + ".gif" for name, _ in STANDARD_DEMOS] + ["demo/out/mcp-agent-02-squatter-wine.gif"],
+)
+
+py_test(
     name = "standard_verification_test",
     size = "medium",
-    srcs = ["//tools/demo:verify_standard_demos.sh"],
+    srcs = ["//tools/demo:verify_standard_demos.py"],
     args = [
         "$(rootpath //cmd/hovel:hovel)",
         "$(rootpath //tools/demo/mcpagent:mcpagent)",
@@ -44,5 +59,7 @@ sh_test(
         "//examples/go/mock_survey",
         "//tools/demo/mcpagent",
     ],
+    main = "verify_standard_demos.py",
+    python_version = "PY3",
     tags = ["e2e"],
 )
