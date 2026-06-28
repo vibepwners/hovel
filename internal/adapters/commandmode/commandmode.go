@@ -68,13 +68,14 @@ func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulec
 	store := filesystem.NewWorkspaceStore()
 	pythonSessions := pythonrpc.NewSessionBroker()
 	stepProcesses := pythonrpc.NewStepProcessBroker()
-	stepRunner := pythonrpc.StepRuntimeRunner{Runner: pythonrpc.Runner{
+	runner := pythonrpc.Runner{
 		Events:        discardEvents{},
 		IDs:           randomIDs{},
 		Clock:         systemClock{},
 		Sessions:      pythonSessions,
 		StepProcesses: stepProcesses,
-	}}
+	}
+	stepRunner := pythonrpc.StepRuntimeRunner{Runner: runner}
 	return commands.Runtime{
 		Workspaces: services.NewWorkspaceService(
 			store,
@@ -99,7 +100,7 @@ func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulec
 		Modules:            catalog,
 		ModuleChecks:       moduleChecker{},
 		Payloads:           store,
-		PayloadProviders:   payloadProviderService{daemons: services.NewDaemonService(store), runs: daemonRunClients{}, modules: catalog},
+		PayloadProviders:   payloadProviderService{daemons: services.NewDaemonService(store), runs: daemonRunClients{}, modules: catalog, payloads: runner},
 	}
 }
 
@@ -731,9 +732,14 @@ func (daemonRunClients) DialRunClient(socketPath string) (commands.RunClient, er
 }
 
 type payloadProviderService struct {
-	daemons commands.DaemonStatusProvider
-	runs    commands.RunClientFactory
-	modules modulecatalog.Catalog
+	daemons  commands.DaemonStatusProvider
+	runs     commands.RunClientFactory
+	modules  modulecatalog.Catalog
+	payloads payloadMetadataLister
+}
+
+type payloadMetadataLister interface {
+	ListPayloads(context.Context, string, run.PayloadQuery) ([]run.PayloadInfo, error)
 }
 
 func (s payloadProviderService) ListAvailablePayloads(ctx context.Context) ([]commands.AvailablePayload, error) {
@@ -742,14 +748,55 @@ func (s payloadProviderService) ListAvailablePayloads(ctx context.Context) ([]co
 	}
 	var payloads []commands.AvailablePayload
 	for _, module := range s.modules.ByType(modulecatalog.TypePayloadProvider) {
-		payloads = append(payloads, commands.AvailablePayload{
-			Provider:  module.Name,
-			PayloadID: module.ID,
-			Name:      module.Name,
-			Version:   module.Version,
-		})
+		listed, err := s.listProviderPayloads(ctx, module)
+		if err != nil || len(listed) == 0 {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			payloads = append(payloads, catalogAvailablePayload(module))
+			continue
+		}
+		payloads = append(payloads, listed...)
 	}
 	return payloads, nil
+}
+
+func (s payloadProviderService) listProviderPayloads(ctx context.Context, module modulecatalog.Module) ([]commands.AvailablePayload, error) {
+	if s.payloads == nil {
+		return nil, fmt.Errorf("payload metadata runner is not configured")
+	}
+	infos, err := s.payloads.ListPayloads(ctx, module.ID, run.PayloadQuery{})
+	if err != nil {
+		return nil, err
+	}
+	payloads := make([]commands.AvailablePayload, 0, len(infos))
+	for _, info := range infos {
+		payloads = append(payloads, availablePayloadFromInfo(module, info))
+	}
+	return payloads, nil
+}
+
+func availablePayloadFromInfo(module modulecatalog.Module, info run.PayloadInfo) commands.AvailablePayload {
+	return commands.AvailablePayload{
+		Provider:     firstNonEmpty(module.Name, info.Name, module.ID),
+		PayloadID:    firstNonEmpty(info.ID, module.ID),
+		Name:         firstNonEmpty(info.Name, module.Name),
+		Version:      firstNonEmpty(info.Version, module.Version),
+		Platform:     info.Platform,
+		Arch:         info.Arch,
+		Formats:      append([]string(nil), info.Formats...),
+		Capabilities: append([]string(nil), info.Capabilities...),
+		Transport:    info.Transport.Kind,
+	}
+}
+
+func catalogAvailablePayload(module modulecatalog.Module) commands.AvailablePayload {
+	return commands.AvailablePayload{
+		Provider:  module.Name,
+		PayloadID: module.ID,
+		Name:      module.Name,
+		Version:   module.Version,
+	}
 }
 
 func (s payloadProviderService) ConnectInstalledPayload(ctx context.Context, record commands.InstalledPayloadRecord) (commands.SessionRef, error) {

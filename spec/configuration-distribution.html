@@ -50,7 +50,7 @@
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
         <li><a href="module-rust.html">Rust Modules</a></li>
-        <li><a href="module-eternalromance.html">Case Study: EternalRomance</a></li>
+        <li><a href="module-ms17-010.html">Case Study: MS17-010</a></li>
       </ul>
     </aside>
     <main class="content">
@@ -240,8 +240,8 @@ kind: ModuleInstallSet
 modules:
   - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
     sha256: ...
-  - source: ./etro-survey-1.0.0.tgz
-  - source: /opt/hovel/modules/etro-exploit-1.0.0.tgz</code></pre>
+  - source: ./ms17-010-survey-1.0.0.tgz
+  - source: /opt/hovel/modules/ms17-010-exploit-1.0.0.tgz</code></pre>
 
         <h2>Storage</h2>
         <p>Installed module state is recorded in the workspace lock file, not edited into config. Config describes search paths and policy; install state records the resolved package root, checksum, link mode, and timestamp.</p>
@@ -301,7 +301,7 @@ hovel-windows-amd64.exe
 <pre data-lang="bash"><code>uvx hovel throw ./ssh-memory.chain.yaml
 uvx hovel throw ./ssh-memory.chain.yaml --now
 </code></pre>
-        <p>The package includes no modules by default. In-tree modules such as EternalRomance, Squatter, and the mock modules are built as separate <code>.tgz</code> artifacts with their module-declared versions and published on the GitHub Release page.</p>
+        <p>The package includes no modules by default. In-tree modules such as MS17-010, Squatter, and the mock modules are built as separate <code>.tgz</code> artifacts with their module-declared versions and published on the GitHub Release page.</p>
         <p>Release artifact authority:</p>
         <ol>
           <li>GitHub Releases own native binaries, module packages, checksums, and immutable source archives.</li>

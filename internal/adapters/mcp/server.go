@@ -260,7 +260,7 @@ func (s *Server) MCPServer() *mcpsdk.Server {
 		Version: Version,
 	}, &mcpsdk.ServerOptions{
 		Capabilities: &mcpsdk.ServerCapabilities{},
-		Instructions: "Use typed tools first. Start with hovel_catalog_snapshot and hovel_workspace_snapshot. Use hovel_chain_apply to idempotently create/select an operation and chain, add modules, targets, and config, and validate. For Etro-to-Squatter TCP bind, add etro-survey@v0.1.0, etro-exploit@v1.0.0, and squatter@v0.1.0, then set operator.confirmed_lab and optional squatter.bind_port as chain config. Use hovel_throw_start only after explicit caller authorization for the throw and dangerous modules. After a throw, use hovel_installed_payload_list to get payload handles and hovel_payload_cmd to run cmd.exe commands such as systeminfo. Use hovel_command_run only as an escape hatch for commands without typed tools.",
+		Instructions: "Use typed tools first. Start with hovel_catalog_snapshot and hovel_workspace_snapshot. Use hovel_chain_apply to idempotently create/select an operation and chain, add modules, targets, and config, and validate. For MS17-010-to-Squatter TCP bind, add ms17-010-survey@v0.1.0, ms17-010-exploit@v1.0.0, and squatter@v0.1.0, then set operator.confirmed_lab and optional squatter.bind_port as chain config. Use hovel_throw_start only after explicit caller authorization for the throw and dangerous modules. After a throw, use hovel_installed_payload_list to get payload handles and hovel_payload_cmd to run cmd.exe commands such as systeminfo. Use hovel_command_run only as an escape hatch for commands without typed tools.",
 	})
 	s.RegisterTools(server)
 	return server
@@ -372,7 +372,7 @@ type payloadCommandCallInput struct {
 }
 
 type commandRunInput struct {
-	Args      []string `json:"args" jsonschema:"Command arguments without leading hovel or run. Examples: [\"op\",\"use\",\"lab\"], [\"chain\",\"create\",\"etro-squatter\"], [\"target\",\"add\",\"192.168.122.142\"]."`
+	Args      []string `json:"args" jsonschema:"Command arguments without leading hovel or run. Examples: [\"op\",\"use\",\"lab\"], [\"chain\",\"create\",\"ms17-010-squatter\"], [\"target\",\"add\",\"192.168.122.142\"]."`
 	Operation string   `json:"operation,omitempty" jsonschema:"Optional operation context to select before running the command. Defaults to this MCP operator's current operation."`
 	Chain     string   `json:"chain,omitempty" jsonschema:"Optional chain context to select before running the command. Defaults to this MCP operator's active chain."`
 }

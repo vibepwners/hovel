@@ -12,10 +12,10 @@ import (
 func TestRuntimeExecutesCapabilityStepsInOrder(t *testing.T) {
 	catalog := modulecatalog.New(
 		modulecatalog.Module{
-			ID:      "etro@v1",
+			ID:      "ms17-010@v1",
 			Enabled: true,
 			StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{{
-				ID:   "etro.exploit",
+				ID:   "ms17-010.exploit",
 				Kind: "exploit.remote_execution",
 				Produces: []modulecatalog.CapabilityRequirement{{
 					Type:          modulecatalog.CapabilityRemoteExecution,
@@ -42,7 +42,7 @@ func TestRuntimeExecutesCapabilityStepsInOrder(t *testing.T) {
 	)
 	runner := &fakeStepRunner{
 		execute: map[string]StepExecuteResult{
-			"etro@v1/etro.exploit": {
+			"ms17-010@v1/ms17-010.exploit": {
 				Status: "succeeded",
 				Capabilities: []modulecatalog.Capability{{
 					ID:            "remote-1",
@@ -66,7 +66,7 @@ func TestRuntimeExecutesCapabilityStepsInOrder(t *testing.T) {
 	result, err := New(catalog, runner).Execute(context.Background(), Request{
 		RunID: "run-1",
 		Steps: []StepRef{
-			{ModuleID: "etro", StepID: "etro.exploit"},
+			{ModuleID: "ms17-010", StepID: "ms17-010.exploit"},
 			{ModuleID: "squatter", StepID: "squatter.connect_smb"},
 		},
 	})
@@ -79,8 +79,8 @@ func TestRuntimeExecutesCapabilityStepsInOrder(t *testing.T) {
 	}
 	gotCalls := runner.calls
 	wantCalls := []stepCall{
-		{phase: "prepare", moduleID: "etro@v1", stepID: "etro.exploit"},
-		{phase: "execute", moduleID: "etro@v1", stepID: "etro.exploit"},
+		{phase: "prepare", moduleID: "ms17-010@v1", stepID: "ms17-010.exploit"},
+		{phase: "execute", moduleID: "ms17-010@v1", stepID: "ms17-010.exploit"},
 		{phase: "prepare", moduleID: "squatter@v1", stepID: "squatter.connect_smb", inputs: []modulecatalog.CapabilityRef{{CapabilityID: "remote-1", Type: modulecatalog.CapabilityRemoteExecution}}},
 		{phase: "execute", moduleID: "squatter@v1", stepID: "squatter.connect_smb", inputs: []modulecatalog.CapabilityRef{{CapabilityID: "remote-1", Type: modulecatalog.CapabilityRemoteExecution}}},
 	}

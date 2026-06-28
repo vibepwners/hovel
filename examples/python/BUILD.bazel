@@ -6,10 +6,10 @@ filegroup(
     name = "sources",
     srcs = glob([
         "hovel-modules.json",
-        "etro_exploit/**/*.py",
-        "etro_exploit/pyproject.toml",
-        "etro_survey/**/*.py",
-        "etro_survey/pyproject.toml",
+        "ms17_010_exploit/**/*.py",
+        "ms17_010_exploit/pyproject.toml",
+        "ms17_010_survey/**/*.py",
+        "ms17_010_survey/pyproject.toml",
         "mock_exploit/**/*.py",
         "mock_exploit/pyproject.toml",
         "mock_exploit_session/**/*.py",
@@ -20,65 +20,65 @@ filegroup(
 )
 
 py_library(
-    name = "etro_survey_lib",
-    srcs = glob(["etro_survey/hovel_etro_survey/*.py"]),
-    imports = ["etro_survey"],
+    name = "ms17_010_survey_lib",
+    srcs = glob(["ms17_010_survey/hovel_ms17_010_survey/*.py"]),
+    imports = ["ms17_010_survey"],
     deps = ["//sdk/python:hovel_sdk"],
 )
 
 py_binary(
-    name = "etro_survey_module",
-    srcs = ["etro_survey/hovel_etro_survey/__main__.py"],
-    imports = ["etro_survey"],
-    main = "etro_survey/hovel_etro_survey/__main__.py",
+    name = "ms17_010_survey_module",
+    srcs = ["ms17_010_survey/hovel_ms17_010_survey/__main__.py"],
+    imports = ["ms17_010_survey"],
+    main = "ms17_010_survey/hovel_ms17_010_survey/__main__.py",
     python_version = "PY3",
     deps = [
-        ":etro_survey_lib",
+        ":ms17_010_survey_lib",
         "//sdk/python:hovel_sdk",
     ],
 )
 
 py_test(
-    name = "etro_survey_test",
+    name = "ms17_010_survey_test",
     size = "small",
-    srcs = ["etro_survey/hovel_etro_survey/module_test.py"],
-    imports = ["etro_survey"],
-    main = "etro_survey/hovel_etro_survey/module_test.py",
+    srcs = ["ms17_010_survey/hovel_ms17_010_survey/module_test.py"],
+    imports = ["ms17_010_survey"],
+    main = "ms17_010_survey/hovel_ms17_010_survey/module_test.py",
     python_version = "PY3",
     deps = [
-        ":etro_survey_lib",
+        ":ms17_010_survey_lib",
         "//sdk/python:hovel_sdk",
     ],
 )
 
 py_library(
-    name = "etro_exploit_lib",
-    srcs = glob(["etro_exploit/hovel_etro_exploit/*.py"]),
-    imports = ["etro_exploit"],
+    name = "ms17_010_exploit_lib",
+    srcs = glob(["ms17_010_exploit/hovel_ms17_010_exploit/*.py"]),
+    imports = ["ms17_010_exploit"],
     deps = ["//sdk/python:hovel_sdk"],
 )
 
 py_binary(
-    name = "etro_exploit_module",
-    srcs = ["etro_exploit/hovel_etro_exploit/__main__.py"],
-    imports = ["etro_exploit"],
-    main = "etro_exploit/hovel_etro_exploit/__main__.py",
+    name = "ms17_010_exploit_module",
+    srcs = ["ms17_010_exploit/hovel_ms17_010_exploit/__main__.py"],
+    imports = ["ms17_010_exploit"],
+    main = "ms17_010_exploit/hovel_ms17_010_exploit/__main__.py",
     python_version = "PY3",
     deps = [
-        ":etro_exploit_lib",
+        ":ms17_010_exploit_lib",
         "//sdk/python:hovel_sdk",
     ],
 )
 
 py_test(
-    name = "etro_exploit_test",
+    name = "ms17_010_exploit_test",
     size = "small",
-    srcs = ["etro_exploit/hovel_etro_exploit/module_test.py"],
-    imports = ["etro_exploit"],
-    main = "etro_exploit/hovel_etro_exploit/module_test.py",
+    srcs = ["ms17_010_exploit/hovel_ms17_010_exploit/module_test.py"],
+    imports = ["ms17_010_exploit"],
+    main = "ms17_010_exploit/hovel_ms17_010_exploit/module_test.py",
     python_version = "PY3",
     deps = [
-        ":etro_exploit_lib",
+        ":ms17_010_exploit_lib",
         "//sdk/python:hovel_sdk",
     ],
 )

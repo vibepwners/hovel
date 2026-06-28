@@ -189,12 +189,12 @@ func TestRunCommandCanListReadAndSendSessions(t *testing.T) {
 func TestRunCommandPersistsSquatterAsModuleWithTypeConfig(t *testing.T) {
 	t.Setenv("HOVEL_MODULE_CONFIG", testsupport.WritePythonModuleFixtures(t,
 		testsupport.PythonModuleFixture{
-			ID:   "etro-survey",
-			Body: rootCLIModuleFixtureBody("etro-survey", "v0.1.0", "survey"),
+			ID:   "ms17-010-survey",
+			Body: rootCLIModuleFixtureBody("ms17-010-survey", "v0.1.0", "survey"),
 		},
 		testsupport.PythonModuleFixture{
-			ID:   "etro-exploit",
-			Body: rootCLIModuleFixtureBody("etro-exploit", "v1.0.0", "exploit"),
+			ID:   "ms17-010-exploit",
+			Body: rootCLIModuleFixtureBody("ms17-010-exploit", "v1.0.0", "exploit"),
 		},
 		testsupport.PythonModuleFixture{
 			ID:   "squatter",
@@ -206,7 +206,7 @@ func TestRunCommandPersistsSquatterAsModuleWithTypeConfig(t *testing.T) {
 	run := func(args ...string) string {
 		t.Helper()
 		var stdout, stderr bytes.Buffer
-		full := append([]string{"run", "--workspace", fixture.WorkspacePath, "--op", "o1", "--chain", "etro"}, args...)
+		full := append([]string{"run", "--workspace", fixture.WorkspacePath, "--op", "o1", "--chain", "ms17-010"}, args...)
 		code := Run(ctx, full, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("hovel %s exit code = %d, stderr = %s", strings.Join(full, " "), code, stderr.String())
@@ -214,12 +214,12 @@ func TestRunCommandPersistsSquatterAsModuleWithTypeConfig(t *testing.T) {
 		return stdout.String()
 	}
 
-	run("add", "etro-survey@v0.1.0")
-	run("add", "etro-exploit@v1.0.0")
+	run("add", "ms17-010-survey@v0.1.0")
+	run("add", "ms17-010-exploit@v1.0.0")
 	run("add", "squatter@v0.1.0")
 	output := run("chain", "inspect")
 
-	for _, want := range []string{"etro-survey@v0.1.0", "etro-exploit@v1.0.0", "squatter@v0.1.0"} {
+	for _, want := range []string{"ms17-010-survey@v0.1.0", "ms17-010-exploit@v1.0.0", "squatter@v0.1.0"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("chain inspect missing %q:\n%s", want, output)
 		}

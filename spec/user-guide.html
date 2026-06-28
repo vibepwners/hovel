@@ -51,7 +51,7 @@
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
         <li><a href="module-rust.html">Rust Modules</a></li>
-        <li><a href="module-eternalromance.html">Case Study: EternalRomance</a></li>
+        <li><a href="module-ms17-010.html">Case Study: MS17-010</a></li>
       </ul>
     </aside>
     <main class="content">
@@ -131,9 +131,9 @@ runtime:
         <h2>Install Modules</h2>
         <p>Modules are distributed as <code>.tgz</code> packages. Install from disk, absolute path, HTTPS URL, a local package reference, an index-backed reference, a bulk manifest, or a linked development directory.</p>
 <pre data-lang="shell"><code>hovel module install ./squatter-{{HOVEL_VERSION}}.tgz
-hovel module install /opt/hovel/modules/etro-survey-1.0.0.tgz
+hovel module install /opt/hovel/modules/ms17-010-survey-1.0.0.tgz
 hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
-hovel module install etro-survey
+hovel module install ms17-010-survey
 hovel module install squatter@{{HOVEL_VERSION}}
 hovel module bulk-install ./lab-modules.yaml
 hovel module install --link /home/me/dev/my-module
@@ -145,8 +145,8 @@ kind: ModuleInstallSet
 modules:
   - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
     sha256: ...
-  - source: ./etro-survey-1.0.0.tgz
-  - source: ./etro-exploit-1.0.0.tgz</code></pre>
+  - source: ./ms17-010-survey-1.0.0.tgz
+  - source: ./ms17-010-exploit-1.0.0.tgz</code></pre>
         <p>Installed packages are recorded in <code>module-lock.yaml</code> only after the install process completes. Cached downloads stay visible through <code>module available</code> for offline reinstall until explicitly cleaned; they are not installed modules.</p>
         <figure class="demo-figure">
           <img src="../assets/demos/module-package-install-01-link.gif" alt="Terminal demo installing a linked module package, listing the installed module, and showing module-lock.yaml.">

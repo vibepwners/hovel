@@ -1031,6 +1031,49 @@ while True:
 	}
 }
 
+func TestRunnerListPayloadsDecodesArrayResult(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "list_payloads":
+        send({"jsonrpc": "2.0", "id": rid, "result": [{
+            "id": "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+            "name": "squatter",
+            "version": "v0.1.0",
+            "platform": "windows",
+            "arch": "x86",
+            "formats": ["pe-exe"],
+            "capabilities": ["file.get", "process.exec"],
+            "transport": {"kind": "tcp-bind", "encrypted": False},
+            "session": {"kind": "agent", "acquisition": "post_throw_connect", "owner": "payload_provider"}
+        }]})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	payloads, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.ListPayloads(context.Background(), "broken", run.PayloadQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("payload count = %d, want 1", len(payloads))
+	}
+	payload := payloads[0]
+	if payload.ID != "squatter/windows/x86/windows-7/tcp-bind/pe-exe" ||
+		payload.Platform != "windows" ||
+		payload.Arch != "x86" ||
+		payload.Transport.Kind != "tcp-bind" ||
+		len(payload.Formats) != 1 ||
+		payload.Formats[0] != "pe-exe" {
+		t.Fatalf("payload = %#v", payload)
+	}
+}
+
 func TestStepRuntimeRunnerExecutesCapabilityChain(t *testing.T) {
 	configPath := writePythonModuleFixture(t, `
 while True:
@@ -1043,7 +1086,7 @@ while True:
     params = request.get("params") or {}
     step_id = params.get("stepId")
     if method == "step.prepare":
-        if step_id == "etro.exploit":
+        if step_id == "ms17-010.exploit":
             send({"jsonrpc": "2.0", "id": rid, "result": {}})
         elif step_id == "squatter.connect_smb":
             if params.get("inputs", [])[0]["capabilityId"] != "remote-1":
@@ -1053,7 +1096,7 @@ while True:
         else:
             send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": "unknown step"}})
     elif method == "step.execute":
-        if step_id == "etro.exploit":
+        if step_id == "ms17-010.exploit":
             send({"jsonrpc": "2.0", "id": rid, "result": {
                 "status": "succeeded",
                 "capabilities": [{
@@ -1094,7 +1137,7 @@ while True:
 		Enabled: true,
 		StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{
 			{
-				ID:   "etro.exploit",
+				ID:   "ms17-010.exploit",
 				Kind: "exploit.remote_execution",
 			},
 			{
@@ -1112,7 +1155,7 @@ while True:
 	result, err := runtime.Execute(context.Background(), chainruntime.Request{
 		RunID: "run-1",
 		Steps: []chainruntime.StepRef{
-			{ModuleID: "broken", StepID: "etro.exploit"},
+			{ModuleID: "broken", StepID: "ms17-010.exploit"},
 			{ModuleID: "broken", StepID: "squatter.connect_smb"},
 		},
 	})

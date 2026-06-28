@@ -68,20 +68,20 @@ PYTHON_MODULES = [
         "hovel_example_exploit_session",
     ),
     (
-        "etro-survey",
+        "ms17-010-survey",
         "v0.1.0",
         "survey",
-        "EternalRomance SMBv1 survey module.",
-        "examples/python/etro_survey",
-        "hovel_etro_survey",
+        "MS17-010 SMBv1 survey module.",
+        "examples/python/ms17_010_survey",
+        "hovel_ms17_010_survey",
     ),
     (
-        "etro-exploit",
+        "ms17-010-exploit",
         "v1.0.0",
         "exploit",
-        "EternalRomance SMBv1 exploit module.",
-        "examples/python/etro_exploit",
-        "hovel_etro_exploit",
+        "MS17-010 SMBv1 exploit module.",
+        "examples/python/ms17_010_exploit",
+        "hovel_ms17_010_exploit",
     ),
 ]
 

@@ -230,6 +230,18 @@ func (r Runner) ListPayloadCommands(ctx context.Context, moduleID string, reques
 	return decoded.Commands, nil
 }
 
+func (r Runner) ListPayloads(ctx context.Context, moduleID string, query run.PayloadQuery) ([]run.PayloadInfo, error) {
+	result, err := r.callPayloadProvider(ctx, moduleID, "list_payloads", query)
+	if err != nil {
+		return nil, err
+	}
+	var decoded []run.PayloadInfo
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return nil, services.NewModuleExecutionFailure("module returned invalid payload list", err)
+	}
+	return decoded, nil
+}
+
 func (r Runner) RunPayloadCommand(ctx context.Context, moduleID string, request run.PayloadCommandRequest) (run.PayloadCommandResult, error) {
 	result, err := r.callPayloadCommand(ctx, moduleID, "payload.command.run", request)
 	if err != nil {
@@ -258,6 +270,30 @@ func (r Runner) callPayloadCommand(ctx context.Context, moduleID, method string,
 	result, err := process.client.call(ctx, method, params)
 	if err != nil {
 		return nil, moduleFailure("module failed during payload command", "module payload command failed", err, process.stderrString())
+	}
+	_, _ = process.client.call(context.Background(), "shutdown", nil)
+	if err := process.wait(); err != nil {
+		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
+	}
+	return result, nil
+}
+
+func (r Runner) callPayloadProvider(ctx context.Context, moduleID, method string, params any) (json.RawMessage, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	process, err := r.start(ctx, moduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer process.killAndWait()
+	result, err := process.client.callRaw(ctx, method, params)
+	if err != nil {
+		return nil, moduleFailure("module failed during payload provider call", "module payload provider call failed", err, process.stderrString())
 	}
 	_, _ = process.client.call(context.Background(), "shutdown", nil)
 	if err := process.wait(); err != nil {
@@ -1149,8 +1185,24 @@ func newClient(stdout io.Reader, stdin io.WriteCloser) *rpcClient {
 }
 
 func (c *rpcClient) call(ctx context.Context, method string, params any) (map[string]any, error) {
-	if err := ctx.Err(); err != nil {
+	message, err := c.callMessage(ctx, method, params)
+	if err != nil {
 		return nil, err
+	}
+	return rpcResult(message)
+}
+
+func (c *rpcClient) callRaw(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	message, err := c.callMessage(ctx, method, params)
+	if err != nil {
+		return nil, err
+	}
+	return rpcRawResult(message)
+}
+
+func (c *rpcClient) callMessage(ctx context.Context, method string, params any) (rpcMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return rpcMessage{}, err
 	}
 
 	c.mu.Lock()
@@ -1164,26 +1216,26 @@ func (c *rpcClient) call(ctx context.Context, method string, params any) (map[st
 	c.writeMu.Lock()
 	if err := writeFrame(c.writer, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		c.writeMu.Unlock()
-		return nil, err
+		return rpcMessage{}, err
 	}
 	c.writeMu.Unlock()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return rpcMessage{}, ctx.Err()
 		case <-c.done:
 			select {
 			case message := <-responses:
-				return rpcResult(message)
+				return message, nil
 			default:
 			}
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return rpcMessage{}, err
 			}
-			return nil, c.readError()
+			return rpcMessage{}, c.readError()
 		case message := <-responses:
-			return rpcResult(message)
+			return message, nil
 		}
 	}
 }
@@ -1196,6 +1248,16 @@ func rpcResult(message rpcMessage) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	return message.Result, nil
+}
+
+func rpcRawResult(message rpcMessage) (json.RawMessage, error) {
+	if message.Error != nil {
+		return nil, errors.New(message.Error.Message)
+	}
+	if len(message.ResultRaw) == 0 {
+		return json.RawMessage("null"), nil
+	}
+	return append(json.RawMessage(nil), message.ResultRaw...), nil
 }
 
 func (c *rpcClient) readLoop() {
@@ -1290,12 +1352,13 @@ func (c *rpcClient) logsSnapshot() []rpcLog {
 }
 
 type rpcMessage struct {
-	ID      int
-	Method  string
-	Result  map[string]any
-	Log     rpcLog
-	Session rpcSessionEvent
-	Error   *rpcError
+	ID        int
+	Method    string
+	Result    map[string]any
+	ResultRaw json.RawMessage
+	Log       rpcLog
+	Session   rpcSessionEvent
+	Error     *rpcError
 }
 
 type rpcError struct {
@@ -1354,8 +1417,10 @@ func (d *frameDecoder) read() (rpcMessage, error) {
 		message.ID = *raw.ID
 	}
 	if len(raw.Result) > 0 {
-		if err := json.Unmarshal(raw.Result, &message.Result); err != nil {
-			return rpcMessage{}, err
+		message.ResultRaw = append(json.RawMessage(nil), raw.Result...)
+		var object map[string]any
+		if err := json.Unmarshal(raw.Result, &object); err == nil {
+			message.Result = object
 		}
 	}
 	if raw.Method == "module/log" && len(raw.Params) > 0 {

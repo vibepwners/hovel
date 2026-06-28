@@ -1125,7 +1125,7 @@ func TestThrowChainFileCapabilityStepsUsesCapabilityRunner(t *testing.T) {
 		ChainConfig:  map[string]string{"operator.confirmed_lab": "true"},
 		TargetConfig: map[string]string{"target.host": "router-01", "target.port": "22"},
 		Steps: []CapabilityChainStepRef{
-			{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+			{ID: "exploit", ModuleID: "ms17-010@v1", StepID: "ms17-010.exploit"},
 			{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
 		},
 	}
@@ -1162,7 +1162,7 @@ func TestThrowChainFileCapabilityStepsUsesCapabilityRunner(t *testing.T) {
 		t.Fatalf("events = %#v, want hovel.payload.installed", events.events)
 	}
 	if !reflect.DeepEqual(payload.Plan.Steps, []CapabilityChainStepRef{
-		{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+		{ID: "exploit", ModuleID: "ms17-010@v1", StepID: "ms17-010.exploit"},
 		{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
 	}) {
 		t.Fatalf("plan steps = %#v", payload.Plan.Steps)
@@ -1184,7 +1184,7 @@ func TestThrowActiveChainCapabilityStepsUseCapabilityRunnerWithPayloadConfig(t *
 	if err := session.UseChain("payload-lab"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.AddStep("etro@v1", "etro.exploit"); err != nil {
+	if _, err := session.AddStep("ms17-010@v1", "ms17-010.exploit"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.AddStep("squatter@v1", "squatter.connect_smb"); err != nil {
@@ -1223,7 +1223,7 @@ func TestThrowActiveChainCapabilityStepsUseCapabilityRunnerWithPayloadConfig(t *
 		Daemons:          fakeDaemonService{status: daemon.Running(identity)},
 		CapabilityChains: runner,
 		Modules: modulecatalog.New(
-			modulecatalog.Module{ID: "etro@v1", Type: modulecatalog.TypeExploit, Enabled: true},
+			modulecatalog.Module{ID: "ms17-010@v1", Type: modulecatalog.TypeExploit, Enabled: true},
 			modulecatalog.Module{
 				ID:      "squatter@v1",
 				Type:    modulecatalog.TypePayloadProvider,
@@ -1268,7 +1268,7 @@ func TestThrowActiveChainCapabilityStepsUseCapabilityRunnerWithPayloadConfig(t *
 			"target.port": "445",
 		},
 		Steps: []CapabilityChainStepRef{
-			{ID: "step-1", ModuleID: "etro@v1", StepID: "etro.exploit"},
+			{ID: "step-1", ModuleID: "ms17-010@v1", StepID: "ms17-010.exploit"},
 			{ID: "step-2", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
 		},
 	}
@@ -1293,7 +1293,7 @@ func TestThrowChainFileRejectsMixedCapabilityAndLegacySteps(t *testing.T) {
 			Spec: ChainFileSpec{
 				Mode: "configured",
 				Steps: []ChainFileStep{
-					{ID: "exploit", Uses: "module:etro@v1", Step: "etro.exploit"},
+					{ID: "exploit", Uses: "module:ms17-010@v1", Step: "ms17-010.exploit"},
 					{ID: "connect", Uses: "module:squatter@v1"},
 				},
 				Targets: []ChainFileTarget{{ID: "mock://target"}},
@@ -1578,7 +1578,7 @@ func TestThrowTargetOverrideScopesTargetConfigs(t *testing.T) {
 	}
 }
 
-func TestThrowInputsSquatterTypeDerivesEtroInstallConfig(t *testing.T) {
+func TestThrowInputsSquatterTypeDerivesMS17010InstallConfig(t *testing.T) {
 	session := operatorsession.New()
 	if err := session.UseOperation("op1"); err != nil {
 		t.Fatal(err)
@@ -1586,7 +1586,7 @@ func TestThrowInputsSquatterTypeDerivesEtroInstallConfig(t *testing.T) {
 	if err := session.UseChain("alpha"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.AddModule("etro-exploit@v1.0.0"); err != nil {
+	if _, err := session.AddModule("ms17-010-exploit@v1.0.0"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.AddModule("squatter@v0.1.0"); err != nil {
@@ -1615,7 +1615,7 @@ func TestThrowInputsSquatterTypeDerivesEtroInstallConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := throw.Modules, []string{"etro-exploit@v1.0.0", "squatter@v0.1.0"}; !reflect.DeepEqual(got, want) {
+	if got, want := throw.Modules, []string{"ms17-010-exploit@v1.0.0", "squatter@v0.1.0"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("modules = %#v, want %#v", got, want)
 	}
 	if len(throw.Steps) != 0 {
@@ -1628,8 +1628,11 @@ func TestThrowInputsSquatterTypeDerivesEtroInstallConfig(t *testing.T) {
 	if config["payload.bind_port"] != "9101" {
 		t.Fatalf("payload.bind_port = %q, want 9101", config["payload.bind_port"])
 	}
+	if config["payload.transport"] != "tcp-bind" {
+		t.Fatalf("payload.transport = %q, want tcp-bind", config["payload.transport"])
+	}
 	if _, ok := config["payload.remote_path"]; ok {
-		t.Fatalf("payload.remote_path = %q, want ETRO to auto-generate an unlocked path", config["payload.remote_path"])
+		t.Fatalf("payload.remote_path = %q, want the exploit to auto-generate an unlocked path", config["payload.remote_path"])
 	}
 	if !strings.HasSuffix(config["payload.local_path"], filepath.Join("examples", "bin", "squatter.exe")) {
 		t.Fatalf("payload.local_path = %q, want staged squatter.exe", config["payload.local_path"])
@@ -1645,6 +1648,58 @@ func TestThrowInputsSquatterTypeDerivesEtroInstallConfig(t *testing.T) {
 	config = throw.TargetConfigs["t1"]
 	if config["payload.remote_path"] != `C:\Windows\Temp\hovel-fixed.exe` {
 		t.Fatalf("payload.remote_path = %q, want explicit Squatter remote path", config["payload.remote_path"])
+	}
+}
+
+func TestThrowInputsSquatterTypePreservesTargetBindPortWithoutChainOverride(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("ms17-010-exploit@v1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("squatter@v0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("operator.confirmed_lab", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetChainConfig("squatter.type", "tcp-bind"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("t1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("t1", "target.host", "192.168.122.142"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("t1", "payload.bind_port", "9100"); err != nil {
+		t.Fatal(err)
+	}
+
+	throw, err := throwInputs(context.Background(), Runtime{Session: session, Modules: squatterCatalog()}, Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := throw.TargetConfigs["t1"]
+	if config["payload.bind_port"] != "9100" {
+		t.Fatalf("payload.bind_port = %q, want target-level 9100", config["payload.bind_port"])
+	}
+
+	if err := session.SetChainConfig("squatter.bind_port", "9444"); err != nil {
+		t.Fatal(err)
+	}
+	throw, err = throwInputs(context.Background(), Runtime{Session: session, Modules: squatterCatalog()}, Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config = throw.TargetConfigs["t1"]
+	if config["payload.bind_port"] != "9444" {
+		t.Fatalf("payload.bind_port = %q, want chain squatter.bind_port override 9444", config["payload.bind_port"])
 	}
 }
 
@@ -1683,14 +1738,14 @@ func TestSquatterPayloadPathPrefersModuleConfigStagedBinary(t *testing.T) {
 func TestThrowInputsFromChainFileSquatterTypeDerivesInstallConfig(t *testing.T) {
 	store := &fakeChainFileStore{
 		reads: map[string]ChainFile{
-			"etro-squatter.chain.yaml": {
+			"ms17-010-squatter.chain.yaml": {
 				APIVersion: "hovel.dev/v1alpha1",
 				Kind:       "Chain",
-				Metadata:   ChainFileMetadata{Name: "etro-squatter"},
+				Metadata:   ChainFileMetadata{Name: "ms17-010-squatter"},
 				Spec: ChainFileSpec{
 					Mode: "configured",
 					Steps: []ChainFileStep{
-						{ID: "exploit", Uses: "module:etro-exploit@v1.0.0"},
+						{ID: "exploit", Uses: "module:ms17-010-exploit@v1.0.0"},
 						{ID: "squatter-bind", Uses: "module:squatter@v0.1.0"},
 					},
 					Config: map[string]string{"operator.confirmed_lab": "true", "squatter.type": "tcp-bind", "squatter.bind_port": "9101"},
@@ -1707,12 +1762,12 @@ func TestThrowInputsFromChainFileSquatterTypeDerivesInstallConfig(t *testing.T) 
 	}
 
 	throw, err := throwInputs(context.Background(), Runtime{ChainFiles: store, Modules: squatterCatalog()}, Invocation{
-		Positionals: map[string]string{"file": "etro-squatter.chain.yaml"},
+		Positionals: map[string]string{"file": "ms17-010-squatter.chain.yaml"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := throw.Modules, []string{"etro-exploit@v1.0.0", "squatter@v0.1.0"}; !reflect.DeepEqual(got, want) {
+	if got, want := throw.Modules, []string{"ms17-010-exploit@v1.0.0", "squatter@v0.1.0"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("modules = %#v, want %#v", got, want)
 	}
 	config := throw.TargetConfigs["t1"]
@@ -1724,14 +1779,14 @@ func TestThrowInputsFromChainFileSquatterTypeDerivesInstallConfig(t *testing.T) 
 func TestThrowInputsFromChainFileSquatterSMBTransportKeepsExplicitInstallConfig(t *testing.T) {
 	store := &fakeChainFileStore{
 		reads: map[string]ChainFile{
-			"etro-squatter-smb.chain.yaml": {
+			"ms17-010-squatter-smb.chain.yaml": {
 				APIVersion: "hovel.dev/v1alpha1",
 				Kind:       "Chain",
-				Metadata:   ChainFileMetadata{Name: "etro-squatter-smb"},
+				Metadata:   ChainFileMetadata{Name: "ms17-010-squatter-smb"},
 				Spec: ChainFileSpec{
 					Mode: "configured",
 					Steps: []ChainFileStep{
-						{ID: "exploit", Uses: "module:etro-exploit@v1.0.0"},
+						{ID: "exploit", Uses: "module:ms17-010-exploit@v1.0.0"},
 						{ID: "squatter-smb", Uses: "module:squatter@v0.1.0"},
 					},
 					Config: map[string]string{
@@ -1755,7 +1810,7 @@ func TestThrowInputsFromChainFileSquatterSMBTransportKeepsExplicitInstallConfig(
 	}
 
 	throw, err := throwInputs(context.Background(), Runtime{ChainFiles: store}, Invocation{
-		Positionals: map[string]string{"file": "etro-squatter-smb.chain.yaml"},
+		Positionals: map[string]string{"file": "ms17-010-squatter-smb.chain.yaml"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1882,14 +1937,14 @@ func TestChainAddSquatterRequiresLoadedProvider(t *testing.T) {
 	}
 }
 
-func TestExecuteLegacyThrowRunsSquatterProviderAfterEtroInstall(t *testing.T) {
+func TestExecuteLegacyThrowRunsSquatterProviderAfterMS17010Install(t *testing.T) {
 	recorder := &fakeRunRecorder{}
 	client := fakeRunClient{recorder: recorder}
 	throw := throwExecution{
 		Operation: "op1",
 		Chain:     "alpha",
 		Targets:   []string{"t1"},
-		Modules:   []string{"etro-exploit@v1.0.0", "squatter.bind"},
+		Modules:   []string{"ms17-010-exploit@v1.0.0", "squatter.bind"},
 		TargetConfigs: map[string]map[string]string{
 			"t1": {
 				"target.host":         "192.168.122.142",
@@ -1906,9 +1961,9 @@ func TestExecuteLegacyThrowRunsSquatterProviderAfterEtroInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(recorder.requests) != 2 {
-		t.Fatalf("requests = %#v, want etro and squatter provider", recorder.requests)
+		t.Fatalf("requests = %#v, want ms17-010 and squatter provider", recorder.requests)
 	}
-	if recorder.requests[0].ModuleID != "etro-exploit@v1.0.0" {
+	if recorder.requests[0].ModuleID != "ms17-010-exploit@v1.0.0" {
 		t.Fatalf("first module = %q", recorder.requests[0].ModuleID)
 	}
 	if recorder.requests[1].ModuleID != "squatter@v0.1.0" {
@@ -1916,6 +1971,78 @@ func TestExecuteLegacyThrowRunsSquatterProviderAfterEtroInstall(t *testing.T) {
 	}
 	if recorder.requests[1].TargetConfig["payload.bind_port"] != "9101" {
 		t.Fatalf("squatter target config = %#v", recorder.requests[1].TargetConfig)
+	}
+}
+
+func TestExecuteLegacyThrowAutoConnectsSquatterPayloadAfterMS17010Install(t *testing.T) {
+	recorder := &fakeRunRecorder{installedPayloads: []InstalledPayloadDescriptor{installedPayloadDescriptorFixture()}}
+	client := fakeRunClient{recorder: recorder}
+	payloads := newFakePayloadRepository(nil)
+	providers := &fakePayloadProviderService{
+		session: SessionRef{
+			ID:        "session-squatter",
+			RunID:     "run-connect",
+			ModuleID:  "squatter@v0.1.0",
+			Target:    "192.168.122.142",
+			Kind:      "agent",
+			State:     "open",
+			Transport: "squatter/tcp-bind",
+		},
+	}
+	events := &fakeEventRecorder{}
+	throw := throwExecution{
+		Operation: "op1",
+		Chain:     "alpha",
+		Targets:   []string{"t1"},
+		Modules:   []string{"ms17-010-exploit@v1.0.0", "squatter@v0.1.0"},
+		ChainConfig: map[string]string{
+			"squatter.type": "tcp-bind",
+		},
+		TargetConfigs: map[string]map[string]string{
+			"t1": {
+				"target.host":        "192.168.122.142",
+				"target.port":        "445",
+				"payload.local_path": "/tmp/squatter.exe",
+				"payload.bind_port":  "9101",
+				"payload.transport":  "tcp-bind",
+			},
+		},
+	}
+	payload := ThrowPayload{ThrowID: "throw-1", Chain: "alpha", Targets: []string{"t1"}}
+
+	err := executeLegacyThrow(context.Background(), Runtime{
+		Modules:          squatterCatalog(),
+		Payloads:         payloads,
+		PayloadProviders: providers,
+		Events:           events,
+	}, client, ".hovel", squatterCatalog(), ThrowPlanRecord{Operation: "op1", Chain: "alpha"}, throw, &payload, time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.requests) != 1 {
+		t.Fatalf("requests = %#v, want only the installer module; Squatter bridge should auto-connect from payload inventory", recorder.requests)
+	}
+	if recorder.requests[0].ModuleID != "ms17-010-exploit@v1.0.0" {
+		t.Fatalf("module = %q, want ms17-010-exploit", recorder.requests[0].ModuleID)
+	}
+	if providers.connected.Handle != "p1" {
+		t.Fatalf("connected payload = %#v, want p1", providers.connected)
+	}
+	if payloads.records["p1"].State != PayloadStateConnected {
+		t.Fatalf("payload state = %q, want connected", payloads.records["p1"].State)
+	}
+	if len(payload.Results) != 1 || len(payload.Results[0].Sessions) != 1 {
+		t.Fatalf("results = %#v, want connected session on MS17-010 run", payload.Results)
+	}
+	session := payload.Results[0].Sessions[0]
+	if session.ID != "session-squatter" || session.InstalledPayloadID != "p1" {
+		t.Fatalf("session = %#v, want session-squatter linked to p1", session)
+	}
+	if payload.Results[0].InstalledPayloads[0].State != PayloadStateConnected {
+		t.Fatalf("installed descriptor state = %q, want connected", payload.Results[0].InstalledPayloads[0].State)
+	}
+	if !hasStructuredEvent(events.events, "hovel.payload.connected") {
+		t.Fatalf("events = %#v, want hovel.payload.connected", events.events)
 	}
 }
 
@@ -3549,14 +3676,14 @@ func TestChainLoadRestoresConfiguredChainFile(t *testing.T) {
 func TestThrowInputsFromChainFileKeepsCapabilityStepRefs(t *testing.T) {
 	store := &fakeChainFileStore{
 		reads: map[string]ChainFile{
-			"etro-squatter.yaml": {
+			"ms17-010-squatter.yaml": {
 				APIVersion: "hovel.dev/v1alpha1",
 				Kind:       "Chain",
-				Metadata:   ChainFileMetadata{Name: "etro-squatter"},
+				Metadata:   ChainFileMetadata{Name: "ms17-010-squatter"},
 				Spec: ChainFileSpec{
 					Mode: "configured",
 					Steps: []ChainFileStep{
-						{ID: "exploit", Uses: "module:etro@v1", Step: "etro.exploit"},
+						{ID: "exploit", Uses: "module:ms17-010@v1", Step: "ms17-010.exploit"},
 						{ID: "connect", Uses: "module:squatter@v1", Step: "squatter.connect_smb"},
 					},
 					Targets: []ChainFileTarget{{ID: "smb://target"}},
@@ -3565,12 +3692,12 @@ func TestThrowInputsFromChainFileKeepsCapabilityStepRefs(t *testing.T) {
 		},
 	}
 
-	throw, err := throwInputsFromChainFile(context.Background(), Runtime{ChainFiles: store}, Invocation{}, "etro-squatter.yaml")
+	throw, err := throwInputsFromChainFile(context.Background(), Runtime{ChainFiles: store}, Invocation{}, "ms17-010-squatter.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []throwStepRef{
-		{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+		{ID: "exploit", ModuleID: "ms17-010@v1", StepID: "ms17-010.exploit"},
 		{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
 	}
 	if !reflect.DeepEqual(throw.Steps, want) {
@@ -4312,7 +4439,7 @@ func capabilityChainFileFixture(name, target string) ChainFile {
 		Spec: ChainFileSpec{
 			Mode: "configured",
 			Steps: []ChainFileStep{
-				{ID: "exploit", Uses: "module:etro@v1", Step: "etro.exploit"},
+				{ID: "exploit", Uses: "module:ms17-010@v1", Step: "ms17-010.exploit"},
 				{ID: "connect", Uses: "module:squatter@v1", Step: "squatter.connect_smb"},
 			},
 			Config: map[string]string{"operator.confirmed_lab": "true"},

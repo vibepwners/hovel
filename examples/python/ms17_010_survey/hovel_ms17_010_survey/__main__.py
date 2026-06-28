@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from hovel_etro_survey.module import EtroSurvey
+from hovel_ms17_010_survey.module import MS17010Survey
 from hovel_sdk import serve
 
 
 def main() -> None:
-    serve(EtroSurvey())
+    serve(MS17010Survey())
 
 
 if __name__ == "__main__":

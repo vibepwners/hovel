@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from hovel_etro_survey.smb import (
+from hovel_ms17_010_survey.smb import (
     PIPE_WHITELIST,
     STATUS_ACCESS_DENIED,
     STATUS_INSUFF_SERVER_RESOURCES,
@@ -29,19 +29,19 @@ def verdict_for_status(status: int) -> str:
     return _VERDICT_LIKELY_PATCHED
 
 
-class EtroSurvey(HovelModule):
-    name = "etro-survey"
+class MS17010Survey(HovelModule):
+    name = "ms17-010-survey"
     version = "v0.1.0"
     module_type = "survey"
-    summary = "Fingerprint SMBv1 for the MS17-010 / EternalRomance vulnerability."
+    summary = "Fingerprint SMBv1 for MS17-010 exposure."
     description = (
         "Clean-room Smbtouch-equivalent survey. Opens an anonymous NULL session over "
-        "SMBv1, tree-connects to IPC$, enumerates the EternalRomance pipe whitelist "
+        "SMBv1, tree-connects to IPC$, enumerates the MS17-010 named-pipe candidates "
         "(spoolss/browser/lsarpc), and uses the PeekNamedPipe oracle to report whether "
         "srv.sys is vulnerable. Reconnaissance only; it never corrupts remote memory. "
-        "Its facts (verdict, reachable pipe) feed the etro-exploit module."
+        "Its facts (verdict, reachable pipe) feed the ms17-010-exploit module."
     )
-    tags: ClassVar[tuple[str, ...]] = ("smb", "ms17-010", "eternalromance", "survey", "python")
+    tags: ClassVar[tuple[str, ...]] = ("smb", "ms17-010", "survey", "python")
     target_config: ClassVar[tuple[Requirement, ...]] = (
         Requirement("target.host", "host", description="Target host name or IP address."),
         Requirement("target.port", "port", default=_DEFAULT_PORT, description="SMB TCP port (445 direct, 139 NBT)."),
@@ -110,7 +110,7 @@ def _verdict_result(host: str, port: int, peek: SmbResponse, pipes: list[str], c
         ctx.log.info("target reports MS17-010 vulnerable", extra={"host": host})
         findings.append(
             Finding(
-                title="SMBv1 vulnerable to MS17-010 (EternalRomance family)",
+                title="SMBv1 vulnerable to MS17-010",
                 severity="critical",
                 detail=(
                     f"{host}:{port} answered the PeekNamedPipe oracle with "
@@ -135,7 +135,7 @@ def _verdict_result(host: str, port: int, peek: SmbResponse, pipes: list[str], c
         {"facts": facts},
         summary=f"SMBv1 touch of {host}:{port}: {verdict}",
         findings=findings,
-        artifacts=[Artifact.json("etro-survey-facts.json", facts)],
+        artifacts=[Artifact.json("ms17-010-survey-facts.json", facts)],
     )
 
 
@@ -157,5 +157,5 @@ def _unreachable_result(host: str, port: int, error: str) -> Result:
                 detail=f"Could not complete a NULL-session SMBv1 touch of {host}:{port}: {error}",
             ),
         ],
-        artifacts=[Artifact.json("etro-survey-facts.json", facts)],
+        artifacts=[Artifact.json("ms17-010-survey-facts.json", facts)],
     )

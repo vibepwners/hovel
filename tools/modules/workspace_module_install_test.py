@@ -10,8 +10,8 @@ from pathlib import Path
 
 
 MODULES = (
-    ("etro-survey", "survey", "python", "etro_survey", "hovel_etro_survey"),
-    ("etro-exploit", "exploit", "python", "etro_exploit", "hovel_etro_exploit"),
+    ("ms17-010-survey", "survey", "python", "ms17_010_survey", "hovel_ms17_010_survey"),
+    ("ms17-010-exploit", "exploit", "python", "ms17_010_exploit", "hovel_ms17_010_exploit"),
     ("mock-survey", "survey", "python", "mock_survey", "hovel_example_survey"),
     ("mock-exploit", "exploit", "python", "mock_exploit", "hovel_example_exploit"),
     ("mock-exploit-session", "exploit", "python", "mock_exploit_session", "hovel_example_exploit_session"),

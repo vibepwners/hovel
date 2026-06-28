@@ -773,8 +773,8 @@ func TestInteractiveConfigWizardUsesEffectiveValidationForSquatterBind(t *testin
 	session := operatorsession.New()
 	modules := modulecatalog.New(
 		modulecatalog.Module{
-			ID:      "etro-exploit@v1.0.0",
-			Name:    "etro-exploit",
+			ID:      "ms17-010-exploit@v1.0.0",
+			Name:    "ms17-010-exploit",
 			Type:    modulecatalog.TypeExploit,
 			Enabled: true,
 			ChainConfig: []modulecatalog.Requirement{
@@ -803,7 +803,7 @@ func TestInteractiveConfigWizardUsesEffectiveValidationForSquatterBind(t *testin
 	for _, line := range []string{
 		"op use test-op",
 		"chain use lab",
-		"chain add etro-exploit@v1.0.0",
+		"chain add ms17-010-exploit@v1.0.0",
 		"chain add squatter@v0.1.0",
 		"target add t1",
 		"chain config interactive",

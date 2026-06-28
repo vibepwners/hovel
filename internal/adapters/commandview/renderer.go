@@ -31,6 +31,10 @@ func (r Renderer) Render(result commands.Result) (string, bool) {
 		return r.moduleInspect(payload), true
 	case commands.ModuleCheckPayload:
 		return r.moduleCheck(payload), true
+	case commands.ArtifactRecord:
+		return r.artifactInspect(payload), true
+	case []commands.ArtifactRecord:
+		return r.artifacts(payload), true
 	case []commands.InstalledPayloadRecord:
 		return r.installedPayloads(payload), true
 	case []commands.AvailablePayload:
@@ -162,6 +166,42 @@ func (r Renderer) moduleCheck(payload commands.ModuleCheckPayload) string {
 	}
 	summary := fmt.Sprintf("%s  failures=%d warnings=%d", r.styles.Status(string(payload.Status)), payload.Failures, payload.Warnings)
 	return r.styles.Panel("MODULE CHECKS", summary, r.styles.Table([]string{"STATUS", "MODULE", "FAIL", "WARN"}, rows, r.contentWidth()), r.panelWidth())
+}
+
+func (r Renderer) artifacts(records []commands.ArtifactRecord) string {
+	if len(records) == 0 {
+		return r.styles.Muted.Render("No artifacts")
+	}
+	rows := make([][]string, 0, len(records))
+	for _, record := range records {
+		rows = append(rows, []string{
+			short(record.ID, 18),
+			short(record.ThrowID, 18),
+			wrapCell(record.Name, 24),
+			display(record.Kind),
+			formatBytes(record.Size),
+			wrapCell(record.Path, 36),
+		})
+	}
+	return r.styles.Table([]string{"ID", "THROW", "NAME", "KIND", "SIZE", "PATH"}, rows, r.tableWidth())
+}
+
+func (r Renderer) artifactInspect(record commands.ArtifactRecord) string {
+	valueWidth := bounded(r.contentWidth()-12, 24, 72)
+	body := r.styles.KeyValue([][2]string{
+		{"id", r.styles.Header.Render(record.ID)},
+		{"name", display(record.Name)},
+		{"kind", display(record.Kind)},
+		{"throw", display(record.ThrowID)},
+		{"run", display(record.RunID)},
+		{"module", display(record.ModuleID)},
+		{"target", display(record.Target)},
+		{"size", formatBytes(record.Size)},
+		{"sha256", wrapCell(display(record.SHA256), valueWidth)},
+		{"path", wrapCell(display(record.Path), valueWidth)},
+		{"created", display(record.CreatedAt)},
+	})
+	return r.styles.Panel("ARTIFACT", record.ID, body, r.panelWidth())
 }
 
 func (r Renderer) availablePayloads(payloads []commands.AvailablePayload) string {
@@ -326,6 +366,16 @@ func short(value string, n int) string {
 		return value
 	}
 	return value[:n]
+}
+
+func formatBytes(size int) string {
+	if size < 1024 {
+		return fmt.Sprintf("%d B", size)
+	}
+	if size < 1024*1024 {
+		return fmt.Sprintf("%.1f KiB", float64(size)/1024)
+	}
+	return fmt.Sprintf("%.1f MiB", float64(size)/(1024*1024))
 }
 
 func nonEmpty(values []string) []string {

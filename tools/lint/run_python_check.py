@@ -60,8 +60,8 @@ def mypy_invocations(root: Path) -> list[tuple[Path, list[Path]]]:
     sdk = root / "sdk/python"
     return [
         (Path("sdk/python/hovel_sdk"), [sdk]),
-        (Path("examples/python/etro_exploit/hovel_etro_exploit"), [sdk, root / "examples/python/etro_exploit"]),
-        (Path("examples/python/etro_survey/hovel_etro_survey"), [sdk, root / "examples/python/etro_survey"]),
+        (Path("examples/python/ms17_010_exploit/hovel_ms17_010_exploit"), [sdk, root / "examples/python/ms17_010_exploit"]),
+        (Path("examples/python/ms17_010_survey/hovel_ms17_010_survey"), [sdk, root / "examples/python/ms17_010_survey"]),
         (Path("examples/python/mock_exploit/hovel_example_exploit"), [sdk, root / "examples/python/mock_exploit"]),
         (
             Path("examples/python/mock_exploit_session/hovel_example_exploit_session"),

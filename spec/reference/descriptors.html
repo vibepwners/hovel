@@ -50,7 +50,7 @@
         <li><a href="../module-python.html">Python Modules</a></li>
         <li><a href="../module-go.html">Go Modules</a></li>
         <li><a href="../module-rust.html">Rust Modules</a></li>
-        <li><a href="../module-eternalromance.html">Case Study: EternalRomance</a></li>
+        <li><a href="../module-ms17-010.html">Case Study: MS17-010</a></li>
       </ul>
     </aside>
     <main class="content">
@@ -159,8 +159,8 @@ kind: ModuleInstallSet
 modules:
   - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
     sha256: ...
-  - source: ./etro-survey-1.0.0.tgz
-  - source: /opt/hovel/modules/etro-exploit-1.0.0.tgz
+  - source: ./ms17-010-survey-1.0.0.tgz
+  - source: /opt/hovel/modules/ms17-010-exploit-1.0.0.tgz
 </code></pre>
         <p>Bulk install runs in order, stops on first failure, and does not roll back prior successful installs.</p>
 

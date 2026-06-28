@@ -1199,7 +1199,7 @@ func squatterTCPBindRequirements() []modulecatalog.Requirement {
 			Key:         "squatter.remote_path",
 			Type:        modulecatalog.ValueString,
 			Required:    false,
-			Description: "Optional fixed target path used when ETRO installs the Squatter agent; unset auto-generates a fresh path.",
+			Description: "Optional fixed target path used when the MS17-010 exploit installs the Squatter agent; unset auto-generates a fresh path.",
 		},
 	}
 }

@@ -33,7 +33,7 @@ func TestRendererUsesCharmTableForModuleInventory(t *testing.T) {
 
 func TestRendererBuildsModuleInspectCard(t *testing.T) {
 	rendered, ok := New(96).Render(commands.Result{JSON: commands.ModuleInspectPayload{
-		ID:          "etro-exploit@v1.0.0",
+		ID:          "ms17-010-exploit@v1.0.0",
 		Type:        modulecatalog.TypeExploit,
 		Version:     "v1.0.0",
 		RuntimeKind: modulecatalog.RuntimeJSONRPCStdio,
@@ -56,7 +56,7 @@ func TestRendererBuildsModuleInspectCard(t *testing.T) {
 		t.Fatal("renderer did not handle module inspect")
 	}
 	plain := stripANSI(rendered)
-	for _, want := range []string{"MODULE", "etro-exploit@v1.0.0", "Operator notes", "operator.confirmed_lab", "STEPS", "smb.throw", "Next: chain add etro-exploit@v1.0.0"} {
+	for _, want := range []string{"MODULE", "ms17-010-exploit@v1.0.0", "Operator notes", "operator.confirmed_lab", "STEPS", "smb.throw", "Next: chain add ms17-010-exploit@v1.0.0"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("rendered inspect missing %q:\n%s", want, rendered)
 		}
@@ -93,6 +93,51 @@ func TestRendererModuleInspectFitsDemoViewport(t *testing.T) {
 	for _, line := range lines {
 		if width := utf8.RuneCountInString(line); width > 100 {
 			t.Fatalf("rendered inspect line is too wide: got %d columns in %q\n%s", width, line, rendered)
+		}
+	}
+}
+
+func TestRendererUsesCharmTableForArtifacts(t *testing.T) {
+	rendered, ok := New(100).Render(commands.Result{JSON: []commands.ArtifactRecord{{
+		ID:      "artifact-abc",
+		ThrowID: "throw-alpha",
+		Name:    "transcript.txt",
+		Kind:    "text/plain",
+		Size:    1536,
+		Path:    "artifacts/throw-alpha/run-1/transcript.txt",
+	}}})
+	if !ok {
+		t.Fatal("renderer did not handle artifact list")
+	}
+	plain := stripANSI(rendered)
+	for _, want := range []string{"╭", "ID", "THROW", "NAME", "transcript.txt", "1.5 KiB", "artifacts/throw-alpha"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("rendered artifacts missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestRendererBuildsArtifactInspectCard(t *testing.T) {
+	rendered, ok := New(96).Render(commands.Result{JSON: commands.ArtifactRecord{
+		ID:        "artifact-abc",
+		ThrowID:   "throw-alpha",
+		RunID:     "run-1",
+		ModuleID:  "mock-exploit@v0.0.0-example",
+		Target:    "mock://router-01",
+		Name:      "transcript.txt",
+		Kind:      "text/plain",
+		Size:      12,
+		SHA256:    "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abc1",
+		Path:      "artifacts/throw-alpha/run-1/transcript.txt",
+		CreatedAt: "2026-06-27T12:00:00Z",
+	}})
+	if !ok {
+		t.Fatal("renderer did not handle artifact inspect")
+	}
+	plain := stripANSI(rendered)
+	for _, want := range []string{"ARTIFACT", "artifact-abc", "transcript.txt", "throw-alpha", "mock-exploit@v0.0.0-example", "12 B", "sha256", "path"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("rendered artifact inspect missing %q:\n%s", want, rendered)
 		}
 	}
 }
