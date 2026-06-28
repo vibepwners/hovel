@@ -13,6 +13,7 @@ import (
 type CreatePendingRequest struct {
 	ID        string
 	Operation string
+	Chain     string
 	PlanHash  string
 	Flags     operatordomain.ApprovalFlags
 	Entities  []operatordomain.Entity
@@ -31,6 +32,7 @@ type ConfirmRequest struct {
 type PendingSnapshot struct {
 	ID                  string
 	Operation           string
+	Chain               string
 	PlanHash            string
 	Flags               operatordomain.ApprovalFlags
 	CreatedAt           time.Time
@@ -52,6 +54,7 @@ func (c *Coordinator) CreatePending(req CreatePendingRequest) (PendingSnapshot, 
 	pending, err := operatordomain.NewPendingThrow(operatordomain.PendingThrowArgs{
 		ID:        req.ID,
 		Operation: req.Operation,
+		Chain:     req.Chain,
 		PlanHash:  req.PlanHash,
 		Flags:     req.Flags,
 		Entities:  req.Entities,
@@ -151,6 +154,7 @@ func snapshot(pending operatordomain.PendingThrow) PendingSnapshot {
 	return PendingSnapshot{
 		ID:                  pending.ID,
 		Operation:           pending.Operation,
+		Chain:               pending.Chain,
 		PlanHash:            pending.PlanHash,
 		Flags:               pending.Flags,
 		CreatedAt:           pending.CreatedAt,

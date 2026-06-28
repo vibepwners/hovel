@@ -60,11 +60,19 @@ func NewAppWithSessionAndModules(session commands.OperatorSession, modules modul
 	return NewAppWithRuntime(defaultRuntimeWithCatalog(session, modules))
 }
 
+func NewAppWithSessionModulesAndWorkspace(session commands.OperatorSession, modules modulecatalog.Catalog, workspacePath string) App {
+	return NewAppWithRuntime(defaultRuntimeWithCatalogAndWorkspace(session, modules, workspacePath))
+}
+
 func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 	return defaultRuntimeWithCatalog(session, pythonrpc.MustConfiguredCatalog())
 }
 
 func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulecatalog.Catalog) commands.Runtime {
+	return defaultRuntimeWithCatalogAndWorkspace(session, catalog, "")
+}
+
+func defaultRuntimeWithCatalogAndWorkspace(session commands.OperatorSession, catalog modulecatalog.Catalog, workspacePath string) commands.Runtime {
 	store := filesystem.NewWorkspaceStore()
 	pythonSessions := pythonrpc.NewSessionBroker()
 	stepProcesses := pythonrpc.NewStepProcessBroker()
@@ -74,6 +82,7 @@ func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulec
 		Clock:         systemClock{},
 		Sessions:      pythonSessions,
 		StepProcesses: stepProcesses,
+		WorkspacePath: workspacePath,
 	}
 	stepRunner := pythonrpc.StepRuntimeRunner{Runner: runner}
 	return commands.Runtime{
@@ -84,6 +93,8 @@ func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulec
 			systemClock{},
 		),
 		Daemons:            services.NewDaemonService(store),
+		PendingThrows:      daemonPendingThrows{},
+		LaunchKeyPolicies:  daemonLaunchKeyPolicies{},
 		Runs:               daemonRunClients{},
 		CapabilityChains:   capabilityChainExecutor{catalog: catalog, runner: stepRunner},
 		Plans:              store,
@@ -566,6 +577,9 @@ func commandPath(args []string) []string {
 
 type daemonRunClients struct{}
 
+type daemonPendingThrows struct{}
+type daemonLaunchKeyPolicies struct{}
+
 type capabilityChainExecutor struct {
 	catalog modulecatalog.Catalog
 	runner  chainruntime.StepRunner
@@ -741,6 +755,102 @@ func (daemonRunClients) DialRunClient(socketPath string) (commands.RunClient, er
 		return nil, err
 	}
 	return daemonRunClient{client: client}, nil
+}
+
+func (daemonPendingThrows) CreatePendingThrow(ctx context.Context, socketPath string, req commands.PendingThrowCreateRequest) (commands.PendingThrowSnapshot, error) {
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		return commands.PendingThrowSnapshot{}, err
+	}
+	defer client.Close()
+	resp, err := client.CreatePendingThrow(ctx, daemonrpc.CreatePendingThrowRequest{
+		ID:             req.ID,
+		Operation:      req.Operation,
+		Chain:          req.Chain,
+		PlanHash:       req.PlanHash,
+		AllowDangerous: req.AllowDangerous,
+		NowBypass:      req.NowBypass,
+	})
+	if err != nil {
+		return commands.PendingThrowSnapshot{}, err
+	}
+	return pendingThrowSnapshot(resp), nil
+}
+
+func (daemonPendingThrows) RequirePendingThrowReady(ctx context.Context, socketPath, id string) (commands.PendingThrowSnapshot, error) {
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		return commands.PendingThrowSnapshot{}, err
+	}
+	defer client.Close()
+	resp, err := client.RequirePendingThrowReady(ctx, daemonrpc.PendingThrowRequest{ID: id})
+	if err != nil {
+		return pendingThrowSnapshot(resp), err
+	}
+	return pendingThrowSnapshot(resp), nil
+}
+
+func (daemonPendingThrows) CancelPendingThrow(ctx context.Context, socketPath, id string) error {
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	return client.CancelPendingThrow(ctx, daemonrpc.PendingThrowRequest{ID: id})
+}
+
+func pendingThrowSnapshot(resp daemonrpc.PendingThrowResponse) commands.PendingThrowSnapshot {
+	return commands.PendingThrowSnapshot{
+		ID:                  resp.ID,
+		Operation:           resp.Operation,
+		Chain:               resp.Chain,
+		PlanHash:            resp.PlanHash,
+		AllowDangerous:      resp.AllowDangerous,
+		NowBypass:           resp.NowBypass,
+		Ready:               resp.Ready,
+		RequiredApproverIDs: append([]string(nil), resp.RequiredApproverIDs...),
+		MissingApproverIDs:  append([]string(nil), resp.MissingApproverIDs...),
+	}
+}
+
+func (daemonLaunchKeyPolicies) GetLaunchKeyPolicy(ctx context.Context, socketPath, operation string) (commands.LaunchKeyPolicySnapshot, error) {
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		return commands.LaunchKeyPolicySnapshot{}, err
+	}
+	defer client.Close()
+	resp, err := client.GetLaunchKeyPolicy(ctx, daemonrpc.LaunchKeyPolicyRequest{Operation: operation})
+	if err != nil {
+		return commands.LaunchKeyPolicySnapshot{}, err
+	}
+	return launchKeyPolicySnapshot(resp), nil
+}
+
+func (daemonLaunchKeyPolicies) SetLaunchKeyPolicy(ctx context.Context, socketPath string, req commands.LaunchKeyPolicySetRequest) (commands.LaunchKeyPolicySnapshot, error) {
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		return commands.LaunchKeyPolicySnapshot{}, err
+	}
+	defer client.Close()
+	resp, err := client.SetLaunchKeyPolicy(ctx, daemonrpc.SetLaunchKeyPolicyRequest{
+		Operation:        req.Operation,
+		Mode:             req.Mode,
+		Quorum:           req.Quorum,
+		HeartbeatTimeout: req.HeartbeatTimeout,
+	})
+	if err != nil {
+		return commands.LaunchKeyPolicySnapshot{}, err
+	}
+	return launchKeyPolicySnapshot(resp), nil
+}
+
+func launchKeyPolicySnapshot(resp daemonrpc.LaunchKeyPolicyResponse) commands.LaunchKeyPolicySnapshot {
+	return commands.LaunchKeyPolicySnapshot{
+		Operation:        resp.Operation,
+		Mode:             resp.Policy.Mode,
+		Quorum:           resp.Policy.Quorum,
+		HeartbeatTimeout: resp.Policy.HeartbeatTimeout,
+	}
 }
 
 type payloadProviderService struct {

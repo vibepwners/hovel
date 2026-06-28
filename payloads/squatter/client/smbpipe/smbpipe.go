@@ -65,15 +65,6 @@ const (
 	capLargeReadX     = 0x00004000
 	capLargeWriteX    = 0x00008000
 
-	fileReadData        = 0x00000001
-	fileWriteData       = 0x00000002
-	fileReadEA          = 0x00000008
-	fileWriteEA         = 0x00000010
-	fileReadAttributes  = 0x00000080
-	fileWriteAttributes = 0x00000100
-	readControl         = 0x00020000
-	synchronize         = 0x00100000
-
 	fileShareRead    = 0x00000001
 	fileShareWrite   = 0x00000002
 	pipeAccess       = 0x0002019f
@@ -114,19 +105,7 @@ func (d Dialer) Dial(ctx context.Context, opts Options) (io.ReadWriteCloser, err
 	if err := opts.validate(); err != nil {
 		return nil, err
 	}
-
-	done := make(chan dialResult, 1)
-	go func() {
-		conn, err := dial(ctx, opts)
-		done <- dialResult{conn: conn, err: err}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case result := <-done:
-		return result.conn, result.err
-	}
+	return dial(ctx, opts)
 }
 
 func NormalizePipePath(pipe string) string {
@@ -167,11 +146,6 @@ func (o Options) validate() error {
 		return fmt.Errorf("smb port is invalid: %d", o.Port)
 	}
 	return nil
-}
-
-type dialResult struct {
-	conn io.ReadWriteCloser
-	err  error
 }
 
 func dial(ctx context.Context, opts Options) (io.ReadWriteCloser, error) {
@@ -1175,17 +1149,6 @@ func isStatus(err error, status uint32) bool {
 		return e.status == status
 	}
 	return false
-}
-
-func desiredPipeAccess() uint32 {
-	return fileReadData |
-		fileWriteData |
-		fileReadEA |
-		fileWriteEA |
-		fileReadAttributes |
-		fileWriteAttributes |
-		readControl |
-		synchronize
 }
 
 func clientCapabilities(legacy bool) uint32 {

@@ -1564,6 +1564,16 @@ func moduleFromRPC(moduleID string, info, schema map[string]any, stepContractVal
 		ChainConfig:  chainConfig,
 		TargetConfig: targetConfig,
 	}
+	discovery, err := contextFromRPC(info["discoveryContext"], "discoveryContext")
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	planning, err := contextFromRPC(schema["planningContext"], "planningContext")
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	module.Discovery = discovery
+	module.Planning = planning
 	if len(stepContractValues) > 0 {
 		stepContracts, err := stepContractsFromRPC(stepContractValues[0])
 		if err != nil {
@@ -1608,12 +1618,17 @@ func stepContractsFromRPC(value map[string]any) (modulecatalog.StepContractSet, 
 		if err != nil {
 			return set, err
 		}
+		context, err := contextFromRPC(object["context"], fmt.Sprintf("step contract %d context", index+1))
+		if err != nil {
+			return set, err
+		}
 		set.Steps = append(set.Steps, modulecatalog.StepContract{
 			ID:           strings.TrimSpace(stringValue(object["id"])),
 			Kind:         strings.TrimSpace(stringValue(object["kind"])),
 			ConfigSchema: anyMap(object["configSchema"]),
 			Requires:     requires,
 			Produces:     produces,
+			Context:      context,
 			Prepare: modulecatalog.StepPrepareContract{
 				Materializes: materializes,
 			},
@@ -1621,6 +1636,25 @@ func stepContractsFromRPC(value map[string]any) (modulecatalog.StepContractSet, 
 		})
 	}
 	return set, nil
+}
+
+func contextFromRPC(value any, label string) (modulecatalog.Context, error) {
+	if value == nil {
+		return modulecatalog.Context{}, nil
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return modulecatalog.Context{}, fmt.Errorf("%s must be an object", label)
+	}
+	data, err := json.Marshal(object)
+	if err != nil {
+		return modulecatalog.Context{}, err
+	}
+	var context modulecatalog.Context
+	if err := json.Unmarshal(data, &context); err != nil {
+		return modulecatalog.Context{}, fmt.Errorf("%s is invalid: %w", label, err)
+	}
+	return context, nil
 }
 
 func capabilityRequirementsFromRPC(value any, label string) ([]modulecatalog.CapabilityRequirement, error) {

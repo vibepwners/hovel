@@ -21,6 +21,7 @@ impl Module for MockSurvey {
             summary: "Collect example target facts.".into(),
             description: "Example Rust survey module for the Hovel stdio JSON-RPC runtime.".into(),
             tags: vec!["example".into(), "survey".into(), "rust".into()],
+            discovery_context: Vec::new(),
         }
     }
 

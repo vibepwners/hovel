@@ -119,6 +119,7 @@ impl Module for FakeModule {
             summary: "fake".into(),
             description: String::new(),
             tags: vec!["example".into(), "test".into()],
+            discovery_context: Vec::new(),
         }
     }
 
@@ -162,6 +163,7 @@ impl Module for AgentAwareModule {
             summary: "agent aware".into(),
             description: String::new(),
             tags: Vec::new(),
+            discovery_context: Vec::new(),
         }
     }
 

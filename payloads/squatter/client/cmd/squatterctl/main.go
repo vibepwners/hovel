@@ -22,7 +22,11 @@ import (
 )
 
 func main() {
-	opts := shell.ParseCLI(os.Args[1:])
+	opts, err := shell.ParseCLI(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "usage:", err)
+		os.Exit(2)
+	}
 	conn, err := dial(opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "connect:", err)

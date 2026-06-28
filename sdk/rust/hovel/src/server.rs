@@ -102,19 +102,23 @@ fn dispatch(
 
 fn handshake(module: &dyn Module) -> Value {
     let info = module.info();
-    Value::object(vec![
+    let mut pairs = vec![
         ("name", Value::Str(info.name)),
         ("version", Value::Str(info.version)),
         ("moduleType", Value::from(info.module_type.as_str())),
         ("summary", Value::Str(info.summary)),
         ("description", Value::Str(info.description)),
         ("tags", Value::Array(info.tags.into_iter().map(Value::Str).collect())),
-    ])
+    ];
+    if !info.discovery_context.is_empty() {
+        pairs.push(("discoveryContext", Value::Object(info.discovery_context)));
+    }
+    Value::object(pairs)
 }
 
 fn schema(module: &dyn Module) -> Value {
     let schema = module.schema();
-    Value::object(vec![
+    let mut pairs = vec![
         (
             "chainConfig",
             Value::Array(schema.chain_config.iter().map(|r| r.to_value()).collect()),
@@ -124,7 +128,11 @@ fn schema(module: &dyn Module) -> Value {
             Value::Array(schema.target_config.iter().map(|r| r.to_value()).collect()),
         ),
         ("outputs", Value::Object(schema.outputs)),
-    ])
+    ];
+    if !schema.planning_context.is_empty() {
+        pairs.push(("planningContext", Value::Object(schema.planning_context)));
+    }
+    Value::object(pairs)
 }
 
 fn execute(module: &dyn Module, emitter: &mut Emitter, params: &Value) -> Value {

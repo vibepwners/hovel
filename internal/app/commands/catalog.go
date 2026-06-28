@@ -40,6 +40,17 @@ type DaemonStatusProvider interface {
 	Status(context.Context, services.DaemonStatusRequest) (daemon.Status, error)
 }
 
+type PendingThrowCoordinator interface {
+	CreatePendingThrow(context.Context, string, PendingThrowCreateRequest) (PendingThrowSnapshot, error)
+	RequirePendingThrowReady(context.Context, string, string) (PendingThrowSnapshot, error)
+	CancelPendingThrow(context.Context, string, string) error
+}
+
+type LaunchKeyPolicyManager interface {
+	GetLaunchKeyPolicy(context.Context, string, string) (LaunchKeyPolicySnapshot, error)
+	SetLaunchKeyPolicy(context.Context, string, LaunchKeyPolicySetRequest) (LaunchKeyPolicySnapshot, error)
+}
+
 type RunClientFactory interface {
 	DialRunClient(socketPath string) (RunClient, error)
 }
@@ -71,6 +82,41 @@ type RunPublishedLog struct {
 	Operation string
 	Chain     string
 	Entry     operatorlog.Entry
+}
+
+type PendingThrowCreateRequest struct {
+	ID             string
+	Operation      string
+	Chain          string
+	PlanHash       string
+	AllowDangerous bool
+	NowBypass      bool
+}
+
+type PendingThrowSnapshot struct {
+	ID                  string
+	Operation           string
+	Chain               string
+	PlanHash            string
+	AllowDangerous      bool
+	NowBypass           bool
+	Ready               bool
+	RequiredApproverIDs []string
+	MissingApproverIDs  []string
+}
+
+type LaunchKeyPolicySetRequest struct {
+	Operation        string
+	Mode             string
+	Quorum           int
+	HeartbeatTimeout string
+}
+
+type LaunchKeyPolicySnapshot struct {
+	Operation        string `json:"operation"`
+	Mode             string `json:"mode"`
+	Quorum           int    `json:"quorum,omitempty"`
+	HeartbeatTimeout string `json:"heartbeatTimeout,omitempty"`
 }
 
 type CapabilityChainRunner interface {
@@ -151,6 +197,8 @@ type publishedFeedbackSession interface {
 type Runtime struct {
 	Workspaces         WorkspaceInitializer
 	Daemons            DaemonStatusProvider
+	PendingThrows      PendingThrowCoordinator
+	LaunchKeyPolicies  LaunchKeyPolicyManager
 	Runs               RunClientFactory
 	CapabilityChains   CapabilityChainRunner
 	Plans              ThrowPlanRecorder
@@ -480,6 +528,8 @@ type ModuleInspectPayload struct {
 	Enabled      bool                        `json:"enabled"`
 	ChainConfig  []modulecatalog.Requirement `json:"chainConfig,omitempty"`
 	TargetConfig []modulecatalog.Requirement `json:"targetConfig,omitempty"`
+	Discovery    *modulecatalog.Context      `json:"discoveryContext,omitempty"`
+	Planning     *modulecatalog.Context      `json:"planningContext,omitempty"`
 	Steps        []ModuleStepPayload         `json:"steps,omitempty"`
 }
 
@@ -489,6 +539,7 @@ type ModuleStepPayload struct {
 	Ready    bool                                  `json:"ready"`
 	Requires []modulecatalog.CapabilityRequirement `json:"requires,omitempty"`
 	Produces []modulecatalog.CapabilityRequirement `json:"produces,omitempty"`
+	Context  *modulecatalog.Context                `json:"context,omitempty"`
 	Missing  []modulecatalog.MissingCapability     `json:"missing,omitempty"`
 }
 
@@ -1142,6 +1193,21 @@ func HovelRegistry(runtime Runtime) Registry {
 			Handler: throwHandler(runtime),
 		},
 		Definition{
+			Path:    []string{"throw", "plan"},
+			Summary: "Create or refresh a persisted throw plan without confirming or executing.",
+			Positionals: []Positional{
+				{Name: "file", Help: "Configured chain YAML file", Required: false},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("chain", "c", "Chain name or module reference"),
+				stringOption("target", "t", "Target identifier"),
+				stringOption("target-set", "", "Target set name"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: throwPlanHandler(runtime),
+		},
+		Definition{
 			Path:    []string{"confirm"},
 			Summary: "Pre-confirm the selected throw plan or chain file without executing it.",
 			Positionals: []Positional{
@@ -1194,6 +1260,31 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: throwsInspectHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"launch-key", "policy", "inspect"},
+			Summary: "Inspect launch-key policy for an operation.",
+			Options: []Option{
+				stringOption("operation", "", "Operation name"),
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: launchKeyPolicyInspectHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"launch-key", "policy", "set"},
+			Summary: "Set launch-key policy for an operation.",
+			Positionals: []Positional{
+				{Name: "mode", Help: "Policy mode: anyone, quorum, all_connected", Required: true},
+			},
+			Options: []Option{
+				stringOption("operation", "", "Operation name"),
+				stringOption("workspace", "w", "Workspace path"),
+				stringOption("quorum", "", "Required approver count for quorum mode"),
+				stringOption("heartbeat-timeout", "", "Live entity heartbeat timeout"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: launchKeyPolicySetHandler(runtime),
 		},
 		Definition{
 			Path:           []string{"session", "list"},
@@ -1586,9 +1677,10 @@ func chainAddHandler(runtime Runtime) Handler {
 }
 
 const (
-	squatterTypeConfigKey = "squatter.type"
-	squatterTypeTCPBind   = "tcp-bind"
-	squatterTypeSMBPipe   = "smb-named-pipe"
+	squatterTypeConfigKey  = "squatter.type"
+	squatterTypeTCPBind    = "tcp-bind"
+	squatterTypeSMBPipe    = "smb-named-pipe"
+	moduleIndexHTTPTimeout = 30 * time.Second
 )
 
 func isSquatterBindAlias(value string) bool {
@@ -2582,7 +2674,8 @@ func loadModuleIndex(indexPath string, offline bool) (modulepackage.Index, error
 			}
 			return modulepackage.ParseIndex(body)
 		}
-		resp, err := http.Get(indexPath)
+		client := moduleIndexHTTPClient()
+		resp, err := client.Get(indexPath)
 		if err != nil {
 			return modulepackage.Index{}, err
 		}
@@ -2605,6 +2698,14 @@ func loadModuleIndex(indexPath string, offline bool) (modulepackage.Index, error
 		return modulepackage.Index{}, fmt.Errorf("module indexes require https: %s", indexPath)
 	}
 	return modulepackage.LoadIndex(indexPath)
+}
+
+func moduleIndexHTTPClient() *http.Client {
+	client := *http.DefaultClient
+	if client.Timeout == 0 {
+		client.Timeout = moduleIndexHTTPTimeout
+	}
+	return &client
 }
 
 func moduleIndexCachePath(indexURL string) (string, error) {
@@ -2866,6 +2967,17 @@ func throwHandler(runtime Runtime) Handler {
 					return Result{}, err
 				}
 			}
+		}
+		pendingID := launchKeyPendingThrowID(plan, invocation.Flag("allow-dangerous"), invocation.Flag("now"))
+		if err := requireLaunchKeyReady(ctx, runtime, status.Identity.SocketPath, PendingThrowCreateRequest{
+			ID:             pendingID,
+			Operation:      planOperation(plan),
+			Chain:          plan.Chain,
+			PlanHash:       plan.PlanHash,
+			AllowDangerous: invocation.Flag("allow-dangerous"),
+			NowBypass:      invocation.Flag("now"),
+		}); err != nil {
+			return Result{}, err
 		}
 
 		throwStarted := time.Now()
@@ -3531,6 +3643,19 @@ func recordThrowConfirmation(ctx context.Context, runtime Runtime, plan ThrowPla
 	return confirmation, nil
 }
 
+func throwPlanHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		plan, err := recordThrowPlan(ctx, runtime, invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{
+			Human: fmt.Sprintf("Planned throw %s for chain %s against %d target(s)", plan.ID, plan.Chain, len(plan.Targets)),
+			JSON:  plan.Payload(),
+		}, nil
+	}
+}
+
 func throwsListHandler(runtime Runtime) Handler {
 	return func(ctx context.Context, invocation Invocation) (Result, error) {
 		if runtime.ThrowPlans == nil {
@@ -3588,6 +3713,85 @@ func throwsInspectHandler(runtime Runtime) Handler {
 		}
 		return Result{Human: strings.Join(lines, "\n"), JSON: plan}, nil
 	}
+}
+
+func launchKeyPolicyInspectHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if runtime.LaunchKeyPolicies == nil {
+			return Result{}, fmt.Errorf("launch-key policy manager is not configured")
+		}
+		if runtime.Daemons == nil {
+			return Result{}, fmt.Errorf("daemon service is not configured")
+		}
+		status, err := runtime.Daemons.Status(ctx, services.DaemonStatusRequest{
+			WorkspacePath: workspacepath.ResolvePath(invocation.Option("workspace")),
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		operation := strings.TrimSpace(invocation.Option("operation"))
+		if operation == "" && runtime.Session != nil {
+			operation = runtime.Session.Snapshot().ActiveOperation
+		}
+		snapshot, err := runtime.LaunchKeyPolicies.GetLaunchKeyPolicy(ctx, status.Identity.SocketPath, operation)
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Human: launchKeyPolicyHuman(snapshot), JSON: snapshot}, nil
+	}
+}
+
+func launchKeyPolicySetHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if runtime.LaunchKeyPolicies == nil {
+			return Result{}, fmt.Errorf("launch-key policy manager is not configured")
+		}
+		if runtime.Daemons == nil {
+			return Result{}, fmt.Errorf("daemon service is not configured")
+		}
+		status, err := runtime.Daemons.Status(ctx, services.DaemonStatusRequest{
+			WorkspacePath: workspacepath.ResolvePath(invocation.Option("workspace")),
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		quorum := 0
+		if raw := strings.TrimSpace(invocation.Option("quorum")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 1 {
+				return Result{}, fmt.Errorf("launch-key quorum must be at least 1")
+			}
+			quorum = parsed
+		}
+		operation := strings.TrimSpace(invocation.Option("operation"))
+		if operation == "" && runtime.Session != nil {
+			operation = runtime.Session.Snapshot().ActiveOperation
+		}
+		snapshot, err := runtime.LaunchKeyPolicies.SetLaunchKeyPolicy(ctx, status.Identity.SocketPath, LaunchKeyPolicySetRequest{
+			Operation:        operation,
+			Mode:             invocation.Positional("mode"),
+			Quorum:           quorum,
+			HeartbeatTimeout: invocation.Option("heartbeat-timeout"),
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Human: launchKeyPolicyHuman(snapshot), JSON: snapshot}, nil
+	}
+}
+
+func launchKeyPolicyHuman(snapshot LaunchKeyPolicySnapshot) string {
+	lines := []string{
+		fmt.Sprintf("Launch-key policy %s", snapshot.Operation),
+		fmt.Sprintf("mode              %s", snapshot.Mode),
+	}
+	if snapshot.Quorum > 0 {
+		lines = append(lines, fmt.Sprintf("quorum           %d", snapshot.Quorum))
+	}
+	if snapshot.HeartbeatTimeout != "" {
+		lines = append(lines, fmt.Sprintf("heartbeat        %s", snapshot.HeartbeatTimeout))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func eventLines(events []event.Event) []string {
@@ -3682,10 +3886,6 @@ func dialDaemonRunClient(ctx context.Context, runtime Runtime, workspacePath str
 	return client, func() { _ = client.Close() }, nil
 }
 
-func newThrowPlan(workspacePath, chain string, targets []string) ThrowPlanRecord {
-	return newThrowPlanForExecution(workspacePath, throwExecution{Chain: chain, Targets: targets})
-}
-
 func newThrowPlanForExecution(workspacePath string, throw throwExecution) ThrowPlanRecord {
 	hash := planHashForExecution(throw)
 	return ThrowPlanRecord{
@@ -3774,10 +3974,6 @@ func confirmationClientID(runtime Runtime) string {
 	return "command"
 }
 
-func planHash(chain string, targets []string) string {
-	return planHashForExecution(throwExecution{Chain: chain, Targets: targets})
-}
-
 func planHashForExecution(throw throwExecution) string {
 	operation := strings.TrimSpace(throw.Operation)
 	if operation == "" {
@@ -3821,28 +4017,6 @@ func planHashLegacy(chain string, targets []string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func stablePlanComponent(chain string, targets []string) string {
-	var b strings.Builder
-	b.WriteString(chain)
-	for _, target := range targets {
-		b.WriteString("-")
-		b.WriteString(target)
-	}
-	out := strings.Map(func(r rune) rune {
-		switch {
-		case unicode.IsLetter(r), unicode.IsDigit(r):
-			return r
-		default:
-			return '-'
-		}
-	}, b.String())
-	out = strings.Trim(out, "-")
-	if out == "" {
-		return "throw"
-	}
-	return out
-}
-
 func stableIDComponent(value string) string {
 	value = strings.TrimSpace(value)
 	if len(value) > 16 {
@@ -3852,6 +4026,47 @@ func stableIDComponent(value string) string {
 		return value
 	}
 	return "record"
+}
+
+func launchKeyPendingThrowID(plan ThrowPlanRecord, allowDangerous, nowBypass bool) string {
+	fingerprint := struct {
+		PlanHash       string `json:"planHash"`
+		AllowDangerous bool   `json:"allowDangerous"`
+		NowBypass      bool   `json:"nowBypass"`
+	}{
+		PlanHash:       plan.PlanHash,
+		AllowDangerous: allowDangerous,
+		NowBypass:      nowBypass,
+	}
+	data, err := json.Marshal(fingerprint)
+	if err != nil {
+		return "pending-" + stableIDComponent(plan.PlanHash)
+	}
+	sum := sha256.Sum256(data)
+	return "pending-" + hex.EncodeToString(sum[:16])
+}
+
+func requireLaunchKeyReady(ctx context.Context, runtime Runtime, socketPath string, req PendingThrowCreateRequest) error {
+	if runtime.PendingThrows == nil {
+		return nil
+	}
+	if _, err := runtime.PendingThrows.CreatePendingThrow(ctx, socketPath, req); err != nil && !isPendingThrowExistsError(err, req.ID) {
+		return err
+	}
+	if _, err := runtime.PendingThrows.RequirePendingThrowReady(ctx, socketPath, req.ID); err != nil {
+		return fmt.Errorf("launch-key pending throw %s is not ready: %w", req.ID, err)
+	}
+	if err := runtime.PendingThrows.CancelPendingThrow(ctx, socketPath, req.ID); err != nil {
+		return fmt.Errorf("consume launch-key pending throw %s: %w", req.ID, err)
+	}
+	return nil
+}
+
+func isPendingThrowExistsError(err error, id string) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "pending throw "+id+" already exists")
 }
 
 type throwExecution struct {
@@ -5011,19 +5226,6 @@ func globalModuleWorkspace() string {
 	return filepath.Join(".hovel-global")
 }
 
-func validationView(state operatorsession.State) modulecatalog.ConfigView {
-	steps := make([]modulecatalog.StepRef, 0, len(state.Steps))
-	for _, step := range state.Steps {
-		steps = append(steps, modulecatalog.StepRef{ID: step.ID, ModuleID: step.ModuleID})
-	}
-	return modulecatalog.ConfigView{
-		Steps:         steps,
-		Targets:       append([]string(nil), state.Targets...),
-		ChainConfig:   cloneStringMap(state.Config),
-		TargetConfigs: cloneTargetConfigs(state.TargetConfigs),
-	}
-}
-
 func ValidateState(db ModuleDatabase, state operatorsession.State) modulecatalog.Validation {
 	var issues []modulecatalog.Issue
 	if len(state.Steps) == 0 {
@@ -5160,25 +5362,6 @@ func squatterBindRequirements(scope modulecatalog.Scope) []modulecatalog.Require
 	}
 }
 
-func configLines(config map[string]string, requirements map[string]modulecatalog.Requirement) string {
-	keys := make([]string, 0, len(config))
-	for key := range config {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	lines := make([]string, 0, len(keys))
-	for _, key := range keys {
-		requirement := requirements[key]
-		value := modulecatalog.DisplayValue(requirement, config[key])
-		typeName := string(requirement.Type)
-		if typeName == "" {
-			typeName = "string"
-		}
-		lines = append(lines, fmt.Sprintf("  %-28s %-18s %s", key, typeName, value))
-	}
-	return strings.Join(lines, "\n")
-}
-
 func availableConfigLines(config map[string]string, requirements map[string]modulecatalog.Requirement) string {
 	seen := map[string]bool{}
 	var lines []string
@@ -5236,17 +5419,6 @@ func sortedConfigKeys(values map[string]string) []string {
 	return keys
 }
 
-func moduleLines(modules []modulecatalog.Module) string {
-	lines := []string{
-		"ID                         TYPE              SUMMARY",
-		"--                         ----              -------",
-	}
-	for _, module := range modules {
-		lines = append(lines, fmt.Sprintf("%-26s %-17s %s", module.ID, module.Type, module.Summary))
-	}
-	return strings.Join(lines, "\n")
-}
-
 func moduleInventoryLines(records []ModuleInventoryRecord) string {
 	lines := []string{
 		"ID                         TYPE              SCOPE      SOURCE       SUMMARY",
@@ -5281,6 +5453,14 @@ func moduleInspect(payload ModuleInspectPayload) string {
 	if len(payload.Tags) > 0 {
 		lines = append(lines, "tags         "+strings.Join(payload.Tags, ", "))
 	}
+	if payload.Discovery != nil {
+		lines = append(lines, "", "discovery context")
+		lines = append(lines, contextLines(*payload.Discovery)...)
+	}
+	if payload.Planning != nil {
+		lines = append(lines, "", "planning context")
+		lines = append(lines, contextLines(*payload.Planning)...)
+	}
 	if len(payload.ChainConfig) > 0 {
 		lines = append(lines, "", "chain config")
 		for _, requirement := range payload.ChainConfig {
@@ -5308,14 +5488,41 @@ func moduleInspect(payload ModuleInspectPayload) string {
 				}
 			}
 			lines = append(lines, line)
+			if step.Context != nil && step.Context.Summary != "" {
+				lines = append(lines, "    context "+step.Context.Summary)
+			}
 		}
 	}
 	lines = append(lines, "", "Next: chain add "+payload.ID)
 	return strings.Join(lines, "\n")
 }
 
+func contextLines(context modulecatalog.Context) []string {
+	var lines []string
+	if context.Summary != "" {
+		lines = append(lines, "  summary      "+context.Summary)
+	}
+	if len(context.Keywords) > 0 {
+		lines = append(lines, "  keywords     "+strings.Join(context.Keywords, ", "))
+	}
+	if len(context.Capabilities) > 0 {
+		lines = append(lines, "  capabilities "+strings.Join(context.Capabilities, ", "))
+	}
+	if context.Risk.Level != "" {
+		detail := context.Risk.Level
+		if len(context.Risk.Reasons) > 0 {
+			detail += " (" + strings.Join(context.Risk.Reasons, ", ") + ")"
+		}
+		lines = append(lines, "  risk         "+detail)
+	}
+	if context.Cleanup != "" {
+		lines = append(lines, "  cleanup      "+context.Cleanup)
+	}
+	return lines
+}
+
 func moduleInspectPayload(module modulecatalog.Module, steps []ModuleStepPayload) ModuleInspectPayload {
-	return ModuleInspectPayload{
+	payload := ModuleInspectPayload{
 		ID:           module.ID,
 		Name:         module.Name,
 		Type:         module.Type,
@@ -5330,6 +5537,15 @@ func moduleInspectPayload(module modulecatalog.Module, steps []ModuleStepPayload
 		TargetConfig: append([]modulecatalog.Requirement(nil), module.TargetConfig...),
 		Steps:        steps,
 	}
+	if contextPresent(module.Discovery) {
+		discovery := module.Discovery
+		payload.Discovery = &discovery
+	}
+	if contextPresent(module.Planning) {
+		planning := module.Planning
+		payload.Planning = &planning
+	}
+	return payload
 }
 
 func moduleStepPayloads(moduleID string, availability []modulecatalog.StepAvailability) []ModuleStepPayload {
@@ -5338,16 +5554,40 @@ func moduleStepPayloads(moduleID string, availability []modulecatalog.StepAvaila
 		if item.ModuleID != moduleID {
 			continue
 		}
-		steps = append(steps, ModuleStepPayload{
+		payload := ModuleStepPayload{
 			ID:       item.Step.ID,
 			Kind:     item.Step.Kind,
 			Ready:    item.Resolution.Ready,
 			Requires: append([]modulecatalog.CapabilityRequirement(nil), item.Step.Requires...),
 			Produces: append([]modulecatalog.CapabilityRequirement(nil), item.Step.Produces...),
 			Missing:  append([]modulecatalog.MissingCapability(nil), item.Resolution.Missing...),
-		})
+		}
+		if contextPresent(item.Step.Context) {
+			context := item.Step.Context
+			payload.Context = &context
+		}
+		steps = append(steps, payload)
 	}
 	return steps
+}
+
+func ModuleStepPayloadsForMCP(moduleID string, availability []modulecatalog.StepAvailability) []ModuleStepPayload {
+	return moduleStepPayloads(moduleID, availability)
+}
+
+func contextPresent(context modulecatalog.Context) bool {
+	return context.Summary != "" ||
+		len(context.Keywords) > 0 ||
+		len(context.Platforms) > 0 ||
+		len(context.Targets) > 0 ||
+		len(context.Capabilities) > 0 ||
+		len(context.Preconditions) > 0 ||
+		len(context.SideEffects) > 0 ||
+		context.Cleanup != "" ||
+		context.Risk.Level != "" ||
+		len(context.Risk.Reasons) > 0 ||
+		len(context.Examples) > 0 ||
+		len(context.AgentHints) > 0
 }
 
 func missingCapabilitySummary(missing modulecatalog.MissingCapability) string {

@@ -433,6 +433,64 @@ func TestE2EChainFileSaveLoadRoundTripThenThrows(t *testing.T) {
 	}
 }
 
+func TestE2EInstalledModuleRefreshesLiveCatalog(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
+	workspacePath := fixture.WorkspacePath
+	moduleRoot := writeRPCModulePackage(t, "live-installed", "exploit", `{"chainConfig": [], "targetConfig": [], "outputs": {}}`, `{
+  "version": "contracts-v1",
+  "steps": [{"id": "live.step", "kind": "action", "requires": [], "produces": []}]
+}`)
+	chainFile := filepath.Join(t.TempDir(), "live-installed.chain.yaml")
+	if err := os.WriteFile(chainFile, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: Chain
+metadata:
+  name: live-installed
+spec:
+  mode: configured
+  steps:
+    - id: live
+      uses: module:live-installed@0.1.0
+      step: live.step
+  targets:
+    - id: mock://target
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := newAppWithSessionAndModules(operatorsession.New(), modulecatalog.New())
+	app.workspacePath = workspacePath
+	var stdout, stderr bytes.Buffer
+	for _, line := range []string{
+		"op use test-op",
+		"chain use live-installed",
+		"module install --link " + quoteCommandArg(moduleRoot) + " --no-scripts --workspace " + quoteCommandArg(workspacePath),
+	} {
+		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q exit code = %d, stderr = %s, stdout = %s", line, code, stderr.String(), stdout.String())
+		}
+	}
+
+	if suggestions := app.Suggestions("chain add live"); !containsSuggestion(suggestions, "live-installed@0.1.0") {
+		t.Fatalf("chain add suggestions = %#v, want installed module", suggestions)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "chain load "+quoteCommandArg(chainFile), &stdout, &stderr); code != 0 {
+		t.Fatalf("chain load exit code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+quoteCommandArg(workspacePath)+" --now --json", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	payload := decodeThrowJSON(t, stdout.Bytes())
+	if payload.Chain != "live-installed" || len(payload.Results) != 1 || payload.Results[0].State != "succeeded" {
+		t.Fatalf("installed module throw payload = %#v", payload)
+	}
+}
+
 func TestE2ESessionConnectHandlesRawTerminalCarriageReturn(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
 	workspacePath := fixture.WorkspacePath

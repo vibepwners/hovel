@@ -15,11 +15,13 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
+	"github.com/Vibe-Pwners/hovel/internal/app/hovelconfig"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 )
@@ -143,7 +145,14 @@ func Serve(ctx context.Context, args Args) error {
 	defer listener.Close()
 
 	runs := services.NewRunService(runner, events, ids, clock)
-	handler, err := daemonrpc.NewHandler(runs, daemonrpc.WithSession(session), daemonrpc.WithLogBroker(logs), daemonrpc.WithSessionPersistence(persistSession), daemonrpc.WithModuleSessions(sessionBroker))
+	config, _, err := hovelconfig.Load(hovelconfig.Options{
+		Workspace:    workspacePath,
+		ExplicitPath: args.HovelConfig,
+	})
+	if err != nil {
+		return err
+	}
+	handler, err := daemonrpc.NewHandler(runs, daemonrpc.WithSession(session), daemonrpc.WithLogBroker(logs), daemonrpc.WithSessionPersistence(persistSession), daemonrpc.WithModuleSessions(sessionBroker), daemonrpc.WithLaunchKeyPolicy(launchKeyPolicyFromConfig(config.Policy.LaunchKey)))
 	if err != nil {
 		return err
 	}
@@ -170,6 +179,19 @@ func Serve(ctx context.Context, args Args) error {
 		return errors.Join(ctx.Err(), clearErr)
 	}
 	return nil
+}
+
+func launchKeyPolicyFromConfig(config hovelconfig.LaunchKeyPolicy) operatordomain.LaunchKeyPolicy {
+	policy := operatordomain.LaunchKeyPolicy{
+		Mode:   operatordomain.LaunchKeyMode(config.Mode),
+		Quorum: config.Quorum,
+	}
+	if timeout := config.HeartbeatTimeout; timeout != "" {
+		if parsed, err := time.ParseDuration(timeout); err == nil {
+			policy.HeartbeatTimeout = parsed
+		}
+	}
+	return operatordomain.NormalizeLaunchKeyPolicy(policy)
 }
 
 func serveRPC(listener net.Listener, server *http.Server, errs chan<- error) {

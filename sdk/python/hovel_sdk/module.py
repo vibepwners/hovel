@@ -16,12 +16,14 @@ class HovelModule(ABC):
     module_type: str = ""
     description: str = ""
     tags: ClassVar[tuple[str, ...]] = ()
+    discovery_context: ClassVar[dict[str, Any]] = {}
     global_config: ClassVar[tuple[Requirement, ...]] = ()
     target_config: ClassVar[tuple[Requirement, ...]] = ()
     outputs: ClassVar[dict[str, Any]] = {}
+    planning_context: ClassVar[dict[str, Any]] = {}
 
     def info(self) -> dict[str, Any]:
-        return {
+        info: dict[str, Any] = {
             "name": self.name,
             "version": self.version,
             "summary": self.summary,
@@ -29,13 +31,19 @@ class HovelModule(ABC):
             "moduleType": self.module_type,
             "tags": list(self.tags),
         }
+        if self.discovery_context:
+            info["discoveryContext"] = dict(self.discovery_context)
+        return info
 
     def module_schema(self) -> dict[str, Any]:
-        return {
+        schema: dict[str, Any] = {
             "chainConfig": [requirement.to_rpc() for requirement in self.global_config],
             "targetConfig": [requirement.to_rpc() for requirement in self.target_config],
             "outputs": dict(self.outputs),
         }
+        if self.planning_context:
+            schema["planningContext"] = dict(self.planning_context)
+        return schema
 
     def describe_steps(self) -> dict[str, Any]:
         return {"steps": []}

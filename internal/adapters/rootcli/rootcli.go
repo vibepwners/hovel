@@ -11,6 +11,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	mcpadapter "github.com/Vibe-Pwners/hovel/internal/adapters/mcp"
+	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
@@ -260,7 +261,12 @@ func runDaemonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	}
 	commandArgs := injectWorkspaceForDaemonCommand(normalizeRunCommand(parsed.Command), parsed.Workspace)
 	commandArgs = injectConfigForDaemonCommand(commandArgs, parsed.Config)
-	app := commandmode.NewAppWithSessionAndModules(operatorSession, pythonrpc.MustConfiguredCatalog())
+	catalog, err := (pythonrpc.Runner{WorkspacePath: parsed.Workspace, HovelConfig: parsed.Config}).Catalog(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "hovel: failed to load module catalog: %v\n", err)
+		catalog = modulecatalog.New()
+	}
+	app := commandmode.NewAppWithSessionModulesAndWorkspace(operatorSession, catalog, parsed.Workspace)
 	return app.Run(ctx, commandArgs, stdout, stderr)
 }
 

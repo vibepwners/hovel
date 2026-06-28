@@ -207,7 +207,7 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 	names := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
-		if tool.Name == ToolChainApply || tool.Name == ToolCommandRun || tool.Name == ToolThrowStart || tool.Name == ToolPayloadCmd || tool.Name == ToolPayloadCommandCall {
+		if tool.Name == ToolChainApply || tool.Name == ToolCommandRun || tool.Name == ToolThrowPlan || tool.Name == ToolThrowConfirm || tool.Name == ToolThrowStart || tool.Name == ToolPayloadCmd || tool.Name == ToolPayloadCommandCall {
 			if tool.Annotations == nil || tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || !*tool.Annotations.DestructiveHint {
 				t.Fatalf("tool %s is missing destructive annotations", tool.Name)
 			}
@@ -218,7 +218,7 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 		}
 	}
 	sort.Strings(names)
-	wantNames := []string{ToolCatalogSnapshot, ToolChainApply, ToolCommandRun, ToolInstalledPayloadList, ToolOperationList, ToolOperatorIdentity, ToolOperatorListEntities, ToolPayloadCmd, ToolPayloadCommandCall, ToolPayloadCommandList, ToolThrowStart, ToolWorkspaceSnapshot}
+	wantNames := []string{ToolCatalogSnapshot, ToolChainApply, ToolChainSuggest, ToolCommandRun, ToolInstalledPayloadList, ToolLaunchKeyPolicy, ToolModuleInspect, ToolModuleSearch, ToolOperationList, ToolOperatorIdentity, ToolOperatorListEntities, ToolPayloadCmd, ToolPayloadCommandCall, ToolPayloadCommandList, ToolThrowConfirm, ToolThrowPlan, ToolThrowStart, ToolWorkspaceSnapshot}
 	sort.Strings(wantNames)
 	if !reflect.DeepEqual(names, wantNames) {
 		t.Fatalf("tool names = %#v, want %#v", names, wantNames)
@@ -358,6 +358,33 @@ func TestMCPCommandRunCarriesOperationAndChainContext(t *testing.T) {
 	}
 }
 
+func TestMCPCommandRunRejectsLaunchKeyPolicyMutation(t *testing.T) {
+	daemon := newFakeDaemon()
+	called := false
+	attached, err := Attach(context.Background(), daemon, OperatorOptions{
+		EntityID:    "mcp-command-policy-test",
+		DisplayName: "MCP command policy test",
+		CommandRunner: func(context.Context, commandRunInput) (commandRunOutput, error) {
+			called = true
+			return commandRunOutput{ExitCode: 0}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Attach returned error: %v", err)
+	}
+	defer attached.Detach(context.Background())
+
+	_, _, err = attached.commandRun(context.Background(), nil, commandRunInput{
+		Args: []string{"hovel", "launch-key", "policy", "set", "all_connected"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "human-only") {
+		t.Fatalf("commandRun returned %v, want human-only policy error", err)
+	}
+	if called {
+		t.Fatal("command runner was invoked for a human-only policy mutation")
+	}
+}
+
 func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	testsupport.UseExampleModuleConfig(t)
 	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
@@ -422,6 +449,86 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	}
 	if got := operation.Chains[0].Config["operator.confirmed_lab"]; got != "true" {
 		t.Fatalf("operator.confirmed_lab = %q", got)
+	}
+}
+
+func TestMCPThrowPlanAndConfirmUseLaunchKeyPendingThrow(t *testing.T) {
+	daemon := newFakeDaemon()
+	var commandRequests []commandRunInput
+	attached, err := Attach(context.Background(), daemon, OperatorOptions{
+		EntityID:    "mcp-throw-approval-test",
+		DisplayName: "MCP throw approval test",
+		Operation:   "redteam-lab",
+		ActiveChain: "alpha",
+		CommandRunner: func(_ context.Context, input commandRunInput) (commandRunOutput, error) {
+			commandRequests = append(commandRequests, commandRunInput{
+				Args:      append([]string(nil), input.Args...),
+				Operation: input.Operation,
+				Chain:     input.Chain,
+			})
+			return commandRunOutput{
+				Args:     append([]string(nil), input.Args...),
+				ExitCode: 0,
+				JSON: commands.ThrowPlanPayload{
+					ID:       "plan-1",
+					PlanHash: "hash-1",
+					Chain:    input.Chain,
+					Targets:  []string{"mock://router-01"},
+				},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Attach returned error: %v", err)
+	}
+	defer attached.Detach(context.Background())
+
+	_, planOut, err := attached.throwPlan(context.Background(), nil, throwPlanInput{
+		AllowDangerous: true,
+		NowBypass:      true,
+	})
+	if err != nil {
+		t.Fatalf("throwPlan returned error: %v", err)
+	}
+	wantPendingID := launchKeyPendingThrowID("hash-1", true, true)
+	if planOut.Pending.ID != wantPendingID || planOut.Pending.Operation != "redteam-lab" || planOut.Pending.Chain != "alpha" {
+		t.Fatalf("pending = %#v, want %s redteam-lab/alpha", planOut.Pending, wantPendingID)
+	}
+	if planOut.Policy.Operation != "redteam-lab" || planOut.Policy.Policy.Mode != "anyone" {
+		t.Fatalf("policy = %#v", planOut.Policy)
+	}
+	if len(commandRequests) != 1 || !reflect.DeepEqual(commandRequests[0].Args, []string{"throw", "plan", "--chain", "alpha", "--json"}) {
+		t.Fatalf("command requests = %#v", commandRequests)
+	}
+	if commandRequests[0].Operation != "redteam-lab" || commandRequests[0].Chain != "alpha" {
+		t.Fatalf("command request context = %#v", commandRequests[0])
+	}
+
+	_, confirmOut, err := attached.throwConfirm(context.Background(), nil, throwConfirmInput{
+		PendingID:      planOut.Pending.ID,
+		PlanHash:       "hash-1",
+		NuclearKey:     "turn both keys",
+		AllowDangerous: true,
+		NowBypass:      true,
+	})
+	if err != nil {
+		t.Fatalf("throwConfirm returned error: %v", err)
+	}
+	if !confirmOut.NuclearKeyAccepted || !confirmOut.Pending.Ready {
+		t.Fatalf("confirm output = %#v", confirmOut)
+	}
+	data, err := json.Marshal(confirmOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "turn both keys") {
+		t.Fatalf("confirmation output leaked nuclear key: %s", data)
+	}
+	if len(daemon.confirmRequests) != 1 {
+		t.Fatalf("confirm requests = %#v, want one", daemon.confirmRequests)
+	}
+	if got := daemon.confirmRequests[0]; got.EntityID != "mcp-throw-approval-test" || got.PlanHash != "hash-1" || !got.AllowDangerous || !got.NowBypass {
+		t.Fatalf("confirm request = %#v", got)
 	}
 }
 
@@ -766,12 +873,20 @@ type fakeDaemon struct {
 	payloadCommandRequests []daemonrpc.PayloadCommandRunRequest
 	payloadCommandResponse daemonrpc.PayloadCommandRunResponse
 	payloadCommandError    error
+	pending                map[string]daemonrpc.PendingThrowResponse
+	confirmRequests        []daemonrpc.ConfirmPendingThrowRequest
+	policy                 daemonrpc.LaunchKeyPolicyResponse
 }
 
 func newFakeDaemon() *fakeDaemon {
 	return &fakeDaemon{
 		now:      time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC),
 		entities: map[string]daemonrpc.OperatorEntity{},
+		pending:  map[string]daemonrpc.PendingThrowResponse{},
+		policy: daemonrpc.LaunchKeyPolicyResponse{
+			Operation: "default",
+			Policy:    daemonrpc.LaunchKeyPolicyOutput{Mode: "anyone"},
+		},
 	}
 }
 
@@ -843,6 +958,54 @@ func (f *fakeDaemon) Snapshot(_ context.Context, req daemonrpc.SnapshotRequest) 
 	defer f.mu.Unlock()
 	f.snapshotRequests = append(f.snapshotRequests, req)
 	return f.snapshot, nil
+}
+
+func (f *fakeDaemon) GetLaunchKeyPolicy(_ context.Context, req daemonrpc.LaunchKeyPolicyRequest) (daemonrpc.LaunchKeyPolicyResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.policy
+	if req.Operation != "" {
+		out.Operation = req.Operation
+	}
+	return out, nil
+}
+
+func (f *fakeDaemon) CreatePendingThrow(_ context.Context, req daemonrpc.CreatePendingThrowRequest) (daemonrpc.PendingThrowResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.pending[req.ID]; ok {
+		return daemonrpc.PendingThrowResponse{}, errors.New("pending throw " + req.ID + " already exists")
+	}
+	out := daemonrpc.PendingThrowResponse{
+		ID:             req.ID,
+		Operation:      req.Operation,
+		Chain:          req.Chain,
+		PlanHash:       req.PlanHash,
+		AllowDangerous: req.AllowDangerous,
+		NowBypass:      req.NowBypass,
+		Ready:          true,
+	}
+	f.pending[req.ID] = out
+	return out, nil
+}
+
+func (f *fakeDaemon) ConfirmPendingThrow(_ context.Context, req daemonrpc.ConfirmPendingThrowRequest) (daemonrpc.PendingThrowResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.confirmRequests = append(f.confirmRequests, req)
+	out, ok := f.pending[req.ID]
+	if !ok {
+		return daemonrpc.PendingThrowResponse{}, errors.New("pending throw " + req.ID + " does not exist")
+	}
+	if req.PlanHash != out.PlanHash {
+		return daemonrpc.PendingThrowResponse{}, errors.New("plan hash mismatch")
+	}
+	if req.AllowDangerous != out.AllowDangerous || req.NowBypass != out.NowBypass {
+		return daemonrpc.PendingThrowResponse{}, errors.New("approval flags mismatch")
+	}
+	out.Ready = true
+	f.pending[req.ID] = out
+	return out, nil
 }
 
 func (f *fakeDaemon) ListPayloadCommands(context.Context, daemonrpc.PayloadCommandListRequest) (daemonrpc.PayloadCommandListResponse, error) {

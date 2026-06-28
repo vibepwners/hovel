@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -89,8 +90,11 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"confirm"},
 		{"run"},
 		{"throw"},
+		{"throw", "plan"},
 		{"throw", "inspect"},
 		{"throw", "list"},
+		{"launch-key", "policy", "inspect"},
+		{"launch-key", "policy", "set"},
 	} {
 		if _, ok := registry.Find(path...); !ok {
 			t.Fatalf("missing command path %q", strings.Join(path, " "))
@@ -427,6 +431,176 @@ func TestThrowNowRecordsBypassConfirmation(t *testing.T) {
 	}
 	if len(recorder.requests) != 1 {
 		t.Fatalf("run requests = %#v, want one", recorder.requests)
+	}
+}
+
+func TestThrowRequiresReadyLaunchKeyBeforeRun(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &fakeRunRecorder{}
+	pending := &fakePendingThrowCoordinator{}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		PendingThrows: pending,
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+	})
+	definition, _ := registry.Find("throw")
+
+	_, err = definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "mock://target",
+		},
+		Flags: map[string]bool{"now": true, "allow-dangerous": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{Operation: operatorsession.DefaultOperation, Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
+	wantPendingID := launchKeyPendingThrowID(wantPlan, true, true)
+	if pending.createSocket != "/tmp/hovel.sock" || pending.readySocket != "/tmp/hovel.sock" {
+		t.Fatalf("launch-key sockets = %q/%q, want daemon socket", pending.createSocket, pending.readySocket)
+	}
+	if !reflect.DeepEqual(pending.createRequest, PendingThrowCreateRequest{
+		ID:             wantPendingID,
+		Operation:      operatorsession.DefaultOperation,
+		Chain:          "mock-exploit",
+		PlanHash:       wantPlan.PlanHash,
+		AllowDangerous: true,
+		NowBypass:      true,
+	}) {
+		t.Fatalf("pending create request = %#v", pending.createRequest)
+	}
+	if pending.readyID != wantPendingID {
+		t.Fatalf("ready id = %q, want %q", pending.readyID, wantPendingID)
+	}
+	if pending.cancelSocket != "/tmp/hovel.sock" || pending.cancelID != wantPendingID {
+		t.Fatalf("cancel = %q/%q, want daemon socket and %q", pending.cancelSocket, pending.cancelID, wantPendingID)
+	}
+	if len(recorder.requests) != 1 {
+		t.Fatalf("run requests = %#v, want one", recorder.requests)
+	}
+}
+
+func TestThrowStopsWhenLaunchKeyApprovalsAreMissing(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &fakeRunRecorder{}
+	pending := &fakePendingThrowCoordinator{readyErr: errors.New("launch-key approvals missing: cli-1")}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		PendingThrows: pending,
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+	})
+	definition, _ := registry.Find("throw")
+
+	_, err = definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "mock://target",
+		},
+		Flags: map[string]bool{"now": true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "launch-key approvals missing") {
+		t.Fatalf("error = %v, want launch-key failure", err)
+	}
+	if len(recorder.requests) != 0 {
+		t.Fatalf("run requests = %#v, want none", recorder.requests)
+	}
+	if pending.cancelID != "" {
+		t.Fatalf("cancel id = %q, want no cancel before ready", pending.cancelID)
+	}
+}
+
+func TestLaunchKeyPolicyCommandsInspectAndSetThroughCLI(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := &fakeLaunchKeyPolicyManager{
+		getSnapshot: LaunchKeyPolicySnapshot{Operation: "redteam-lab", Mode: "anyone"},
+		setSnapshot: LaunchKeyPolicySnapshot{Operation: "redteam-lab", Mode: "quorum", Quorum: 2, HeartbeatTimeout: "45s"},
+	}
+	registry := HovelRegistry(Runtime{
+		Daemons:           fakeDaemonService{status: daemon.Running(identity)},
+		LaunchKeyPolicies: policies,
+	})
+
+	inspect, _ := registry.Find("launch-key", "policy", "inspect")
+	result, err := inspect.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"operation": "redteam-lab",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policies.getSocket != "/tmp/hovel.sock" || policies.getOperation != "redteam-lab" {
+		t.Fatalf("inspect request = %q/%q", policies.getSocket, policies.getOperation)
+	}
+	if snapshot, ok := result.JSON.(LaunchKeyPolicySnapshot); !ok || snapshot.Mode != "anyone" {
+		t.Fatalf("inspect json = %#v", result.JSON)
+	}
+
+	set, _ := registry.Find("launch-key", "policy", "set")
+	result, err = set.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"mode": "quorum"},
+		Options: map[string]string{
+			"workspace":         ".hovel",
+			"operation":         "redteam-lab",
+			"quorum":            "2",
+			"heartbeat-timeout": "45s",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policies.setSocket != "/tmp/hovel.sock" {
+		t.Fatalf("set socket = %q, want daemon socket", policies.setSocket)
+	}
+	if !reflect.DeepEqual(policies.setRequest, LaunchKeyPolicySetRequest{
+		Operation:        "redteam-lab",
+		Mode:             "quorum",
+		Quorum:           2,
+		HeartbeatTimeout: "45s",
+	}) {
+		t.Fatalf("set request = %#v", policies.setRequest)
+	}
+	if snapshot, ok := result.JSON.(LaunchKeyPolicySnapshot); !ok || snapshot.Mode != "quorum" || snapshot.Quorum != 2 {
+		t.Fatalf("set json = %#v", result.JSON)
 	}
 }
 
@@ -4216,6 +4390,79 @@ func (s fakeDaemonService) Status(context.Context, services.DaemonStatusRequest)
 		return daemon.NotRunning(".hovel"), nil
 	}
 	return s.status, nil
+}
+
+type fakePendingThrowCoordinator struct {
+	createSocket  string
+	createRequest PendingThrowCreateRequest
+	createErr     error
+	readySocket   string
+	readyID       string
+	readyErr      error
+	cancelSocket  string
+	cancelID      string
+	cancelErr     error
+}
+
+type fakeLaunchKeyPolicyManager struct {
+	getSocket    string
+	getOperation string
+	getSnapshot  LaunchKeyPolicySnapshot
+	getErr       error
+	setSocket    string
+	setRequest   LaunchKeyPolicySetRequest
+	setSnapshot  LaunchKeyPolicySnapshot
+	setErr       error
+}
+
+func (m *fakeLaunchKeyPolicyManager) GetLaunchKeyPolicy(_ context.Context, socketPath, operation string) (LaunchKeyPolicySnapshot, error) {
+	m.getSocket = socketPath
+	m.getOperation = operation
+	if m.getErr != nil {
+		return LaunchKeyPolicySnapshot{}, m.getErr
+	}
+	return m.getSnapshot, nil
+}
+
+func (m *fakeLaunchKeyPolicyManager) SetLaunchKeyPolicy(_ context.Context, socketPath string, req LaunchKeyPolicySetRequest) (LaunchKeyPolicySnapshot, error) {
+	m.setSocket = socketPath
+	m.setRequest = req
+	if m.setErr != nil {
+		return LaunchKeyPolicySnapshot{}, m.setErr
+	}
+	return m.setSnapshot, nil
+}
+
+func (c *fakePendingThrowCoordinator) CreatePendingThrow(_ context.Context, socketPath string, req PendingThrowCreateRequest) (PendingThrowSnapshot, error) {
+	c.createSocket = socketPath
+	c.createRequest = req
+	if c.createErr != nil {
+		return PendingThrowSnapshot{}, c.createErr
+	}
+	return PendingThrowSnapshot{
+		ID:             req.ID,
+		Operation:      req.Operation,
+		Chain:          req.Chain,
+		PlanHash:       req.PlanHash,
+		AllowDangerous: req.AllowDangerous,
+		NowBypass:      req.NowBypass,
+		Ready:          true,
+	}, nil
+}
+
+func (c *fakePendingThrowCoordinator) RequirePendingThrowReady(_ context.Context, socketPath, id string) (PendingThrowSnapshot, error) {
+	c.readySocket = socketPath
+	c.readyID = id
+	if c.readyErr != nil {
+		return PendingThrowSnapshot{ID: id}, c.readyErr
+	}
+	return PendingThrowSnapshot{ID: id, Ready: true}, nil
+}
+
+func (c *fakePendingThrowCoordinator) CancelPendingThrow(_ context.Context, socketPath, id string) error {
+	c.cancelSocket = socketPath
+	c.cancelID = id
+	return c.cancelErr
 }
 
 type fakeRunRecorder struct {

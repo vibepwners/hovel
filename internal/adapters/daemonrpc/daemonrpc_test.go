@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -711,7 +712,7 @@ func TestClientCoordinatesLaunchKeyApprovalsFromLiveEntities(t *testing.T) {
 	)
 	serveTestDaemon(t, socketPath, runs,
 		WithOperatorClock(fixedClock{now: time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)}),
-		WithLaunchKeyPolicy(operatordomain.LaunchKeyPolicy{Enabled: true, HeartbeatTimeout: time.Minute}),
+		WithLaunchKeyPolicy(operatordomain.LaunchKeyPolicy{Mode: operatordomain.LaunchKeyAllConnected, HeartbeatTimeout: time.Minute}),
 	)
 
 	client, err := Dial(socketPath)
@@ -719,16 +720,17 @@ func TestClientCoordinatesLaunchKeyApprovalsFromLiveEntities(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-cli", Kind: "cli", Operation: "redteam-lab"}); err != nil {
+	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-cli", Kind: "cli", Operation: "redteam-lab", ActiveChain: "alpha"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-mcp", Kind: "mcp", Agent: true, Operation: "redteam-lab"}); err != nil {
+	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-mcp", Kind: "mcp", Agent: true, Operation: "redteam-lab", ActiveChain: "alpha"}); err != nil {
 		t.Fatal(err)
 	}
 
 	pending, err := client.CreatePendingThrow(context.Background(), CreatePendingThrowRequest{
 		ID:             "pending-1",
 		Operation:      "redteam-lab",
+		Chain:          "alpha",
 		PlanHash:       "hash-1",
 		AllowDangerous: true,
 	})
@@ -786,7 +788,7 @@ func TestLaunchKeyPendingThrowSnapshotsRequiredEntities(t *testing.T) {
 	)
 	serveTestDaemon(t, socketPath, runs,
 		WithOperatorClock(fixedClock{now: time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)}),
-		WithLaunchKeyPolicy(operatordomain.LaunchKeyPolicy{Enabled: true, HeartbeatTimeout: time.Minute}),
+		WithLaunchKeyPolicy(operatordomain.LaunchKeyPolicy{Mode: operatordomain.LaunchKeyAllConnected, HeartbeatTimeout: time.Minute}),
 	)
 
 	client, err := Dial(socketPath)
@@ -794,12 +796,13 @@ func TestLaunchKeyPendingThrowSnapshotsRequiredEntities(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-cli", Kind: "cli", Operation: "redteam-lab"}); err != nil {
+	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-cli", Kind: "cli", Operation: "redteam-lab", ActiveChain: "alpha"}); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := client.CreatePendingThrow(context.Background(), CreatePendingThrowRequest{
 		ID:        "pending-1",
 		Operation: "redteam-lab",
+		Chain:     "alpha",
 		PlanHash:  "hash-1",
 	})
 	if err != nil {
@@ -809,7 +812,7 @@ func TestLaunchKeyPendingThrowSnapshotsRequiredEntities(t *testing.T) {
 		t.Fatalf("required approvers = %#v, want snapshot %#v", got, want)
 	}
 
-	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-mcp", Kind: "mcp", Agent: true, Operation: "redteam-lab"}); err != nil {
+	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-mcp", Kind: "mcp", Agent: true, Operation: "redteam-lab", ActiveChain: "alpha"}); err != nil {
 		t.Fatal(err)
 	}
 	pending, err = client.ConfirmPendingThrow(context.Background(), ConfirmPendingThrowRequest{
@@ -840,7 +843,7 @@ func TestClientCancelsPendingLaunchKeyThrow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if _, err := client.CreatePendingThrow(context.Background(), CreatePendingThrowRequest{ID: "pending-1", Operation: "redteam-lab", PlanHash: "hash-1"}); err != nil {
+	if _, err := client.CreatePendingThrow(context.Background(), CreatePendingThrowRequest{ID: "pending-1", Operation: "redteam-lab", Chain: "alpha", PlanHash: "hash-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.CancelPendingThrow(context.Background(), PendingThrowRequest{ID: "pending-1"}); err != nil {
@@ -848,6 +851,42 @@ func TestClientCancelsPendingLaunchKeyThrow(t *testing.T) {
 	}
 	if _, err := client.RequirePendingThrowReady(context.Background(), PendingThrowRequest{ID: "pending-1"}); err == nil {
 		t.Fatal("RequirePendingThrowReady returned nil after cancel")
+	}
+}
+
+func TestClientQueriesAndOverridesLaunchKeyPolicy(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs,
+		WithLaunchKeyPolicy(operatordomain.LaunchKeyPolicy{Mode: operatordomain.LaunchKeyAnyone}),
+	)
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	policy, err := client.GetLaunchKeyPolicy(context.Background(), LaunchKeyPolicyRequest{Operation: "redteam-lab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Policy.Mode != "anyone" {
+		t.Fatalf("default policy = %#v, want anyone", policy)
+	}
+	policy, err = client.SetLaunchKeyPolicy(context.Background(), SetLaunchKeyPolicyRequest{Operation: "redteam-lab", Mode: "quorum", Quorum: 2, HeartbeatTimeout: "30s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Operation != "redteam-lab" || policy.Policy.Mode != "quorum" || policy.Policy.Quorum != 2 || policy.Policy.HeartbeatTimeout != "30s" {
+		t.Fatalf("set policy = %#v, want quorum override", policy)
+	}
+	if _, err := client.SetLaunchKeyPolicy(context.Background(), SetLaunchKeyPolicyRequest{Operation: "redteam-lab", Mode: "quorum"}); err == nil || !strings.Contains(err.Error(), "quorum") {
+		t.Fatalf("invalid quorum error = %v, want quorum error", err)
 	}
 }
 

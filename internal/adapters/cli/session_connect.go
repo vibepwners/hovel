@@ -309,11 +309,6 @@ func sessionConnectHelpRequested(fields []string) bool {
 	return false
 }
 
-func parseSessionConnectID(line string) (string, error) {
-	sessionID, _, err := parseSessionConnect(line)
-	return sessionID, err
-}
-
 func parseSessionConnect(line string) (string, SessionConnectOptions, error) {
 	parsed, err := ParseSessionConnectCommand(strings.Fields(line))
 	if err != nil {

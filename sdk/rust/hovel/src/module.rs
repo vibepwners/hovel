@@ -76,6 +76,7 @@ pub struct Info {
     pub summary: String,
     pub description: String,
     pub tags: Vec<String>,
+    pub discovery_context: Vec<(String, Value)>,
 }
 
 /// The configuration contract a module reports.
@@ -83,6 +84,7 @@ pub struct Schema {
     pub chain_config: Vec<Requirement>,
     pub target_config: Vec<Requirement>,
     pub outputs: Vec<(String, Value)>,
+    pub planning_context: Vec<(String, Value)>,
 }
 
 impl Default for Schema {
@@ -91,6 +93,7 @@ impl Default for Schema {
             chain_config: Vec::new(),
             target_config: Vec::new(),
             outputs: Vec::new(),
+            planning_context: Vec::new(),
         }
     }
 }

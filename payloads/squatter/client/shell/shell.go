@@ -1239,7 +1239,7 @@ type CLIOptions struct {
 	SMBPort  int
 }
 
-func ParseCLI(args []string) CLIOptions {
+func ParseCLI(args []string) (CLIOptions, error) {
 	opts := CLIOptions{Mode: ModeShell, Streams: 3, Host: "127.0.0.1", Port: "9100"}
 	positionals := make([]string, 0, 2)
 	for i := 0; i < len(args); i++ {
@@ -1249,36 +1249,50 @@ func ParseCLI(args []string) CLIOptions {
 		case "--streams":
 			opts.Mode = ModeStreams
 			i++
-			if i < len(args) {
-				opts.Streams, _ = strconv.Atoi(args[i])
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			streams, err := strconv.Atoi(args[i])
+			if err != nil || streams < 1 {
+				return CLIOptions{}, fmt.Errorf("--streams must be a positive integer")
+			}
+			opts.Streams = streams
 		case "--smb":
 			opts.SMB = true
 		case "--domain":
 			i++
-			if i < len(args) {
-				opts.Domain = args[i]
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			opts.Domain = args[i]
 		case "--user", "--username":
 			i++
-			if i < len(args) {
-				opts.Username = args[i]
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			opts.Username = args[i]
 		case "--password":
 			i++
-			if i < len(args) {
-				opts.Password = args[i]
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			opts.Password = args[i]
 		case "--pipe":
 			i++
-			if i < len(args) {
-				opts.Pipe = args[i]
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			opts.Pipe = args[i]
 		case "--smb-port":
 			i++
-			if i < len(args) {
-				opts.SMBPort, _ = strconv.Atoi(args[i])
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			port, err := strconv.Atoi(args[i])
+			if err != nil || port < 1 || port > 65535 {
+				return CLIOptions{}, fmt.Errorf("--smb-port must be an integer between 1 and 65535")
+			}
+			opts.SMBPort = port
 		default:
 			positionals = append(positionals, args[i])
 		}
@@ -1289,5 +1303,5 @@ func ParseCLI(args []string) CLIOptions {
 	if len(positionals) > 1 {
 		opts.Port = positionals[1]
 	}
-	return opts
+	return opts, nil
 }

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -343,7 +342,8 @@ func TestExecuteLineUsesCommandMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	workspacePath := t.TempDir()
 
-	code := newTestApp().ExecuteLine(context.Background(), "control init --workspace "+workspacePath+" --json", &stdout, &stderr)
+	app := newTestApp()
+	code := app.ExecuteLine(context.Background(), "control init --workspace "+workspacePath+" --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -833,80 +833,7 @@ const (
 
 func installRPCModulePackage(t *testing.T, workspace, name, moduleType, schemaJSON, stepsJSON string) {
 	t.Helper()
-	moduleRoot := filepath.Join(t.TempDir(), name)
-	if err := os.MkdirAll(filepath.Join(moduleRoot, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
-kind: ModulePackage
-metadata:
-  name: `+name+`
-  version: 0.1.0
-  moduleType: `+moduleType+`
-runtime:
-  protocol: jsonrpc-stdio
-launch:
-  - selector:
-      os: linux
-      arch: amd64
-    command: ["bin/`+name+`"]
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	script := `#!/usr/bin/env python3
-import json
-import sys
-
-INFO = {
-    "name": ` + strconv.Quote(name) + `,
-    "version": "0.1.0",
-    "moduleType": ` + strconv.Quote(moduleType) + `,
-    "summary": "installed test module",
-    "tags": [],
-}
-SCHEMA = json.loads(` + strconv.Quote(schemaJSON) + `)
-STEPS = json.loads(` + strconv.Quote(stepsJSON) + `)
-
-def read():
-    headers = {}
-    while True:
-        line = sys.stdin.buffer.readline()
-        if line in (b"\r\n", b"\n", b""):
-            break
-        key, value = line.decode().split(":", 1)
-        headers[key.lower()] = value.strip()
-    length = int(headers.get("content-length", "0"))
-    if length == 0:
-        return None
-    return json.loads(sys.stdin.buffer.read(length))
-
-def send(message):
-    body = json.dumps(message).encode()
-    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body))
-    sys.stdout.buffer.write(body)
-    sys.stdout.buffer.flush()
-
-while True:
-    request = read()
-    if not request:
-        break
-    method = request.get("method")
-    rid = request.get("id")
-    if method == "handshake":
-        send({"jsonrpc": "2.0", "id": rid, "result": INFO})
-    elif method == "schema":
-        send({"jsonrpc": "2.0", "id": rid, "result": SCHEMA})
-    elif method == "step.describe":
-        send({"jsonrpc": "2.0", "id": rid, "result": STEPS})
-    elif method == "shutdown":
-        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
-        break
-    else:
-        send({"jsonrpc": "2.0", "id": rid, "error": {"message": "unknown method " + str(method)}})
-`
-	if err := os.WriteFile(filepath.Join(moduleRoot, "bin", name), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	moduleRoot := writeRPCModulePackage(t, name, moduleType, schemaJSON, stepsJSON)
 	if _, err := modulepackage.InstallLink(modulepackage.InstallOptions{
 		Workspace: workspace,
 		SourceDir: moduleRoot,
@@ -1070,15 +997,6 @@ func TestWorkspaceSessionIsSharedAcrossCLIInstances(t *testing.T) {
 func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func containsSuggestion(suggestions []prompt.Suggest, want string) bool {
-	for _, suggestion := range suggestions {
-		if suggestion.Text == want {
 			return true
 		}
 	}

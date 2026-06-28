@@ -742,10 +742,13 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "result": {
             "name": "stepper",
             "version": "v0.0.0-test",
-            "moduleType": "payload_provider"
+            "moduleType": "payload_provider",
+            "discoveryContext": {"summary": "Finds SMB paths", "keywords": ["ms17-010"]}
         }})
     elif method == "schema":
-        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
+        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {},
+            "planningContext": {"risk": {"level": "medium", "reasons": ["opens a session"]}}
+        }})
     elif method == "step.describe":
         send({"jsonrpc": "2.0", "id": rid, "result": {"version": "contracts-v1", "steps": [{
             "id": "squatter.connect_smb",
@@ -757,6 +760,7 @@ while True:
             "produces": [
                 {"type": "SessionRef", "schemaVersion": "v1", "attributes": {"provider": "squatter", "transport": "smb-named-pipe"}}
             ],
+            "context": {"summary": "Connect to SMB named-pipe payload", "capabilities": ["session.shell"]},
             "prepare": {"materializes": []}
         }]}})
     elif method == "shutdown":
@@ -774,6 +778,12 @@ while True:
 	if module.StepContracts.Version != "contracts-v1" {
 		t.Fatalf("contract version = %q", module.StepContracts.Version)
 	}
+	if module.Discovery.Summary != "Finds SMB paths" || module.Discovery.Keywords[0] != "ms17-010" {
+		t.Fatalf("discovery context = %#v", module.Discovery)
+	}
+	if module.Planning.Risk.Level != "medium" {
+		t.Fatalf("planning context = %#v", module.Planning)
+	}
 	if len(module.StepContracts.Steps) != 1 {
 		t.Fatalf("steps = %#v, want one", module.StepContracts.Steps)
 	}
@@ -783,6 +793,9 @@ while True:
 	}
 	if step.Requires[1].Attributes["protocol"] != "smb" {
 		t.Fatalf("credential requirement = %#v", step.Requires[1])
+	}
+	if step.Context.Summary != "Connect to SMB named-pipe payload" || step.Context.Capabilities[0] != "session.shell" {
+		t.Fatalf("step context = %#v", step.Context)
 	}
 }
 

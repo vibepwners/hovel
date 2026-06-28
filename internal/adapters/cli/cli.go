@@ -43,6 +43,7 @@ type App struct {
 	moduleCount   int
 	workspacePath string
 	surface       *promptSurface
+	workspaceIDs  map[string]bool
 }
 
 func NewApp() App {
@@ -136,7 +137,7 @@ func (a App) withDaemonSession(ctx context.Context, client *daemonrpc.Client) Ap
 	session := daemonrpc.NewSessionClient(ctx, client)
 	a.daemonClient = client
 	a.session = session
-	a.commands = commandmode.NewAppWithSessionAndModules(session, a.modules)
+	a.commands = commandmode.NewAppWithSessionModulesAndWorkspace(session, a.modules, a.workspacePath)
 	a.wizard = newInteractiveConfigWizard(session, a.modules)
 	return a
 }
@@ -147,11 +148,11 @@ func (a *App) refreshWorkspaceModules(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(installed) == 0 {
-		return nil
-	}
-	a.modules = mergeModuleCatalogs(a.modules, modulecatalog.New(installed...))
-	a.commands = commandmode.NewAppWithSessionAndModules(a.session, a.modules)
+	base := moduleCatalogWithoutIDs(a.modules, a.workspaceIDs)
+	workspaceCatalog := modulecatalog.New(installed...)
+	a.modules = mergeModuleCatalogs(base, workspaceCatalog)
+	a.workspaceIDs = moduleIDSet(installed)
+	a.commands = commandmode.NewAppWithSessionModulesAndWorkspace(a.session, a.modules, workspacePath)
 	if a.wizard == nil {
 		a.wizard = newInteractiveConfigWizard(a.session, a.modules)
 	} else {
@@ -202,6 +203,28 @@ func mergeModuleCatalogs(catalogs ...modulecatalog.Catalog) modulecatalog.Catalo
 		modules = append(modules, catalog.List()...)
 	}
 	return modulecatalog.New(modules...)
+}
+
+func moduleCatalogWithoutIDs(catalog modulecatalog.Catalog, ids map[string]bool) modulecatalog.Catalog {
+	if len(ids) == 0 {
+		return catalog
+	}
+	modules := catalog.List()
+	filtered := modules[:0]
+	for _, module := range modules {
+		if !ids[module.ID] {
+			filtered = append(filtered, module)
+		}
+	}
+	return modulecatalog.New(filtered...)
+}
+
+func moduleIDSet(modules []modulecatalog.Module) map[string]bool {
+	ids := make(map[string]bool, len(modules))
+	for _, module := range modules {
+		ids[module.ID] = true
+	}
+	return ids
 }
 
 func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surface *promptSurface, fallback io.Writer) func() {
@@ -300,7 +323,7 @@ func (a App) promptWriter() prompt.ConsoleWriter {
 	return newPromptSurface(prompt.NewStdoutWriter())
 }
 
-func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
+func (a *App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
 	if err := a.loadWorkspaceSession(ctx); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -355,6 +378,12 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 		}()
 	}
 	code := a.commands.ExecuteLine(ctx, trimmed, stdout, stderr)
+	if code == 0 && moduleCatalogMutationCommand(trimmed) {
+		if err := a.refreshWorkspaceModules(ctx); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+	}
 	if err := a.saveWorkspaceSession(ctx); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -389,6 +418,24 @@ func commandLineUsesWorkspace(line string) bool {
 	}
 	switch fields[0] {
 	case "throw", "throws", "confirm", "review", "artifact", "artifacts", "session", "sessions", "module", "modules":
+		return true
+	default:
+		return false
+	}
+}
+
+func moduleCatalogMutationCommand(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return false
+	}
+	switch fields[0] {
+	case "module", "modules":
+	default:
+		return false
+	}
+	switch fields[1] {
+	case "install", "bulk-install", "uninstall":
 		return true
 	default:
 		return false
@@ -476,7 +523,7 @@ func (a App) PromptPrefix() string {
 	return a.theme.PromptPrefix(state.ActiveOperation, state.ActiveChain, len(state.Steps), len(state.Targets))
 }
 
-func (a App) Completer(document prompt.Document) []prompt.Suggest {
+func (a *App) Completer(document prompt.Document) []prompt.Suggest {
 	if a.surface != nil {
 		a.surface.SetDocument(document)
 	}
@@ -1545,14 +1592,6 @@ const hovelCompactWordmark = "                          \n" +
 
 const wideMastheadColumns = 69
 
-func splitStyledLines(values []string) []string {
-	var lines []string
-	for _, value := range values {
-		lines = append(lines, strings.Split(value, "\n")...)
-	}
-	return lines
-}
-
 func centerBlock(value string, width int) string {
 	lines := strings.Split(value, "\n")
 	for i, line := range lines {
@@ -1572,31 +1611,4 @@ func thickRoundedBorder() lipgloss.Border {
 		BottomLeft:  "╰",
 		BottomRight: "╯",
 	}
-}
-
-func joinColumns(left, right []string, gap int) string {
-	width := 0
-	for _, line := range left {
-		if lipgloss.Width(line) > width {
-			width = lipgloss.Width(line)
-		}
-	}
-	var out []string
-	rows := len(left)
-	if len(right) > rows {
-		rows = len(right)
-	}
-	spacer := strings.Repeat(" ", gap)
-	for i := 0; i < rows; i++ {
-		leftLine := ""
-		if i < len(left) {
-			leftLine = left[i]
-		}
-		rightLine := ""
-		if i < len(right) {
-			rightLine = right[i]
-		}
-		out = append(out, leftLine+strings.Repeat(" ", width-lipgloss.Width(leftLine))+spacer+rightLine)
-	}
-	return strings.Join(out, "\n")
 }

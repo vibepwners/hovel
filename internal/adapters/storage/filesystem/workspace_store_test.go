@@ -210,6 +210,49 @@ func TestMaterializeArtifactKeepsSameBytesDistinctAcrossThrows(t *testing.T) {
 	}
 }
 
+func TestMaterializeArtifactKeepsSameNameDistinctWithinRun(t *testing.T) {
+	store := NewWorkspaceStore()
+	workspacePath := filepath.Join(t.TempDir(), ".hovel")
+	materialization := commands.ArtifactMaterialization{
+		Workspace: workspacePath,
+		ThrowID:   "throw-one",
+		RunID:     "run-1",
+		ModuleID:  "mock-exploit",
+		Target:    "mock://target",
+		Artifact: commands.Artifact{
+			Name: "transcript.txt",
+			Kind: "text/plain",
+		},
+	}
+	first := materialization
+	first.Artifact.Data = "first bytes"
+	firstRecord, err := store.MaterializeArtifact(context.Background(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := materialization
+	second.Artifact.Data = "second bytes"
+	secondRecord, err := store.MaterializeArtifact(context.Background(), second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if firstRecord.ID == secondRecord.ID || firstRecord.Path == secondRecord.Path {
+		t.Fatalf("records collided: first=%#v second=%#v", firstRecord, secondRecord)
+	}
+	firstBytes, err := os.ReadFile(filepath.Join(workspacePath, firstRecord.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBytes, err := os.ReadFile(filepath.Join(workspacePath, secondRecord.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstBytes) != "first bytes" || string(secondBytes) != "second bytes" {
+		t.Fatalf("artifact bytes = %q/%q", string(firstBytes), string(secondBytes))
+	}
+}
+
 func TestWorkspaceStoreDelegatesInstalledPayloadInventoryToSQLite(t *testing.T) {
 	store := NewWorkspaceStore()
 	workspacePath := filepath.Join(t.TempDir(), ".hovel")
@@ -289,7 +332,7 @@ func TestMaterializeArtifactCopiesFileArtifactIntoWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPath := filepath.Join("artifacts", "throw-mock", "run-1", "loot.txt")
+	wantPath := filepath.Join("artifacts", "throw-mock", "run-1", record.ID, "loot.txt")
 	if record.Path != wantPath {
 		t.Fatalf("path = %q, want workspace artifact path %q", record.Path, wantPath)
 	}

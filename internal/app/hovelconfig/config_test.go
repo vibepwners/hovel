@@ -111,6 +111,24 @@ logging:
 	}
 }
 
+func TestLoadParsesLaunchKeyPolicy(t *testing.T) {
+	path := writeFile(t, t.TempDir(), "config.yaml", `apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+policy:
+  launchKey:
+    mode: quorum
+    quorum: 2
+    heartbeatTimeout: 45s
+`)
+	config, _, err := Load(Options{ExplicitPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Policy.LaunchKey.Mode != "quorum" || config.Policy.LaunchKey.Quorum != 2 || config.Policy.LaunchKey.HeartbeatTimeout != "45s" {
+		t.Fatalf("launch key policy = %#v", config.Policy.LaunchKey)
+	}
+}
+
 func writeFile(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)

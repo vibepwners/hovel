@@ -17,13 +17,14 @@ func TestCoordinatorBlocksStartUntilRequiredApproversConfirm(t *testing.T) {
 	pending, err := coordinator.CreatePending(CreatePendingRequest{
 		ID:        "pending-1",
 		Operation: "op-alpha",
+		Chain:     "chain-alpha",
 		PlanHash:  "hash-1",
 		Flags:     flags,
 		Entities: []operatordomain.Entity{
-			mustEntity(t, operatordomain.EntityArgs{ID: "entity-cli", Kind: operatordomain.KindCLI, Operation: "op-alpha", ConnectedAt: now, LastSeenAt: now}),
-			mustEntity(t, operatordomain.EntityArgs{ID: "entity-mcp", Kind: operatordomain.KindMCP, Agent: true, Operation: "op-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, operatordomain.EntityArgs{ID: "entity-cli", Kind: operatordomain.KindCLI, Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, operatordomain.EntityArgs{ID: "entity-mcp", Kind: operatordomain.KindMCP, Agent: true, Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
 		},
-		Policy: operatordomain.LaunchKeyPolicy{Enabled: true, HeartbeatTimeout: time.Minute},
+		Policy: operatordomain.LaunchKeyPolicy{Mode: operatordomain.LaunchKeyAllConnected, HeartbeatTimeout: time.Minute},
 		Now:    now,
 	})
 	if err != nil {
@@ -90,11 +91,12 @@ func TestCoordinatorAllowsStartWhenLaunchKeyDisabled(t *testing.T) {
 	pending, err := coordinator.CreatePending(CreatePendingRequest{
 		ID:        "pending-1",
 		Operation: "op-alpha",
+		Chain:     "chain-alpha",
 		PlanHash:  "hash-1",
 		Entities: []operatordomain.Entity{
-			mustEntity(t, operatordomain.EntityArgs{ID: "entity-cli", Kind: operatordomain.KindCLI, Operation: "op-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, operatordomain.EntityArgs{ID: "entity-cli", Kind: operatordomain.KindCLI, Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
 		},
-		Policy: operatordomain.LaunchKeyPolicy{Enabled: false, HeartbeatTimeout: time.Minute},
+		Policy: operatordomain.LaunchKeyPolicy{Mode: operatordomain.LaunchKeyAnyone, HeartbeatTimeout: time.Minute},
 		Now:    now,
 	})
 	if err != nil {
@@ -114,8 +116,9 @@ func TestCoordinatorCancelRemovesPendingThrow(t *testing.T) {
 	if _, err := coordinator.CreatePending(CreatePendingRequest{
 		ID:        "pending-1",
 		Operation: "op-alpha",
+		Chain:     "chain-alpha",
 		PlanHash:  "hash-1",
-		Policy:    operatordomain.LaunchKeyPolicy{Enabled: false},
+		Policy:    operatordomain.LaunchKeyPolicy{Mode: operatordomain.LaunchKeyAnyone},
 		Now:       now,
 	}); err != nil {
 		t.Fatal(err)

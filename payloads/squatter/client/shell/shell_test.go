@@ -212,7 +212,7 @@ func TestSuggestionsCoverTopLevelAndActiveModule(t *testing.T) {
 }
 
 func TestParseCLISupportsSMBNamedPipe(t *testing.T) {
-	opts := ParseCLI([]string{
+	opts, err := ParseCLI([]string{
 		"192.0.2.10",
 		"--smb",
 		"--pipe", `\pipe\squatter`,
@@ -222,6 +222,9 @@ func TestParseCLISupportsSMBNamedPipe(t *testing.T) {
 		"--smb-port", "445",
 		"--demo",
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if !opts.SMB {
 		t.Fatal("SMB = false, want true")
@@ -237,6 +240,19 @@ func TestParseCLISupportsSMBNamedPipe(t *testing.T) {
 	}
 	if opts.Mode != ModeDemo {
 		t.Fatalf("Mode = %q, want demo", opts.Mode)
+	}
+}
+
+func TestParseCLIRejectsInvalidNumericFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"--streams", "nope"},
+		{"--streams", "0"},
+		{"--smb-port", "nope"},
+		{"--smb-port", "70000"},
+	} {
+		if _, err := ParseCLI(args); err == nil {
+			t.Fatalf("ParseCLI(%#v) returned nil error", args)
+		}
 	}
 }
 

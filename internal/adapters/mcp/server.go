@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -40,8 +41,14 @@ const (
 	ToolOperationList        = "hovel_operation_list"
 	ToolWorkspaceSnapshot    = "hovel_workspace_snapshot"
 	ToolCatalogSnapshot      = "hovel_catalog_snapshot"
+	ToolModuleSearch         = "hovel_module_search"
+	ToolModuleInspect        = "hovel_module_inspect"
+	ToolChainSuggest         = "hovel_chain_suggest"
+	ToolLaunchKeyPolicy      = "hovel_launch_key_policy"
 	ToolChainApply           = "hovel_chain_apply"
 	ToolCommandRun           = "hovel_command_run"
+	ToolThrowPlan            = "hovel_throw_plan"
+	ToolThrowConfirm         = "hovel_throw_confirm"
 	ToolThrowStart           = "hovel_throw_start"
 	ToolInstalledPayloadList = "hovel_installed_payload_list"
 	ToolPayloadCmd           = "hovel_payload_cmd"
@@ -61,6 +68,9 @@ type Daemon interface {
 	DetachEntity(context.Context, daemonrpc.DetachEntityRequest) error
 	ListEntities(context.Context, daemonrpc.ListEntitiesRequest) (daemonrpc.ListEntitiesResponse, error)
 	Snapshot(context.Context, daemonrpc.SnapshotRequest) (daemonrpc.SnapshotResponse, error)
+	GetLaunchKeyPolicy(context.Context, daemonrpc.LaunchKeyPolicyRequest) (daemonrpc.LaunchKeyPolicyResponse, error)
+	CreatePendingThrow(context.Context, daemonrpc.CreatePendingThrowRequest) (daemonrpc.PendingThrowResponse, error)
+	ConfirmPendingThrow(context.Context, daemonrpc.ConfirmPendingThrowRequest) (daemonrpc.PendingThrowResponse, error)
 	ListPayloadCommands(context.Context, daemonrpc.PayloadCommandListRequest) (daemonrpc.PayloadCommandListResponse, error)
 	RunPayloadCommand(context.Context, daemonrpc.PayloadCommandRunRequest) (daemonrpc.PayloadCommandRunResponse, error)
 	Close() error
@@ -298,6 +308,30 @@ func (s *Server) RegisterTools(server *mcpsdk.Server) {
 		Annotations: readOnlyTool("Catalog Snapshot"),
 	}, s.catalogSnapshot)
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        ToolModuleSearch,
+		Title:       "Search Modules",
+		Description: "Search the effective module catalog by ID, summary, tags, and optional module-authored context.",
+		Annotations: readOnlyTool("Search Modules"),
+	}, s.moduleSearch)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        ToolModuleInspect,
+		Title:       "Inspect Module",
+		Description: "Return full structured context for one module, including config requirements and step contracts.",
+		Annotations: readOnlyTool("Inspect Module"),
+	}, s.moduleInspect)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        ToolChainSuggest,
+		Title:       "Suggest Chain",
+		Description: "Return read-only chain candidates and hovel_chain_apply drafts from catalog context.",
+		Annotations: readOnlyTool("Suggest Chain"),
+	}, s.chainSuggest)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        ToolLaunchKeyPolicy,
+		Title:       "Launch-Key Policy",
+		Description: "Return the effective launch-key policy for an operation. MCP cannot change this policy.",
+		Annotations: readOnlyTool("Launch-Key Policy"),
+	}, s.launchKeyPolicy)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        ToolChainApply,
 		Title:       "Apply Chain State",
 		Description: "Idempotently create/select an operation and chain, add missing modules and targets, set config, and validate.",
@@ -309,6 +343,18 @@ func (s *Server) RegisterTools(server *mcpsdk.Server) {
 		Description: "Run one Hovel command-mode command through the daemon-backed MCP operator session. Use this for setup and inspection commands such as op use, chain create, chain add, target add, target config set, chain config set, validate, payloads list for provider-buildable payloads, payloads installed for installed payload records, artifacts list, and chain logs. Pass args without a leading hovel or run.",
 		Annotations: destructiveTool("Run Hovel Command"),
 	}, s.commandRun)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        ToolThrowPlan,
+		Title:       "Plan Throw",
+		Description: "Create or refresh a persisted throw plan and launch-key pending approval record without executing.",
+		Annotations: destructiveTool("Plan Throw"),
+	}, s.throwPlan)
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        ToolThrowConfirm,
+		Title:       "Confirm Throw",
+		Description: "Approve a pending throw for this MCP entity with an explicit nuclear key string and exact plan hash.",
+		Annotations: destructiveTool("Confirm Throw"),
+	}, s.throwConfirm)
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        ToolThrowStart,
 		Title:       "Start Throw",
@@ -359,6 +405,21 @@ type throwStartInput struct {
 	AllowDangerous bool   `json:"allowDangerous,omitempty" jsonschema:"Set true only when the caller explicitly authorized modules tagged dangerous."`
 }
 
+type throwPlanInput struct {
+	Operation      string `json:"operation,omitempty" jsonschema:"Optional operation name. Defaults to current operation."`
+	Chain          string `json:"chain,omitempty" jsonschema:"Chain name. Defaults to current chain."`
+	AllowDangerous bool   `json:"allowDangerous,omitempty" jsonschema:"Whether dangerous modules are explicitly authorized for this plan."`
+	NowBypass      bool   `json:"nowBypass,omitempty" jsonschema:"Whether the later start is expected to use an auditable now bypass."`
+}
+
+type throwConfirmInput struct {
+	PendingID      string `json:"pendingId" jsonschema:"Pending throw ID returned by hovel_throw_plan."`
+	PlanHash       string `json:"planHash" jsonschema:"Exact plan hash returned by hovel_throw_plan."`
+	NuclearKey     string `json:"nuclearKey" jsonschema:"Explicit caller-provided approval phrase; must be non-empty."`
+	AllowDangerous bool   `json:"allowDangerous,omitempty" jsonschema:"Must match the planned dangerous-module flag."`
+	NowBypass      bool   `json:"nowBypass,omitempty" jsonschema:"Must match the planned now-bypass flag."`
+}
+
 type payloadCommandListInput struct {
 	Payload string `json:"payload" jsonschema:"Installed payload handle or record ID."`
 }
@@ -375,6 +436,21 @@ type commandRunInput struct {
 	Args      []string `json:"args" jsonschema:"Command arguments without leading hovel or run. Examples: [\"op\",\"use\",\"lab\"], [\"chain\",\"create\",\"ms17-010-squatter\"], [\"target\",\"add\",\"192.168.122.142\"]."`
 	Operation string   `json:"operation,omitempty" jsonschema:"Optional operation context to select before running the command. Defaults to this MCP operator's current operation."`
 	Chain     string   `json:"chain,omitempty" jsonschema:"Optional chain context to select before running the command. Defaults to this MCP operator's active chain."`
+}
+
+type moduleSearchInput struct {
+	Query string `json:"query,omitempty" jsonschema:"Search text from the caller's intent, target, platform, CVE, or desired capability."`
+	Type  string `json:"type,omitempty" jsonschema:"Optional module type filter: survey, exploit, or payload_provider."`
+}
+
+type moduleInspectInput struct {
+	Module string `json:"module" jsonschema:"Module ID or latest-version alias."`
+}
+
+type chainSuggestInput struct {
+	Intent  string   `json:"intent,omitempty" jsonschema:"Caller intent for the chain."`
+	Targets []string `json:"targets,omitempty" jsonschema:"Known target identifiers or hosts."`
+	Query   string   `json:"query,omitempty" jsonschema:"Optional additional catalog search query."`
 }
 
 type chainApplyInput struct {
@@ -432,16 +508,42 @@ type catalogSnapshotOutput struct {
 }
 
 type moduleOutput struct {
-	ID           string                      `json:"id"`
-	Name         string                      `json:"name,omitempty"`
-	Type         string                      `json:"type"`
-	Version      string                      `json:"version,omitempty"`
-	Summary      string                      `json:"summary,omitempty"`
-	Tags         []string                    `json:"tags,omitempty"`
-	Enabled      bool                        `json:"enabled"`
-	Dangerous    bool                        `json:"dangerous,omitempty"`
-	ChainConfig  []modulecatalog.Requirement `json:"chainConfig,omitempty"`
-	TargetConfig []modulecatalog.Requirement `json:"targetConfig,omitempty"`
+	ID           string                       `json:"id"`
+	Name         string                       `json:"name,omitempty"`
+	Type         string                       `json:"type"`
+	Version      string                       `json:"version,omitempty"`
+	Summary      string                       `json:"summary,omitempty"`
+	Description  string                       `json:"description,omitempty"`
+	Tags         []string                     `json:"tags,omitempty"`
+	Enabled      bool                         `json:"enabled"`
+	Dangerous    bool                         `json:"dangerous,omitempty"`
+	ChainConfig  []modulecatalog.Requirement  `json:"chainConfig,omitempty"`
+	TargetConfig []modulecatalog.Requirement  `json:"targetConfig,omitempty"`
+	Discovery    *modulecatalog.Context       `json:"discoveryContext,omitempty"`
+	Planning     *modulecatalog.Context       `json:"planningContext,omitempty"`
+	Steps        []commands.ModuleStepPayload `json:"steps,omitempty"`
+}
+
+type moduleSearchOutput struct {
+	Query   string         `json:"query,omitempty"`
+	Modules []moduleOutput `json:"modules"`
+}
+
+type moduleInspectOutput struct {
+	Module moduleOutput `json:"module"`
+}
+
+type chainSuggestOutput struct {
+	Intent     string                  `json:"intent,omitempty"`
+	Candidates []chainSuggestionOutput `json:"candidates"`
+}
+
+type chainSuggestionOutput struct {
+	Summary    string                     `json:"summary,omitempty"`
+	Modules    []string                   `json:"modules"`
+	Targets    []string                   `json:"targets,omitempty"`
+	ChainApply chainApplyInput            `json:"chainApply"`
+	Risk       *modulecatalog.RiskContext `json:"risk,omitempty"`
 }
 
 type operationOutput struct {
@@ -470,6 +572,19 @@ type throwStartOutput struct {
 	Results           []commands.RunPayload     `json:"results"`
 	InstalledPayloads []installedPayloadStatus  `json:"installedPayloads,omitempty"`
 	Next              []string                  `json:"next,omitempty"`
+}
+
+type throwPlanOutput struct {
+	Operation string                            `json:"operation,omitempty"`
+	Chain     string                            `json:"chain"`
+	Plan      commands.ThrowPlanPayload         `json:"plan"`
+	Pending   daemonrpc.PendingThrowResponse    `json:"pending"`
+	Policy    daemonrpc.LaunchKeyPolicyResponse `json:"policy"`
+}
+
+type throwConfirmOutput struct {
+	Pending            daemonrpc.PendingThrowResponse `json:"pending"`
+	NuclearKeyAccepted bool                           `json:"nuclearKeyAccepted"`
 }
 
 type payloadCommandListOutput struct {
@@ -579,6 +694,83 @@ func (s *Server) catalogSnapshot(ctx context.Context, _ *mcpsdk.CallToolRequest,
 	return nil, s.catalogSnapshotValue(ctx), nil
 }
 
+func (s *Server) moduleSearch(ctx context.Context, _ *mcpsdk.CallToolRequest, input moduleSearchInput) (*mcpsdk.CallToolResult, moduleSearchOutput, error) {
+	catalog, err := s.mcpCommandCatalog(ctx, []string{"module", "list"})
+	if err != nil {
+		return nil, moduleSearchOutput{}, err
+	}
+	modules := catalog.Search(input.Query)
+	if strings.TrimSpace(input.Type) != "" {
+		filtered := modules[:0]
+		for _, module := range modules {
+			if string(module.Type) == strings.TrimSpace(input.Type) {
+				filtered = append(filtered, module)
+			}
+		}
+		modules = filtered
+	}
+	return nil, moduleSearchOutput{
+		Query:   strings.TrimSpace(input.Query),
+		Modules: moduleOutputs(modules),
+	}, nil
+}
+
+func (s *Server) moduleInspect(ctx context.Context, _ *mcpsdk.CallToolRequest, input moduleInspectInput) (*mcpsdk.CallToolResult, moduleInspectOutput, error) {
+	catalog, err := s.mcpCommandCatalog(ctx, []string{"module", "inspect"})
+	if err != nil {
+		return nil, moduleInspectOutput{}, err
+	}
+	module, ok := catalog.Find(input.Module)
+	if !ok {
+		return nil, moduleInspectOutput{}, fmt.Errorf("module %s does not exist", input.Module)
+	}
+	return nil, moduleInspectOutput{Module: moduleOutputFromModuleWithSteps(module, catalog)}, nil
+}
+
+func (s *Server) chainSuggest(ctx context.Context, _ *mcpsdk.CallToolRequest, input chainSuggestInput) (*mcpsdk.CallToolResult, chainSuggestOutput, error) {
+	query := strings.TrimSpace(strings.Join([]string{input.Intent, input.Query, strings.Join(input.Targets, " ")}, " "))
+	_, search, err := s.moduleSearch(ctx, nil, moduleSearchInput{Query: query})
+	if err != nil {
+		return nil, chainSuggestOutput{}, err
+	}
+	limit := len(search.Modules)
+	if limit > 5 {
+		limit = 5
+	}
+	candidates := make([]chainSuggestionOutput, 0, limit)
+	for _, module := range search.Modules[:limit] {
+		apply := chainApplyInput{
+			Chain:   suggestedChainName(input.Intent, module.ID),
+			Modules: []string{module.ID},
+			Targets: append([]string(nil), input.Targets...),
+		}
+		candidate := chainSuggestionOutput{
+			Summary:    module.Summary,
+			Modules:    []string{module.ID},
+			Targets:    append([]string(nil), input.Targets...),
+			ChainApply: apply,
+		}
+		if module.Planning != nil && module.Planning.Risk.Level != "" {
+			risk := module.Planning.Risk
+			candidate.Risk = &risk
+		}
+		candidates = append(candidates, candidate)
+	}
+	return nil, chainSuggestOutput{Intent: strings.TrimSpace(input.Intent), Candidates: candidates}, nil
+}
+
+func (s *Server) launchKeyPolicy(ctx context.Context, _ *mcpsdk.CallToolRequest, input operationContextInput) (*mcpsdk.CallToolResult, daemonrpc.LaunchKeyPolicyResponse, error) {
+	if err := s.refresh(ctx); err != nil {
+		return nil, daemonrpc.LaunchKeyPolicyResponse{}, err
+	}
+	operation := contextOperation(input.Operation, s.currentOperation())
+	out, err := s.daemon.GetLaunchKeyPolicy(ctx, daemonrpc.LaunchKeyPolicyRequest{Operation: operation})
+	if err != nil {
+		return nil, daemonrpc.LaunchKeyPolicyResponse{}, err
+	}
+	return nil, out, nil
+}
+
 func (s *Server) chainApply(ctx context.Context, _ *mcpsdk.CallToolRequest, input chainApplyInput) (*mcpsdk.CallToolResult, chainApplyOutput, error) {
 	operation := contextOperation(input.Operation, s.currentOperation())
 	chain := strings.TrimSpace(input.Chain)
@@ -648,6 +840,9 @@ func (s *Server) commandRun(ctx context.Context, _ *mcpsdk.CallToolRequest, inpu
 	if len(args) == 0 {
 		return nil, commandRunOutput{}, errors.New("args are required")
 	}
+	if mcpCommandMutatesHumanOnlyPolicy(args) {
+		return nil, commandRunOutput{}, errors.New("launch-key policy changes are human-only; use the CLI, not MCP")
+	}
 	input.Args = args
 	if strings.TrimSpace(input.Operation) == "" {
 		input.Operation = strings.TrimSpace(s.currentOperation())
@@ -673,6 +868,15 @@ func (s *Server) commandRun(ctx context.Context, _ *mcpsdk.CallToolRequest, inpu
 		out.Chain = strings.TrimSpace(input.Chain)
 	}
 	return nil, out, nil
+}
+
+func mcpCommandMutatesHumanOnlyPolicy(args []string) bool {
+	if len(args) < 3 {
+		return false
+	}
+	return strings.TrimSpace(args[0]) == "launch-key" &&
+		strings.TrimSpace(args[1]) == "policy" &&
+		strings.TrimSpace(args[2]) == "set"
 }
 
 func (s *Server) requireCommandOK(ctx context.Context, input commandRunInput) (commandRunOutput, error) {
@@ -825,6 +1029,78 @@ func (s *Server) applySchemaDefaults(ctx context.Context, operation, chain strin
 		}
 	}
 	return nil
+}
+
+func (s *Server) throwPlan(ctx context.Context, _ *mcpsdk.CallToolRequest, input throwPlanInput) (*mcpsdk.CallToolResult, throwPlanOutput, error) {
+	if err := s.refresh(ctx); err != nil {
+		return nil, throwPlanOutput{}, err
+	}
+	operation := contextOperation(input.Operation, s.currentOperation())
+	chain := strings.TrimSpace(input.Chain)
+	if chain == "" {
+		chain = s.currentActiveChain()
+	}
+	if chain == "" {
+		return nil, throwPlanOutput{}, errors.New("chain is required; provide chain or attach hovel mcp with --chain")
+	}
+	out, err := s.requireCommandOK(ctx, commandRunInput{Operation: operation, Chain: chain, Args: []string{"throw", "plan", "--chain", chain, "--json"}})
+	if err != nil {
+		return nil, throwPlanOutput{}, err
+	}
+	var plan commands.ThrowPlanPayload
+	if data, err := json.Marshal(out.JSON); err == nil {
+		_ = json.Unmarshal(data, &plan)
+	}
+	if plan.ID == "" || plan.PlanHash == "" {
+		return nil, throwPlanOutput{}, errors.New("throw plan command did not return a plan payload")
+	}
+	pendingID := launchKeyPendingThrowID(plan.PlanHash, input.AllowDangerous, input.NowBypass)
+	pending, err := s.daemon.CreatePendingThrow(ctx, daemonrpc.CreatePendingThrowRequest{
+		ID:             pendingID,
+		Operation:      operation,
+		Chain:          chain,
+		PlanHash:       plan.PlanHash,
+		AllowDangerous: input.AllowDangerous,
+		NowBypass:      input.NowBypass,
+	})
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		return nil, throwPlanOutput{}, err
+	}
+	if err != nil {
+		pending = daemonrpc.PendingThrowResponse{ID: pendingID, Operation: operation, Chain: chain, PlanHash: plan.PlanHash}
+	}
+	policy, err := s.daemon.GetLaunchKeyPolicy(ctx, daemonrpc.LaunchKeyPolicyRequest{Operation: operation})
+	if err != nil {
+		return nil, throwPlanOutput{}, err
+	}
+	return nil, throwPlanOutput{Operation: operation, Chain: chain, Plan: plan, Pending: pending, Policy: policy}, nil
+}
+
+func (s *Server) throwConfirm(ctx context.Context, _ *mcpsdk.CallToolRequest, input throwConfirmInput) (*mcpsdk.CallToolResult, throwConfirmOutput, error) {
+	if strings.TrimSpace(input.PendingID) == "" {
+		return nil, throwConfirmOutput{}, errors.New("pendingId is required")
+	}
+	if strings.TrimSpace(input.PlanHash) == "" {
+		return nil, throwConfirmOutput{}, errors.New("planHash is required")
+	}
+	key := strings.TrimSpace(input.NuclearKey)
+	if key == "" {
+		return nil, throwConfirmOutput{}, errors.New("nuclearKey is required")
+	}
+	if err := s.refresh(ctx); err != nil {
+		return nil, throwConfirmOutput{}, err
+	}
+	pending, err := s.daemon.ConfirmPendingThrow(ctx, daemonrpc.ConfirmPendingThrowRequest{
+		ID:             input.PendingID,
+		EntityID:       s.entity.ID,
+		PlanHash:       input.PlanHash,
+		AllowDangerous: input.AllowDangerous,
+		NowBypass:      input.NowBypass,
+	})
+	if err != nil {
+		return nil, throwConfirmOutput{}, err
+	}
+	return nil, throwConfirmOutput{Pending: pending, NuclearKeyAccepted: true}, nil
 }
 
 func (s *Server) throwStart(ctx context.Context, _ *mcpsdk.CallToolRequest, input throwStartInput) (*mcpsdk.CallToolResult, throwStartOutput, error) {
@@ -1068,7 +1344,7 @@ func commandModeThrowStarter(workspacePath string, client *daemonrpc.Client, cat
 		if err != nil {
 			return throwStartOutput{}, err
 		}
-		code := commandmode.NewAppWithSessionAndModules(session, catalog).Run(ctx, args, &stdout, &stderr)
+		code := commandmode.NewAppWithSessionModulesAndWorkspace(session, catalog, workspacePath).Run(ctx, args, &stdout, &stderr)
 		if code != 0 {
 			message := strings.TrimSpace(stderr.String())
 			if message == "" {
@@ -1118,7 +1394,7 @@ func commandModeCommandRunner(workspacePath string, client *daemonrpc.Client, ca
 			return commandRunOutput{}, err
 		}
 		var stdout, stderr bytes.Buffer
-		code := commandmode.NewAppWithSessionAndModules(session, catalog).Run(ctx, args, &stdout, &stderr)
+		code := commandmode.NewAppWithSessionModulesAndWorkspace(session, catalog, workspacePath).Run(ctx, args, &stdout, &stderr)
 		out := commandRunOutput{
 			Args:      append([]string(nil), args...),
 			Operation: operation,
@@ -1449,18 +1725,91 @@ func moduleOutputs(modules []modulecatalog.Module) []moduleOutput {
 }
 
 func moduleOutputFromModule(module modulecatalog.Module) moduleOutput {
-	return moduleOutput{
+	out := moduleOutput{
 		ID:           module.ID,
 		Name:         module.Name,
 		Type:         string(module.Type),
 		Version:      module.Version,
 		Summary:      module.Summary,
+		Description:  module.Description,
 		Tags:         append([]string(nil), module.Tags...),
 		Enabled:      module.Enabled,
 		Dangerous:    module.Dangerous(),
 		ChainConfig:  append([]modulecatalog.Requirement(nil), module.ChainConfig...),
 		TargetConfig: append([]modulecatalog.Requirement(nil), module.TargetConfig...),
 	}
+	if commandContextPresent(module.Discovery) {
+		discovery := module.Discovery
+		out.Discovery = &discovery
+	}
+	if commandContextPresent(module.Planning) {
+		planning := module.Planning
+		out.Planning = &planning
+	}
+	return out
+}
+
+func moduleOutputFromModuleWithSteps(module modulecatalog.Module, catalog modulecatalog.Catalog) moduleOutput {
+	out := moduleOutputFromModule(module)
+	out.Steps = commands.ModuleStepPayloadsForMCP(module.ID, catalog.ResolveStepAvailability(nil))
+	return out
+}
+
+func commandContextPresent(context modulecatalog.Context) bool {
+	return context.Summary != "" ||
+		len(context.Keywords) > 0 ||
+		len(context.Platforms) > 0 ||
+		len(context.Targets) > 0 ||
+		len(context.Capabilities) > 0 ||
+		len(context.Preconditions) > 0 ||
+		len(context.SideEffects) > 0 ||
+		context.Cleanup != "" ||
+		context.Risk.Level != "" ||
+		len(context.Risk.Reasons) > 0 ||
+		len(context.Examples) > 0 ||
+		len(context.AgentHints) > 0
+}
+
+func suggestedChainName(intent, moduleID string) string {
+	base := modulecatalog.ReferenceName(moduleID)
+	if text := strings.ToLower(strings.TrimSpace(intent)); text != "" {
+		text = strings.Map(func(r rune) rune {
+			switch {
+			case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+				return r
+			case r == '-' || r == '_':
+				return '-'
+			default:
+				return '-'
+			}
+		}, text)
+		text = strings.Trim(text, "-")
+		if text != "" {
+			base = text
+		}
+	}
+	if base == "" {
+		return "suggested-chain"
+	}
+	return base
+}
+
+func launchKeyPendingThrowID(planHash string, allowDangerous, nowBypass bool) string {
+	fingerprint := struct {
+		PlanHash       string `json:"planHash"`
+		AllowDangerous bool   `json:"allowDangerous"`
+		NowBypass      bool   `json:"nowBypass"`
+	}{
+		PlanHash:       planHash,
+		AllowDangerous: allowDangerous,
+		NowBypass:      nowBypass,
+	}
+	data, err := json.Marshal(fingerprint)
+	if err != nil {
+		return "pending-" + strings.TrimSpace(planHash)
+	}
+	sum := sha256.Sum256(data)
+	return "pending-" + hex.EncodeToString(sum[:16])
 }
 
 func (s *Server) installedPayloadRecords(ctx context.Context, operation, chain, state string, includeRemoved bool) ([]commands.InstalledPayloadRecord, error) {
@@ -1664,8 +2013,14 @@ func defaultCapabilities() []string {
 		ToolOperationList,
 		ToolWorkspaceSnapshot,
 		ToolCatalogSnapshot,
+		ToolModuleSearch,
+		ToolModuleInspect,
+		ToolChainSuggest,
+		ToolLaunchKeyPolicy,
 		ToolChainApply,
 		ToolCommandRun,
+		ToolThrowPlan,
+		ToolThrowConfirm,
 		ToolThrowStart,
 		ToolInstalledPayloadList,
 		ToolPayloadCmd,

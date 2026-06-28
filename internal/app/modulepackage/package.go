@@ -29,6 +29,7 @@ const (
 	ManifestName         = "hovel-module.yaml"
 	ProtocolJSONRPCStdio = "jsonrpc-stdio"
 	DefaultPBSRelease    = "20260610"
+	defaultHTTPTimeout   = 30 * time.Second
 )
 
 type Package struct {
@@ -219,10 +220,7 @@ func LoadInstallSetURL(source string, opts InstallOptions) (InstallSet, error) {
 	if opts.Offline {
 		return InstallSet{}, errors.New("offline module bulk-install cannot download a remote manifest")
 	}
-	client := opts.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := installHTTPClient(opts)
 	resp, err := client.Get(source)
 	if err != nil {
 		return InstallSet{}, err
@@ -727,10 +725,7 @@ func InstallURL(opts InstallOptions) (InstallResult, error) {
 	}
 	tempPath := temp.Name()
 	defer os.Remove(tempPath)
-	client := opts.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := installHTTPClient(opts)
 	resp, err := client.Get(source)
 	if err != nil {
 		_ = temp.Close()
@@ -1083,10 +1078,7 @@ var pbsAssetPattern = regexp.MustCompile(`^cpython-([0-9]+\.[0-9]+\.[0-9]+)\+[^-
 
 func selectPBSAsset(release, platform string, versions []string, opts InstallOptions) (pbsAsset, error) {
 	apiURL := "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/" + release
-	client := opts.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := installHTTPClient(opts)
 	if opts.Offline {
 		return pbsAsset{}, errors.New("managed python asset metadata is not available offline")
 	}
@@ -1191,7 +1183,7 @@ func downloadFile(source, dest string, client *http.Client, opts InstallOptions)
 		return err
 	}
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultInstallHTTPClient()
 	}
 	resp, err := client.Get(source)
 	if err != nil {
@@ -1232,6 +1224,21 @@ func downloadFile(source, dest string, client *http.Client, opts InstallOptions)
 		Total:  total,
 	})
 	return os.Rename(tempPath, dest)
+}
+
+func installHTTPClient(opts InstallOptions) *http.Client {
+	if opts.Client != nil {
+		return opts.Client
+	}
+	return defaultInstallHTTPClient()
+}
+
+func defaultInstallHTTPClient() *http.Client {
+	client := *http.DefaultClient
+	if client.Timeout == 0 {
+		client.Timeout = defaultHTTPTimeout
+	}
+	return &client
 }
 
 func reportInstallProgress(opts InstallOptions, event InstallProgress) {

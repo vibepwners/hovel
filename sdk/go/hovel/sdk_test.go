@@ -80,6 +80,28 @@ func (fakePayloadProvider) Run(*Context) (Result, error) {
 	return Ok(map[string]any{"status": "not-used"}, WithSummary("payload provider execute placeholder")), nil
 }
 
+type fakeContextModule struct{}
+
+func (fakeContextModule) Info() Info {
+	return Info{
+		Name:    "fake-context",
+		Version: "v0.0.0-test",
+		Type:    TypeSurvey,
+		DiscoveryContext: ModuleContext{
+			Summary:  "Find SMB exposure",
+			Keywords: []string{"ms17-010"},
+		},
+	}
+}
+
+func (fakeContextModule) Schema() Schema {
+	return Schema{
+		PlanningContext: ModuleContext{Risk: RiskContext{Level: "low"}},
+	}
+}
+
+func (fakeContextModule) Run(*Context) (Result, error) { return Ok(nil), nil }
+
 func (fakePayloadProvider) ListPayloads(PayloadQuery) ([]PayloadInfo, error) {
 	return []PayloadInfo{fakePayloadInfo()}, nil
 }
@@ -486,6 +508,33 @@ func TestServeHandshakeSchemaExecute(t *testing.T) {
 	findings, _ := result["findings"].([]any)
 	if len(findings) != 1 {
 		t.Fatalf("findings = %#v", result["findings"])
+	}
+}
+
+func TestServeOptionalContextFields(t *testing.T) {
+	conn := newRPCConn(t, fakeContextModule{})
+	defer conn.close()
+
+	info := conn.call("handshake", nil)
+	discovery, _ := info["discoveryContext"].(map[string]any)
+	if discovery["summary"] != "Find SMB exposure" {
+		t.Fatalf("discovery context = %#v", discovery)
+	}
+	if _, ok := discovery["risk"]; ok {
+		t.Fatalf("discovery context included absent risk: %#v", discovery)
+	}
+	schema := conn.call("schema", nil)
+	planning, _ := schema["planningContext"].(map[string]any)
+	risk, _ := planning["risk"].(map[string]any)
+	if risk["level"] != "low" {
+		t.Fatalf("planning context = %#v", planning)
+	}
+
+	plain := newRPCConn(t, fakeModule{})
+	defer plain.close()
+	plainInfo := plain.call("handshake", nil)
+	if _, ok := plainInfo["discoveryContext"]; ok {
+		t.Fatalf("plain handshake has discoveryContext: %#v", plainInfo)
 	}
 }
 

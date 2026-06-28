@@ -139,7 +139,7 @@ func (s *server) handshake() map[string]any {
 	if tags == nil {
 		tags = []string{}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"name":        info.Name,
 		"version":     info.Version,
 		"moduleType":  string(info.Type),
@@ -147,6 +147,10 @@ func (s *server) handshake() map[string]any {
 		"description": info.Description,
 		"tags":        tags,
 	}
+	if contextPresent(info.DiscoveryContext) {
+		out["discoveryContext"] = info.DiscoveryContext
+	}
+	return out
 }
 
 func (s *server) schema() map[string]any {
@@ -155,11 +159,29 @@ func (s *server) schema() map[string]any {
 	if outputs == nil {
 		outputs = map[string]any{}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"chainConfig":  requirementsToRPC(schema.ChainConfig),
 		"targetConfig": requirementsToRPC(schema.TargetConfig),
 		"outputs":      outputs,
 	}
+	if contextPresent(schema.PlanningContext) {
+		out["planningContext"] = schema.PlanningContext
+	}
+	return out
+}
+
+func contextPresent(context ModuleContext) bool {
+	return context.Summary != "" ||
+		len(context.Keywords) > 0 ||
+		len(context.Platforms) > 0 ||
+		len(context.Targets) > 0 ||
+		len(context.Capabilities) > 0 ||
+		len(context.Preconditions) > 0 ||
+		len(context.SideEffects) > 0 ||
+		context.Cleanup != "" ||
+		riskContextPresent(context.Risk) ||
+		len(context.Examples) > 0 ||
+		len(context.AgentHints) > 0
 }
 
 func (s *server) payloadProvider() (PayloadProvider, error) {
