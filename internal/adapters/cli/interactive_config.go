@@ -212,18 +212,9 @@ func (w *interactiveConfigWizard) promptNextMissing(stdout, stderr io.Writer) in
 }
 
 func (w *interactiveConfigWizard) complete(stdout io.Writer) int {
-	state := w.session.Snapshot()
-	validation := commands.ValidateState(w.modules, state)
+	chain := w.session.Snapshot().ActiveChain
 	w.reset()
-	if !validation.Valid {
-		fmt.Fprintf(stdout, "Chain %s still needs attention\n", state.ActiveChain)
-		for _, issue := range validation.Issues {
-			fmt.Fprintln(stdout, "[!] "+issue.Message)
-		}
-		return 1
-	}
-	fmt.Fprintf(stdout, "Chain %s configuration complete\n", state.ActiveChain)
-	return 0
+	return completeConfigInteractionForChain(w.session, w.modules, chain, stdout)
 }
 
 func (w *interactiveConfigWizard) renderCurrentMenu(stdout io.Writer) {

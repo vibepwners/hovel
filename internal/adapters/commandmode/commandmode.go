@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/adapters/commandview"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
@@ -28,6 +29,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 	"github.com/akamensky/argparse"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 )
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -273,7 +275,13 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		return resultCode(result)
 	}
 	if result.Human != "" {
-		fmt.Fprintln(stdout, result.Human)
+		human := result.Human
+		if !parsed.Flag("no-color") && terminalOutput(stdout) {
+			if rendered, ok := commandview.New(terminalWidth(stdout)).Render(result); ok {
+				human = rendered
+			}
+		}
+		fmt.Fprintln(stdout, human)
 	}
 	return resultCode(result)
 }
@@ -291,6 +299,22 @@ func stdinNonInteractive() bool {
 		return true
 	}
 	return info.Mode()&os.ModeCharDevice == 0
+}
+
+func terminalOutput(writer io.Writer) bool {
+	return terminalWidth(writer) > 0
+}
+
+func terminalWidth(writer io.Writer) int {
+	file, ok := writer.(interface{ Fd() uintptr })
+	if !ok {
+		return 0
+	}
+	width, _, err := term.GetSize(file.Fd())
+	if err != nil {
+		return 0
+	}
+	return width
 }
 
 type terminalInput struct {

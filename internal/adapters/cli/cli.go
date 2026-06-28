@@ -464,16 +464,16 @@ func isJSONThrowExecutionCommand(line string) bool {
 
 func (a App) PromptPrefix() string {
 	if a.session == nil {
-		return a.theme.PromptPrefix("", "")
+		return a.theme.PromptPrefix("", "", 0, 0)
 	}
 	state := a.session.Snapshot()
 	if a.wizard != nil && a.wizard.Active() {
 		if prompt, ok := a.wizard.ValuePrompt(); ok {
-			return a.theme.ConfigValuePromptPrefix(state.ActiveOperation, state.ActiveChain, prompt)
+			return a.theme.ConfigValuePromptPrefix(state.ActiveOperation, state.ActiveChain, len(state.Steps), len(state.Targets), prompt)
 		}
-		return a.theme.ConfigPromptPrefix(state.ActiveOperation, state.ActiveChain, a.wizard.PromptMode())
+		return a.theme.ConfigPromptPrefix(state.ActiveOperation, state.ActiveChain, len(state.Steps), len(state.Targets), a.wizard.PromptMode())
 	}
-	return a.theme.PromptPrefix(state.ActiveOperation, state.ActiveChain)
+	return a.theme.PromptPrefix(state.ActiveOperation, state.ActiveChain, len(state.Steps), len(state.Targets))
 }
 
 func (a App) Completer(document prompt.Document) []prompt.Suggest {
@@ -996,6 +996,9 @@ func (a App) ConfigureInteractive(ctx context.Context, stdout, stderr io.Writer)
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if shouldUseHuhConfig(stdout) {
+		return a.runHuhConfigForm(ctx, stdout, stderr)
+	}
 	if a.wizard == nil {
 		a.wizard = newInteractiveConfigWizard(a.session, a.modules)
 	}
@@ -1268,22 +1271,22 @@ func DefaultTheme() Theme {
 	}
 }
 
-func (t Theme) PromptPrefix(operation, chain string) string {
+func (t Theme) PromptPrefix(operation, chain string, steps, targets int) string {
 	operation = strings.TrimSpace(operation)
 	chain = strings.TrimSpace(chain)
 	if operation == "" || operation == operatorsession.DefaultOperation {
 		if chain == "" {
 			return "h0v3l> "
 		}
-		return "h0v3l (" + chain + ") > "
+		return fmt.Sprintf("h0v3l (%s | steps:%d targets:%d) > ", chain, steps, targets)
 	}
 	if chain == "" {
-		return "h0v3l [" + operation + "]> "
+		return "h0v3l [op:" + operation + "]> "
 	}
-	return "h0v3l [" + operation + "/" + chain + "] > "
+	return fmt.Sprintf("h0v3l [%s/%s | steps:%d targets:%d] > ", operation, chain, steps, targets)
 }
 
-func (t Theme) ConfigPromptPrefix(operation, chain, mode string) string {
+func (t Theme) ConfigPromptPrefix(operation, chain string, steps, targets int, mode string) string {
 	operation = strings.TrimSpace(operation)
 	chain = strings.TrimSpace(chain)
 	mode = strings.TrimSpace(mode)
@@ -1294,18 +1297,18 @@ func (t Theme) ConfigPromptPrefix(operation, chain, mode string) string {
 		if chain == "" {
 			return "h0v3l " + mode + "> "
 		}
-		return "h0v3l (" + chain + ") " + mode + " > "
+		return fmt.Sprintf("h0v3l (%s | steps:%d targets:%d) %s > ", chain, steps, targets, mode)
 	}
 	if chain == "" {
 		return "h0v3l [" + operation + "] " + mode + " > "
 	}
-	return "h0v3l [" + operation + "/" + chain + "] " + mode + " > "
+	return fmt.Sprintf("h0v3l [%s/%s | steps:%d targets:%d] %s > ", operation, chain, steps, targets, mode)
 }
 
-func (t Theme) ConfigValuePromptPrefix(operation, chain, prompt string) string {
+func (t Theme) ConfigValuePromptPrefix(operation, chain string, steps, targets int, prompt string) string {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
-		return t.ConfigPromptPrefix(operation, chain, "config value")
+		return t.ConfigPromptPrefix(operation, chain, steps, targets, "config value")
 	}
 	operation = strings.TrimSpace(operation)
 	chain = strings.TrimSpace(chain)
@@ -1313,12 +1316,12 @@ func (t Theme) ConfigValuePromptPrefix(operation, chain, prompt string) string {
 		if chain == "" {
 			return "h0v3l " + prompt + " "
 		}
-		return "h0v3l (" + chain + ") " + prompt + " "
+		return fmt.Sprintf("h0v3l (%s | steps:%d targets:%d) %s ", chain, steps, targets, prompt)
 	}
 	if chain == "" {
 		return "h0v3l [" + operation + "] " + prompt + " "
 	}
-	return "h0v3l [" + operation + "/" + chain + "] " + prompt + " "
+	return fmt.Sprintf("h0v3l [%s/%s | steps:%d targets:%d] %s ", operation, chain, steps, targets, prompt)
 }
 
 type WelcomeInfo struct {

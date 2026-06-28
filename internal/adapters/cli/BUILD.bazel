@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "cli.go",
         "interactive_config.go",
+        "interactive_config_huh.go",
         "prompt_writer.go",
         "session_connect.go",
         "session_persistence.go",
@@ -29,6 +30,7 @@ go_library(
         "//internal/infra/daemonmanager",
         "//internal/modules/pythonrpc",
         "@com_github_c_bata_go_prompt//:go-prompt",
+        "@com_github_charmbracelet_huh//:huh",
         "@com_github_charmbracelet_lipgloss//:lipgloss",
         "@com_github_charmbracelet_x_term//:term",
     ] + select({

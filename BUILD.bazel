@@ -82,6 +82,7 @@ _CI_TESTS = [
     "//internal/adapters/cli:cli_test",
     "//internal/adapters/commandmode:commandmode_e2e_test",
     "//internal/adapters/commandmode:commandmode_test",
+    "//internal/adapters/commandview:commandview_test",
     "//internal/adapters/daemonrpc:daemonrpc_test",
     "//internal/adapters/descriptor:descriptor_test",
     "//internal/adapters/mcp:mcp_test",
