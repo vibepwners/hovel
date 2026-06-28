@@ -3055,10 +3055,11 @@ func shouldGenerateSquatterPayloadForModule(db ModuleDatabase, throw throwExecut
 	if moduleID == "squatter.bind" || isSquatterProviderModuleID(db, moduleID) {
 		return false
 	}
-	if module, ok := db.Find(moduleID); ok && module.Type != modulecatalog.TypeExploit {
+	module, ok := db.Find(moduleID)
+	if !ok || module.Type != modulecatalog.TypeExploit {
 		return false
 	}
-	return true
+	return isSquatterPayloadInstallerModule(module)
 }
 
 func throwHasSquatterPayloadBridge(db ModuleDatabase, throw throwExecution) bool {
@@ -3068,6 +3069,10 @@ func throwHasSquatterPayloadBridge(db ModuleDatabase, throw throwExecution) bool
 		}
 	}
 	return false
+}
+
+func isSquatterPayloadInstallerModule(module modulecatalog.Module) bool {
+	return modulecatalog.ReferenceName(module.ID) == "ms17-010-exploit"
 }
 
 func squatterPayloadGenerationConfig(chainConfig, targetConfig map[string]string, target string) map[string]string {

@@ -2086,6 +2086,39 @@ func TestExecuteLegacyThrowGeneratesSquatterSMBNamedPipePayload(t *testing.T) {
 	}
 }
 
+func TestExecuteLegacyThrowDoesNotGenerateSquatterPayloadForUnrelatedExploit(t *testing.T) {
+	recorder := &fakeRunRecorder{}
+	client := fakeRunClient{recorder: recorder}
+	catalog := mockExploitSquatterCatalog()
+	throw := throwExecution{
+		Operation: "op1",
+		Chain:     "alpha",
+		Targets:   []string{"mock://target"},
+		Modules:   []string{"mock-exploit@v0.0.0-example", "squatter@v0.1.0"},
+		TargetConfigs: map[string]map[string]string{
+			"mock://target": {
+				"target.host": "router-01",
+				"target.port": "22",
+			},
+		},
+	}
+	payload := ThrowPayload{ThrowID: "throw-1", Chain: "alpha", Targets: []string{"mock://target"}}
+
+	err := executeLegacyThrow(context.Background(), Runtime{Modules: catalog}, client, "", catalog, ThrowPlanRecord{Operation: "op1", Chain: "alpha"}, throw, &payload, time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.generations) != 0 {
+		t.Fatalf("payload generations = %#v, want none for unrelated exploit", recorder.generations)
+	}
+	if len(recorder.requests) != 2 {
+		t.Fatalf("requests = %#v, want mock exploit and Squatter provider", recorder.requests)
+	}
+	if got := recorder.requests[0].TargetConfig["payload.bytes_base64"]; got != "" {
+		t.Fatalf("payload.bytes_base64 = %q, want no generated payload injected into mock exploit", got)
+	}
+}
+
 func TestThrowTargetSetFiltersIncompatibleTargets(t *testing.T) {
 	session := operatorsession.New()
 	if err := session.UseOperation("op1"); err != nil {
@@ -4125,6 +4158,16 @@ func exampleCatalog() modulecatalog.Catalog {
 func squatterCatalog() modulecatalog.Catalog {
 	return modulecatalog.New(
 		modulecatalog.Module{
+			ID:          "ms17-010-exploit@v1.0.0",
+			Name:        "ms17-010-exploit",
+			Type:        modulecatalog.TypeExploit,
+			Version:     "v1.0.0",
+			Summary:     "MS17-010 SMBv1 exploit module.",
+			RuntimeKind: "jsonrpc-stdio",
+			Enabled:     true,
+			Tags:        []string{"dangerous"},
+		},
+		modulecatalog.Module{
 			ID:          "squatter@v0.1.0",
 			Name:        "squatter",
 			Type:        modulecatalog.TypePayloadProvider,
@@ -4139,6 +4182,11 @@ func squatterCatalog() modulecatalog.Catalog {
 			},
 		},
 	)
+}
+
+func mockExploitSquatterCatalog() modulecatalog.Catalog {
+	modules := append(exampleCatalog().List(), squatterCatalog().List()...)
+	return modulecatalog.New(modules...)
 }
 
 func hasOption(definition Definition, name string) bool {
