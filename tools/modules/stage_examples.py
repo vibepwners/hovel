@@ -34,9 +34,11 @@ def main() -> int:
         if target.exists() and same_file_contents(src, target):
             current += 1
         else:
+            if target.exists():
+                target.chmod(target.stat().st_mode | stat.S_IWUSR)
             shutil.copy2(src, target)
             staged += 1
-        target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        target.chmod(target.stat().st_mode | stat.S_IWUSR | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     print(f"example module binaries current: {current}; staged: {staged}; destination: {dest}")
     return 0

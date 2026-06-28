@@ -200,6 +200,10 @@ def package_native(name: str, version: str, module_type: str, summary: str, bina
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / binary, dst)
         dst.chmod(0o755)
+        if name == "squatter":
+            payload = root / "bin" / "squatter.exe"
+            shutil.copy2(ROOT / "examples/bin/squatter.exe", payload)
+            payload.chmod(0o755)
         archive = OUT / f"{name}-{version}.tgz"
         archive_dir(root, archive)
         return name, version, archive

@@ -223,6 +223,13 @@ type PendingThrowResponse struct {
 }
 
 type PayloadCommand = run.PayloadCommand
+type PayloadGenerateRequest struct {
+	ModuleID string                     `json:"moduleId"`
+	Request  run.GeneratePayloadRequest `json:"request"`
+}
+
+type PayloadGenerateResponse = run.PayloadArtifactSet
+
 type PayloadCommandListRequest struct {
 	ModuleID string                        `json:"moduleId"`
 	Request  run.PayloadCommandListRequest `json:"request"`
@@ -313,6 +320,7 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[ConfirmPendingThrowRequest, PendingThrowResponse](mux, "ConfirmPendingThrow", rpcServer.confirmPendingThrowRPC)
 	registerUnary[PendingThrowRequest, PendingThrowResponse](mux, "RequirePendingThrowReady", rpcServer.requirePendingThrowReadyRPC)
 	registerUnary[PendingThrowRequest, EmptyResponse](mux, "CancelPendingThrow", rpcServer.cancelPendingThrowRPC)
+	registerUnary[PayloadGenerateRequest, PayloadGenerateResponse](mux, "GeneratePayload", rpcServer.generatePayloadRPC)
 	registerUnary[PayloadCommandListRequest, PayloadCommandListResponse](mux, "ListPayloadCommands", rpcServer.listPayloadCommandsRPC)
 	registerUnary[PayloadCommandRunRequest, PayloadCommandRunResponse](mux, "RunPayloadCommand", rpcServer.runPayloadCommandRPC)
 	return nil
@@ -429,6 +437,13 @@ func (s Server) executeModule(ctx context.Context, req ExecuteModuleRequest, res
 	}
 	*resp = responseFromResult(result)
 	return nil
+}
+
+func (s *Server) generatePayloadRPC(ctx context.Context, req PayloadGenerateRequest) (PayloadGenerateResponse, error) {
+	return s.runs.GeneratePayload(ctx, services.GeneratePayloadRequest{
+		ModuleID: req.ModuleID,
+		Request:  req.Request,
+	})
 }
 
 func (s *Server) listPayloadCommandsRPC(ctx context.Context, req PayloadCommandListRequest) (PayloadCommandListResponse, error) {
@@ -1440,6 +1455,10 @@ func (c *Client) RunMockExploit(ctx context.Context, req RunMockExploitRequest) 
 
 func (c *Client) ExecuteModule(ctx context.Context, req ExecuteModuleRequest) (ExecuteModuleResponse, error) {
 	return invoke[ExecuteModuleRequest, ExecuteModuleResponse](c, ctx, "ExecuteModule", req)
+}
+
+func (c *Client) GeneratePayload(ctx context.Context, req PayloadGenerateRequest) (PayloadGenerateResponse, error) {
+	return invoke[PayloadGenerateRequest, PayloadGenerateResponse](c, ctx, "GeneratePayload", req)
 }
 
 func (c *Client) ListPayloadCommands(ctx context.Context, req PayloadCommandListRequest) (PayloadCommandListResponse, error) {

@@ -345,10 +345,12 @@
         <p>
           The currently implemented legacy CLI bridge keeps that ownership boundary while
           using module-level chain entries: when Squatter is present in an MS17-010 chain,
-          planning derives <code>payload.local_path</code>, <code>payload.transport</code>,
-          and bind settings for the MS17-010 exploit. If it reports a Squatter installed-payload
-          descriptor, Hovel records it in the payload inventory and immediately asks the
-          Squatter provider to reconnect, appending the resulting <code>SessionRef</code>
+          planning derives <code>payload.transport</code> and bind settings for the MS17-010
+          exploit. At execution time Hovel asks the Squatter provider to generate the payload
+          artifact and passes the resulting bytes to the exploit as <code>payload.bytes_base64</code>;
+          operators do not configure host-local payload paths. If the exploit reports a Squatter
+          installed-payload descriptor, Hovel records it in the payload inventory and immediately
+          asks the Squatter provider to reconnect, appending the resulting <code>SessionRef</code>
           to the throw result. Without a Squatter bridge step, the MS17-010 exploit remains command
           execution only and should not be expected to create a session.
         </p>

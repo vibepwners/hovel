@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -256,7 +257,7 @@ func TestThrowHandlerUsesDaemonSocket(t *testing.T) {
 		t.Fatal("throw start timestamp was not propagated to run request")
 	}
 	recorder.requests[0].ThrowStarted = ""
-	if !reflect.DeepEqual(recorder.requests[0], RunMockExploitRequest{Operation: operatorsession.DefaultOperation, Chain: "mock-exploit", ModuleID: "mock-exploit@v0.0.0-example", Target: "mock://target", ChainConfig: map[string]string{}}) {
+	if !reflect.DeepEqual(recorder.requests[0], RunMockExploitRequest{Operation: operatorsession.DefaultOperation, Chain: "mock-exploit", ModuleID: "mock-exploit@v0.0.0-example", Target: "mock://target", ChainConfig: map[string]string{}, TargetConfig: map[string]string{}}) {
 		t.Fatalf("run request = %#v", recorder.requests[0])
 	}
 	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{Operation: operatorsession.DefaultOperation, Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
@@ -1634,8 +1635,11 @@ func TestThrowInputsSquatterTypeDerivesMS17010InstallConfig(t *testing.T) {
 	if _, ok := config["payload.remote_path"]; ok {
 		t.Fatalf("payload.remote_path = %q, want the exploit to auto-generate an unlocked path", config["payload.remote_path"])
 	}
-	if !strings.HasSuffix(config["payload.local_path"], filepath.Join("examples", "bin", "squatter.exe")) {
-		t.Fatalf("payload.local_path = %q, want staged squatter.exe", config["payload.local_path"])
+	if _, ok := config["payload.local_path"]; ok {
+		t.Fatalf("payload.local_path = %q, want provider-generated payload bytes during execution", config["payload.local_path"])
+	}
+	if _, ok := config["payload.bytes_base64"]; ok {
+		t.Fatalf("payload.bytes_base64 should not be persisted into throw planning")
 	}
 
 	if err := session.SetChainConfig("squatter.remote_path", `C:\Windows\Temp\hovel-fixed.exe`); err != nil {
@@ -1703,38 +1707,6 @@ func TestThrowInputsSquatterTypePreservesTargetBindPortWithoutChainOverride(t *t
 	}
 }
 
-func TestSquatterPayloadPathPrefersModuleConfigStagedBinary(t *testing.T) {
-	t.Setenv("SQUATTER_PAYLOAD_PATH", "")
-	t.Setenv("BUILD_WORKSPACE_DIRECTORY", "")
-
-	root := t.TempDir()
-	payloadPath := filepath.Join(root, "examples", "bin", "squatter.exe")
-	if err := os.MkdirAll(filepath.Dir(payloadPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(payloadPath, []byte("fixture"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, configPath := range []string{
-		filepath.Join(root, "examples", "hovel-modules.json"),
-		filepath.Join(root, "examples", "python", "hovel-modules.json"),
-	} {
-		t.Run(configPath, func(t *testing.T) {
-			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(configPath, []byte("{}"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("HOVEL_MODULE_CONFIG", configPath)
-			if got := squatterPayloadPath(); got != payloadPath {
-				t.Fatalf("squatterPayloadPath() = %q, want %q", got, payloadPath)
-			}
-		})
-	}
-}
-
 func TestThrowInputsFromChainFileSquatterTypeDerivesInstallConfig(t *testing.T) {
 	store := &fakeChainFileStore{
 		reads: map[string]ChainFile{
@@ -1771,12 +1743,15 @@ func TestThrowInputsFromChainFileSquatterTypeDerivesInstallConfig(t *testing.T) 
 		t.Fatalf("modules = %#v, want %#v", got, want)
 	}
 	config := throw.TargetConfigs["t1"]
-	if config["target.port"] != "445" || config["payload.bind_port"] != "9101" || config["payload.local_path"] == "" {
+	if config["target.port"] != "445" || config["payload.bind_port"] != "9101" {
 		t.Fatalf("target config = %#v, want derived Squatter install config", config)
+	}
+	if _, ok := config["payload.local_path"]; ok {
+		t.Fatalf("payload.local_path = %q, want provider-generated payload bytes during execution", config["payload.local_path"])
 	}
 }
 
-func TestThrowInputsFromChainFileSquatterSMBTransportKeepsExplicitInstallConfig(t *testing.T) {
+func TestThrowInputsFromChainFileSquatterSMBTransportKeepsExplicitRemoteConfig(t *testing.T) {
 	store := &fakeChainFileStore{
 		reads: map[string]ChainFile{
 			"ms17-010-squatter-smb.chain.yaml": {
@@ -1799,7 +1774,6 @@ func TestThrowInputsFromChainFileSquatterSMBTransportKeepsExplicitInstallConfig(
 						Config: map[string]string{
 							"target.host":         "192.168.122.142",
 							"target.port":         "445",
-							"payload.local_path":  "/tmp/squatter-smb.exe",
 							"payload.remote_path": `C:\Windows\Temp\hovelsmb.exe`,
 							"payload.bind_port":   "",
 						},
@@ -1816,8 +1790,8 @@ func TestThrowInputsFromChainFileSquatterSMBTransportKeepsExplicitInstallConfig(
 		t.Fatal(err)
 	}
 	config := throw.TargetConfigs["t1"]
-	if config["payload.local_path"] != "/tmp/squatter-smb.exe" {
-		t.Fatalf("payload.local_path = %q, want explicit SMB payload", config["payload.local_path"])
+	if _, ok := config["payload.local_path"]; ok {
+		t.Fatalf("payload.local_path = %q, want provider-generated payload bytes during execution", config["payload.local_path"])
 	}
 	if config["payload.remote_path"] != `C:\Windows\Temp\hovelsmb.exe` {
 		t.Fatalf("payload.remote_path = %q, want explicit SMB remote path", config["payload.remote_path"])
@@ -1949,7 +1923,6 @@ func TestExecuteLegacyThrowRunsSquatterProviderAfterMS17010Install(t *testing.T)
 			"t1": {
 				"target.host":         "192.168.122.142",
 				"target.port":         "445",
-				"payload.local_path":  "/tmp/squatter.exe",
 				"payload.remote_path": `C:\Windows\Temp\hovel-squatter.exe`,
 				"payload.bind_port":   "9101",
 			},
@@ -1963,8 +1936,17 @@ func TestExecuteLegacyThrowRunsSquatterProviderAfterMS17010Install(t *testing.T)
 	if len(recorder.requests) != 2 {
 		t.Fatalf("requests = %#v, want ms17-010 and squatter provider", recorder.requests)
 	}
+	if len(recorder.generations) != 1 {
+		t.Fatalf("payload generations = %#v, want one Squatter payload generation", recorder.generations)
+	}
 	if recorder.requests[0].ModuleID != "ms17-010-exploit@v1.0.0" {
 		t.Fatalf("first module = %q", recorder.requests[0].ModuleID)
+	}
+	if recorder.requests[0].TargetConfig["payload.bytes_base64"] == "" {
+		t.Fatalf("first target config = %#v, want provider-generated payload bytes", recorder.requests[0].TargetConfig)
+	}
+	if recorder.requests[0].TargetConfig["payload.local_path"] != "" {
+		t.Fatalf("payload.local_path = %q, want no local path", recorder.requests[0].TargetConfig["payload.local_path"])
 	}
 	if recorder.requests[1].ModuleID != "squatter@v0.1.0" {
 		t.Fatalf("second module = %q, want squatter provider", recorder.requests[1].ModuleID)
@@ -2002,8 +1984,8 @@ func TestExecuteLegacyThrowAutoConnectsSquatterPayloadAfterMS17010Install(t *tes
 			"t1": {
 				"target.host":        "192.168.122.142",
 				"target.port":        "445",
-				"payload.local_path": "/tmp/squatter.exe",
 				"payload.bind_port":  "9101",
+				"payload.local_path": "/tmp/stale-squatter.exe",
 				"payload.transport":  "tcp-bind",
 			},
 		},
@@ -2022,8 +2004,21 @@ func TestExecuteLegacyThrowAutoConnectsSquatterPayloadAfterMS17010Install(t *tes
 	if len(recorder.requests) != 1 {
 		t.Fatalf("requests = %#v, want only the installer module; Squatter bridge should auto-connect from payload inventory", recorder.requests)
 	}
+	if len(recorder.generations) != 1 {
+		t.Fatalf("payload generations = %#v, want one Squatter payload generation", recorder.generations)
+	}
+	generation := recorder.generations[0]
+	if generation.moduleID != "squatter@v0.1.0" || generation.request.PayloadID != "squatter/windows/x86/windows-7/tcp-bind/pe-exe" {
+		t.Fatalf("payload generation = %#v, want Squatter tcp-bind provider request", generation)
+	}
 	if recorder.requests[0].ModuleID != "ms17-010-exploit@v1.0.0" {
 		t.Fatalf("module = %q, want ms17-010-exploit", recorder.requests[0].ModuleID)
+	}
+	if recorder.requests[0].TargetConfig["payload.local_path"] != "" {
+		t.Fatalf("payload.local_path = %q, want no operator/local path", recorder.requests[0].TargetConfig["payload.local_path"])
+	}
+	if recorder.requests[0].TargetConfig["payload.bytes_base64"] == "" {
+		t.Fatalf("target config = %#v, want provider-generated payload bytes", recorder.requests[0].TargetConfig)
 	}
 	if providers.connected.Handle != "p1" {
 		t.Fatalf("connected payload = %#v, want p1", providers.connected)
@@ -2043,6 +2038,51 @@ func TestExecuteLegacyThrowAutoConnectsSquatterPayloadAfterMS17010Install(t *tes
 	}
 	if !hasStructuredEvent(events.events, "hovel.payload.connected") {
 		t.Fatalf("events = %#v, want hovel.payload.connected", events.events)
+	}
+}
+
+func TestExecuteLegacyThrowGeneratesSquatterSMBNamedPipePayload(t *testing.T) {
+	recorder := &fakeRunRecorder{}
+	client := fakeRunClient{recorder: recorder}
+	throw := throwExecution{
+		Operation: "op1",
+		Chain:     "alpha",
+		Targets:   []string{"t1"},
+		Modules:   []string{"ms17-010-exploit@v1.0.0", "squatter@v0.1.0"},
+		ChainConfig: map[string]string{
+			"payload.transport": "smb-named-pipe",
+			"payload.pipe":      "squatter",
+		},
+		TargetConfigs: map[string]map[string]string{
+			"t1": {
+				"target.host":         "192.168.122.142",
+				"target.port":         "445",
+				"payload.local_path":  "/tmp/stale-squatter-smb.exe",
+				"payload.remote_path": `C:\Windows\Temp\hovelsmb.exe`,
+			},
+		},
+	}
+	payload := ThrowPayload{ThrowID: "throw-1", Chain: "alpha", Targets: []string{"t1"}}
+
+	err := executeLegacyThrow(context.Background(), Runtime{Modules: squatterCatalog()}, client, "", squatterCatalog(), ThrowPlanRecord{Operation: "op1", Chain: "alpha"}, throw, &payload, time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.generations) != 1 {
+		t.Fatalf("payload generations = %#v, want one Squatter payload generation", recorder.generations)
+	}
+	generation := recorder.generations[0]
+	if generation.request.PayloadID != "squatter/windows/x86/windows-7/smb-named-pipe/pe-exe" {
+		t.Fatalf("payload generation = %#v, want Squatter SMB named-pipe provider request", generation)
+	}
+	if recorder.requests[0].TargetConfig["payload.local_path"] != "" {
+		t.Fatalf("payload.local_path = %q, want no operator/local path", recorder.requests[0].TargetConfig["payload.local_path"])
+	}
+	if recorder.requests[0].TargetConfig["payload.bytes_base64"] == "" {
+		t.Fatalf("target config = %#v, want provider-generated payload bytes", recorder.requests[0].TargetConfig)
+	}
+	if recorder.requests[0].TargetConfig["payload.remote_path"] != `C:\Windows\Temp\hovelsmb.exe` {
+		t.Fatalf("payload.remote_path = %q, want explicit target path preserved", recorder.requests[0].TargetConfig["payload.remote_path"])
 	}
 }
 
@@ -4132,6 +4172,7 @@ func (s fakeDaemonService) Status(context.Context, services.DaemonStatusRequest)
 
 type fakeRunRecorder struct {
 	socketPath        string
+	generations       []fakePayloadGeneration
 	requests          []RunMockExploitRequest
 	artifacts         []Artifact
 	installedPayloads []InstalledPayloadDescriptor
@@ -4140,6 +4181,11 @@ type fakeRunRecorder struct {
 	tail              SessionChunk
 	tails             []fakeSessionTail
 	writes            []fakeSessionWrite
+}
+
+type fakePayloadGeneration struct {
+	moduleID string
+	request  GeneratePayloadRequest
 }
 
 type fakeSessionTail struct {
@@ -4673,6 +4719,22 @@ func (c fakeRunClient) RunMockExploit(_ context.Context, req RunMockExploitReque
 		Findings:  []Finding{{Title: "finding", Severity: "info", Detail: "detail"}},
 		Artifacts: artifacts,
 	}, nil
+}
+
+func (c fakeRunClient) GeneratePayload(_ context.Context, moduleID string, req GeneratePayloadRequest) (PayloadArtifactSet, error) {
+	if c.recorder != nil {
+		c.recorder.generations = append(c.recorder.generations, fakePayloadGeneration{moduleID: moduleID, request: req})
+	}
+	artifact := PayloadArtifact{
+		Name:     "squatter.exe",
+		Role:     "primary",
+		Format:   "pe-exe",
+		Encoding: "base64",
+		Bytes:    base64.StdEncoding.EncodeToString([]byte("MZ squatter payload")),
+		SHA256:   "fake-sha",
+		Size:     int64(len("MZ squatter payload")),
+	}
+	return PayloadArtifactSet{Primary: artifact, Artifacts: []PayloadArtifact{artifact}}, nil
 }
 
 func (c fakeRunClient) ListSessions(context.Context) ([]SessionRef, error) {

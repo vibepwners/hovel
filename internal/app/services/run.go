@@ -19,6 +19,10 @@ type PayloadCommandRunner interface {
 	RunPayloadCommand(context.Context, string, run.PayloadCommandRequest) (run.PayloadCommandResult, error)
 }
 
+type PayloadGenerator interface {
+	GeneratePayload(context.Context, string, run.GeneratePayloadRequest) (run.PayloadArtifactSet, error)
+}
+
 type SessionBroker interface {
 	ListSessions(context.Context) ([]run.SessionRef, error)
 	WriteSession(context.Context, string, []byte) error
@@ -120,6 +124,19 @@ type PayloadCommandRunRequest struct {
 	Chain     string
 	ModuleID  string
 	Request   run.PayloadCommandRequest
+}
+
+type GeneratePayloadRequest struct {
+	ModuleID string
+	Request  run.GeneratePayloadRequest
+}
+
+func (s RunService) GeneratePayload(ctx context.Context, req GeneratePayloadRequest) (run.PayloadArtifactSet, error) {
+	runner, ok := s.runner.(PayloadGenerator)
+	if !ok {
+		return run.PayloadArtifactSet{}, errors.New("payload generator is not configured")
+	}
+	return runner.GeneratePayload(ctx, req.ModuleID, req.Request)
 }
 
 func (s RunService) ListPayloadCommands(ctx context.Context, req PayloadCommandListRequest) ([]run.PayloadCommand, error) {

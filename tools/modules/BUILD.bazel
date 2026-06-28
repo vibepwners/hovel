@@ -58,6 +58,16 @@ py_test(
 )
 
 py_test(
+    name = "package_examples_test",
+    size = "small",
+    srcs = [
+        "package_examples.py",
+        "package_examples_test.py",
+    ],
+    python_version = "PY3",
+)
+
+py_test(
     name = "workspace_module_install_test",
     size = "medium",
     srcs = ["workspace_module_install_test.py"],

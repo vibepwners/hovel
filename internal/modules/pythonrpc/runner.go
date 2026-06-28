@@ -242,6 +242,18 @@ func (r Runner) ListPayloads(ctx context.Context, moduleID string, query run.Pay
 	return decoded, nil
 }
 
+func (r Runner) GeneratePayload(ctx context.Context, moduleID string, request run.GeneratePayloadRequest) (run.PayloadArtifactSet, error) {
+	result, err := r.callPayloadProvider(ctx, moduleID, "generate_payload", request)
+	if err != nil {
+		return run.PayloadArtifactSet{}, err
+	}
+	var decoded run.PayloadArtifactSet
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return run.PayloadArtifactSet{}, services.NewModuleExecutionFailure("module returned invalid payload artifact set", err)
+	}
+	return decoded, nil
+}
+
 func (r Runner) RunPayloadCommand(ctx context.Context, moduleID string, request run.PayloadCommandRequest) (run.PayloadCommandResult, error) {
 	result, err := r.callPayloadCommand(ctx, moduleID, "payload.command.run", request)
 	if err != nil {

@@ -241,6 +241,30 @@ type PayloadSession struct {
 	Owner                    string `json:"owner"`
 }
 
+type GeneratePayloadRequest struct {
+	RunID     string            `json:"runId,omitempty"`
+	Target    string            `json:"target"`
+	PayloadID string            `json:"payloadId"`
+	Format    string            `json:"format"`
+	Config    map[string]string `json:"config,omitempty"`
+}
+
+type PayloadArtifactSet struct {
+	Primary   PayloadArtifact   `json:"primary"`
+	Artifacts []PayloadArtifact `json:"artifacts"`
+}
+
+type PayloadArtifact struct {
+	Name     string `json:"name"`
+	Role     string `json:"role"`
+	Format   string `json:"format"`
+	Encoding string `json:"encoding"`
+	Bytes    string `json:"bytes,omitempty"`
+	Handle   string `json:"handle,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+	SHA256   string `json:"sha256,omitempty"`
+}
+
 type PayloadCommandListRequest struct {
 	InstalledPayloadID string                 `json:"installedPayloadId,omitempty"`
 	Target             string                 `json:"target,omitempty"`
