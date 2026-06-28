@@ -93,14 +93,14 @@ tasks:
     cmds:
       - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- throw {{.CLI_ARGS}} --workspace "{{.WORKSPACE}}"
 
-  lab:etro-squatter-bind:
-    desc: Throw the representative Etro -> Squatter TCP bind lab chain against HOVEL_LAB_TARGET_HOST.
+  lab:ms17-010-squatter-bind:
+    desc: Throw the representative MS17-010 -> Squatter TCP bind lab chain against HOVEL_LAB_TARGET_HOST.
     deps: [modules:build]
     env:
       HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
       HOVEL_WORKSPACE: '{{.WORKSPACE}}'
     cmds:
-      - bash tools/lab/etro_squatter_bind.sh
+      - bash tools/lab/ms17_010_squatter_bind.sh
 
   clean:
     desc: Remove local dev state (./.hovel workspace and .task cache). Leaves the Bazel cache alone.
@@ -159,6 +159,7 @@ tasks:
       - examples/python/**/*
     generates:
       - dist/modules/module-index.yaml
+      - dist/modules/module-install-set.yaml
       - dist/modules/*.tgz
       - dist/modules/SHA256SUMS
     cmds:
@@ -206,7 +207,7 @@ tasks:
     cmds:
       - task: run
         vars:
-          CLI_ARGS: --jobs=1 //tools/demo:materialize_all_demo_outputs
+          CLI_ARGS: //tools/demo:materialize_all_demo_outputs
 
   docs:api:
     desc: Generate language-native SDK API docs into _site/api/sdk.

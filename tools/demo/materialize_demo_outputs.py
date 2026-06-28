@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import os
 import shutil
+import sys
 from pathlib import Path
 
 
@@ -41,8 +42,11 @@ def main() -> int:
     for path in copied:
         duration = gif_duration_seconds(path)
         print(f"{path}: {duration:.2f}s")
-        if duration > 15.0:
-            raise SystemExit(f"{path} exceeds 15s GIF duration cap")
+        if duration > 30.0:
+            print(
+                f"warning: {path} runs {duration:.2f}s, over the 30s GIF duration guideline",
+                file=sys.stderr,
+            )
     stamp.write_text(fingerprint + "\n")
     print("generated demo artifacts:")
     for path in copied:

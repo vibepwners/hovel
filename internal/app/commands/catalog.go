@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
@@ -876,7 +877,7 @@ func HovelRegistry(runtime Runtime) Registry {
 			Aliases: [][]string{{"modules", "bulk-install"}},
 			Summary: "Install trusted module packages from a bulk manifest.",
 			Positionals: []Positional{
-				{Name: "manifest", Help: "ModuleInstallSet YAML file", Required: true},
+				{Name: "manifest", Help: "ModuleInstallSet YAML file or HTTPS URL", Required: true},
 			},
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
@@ -1634,6 +1635,24 @@ func legacyExecutionModuleIDs(db ModuleDatabase, modules []string) []string {
 	return out
 }
 
+func legacyExecutionModuleIDsForThrow(runtime Runtime, db ModuleDatabase, throw throwExecution) []string {
+	modules := legacyExecutionModuleIDs(db, throw.Modules)
+	if !shouldAutoConnectSquatterPayloads(runtime, db, throw) {
+		return modules
+	}
+	filtered := make([]string, 0, len(modules))
+	for _, moduleID := range modules {
+		if isSquatterTCPBindModule(db, moduleID, throw.ChainConfig) {
+			continue
+		}
+		filtered = append(filtered, moduleID)
+	}
+	if len(filtered) == 0 {
+		return modules
+	}
+	return filtered
+}
+
 func hasSquatterBindModule(modules []string) bool {
 	for _, moduleID := range modules {
 		if moduleID == "squatter.bind" {
@@ -1654,6 +1673,22 @@ func isSquatterTCPBindModule(db ModuleDatabase, moduleID string, config map[stri
 	}
 	mode := strings.TrimSpace(config[squatterTypeConfigKey])
 	return mode == "" || mode == squatterTypeTCPBind
+}
+
+func shouldAutoConnectSquatterPayloads(runtime Runtime, db ModuleDatabase, throw throwExecution) bool {
+	if runtime.Payloads == nil || runtime.PayloadProviders == nil {
+		return false
+	}
+	hasBridge := false
+	hasInstaller := false
+	for _, moduleID := range throw.Modules {
+		if moduleID == "squatter.bind" || isSquatterTCPBindModule(db, moduleID, throw.ChainConfig) {
+			hasBridge = true
+			continue
+		}
+		hasInstaller = true
+	}
+	return hasBridge && hasInstaller
 }
 
 func chainFileHasSquatterTCPBindModule(db ModuleDatabase, steps []ChainFileStep, config map[string]string) bool {
@@ -2168,14 +2203,27 @@ func modulesBulkInstallHandler(runtime Runtime) Handler {
 		}
 		workspacePath := workspaceFromInvocation(invocation)
 		manifestPath := invocation.Positional("manifest")
-		set, err := modulepackage.LoadInstallSet(manifestPath)
+		baseOptions, err := moduleInstallOptions(workspacePath, invocation)
 		if err != nil {
 			return Result{}, err
 		}
-		baseDir := filepath.Dir(manifestPath)
+		set, err := loadBulkInstallSet(manifestPath, baseOptions)
+		if err != nil {
+			return Result{}, err
+		}
+		baseDir := bulkInstallBaseDir(manifestPath)
 		payload := ModuleBulkInstallPayload{Workspace: workspacePath}
-		for _, item := range set.Modules {
+		for i, item := range set.Modules {
 			source := resolveBulkInstallSource(baseDir, item.Source)
+			if invocation.InstallProgress != nil {
+				invocation.InstallProgress(modulepackage.InstallProgress{
+					Stage:  modulepackage.InstallProgressSetEntry,
+					Source: source,
+					SHA256: item.SHA256,
+					Index:  i + 1,
+					Count:  len(set.Modules),
+				})
+			}
 			result, linked, err := installModuleSource(workspacePath, source, "", item.SHA256, invocation)
 			if err != nil {
 				return Result{}, err
@@ -2274,6 +2322,7 @@ func moduleInstallOptions(workspacePath string, invocation Invocation) (modulepa
 		NoCache:                      invocation.Flag("no-cache") || !config.Cache.Enabled,
 		Replace:                      invocation.Flag("replace"),
 		PythonBuildStandaloneRelease: config.Runtime.Python.PythonBuildStandalone.Release,
+		Progress:                     invocation.InstallProgress,
 	}, nil
 }
 
@@ -2597,10 +2646,42 @@ func looseVersionParts(version string) []int {
 }
 
 func resolveBulkInstallSource(baseDir, source string) string {
+	if base, err := url.Parse(baseDir); err == nil && base.Scheme != "" && base.Host != "" {
+		relative, err := url.Parse(source)
+		if err != nil {
+			return source
+		}
+		return base.ResolveReference(relative).String()
+	}
 	if strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") || filepath.IsAbs(source) {
 		return source
 	}
 	return filepath.Join(baseDir, source)
+}
+
+func loadBulkInstallSet(source string, opts modulepackage.InstallOptions) (modulepackage.InstallSet, error) {
+	source = strings.TrimSpace(source)
+	if strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") {
+		return modulepackage.LoadInstallSetURL(source, opts)
+	}
+	return modulepackage.LoadInstallSet(source)
+}
+
+func bulkInstallBaseDir(source string) string {
+	if parsed, err := url.Parse(source); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		dir := path.Dir(parsed.Path)
+		if dir == "." {
+			dir = ""
+		}
+		if dir != "" && dir != "/" {
+			dir += "/"
+		}
+		parsed.Path = dir
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		return parsed.String()
+	}
+	return filepath.Dir(source)
 }
 
 func modulesInspectHandler(runtime Runtime) Handler {
@@ -2859,7 +2940,8 @@ func throwHandler(runtime Runtime) Handler {
 }
 
 func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, workspacePath string, db ModuleDatabase, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time, streamLog func(...operatorlog.Entry)) error {
-	modules := legacyExecutionModuleIDs(db, throw.Modules)
+	modules := legacyExecutionModuleIDsForThrow(runtime, db, throw)
+	autoConnectSquatter := shouldAutoConnectSquatterPayloads(runtime, db, throw)
 	for _, target := range throw.Targets {
 		for _, moduleID := range modules {
 			runIndex := len(payload.Results) + 1
@@ -2889,8 +2971,14 @@ func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, 
 			if err := materializeRunArtifacts(ctx, runtime, workspacePath, plan, payload, moduleID, target, result.RunID); err != nil {
 				return err
 			}
-			if err := recordInstalledPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1); err != nil {
+			installedPayloads, err := recordInstalledPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1)
+			if err != nil {
 				return err
+			}
+			if autoConnectSquatter {
+				if err := connectInstalledSquatterPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1, installedPayloads); err != nil {
+					return err
+				}
 			}
 			resultEntries := throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(modules), throwStarted)
 			if runtime.Session != nil && feedbackPublished(runtime.Session) {
@@ -2929,7 +3017,7 @@ func executeCapabilityThrow(ctx context.Context, runtime Runtime, workspacePath 
 		if err := materializeRunArtifacts(ctx, runtime, workspacePath, plan, payload, "capability-chain", target, payload.Results[len(payload.Results)-1].RunID); err != nil {
 			return err
 		}
-		if err := recordInstalledPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1); err != nil {
+		if _, err := recordInstalledPayloadsForRun(ctx, runtime, workspacePath, plan, payload, len(payload.Results)-1); err != nil {
 			return err
 		}
 		resultEntries := throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets), throwStarted)
@@ -3028,17 +3116,19 @@ func materializeRunArtifacts(ctx context.Context, runtime Runtime, workspacePath
 	return nil
 }
 
-func recordInstalledPayloadsForRun(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, payload *ThrowPayload, resultIndex int) error {
+func recordInstalledPayloadsForRun(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, payload *ThrowPayload, resultIndex int) ([]InstalledPayloadRecord, error) {
 	if runtime.Payloads == nil || resultIndex < 0 || resultIndex >= len(payload.Results) {
-		return nil
+		return nil, nil
 	}
 	result := payload.Results[resultIndex]
+	records := make([]InstalledPayloadRecord, 0, len(result.InstalledPayloads))
 	for descriptorIndex, descriptor := range result.InstalledPayloads {
 		record := installedPayloadRecordFromDescriptor(workspacePath, plan, payload.ThrowID, result, descriptor)
 		recorded, err := runtime.Payloads.RecordInstalledPayload(ctx, record)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		records = append(records, recorded)
 		payload.Results[resultIndex].InstalledPayloads[descriptorIndex].State = recorded.State
 		if err := recordStructuredEvent(ctx, runtime, workspacePath, "hovel.payload.installed", "installed payload recorded", plan, payload.ThrowID, result.RunID, event.LevelInfo, map[string]string{
 			"payloadHandle": recorded.Handle,
@@ -3048,10 +3138,61 @@ func recordInstalledPayloadsForRun(ctx context.Context, runtime Runtime, workspa
 			"target":        recorded.Target,
 			"transport":     recorded.Transport,
 		}); err != nil {
+			return nil, err
+		}
+	}
+	return records, nil
+}
+
+func connectInstalledSquatterPayloadsForRun(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, payload *ThrowPayload, resultIndex int, records []InstalledPayloadRecord) error {
+	if runtime.Payloads == nil || runtime.PayloadProviders == nil || resultIndex < 0 || resultIndex >= len(payload.Results) {
+		return nil
+	}
+	for descriptorIndex, record := range records {
+		if !autoConnectableSquatterPayload(record) {
+			continue
+		}
+		session, err := runtime.PayloadProviders.ConnectInstalledPayload(ctx, record)
+		if err != nil {
+			_, _ = runtime.Payloads.UpdateInstalledPayloadState(ctx, workspacePath, record.Handle, PayloadStateUnreachable, err.Error())
+			return fmt.Errorf("connect installed payload %s: %w", payloadRecordRef(record), err)
+		}
+		if session.InstalledPayloadID == "" {
+			session.InstalledPayloadID = record.Handle
+		}
+		connected, err := runtime.Payloads.UpdateInstalledPayloadState(ctx, workspacePath, record.Handle, PayloadStateConnected, "session connected")
+		if err != nil {
+			return err
+		}
+		payload.Results[resultIndex].Sessions = append(payload.Results[resultIndex].Sessions, session)
+		if descriptorIndex < len(payload.Results[resultIndex].InstalledPayloads) {
+			payload.Results[resultIndex].InstalledPayloads[descriptorIndex].State = connected.State
+		}
+		if err := recordStructuredEvent(ctx, runtime, workspacePath, "hovel.payload.connected", "installed payload connected", plan, payload.ThrowID, payload.Results[resultIndex].RunID, event.LevelInfo, map[string]string{
+			"payloadHandle": connected.Handle,
+			"payloadId":     connected.PayloadID,
+			"provider":      connected.Provider,
+			"session":       session.ID,
+			"target":        connected.Target,
+			"transport":     connected.Transport,
+		}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func autoConnectableSquatterPayload(record InstalledPayloadRecord) bool {
+	return strings.EqualFold(record.Provider, "squatter") && record.SupportsReconnect && record.Reconnect != nil
+}
+
+func payloadRecordRef(record InstalledPayloadRecord) string {
+	for _, value := range []string{record.Handle, record.PayloadID, record.InstanceKey} {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return "unknown"
 }
 
 func installedPayloadRecordFromDescriptor(workspacePath string, plan ThrowPlanRecord, throwID string, result RunPayload, descriptor InstalledPayloadDescriptor) InstalledPayloadRecord {
@@ -3774,13 +3915,8 @@ func applySquatterBindTargetConfig(targets []string, configs map[string]map[stri
 	if configs == nil {
 		configs = map[string]map[string]string{}
 	}
-	bindPort := strings.TrimSpace(chainConfig["squatter.bind_port"])
-	if bindPort == "" {
-		bindPort = strings.TrimSpace(chainConfig["payload.bind_port"])
-	}
-	if bindPort == "" {
-		bindPort = "9101"
-	}
+	chainBindPort := strings.TrimSpace(chainConfig["squatter.bind_port"])
+	chainPayloadBindPort := strings.TrimSpace(chainConfig["payload.bind_port"])
 	remotePath := strings.TrimSpace(chainConfig["squatter.remote_path"])
 	localPath := squatterPayloadPath()
 	for _, target := range targets {
@@ -3794,10 +3930,20 @@ func applySquatterBindTargetConfig(targets []string, configs map[string]map[stri
 			config["target.port"] = "445"
 		}
 		config["payload.local_path"] = localPath
+		config["payload.transport"] = squatterTypeTCPBind
 		if remotePath != "" {
 			config["payload.remote_path"] = remotePath
 		}
-		config["payload.bind_port"] = bindPort
+		switch targetBindPort := strings.TrimSpace(config["payload.bind_port"]); {
+		case chainBindPort != "":
+			config["payload.bind_port"] = chainBindPort
+		case targetBindPort != "":
+			config["payload.bind_port"] = targetBindPort
+		case chainPayloadBindPort != "":
+			config["payload.bind_port"] = chainPayloadBindPort
+		default:
+			config["payload.bind_port"] = "9101"
+		}
 		configs[target] = config
 	}
 	return configs
@@ -4937,7 +5083,7 @@ func squatterBindRequirements(scope modulecatalog.Scope) []modulecatalog.Require
 			Key:         "squatter.remote_path",
 			Type:        modulecatalog.ValueString,
 			Required:    false,
-			Description: "Optional fixed target path used when ETRO installs the Squatter agent; unset auto-generates a fresh path.",
+			Description: "Optional fixed target path used when the MS17-010 exploit installs the Squatter agent; unset auto-generates a fresh path.",
 		},
 	}
 }

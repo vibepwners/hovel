@@ -52,7 +52,7 @@
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
         <li><a href="module-rust.html">Rust Modules</a></li>
-        <li><a href="module-eternalromance.html">Case Study: EternalRomance</a></li>
+        <li><a href="module-ms17-010.html">Case Study: MS17-010</a></li>
       </ul>
     </aside>
     <main class="content">
@@ -339,7 +339,7 @@ task ci</code></pre>
           internet. Success exits <code>0</code>. Any failure exits <code>1</code>. Warnings
           exit <code>0</code> unless the caller passes <code>--warnings-as-errors</code>.
         </p>
-<pre data-lang="shell"><code>hovel module check etro-exploit@v1.0.0
+<pre data-lang="shell"><code>hovel module check ms17-010-exploit@v1.0.0
 hovel module check --all
 hovel module check --warnings-as-errors ./dist/modules/my-module-0.1.0.tgz
 hovel run --workspace .hovel -- module check mock-survey</code></pre>
@@ -350,15 +350,15 @@ hovel run --workspace .hovel -- module check mock-survey</code></pre>
           parsed metadata, chain and target config schema counts, and provider step
           contract count.
         </p>
-<pre data-lang="text"><code>MODULE CHECK etro-exploit@v1.0.0
+<pre data-lang="text"><code>MODULE CHECK ms17-010-exploit@v1.0.0
 status  ✅ PASS
-module  etro-exploit@v1.0.0
+module  ms17-010-exploit@v1.0.0
 
 CHECK   NAME                         MESSAGE
 -----   ----                         -------
 ✅ PASS rpc discovery                handshake, schema, step.describe, and shutdown completed
 ✅ PASS runtime                      jsonrpc-stdio
-✅ PASS metadata                     etro-exploit@v1.0.0 exploit v1.0.0
+✅ PASS metadata                     ms17-010-exploit@v1.0.0 exploit v1.0.0
 ✅ PASS config schema                1 chain requirements, 3 target requirements
 ✅ PASS step contracts               0 provider steps</code></pre>
         <p>
@@ -450,9 +450,10 @@ CHECK   NAME                         MESSAGE
 hovel module install https://github.com/org/repo/releases/download/{{HOVEL_RELEASE_TAG}}/my-module-0.1.0.tgz --sha256 ...
 hovel module install my-module
 hovel module install my-module@0.1.0
+hovel module bulk-install https://github.com/org/repo/releases/download/{{HOVEL_RELEASE_TAG}}/module-install-set.yaml
 hovel module bulk-install ./lab-modules.yaml
 hovel module install --link /home/me/dev/my-module</code></pre>
-        <p>Bare install references choose the newest semver package from the first matching local source tier: download cache, configured package roots and archives, then the source-tree module index when present. Hovel consults configured indexes after local sources. The default install target is the active workspace. <code>--global</code> installs into user-level storage. Workspace modules take precedence over global modules and cached packages.</p>
+        <p>Bare install references choose the newest semver package from the first matching local source tier: download cache, configured package roots and archives, then the source-tree module index when present. Hovel consults configured indexes after local sources. Bulk-install manifests may be local YAML files or HTTPS URLs. The default install target is the active workspace. <code>--global</code> installs into user-level storage. Workspace modules take precedence over global modules and cached packages.</p>
         <blockquote>
           The <code>command</code> launcher is what makes Hovel polyglot: any executable that
           speaks the stdio JSON-RPC protocol is a module, regardless of how it was built.

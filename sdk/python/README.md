@@ -92,4 +92,4 @@ For deeper examples, compare:
 - [`../../examples/python/mock_survey`](../../examples/python/mock_survey)
 - [`../../examples/python/mock_exploit`](../../examples/python/mock_exploit)
 - [`../../examples/python/mock_exploit_session`](../../examples/python/mock_exploit_session)
-- [`../../examples/python/etro_exploit`](../../examples/python/etro_exploit)
+- [`../../examples/python/ms17_010_exploit`](../../examples/python/ms17_010_exploit)

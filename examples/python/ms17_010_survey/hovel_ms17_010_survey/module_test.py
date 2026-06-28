@@ -1,7 +1,7 @@
 import unittest
 
-from hovel_etro_survey.module import EtroSurvey, verdict_for_status
-from hovel_etro_survey.smb import (
+from hovel_ms17_010_survey.module import MS17010Survey, verdict_for_status
+from hovel_ms17_010_survey.smb import (
     CMD_NEGOTIATE,
     PIPE_WHITELIST,
     STATUS_INSUFF_SERVER_RESOURCES,
@@ -10,15 +10,15 @@ from hovel_etro_survey.smb import (
 )
 
 
-class EtroSurveyTest(unittest.TestCase):
+class MS17010SurveyTest(unittest.TestCase):
     def test_module_is_a_safe_survey(self) -> None:
-        module = EtroSurvey()
+        module = MS17010Survey()
         info = module.info()
         self.assertEqual(info["moduleType"], "survey")
         self.assertNotIn("dangerous", info["tags"])
 
     def test_schema_declares_target(self) -> None:
-        schema = EtroSurvey().module_schema()
+        schema = MS17010Survey().module_schema()
         keys = [requirement["key"] for requirement in schema["targetConfig"]]
         self.assertIn("target.host", keys)
         self.assertIn("target.port", keys)
@@ -34,7 +34,7 @@ class EtroSurveyTest(unittest.TestCase):
         self.assertEqual(header[:4], b"\xffSMB")
         self.assertEqual(header[4], CMD_NEGOTIATE)
 
-    def test_pipe_whitelist_matches_eternalromance(self) -> None:
+    def test_pipe_whitelist_matches_ms17_010_probe(self) -> None:
         self.assertEqual(PIPE_WHITELIST, ("spoolss", "browser", "lsarpc"))
 
 

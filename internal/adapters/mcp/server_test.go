@@ -333,10 +333,10 @@ func TestMCPCommandRunCarriesOperationAndChainContext(t *testing.T) {
 	if out := call("hovel", "run", "--", "op", "use", "redteam-lab"); !out.OK || out.Operation != "redteam-lab" || out.Chain != "" {
 		t.Fatalf("op use output = %#v", out)
 	}
-	if out := call("chain", "create", "etro-squatter"); !out.OK || out.Operation != "redteam-lab" || out.Chain != "etro-squatter" {
+	if out := call("chain", "create", "ms17-010-squatter"); !out.OK || out.Operation != "redteam-lab" || out.Chain != "ms17-010-squatter" {
 		t.Fatalf("chain create output = %#v", out)
 	}
-	if out := call("target", "add", "192.168.122.142"); !out.OK || out.Operation != "redteam-lab" || out.Chain != "etro-squatter" {
+	if out := call("target", "add", "192.168.122.142"); !out.OK || out.Operation != "redteam-lab" || out.Chain != "ms17-010-squatter" {
 		t.Fatalf("target add output = %#v", out)
 	}
 
@@ -349,11 +349,11 @@ func TestMCPCommandRunCarriesOperationAndChainContext(t *testing.T) {
 	if requests[1].Operation != "redteam-lab" || requests[1].Chain != "" {
 		t.Fatalf("second request context = %#v", requests[1])
 	}
-	if requests[2].Operation != "redteam-lab" || requests[2].Chain != "etro-squatter" {
+	if requests[2].Operation != "redteam-lab" || requests[2].Chain != "ms17-010-squatter" {
 		t.Fatalf("third request context = %#v", requests[2])
 	}
 	entity := attached.currentEntity()
-	if entity.Operation != "redteam-lab" || entity.ActiveChain != "etro-squatter" {
+	if entity.Operation != "redteam-lab" || entity.ActiveChain != "ms17-010-squatter" {
 		t.Fatalf("entity context = %#v", entity)
 	}
 }
@@ -391,9 +391,9 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	}
 
 	run("op", "use", "mcp-e2e")
-	run("chain", "create", "etro")
+	run("chain", "create", "ms17-010")
 	modules := run("modules", "available")
-	if !strings.Contains(modules.Stdout, "etro-exploit@v1.0.0") {
+	if !strings.Contains(modules.Stdout, "ms17-010-exploit@v1.0.0") {
 		t.Fatalf("modules available missing configured catalog:\n%s", modules.Stdout)
 	}
 	run("target", "add", "192.168.122.142")
@@ -404,7 +404,7 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workspaceSnapshot returned error: %v", err)
 	}
-	if snapshot.ActiveOperation != "mcp-e2e" || snapshot.ActiveChain != "etro" {
+	if snapshot.ActiveOperation != "mcp-e2e" || snapshot.ActiveChain != "ms17-010" {
 		t.Fatalf("snapshot context = %s/%s", snapshot.ActiveOperation, snapshot.ActiveChain)
 	}
 	if len(snapshot.Operations) != 1 {
@@ -417,7 +417,7 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	if got := operation.TargetConfigs["192.168.122.142"]["target.host"]; got != "192.168.122.142" {
 		t.Fatalf("target.host = %q", got)
 	}
-	if len(operation.Chains) != 1 || operation.Chains[0].Name != "etro" {
+	if len(operation.Chains) != 1 || operation.Chains[0].Name != "ms17-010" {
 		t.Fatalf("chains = %#v", operation.Chains)
 	}
 	if got := operation.Chains[0].Config["operator.confirmed_lab"]; got != "true" {
@@ -425,15 +425,15 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	}
 }
 
-func TestMCPChainApplyBuildsEtroSquatterWithoutCLIProbing(t *testing.T) {
+func TestMCPChainApplyBuildsMS17010SquatterWithoutCLIProbing(t *testing.T) {
 	configPath := testsupport.WritePythonModuleFixtures(t,
 		testsupport.PythonModuleFixture{
-			ID:   "etro-survey",
-			Body: schemaModuleFixtureBody("etro-survey", "v0.1.0", "survey", `[]`, `[]`),
+			ID:   "ms17-010-survey",
+			Body: schemaModuleFixtureBody("ms17-010-survey", "v0.1.0", "survey", `[]`, `[]`),
 		},
 		testsupport.PythonModuleFixture{
-			ID: "etro-exploit",
-			Body: schemaModuleFixtureBody("etro-exploit", "v1.0.0", "exploit", `[
+			ID: "ms17-010-exploit",
+			Body: schemaModuleFixtureBody("ms17-010-exploit", "v1.0.0", "exploit", `[
 		{"key": "operator.confirmed_lab", "type": "bool", "required": True}
 	]`, `[
 		{"key": "target.host", "type": "host", "required": True},
@@ -468,7 +468,7 @@ func TestMCPChainApplyBuildsEtroSquatterWithoutCLIProbing(t *testing.T) {
 	_, out, err := attached.chainApply(context.Background(), nil, chainApplyInput{
 		Operation: "o1",
 		Chain:     "xp",
-		Modules:   []string{"etro-survey@v0.1.0", "etro-exploit@v1.0.0", "squatter@v0.1.0"},
+		Modules:   []string{"ms17-010-survey@v0.1.0", "ms17-010-exploit@v1.0.0", "squatter@v0.1.0"},
 		Targets:   []string{"192.168.122.142"},
 		ChainConfig: map[string]string{
 			"operator.confirmed_lab": "true",

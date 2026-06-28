@@ -50,7 +50,7 @@
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
         <li><a href="module-rust.html">Rust Modules</a></li>
-        <li><a href="module-eternalromance.html">Case Study: EternalRomance</a></li>
+        <li><a href="module-ms17-010.html">Case Study: MS17-010</a></li>
       </ul>
     </aside>
     <main class="content">
@@ -169,8 +169,8 @@ CleanupHandle</code></pre>
           an ordered set of module step references, resolves inputs before each step,
           calls <code>step.prepare</code>, calls <code>step.execute</code>, records
           produced capabilities, applies state transitions, and blocks at the first
-          missing requirement. This primitive is intentionally not Etro-specific; the
-          Etro-to-Squatter path is the representative chain used to prove the model.
+          missing requirement. This primitive is intentionally not MS17-010-specific; the
+          MS17-010-to-Squatter path is the representative chain used to prove the model.
         </p>
         <p>
           Chain files identify both layers explicitly. <code>uses</code> locates the
@@ -190,24 +190,24 @@ CleanupHandle</code></pre>
           execute detail remains available through capability evidence and structured
           events.
           One-shot chain-file throws use the same primitive with the configured module
-          catalog and JSON-RPC step runner, so Etro-to-Squatter is not a special throw
+          catalog and JSON-RPC step runner, so MS17-010-to-Squatter is not a special throw
           path; it is one ordered capability-step chain.
         </p>
 <pre data-lang="yaml"><code>steps:
   - id: exploit
-    uses: module:etro@v1
-    step: etro.exploit
+    uses: module:ms17-010@v1
+    step: ms17-010.exploit
   - id: install
     uses: module:squatter-provider@v1
     step: squatter.install_smb</code></pre>
 
-        <h2>Representative Etro to Squatter Chain</h2>
+        <h2>Representative MS17-010 to Squatter Chain</h2>
         <p>
-          The EternalRomance chain is the representative example for payload and session
-          orchestration. Etro demonstrates exploitation and access establishment; it does
+          The MS17-010 chain is the representative example for payload and session
+          orchestration. The MS17-010 module demonstrates exploitation and access establishment; it does
           not speak Squatter's protocol and does not own Squatter sessions.
         </p>
-<pre data-lang="chain"><code>etro.exploit
+<pre data-lang="chain"><code>ms17-010.exploit
   produces: RemoteExecutionCapability(connection_bound)
 
 windows.credential.create_local_admin

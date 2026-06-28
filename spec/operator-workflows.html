@@ -50,7 +50,7 @@
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
         <li><a href="module-rust.html">Rust Modules</a></li>
-        <li><a href="module-eternalromance.html">Case Study: EternalRomance</a></li>
+        <li><a href="module-ms17-010.html">Case Study: MS17-010</a></li>
       </ul>
     </aside>
     <main class="content">
@@ -183,7 +183,7 @@ module search &lt;query&gt;    # compatibility alias for local availability sear
 chain inspect
 </code></pre>
         <p>Adding a module logs to the chain topic. Removing or reordering a step is a planned editing capability, not a current registry command. When step editing lands, those mutations must also log to the chain topic. Step IDs must be stable so validation errors, logs, and UI selection can point at a specific item.</p>
-        <p>Payload providers must also be visible as chain steps. Operators should add Squatter explicitly with <code>chain add squatter.bind</code> rather than configuring low-level payload file paths on every target. For the current Etro-to-Squatter TCP bind slice, that step contributes chain-scoped Squatter settings such as <code>squatter.bind_port</code> and optional <code>squatter.remote_path</code>. During planning Hovel derives the ETRO install inputs for each selected target from that step, including the staged local payload path, optional fixed remote path, bind port, and SMB transport port. When no fixed remote path is configured, Etro generates a fresh target path during execution and records it in the result artifact.</p>
+        <p>Payload providers must also be visible as chain steps. Operators should add Squatter explicitly with <code>chain add squatter.bind</code> or <code>chain add squatter</code> rather than configuring low-level payload file paths on every target. For the current MS17-010-to-Squatter TCP bind slice, that step contributes chain-scoped Squatter settings such as <code>squatter.bind_port</code> and optional <code>squatter.remote_path</code>. During planning Hovel derives the MS17-010 install inputs for each selected target from that step, including the staged local payload path, optional fixed remote path, bind port, payload transport, and SMB transport port. When no fixed remote path is configured, the MS17-010 exploit generates a fresh target path during execution and records it in the result artifact. During execution, a Squatter bridge step means the MS17-010 exploit installs the staged payload and Hovel immediately connects any recorded Squatter installed payload through the provider, so a successful handoff produces a normal session visible in <code>session list</code>. An MS17-010-only chain may still run a command such as <code>calc.exe</code>, but it does not create a Squatter session.</p>
 
         <h2>Configuration</h2>
         <p>Configuration is a typed key-value dictionary.</p>
@@ -320,10 +320,12 @@ payloads mark-removed &lt;payload-id&gt; [--reason &lt;reason&gt;] [--json]
         <p>
           <code>payloads connect &lt;payload-id&gt;</code> creates a normal Hovel session when
           reconnect succeeds. The session appears in <code>session list</code> and links
-          back to the installed payload id. Providers may support multiple active
-          sessions per installed payload; when they do not, the provider should reject a
-          second connection with a clear error and Hovel should preserve the installed
-          record.
+          back to the installed payload id. The MS17-010-to-Squatter bridge performs this
+          connection automatically during the throw after the MS17-010 exploit records the installed
+          payload; <code>payloads connect</code> remains the manual reconnect path for
+          already installed payloads. Providers may support multiple active sessions per
+          installed payload; when they do not, the provider should reject a second
+          connection with a clear error and Hovel should preserve the installed record.
         </p>
         <p>
           Cleanup has two explicit paths. <code>payloads cleanup &lt;payload-id&gt;</code>

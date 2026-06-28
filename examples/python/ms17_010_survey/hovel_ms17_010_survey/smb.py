@@ -1,8 +1,8 @@
-"""Minimal SMBv1 client for the MS17-010 / EternalRomance vulnerability touch.
+"""Minimal SMBv1 client for the MS17-010 vulnerability touch.
 
 This is a deliberately small, dependency-free SMBv1 implementation that does only
 what the survey needs: a NULL-session negotiate / session-setup / tree-connect to
-IPC$, a named-pipe open probe against the EternalRomance pipe whitelist, and the
+IPC$, a named-pipe open probe against MS17-010 pipe candidates, and the
 well-known PeekNamedPipe transaction that distinguishes a vulnerable srv.sys
 (STATUS_INSUFF_SERVER_RESOURCES) from a patched one. It is reconnaissance only and
 never corrupts remote memory.
@@ -62,7 +62,7 @@ STATUS_INVALID_HANDLE = 0xC0000008
 STATUS_ACCESS_DENIED = 0xC0000022
 STATUS_OBJECT_NAME_NOT_FOUND = 0xC0000034
 
-# The exact pipe whitelist EternalRomance / Smbtouch accept.
+# Smbtouch-compatible named-pipe candidates for the MS17-010 probe.
 PIPE_WHITELIST = ("spoolss", "browser", "lsarpc")
 
 
@@ -164,7 +164,7 @@ class SmbTouchClient:
 
     def session_setup_null(self) -> SmbResponse:
         # 13-word NT LM 0.12 SESSION_SETUP_ANDX with empty OEM/Unicode passwords =
-        # an anonymous NULL session (the property that makes ETRO remote-unauth).
+        # an anonymous NULL session, which is required for the remote unauthenticated touch.
         # XP SP3 rejects the bare 4-null byte block (DOS error ERRSRV 0x0001), so we
         # send empty account/domain but real NativeOS/NativeLanMan strings, and a
         # server-sized MaxMpxCount.

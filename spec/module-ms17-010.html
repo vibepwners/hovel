@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Case Study: EternalRomance — Hovel book</title>
+  <title>Case Study: MS17-010 — Hovel book</title>
   <link rel="icon" type="image/png" href="../assets/hovel.png">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
@@ -50,16 +50,16 @@
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
         <li><a href="module-rust.html">Rust Modules</a></li>
-        <li><a href="module-eternalromance.html" aria-current="page">Case Study: EternalRomance</a></li>
+        <li><a href="module-ms17-010.html" aria-current="page">Case Study: MS17-010</a></li>
       </ul>
     </aside>
     <main class="content">
       <article>
-        <h1>Case Study: EternalRomance (MS17-010)</h1>
+        <h1>Case Study: MS17-010 (MS17-010)</h1>
         <p>
           The mock modules elsewhere in these guides show the shape of the SDK without touching a
-          real target. This page documents a pair of <em>real</em> modules — <code>etro-survey</code>
-          and <code>etro-exploit</code> — that fingerprint and exploit the MS17-010 SMBv1
+          real target. This page documents a pair of <em>real</em> modules — <code>ms17-010-survey</code>
+          and <code>ms17-010-exploit</code> — that fingerprint and exploit the MS17-010 SMBv1
           vulnerability (CVE-2017-0143) in the Windows kernel driver <code>srv.sys</code>. It is the
           reference example for a full, network-facing capability in Hovel: a survey that produces
           facts, an exploit that consumes them, a real memory-corruption primitive, typed
@@ -67,8 +67,8 @@
           dangerous action.
         </p>
         <p>
-          Both modules live under <code>examples/python/etro_survey/</code> and
-          <code>examples/python/etro_exploit/</code>. They are pure-Python and carry no third-party
+          Both modules live under <code>examples/python/ms17_010_survey/</code> and
+          <code>examples/python/ms17_010_exploit/</code>. They are pure-Python and carry no third-party
           dependencies — the SMB and DCE/RPC wire formats are assembled by hand with
           <code>struct</code> — so they run straight from source through the daemon's interpreter,
           exactly like the mock examples.
@@ -85,8 +85,8 @@
 
         <h2 id="overview">What the example demonstrates</h2>
         <ul>
-          <li><strong>A survey that feeds an exploit.</strong> <code>etro-survey</code> reports
-            whether a host is vulnerable and which named pipe to use; <code>etro-exploit</code>
+          <li><strong>A survey that feeds an exploit.</strong> <code>ms17-010-survey</code> reports
+            whether a host is vulnerable and which named pipe to use; <code>ms17-010-exploit</code>
             takes those facts as configuration.</li>
           <li><strong>A genuine kernel read/write primitive</strong> built entirely from
             legitimate-looking SMB requests.</li>
@@ -123,7 +123,7 @@
 
         <h2 id="survey">The survey module</h2>
         <p>
-          <code>etro-survey</code> is a <code>survey</code> module: it gathers facts and changes
+          <code>ms17-010-survey</code> is a <code>survey</code> module: it gathers facts and changes
           nothing. It performs a real SMBv1 handshake — negotiate, anonymous session setup, tree
           connect to <code>IPC$</code> — then probes the three candidate pipes and issues the
           standard MS17-010 detection request (a <code>PeekNamedPipe</code> transaction against an
@@ -226,22 +226,22 @@
           service, and start it. The modular chain model generalizes that result into a
           <code>RemoteExecutionCapability</code> with explicit sub-capabilities such as
           <code>exec_command</code>, <code>upload_file</code>, and
-          <code>service_control</code>. Etro must only report sub-capabilities it
+          <code>service_control</code>. The MS17-010 module must only report sub-capabilities it
           actually implements and can keep valid.
         </p>
 
         <h2 id="module">The exploit module</h2>
         <p>
-          <code>etro-exploit</code> is an <code>exploit</code> module. Its class attributes declare
+          <code>ms17-010-exploit</code> is an <code>exploit</code> module. Its class attributes declare
           the metadata, the <code>dangerous</code> tag, the chain-level confirmation requirement, and
           the per-target configuration; <code>run</code> performs the chain. The shape will be
           familiar from the <a href="module-python.html">Python guide</a>:
         </p>
-<pre data-lang="examples/python/etro_exploit/.../module.py"><code>class EtroExploit(HovelModule):
-    name = "etro-exploit"
+<pre data-lang="examples/python/ms17_010_exploit/.../module.py"><code>class MS17010ExploitModule(HovelModule):
+    name = "ms17-010-exploit"
     module_type = "exploit"
-    summary = "EternalRomance (MS17-010) SMBv1 srv.sys RCE — runs a command as SYSTEM."
-    tags = ("dangerous", "smb", "ms17-010", "eternalromance", "exploit", "python")
+    summary = "MS17-010 SMBv1 srv.sys RCE — runs a command as SYSTEM."
+    tags = ("dangerous", "smb", "ms17-010", "exploit", "python")
 
     global_config = (
         Requirement("operator.confirmed_lab", "bool",
@@ -294,7 +294,7 @@
           Both modules are ordinary <code>jsonrpc-stdio</code> modules. They subclass
           <code>HovelModule</code>, declare <code>survey</code> / <code>exploit</code> as
           their <code>module_type</code>, and answer the common RPC methods through the
-          SDK's <code>serve</code> loop. In the chain-step model, Etro also reports live
+          SDK's <code>serve</code> loop. In the chain-step model, the MS17-010 exploit also reports live
           step contracts through <code>step.describe</code> and executes confirmed steps
           through <code>step.execute</code>. Nothing about the framing changes for a real
           module versus a mock; see the <a href="module-protocol.html">Wire Protocol</a>
@@ -329,9 +329,9 @@
           one that is anonymously reachable.
         </p>
 
-        <h3>The Etro to Squatter handoff</h3>
+        <h3>The MS17-010 to Squatter handoff</h3>
         <p>
-          Etro does not own Squatter sessions. In the representative Squatter chain, Etro
+          The MS17-010 exploit does not own Squatter sessions. In the representative Squatter chain, it
           produces a connection-bound <code>RemoteExecutionCapability</code>. A separate
           Windows credential step consumes that capability to create a temporary local SMB
           credential with neutral random username and high-entropy random password. The
@@ -342,7 +342,17 @@
           the SMB credential to connect to <code>\\target\pipe\name</code> and produce the
           <code>SessionRef</code>.
         </p>
-<pre data-lang="chain"><code>etro.exploit
+        <p>
+          The currently implemented legacy CLI bridge keeps that ownership boundary while
+          using module-level chain entries: when Squatter is present in an MS17-010 chain,
+          planning derives <code>payload.local_path</code>, <code>payload.transport</code>,
+          and bind settings for the MS17-010 exploit. If it reports a Squatter installed-payload
+          descriptor, Hovel records it in the payload inventory and immediately asks the
+          Squatter provider to reconnect, appending the resulting <code>SessionRef</code>
+          to the throw result. Without a Squatter bridge step, the MS17-010 exploit remains command
+          execution only and should not be expected to create a session.
+        </p>
+<pre data-lang="chain"><code>ms17-010.exploit
   -&gt; RemoteExecutionCapability(connection_bound)
 windows.credential.create_local_admin
   -&gt; CredentialCapability(protocol=smb), CleanupHandle
@@ -353,10 +363,10 @@ squatter.install_smb
 squatter.connect_smb
   -&gt; SessionRef</code></pre>
         <p>
-          This is intentionally a representative chain, not a bespoke Etro product. Etro
+          This is intentionally a representative chain, not a bespoke MS17-010 product. The MS17-010 exploit
           establishes access; credential, install, installed payload tracking, connect,
           session, and cleanup behavior are owned by their respective modules and provider
-          steps. Etro may report that it installed Squatter only by returning a typed
+          steps. It may report that it installed Squatter only by returning a typed
           installed-payload descriptor naming the Squatter provider and payload id; Hovel
           still validates that descriptor before persistence.
         </p>
@@ -366,10 +376,10 @@ squatter.connect_smb
           Each module ships as a package with a Python launch entry. Operators install
           release packages or link local package roots while developing:
         </p>
-<pre data-lang="shell"><code>hovel module install ./etro-survey-1.0.0.tgz
-hovel module install ./etro-exploit-1.0.0.tgz
-hovel module install --link "$PWD/examples/python/etro_survey"
-hovel module install --link "$PWD/examples/python/etro_exploit"</code></pre>
+<pre data-lang="shell"><code>hovel module install ./ms17-010-survey-1.0.0.tgz
+hovel module install ./ms17-010-exploit-1.0.0.tgz
+hovel module install --link "$PWD/examples/python/ms17_010_survey"
+hovel module install --link "$PWD/examples/python/ms17_010_exploit"</code></pre>
         <p>A throw supplies the target configuration and the confirmation:</p>
 <pre data-lang="execute params"><code>{
   "target": "10.0.0.42",
@@ -390,8 +400,8 @@ hovel module install --link "$PWD/examples/python/etro_exploit"</code></pre>
 
         <h2 id="files">Where to look</h2>
         <ul>
-          <li><code>examples/python/etro_survey/</code> — the survey module and its SMB touch.</li>
-          <li><code>examples/python/etro_exploit/</code> — the exploit module, primitive, and SCM
+          <li><code>examples/python/ms17_010_survey/</code> — the survey module and its SMB touch.</li>
+          <li><code>examples/python/ms17_010_exploit/</code> — the exploit module, primitive, and SCM
             client.</li>
           <li><a href="module-python.html">Python Modules</a> — the SDK surface these are built on.</li>
           <li><a href="safety.html">Safety and Scope</a> — the trust model the dangerous tag plugs

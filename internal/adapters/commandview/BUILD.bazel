@@ -1,0 +1,24 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "commandview",
+    srcs = ["renderer.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/commandview",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/adapters/clistyle",
+        "//internal/app/commands",
+        "//internal/app/modulecatalog",
+        "@com_github_charmbracelet_glamour//:glamour",
+    ],
+)
+
+go_test(
+    name = "commandview_test",
+    srcs = ["renderer_test.go"],
+    embed = [":commandview"],
+    deps = [
+        "//internal/app/commands",
+        "//internal/app/modulecatalog",
+    ],
+)

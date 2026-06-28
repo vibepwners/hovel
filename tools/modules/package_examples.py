@@ -2,7 +2,9 @@
 """Build example Hovel module packages into dist/modules.
 
 Invoked through Task. The script assumes `task modules:build` has already
-staged native example binaries into examples/bin/.
+staged native example binaries into examples/bin/. Set
+HOVEL_MODULE_RELEASE_BASE_URL to produce an HTTPS bulk-install manifest for a
+release, for example https://github.com/Vibe-Pwners/hovel/releases/download/v1.2.3.
 """
 
 from __future__ import annotations
@@ -68,20 +70,20 @@ PYTHON_MODULES = [
         "hovel_example_exploit_session",
     ),
     (
-        "etro-survey",
+        "ms17-010-survey",
         "v0.1.0",
         "survey",
-        "EternalRomance SMBv1 survey module.",
-        "examples/python/etro_survey",
-        "hovel_etro_survey",
+        "MS17-010 SMBv1 survey module.",
+        "examples/python/ms17_010_survey",
+        "hovel_ms17_010_survey",
     ),
     (
-        "etro-exploit",
+        "ms17-010-exploit",
         "v1.0.0",
         "exploit",
-        "EternalRomance SMBv1 exploit module.",
-        "examples/python/etro_exploit",
-        "hovel_etro_exploit",
+        "MS17-010 SMBv1 exploit module.",
+        "examples/python/ms17_010_exploit",
+        "hovel_ms17_010_exploit",
     ),
 ]
 
@@ -134,6 +136,22 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def module_release_base_url() -> str:
+    base = os.environ.get("HOVEL_MODULE_RELEASE_BASE_URL", "").strip()
+    if base:
+        return base.rstrip("/")
+    tag = os.environ.get("HOVEL_RELEASE_TAG", "").strip()
+    if tag:
+        return f"https://github.com/Vibe-Pwners/hovel/releases/download/{tag}"
+    return ""
+
+
+def module_source(archive: Path, base_url: str) -> str:
+    if base_url:
+        return f"{base_url}/{archive.name}"
+    return archive.name
 
 
 def native_manifest(name: str, version: str, module_type: str, summary: str, command: str) -> str:
@@ -210,7 +228,9 @@ def main() -> None:
         archives.append(package_python(*item))
 
     index_lines = ["apiVersion: hovel.dev/v1alpha1", "kind: ModuleIndex", "modules:"]
+    install_lines = ["apiVersion: hovel.dev/v1alpha1", "kind: ModuleInstallSet", "modules:"]
     sum_lines = []
+    base_url = module_release_base_url()
     for name, version, archive in sorted(archives, key=lambda item: item[2].name):
         digest = sha256(archive)
         index_lines.extend(
@@ -221,8 +241,15 @@ def main() -> None:
                 f"    sha256: {digest}",
             ]
         )
+        install_lines.extend(
+            [
+                f"  - source: {module_source(archive, base_url)}",
+                f"    sha256: {digest}",
+            ]
+        )
         sum_lines.append(f"{digest}  {archive.name}")
     write(OUT / "module-index.yaml", "\n".join(index_lines) + "\n")
+    write(OUT / "module-install-set.yaml", "\n".join(install_lines) + "\n")
     write(OUT / "SHA256SUMS", "\n".join(sum_lines) + "\n")
     print(f"packaged {len(archives)} modules into {OUT.relative_to(ROOT)}")
 

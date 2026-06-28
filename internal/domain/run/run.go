@@ -204,6 +204,43 @@ type InstalledPayloadDescriptor struct {
 	Metadata                 map[string]string      `json:"metadata,omitempty"`
 }
 
+type PayloadQuery struct {
+	Target       string            `json:"target,omitempty"`
+	Platform     string            `json:"platform,omitempty"`
+	Arch         string            `json:"arch,omitempty"`
+	Format       string            `json:"format,omitempty"`
+	Transport    string            `json:"transport,omitempty"`
+	Config       map[string]string `json:"config,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+}
+
+type PayloadInfo struct {
+	ID           string           `json:"id"`
+	Name         string           `json:"name"`
+	Version      string           `json:"version"`
+	Platform     string           `json:"platform"`
+	Arch         string           `json:"arch"`
+	MinOS        string           `json:"minOS,omitempty"`
+	TestedOS     []string         `json:"testedOS,omitempty"`
+	Formats      []string         `json:"formats"`
+	Capabilities []string         `json:"capabilities"`
+	Transport    PayloadTransport `json:"transport"`
+	Session      PayloadSession   `json:"session"`
+}
+
+type PayloadTransport struct {
+	Kind      string `json:"kind"`
+	Encrypted bool   `json:"encrypted"`
+}
+
+type PayloadSession struct {
+	Kind                     string `json:"kind"`
+	Acquisition              string `json:"acquisition"`
+	RequiresPreThrowListener bool   `json:"requiresPreThrowListener"`
+	RequiresPostThrowConnect bool   `json:"requiresPostThrowConnect"`
+	Owner                    string `json:"owner"`
+}
+
 type PayloadCommandListRequest struct {
 	InstalledPayloadID string                 `json:"installedPayloadId,omitempty"`
 	Target             string                 `json:"target,omitempty"`

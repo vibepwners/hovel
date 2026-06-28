@@ -1,16 +1,16 @@
 {
   "modules": [
     {
-      "id": "etro-survey",
+      "id": "ms17-010-survey",
       "runtime": "jsonrpc-stdio",
-      "project_dir": "python/etro_survey",
-      "module": "hovel_etro_survey"
+      "project_dir": "python/ms17_010_survey",
+      "module": "hovel_ms17_010_survey"
     },
     {
-      "id": "etro-exploit",
+      "id": "ms17-010-exploit",
       "runtime": "jsonrpc-stdio",
-      "project_dir": "python/etro_exploit",
-      "module": "hovel_etro_exploit"
+      "project_dir": "python/ms17_010_exploit",
+      "module": "hovel_ms17_010_exploit"
     },
     {
       "id": "mock-survey",

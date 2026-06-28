@@ -2,6 +2,7 @@ package modulepackage
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -203,6 +204,57 @@ func LoadInstallSet(path string) (InstallSet, error) {
 	if err != nil {
 		return InstallSet{}, err
 	}
+	return ParseInstallSet(body)
+}
+
+func LoadInstallSetURL(source string, opts InstallOptions) (InstallSet, error) {
+	source = strings.TrimSpace(source)
+	parsed, err := url.Parse(source)
+	if err != nil {
+		return InstallSet{}, err
+	}
+	if parsed.Scheme != "https" {
+		return InstallSet{}, errors.New("module bulk-install manifests require https")
+	}
+	if opts.Offline {
+		return InstallSet{}, errors.New("offline module bulk-install cannot download a remote manifest")
+	}
+	client := opts.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Get(source)
+	if err != nil {
+		return InstallSet{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return InstallSet{}, fmt.Errorf("download %s failed: %s", source, resp.Status)
+	}
+	total := resp.ContentLength
+	reportInstallProgress(opts, InstallProgress{
+		Stage:  InstallProgressDownloadStart,
+		Source: source,
+		Total:  total,
+	})
+	var body bytes.Buffer
+	if _, err := copyWithInstallProgress(&body, resp.Body, opts, InstallProgress{
+		Stage:  InstallProgressDownloadProgress,
+		Source: source,
+		Total:  total,
+	}); err != nil {
+		return InstallSet{}, err
+	}
+	reportInstallProgress(opts, InstallProgress{
+		Stage:  InstallProgressDownloadComplete,
+		Source: source,
+		Bytes:  int64(body.Len()),
+		Total:  total,
+	})
+	return ParseInstallSet(body.Bytes())
+}
+
+func ParseInstallSet(body []byte) (InstallSet, error) {
 	var set InstallSet
 	if err := yaml.Unmarshal(body, &set); err != nil {
 		return InstallSet{}, err
@@ -461,6 +513,7 @@ type InstallOptions struct {
 	PythonBuildStandaloneCacheDir string
 	PythonBuildStandaloneArchive  string
 	Client                        *http.Client
+	Progress                      func(InstallProgress)
 	Now                           time.Time
 }
 
@@ -468,6 +521,34 @@ type InstallResult struct {
 	Name    string
 	Version string
 	Source  string
+}
+
+type InstallProgressStage string
+
+const (
+	InstallProgressDownloadCacheHit InstallProgressStage = "download-cache-hit"
+	InstallProgressDownloadStart    InstallProgressStage = "download-start"
+	InstallProgressDownloadProgress InstallProgressStage = "download-progress"
+	InstallProgressDownloadComplete InstallProgressStage = "download-complete"
+	InstallProgressDownloadVerified InstallProgressStage = "download-verified"
+	InstallProgressDownloadCached   InstallProgressStage = "download-cached"
+	InstallProgressArchiveStart     InstallProgressStage = "archive-install-start"
+	InstallProgressArchiveComplete  InstallProgressStage = "archive-install-complete"
+	InstallProgressSetEntry         InstallProgressStage = "install-set-entry"
+)
+
+type InstallProgress struct {
+	Stage   InstallProgressStage
+	Source  string
+	Archive string
+	Name    string
+	Version string
+	SHA256  string
+	Bytes   int64
+	Total   int64
+	Cached  bool
+	Index   int
+	Count   int
 }
 
 type UninstallOptions struct {
@@ -527,6 +608,12 @@ func InstallArchive(opts InstallOptions) (InstallResult, error) {
 	if expected := strings.TrimSpace(opts.SHA256); expected != "" && !strings.EqualFold(expected, sum) {
 		return InstallResult{}, fmt.Errorf("sha256 mismatch for %s", source)
 	}
+	reportInstallProgress(opts, InstallProgress{
+		Stage:   InstallProgressArchiveStart,
+		Source:  source,
+		Archive: source,
+		SHA256:  sum,
+	})
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		return InstallResult{}, err
 	}
@@ -589,6 +676,14 @@ func InstallArchive(opts InstallOptions) (InstallResult, error) {
 	if backupParent != "" {
 		_ = os.RemoveAll(backupParent)
 	}
+	reportInstallProgress(opts, InstallProgress{
+		Stage:   InstallProgressArchiveComplete,
+		Source:  source,
+		Archive: source,
+		Name:    pkg.Manifest.Metadata.Name,
+		Version: pkg.Manifest.Metadata.Version,
+		SHA256:  sum,
+	})
 	return InstallResult{Name: pkg.Manifest.Metadata.Name, Version: pkg.Manifest.Metadata.Version, Source: dest}, nil
 }
 
@@ -609,6 +704,13 @@ func InstallURL(opts InstallOptions) (InstallResult, error) {
 	if expected != "" && !opts.NoCache {
 		cached := filepath.Join(cacheDir, strings.ToLower(expected)+".tgz")
 		if _, err := os.Stat(cached); err == nil {
+			reportInstallProgress(opts, InstallProgress{
+				Stage:   InstallProgressDownloadCacheHit,
+				Source:  source,
+				Archive: cached,
+				SHA256:  expected,
+				Cached:  true,
+			})
 			opts.SourceArchive = cached
 			return InstallArchive(opts)
 		}
@@ -639,13 +741,30 @@ func InstallURL(opts InstallOptions) (InstallResult, error) {
 		_ = temp.Close()
 		return InstallResult{}, fmt.Errorf("download %s failed: %s", source, resp.Status)
 	}
-	if _, err := io.Copy(temp, resp.Body); err != nil {
+	total := resp.ContentLength
+	reportInstallProgress(opts, InstallProgress{
+		Stage:  InstallProgressDownloadStart,
+		Source: source,
+		Total:  total,
+	})
+	if _, err := copyWithInstallProgress(temp, resp.Body, opts, InstallProgress{
+		Stage:  InstallProgressDownloadProgress,
+		Source: source,
+		Total:  total,
+	}); err != nil {
 		_ = temp.Close()
 		return InstallResult{}, err
 	}
 	if err := temp.Close(); err != nil {
 		return InstallResult{}, err
 	}
+	size, _ := fileSize(tempPath)
+	reportInstallProgress(opts, InstallProgress{
+		Stage:  InstallProgressDownloadComplete,
+		Source: source,
+		Bytes:  size,
+		Total:  total,
+	})
 	sum, err := FileSHA256(tempPath)
 	if err != nil {
 		return InstallResult{}, err
@@ -653,6 +772,13 @@ func InstallURL(opts InstallOptions) (InstallResult, error) {
 	if expected != "" && !strings.EqualFold(expected, sum) {
 		return InstallResult{}, fmt.Errorf("sha256 mismatch for %s", source)
 	}
+	reportInstallProgress(opts, InstallProgress{
+		Stage:  InstallProgressDownloadVerified,
+		Source: source,
+		Bytes:  size,
+		Total:  total,
+		SHA256: sum,
+	})
 	archive := tempPath
 	if !opts.NoCache {
 		cached := filepath.Join(cacheDir, sum+".tgz")
@@ -661,10 +787,24 @@ func InstallURL(opts InstallOptions) (InstallResult, error) {
 				return InstallResult{}, err
 			}
 			archive = cached
+			reportInstallProgress(opts, InstallProgress{
+				Stage:   InstallProgressDownloadCached,
+				Source:  source,
+				Archive: cached,
+				SHA256:  sum,
+				Cached:  true,
+			})
 		} else if err != nil {
 			return InstallResult{}, err
 		} else {
 			archive = cached
+			reportInstallProgress(opts, InstallProgress{
+				Stage:   InstallProgressDownloadCacheHit,
+				Source:  source,
+				Archive: cached,
+				SHA256:  sum,
+				Cached:  true,
+			})
 		}
 	}
 	opts.SourceArchive = archive
@@ -845,7 +985,7 @@ func ensurePBSInterpreter(versions []string, opts InstallOptions) (string, error
 		if opts.Offline {
 			return "", errors.New("managed python runtime is not cached and --offline was set")
 		}
-		if err := downloadFile(asset.URL, archivePath, opts.Client); err != nil {
+		if err := downloadFile(asset.URL, archivePath, opts.Client, opts); err != nil {
 			return "", err
 		}
 	}
@@ -1046,7 +1186,7 @@ func compareVersionParts(left, right []int) int {
 	return 0
 }
 
-func downloadFile(source, dest string, client *http.Client) error {
+func downloadFile(source, dest string, client *http.Client, opts InstallOptions) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
@@ -1061,20 +1201,77 @@ func downloadFile(source, dest string, client *http.Client) error {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("download %s failed: %s", source, resp.Status)
 	}
+	total := resp.ContentLength
+	reportInstallProgress(opts, InstallProgress{
+		Stage:  InstallProgressDownloadStart,
+		Source: source,
+		Total:  total,
+	})
 	temp, err := os.CreateTemp(filepath.Dir(dest), "download-*")
 	if err != nil {
 		return err
 	}
 	tempPath := temp.Name()
 	defer os.Remove(tempPath)
-	if _, err := io.Copy(temp, resp.Body); err != nil {
+	if _, err := copyWithInstallProgress(temp, resp.Body, opts, InstallProgress{
+		Stage:  InstallProgressDownloadProgress,
+		Source: source,
+		Total:  total,
+	}); err != nil {
 		_ = temp.Close()
 		return err
 	}
 	if err := temp.Close(); err != nil {
 		return err
 	}
+	size, _ := fileSize(tempPath)
+	reportInstallProgress(opts, InstallProgress{
+		Stage:  InstallProgressDownloadComplete,
+		Source: source,
+		Bytes:  size,
+		Total:  total,
+	})
 	return os.Rename(tempPath, dest)
+}
+
+func reportInstallProgress(opts InstallOptions, event InstallProgress) {
+	if opts.Progress != nil {
+		opts.Progress(event)
+	}
+}
+
+func copyWithInstallProgress(dst io.Writer, src io.Reader, opts InstallOptions, event InstallProgress) (int64, error) {
+	var copied int64
+	buf := make([]byte, 32*1024)
+	for {
+		n, readErr := src.Read(buf)
+		if n > 0 {
+			written, writeErr := dst.Write(buf[:n])
+			copied += int64(written)
+			event.Bytes = copied
+			reportInstallProgress(opts, event)
+			if writeErr != nil {
+				return copied, writeErr
+			}
+			if written != n {
+				return copied, io.ErrShortWrite
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return copied, nil
+		}
+		if readErr != nil {
+			return copied, readErr
+		}
+	}
+}
+
+func fileSize(path string) (int64, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
 }
 
 func fileExists(path string) bool {

@@ -441,15 +441,15 @@ class SDKTest(unittest.TestCase):
                     },
                 ),
                 cleanup=PayloadProviderRecord(
-                    provider_id="etro",
-                    schema="etro.smb_service.cleanup",
+                    provider_id="ms17-010",
+                    schema="ms17_010.smb_service.cleanup",
                     schema_version="v1",
                     descriptor={
                         "remotePath": r"C:\Windows\Temp\svc123.exe",
                         "serviceName": "svc123",
                     },
                 ),
-                metadata={"launch_method": "etro-smb-service"},
+                metadata={"launch_method": "ms17-010-smb-service"},
             )
         )
 
@@ -462,7 +462,7 @@ class SDKTest(unittest.TestCase):
         self.assertEqual(installed["reconnect"]["providerId"], "squatter")
         self.assertEqual(installed["reconnect"]["schemaVersion"], "v1")
         self.assertEqual(installed["reconnect"]["descriptor"]["port"], 9101)
-        self.assertEqual(installed["cleanup"]["providerId"], "etro")
+        self.assertEqual(installed["cleanup"]["providerId"], "ms17-010")
         self.assertEqual(installed["cleanup"]["descriptor"]["serviceName"], "svc123")
 
     def test_async_module_can_open_and_drive_shell_session(self) -> None:

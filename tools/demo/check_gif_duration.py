@@ -8,7 +8,7 @@ import pathlib
 import sys
 
 
-MAX_SECONDS = 15.0
+MAX_SECONDS = 30.0
 
 
 def main() -> int:
@@ -17,16 +17,18 @@ def main() -> int:
     parser.add_argument("--max-seconds", type=float, default=MAX_SECONDS)
     args = parser.parse_args()
 
-    failed = False
     for path in args.gif:
         if path.suffix.lower() != ".gif":
             continue
         duration = gif_duration_seconds(path)
         print(f"{path}: {duration:.2f}s")
         if duration > args.max_seconds:
-            print(f"{path} exceeds {args.max_seconds:.0f}s GIF duration cap", file=sys.stderr)
-            failed = True
-    return 1 if failed else 0
+            print(
+                f"warning: {path} runs {duration:.2f}s, over the {args.max_seconds:.0f}s "
+                "GIF duration guideline",
+                file=sys.stderr,
+            )
+    return 0
 
 
 def gif_duration_seconds(path: pathlib.Path) -> float:

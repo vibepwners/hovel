@@ -14,6 +14,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
 func TestHelpShowsCommandMenu(t *testing.T) {
@@ -106,13 +107,68 @@ func TestDefaultRuntimeWiresCapabilityChainRunner(t *testing.T) {
 	}
 }
 
+func TestPayloadProviderServiceListsProviderAdvertisedPayloads(t *testing.T) {
+	modules := modulecatalog.New(modulecatalog.Module{
+		ID:      "squatter@v0.1.0",
+		Name:    "Squatter",
+		Type:    modulecatalog.TypePayloadProvider,
+		Version: "v0.1.0",
+		Enabled: true,
+	})
+	service := payloadProviderService{
+		modules: modules,
+		payloads: fakePayloadMetadataLister{payloads: map[string][]run.PayloadInfo{
+			"squatter@v0.1.0": {
+				{
+					ID:           "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+					Name:         "squatter",
+					Version:      "v0.1.0",
+					Platform:     "windows",
+					Arch:         "x86",
+					Formats:      []string{"pe-exe"},
+					Capabilities: []string{"file.get", "process.exec"},
+					Transport:    run.PayloadTransport{Kind: "tcp-bind"},
+				},
+				{
+					ID:        "squatter/windows/x86/windows-7/smb-named-pipe/pe-exe",
+					Name:      "squatter",
+					Version:   "v0.1.0",
+					Platform:  "windows",
+					Arch:      "x86",
+					Formats:   []string{"pe-exe"},
+					Transport: run.PayloadTransport{Kind: "smb-named-pipe"},
+				},
+			},
+		}},
+	}
+
+	payloads, err := service.ListAvailablePayloads(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("payload count = %d, want 2: %#v", len(payloads), payloads)
+	}
+	if payloads[0].PayloadID != "squatter/windows/x86/windows-7/tcp-bind/pe-exe" ||
+		payloads[0].Platform != "windows" ||
+		payloads[0].Arch != "x86" ||
+		payloads[0].Transport != "tcp-bind" ||
+		strings.Join(payloads[0].Formats, ",") != "pe-exe" ||
+		!strings.Contains(strings.Join(payloads[0].Capabilities, ","), "process.exec") {
+		t.Fatalf("first payload = %#v", payloads[0])
+	}
+	if payloads[1].Transport != "smb-named-pipe" {
+		t.Fatalf("second payload = %#v", payloads[1])
+	}
+}
+
 func TestCapabilityChainExecutorRunsStepsThroughChainRuntime(t *testing.T) {
 	catalog := modulecatalog.New(
 		modulecatalog.Module{
-			ID:      "etro@v1",
+			ID:      "ms17-010@v1",
 			Enabled: true,
 			StepContracts: modulecatalog.StepContractSet{Steps: []modulecatalog.StepContract{{
-				ID: "etro.exploit",
+				ID: "ms17-010.exploit",
 				Produces: []modulecatalog.CapabilityRequirement{{
 					Type: modulecatalog.CapabilityRemoteExecution,
 				}},
@@ -135,7 +191,7 @@ func TestCapabilityChainExecutorRunsStepsThroughChainRuntime(t *testing.T) {
 	)
 	runner := &fakeStepRuntimeRunner{
 		execute: map[string]chainruntime.StepExecuteResult{
-			"etro@v1/etro.exploit": {
+			"ms17-010@v1/ms17-010.exploit": {
 				Status: "succeeded",
 				Capabilities: []modulecatalog.Capability{{
 					ID:    "remote-1",
@@ -170,7 +226,7 @@ func TestCapabilityChainExecutorRunsStepsThroughChainRuntime(t *testing.T) {
 		ChainConfig:  map[string]string{"payload.transport": "smb-named-pipe"},
 		TargetConfig: map[string]string{"target.host": "192.0.2.10"},
 		Steps: []commands.CapabilityChainStepRef{
-			{ID: "exploit", ModuleID: "etro@v1", StepID: "etro.exploit"},
+			{ID: "exploit", ModuleID: "ms17-010@v1", StepID: "ms17-010.exploit"},
 			{ID: "connect", ModuleID: "squatter@v1", StepID: "squatter.connect_smb"},
 		},
 	})
@@ -598,6 +654,14 @@ func testConfirmationPrompt() commands.ConfirmationPrompt {
 			{Label: "plan hash", Value: plan.PlanHash, Muted: true},
 		},
 	}
+}
+
+type fakePayloadMetadataLister struct {
+	payloads map[string][]run.PayloadInfo
+}
+
+func (l fakePayloadMetadataLister) ListPayloads(_ context.Context, moduleID string, _ run.PayloadQuery) ([]run.PayloadInfo, error) {
+	return append([]run.PayloadInfo(nil), l.payloads[moduleID]...), nil
 }
 
 type fakeStepRuntimeRunner struct {

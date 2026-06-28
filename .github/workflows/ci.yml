@@ -67,13 +67,13 @@ jobs:
           cache: false
 
       - name: Build
-        run: task build
+        run: task build -- //:build
 
       - name: Build release wheels
         run: task release:hovel-wheels
 
       - name: Test
-        run: task test
+        run: task test -- //:ci_test
 
       - name: Race tests
         run: task test:race

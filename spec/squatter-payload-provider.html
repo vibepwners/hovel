@@ -51,7 +51,7 @@
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
         <li><a href="module-rust.html">Rust Modules</a></li>
-        <li><a href="module-eternalromance.html">Case Study: EternalRomance</a></li>
+        <li><a href="module-ms17-010.html">Case Study: MS17-010</a></li>
       </ul>
     </aside>
     <main class="content">
@@ -284,7 +284,7 @@ squatter.agent.max_chunk_size = 65536
           The first SMB connector is SMB2/3 only because it is backed by
           <code>github.com/jfjallid/go-smb</code>. Windows XP targets that only expose
           SMBv1 should use <code>tcp-bind</code> or <code>tcp-callback</code> for the
-          representative Etro chain unless a separate SMBv1 pipe connector is added.
+          representative MS17-010 chain unless a separate SMBv1 pipe connector is added.
         </p>
         <p>
           TCP bind generation patches the payload to listen on
@@ -530,17 +530,17 @@ windows_multiplatform(
         </ol>
         <p>The Squatter path still avoids:</p>
         <ol>
-          <li>Etro-specific Squatter protocol handling.</li>
+          <li>MS17-010-specific Squatter protocol handling.</li>
           <li>Hidden helper-step insertion by the planner.</li>
           <li>Target-visible Hovel or Squatter ownership markers.</li>
           <li>Command-only Squatter staging as a fallback for the representative SMB chain.</li>
           <li>Silent credential redaction in normal operator CLI output.</li>
         </ol>
         <p>
-          The representative Etro chain should require an upload-capable remote execution
-          path for SMB install. If Etro cannot honestly produce an
+          The representative MS17-010 chain should require an upload-capable remote execution
+          path for SMB install. If the MS17-010 exploit cannot honestly produce an
           <code>upload_file</code> sub-capability, Squatter SMB install must not pretend
-          it can use Etro for staging. A separate command-only installer variant may be
+          it can use the MS17-010 exploit for staging. A separate command-only installer variant may be
           designed later if it becomes operationally necessary.
         </p>
       </article>

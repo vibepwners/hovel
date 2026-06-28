@@ -375,13 +375,13 @@ func TestPromptPrefixTracksActiveChain(t *testing.T) {
 	if code := app.ExecuteLine(context.Background(), "op use engagement", &stdout, &stderr); code != 0 {
 		t.Fatalf("operation exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if got := app.PromptPrefix(); got != "h0v3l [engagement]> " {
+	if got := app.PromptPrefix(); got != "h0v3l [op:engagement]> " {
 		t.Fatalf("prompt prefix = %q, want active operation", got)
 	}
 	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
 		t.Fatalf("chain exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if got := app.PromptPrefix(); got != "h0v3l [engagement/lab] > " {
+	if got := app.PromptPrefix(); got != "h0v3l [engagement/lab | steps:0 targets:0] > " {
 		t.Fatalf("prompt prefix = %q, want active chain", got)
 	}
 }
@@ -411,7 +411,7 @@ func TestChainCreateEntersContextAndRootAliasesOperateOnActiveChain(t *testing.T
 	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
 		t.Fatalf("chain create exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if got := app.PromptPrefix(); got != "h0v3l [test-op/lab] > " {
+	if got := app.PromptPrefix(); got != "h0v3l [test-op/lab | steps:0 targets:0] > " {
 		t.Fatalf("prompt prefix = %q, want active chain", got)
 	}
 
@@ -452,7 +452,7 @@ func TestInteractiveConfigWizardEditsCurrentThenFillsRemainingConfig(t *testing.
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
 	}
-	if got := app.PromptPrefix(); got != "h0v3l [test-op/lab] config select > " {
+	if got := app.PromptPrefix(); got != "h0v3l [test-op/lab | steps:1 targets:1] config select > " {
 		t.Fatalf("prompt prefix = %q, want config select", got)
 	}
 	if suggestions := app.Suggestions(""); !containsSuggestion(suggestions, "continue") || !containsSuggestion(suggestions, "1") {
@@ -464,7 +464,7 @@ func TestInteractiveConfigWizardEditsCurrentThenFillsRemainingConfig(t *testing.
 	if code := app.ExecuteLine(context.Background(), "1", &stdout, &stderr); code != 0 {
 		t.Fatalf("select current exit code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
 	}
-	if got, want := app.PromptPrefix(), "h0v3l [test-op/lab] chain operator.confirmed_lab (bool) [true]: "; got != want {
+	if got, want := app.PromptPrefix(), "h0v3l [test-op/lab | steps:1 targets:1] chain operator.confirmed_lab (bool) [true]: "; got != want {
 		t.Fatalf("prompt prefix = %q, want %q", got, want)
 	}
 	if !strings.Contains(stdout.String(), "Editing chain operator.confirmed_lab=true") {
@@ -538,7 +538,7 @@ func TestInteractiveConfigWizardDoesNotBlockWhenThereIsNoCurrentConfig(t *testin
 	if code := app.ExecuteLine(context.Background(), "c", &stdout, &stderr); code != 0 {
 		t.Fatalf("continue exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if got, want := app.PromptPrefix(), "h0v3l [test-op/lab] chain operator.confirmed_lab (bool): "; got != want {
+	if got, want := app.PromptPrefix(), "h0v3l [test-op/lab | steps:1 targets:1] chain operator.confirmed_lab (bool): "; got != want {
 		t.Fatalf("prompt prefix = %q, want %q", got, want)
 	}
 	if suggestions := app.Suggestions(""); !containsSuggestion(suggestions, "true") || !containsSuggestion(suggestions, "false") {
@@ -639,6 +639,57 @@ func TestInteractiveConfigWizardSupportsTypedSuggestionsInvalidRetryAndRedactsSe
 	}
 }
 
+func TestHuhConfigValuesUseCurrentValuesDefaultsAndChoices(t *testing.T) {
+	items := []configItem{
+		{
+			Scope: modulecatalog.ScopeChain,
+			Key:   "mode",
+			Requirement: modulecatalog.Requirement{
+				Key:      "mode",
+				Type:     modulecatalog.ValueEnum,
+				Required: true,
+				Allowed:  []string{"quiet", "loud"},
+			},
+		},
+		{
+			Scope: modulecatalog.ScopeChain,
+			Key:   "delay",
+			Requirement: modulecatalog.Requirement{
+				Key:     "delay",
+				Type:    modulecatalog.ValueDuration,
+				Default: "5s",
+			},
+		},
+		{
+			Scope:  modulecatalog.ScopeTarget,
+			Target: "mock://router-01",
+			Key:    "target.port",
+			Value:  "22",
+			Requirement: modulecatalog.Requirement{
+				Key:  "target.port",
+				Type: modulecatalog.ValuePort,
+			},
+		},
+	}
+
+	values := newHuhConfigValues(items)
+	if len(values) != 3 {
+		t.Fatalf("values = %#v, want 3", values)
+	}
+	if values[0].Value != "quiet" {
+		t.Fatalf("enum initial value = %q, want first allowed value", values[0].Value)
+	}
+	if values[1].Value != "5s" {
+		t.Fatalf("default initial value = %q, want 5s", values[1].Value)
+	}
+	if values[2].Value != "22" {
+		t.Fatalf("current initial value = %q, want 22", values[2].Value)
+	}
+	if got := huhConfigKey(values[2].Item); got != "target:mock://router-01:target.port" {
+		t.Fatalf("target key = %q", got)
+	}
+}
+
 func TestInteractiveConfigSeesInstalledWorkspaceModule(t *testing.T) {
 	workspace := t.TempDir()
 	installRPCModulePackage(t, workspace, "installed-rpc", "exploit", emptyRPCSchema, emptyRPCSteps)
@@ -722,8 +773,8 @@ func TestInteractiveConfigWizardUsesEffectiveValidationForSquatterBind(t *testin
 	session := operatorsession.New()
 	modules := modulecatalog.New(
 		modulecatalog.Module{
-			ID:      "etro-exploit@v1.0.0",
-			Name:    "etro-exploit",
+			ID:      "ms17-010-exploit@v1.0.0",
+			Name:    "ms17-010-exploit",
 			Type:    modulecatalog.TypeExploit,
 			Enabled: true,
 			ChainConfig: []modulecatalog.Requirement{
@@ -752,7 +803,7 @@ func TestInteractiveConfigWizardUsesEffectiveValidationForSquatterBind(t *testin
 	for _, line := range []string{
 		"op use test-op",
 		"chain use lab",
-		"chain add etro-exploit@v1.0.0",
+		"chain add ms17-010-exploit@v1.0.0",
 		"chain add squatter@v0.1.0",
 		"target add t1",
 		"chain config interactive",

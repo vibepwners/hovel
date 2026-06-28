@@ -50,7 +50,7 @@
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
         <li><a href="module-rust.html">Rust Modules</a></li>
-        <li><a href="module-eternalromance.html">Case Study: EternalRomance</a></li>
+        <li><a href="module-ms17-010.html">Case Study: MS17-010</a></li>
       </ul>
     </aside>
     <main class="content">
@@ -66,7 +66,7 @@ hovel status
 pipx inject hovel hovel-sdk  # only needed when authoring Python modules in the same environment
 </code></pre>
         <p>The <code>hovel</code> package contains the platform-specific Go mono-binary and a tiny Python launcher that execs it. It does not download the binary during install or first run. The Python module SDK is a separate PyPI package named <code>hovel-sdk</code>.</p>
-        <p>GitHub Releases are the canonical artifact source. A release publishes native binaries, PyPI wheels, the SDK wheel/sdist, module packages, and <code>SHA256SUMS</code>. The PyPI projects are published from dedicated workflows:</p>
+        <p>GitHub Releases are the canonical artifact source. A release publishes native binaries, PyPI wheels, the SDK wheel/sdist, module packages, <code>module-index.yaml</code>, <code>module-install-set.yaml</code>, and <code>SHA256SUMS</code>. The PyPI projects are published from dedicated workflows:</p>
 <pre data-lang="text"><code>.github/workflows/hovel-pypi.yml
 .github/workflows/hovel-sdk-pypi.yml
 </code></pre>
@@ -105,7 +105,7 @@ hovel --config ./lab.yaml ...
         <ol>
           <li><code>hovel module install https://...</code></li>
           <li><code>hovel module install name</code> or <code>name@version</code> when resolution reaches a configured HTTPS index</li>
-          <li><code>hovel module bulk-install</code> when a source or index is a URL</li>
+          <li><code>hovel module bulk-install https://...</code> or a bulk manifest whose source is a URL</li>
           <li>install-time managed Python setup for a package that declares python-build-standalone and is not run with <code>--offline</code></li>
         </ol>
         <p>Daemon startup, catalog listing, chain validation, throws, local inspection, and runtime execution never resolve dependencies from the internet.</p>
@@ -216,6 +216,7 @@ hovel module install /opt/hovel/modules/ssh-memory-0.1.0.tgz
 hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
 hovel module install ssh-memory
 hovel module install squatter@{{HOVEL_VERSION}}
+hovel module bulk-install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/module-install-set.yaml
 hovel module bulk-install ./modules.yaml
 hovel module install --link /home/me/dev/my-module
 hovel module available
@@ -223,10 +224,10 @@ hovel module installed
 hovel module uninstall squatter@{{HOVEL_VERSION}}
 </code></pre>
         <p>The default install target is the active workspace. <code>--global</code> installs into the user data directory. A normal install copies or extracts into Hovel-managed storage; <code>--link</code> records an absolute module directory for development.</p>
-        <p>Installing the same <code>name@version</code> with a different SHA-256 fails unless <code>--replace</code> is supplied. Bulk install runs in order, stops on the first failure, and does not roll back earlier successful installs.</p>
+        <p>Installing the same <code>name@version</code> with a different SHA-256 fails unless <code>--replace</code> is supplied. Bulk install accepts local manifest files or HTTPS manifest URLs. Relative sources in a downloaded manifest resolve against the manifest URL. Bulk install runs in order, stops on the first failure, and does not roll back earlier successful installs.</p>
 
         <h2>Indexes And Bulk Manifests</h2>
-        <p>Hovel has no default internet index. An operator may configure or pass an index explicitly. Source-tree development also discovers the local <code>dist/modules/module-index.yaml</code> produced by <code>task modules:package</code> when <code>HOVEL_MODULE_CONFIG</code> points at the in-repo examples catalog. Cached HTTPS indexes are available offline after the first explicit fetch.</p>
+        <p>Hovel has no default internet index. An operator may configure or pass an index explicitly. Source-tree development also discovers the local <code>dist/modules/module-index.yaml</code> produced by <code>task modules:package</code> when <code>HOVEL_MODULE_CONFIG</code> points at the in-repo examples catalog. The same task also writes <code>dist/modules/module-install-set.yaml</code> for bulk installs. Cached HTTPS indexes are available offline after the first explicit fetch.</p>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleIndex
 modules:
@@ -240,8 +241,8 @@ kind: ModuleInstallSet
 modules:
   - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
     sha256: ...
-  - source: ./etro-survey-1.0.0.tgz
-  - source: /opt/hovel/modules/etro-exploit-1.0.0.tgz</code></pre>
+  - source: ./ms17-010-survey-1.0.0.tgz
+  - source: /opt/hovel/modules/ms17-010-exploit-1.0.0.tgz</code></pre>
 
         <h2>Storage</h2>
         <p>Installed module state is recorded in the workspace lock file, not edited into config. Config describes search paths and policy; install state records the resolved package root, checksum, link mode, and timestamp.</p>
@@ -301,7 +302,7 @@ hovel-windows-amd64.exe
 <pre data-lang="bash"><code>uvx hovel throw ./ssh-memory.chain.yaml
 uvx hovel throw ./ssh-memory.chain.yaml --now
 </code></pre>
-        <p>The package includes no modules by default. In-tree modules such as EternalRomance, Squatter, and the mock modules are built as separate <code>.tgz</code> artifacts with their module-declared versions and published on the GitHub Release page.</p>
+        <p>The package includes no modules by default. In-tree modules such as MS17-010, Squatter, and the mock modules are built as separate <code>.tgz</code> artifacts with their module-declared versions and published on the GitHub Release page.</p>
         <p>Release artifact authority:</p>
         <ol>
           <li>GitHub Releases own native binaries, module packages, checksums, and immutable source archives.</li>
