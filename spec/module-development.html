@@ -450,9 +450,10 @@ CHECK   NAME                         MESSAGE
 hovel module install https://github.com/org/repo/releases/download/{{HOVEL_RELEASE_TAG}}/my-module-0.1.0.tgz --sha256 ...
 hovel module install my-module
 hovel module install my-module@0.1.0
+hovel module bulk-install https://github.com/org/repo/releases/download/{{HOVEL_RELEASE_TAG}}/module-install-set.yaml
 hovel module bulk-install ./lab-modules.yaml
 hovel module install --link /home/me/dev/my-module</code></pre>
-        <p>Bare install references choose the newest semver package from the first matching local source tier: download cache, configured package roots and archives, then the source-tree module index when present. Hovel consults configured indexes after local sources. The default install target is the active workspace. <code>--global</code> installs into user-level storage. Workspace modules take precedence over global modules and cached packages.</p>
+        <p>Bare install references choose the newest semver package from the first matching local source tier: download cache, configured package roots and archives, then the source-tree module index when present. Hovel consults configured indexes after local sources. Bulk-install manifests may be local YAML files or HTTPS URLs. The default install target is the active workspace. <code>--global</code> installs into user-level storage. Workspace modules take precedence over global modules and cached packages.</p>
         <blockquote>
           The <code>command</code> launcher is what makes Hovel polyglot: any executable that
           speaks the stdio JSON-RPC protocol is a module, regardless of how it was built.

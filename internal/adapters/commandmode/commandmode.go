@@ -232,6 +232,9 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 	parsed.Input = terminalInput{in: os.Stdin, out: stdout, echoAnswer: echoConfirmationAnswer}
 	parsed.Output = stdout
 	parsed.NonInteractive = stdinNonInteractive()
+	if installProgressCommand(definition) && !parsed.Flag("json") {
+		parsed.InstallProgress = newInstallProgressRenderer(stdout, terminalWidth(stdout), !parsed.Flag("no-color")).Handle
+	}
 	if !echoConfirmationAnswer && definition.PathString() == "throw" && !parsed.Flag("json") {
 		renderer := a.logs
 		if parsed.Flag("no-color") {
@@ -285,6 +288,15 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		fmt.Fprintln(stdout, human)
 	}
 	return resultCode(result)
+}
+
+func installProgressCommand(definition commands.Definition) bool {
+	switch definition.PathString() {
+	case "module install", "modules install", "module bulk-install", "modules bulk-install":
+		return true
+	default:
+		return false
+	}
 }
 
 func resultCode(result commands.Result) int {

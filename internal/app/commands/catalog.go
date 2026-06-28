@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
@@ -876,7 +877,7 @@ func HovelRegistry(runtime Runtime) Registry {
 			Aliases: [][]string{{"modules", "bulk-install"}},
 			Summary: "Install trusted module packages from a bulk manifest.",
 			Positionals: []Positional{
-				{Name: "manifest", Help: "ModuleInstallSet YAML file", Required: true},
+				{Name: "manifest", Help: "ModuleInstallSet YAML file or HTTPS URL", Required: true},
 			},
 			Options: []Option{
 				stringOption("workspace", "w", "Workspace path"),
@@ -2202,14 +2203,27 @@ func modulesBulkInstallHandler(runtime Runtime) Handler {
 		}
 		workspacePath := workspaceFromInvocation(invocation)
 		manifestPath := invocation.Positional("manifest")
-		set, err := modulepackage.LoadInstallSet(manifestPath)
+		baseOptions, err := moduleInstallOptions(workspacePath, invocation)
 		if err != nil {
 			return Result{}, err
 		}
-		baseDir := filepath.Dir(manifestPath)
+		set, err := loadBulkInstallSet(manifestPath, baseOptions)
+		if err != nil {
+			return Result{}, err
+		}
+		baseDir := bulkInstallBaseDir(manifestPath)
 		payload := ModuleBulkInstallPayload{Workspace: workspacePath}
-		for _, item := range set.Modules {
+		for i, item := range set.Modules {
 			source := resolveBulkInstallSource(baseDir, item.Source)
+			if invocation.InstallProgress != nil {
+				invocation.InstallProgress(modulepackage.InstallProgress{
+					Stage:  modulepackage.InstallProgressSetEntry,
+					Source: source,
+					SHA256: item.SHA256,
+					Index:  i + 1,
+					Count:  len(set.Modules),
+				})
+			}
 			result, linked, err := installModuleSource(workspacePath, source, "", item.SHA256, invocation)
 			if err != nil {
 				return Result{}, err
@@ -2308,6 +2322,7 @@ func moduleInstallOptions(workspacePath string, invocation Invocation) (modulepa
 		NoCache:                      invocation.Flag("no-cache") || !config.Cache.Enabled,
 		Replace:                      invocation.Flag("replace"),
 		PythonBuildStandaloneRelease: config.Runtime.Python.PythonBuildStandalone.Release,
+		Progress:                     invocation.InstallProgress,
 	}, nil
 }
 
@@ -2634,7 +2649,39 @@ func resolveBulkInstallSource(baseDir, source string) string {
 	if strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") || filepath.IsAbs(source) {
 		return source
 	}
+	if base, err := url.Parse(baseDir); err == nil && base.Scheme != "" && base.Host != "" {
+		relative, err := url.Parse(source)
+		if err != nil {
+			return source
+		}
+		return base.ResolveReference(relative).String()
+	}
 	return filepath.Join(baseDir, source)
+}
+
+func loadBulkInstallSet(source string, opts modulepackage.InstallOptions) (modulepackage.InstallSet, error) {
+	source = strings.TrimSpace(source)
+	if strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") {
+		return modulepackage.LoadInstallSetURL(source, opts)
+	}
+	return modulepackage.LoadInstallSet(source)
+}
+
+func bulkInstallBaseDir(source string) string {
+	if parsed, err := url.Parse(source); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		dir := path.Dir(parsed.Path)
+		if dir == "." {
+			dir = ""
+		}
+		if dir != "" && dir != "/" {
+			dir += "/"
+		}
+		parsed.Path = dir
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		return parsed.String()
+	}
+	return filepath.Dir(source)
 }
 
 func modulesInspectHandler(runtime Runtime) Handler {

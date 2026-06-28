@@ -3,6 +3,7 @@ package modulepackage
 import (
 	"archive/tar"
 	"compress/gzip"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -695,6 +696,57 @@ func TestInstallURLDownloadsCachesAndInstallsArchive(t *testing.T) {
 	}
 }
 
+func TestInstallURLReportsDownloadProgress(t *testing.T) {
+	workspace := t.TempDir()
+	cache := t.TempDir()
+	archive := packageArchive(t, map[string]string{
+		"hovel-module.yaml": minimalManifest("progress"),
+		"bin/progress":      "#!/bin/sh\n",
+	})
+	body, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := fileSHA256(t, archive)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	var events []InstallProgress
+	_, err = InstallURL(InstallOptions{
+		Workspace: workspace,
+		SourceURL: server.URL + "/progress.tgz",
+		SHA256:    sum,
+		HostOS:    "linux",
+		HostArch:  "amd64",
+		CacheDir:  cache,
+		Client:    server.Client(),
+		Progress: func(event InstallProgress) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasInstallProgressStage(events, InstallProgressDownloadStart) ||
+		!hasInstallProgressStage(events, InstallProgressDownloadProgress) ||
+		!hasInstallProgressStage(events, InstallProgressDownloadVerified) ||
+		!hasInstallProgressStage(events, InstallProgressArchiveComplete) {
+		t.Fatalf("missing expected progress events: %#v", events)
+	}
+	var lastDownload InstallProgress
+	for _, event := range events {
+		if event.Stage == InstallProgressDownloadProgress {
+			lastDownload = event
+		}
+	}
+	if lastDownload.Bytes != int64(len(body)) || lastDownload.Total != int64(len(body)) {
+		t.Fatalf("last download event = %#v, want %d bytes", lastDownload, len(body))
+	}
+}
+
 func TestInstallURLOfflineUsesCachedSHA(t *testing.T) {
 	workspace := t.TempDir()
 	cache := t.TempDir()
@@ -729,6 +781,15 @@ func TestInstallURLOfflineUsesCachedSHA(t *testing.T) {
 	if result.Name != "cached" {
 		t.Fatalf("result = %#v", result)
 	}
+}
+
+func hasInstallProgressStage(events []InstallProgress, stage InstallProgressStage) bool {
+	for _, event := range events {
+		if event.Stage == stage {
+			return true
+		}
+	}
+	return false
 }
 
 func packageDir(t *testing.T, manifest string) string {

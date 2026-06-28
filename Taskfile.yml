@@ -159,6 +159,7 @@ tasks:
       - examples/python/**/*
     generates:
       - dist/modules/module-index.yaml
+      - dist/modules/module-install-set.yaml
       - dist/modules/*.tgz
       - dist/modules/SHA256SUMS
     cmds:

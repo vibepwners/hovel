@@ -162,7 +162,7 @@ modules:
   - source: ./ms17-010-survey-1.0.0.tgz
   - source: /opt/hovel/modules/ms17-010-exploit-1.0.0.tgz
 </code></pre>
-        <p>Bulk install runs in order, stops on first failure, and does not roll back prior successful installs.</p>
+        <p>Bulk install accepts local YAML files and HTTPS manifest URLs. Relative sources in a remote manifest resolve against the manifest URL. The Hovel release workflow publishes <code>module-install-set.yaml</code> next to the example module packages. Bulk install runs in order, stops on first failure, and does not roll back prior successful installs.</p>
 
         <h2>Module Lock</h2>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1

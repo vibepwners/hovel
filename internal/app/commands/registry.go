@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 )
 
@@ -58,14 +59,15 @@ func (d Definition) PathString() string {
 }
 
 type Invocation struct {
-	Definition     Definition
-	Positionals    map[string]string
-	Options        map[string]string
-	Flags          map[string]bool
-	Input          Input
-	Output         io.Writer
-	NonInteractive bool
-	StreamLog      func(operatorlog.Entry)
+	Definition      Definition
+	Positionals     map[string]string
+	Options         map[string]string
+	Flags           map[string]bool
+	Input           Input
+	Output          io.Writer
+	NonInteractive  bool
+	StreamLog       func(operatorlog.Entry)
+	InstallProgress func(modulepackage.InstallProgress)
 }
 
 func (i Invocation) Positional(name string) string {

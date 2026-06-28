@@ -94,7 +94,13 @@ jobs:
           echo "Packaging release module artifacts from committed VERSION ${version}"
 
       - name: Build module packages
-        run: task modules:package
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            HOVEL_MODULE_RELEASE_BASE_URL="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}" task modules:package
+          else
+            task modules:package
+          fi
 
       - name: Upload module package artifact
         uses: actions/upload-artifact@v4

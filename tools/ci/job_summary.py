@@ -72,7 +72,7 @@ JOBS = {
     "publish-hovel-modules": JobSummary(
         title="Publish Hovel Module Packages",
         commands=("task modules:package", "actions/upload-artifact", "gh release upload"),
-        details=("Release uploads run only for published-release events.",),
+        details=("Release uploads run only for published-release events and include the bulk-install manifest.",),
         artifact_glob="dist/modules/*",
     ),
     "publish-sdk-build": JobSummary(

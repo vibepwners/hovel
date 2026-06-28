@@ -2947,6 +2947,72 @@ modules:
 	}
 }
 
+func TestModuleBulkInstallInstallsHTTPSArchives(t *testing.T) {
+	workspace := t.TempDir()
+	archive := writeCommandModuleArchive(t, t.TempDir(), "bulk-remote")
+	body, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum, err := modulepackage.FileSHA256(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/modules.yaml":
+			fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleInstallSet\nmodules:\n  - source: bulk-remote.tgz\n    sha256: %s\n", sum)
+		case "/bulk-remote.tgz":
+			w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+			_, _ = w.Write(body)
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+	oldClient := http.DefaultClient
+	http.DefaultClient = server.Client()
+	t.Cleanup(func() { http.DefaultClient = oldClient })
+
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	bulkDefinition, _ := registry.Find("module", "bulk-install")
+	listDefinition, _ := registry.Find("module", "list")
+	var events []modulepackage.InstallProgress
+
+	result, err := bulkDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"manifest": server.URL + "/modules.yaml"},
+		Options:     map[string]string{"workspace": workspace},
+		InstallProgress: func(event modulepackage.InstallProgress) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "Installed 1 modules") {
+		t.Fatalf("bulk result = %q", result.Human)
+	}
+	for _, want := range []modulepackage.InstallProgressStage{
+		modulepackage.InstallProgressSetEntry,
+		modulepackage.InstallProgressDownloadStart,
+		modulepackage.InstallProgressArchiveComplete,
+	} {
+		if !hasCommandInstallProgressStage(events, want) {
+			t.Fatalf("missing progress stage %s in %#v", want, events)
+		}
+	}
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listResult.Human, "bulk-remote@0.1.0") {
+		t.Fatalf("module list missing remote module:\n%s", listResult.Human)
+	}
+}
+
 func TestModuleInstallResolvesExplicitIndex(t *testing.T) {
 	workspace := t.TempDir()
 	indexDir := t.TempDir()
@@ -4603,6 +4669,15 @@ func (fakeRunClient) RunPayloadCommand(context.Context, RunPayloadCommandRunRequ
 func writeCommandModuleArchive(t *testing.T, dir, name string) string {
 	t.Helper()
 	return writeCommandModuleArchiveVersioned(t, dir, name, "0.1.0", name+".tgz")
+}
+
+func hasCommandInstallProgressStage(events []modulepackage.InstallProgress, stage modulepackage.InstallProgressStage) bool {
+	for _, event := range events {
+		if event.Stage == stage {
+			return true
+		}
+	}
+	return false
 }
 
 func writeCommandModuleArchiveVersion(t *testing.T, dir, name, version string) string {
