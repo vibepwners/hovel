@@ -42,7 +42,6 @@ const (
 	tcpBind      = "tcp-bind"
 	tcpCallback  = "tcp-callback"
 
-	payloadEnvPath = "SQUATTER_PAYLOAD_PATH"
 	payloadRunfile = "payloads/squatter/windows/squatter.exe"
 
 	payloadConfigMagic          = "SQCFG001"
@@ -1363,15 +1362,16 @@ func normalizeNamedPipe(pipe string) string {
 func loadPayloadBinary() ([]byte, error) {
 	var candidates []string
 
-	if explicit := os.Getenv(payloadEnvPath); explicit != "" {
-		candidates = append(candidates, explicit)
-	}
-
 	if runfiles := os.Getenv("RUNFILES_DIR"); runfiles != "" {
 		candidates = appendRunfileCandidates(candidates, runfiles)
 	}
 
 	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "squatter.exe"),
+			filepath.Join(filepath.Dir(exeDir), "bin", "squatter.exe"),
+		)
 		candidates = appendRunfileCandidates(candidates, exe+".runfiles")
 	}
 
@@ -1387,7 +1387,7 @@ func loadPayloadBinary() ([]byte, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("squatter payload binary not found; set %s or run through Bazel runfiles", payloadEnvPath)
+	return nil, fmt.Errorf("squatter payload binary not found; run through Bazel runfiles or install the packaged provider with bin/squatter.exe")
 }
 
 func appendRunfileCandidates(candidates []string, root string) []string {

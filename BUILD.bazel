@@ -112,6 +112,7 @@ _CI_TESTS = [
     "//spec:site_smoke_test",
     "//tools/demo/mcpagent:mcpagent_test",
     "//tools/modules:check_in_repo_modules_test",
+    "//tools/modules:package_examples_test",
     "//tools/modules:workspace_module_install_test",
 ]
 

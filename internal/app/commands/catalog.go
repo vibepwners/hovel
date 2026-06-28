@@ -47,6 +47,7 @@ type RunClientFactory interface {
 type RunClient interface {
 	Close() error
 	RunMockExploit(context.Context, RunMockExploitRequest) (RunMockExploitResponse, error)
+	GeneratePayload(context.Context, string, GeneratePayloadRequest) (PayloadArtifactSet, error)
 	ListPayloadCommands(context.Context, string, RunPayloadCommandListRequest) ([]PayloadCommand, error)
 	RunPayloadCommand(context.Context, RunPayloadCommandRunRequest) (PayloadCommandResult, error)
 	ListSessions(context.Context) ([]SessionRef, error)
@@ -190,6 +191,9 @@ type RunMockExploitRequest struct {
 }
 
 type RunPayloadCommandListRequest = run.PayloadCommandListRequest
+type GeneratePayloadRequest = run.GeneratePayloadRequest
+type PayloadArtifactSet = run.PayloadArtifactSet
+type PayloadArtifact = run.PayloadArtifact
 
 type RunPayloadCommandRunRequest struct {
 	Operation string
@@ -1600,6 +1604,11 @@ func isSquatterProviderModule(module modulecatalog.Module) bool {
 	return strings.EqualFold(module.Name, "squatter") && module.Type == modulecatalog.TypePayloadProvider
 }
 
+func isSquatterProviderModuleID(db ModuleDatabase, moduleID string) bool {
+	module, ok := db.Find(moduleID)
+	return ok && isSquatterProviderModule(module)
+}
+
 func squatterProviderModuleID(db ModuleDatabase) string {
 	if module, ok := findSquatterProviderModule(db); ok {
 		return module.ID
@@ -2951,13 +2960,18 @@ func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, 
 			}
 			emitStreamLog(streamLog, startEntries...)
 			stopRunLogs, streamedRunLogs := startRunLogStream(ctx, client, planOperation(plan), throw.Chain, streamLog)
+			targetConfig, err := targetConfigForLegacyModule(ctx, client, db, throw, *payload, moduleID, target)
+			if err != nil {
+				stopRunLogs()
+				return err
+			}
 			result, err := client.RunMockExploit(ctx, RunMockExploitRequest{
 				Operation:    planOperation(plan),
 				Chain:        throw.Chain,
 				ModuleID:     moduleID,
 				Target:       target,
 				ChainConfig:  throw.ChainConfig,
-				TargetConfig: throw.TargetConfigs[target],
+				TargetConfig: targetConfig,
 				ThrowStarted: throwStarted.Format(time.RFC3339Nano),
 			})
 			stopRunLogs()
@@ -2988,6 +3002,111 @@ func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, 
 		}
 	}
 	return nil
+}
+
+func targetConfigForLegacyModule(ctx context.Context, client RunClient, db ModuleDatabase, throw throwExecution, payload ThrowPayload, moduleID, target string) (map[string]string, error) {
+	config := cloneStringMap(throw.TargetConfigs[target])
+	if !shouldGenerateSquatterPayloadForModule(db, throw, moduleID, config) {
+		return config, nil
+	}
+	providerID := squatterProviderModuleID(db)
+	payloadConfig := squatterPayloadGenerationConfig(throw.ChainConfig, config, target)
+	transport := strings.TrimSpace(payloadConfig["payload.transport"])
+	if transport == "" {
+		transport = squatterTypeTCPBind
+	}
+	generated, err := client.GeneratePayload(ctx, providerID, GeneratePayloadRequest{
+		RunID:     payload.ThrowID + "-squatter-payload",
+		Target:    firstConfiguredString(payloadConfig["target.host"], target),
+		PayloadID: squatterPayloadIDForTransport(transport),
+		Format:    "pe-exe",
+		Config:    payloadConfig,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("generate Squatter payload with %s: %w", providerID, err)
+	}
+	primary := generated.Primary
+	if !strings.EqualFold(strings.TrimSpace(primary.Encoding), "base64") {
+		return nil, fmt.Errorf("generate Squatter payload with %s: unsupported artifact encoding %q", providerID, primary.Encoding)
+	}
+	if strings.TrimSpace(primary.Bytes) == "" {
+		return nil, fmt.Errorf("generate Squatter payload with %s: provider returned no payload bytes", providerID)
+	}
+	if config == nil {
+		config = map[string]string{}
+	}
+	delete(config, "payload.local_path")
+	config["payload.provider"] = "squatter"
+	config["payload.id"] = squatterPayloadIDForTransport(transport)
+	config["payload.format"] = firstConfiguredString(primary.Format, "pe-exe")
+	config["payload.name"] = firstConfiguredString(primary.Name, "squatter.exe")
+	config["payload.sha256"] = primary.SHA256
+	config["payload.bytes_base64"] = primary.Bytes
+	return config, nil
+}
+
+func shouldGenerateSquatterPayloadForModule(db ModuleDatabase, throw throwExecution, moduleID string, targetConfig map[string]string) bool {
+	if strings.TrimSpace(targetConfig["payload.bytes_base64"]) != "" {
+		return false
+	}
+	if !throwHasSquatterPayloadBridge(db, throw) {
+		return false
+	}
+	if moduleID == "squatter.bind" || isSquatterProviderModuleID(db, moduleID) {
+		return false
+	}
+	module, ok := db.Find(moduleID)
+	if !ok || module.Type != modulecatalog.TypeExploit {
+		return false
+	}
+	return isSquatterPayloadInstallerModule(module)
+}
+
+func throwHasSquatterPayloadBridge(db ModuleDatabase, throw throwExecution) bool {
+	for _, moduleID := range throw.Modules {
+		if moduleID == "squatter.bind" || isSquatterProviderModuleID(db, moduleID) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSquatterPayloadInstallerModule(module modulecatalog.Module) bool {
+	return modulecatalog.ReferenceName(module.ID) == "ms17-010-exploit"
+}
+
+func squatterPayloadGenerationConfig(chainConfig, targetConfig map[string]string, target string) map[string]string {
+	config := cloneStringMap(chainConfig)
+	if config == nil {
+		config = map[string]string{}
+	}
+	for key, value := range targetConfig {
+		config[key] = value
+	}
+	if strings.TrimSpace(config["target.host"]) == "" {
+		config["target.host"] = target
+	}
+	if strings.TrimSpace(config["payload.transport"]) == "" {
+		config["payload.transport"] = firstConfiguredString(config[squatterTypeConfigKey], squatterTypeTCPBind)
+	}
+	return config
+}
+
+func squatterPayloadIDForTransport(transport string) string {
+	transport = strings.TrimSpace(transport)
+	if transport == "" {
+		transport = squatterTypeTCPBind
+	}
+	return "squatter/windows/x86/windows-7/" + transport + "/pe-exe"
+}
+
+func firstConfiguredString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func executeCapabilityThrow(ctx context.Context, runtime Runtime, workspacePath string, plan ThrowPlanRecord, throw throwExecution, payload *ThrowPayload, throwStarted time.Time, streamLog func(...operatorlog.Entry)) error {
@@ -3918,7 +4037,6 @@ func applySquatterBindTargetConfig(targets []string, configs map[string]map[stri
 	chainBindPort := strings.TrimSpace(chainConfig["squatter.bind_port"])
 	chainPayloadBindPort := strings.TrimSpace(chainConfig["payload.bind_port"])
 	remotePath := strings.TrimSpace(chainConfig["squatter.remote_path"])
-	localPath := squatterPayloadPath()
 	for _, target := range targets {
 		config := cloneStringMap(configs[target])
 		if config == nil {
@@ -3929,7 +4047,6 @@ func applySquatterBindTargetConfig(targets []string, configs map[string]map[stri
 		default:
 			config["target.port"] = "445"
 		}
-		config["payload.local_path"] = localPath
 		config["payload.transport"] = squatterTypeTCPBind
 		if remotePath != "" {
 			config["payload.remote_path"] = remotePath
@@ -3947,51 +4064,6 @@ func applySquatterBindTargetConfig(targets []string, configs map[string]map[stri
 		configs[target] = config
 	}
 	return configs
-}
-
-func squatterPayloadPath() string {
-	if env := strings.TrimSpace(os.Getenv("SQUATTER_PAYLOAD_PATH")); env != "" {
-		return env
-	}
-	candidates := squatterPayloadPathCandidates()
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	if len(candidates) != 0 {
-		return candidates[0]
-	}
-	return filepath.Join("examples", "bin", "squatter.exe")
-}
-
-func squatterPayloadPathCandidates() []string {
-	var candidates []string
-	add := func(path string) {
-		path = filepath.Clean(strings.TrimSpace(path))
-		if path == "." {
-			return
-		}
-		for _, existing := range candidates {
-			if existing == path {
-				return
-			}
-		}
-		candidates = append(candidates, path)
-	}
-
-	if configPath := strings.TrimSpace(os.Getenv("HOVEL_MODULE_CONFIG")); configPath != "" {
-		configDir := filepath.Dir(configPath)
-		add(filepath.Join(configDir, "bin", "squatter.exe"))
-		add(filepath.Join(filepath.Dir(configDir), "bin", "squatter.exe"))
-	}
-	if workspace := strings.TrimSpace(os.Getenv("BUILD_WORKSPACE_DIRECTORY")); workspace != "" {
-		add(filepath.Join(workspace, "examples", "bin", "squatter.exe"))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		add(filepath.Join(cwd, "examples", "bin", "squatter.exe"))
-	}
-	return candidates
 }
 
 func throwInputsFromChainFile(ctx context.Context, runtime Runtime, invocation Invocation, path string) (throwExecution, error) {

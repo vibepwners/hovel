@@ -1028,6 +1028,13 @@ func (c daemonRunClient) ListPayloadCommands(ctx context.Context, moduleID strin
 	return append([]commands.PayloadCommand(nil), resp.Commands...), nil
 }
 
+func (c daemonRunClient) GeneratePayload(ctx context.Context, moduleID string, req commands.GeneratePayloadRequest) (commands.PayloadArtifactSet, error) {
+	return c.client.GeneratePayload(ctx, daemonrpc.PayloadGenerateRequest{
+		ModuleID: moduleID,
+		Request:  req,
+	})
+}
+
 func (c daemonRunClient) RunPayloadCommand(ctx context.Context, req commands.RunPayloadCommandRunRequest) (commands.PayloadCommandResult, error) {
 	resp, err := c.client.RunPayloadCommand(ctx, daemonrpc.PayloadCommandRunRequest{
 		Operation: req.Operation,

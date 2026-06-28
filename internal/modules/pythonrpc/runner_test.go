@@ -1074,6 +1074,45 @@ while True:
 	}
 }
 
+func TestRunnerGeneratePayloadDecodesArtifactSet(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    if method == "generate_payload":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "primary": {
+                "name": "squatter.exe",
+                "role": "primary",
+                "format": "pe-exe",
+                "encoding": "base64",
+                "bytes": "TVo=",
+                "size": 2,
+                "sha256": "fake"
+            },
+            "artifacts": []
+        }})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`)
+	payload, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.GeneratePayload(context.Background(), "broken", run.GeneratePayloadRequest{
+		Target:    "192.0.2.10",
+		PayloadID: "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Format:    "pe-exe",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.Primary.Name != "squatter.exe" || payload.Primary.Encoding != "base64" || payload.Primary.Bytes != "TVo=" {
+		t.Fatalf("payload = %#v", payload)
+	}
+}
+
 func TestStepRuntimeRunnerExecutesCapabilityChain(t *testing.T) {
 	configPath := writePythonModuleFixture(t, `
 while True:
