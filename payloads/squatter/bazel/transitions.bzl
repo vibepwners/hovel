@@ -23,8 +23,8 @@ of this rule.
 # ABI key -> (target platform label, platform_suffix). Keep in lockstep with the
 # --platform_suffix values in //.bazelrc.
 _ABIS = {
-    "x86_64": ("@windows_toolchains//platforms:windows_x64", "win-x64"),
-    "i686": ("@windows_toolchains//platforms:windows_x86", "win-x86"),
+    "x86_64": ("//platforms:windows_x64", "win-x64", "@mingw_x86_64//:toolchain"),
+    "i686": ("//platforms:windows_x86", "win-x86", "@mingw_i686//:toolchain"),
 }
 
 def _split_impl(settings, attr):
@@ -33,14 +33,16 @@ def _split_impl(settings, attr):
         abi: {
             "//command_line_option:platforms": [platform],
             "//command_line_option:platform_suffix": suffix,
+            "//command_line_option:extra_toolchains": [toolchain],
         }
-        for abi, (platform, suffix) in _ABIS.items()
+        for abi, (platform, suffix, toolchain) in _ABIS.items()
     }
 
 _per_abi = transition(
     implementation = _split_impl,
     inputs = [],
     outputs = [
+        "//command_line_option:extra_toolchains",
         "//command_line_option:platforms",
         "//command_line_option:platform_suffix",
     ],

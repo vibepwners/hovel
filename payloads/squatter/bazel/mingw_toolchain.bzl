@@ -1,11 +1,11 @@
 """In-repo cc_toolchain over an extracted MinGW-w64 tarball.
 
-This is a corrected fork of @windows_toolchains//bazel:consume.bzl. The upstream
-`mingw_cc_toolchain` wires compiler/linker tool groups but omits `ar_files`, so
-the archive action that backs *every* cc_library cannot find the archiver in the
-sandbox ("execvp(...-ar): No such file or directory"). That makes cc_library --
-and therefore cc_test, googletest, nanopb, and anything else that vendors a
-static library -- unbuildable.
+This is a corrected MinGW cc_toolchain helper. The upstream helper this started
+from wired compiler/linker tool groups but omitted `ar_files`, so the archive
+action that backs *every* cc_library could not find the archiver in the sandbox
+("execvp(...-ar): No such file or directory"). That makes cc_library -- and
+therefore cc_test, googletest, nanopb, and anything else that vendors a static
+library -- unbuildable.
 
 The fix is small and surgical: the same toolchain, plus `ar_files`, plus a
 `-lstdc++` on the C++ link (the gcc driver, unlike g++, does not pull libstdc++

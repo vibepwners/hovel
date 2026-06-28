@@ -2646,15 +2646,15 @@ func looseVersionParts(version string) []int {
 }
 
 func resolveBulkInstallSource(baseDir, source string) string {
-	if strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") || filepath.IsAbs(source) {
-		return source
-	}
 	if base, err := url.Parse(baseDir); err == nil && base.Scheme != "" && base.Host != "" {
 		relative, err := url.Parse(source)
 		if err != nil {
 			return source
 		}
 		return base.ResolveReference(relative).String()
+	}
+	if strings.HasPrefix(source, "https://") || strings.HasPrefix(source, "http://") || filepath.IsAbs(source) {
+		return source
 	}
 	return filepath.Join(baseDir, source)
 }

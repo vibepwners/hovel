@@ -13,10 +13,9 @@ So at repository-fetch time we *ask the compiler* where it looks:
     <target>-gcc -E -x c -v - < /dev/null
 
 and parse the `#include <...> search starts here:` block out of stderr. Those
-absolute paths are handed to the upstream `mingw_cc_toolchain` helper
-(`@windows_toolchains//bazel:consume.bzl`) as `builtin_include_dirs`. The result
-is a toolchain definition that re-derives itself from whatever tarball it is
-pointed at -- no per-version edits.
+absolute paths are handed to the MinGW cc_toolchain helper as
+`builtin_include_dirs`. The result is a toolchain definition that re-derives
+itself from whatever tarball it is pointed at -- no per-version edits.
 """
 
 def _fallback_builtin_include_dirs(rctx, target):

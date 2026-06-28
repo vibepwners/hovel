@@ -10,20 +10,26 @@ test --test_env=PYTHONDONTWRITEBYTECODE=1
 build:buildbuddy --bes_backend=grpcs://remote.buildbuddy.io
 build:buildbuddy --bes_results_url=https://app.buildbuddy.io/invocation/
 build:buildbuddy --remote_cache=grpcs://remote.buildbuddy.io
+build:buildbuddy --remote_cache_compression=true
 build:buildbuddy --remote_upload_local_results=false
 
 build:ci --config=buildbuddy
 build:ci --build_metadata=ROLE=CI
+build:ci --noslim_profile
+build:ci --experimental_profile_include_target_label
+build:ci --experimental_profile_include_primary_output
 build:ci --remote_upload_local_results=true
 
-build:win64 --platforms=@windows_toolchains//platforms:windows_x64
+build:win64 --platforms=//platforms:windows_x64
 build:win64 --platform_suffix=win-x64
+build:win64 --extra_toolchains=@mingw_x86_64//:toolchain
 test:win64 --run_under=wine
 test:win64 --test_env=WINEDEBUG=-all
 test:win64 --test_env=LANG=C.UTF-8
 
-build:win32 --platforms=@windows_toolchains//platforms:windows_x86
+build:win32 --platforms=//platforms:windows_x86
 build:win32 --platform_suffix=win-x86
+build:win32 --extra_toolchains=@mingw_i686//:toolchain
 test:win32 --run_under=wine
 test:win32 --test_env=WINEDEBUG=-all
 test:win32 --test_env=LANG=C.UTF-8

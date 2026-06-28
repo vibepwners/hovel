@@ -3013,6 +3013,77 @@ func TestModuleBulkInstallInstallsHTTPSArchives(t *testing.T) {
 	}
 }
 
+func TestModuleBulkInstallResolvesHTTPSManifestAbsolutePathArchives(t *testing.T) {
+	workspace := t.TempDir()
+	archive := writeCommandModuleArchive(t, t.TempDir(), "bulk-release")
+	body, err := os.ReadFile(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum, err := modulepackage.FileSHA256(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const archivePath = "/releases/download/v1.2.3/bulk-release.tgz"
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/downloads/modules.yaml":
+			fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleInstallSet\nmodules:\n  - source: %s\n    sha256: %s\n", archivePath, sum)
+		case archivePath:
+			w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+			_, _ = w.Write(body)
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}))
+	defer server.Close()
+	oldClient := http.DefaultClient
+	http.DefaultClient = server.Client()
+	t.Cleanup(func() { http.DefaultClient = oldClient })
+
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	bulkDefinition, _ := registry.Find("module", "bulk-install")
+	listDefinition, _ := registry.Find("module", "list")
+	var sources []string
+
+	result, err := bulkDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"manifest": server.URL + "/downloads/modules.yaml"},
+		Options:     map[string]string{"workspace": workspace},
+		InstallProgress: func(event modulepackage.InstallProgress) {
+			if event.Stage == modulepackage.InstallProgressSetEntry || event.Stage == modulepackage.InstallProgressDownloadStart {
+				sources = append(sources, event.Source)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "Installed 1 modules") {
+		t.Fatalf("bulk result = %q", result.Human)
+	}
+	wantSource := server.URL + archivePath
+	foundSource := false
+	for _, source := range sources {
+		if source == wantSource {
+			foundSource = true
+			break
+		}
+	}
+	if !foundSource {
+		t.Fatalf("progress sources = %#v, want %q", sources, wantSource)
+	}
+	listResult, err := listDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listResult.Human, "bulk-release@0.1.0") {
+		t.Fatalf("module list missing release module:\n%s", listResult.Human)
+	}
+}
+
 func TestModuleInstallResolvesExplicitIndex(t *testing.T) {
 	workspace := t.TempDir()
 	indexDir := t.TempDir()
