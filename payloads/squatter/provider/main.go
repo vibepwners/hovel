@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -234,7 +235,11 @@ func openSquatterSession(ctx *hovel.Context, conn io.ReadWriteCloser, transport 
 	return ctx.OpenSession(
 		&squatterSession{
 			PTYSession: &hovel.PTYSession{Frontend: func(input io.Reader, output io.Writer) error {
-				defer conn.Close()
+				defer func() {
+					if err := conn.Close(); err != nil {
+						ctx.Log.Warn("Squatter session close failed", "error", err.Error())
+					}
+				}()
 				inputFile, ok := input.(*os.File)
 				if !ok {
 					return fmt.Errorf("squatter PTY input is %T, want *os.File", input)
@@ -262,7 +267,7 @@ func (s *squatterSession) ListPayloadCommands(req hovel.PayloadCommandListReques
 
 func (s *squatterSession) RunPayloadCommand(req hovel.PayloadCommandRequest) (result hovel.PayloadCommandResult, err error) {
 	if s.client == nil {
-		return hovel.PayloadCommandResult{}, fmt.Errorf("Squatter session client is not configured")
+		return hovel.PayloadCommandResult{}, fmt.Errorf("squatter session client is not configured")
 	}
 	err = s.client.WithLockedTransport(func(conn io.Writer, reader *bufio.Reader, sid uint64) error {
 		result, err = runPayloadCommandOnTransport(conn, reader, sid, req)
@@ -1590,7 +1595,7 @@ func (p Provider) RunPayloadCommand(req hovel.PayloadCommandRequest) (hovel.Payl
 	if err != nil {
 		return hovel.PayloadCommandResult{}, err
 	}
-	defer conn.Close()
+	defer func() { logProviderError("close payload command connection", conn.Close()) }()
 	return runPayloadCommandOnTransport(conn, reader, 1, req)
 }
 
@@ -1627,7 +1632,7 @@ func (p Provider) CleanupPayload(req hovel.CleanupPayloadRequest) (hovel.Cleanup
 		args = append(args, "--delete-file")
 	}
 	config := recordDescriptorStringMap(req.Cleanup)
-	_, _ = p.RunPayloadCommand(hovel.PayloadCommandRequest{
+	_, err = p.RunPayloadCommand(hovel.PayloadCommandRequest{
 		InstalledPayloadID: req.InstalledPayloadID,
 		Target:             req.Target,
 		PayloadID:          req.PayloadID,
@@ -1636,6 +1641,7 @@ func (p Provider) CleanupPayload(req hovel.CleanupPayloadRequest) (hovel.Cleanup
 		Config:             config,
 		Agent:              req.Agent,
 	})
+	logProviderError("run payload cleanup command", err)
 	return cleanup, nil
 }
 
@@ -1688,11 +1694,11 @@ func runGetfileCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req hov
 	n, err := xfer.GetFile(conn, reader, sid, remote, file)
 	closeErr := file.Close()
 	if err != nil {
-		_ = os.Remove(path)
+		logProviderError("remove partial getfile artifact", os.Remove(path))
 		return hovel.PayloadCommandResult{}, err
 	}
 	if closeErr != nil {
-		_ = os.Remove(path)
+		logProviderError("remove failed getfile artifact", os.Remove(path))
 		return hovel.PayloadCommandResult{}, closeErr
 	}
 	name := filepath.Base(strings.ReplaceAll(remote, "\\", "/"))
@@ -1737,7 +1743,7 @@ func payloadCommandInput(req hovel.PayloadCommandRequest) (io.Reader, func(), er
 		if err != nil {
 			return nil, func() {}, err
 		}
-		return file, func() { _ = file.Close() }, nil
+		return file, func() { logProviderError("close payload command input file", file.Close()) }, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(req.InputEncoding)) {
 	case "", "utf-8", "text":
@@ -1758,8 +1764,8 @@ func runCmdCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req hovel.P
 		return hovel.PayloadCommandResult{}, fmt.Errorf("cmd requires command line")
 	}
 	if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
-		_ = deadline.SetDeadline(time.Now().Add(15 * time.Second))
-		defer deadline.SetDeadline(time.Time{})
+		logProviderError("set cmd payload command deadline", deadline.SetDeadline(time.Now().Add(15*time.Second)))
+		defer func() { logProviderError("clear cmd payload command deadline", deadline.SetDeadline(time.Time{})) }()
 	}
 	command := req.Args[0]
 	if err := wire.WriteFrame(conn, wire.KindOpen, sid, wire.EncodeOpen("cmd", []string{command})); err != nil {
@@ -1780,15 +1786,17 @@ func runCmdCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req hovel.P
 				Fields:  map[string]string{"command": command},
 			}, nil
 		case wire.KindData:
-			_, _ = out.Write(payload)
+			if _, err := out.Write(payload); err != nil {
+				return hovel.PayloadCommandResult{}, err
+			}
 		}
 	}
 }
 
 func runJSONPayloadCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req hovel.PayloadCommandRequest, module string, args []string) (hovel.PayloadCommandResult, error) {
 	if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
-		_ = deadline.SetDeadline(time.Now().Add(payloadCommandTimeout(req)))
-		defer deadline.SetDeadline(time.Time{})
+		logProviderError("set JSON payload command deadline", deadline.SetDeadline(time.Now().Add(payloadCommandTimeout(req))))
+		defer func() { logProviderError("clear JSON payload command deadline", deadline.SetDeadline(time.Time{})) }()
 	}
 	if err := wire.WriteFrame(conn, wire.KindOpen, sid, wire.EncodeOpen(module, args)); err != nil {
 		return hovel.PayloadCommandResult{}, err
@@ -1813,7 +1821,9 @@ func runJSONPayloadCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req
 				Fields:  fields,
 			}, nil
 		case wire.KindData:
-			_, _ = out.Write(payload)
+			if _, err := out.Write(payload); err != nil {
+				return hovel.PayloadCommandResult{}, err
+			}
 		case wire.KindControl:
 			event, err := wire.DecodeStreamEvent(payload)
 			if err != nil {
@@ -2016,5 +2026,11 @@ func capabilities() []string {
 		"process.kill",
 		"payload.status",
 		"payload.cleanup",
+	}
+}
+
+func logProviderError(action string, err error) {
+	if err != nil {
+		log.Printf("squatter provider: %s: %v", action, err)
 	}
 }

@@ -1883,11 +1883,11 @@ func chainValidateHandler(runtime Runtime) Handler {
 		if err != nil {
 			return Result{}, err
 		}
-		_ = runtime.Session.AppendLog(operatorlog.Info("validate", "validation started"))
+		logCommandError("append validation start log", runtime.Session.AppendLog(operatorlog.Info("validate", "validation started")))
 		validation := ValidateState(db, state)
 		payload := ValidationPayload{Valid: validation.Valid, Issues: validation.Issues}
 		if validation.Valid {
-			_ = runtime.Session.AppendLog(operatorlog.Success("validate", "validation completed"))
+			logCommandError("append validation success log", runtime.Session.AppendLog(operatorlog.Success("validate", "validation completed")))
 			return Result{
 				Human: fmt.Sprintf("Chain %s valid", state.ActiveChain),
 				JSON:  payload,
@@ -1905,7 +1905,7 @@ func chainValidateHandler(runtime Runtime) Handler {
 				operatorlog.Field{Name: "key", Value: issue.Key},
 			))
 		}
-		_ = runtime.Session.AppendLog(logEntries...)
+		logCommandError("append validation failure log", runtime.Session.AppendLog(logEntries...))
 		return Result{
 			Human: strings.Join(lines, "\n"),
 			JSON:  payload,
@@ -2744,7 +2744,7 @@ func loadModuleIndex(indexPath string, offline bool) (modulepackage.Index, error
 		if err != nil {
 			return modulepackage.Index{}, err
 		}
-		defer resp.Body.Close()
+		defer func() { logCommandError("close module index response body", resp.Body.Close()) }()
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
 			return modulepackage.Index{}, fmt.Errorf("download index %s failed: %s", indexPath, resp.Status)
 		}
@@ -2754,7 +2754,7 @@ func loadModuleIndex(indexPath string, offline bool) (modulepackage.Index, error
 		}
 		if cacheErr == nil {
 			if err := os.MkdirAll(filepath.Dir(cached), 0o755); err == nil {
-				_ = os.WriteFile(cached, body, 0o644)
+				logCommandError("write cached module index", os.WriteFile(cached, body, 0o644))
 			}
 		}
 		return modulepackage.ParseIndex(body)
@@ -2814,7 +2814,8 @@ func looseVersionParts(version string) []int {
 	fields := strings.Split(core, ".")
 	parts := make([]int, 0, len(fields))
 	for _, field := range fields {
-		n, _ := strconv.Atoi(field)
+		n, err := strconv.Atoi(field)
+		logCommandError("parse version segment", err)
 		parts = append(parts, n)
 	}
 	return parts
@@ -3055,7 +3056,7 @@ func throwHandler(runtime Runtime) Handler {
 			}
 		}
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
-			_ = runtime.Session.AppendLogToChain(throw.Chain, throwHeader(throw.Chain))
+			logCommandError("append throw header log", runtime.Session.AppendLogToChain(throw.Chain, throwHeader(throw.Chain)))
 		}
 		emitStreamLog(streamThrowLog, throwHeader(throw.Chain))
 		var payload ThrowPayload
@@ -3068,7 +3069,7 @@ func throwHandler(runtime Runtime) Handler {
 		}
 		planEntries := throwPlanEntries(payload, throwStarted)
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
-			_ = runtime.Session.AppendLogToChain(throw.Chain, planEntries...)
+			logCommandError("append throw plan log", runtime.Session.AppendLogToChain(throw.Chain, planEntries...))
 		}
 		emitStreamLog(streamThrowLog, planEntries...)
 		if len(throw.Steps) != 0 {
@@ -3080,14 +3081,14 @@ func throwHandler(runtime Runtime) Handler {
 			if err != nil {
 				return Result{}, err
 			}
-			defer client.Close()
+			defer func() { logCommandError("close legacy throw daemon client", client.Close()) }()
 			if err := executeLegacyThrow(ctx, runtime, client, status.WorkspacePath, db, plan, throw, &payload, throwStarted, streamThrowLog); err != nil {
 				return Result{}, err
 			}
 		}
 		completeEntries := throwCompleteEntries(payload, throwStarted)
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
-			_ = runtime.Session.AppendLogToChain(payload.Chain, completeEntries...)
+			logCommandError("append throw completion log", runtime.Session.AppendLogToChain(payload.Chain, completeEntries...))
 			if runtime.Throws != nil {
 				if err := runtime.Throws.RecordThrow(ctx, newThrowRecord(status.WorkspacePath, plan, payload, throwStarted, time.Now().UTC())); err != nil {
 					return Result{}, err
@@ -3104,7 +3105,7 @@ func throwHandler(runtime Runtime) Handler {
 		emitStreamLog(streamThrowLog, completeEntries...)
 		log := throwLog(payload, throwStarted)
 		if runtime.Session != nil {
-			_ = runtime.Session.AppendLogToChain(payload.Chain, log.Entries()...)
+			logCommandError("append throw log", runtime.Session.AppendLogToChain(payload.Chain, log.Entries()...))
 		}
 		if runtime.Throws != nil {
 			if err := runtime.Throws.RecordThrow(ctx, newThrowRecord(status.WorkspacePath, plan, payload, throwStarted, time.Now().UTC())); err != nil {
@@ -3133,7 +3134,7 @@ func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, 
 			runIndex := len(payload.Results) + 1
 			startEntries := throwRunStartEntries(throw.Chain, target, moduleID, runIndex, len(throw.Targets)*len(modules), throwStarted)
 			if runtime.Session != nil && feedbackPublished(runtime.Session) {
-				_ = runtime.Session.AppendLogToChain(throw.Chain, startEntries...)
+				logCommandError("append throw run start log", runtime.Session.AppendLogToChain(throw.Chain, startEntries...))
 			}
 			emitStreamLog(streamLog, startEntries...)
 			stopRunLogs, streamedRunLogs := startRunLogStream(ctx, client, planOperation(plan), throw.Chain, streamLog)
@@ -3173,7 +3174,7 @@ func executeLegacyThrow(ctx context.Context, runtime Runtime, client RunClient, 
 			}
 			resultEntries := throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets)*len(modules), throwStarted)
 			if runtime.Session != nil && feedbackPublished(runtime.Session) {
-				_ = runtime.Session.AppendLogToChain(throw.Chain, resultEntries...)
+				logCommandError("append throw run result log", runtime.Session.AppendLogToChain(throw.Chain, resultEntries...))
 			}
 			emitStreamLog(streamLog, resultEntries...)
 		}
@@ -3292,7 +3293,7 @@ func executeCapabilityThrow(ctx context.Context, runtime Runtime, workspacePath 
 		runID := fmt.Sprintf("%s-capability-%d", payload.ThrowID, runIndex)
 		startEntries := throwRunStartEntries(throw.Chain, target, "capability-chain", runIndex, len(throw.Targets), throwStarted)
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
-			_ = runtime.Session.AppendLogToChain(throw.Chain, startEntries...)
+			logCommandError("append capability throw start log", runtime.Session.AppendLogToChain(throw.Chain, startEntries...))
 		}
 		emitStreamLog(streamLog, startEntries...)
 		result, err := runtime.CapabilityChains.ExecuteCapabilityChain(ctx, CapabilityChainRequest{
@@ -3318,7 +3319,7 @@ func executeCapabilityThrow(ctx context.Context, runtime Runtime, workspacePath 
 		}
 		resultEntries := throwRunResultEntries(*payload, payload.Results[len(payload.Results)-1], runIndex, len(throw.Targets), throwStarted)
 		if runtime.Session != nil && feedbackPublished(runtime.Session) {
-			_ = runtime.Session.AppendLogToChain(throw.Chain, resultEntries...)
+			logCommandError("append capability throw result log", runtime.Session.AppendLogToChain(throw.Chain, resultEntries...))
 		}
 		emitStreamLog(streamLog, resultEntries...)
 	}
@@ -3450,7 +3451,9 @@ func connectInstalledSquatterPayloadsForRun(ctx context.Context, runtime Runtime
 		}
 		session, err := runtime.PayloadProviders.ConnectInstalledPayload(ctx, record)
 		if err != nil {
-			_, _ = runtime.Payloads.UpdateInstalledPayloadState(ctx, workspacePath, record.Handle, PayloadStateUnreachable, err.Error())
+			if _, updateErr := runtime.Payloads.UpdateInstalledPayloadState(ctx, workspacePath, record.Handle, PayloadStateUnreachable, err.Error()); updateErr != nil {
+				return fmt.Errorf("connect installed payload %s: %w; additionally failed to mark payload unreachable: %v", payloadRecordRef(record), err, updateErr)
+			}
 			return fmt.Errorf("connect installed payload %s: %w", payloadRecordRef(record), err)
 		}
 		if session.InstalledPayloadID == "" {
@@ -3948,7 +3951,7 @@ func dialDaemonRunClient(ctx context.Context, runtime Runtime, workspacePath str
 	if err != nil {
 		return nil, nil, err
 	}
-	return client, func() { _ = client.Close() }, nil
+	return client, func() { logCommandError("close daemon run client", client.Close()) }, nil
 }
 
 func newThrowPlanForExecution(workspacePath string, throw throwExecution) ThrowPlanRecord {
@@ -4583,7 +4586,7 @@ func validateChainFileShape(file ChainFile) error {
 			return fmt.Errorf("chain file step %s module reference is required", step.ID)
 		}
 		if !strings.HasPrefix(step.Uses, "module:") && !strings.HasPrefix(step.Uses, "service:") && !strings.HasPrefix(step.Uses, "provider:") {
-			return fmt.Errorf("chain file step %s uses must start with module:, service:, or provider:", step.ID)
+			return fmt.Errorf("chain file step %s uses must start with module:, service:, or provider", step.ID)
 		}
 	}
 	return nil

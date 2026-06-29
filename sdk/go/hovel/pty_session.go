@@ -62,8 +62,8 @@ func (s *PTYSession) Open() error {
 		if err != nil && !errors.Is(err, os.ErrClosed) && !errors.Is(err, io.EOF) {
 			s.emit([]byte("session frontend error: " + err.Error() + "\n"))
 		}
-		_ = input.Close()
-		_ = output.Close()
+		logSDKError("close PTY input after frontend exit", input.Close())
+		logSDKError("close PTY output after frontend exit", output.Close())
 	}()
 	return nil
 }
@@ -124,13 +124,13 @@ func (s *PTYSession) Close(reason string) error {
 		s.closed = true
 		s.mu.Unlock()
 		if input != nil {
-			_ = input.Close()
+			logSDKError("close PTY input", input.Close())
 		}
 		if output != nil {
-			_ = output.Close()
+			logSDKError("close PTY output", output.Close())
 		}
 		if master != nil {
-			_ = master.Close()
+			logSDKError("close PTY master", master.Close())
 		}
 		s.signal()
 	})
@@ -182,13 +182,13 @@ func (s *PTYSession) markClosed() {
 	master, input, output := s.master, s.input, s.output
 	s.mu.Unlock()
 	if input != nil {
-		_ = input.Close()
+		logSDKError("close PTY input after master read", input.Close())
 	}
 	if output != nil {
-		_ = output.Close()
+		logSDKError("close PTY output after master read", output.Close())
 	}
 	if master != nil {
-		_ = master.Close()
+		logSDKError("close PTY master after master read", master.Close())
 	}
 	s.signal()
 }

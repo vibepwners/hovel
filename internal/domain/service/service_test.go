@@ -122,10 +122,22 @@ func TestNewTypeValidation(t *testing.T) {
 }
 
 func TestNewDescriptorRequiresAllFields(t *testing.T) {
-	validID, _ := NewID("svc-001")
-	validName, _ := NewName("picblob-provider")
-	validVersion, _ := NewVersion("0.1.0")
-	validType, _ := NewType("payload_provider")
+	validID, err := NewID("svc-001")
+	if err != nil {
+		t.Fatalf("NewID returned error: %v", err)
+	}
+	validName, err := NewName("picblob-provider")
+	if err != nil {
+		t.Fatalf("NewName returned error: %v", err)
+	}
+	validVersion, err := NewVersion("0.1.0")
+	if err != nil {
+		t.Fatalf("NewVersion returned error: %v", err)
+	}
+	validType, err := NewType("payload_provider")
+	if err != nil {
+		t.Fatalf("NewType returned error: %v", err)
+	}
 
 	desc, err := New(validID, validName, validVersion, validType)
 	if err != nil {

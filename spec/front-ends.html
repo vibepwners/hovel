@@ -366,7 +366,7 @@ Settings / Theme Selector
         <p>Event streaming may use Server-Sent Events or WebSockets.</p>
 
         <h2>MCP Adapter</h2>
-        <p>An initial MCP adapter is implemented as <code>hovel mcp</code>. It defaults to stdio, supports streamable HTTP with <code>--transport http</code>, accepts the same explicit <code>--config</code> path as other front ends, attaches to <code>hoveld</code> as an MCP operator entity, heartbeats while connected, and exposes typed tools for operator identity, live entity listing, operation listing, workspace snapshots, catalog snapshots, idempotent chain apply, throw start, installed payload listing, and provider-owned payload commands.</p>
+        <p>An initial MCP adapter is implemented as <code>hovel mcp</code>. It defaults to stdio, supports streamable HTTP with <code>--transport http</code>, accepts the same explicit <code>--config</code> path as other front ends, attaches to <code>hoveld</code> as an MCP operator entity, heartbeats while connected, and exposes typed tools for operator identity, live entity listing, operation listing, workspace snapshots, catalog snapshots, module search/inspect, chain suggestions, idempotent chain apply, launch-key policy inspection, throw plan/confirm/start, installed payload listing, typed session calls, and provider-owned payload calls.</p>
         <p>MCP has eventual operator parity: anything a human can do through <code>cli</code>, one-shot execution, TUI, or API should be representable through MCP, subject to the same guardrail checks, confirmations, planning output, and audit trail. The implementation should ship inspection and planning tools before execution tools unless the shared confirmation and audit path is already complete.</p>
         <p>MCP should be treated as a peer front end, not as a privileged back door. It may expose workflows optimized for agents, but those workflows must produce the same plans, guardrail results, confirmations, structured events, artifacts, and throw records that a CLI or TUI operator would see.</p>
         <p>Implemented tools:</p>
@@ -375,36 +375,41 @@ hovel_operator_list_entities
 hovel_operation_list
 hovel_workspace_snapshot
 hovel_catalog_snapshot
+hovel_module_search
+hovel_module_inspect
+hovel_chain_suggest
+hovel_launch_key_policy
 hovel_chain_apply
 hovel_command_run
+hovel_throw_plan
+hovel_throw_confirm
 hovel_throw_start
 hovel_installed_payload_list
+hovel_session_capabilities
+hovel_session_call
 hovel_payload_cmd
-hovel_payload_command_list
-hovel_payload_command_call
+hovel_payload_capabilities
+hovel_payload_call
 </code></pre>
-        <p>Follow-on inspection and planning tools:</p>
-<pre data-lang="tools"><code>hovel_list_modules
-hovel_inspect_module
-hovel_list_services
-hovel_get_service_status
-hovel_plan_throw
-hovel_check_guardrails
-hovel_get_throw_status
-hovel_list_artifacts
-hovel_get_artifact
-hovel_list_targets
-hovel_resolve_payload
-hovel_list_available_payloads
-hovel_inspect_installed_payload
-hovel_list_listeners
-hovel_list_sessions
+        <p>Follow-on inspection and control tools:</p>
+<pre data-lang="tools"><code>hovel_service_list
+hovel_service_status
+hovel_throw_status
+hovel_throw_logs
+hovel_artifact_list
+hovel_artifact_inspect
+hovel_target_list
+hovel_payload_inspect
+hovel_listener_list
+hovel_session_list
+hovel_session_read
+hovel_session_write
+hovel_session_close
 </code></pre>
         <p>Execution tools should be added only after confirmation records and guardrail checks are shared with CLI and REST:</p>
-<pre data-lang="tools"><code>hovel_confirm_action
-hovel_connect_installed_payload
-hovel_cleanup_installed_payload
-hovel_mark_payload_removed
+<pre data-lang="tools"><code>hovel_payload_connect
+hovel_payload_cleanup
+hovel_payload_mark_removed
 hovel_start_service
 hovel_stop_service
 hovel_stream_throw_events

@@ -10,7 +10,7 @@ version: '3'
 # Conventions:
 #   task <name>                 run a task
 #   task <name> -- <args>       forward extra args to the underlying tool
-#                               (supported by build, test, run, throw)
+  #                               (supported by build, test, run, throw)
 #   task --list                 list tasks
 #
 # Quick start for developers:
@@ -297,19 +297,22 @@ tasks:
 
   lint:
     aliases: [l]
-    desc: Run all lint checks (Go formatting, Gazelle, Python, Squatter C).
+    desc: Run all lint checks (Go formatting, golangci-lint, Gazelle, Rust, Python, Squatter C).
     cmds:
       - task: gofmt:check
+      - task: go:lint
       - task: gazelle:check
+      - task: rust:lint
       - task: python:check
       - task: squatter:check
 
   fmt:
     aliases: [format]
-    desc: Auto-format the tree (Go source, Gazelle BUILD metadata, Squatter C).
+    desc: Auto-format the tree (Go source, Gazelle BUILD metadata, Rust source, Squatter C).
     cmds:
       - task: gofmt
       - task: gazelle
+      - task: rustfmt
       - task: squatter:format
 
   # --- Individual quality steps (composed by lint/fmt above) --------------
@@ -327,6 +330,35 @@ tasks:
       - task: run
         vars:
           CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=check
+
+  go:lint:
+    desc: Run golangci-lint over Go packages.
+    cmds:
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:golangci_lint_workspace
+
+  rust:lint:
+    desc: Run Rust formatting and Clippy checks.
+    cmds:
+      - task: rustfmt:check
+      - task: build
+        vars:
+          CLI_ARGS: --@rules_rust//rust/settings:clippy_flag=-Dwarnings --@rules_rust//rust/settings:clippy_flag=-Dclippy::all //:rust_clippy
+
+  rustfmt:
+    desc: Format Rust files in place.
+    cmds:
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:format_rust_workspace -- --mode=write
+
+  rustfmt:check:
+    desc: Check Rust formatting.
+    cmds:
+      - task: test
+        vars:
+          CLI_ARGS: //:rustfmt_check
 
   gazelle:
     desc: Update Go BUILD metadata with Gazelle.

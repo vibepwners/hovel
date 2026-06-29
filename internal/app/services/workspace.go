@@ -79,10 +79,7 @@ func (s WorkspaceService) InitWorkspace(ctx context.Context, req InitWorkspaceRe
 		}
 	}
 
-	return InitWorkspaceResult{
-		Workspace: record.Workspace,
-		Created:   record.Created,
-	}, nil
+	return InitWorkspaceResult(record), nil
 }
 
 func (s WorkspaceService) appendWorkspaceInitialized(ctx context.Context, ws workspace.Workspace) error {

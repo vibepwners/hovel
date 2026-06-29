@@ -13,7 +13,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfigPath())
+	if err := os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfigPath()); err != nil {
+		panic(err)
+	}
 	os.Exit(m.Run())
 }
 

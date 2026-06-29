@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -80,6 +81,30 @@ func writeFully(out io.Writer, payload []byte) error {
 	return nil
 }
 
+func writeLine(out io.Writer, args ...any) {
+	if _, err := fmt.Fprintln(out, args...); err != nil {
+		log.Printf("squatter shell: write line: %v", err)
+	}
+}
+
+func writeText(out io.Writer, text string) {
+	if _, err := fmt.Fprint(out, text); err != nil {
+		log.Printf("squatter shell: write text: %v", err)
+	}
+}
+
+func writeFormat(out io.Writer, format string, args ...any) {
+	if _, err := fmt.Fprintf(out, format, args...); err != nil {
+		log.Printf("squatter shell: write formatted text: %v", err)
+	}
+}
+
+func logShellError(action string, err error) {
+	if err != nil {
+		log.Printf("squatter shell: %s: %v", action, err)
+	}
+}
+
 const streamInteractiveRaw uint32 = 1
 
 type streamStart struct {
@@ -91,22 +116,22 @@ type streamStart struct {
 // Run drives the default interactive Squatter shell.
 func (c *Client) Run(in io.Reader, out io.Writer) {
 	input := bufio.NewReader(in)
-	fmt.Fprintln(out, "squatter shell -- run a module: <name> [args...]   (e.g. 'echo a b')")
-	fmt.Fprintln(out, "  echo <args...>                  open the echo module (interactive)")
-	fmt.Fprintln(out, "  cmd [command...]                open cmd.exe, or run one command through cmd.exe /c")
-	fmt.Fprintln(out, "  wininfo                         collect native Windows host facts")
-	fmt.Fprintln(out, "  process.list                    list processes")
-	fmt.Fprintln(out, "  process.run <command> [ms]      run a process with typed exit metadata")
-	fmt.Fprintln(out, "  process.run_as_user <command>   launch a process with an interactive user token")
-	fmt.Fprintln(out, "  payload.status                  show Squatter lifecycle status")
-	fmt.Fprintln(out, "  getfile <remote> [local]        download a file (fixed memory)")
-	fmt.Fprintln(out, "  putfile <local> <remote>        upload a file (fixed memory)")
-	fmt.Fprintln(out, "  quit                            exit; inside a module, Ctrl-D detaches")
+	writeLine(out, "squatter shell -- run a module: <name> [args...]   (e.g. 'echo a b')")
+	writeLine(out, "  echo <args...>                  open the echo module (interactive)")
+	writeLine(out, "  cmd [command...]                open cmd.exe, or run one command through cmd.exe /c")
+	writeLine(out, "  wininfo                         collect native Windows host facts")
+	writeLine(out, "  process.list                    list processes")
+	writeLine(out, "  process.run <command> [ms]      run a process with typed exit metadata")
+	writeLine(out, "  process.run_as_user <command>   launch a process with an interactive user token")
+	writeLine(out, "  payload.status                  show Squatter lifecycle status")
+	writeLine(out, "  getfile <remote> [local]        download a file (fixed memory)")
+	writeLine(out, "  putfile <local> <remote>        upload a file (fixed memory)")
+	writeLine(out, "  quit                            exit; inside a module, Ctrl-D detaches")
 	for {
-		fmt.Fprint(out, "squatter> ")
+		writeText(out, "squatter> ")
 		line, err := input.ReadString('\n')
 		if err == io.EOF {
-			fmt.Fprintln(out)
+			writeLine(out)
 			return
 		}
 		cmd := strings.TrimSpace(line)
@@ -158,38 +183,44 @@ func (c *Client) RunDemo(out io.Writer) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.openStream(1, "echo", []string{"alpha", "beta", "gamma"}); err != nil {
-		fmt.Fprintf(out, "[open failed: %v]\n", err)
+		writeFormat(out, "[open failed: %v]\n", err)
 		return
 	}
 	_, _, p, err := c.readDataOrClose()
 	if err != nil {
-		fmt.Fprintf(out, "[read failed: %v]\n", err)
+		writeFormat(out, "[read failed: %v]\n", err)
 		return
 	}
-	emit(out, p)
+	if err := emit(out, p); err != nil {
+		logShellError("emit demo output", err)
+		return
+	}
 	for _, msg := range []string{"hello", "world", "the quick brown fox"} {
 		if err := wire.WriteFrame(c.conn, wire.KindData, 1, []byte(msg)); err != nil {
-			fmt.Fprintf(out, "[write failed: %v]\n", err)
+			writeFormat(out, "[write failed: %v]\n", err)
 			return
 		}
 		_, _, p, err = c.readDataOrClose()
 		if err != nil {
-			fmt.Fprintf(out, "[read failed: %v]\n", err)
+			writeFormat(out, "[read failed: %v]\n", err)
 			return
 		}
-		_ = emit(out, p)
+		if err := emit(out, p); err != nil {
+			logShellError("emit demo output", err)
+			return
+		}
 	}
 	if err := wire.WriteFrame(c.conn, wire.KindData, 1, []byte("END")); err != nil {
-		fmt.Fprintf(out, "[write failed: %v]\n", err)
+		writeFormat(out, "[write failed: %v]\n", err)
 		return
 	}
 	k, _, _, err := wire.ReadFrame(c.r)
 	if err != nil {
-		fmt.Fprintf(out, "[read failed: %v]\n", err)
+		writeFormat(out, "[read failed: %v]\n", err)
 		return
 	}
 	if k == wire.KindClose {
-		fmt.Fprintln(out, "[closed]")
+		writeLine(out, "[closed]")
 	}
 }
 
@@ -198,21 +229,38 @@ func (c *Client) RunStreams(out io.Writer, n int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for s := 0; s < n; s++ {
-		_ = c.openStream(uint64(100+s), "echo", []string{fmt.Sprintf("task%d", s)})
+		if err := c.openStream(uint64(100+s), "echo", []string{fmt.Sprintf("task%d", s)}); err != nil {
+			logShellError("open stream", err)
+			return
+		}
 	}
 	for i := 0; i < n; i++ {
-		_, sid, p, _ := c.readDataOrClose()
-		fmt.Fprintf(out, "stream %d: %s\n", sid, p)
+		_, sid, p, err := c.readDataOrClose()
+		if err != nil {
+			logShellError("read stream", err)
+			return
+		}
+		writeFormat(out, "stream %d: %s\n", sid, p)
 	}
 	for s := 0; s < n; s++ {
-		_ = wire.WriteFrame(c.conn, wire.KindData, uint64(100+s), []byte(fmt.Sprintf("msg-%d", s)))
+		if err := wire.WriteFrame(c.conn, wire.KindData, uint64(100+s), []byte(fmt.Sprintf("msg-%d", s))); err != nil {
+			logShellError("write stream", err)
+			return
+		}
 	}
 	for i := 0; i < n; i++ {
-		_, sid, p, _ := c.readDataOrClose()
-		fmt.Fprintf(out, "stream %d echoed %q\n", sid, p)
+		_, sid, p, err := c.readDataOrClose()
+		if err != nil {
+			logShellError("read stream", err)
+			return
+		}
+		writeFormat(out, "stream %d echoed %q\n", sid, p)
 	}
 	for s := 0; s < n; s++ {
-		_ = wire.WriteFrame(c.conn, wire.KindData, uint64(100+s), []byte("END"))
+		if err := wire.WriteFrame(c.conn, wire.KindData, uint64(100+s), []byte("END")); err != nil {
+			logShellError("close stream", err)
+			return
+		}
 	}
 }
 
@@ -244,19 +292,19 @@ func (c *Client) readDataOrClose() (uint16, uint64, []byte, error) {
 
 func (c *Client) startStream(out io.Writer, sid uint64, module string, args []string) streamStart {
 	if err := c.openStream(sid, module, args); err != nil {
-		fmt.Fprintln(out, "[disconnected]")
+		writeLine(out, "[disconnected]")
 		return streamStart{}
 	}
 	for {
 		kind, _, payload, err := wire.ReadFrame(c.r)
 		if err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			return streamStart{}
 		}
 		switch kind {
 		case wire.KindData:
 			if err := emitRaw(out, payload); err != nil {
-				fmt.Fprintln(out, "[disconnected]")
+				writeLine(out, "[disconnected]")
 				return streamStart{}
 			}
 		case wire.KindControl:
@@ -268,7 +316,7 @@ func (c *Client) startStream(out io.Writer, sid uint64, module string, args []st
 				return streamStart{alive: true, active: true, raw: event.Code == streamInteractiveRaw}
 			}
 			if event.Kind == wire.EventError && event.Message != "" {
-				fmt.Fprintf(out, "[%s error: %s]\n", module, event.Message)
+				writeFormat(out, "[%s error: %s]\n", module, event.Message)
 			}
 		case wire.KindClose:
 			return streamStart{alive: true}
@@ -278,15 +326,15 @@ func (c *Client) startStream(out io.Writer, sid uint64, module string, args []st
 
 func (c *Client) runLineStream(out io.Writer, sid uint64, module string, in *bufio.Reader) bool {
 	for {
-		fmt.Fprintf(out, "%s> ", module)
+		writeFormat(out, "%s> ", module)
 		line, err := in.ReadString('\n')
 		if errors.Is(err, io.EOF) {
-			fmt.Fprintln(out)
-			_ = wire.WriteFrame(c.conn, wire.KindClose, sid, nil)
+			writeLine(out)
+			logShellError("close line stream", wire.WriteFrame(c.conn, wire.KindClose, sid, nil))
 			return c.drainUntilClose()
 		}
 		if err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			return false
 		}
 		line = strings.TrimRight(line, "\r\n")
@@ -294,7 +342,7 @@ func (c *Client) runLineStream(out io.Writer, sid uint64, module string, in *buf
 			continue
 		}
 		if err := wire.WriteFrame(c.conn, wire.KindData, sid, []byte(line)); err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			return false
 		}
 		if !c.readActiveResponse(out) {
@@ -316,7 +364,7 @@ func (c *Client) runRawLines(out io.Writer, sid uint64, in *bufio.Reader) bool {
 		line, err := in.ReadString('\n')
 		if len(line) > 0 {
 			if err := wire.WriteFrame(c.conn, wire.KindData, sid, []byte(line)); err != nil {
-				fmt.Fprintln(out, "[disconnected]")
+				writeLine(out, "[disconnected]")
 				return false
 			}
 		}
@@ -326,11 +374,11 @@ func (c *Client) runRawLines(out io.Writer, sid uint64, in *bufio.Reader) bool {
 				return alive
 			case <-time.After(50 * time.Millisecond):
 			}
-			_ = wire.WriteFrame(c.conn, wire.KindClose, sid, nil)
+			logShellError("close raw stream", wire.WriteFrame(c.conn, wire.KindClose, sid, nil))
 			return <-done
 		}
 		if err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			return false
 		}
 	}
@@ -340,7 +388,7 @@ func (c *Client) readActiveResponse(out io.Writer) bool {
 	for {
 		kind, _, payload, err := wire.ReadFrame(c.r)
 		if err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			return false
 		}
 		switch kind {
@@ -352,7 +400,7 @@ func (c *Client) readActiveResponse(out io.Writer) bool {
 		case wire.KindControl:
 			event, err := wire.DecodeStreamEvent(payload)
 			if err == nil && event.Kind == wire.EventError && event.Message != "" {
-				fmt.Fprintf(out, "[stream error: %s]\n", event.Message)
+				writeFormat(out, "[stream error: %s]\n", event.Message)
 			}
 		case wire.KindClose:
 			return false
@@ -364,7 +412,7 @@ func (c *Client) drainStreamFrames(out io.Writer, done chan<- bool) {
 	for {
 		kind, _, payload, err := wire.ReadFrame(c.r)
 		if err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			done <- false
 			return
 		}
@@ -380,7 +428,7 @@ func (c *Client) drainStreamFrames(out io.Writer, done chan<- bool) {
 				continue
 			}
 			if event.Kind == wire.EventError && event.Message != "" {
-				fmt.Fprintf(out, "[stream error: %s]\n", event.Message)
+				writeFormat(out, "[stream error: %s]\n", event.Message)
 			}
 		case wire.KindClose:
 			done <- true
@@ -408,7 +456,7 @@ func (c *Client) attachTerminal(input *os.File, out io.Writer, sid uint64) bool 
 			raw := append([]byte(nil), buf[:n]...)
 			payload := bytes.ReplaceAll(raw, []byte{'\r'}, []byte{'\n'})
 			if err := wire.WriteFrame(c.conn, wire.KindData, sid, payload); err != nil {
-				fmt.Fprintln(out, "[disconnected]")
+				writeLine(out, "[disconnected]")
 				return false
 			}
 			if err := echoAttachInput(out, raw); err != nil {
@@ -423,10 +471,10 @@ func (c *Client) attachTerminal(input *os.File, out io.Writer, sid uint64) bool 
 			continue
 		}
 		if errors.Is(err, io.EOF) {
-			_ = wire.WriteFrame(c.conn, wire.KindClose, sid, nil)
+			logShellError("close attached stream", wire.WriteFrame(c.conn, wire.KindClose, sid, nil))
 			return <-done
 		}
-		fmt.Fprintln(out, "[disconnected]")
+		writeLine(out, "[disconnected]")
 		return false
 	}
 }
@@ -513,7 +561,7 @@ func (c *Client) cmdGetfile(out io.Writer, sid uint64, args []string) bool {
 
 func (c *Client) cmdGetfileLocked(out io.Writer, sid uint64, args []string) bool {
 	if len(args) < 1 {
-		fmt.Fprintln(out, "usage: getfile <remote-path> [local-path]")
+		writeLine(out, "usage: getfile <remote-path> [local-path]")
 		return true
 	}
 	remote := args[0]
@@ -526,16 +574,16 @@ func (c *Client) cmdGetfileLocked(out io.Writer, sid uint64, args []string) bool
 	}
 	f, err := os.Create(local)
 	if err != nil {
-		fmt.Fprintf(out, "[cannot create %s: %v]\n", local, err)
+		writeFormat(out, "[cannot create %s: %v]\n", local, err)
 		return true
 	}
-	defer f.Close()
+	defer func() { logShellError("close downloaded file", f.Close()) }()
 	n, err := xfer.GetFile(c.conn, c.r, sid, remote, f)
 	if err != nil {
-		fmt.Fprintf(out, "[getfile failed: %v]\n", err)
+		writeFormat(out, "[getfile failed: %v]\n", err)
 		return c.conn != nil
 	}
-	fmt.Fprintf(out, "got %s: %d bytes\n", local, n)
+	writeFormat(out, "got %s: %d bytes\n", local, n)
 	return true
 }
 
@@ -547,25 +595,25 @@ func (c *Client) cmdPutfile(out io.Writer, sid uint64, args []string) bool {
 
 func (c *Client) cmdPutfileLocked(out io.Writer, sid uint64, args []string) bool {
 	if len(args) < 2 {
-		fmt.Fprintln(out, "usage: putfile <local-path> <remote-path>")
+		writeLine(out, "usage: putfile <local-path> <remote-path>")
 		return true
 	}
 	local, remote := args[0], strings.Join(args[1:], " ")
 	f, err := os.Open(local)
 	if err != nil {
-		fmt.Fprintf(out, "[cannot open %s: %v]\n", local, err)
+		writeFormat(out, "[cannot open %s: %v]\n", local, err)
 		return true
 	}
-	defer f.Close()
+	defer func() { logShellError("close uploaded file", f.Close()) }()
 	sent, ack, err := xfer.PutFile(c.conn, c.r, sid, f, remote)
 	if err != nil {
-		fmt.Fprintf(out, "[putfile failed: %v]\n", err)
+		writeFormat(out, "[putfile failed: %v]\n", err)
 		return false
 	}
 	if ack != "" {
-		fmt.Fprintln(out, ack)
+		writeLine(out, ack)
 	}
-	fmt.Fprintf(out, "put %s -> %s: %d bytes\n", local, remote, sent)
+	writeFormat(out, "put %s -> %s: %d bytes\n", local, remote, sent)
 	return true
 }
 
@@ -620,23 +668,13 @@ func (s *interactiveShell) runPrompt(extraOptions ...prompt.Option) {
 	prompt.New(s.execute, s.complete, options...).Run()
 }
 
-func (s *interactiveShell) runPromptSafely(extraOptions ...prompt.Option) (ok bool) {
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
-	s.runPrompt(extraOptions...)
-	return true
-}
-
 func (s *interactiveShell) runPTYPrompt(terminal promptTerminal) bool {
 	s.printBanner()
 	if err := terminal.Setup(); err != nil {
 		return false
 	}
 	defer func() {
-		_ = terminal.TearDown()
+		logShellError("tear down prompt terminal", terminal.TearDown())
 	}()
 
 	ui := newShellPromptUI(s, terminal.Writer())
@@ -674,7 +712,10 @@ func (s *interactiveShell) runPTYPrompt(terminal promptTerminal) bool {
 				if err := ui.breakLine(); err != nil {
 					return false
 				}
-				_ = terminal.TearDown()
+				if err := terminal.TearDown(); err != nil {
+					logShellError("tear down prompt terminal", err)
+					return false
+				}
 				s.execute(event.line)
 				if s.done {
 					return true
@@ -698,11 +739,6 @@ func (s *interactiveShell) runPTYPrompt(terminal promptTerminal) bool {
 	return true
 }
 
-func (s *interactiveShell) runTerminalPrompt(input io.Reader) {
-	s.printBanner()
-	s.runTerminalPromptLoop(input)
-}
-
 func (s *interactiveShell) runTerminalPromptLoop(input io.Reader) {
 	reader := bufio.NewReader(input)
 	for !s.done {
@@ -717,7 +753,7 @@ func (s *interactiveShell) runTerminalPromptLoop(input io.Reader) {
 			return
 		}
 		if err != nil {
-			fmt.Fprintln(s.output(), errorStyle().Render("[disconnected]"))
+			writeLine(s.output(), errorStyle().Render("[disconnected]"))
 			return
 		}
 	}
@@ -728,16 +764,16 @@ func (s *interactiveShell) printBanner() {
 	hot := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
 	cool := lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Bold(true)
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	fmt.Fprintln(out, hot.Render("  ____   ___  _   _    _  _____ _____ _____ ____"))
-	fmt.Fprintln(out, hot.Render(" / ___| / _ \\| | | |  / \\|_   _|_   _| ____|  _ \\"))
-	fmt.Fprintln(out, hot.Render(" \\___ \\| | | | | | | / _ \\ | |   | | |  _| | |_) |"))
-	fmt.Fprintln(out, hot.Render("  ___) | |_| | |_| |/ ___ \\| |   | | | |___|  _ <"))
-	fmt.Fprintln(out, hot.Render(" |____/ \\__\\_\\\\___//_/   \\_\\_|   |_| |_____|_| \\_\\"))
+	writeLine(out, hot.Render("  ____   ___  _   _    _  _____ _____ _____ ____"))
+	writeLine(out, hot.Render(" / ___| / _ \\| | | |  / \\|_   _|_   _| ____|  _ \\"))
+	writeLine(out, hot.Render(" \\___ \\| | | | | | | / _ \\ | |   | | |  _| | |_) |"))
+	writeLine(out, hot.Render("  ___) | |_| | |_| |/ ___ \\| |   | | | |___|  _ <"))
+	writeLine(out, hot.Render(" |____/ \\__\\_\\\\___//_/   \\_\\_|   |_| |_____|_| \\_\\"))
 	if strings.TrimSpace(s.title) != "" {
-		fmt.Fprintln(out, cool.Render("squatterctl ")+muted.Render(s.title))
+		writeLine(out, cool.Render("squatterctl ")+muted.Render(s.title))
 	}
-	fmt.Fprintln(out, muted.Render("tab completes commands, arrows browse history, Ctrl-D exits, detach leaves a module"))
-	fmt.Fprintln(out)
+	writeLine(out, muted.Render("tab completes commands, arrows browse history, Ctrl-D exits, detach leaves a module"))
+	writeLine(out)
 }
 
 func (s *interactiveShell) output() io.Writer {
@@ -792,9 +828,13 @@ func (s *interactiveShell) execute(line string) {
 	sid := s.client.nextSID()
 	switch parts[0] {
 	case "getfile":
-		_ = s.client.cmdGetfile(s.output(), sid, parts[1:])
+		if !s.client.cmdGetfile(s.output(), sid, parts[1:]) {
+			s.done = true
+		}
 	case "putfile":
-		_ = s.client.cmdPutfile(s.output(), sid, parts[1:])
+		if !s.client.cmdPutfile(s.output(), sid, parts[1:]) {
+			s.done = true
+		}
 	default:
 		module, args := moduleArgsFromLine(line, parts)
 		s.client.mu.Lock()
@@ -823,11 +863,11 @@ func (s *interactiveShell) executeActive(line string) {
 	_, activeID, raw := s.activeState()
 	switch line {
 	case "detach":
-		_ = wire.WriteFrame(s.client.conn, wire.KindClose, activeID, nil)
+		logShellError("detach active stream", wire.WriteFrame(s.client.conn, wire.KindClose, activeID, nil))
 		s.clearActive()
 		return
 	case "quit", "exit":
-		_ = wire.WriteFrame(s.client.conn, wire.KindClose, activeID, nil)
+		logShellError("close active stream", wire.WriteFrame(s.client.conn, wire.KindClose, activeID, nil))
 		s.done = true
 		s.clearActive()
 		return
@@ -837,7 +877,7 @@ func (s *interactiveShell) executeActive(line string) {
 		payload = append(payload, '\n')
 	}
 	if err := wire.WriteFrame(s.client.conn, wire.KindData, activeID, payload); err != nil {
-		fmt.Fprintln(s.output(), errorStyle().Render("[disconnected]"))
+		writeLine(s.output(), errorStyle().Render("[disconnected]"))
 		s.done = true
 		s.clearActive()
 		return
@@ -890,19 +930,19 @@ func (s *interactiveShell) printHelp() {
 	out := s.output()
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Bold(true)
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	fmt.Fprintln(out, style.Render("commands"))
-	fmt.Fprintln(out, "  cmd [command...]          "+muted.Render("open cmd.exe, or run through cmd.exe /c"))
-	fmt.Fprintln(out, "  wininfo                   "+muted.Render("collect native Windows host facts"))
-	fmt.Fprintln(out, "  process.list              "+muted.Render("list processes"))
-	fmt.Fprintln(out, "  process.run <cmd> [ms]    "+muted.Render("run a process with exit metadata"))
-	fmt.Fprintln(out, "  process.run_as_user <command> "+muted.Render("launch with an interactive user token"))
-	fmt.Fprintln(out, "  payload.status            "+muted.Render("show Squatter lifecycle status"))
-	fmt.Fprintln(out, "  payload.cleanup           "+muted.Render("request Squatter self-cleanup"))
-	fmt.Fprintln(out, "  echo <args...>            "+muted.Render("open the echo module"))
-	fmt.Fprintln(out, "  getfile <remote> [local]  "+muted.Render("download from target"))
-	fmt.Fprintln(out, "  putfile <local> <remote>  "+muted.Render("upload to target"))
-	fmt.Fprintln(out, "  detach                    "+muted.Render("leave an active module"))
-	fmt.Fprintln(out, "  quit                      "+muted.Render("close squatterctl"))
+	writeLine(out, style.Render("commands"))
+	writeLine(out, "  cmd [command...]          "+muted.Render("open cmd.exe, or run through cmd.exe /c"))
+	writeLine(out, "  wininfo                   "+muted.Render("collect native Windows host facts"))
+	writeLine(out, "  process.list              "+muted.Render("list processes"))
+	writeLine(out, "  process.run <cmd> [ms]    "+muted.Render("run a process with exit metadata"))
+	writeLine(out, "  process.run_as_user <command> "+muted.Render("launch with an interactive user token"))
+	writeLine(out, "  payload.status            "+muted.Render("show Squatter lifecycle status"))
+	writeLine(out, "  payload.cleanup           "+muted.Render("request Squatter self-cleanup"))
+	writeLine(out, "  echo <args...>            "+muted.Render("open the echo module"))
+	writeLine(out, "  getfile <remote> [local]  "+muted.Render("download from target"))
+	writeLine(out, "  putfile <local> <remote>  "+muted.Render("upload to target"))
+	writeLine(out, "  detach                    "+muted.Render("leave an active module"))
+	writeLine(out, "  quit                      "+muted.Render("close squatterctl"))
 }
 
 func errorStyle() lipgloss.Style {

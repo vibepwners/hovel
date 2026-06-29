@@ -159,7 +159,7 @@ func (s RunService) RunPayloadCommand(ctx context.Context, req PayloadCommandRun
 		return run.PayloadCommandResult{}, err
 	}
 	if s.events != nil {
-		_ = s.appendPayloadCommandEvent(ctx, req, result)
+		logServiceError("append payload command event", s.appendPayloadCommandEvent(ctx, req, result))
 	}
 	return result, nil
 }

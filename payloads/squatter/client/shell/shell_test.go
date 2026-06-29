@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -12,7 +13,11 @@ import (
 
 func TestClientRunDrivesEchoOverWire(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	defer serverConn.Close()
+	t.Cleanup(func() {
+		if err := serverConn.Close(); err != nil {
+			t.Logf("close shell test server pipe: %v", err)
+		}
+	})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -20,15 +25,19 @@ func TestClientRunDrivesEchoOverWire(t *testing.T) {
 		if err != nil || kind != wire.KindOpen {
 			return
 		}
-		_ = wire.WriteFrame(serverConn, wire.KindData, sid, []byte("argc=2 echo hello"))
-		_ = wire.WriteFrame(serverConn, wire.KindControl, sid, wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventInteractive}))
+		writeTestFrame(t, serverConn, wire.KindData, sid, []byte("argc=2 echo hello"))
+		writeTestFrame(t, serverConn, wire.KindControl, sid, wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventInteractive}))
 		kind, sid, payload, err := wire.ReadFrame(serverConn)
 		if err != nil || kind != wire.KindData {
 			return
 		}
-		_ = wire.WriteFrame(serverConn, wire.KindData, sid, payload)
-		_, sid, _, _ = wire.ReadFrame(serverConn)
-		_ = wire.WriteFrame(serverConn, wire.KindClose, sid, nil)
+		writeTestFrame(t, serverConn, wire.KindData, sid, payload)
+		_, sid, _, err = wire.ReadFrame(serverConn)
+		if err != nil {
+			t.Errorf("read closing shell frame: %v", err)
+			return
+		}
+		writeTestFrame(t, serverConn, wire.KindClose, sid, nil)
 	}()
 
 	input := strings.NewReader("echo hello\nEND\n")
@@ -46,7 +55,11 @@ func TestClientRunDrivesEchoOverWire(t *testing.T) {
 
 func TestClientRunDrivesCmdAsOneShot(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	defer serverConn.Close()
+	t.Cleanup(func() {
+		if err := serverConn.Close(); err != nil {
+			t.Logf("close shell test server pipe: %v", err)
+		}
+	})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -54,9 +67,9 @@ func TestClientRunDrivesCmdAsOneShot(t *testing.T) {
 		if err != nil || kind != wire.KindOpen {
 			return
 		}
-		_ = wire.WriteFrame(serverConn, wire.KindData, sid, []byte("hello from cmd\n"))
-		_ = wire.WriteFrame(serverConn, wire.KindControl, sid, wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventExited}))
-		_ = wire.WriteFrame(serverConn, wire.KindClose, sid, nil)
+		writeTestFrame(t, serverConn, wire.KindData, sid, []byte("hello from cmd\n"))
+		writeTestFrame(t, serverConn, wire.KindControl, sid, wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventExited}))
+		writeTestFrame(t, serverConn, wire.KindClose, sid, nil)
 	}()
 
 	input := strings.NewReader("cmd echo hello\nquit\n")
@@ -80,7 +93,11 @@ func TestClientRunDrivesCmdAsOneShot(t *testing.T) {
 
 func TestClientRunDrivesCmdInteractive(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	defer serverConn.Close()
+	t.Cleanup(func() {
+		if err := serverConn.Close(); err != nil {
+			t.Logf("close shell test server pipe: %v", err)
+		}
+	})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -88,7 +105,7 @@ func TestClientRunDrivesCmdInteractive(t *testing.T) {
 		if err != nil || kind != wire.KindOpen {
 			return
 		}
-		_ = wire.WriteFrame(serverConn, wire.KindControl, sid,
+		writeTestFrame(t, serverConn, wire.KindControl, sid,
 			wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventInteractive, Code: streamInteractiveRaw}))
 		kind, sid, payload, err := wire.ReadFrame(serverConn)
 		if err != nil || kind != wire.KindData {
@@ -97,7 +114,7 @@ func TestClientRunDrivesCmdInteractive(t *testing.T) {
 		if string(payload) != "echo hello\n" {
 			return
 		}
-		_ = wire.WriteFrame(serverConn, wire.KindData, sid, []byte("hello"))
+		writeTestFrame(t, serverConn, wire.KindData, sid, []byte("hello"))
 		kind, sid, payload, err = wire.ReadFrame(serverConn)
 		if err != nil || kind != wire.KindData {
 			return
@@ -105,7 +122,7 @@ func TestClientRunDrivesCmdInteractive(t *testing.T) {
 		if string(payload) != "exit\n" {
 			return
 		}
-		_ = wire.WriteFrame(serverConn, wire.KindClose, sid, nil)
+		writeTestFrame(t, serverConn, wire.KindClose, sid, nil)
 	}()
 
 	input := strings.NewReader("cmd\necho hello\nexit\n")
@@ -129,7 +146,11 @@ func TestClientRunDrivesCmdInteractive(t *testing.T) {
 
 func TestClientRunRendersOpenStreamError(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	defer serverConn.Close()
+	t.Cleanup(func() {
+		if err := serverConn.Close(); err != nil {
+			t.Logf("close shell test server pipe: %v", err)
+		}
+	})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -137,9 +158,9 @@ func TestClientRunRendersOpenStreamError(t *testing.T) {
 		if err != nil || kind != wire.KindOpen {
 			return
 		}
-		_ = wire.WriteFrame(serverConn, wire.KindControl, sid,
+		writeTestFrame(t, serverConn, wire.KindControl, sid,
 			wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventError, Message: "no such module: dir"}))
-		_ = wire.WriteFrame(serverConn, wire.KindClose, sid, nil)
+		writeTestFrame(t, serverConn, wire.KindClose, sid, nil)
 	}()
 
 	input := strings.NewReader("dir\nquit\n")
@@ -161,6 +182,13 @@ func TestCmdArgsFromLinePreservesRawRemainder(t *testing.T) {
 	got = cmdArgsFromLine(`cmd --interactive echo "hello there" && cd`)
 	if len(got) != 2 || got[0] != "--interactive" || got[1] != `echo "hello there" && cd` {
 		t.Fatalf("interactive cmd args = %#v", got)
+	}
+}
+
+func writeTestFrame(t *testing.T, w io.Writer, kind uint16, sid uint64, payload []byte) {
+	t.Helper()
+	if err := wire.WriteFrame(w, kind, sid, payload); err != nil {
+		t.Fatalf("write test frame: %v", err)
 	}
 }
 

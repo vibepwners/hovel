@@ -35,7 +35,7 @@ func TestClientRunsMockExploitThroughDaemonRPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 
 	result, err := client.RunMockExploit(context.Background(), RunMockExploitRequest{
 		ModuleID: "mock-exploit",
@@ -71,7 +71,9 @@ func TestClientCanDialDaemonRPCOverTCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	address := listener.Addr().String()
-	_ = listener.Close()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
 	runs := services.NewRunService(
 		mockexploit.Runner{},
 		discardEvents{},
@@ -84,7 +86,7 @@ func TestClientCanDialDaemonRPCOverTCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 
 	result, err := client.RunMockExploit(context.Background(), RunMockExploitRequest{
 		ModuleID: "mock-exploit",
@@ -112,7 +114,7 @@ func TestSessionClientPublishesModuleAddedLog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 	session := NewSessionClient(context.Background(), client)
 	if err := session.UseChain("c1"); err != nil {
 		t.Fatal(err)
@@ -148,7 +150,7 @@ func TestPollChainLogsOnlyReturnsRequestedChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 	session := NewSessionClient(context.Background(), client)
 	if err := session.UseChain("alpha"); err != nil {
 		t.Fatal(err)
@@ -243,7 +245,7 @@ func TestSessionLogFloodIsBoundedThroughRPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 	session := NewSessionClient(context.Background(), client)
 	if err := session.UseOperation("flood-op"); err != nil {
 		t.Fatal(err)
@@ -295,12 +297,12 @@ func TestConcurrentSessionClientsAppendLogsWithoutCrossChainContamination(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientA.Close()
+	defer closeTestClient(t, clientA)
 	clientB, err := Dial(socketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientB.Close()
+	defer closeTestClient(t, clientB)
 
 	alpha := NewSessionClient(context.Background(), clientA)
 	beta := NewSessionClient(context.Background(), clientB)
@@ -391,12 +393,12 @@ func TestSessionClientsKeepIndependentOperationChainAttachments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientA.Close()
+	defer closeTestClient(t, clientA)
 	clientB, err := Dial(socketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientB.Close()
+	defer closeTestClient(t, clientB)
 
 	alpha := NewSessionClient(context.Background(), clientA)
 	beta := NewSessionClient(context.Background(), clientB)
@@ -473,7 +475,7 @@ func TestSessionMutationsPersistSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 	session := NewSessionClient(context.Background(), client)
 	if err := session.UseOperation("redteam-lab"); err != nil {
 		t.Fatal(err)
@@ -550,7 +552,7 @@ func TestActiveLogsDoesNotPersistSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 	session := NewSessionClient(context.Background(), client)
 	if err := session.UseChain("alpha"); err != nil {
 		t.Fatal(err)
@@ -587,7 +589,7 @@ func TestClientCanAttachHeartbeatAndDetachOperatorEntities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 
 	attached, err := client.AttachEntity(context.Background(), AttachEntityRequest{
 		ID:           "entity-mcp",
@@ -687,7 +689,7 @@ func TestOperatorEntityAttachmentsDoNotPersistSessionSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-cli", Kind: "cli", Operation: "redteam-lab"}); err != nil {
 		t.Fatal(err)
 	}
@@ -719,7 +721,7 @@ func TestClientCoordinatesLaunchKeyApprovalsFromLiveEntities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-cli", Kind: "cli", Operation: "redteam-lab", ActiveChain: "alpha"}); err != nil {
 		t.Fatal(err)
 	}
@@ -795,7 +797,7 @@ func TestLaunchKeyPendingThrowSnapshotsRequiredEntities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 	if _, err := client.AttachEntity(context.Background(), AttachEntityRequest{ID: "entity-cli", Kind: "cli", Operation: "redteam-lab", ActiveChain: "alpha"}); err != nil {
 		t.Fatal(err)
 	}
@@ -842,7 +844,7 @@ func TestClientCancelsPendingLaunchKeyThrow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 	if _, err := client.CreatePendingThrow(context.Background(), CreatePendingThrowRequest{ID: "pending-1", Operation: "redteam-lab", Chain: "alpha", PlanHash: "hash-1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -869,7 +871,7 @@ func TestClientQueriesAndOverridesLaunchKeyPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeTestClient(t, client)
 
 	policy, err := client.GetLaunchKeyPolicy(context.Background(), LaunchKeyPolicyRequest{Operation: "redteam-lab"})
 	if err != nil {
@@ -987,12 +989,25 @@ func serveTestDaemon(t *testing.T, endpoint string, runs services.RunService, op
 	}
 	server := &http.Server{Handler: handler}
 	go func() {
-		_ = server.Serve(listener)
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Logf("serve test daemon: %v", err)
+		}
 	}()
 	t.Cleanup(func() {
-		_ = server.Close()
-		_ = listener.Close()
+		if err := server.Close(); err != nil {
+			t.Logf("close test daemon server: %v", err)
+		}
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Logf("close test daemon listener: %v", err)
+		}
 	})
+}
+
+func closeTestClient(t *testing.T, client *Client) {
+	t.Helper()
+	if err := client.Close(); err != nil {
+		t.Logf("close daemon rpc client: %v", err)
+	}
 }
 
 func shortTempDir(t *testing.T) string {
@@ -1005,7 +1020,11 @@ func shortTempDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Logf("remove temp dir: %v", err)
+		}
+	})
 	return dir
 }
 

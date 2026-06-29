@@ -411,7 +411,7 @@ while True:
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeCommandModeTestClient(t, client)
 
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	_, err = client.RunMockExploit(timeoutCtx, daemonrpc.RunMockExploitRequest{
@@ -579,4 +579,11 @@ func (w *observedWriter) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.buffer.String()
+}
+
+func closeCommandModeTestClient(t *testing.T, client *daemonrpc.Client) {
+	t.Helper()
+	if err := client.Close(); err != nil {
+		t.Logf("close commandmode test daemon client: %v", err)
+	}
 }

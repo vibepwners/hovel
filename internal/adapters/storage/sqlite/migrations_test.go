@@ -10,7 +10,7 @@ import (
 
 func TestApplyMigrationsCreatesSchemaAndRecordsChecksums(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer closeTestDB(t, db)
 
 	if err := ApplyMigrations(context.Background(), db); err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestApplyMigrationsCreatesSchemaAndRecordsChecksums(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer closeTestRows(t, rows)
 	var index int
 	for rows.Next() {
 		var version int
@@ -56,7 +56,7 @@ func TestApplyMigrationsCreatesSchemaAndRecordsChecksums(t *testing.T) {
 
 func TestApplyMigrationsRejectsChangedAppliedMigration(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer closeTestDB(t, db)
 
 	if err := Apply(context.Background(), db, []Migration{{Version: 1, Name: "one", SQL: `CREATE TABLE one(id INTEGER);`}}); err != nil {
 		t.Fatal(err)
@@ -69,7 +69,7 @@ func TestApplyMigrationsRejectsChangedAppliedMigration(t *testing.T) {
 
 func TestApplyMigrationsRejectsNonContiguousVersions(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer closeTestDB(t, db)
 
 	err := Apply(context.Background(), db, []Migration{{Version: 2, Name: "two", SQL: `CREATE TABLE two(id INTEGER);`}})
 	if err == nil || !strings.Contains(err.Error(), "contiguous") {
@@ -85,6 +85,20 @@ func openTestDB(t *testing.T) *sql.DB {
 	}
 	db.SetMaxOpenConns(1)
 	return db
+}
+
+func closeTestDB(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if err := db.Close(); err != nil {
+		t.Logf("close sqlite test database: %v", err)
+	}
+}
+
+func closeTestRows(t *testing.T, rows *sql.Rows) {
+	t.Helper()
+	if err := rows.Close(); err != nil {
+		t.Logf("close sqlite test rows: %v", err)
+	}
 }
 
 func tableExists(t *testing.T, db *sql.DB, table string) bool {

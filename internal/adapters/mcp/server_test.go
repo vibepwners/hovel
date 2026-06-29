@@ -71,7 +71,7 @@ func TestHTTPTransportServesMCPTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -171,7 +171,7 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -188,7 +188,9 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 		t.Fatalf("client connect returned error: %v", err)
 	}
 	defer func() {
-		_ = session.Close()
+		if err := session.Close(); err != nil {
+			t.Logf("close mcp sdk session: %v", err)
+		}
 		cancel()
 		select {
 		case err := <-serverDone:
@@ -322,7 +324,7 @@ func TestMCPCommandRunCarriesOperationAndChainContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	call := func(args ...string) commandRunOutput {
 		t.Helper()
@@ -375,7 +377,7 @@ func TestMCPCommandRunRejectsLaunchKeyPolicyMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, _, err = attached.commandRun(context.Background(), nil, commandRunInput{
 		Args: []string{"hovel", "launch-key", "policy", "set", "all_connected"},
@@ -395,7 +397,7 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeMCPTestClient(t, client)
 
 	attached, err := Attach(context.Background(), client, OperatorOptions{
 		EntityID:      "mcp-command-daemon-test",
@@ -406,7 +408,7 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	run := func(args ...string) commandRunOutput {
 		t.Helper()
@@ -484,7 +486,7 @@ func TestMCPThrowPlanAndConfirmUseLaunchKeyPendingThrow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, planOut, err := attached.throwPlan(context.Background(), nil, throwPlanInput{
 		AllowDangerous: true,
@@ -581,7 +583,7 @@ func TestMCPChainSuggestReturnsCatalogMatchesAndExampleDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, out, err := attached.chainSuggest(context.Background(), nil, chainSuggestInput{
 		Intent:  "MS17-010 Windows XP to Squatter TCP bind",
@@ -643,7 +645,7 @@ func TestMCPChainApplyBuildsMS17010SquatterWithoutCLIProbing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeMCPTestClient(t, client)
 
 	attached, err := Attach(context.Background(), client, OperatorOptions{
 		EntityID:      "mcp-chain-apply-test",
@@ -655,7 +657,7 @@ func TestMCPChainApplyBuildsMS17010SquatterWithoutCLIProbing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, out, err := attached.chainApply(context.Background(), nil, chainApplyInput{
 		Operation: "o1",
@@ -701,7 +703,7 @@ func TestMCPThrowStartPersistsNowBypassAuditTrail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeMCPTestClient(t, client)
 
 	attached, err := Attach(context.Background(), client, OperatorOptions{
 		EntityID:      "mcp-throw-contract",
@@ -716,7 +718,7 @@ func TestMCPThrowStartPersistsNowBypassAuditTrail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, applyOut, err := attached.chainApply(context.Background(), nil, chainApplyInput{
 		Operation: "mcp-contract",
@@ -803,7 +805,7 @@ func TestMCPInstalledPayloadListReportsProviderReadiness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, out, err := attached.installedPayloadList(context.Background(), nil, installedPayloadListInput{})
 	if err != nil {
@@ -847,7 +849,7 @@ func TestMCPPayloadCmdRunsCmdThroughInstalledPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, listed, err := attached.installedPayloadList(context.Background(), nil, installedPayloadListInput{})
 	if err != nil {
@@ -903,7 +905,7 @@ func TestMCPSessionCallRunsTypedSessionCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, capabilities, err := attached.sessionCapabilities(context.Background(), nil, sessionCommandListInput{Session: "session-1"})
 	if err != nil {
@@ -1274,3 +1276,17 @@ func (f *fakeDaemon) RunSessionCommand(_ context.Context, req daemonrpc.SessionC
 }
 
 func (f *fakeDaemon) Close() error { return nil }
+
+func detachTestOperator(t *testing.T, server *Server) {
+	t.Helper()
+	if err := server.Detach(context.Background()); err != nil {
+		t.Logf("detach test operator: %v", err)
+	}
+}
+
+func closeMCPTestClient(t *testing.T, client *daemonrpc.Client) {
+	t.Helper()
+	if err := client.Close(); err != nil {
+		t.Logf("close mcp test daemon client: %v", err)
+	}
+}

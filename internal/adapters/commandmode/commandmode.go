@@ -132,20 +132,20 @@ func (a App) run(ctx context.Context, args []string, stdout, stderr io.Writer, e
 	if len(args) == 0 || topLevelHelpRequested(args) {
 		parser := a.rootParser()
 		if topLevelHelpRequested(args) {
-			fmt.Fprint(stdout, parser.Usage(nil))
+			writeCommandText(stdout, parser.Usage(nil))
 			return 0
 		}
-		fmt.Fprint(stderr, parser.Usage("command is required"))
+		writeCommandText(stderr, parser.Usage("command is required"))
 		return 2
 	}
 
 	definition, commandArgs, ok := a.matchDefinition(args)
 	if !ok {
 		if group, rest, groupOK := a.matchGroup(args); groupOK && helpRequested(rest) {
-			fmt.Fprint(stdout, a.groupParser(group).Usage(nil))
+			writeCommandText(stdout, a.groupParser(group).Usage(nil))
 			return 0
 		}
-		fmt.Fprint(stderr, a.rootParser().Usage(fmt.Sprintf("unknown command %q", strings.Join(commandPath(args), " "))))
+		writeCommandText(stderr, a.rootParser().Usage(fmt.Sprintf("unknown command %q", strings.Join(commandPath(args), " "))))
 		return 2
 	}
 	return a.runDefinition(ctx, definition, commandArgs, stdout, stderr, echoConfirmationAnswer)
@@ -173,7 +173,7 @@ func normalizeLeadingConfig(args []string) []string {
 func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
 	fields, err := splitCommandLine(line)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCommandLine(stderr, err)
 		return 2
 	}
 	if len(fields) == 0 {
@@ -232,7 +232,7 @@ func splitCommandLine(line string) ([]string, error) {
 func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
 	parser, bindings := commandParser(definition)
 	if helpRequested(args) {
-		fmt.Fprint(stdout, usage(definition, parser, nil))
+		writeCommandText(stdout, usage(definition, parser, nil))
 		return 0
 	}
 
@@ -259,17 +259,17 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 			}
 			renderMu.Lock()
 			defer renderMu.Unlock()
-			fmt.Fprintln(stdout, rendered)
+			writeCommandLine(stdout, rendered)
 		}
 	}
 	result, err := definition.Execute(ctx, parsed)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCommandLine(stderr, err)
 		return 1
 	}
 	if parsed.Flag("json") {
 		if err := json.NewEncoder(stdout).Encode(result.JSON); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCommandLine(stderr, err)
 			return 1
 		}
 		return resultCode(result)
@@ -279,12 +279,12 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		if parsed.Flag("no-color") {
 			renderer = terminallog.NewPlainRenderer()
 		}
-		fmt.Fprintln(stdout, renderer.Render(result.Log))
+		writeCommandLine(stdout, renderer.Render(result.Log))
 		return resultCode(result)
 	}
 	if len(result.Raw) > 0 {
 		if _, err := stdout.Write(result.Raw); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCommandLine(stderr, err)
 			return 1
 		}
 		return resultCode(result)
@@ -296,7 +296,7 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 				human = rendered
 			}
 		}
-		fmt.Fprintln(stdout, human)
+		writeCommandLine(stdout, human)
 	}
 	return resultCode(result)
 }
@@ -352,8 +352,8 @@ func (c terminalInput) Confirm(ctx context.Context, prompt commands.Confirmation
 		return commands.ConfirmationAnswer{}, err
 	}
 	if c.out != nil {
-		fmt.Fprintf(c.out, "%s\n", confirmationPromptTextBlock(prompt))
-		fmt.Fprintf(c.out, "%s ", confirmationPromptText(prompt))
+		writeCommandFormat(c.out, "%s\n", confirmationPromptTextBlock(prompt))
+		writeCommandFormat(c.out, "%s ", confirmationPromptText(prompt))
 	}
 	restoreTerminal, terminalEchoEnabled := func() (func() error, bool) {
 		if !c.echoAnswer {
@@ -362,14 +362,14 @@ func (c terminalInput) Confirm(ctx context.Context, prompt commands.Confirmation
 		return enableTerminalEcho()
 	}()
 	if restoreTerminal != nil {
-		defer restoreTerminal()
+		defer func() { logCommandModeError("restore terminal echo", restoreTerminal()) }()
 	}
 	var answer string
 	if _, err := fmt.Fscan(c.in, &answer); err != nil {
 		return commands.ConfirmationAnswer{}, fmt.Errorf("read confirmation: %w", err)
 	}
 	if c.echoAnswer && !terminalEchoEnabled && c.out != nil {
-		fmt.Fprintln(c.out, answer)
+		writeCommandLine(c.out, answer)
 	}
 	return commands.ConfirmationAnswer{Value: answer}, nil
 }
@@ -509,7 +509,7 @@ func commandParser(definition commands.Definition) (*argparse.Parser, commandPar
 func parseDefinition(definition commands.Definition, parser *argparse.Parser, bindings commandParserBindings, args []string, stderr io.Writer) (commands.Invocation, bool, int) {
 	parser.ExitOnHelp(false)
 	if err := parser.Parse(append([]string{"hovel"}, args...)); err != nil {
-		fmt.Fprint(stderr, usage(definition, parser, err))
+		writeCommandText(stderr, usage(definition, parser, err))
 		return commands.Invocation{}, false, 2
 	}
 
@@ -769,7 +769,7 @@ func (daemonPendingThrows) CreatePendingThrow(ctx context.Context, socketPath st
 	if err != nil {
 		return commands.PendingThrowSnapshot{}, err
 	}
-	defer client.Close()
+	defer func() { logCommandModeError("close pending throw daemon client", client.Close()) }()
 	resp, err := client.CreatePendingThrow(ctx, daemonrpc.CreatePendingThrowRequest{
 		ID:             req.ID,
 		Operation:      req.Operation,
@@ -789,7 +789,7 @@ func (daemonPendingThrows) RequirePendingThrowReady(ctx context.Context, socketP
 	if err != nil {
 		return commands.PendingThrowSnapshot{}, err
 	}
-	defer client.Close()
+	defer func() { logCommandModeError("close pending throw daemon client", client.Close()) }()
 	resp, err := client.RequirePendingThrowReady(ctx, daemonrpc.PendingThrowRequest{ID: id})
 	if err != nil {
 		return pendingThrowSnapshot(resp), err
@@ -802,7 +802,7 @@ func (daemonPendingThrows) CancelPendingThrow(ctx context.Context, socketPath, i
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { logCommandModeError("close daemon client", client.Close()) }()
 	return client.CancelPendingThrow(ctx, daemonrpc.PendingThrowRequest{ID: id})
 }
 
@@ -825,7 +825,7 @@ func (daemonLaunchKeyPolicies) GetLaunchKeyPolicy(ctx context.Context, socketPat
 	if err != nil {
 		return commands.LaunchKeyPolicySnapshot{}, err
 	}
-	defer client.Close()
+	defer func() { logCommandModeError("close daemon client", client.Close()) }()
 	resp, err := client.GetLaunchKeyPolicy(ctx, daemonrpc.LaunchKeyPolicyRequest{Operation: operation})
 	if err != nil {
 		return commands.LaunchKeyPolicySnapshot{}, err
@@ -838,7 +838,7 @@ func (daemonLaunchKeyPolicies) SetLaunchKeyPolicy(ctx context.Context, socketPat
 	if err != nil {
 		return commands.LaunchKeyPolicySnapshot{}, err
 	}
-	defer client.Close()
+	defer func() { logCommandModeError("close daemon client", client.Close()) }()
 	resp, err := client.SetLaunchKeyPolicy(ctx, daemonrpc.SetLaunchKeyPolicyRequest{
 		Operation:        req.Operation,
 		Mode:             req.Mode,
@@ -947,7 +947,7 @@ func (s payloadProviderService) ConnectInstalledPayload(ctx context.Context, rec
 	if err != nil {
 		return commands.SessionRef{}, err
 	}
-	defer client.Close()
+	defer func() { logCommandModeError("close daemon client", client.Close()) }()
 	config := installedPayloadReconnectConfig(record)
 	result, err := client.RunMockExploit(ctx, commands.RunMockExploitRequest{
 		Operation:    record.Operation,
@@ -1037,7 +1037,7 @@ func (s payloadProviderService) payloadCommandClient(ctx context.Context, record
 	if err != nil {
 		return nil, "", func() {}, err
 	}
-	return client, moduleID, func() { _ = client.Close() }, nil
+	return client, moduleID, func() { logCommandModeError("close daemon client", client.Close()) }, nil
 }
 
 func commandsPayloadListRequest(record commands.InstalledPayloadRecord) commands.RunPayloadCommandListRequest {
@@ -1310,7 +1310,8 @@ func publishedLogsFromRPC(logs []daemonrpc.PublishedLog) []commands.RunPublished
 }
 
 func operatorLogEntryFromRPC(entry daemonrpc.OperatorLogEntry) operatorlog.Entry {
-	timestamp, _ := time.Parse(time.RFC3339Nano, entry.Time)
+	timestamp, err := time.Parse(time.RFC3339Nano, entry.Time)
+	logCommandModeError("parse operator log timestamp", err)
 	return operatorlog.Entry{
 		ID:             entry.ID,
 		Time:           timestamp,

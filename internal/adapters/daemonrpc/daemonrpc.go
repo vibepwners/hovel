@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"sort"
@@ -370,7 +371,7 @@ func registerUnary[Req, Res any](mux *http.ServeMux, method string, fn func(cont
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		defer r.Body.Close()
+		defer func() { logDaemonRPCError("close request body", r.Body.Close()) }()
 		var req Req
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid JSON request: "+err.Error(), http.StatusBadRequest)
@@ -432,7 +433,7 @@ func WithLaunchKeyPolicy(policy operatordomain.LaunchKeyPolicy) ServerOption {
 	}
 }
 
-func (s Server) RunMockExploit(req RunMockExploitRequest, resp *RunMockExploitResponse) error {
+func (s *Server) RunMockExploit(req RunMockExploitRequest, resp *RunMockExploitResponse) error {
 	return s.ExecuteModule(ExecuteModuleRequest(req), (*ExecuteModuleResponse)(resp))
 }
 
@@ -442,14 +443,18 @@ func (s *Server) executeModuleRPC(ctx context.Context, req ExecuteModuleRequest)
 	return resp, err
 }
 
-func (s Server) ExecuteModule(req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
+func (s *Server) ExecuteModule(req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
 	return s.executeModule(context.Background(), req, resp)
 }
 
-func (s Server) executeModule(ctx context.Context, req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
+func (s *Server) executeModule(ctx context.Context, req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
 	var throwStarted time.Time
 	if req.ThrowStarted != "" {
-		throwStarted, _ = time.Parse(time.RFC3339Nano, req.ThrowStarted)
+		var err error
+		throwStarted, err = time.Parse(time.RFC3339Nano, req.ThrowStarted)
+		if err != nil {
+			return fmt.Errorf("parse throw started timestamp: %w", err)
+		}
 	}
 	result, err := s.runs.ExecuteModule(ctx, services.ExecuteModuleRequest{
 		Operation:    req.Operation,
@@ -536,7 +541,7 @@ type ListSessionsResponse struct {
 	Sessions []SessionRef
 }
 
-func (s Server) ListSessions(_ EmptyRequest, resp *ListSessionsResponse) error {
+func (s *Server) ListSessions(_ EmptyRequest, resp *ListSessionsResponse) error {
 	if s.moduleSessions == nil {
 		resp.Sessions = nil
 		return nil
@@ -562,7 +567,7 @@ func (s *Server) listSessionsRPC(ctx context.Context, _ EmptyRequest) (ListSessi
 	return resp, nil
 }
 
-func (s Server) ReadSession(req SessionReadRequest, resp *SessionChunk) error {
+func (s *Server) ReadSession(req SessionReadRequest, resp *SessionChunk) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
@@ -597,7 +602,7 @@ func (s *Server) readSessionRPC(ctx context.Context, req SessionReadRequest) (Se
 	return resp, nil
 }
 
-func (s Server) TailSession(req SessionTailRequest, resp *SessionChunk) error {
+func (s *Server) TailSession(req SessionTailRequest, resp *SessionChunk) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
@@ -638,7 +643,7 @@ func (s *Server) tailSessionRPC(ctx context.Context, req SessionTailRequest) (Se
 	return resp, nil
 }
 
-func (s Server) WriteSession(req SessionWriteRequest, resp *EmptyResponse) error {
+func (s *Server) WriteSession(req SessionWriteRequest, resp *EmptyResponse) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
@@ -652,7 +657,7 @@ func (s *Server) writeSessionRPC(ctx context.Context, req SessionWriteRequest) (
 	return EmptyResponse{}, s.moduleSessions.WriteSession(ctx, req.SessionID, req.Data)
 }
 
-func (s Server) CloseSession(req SessionCloseRequest, resp *EmptyResponse) error {
+func (s *Server) CloseSession(req SessionCloseRequest, resp *EmptyResponse) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
@@ -666,7 +671,7 @@ func (s *Server) closeSessionRPC(ctx context.Context, req SessionCloseRequest) (
 	return EmptyResponse{}, s.moduleSessions.CloseSession(ctx, req.SessionID)
 }
 
-func (s Server) ListSessionCommands(req SessionCommandListRequest, resp *SessionCommandListResponse) error {
+func (s *Server) ListSessionCommands(req SessionCommandListRequest, resp *SessionCommandListResponse) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
@@ -689,7 +694,7 @@ func (s *Server) listSessionCommandsRPC(ctx context.Context, req SessionCommandL
 	return SessionCommandListResponse{Commands: commands}, nil
 }
 
-func (s Server) RunSessionCommand(req SessionCommandRunRequest, resp *SessionCommandRunResponse) error {
+func (s *Server) RunSessionCommand(req SessionCommandRunRequest, resp *SessionCommandRunResponse) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
@@ -1216,7 +1221,7 @@ func (s *Server) AppendLog(req AppendLogRequest, resp *EmptyResponse) error {
 	return s.persistLocked()
 }
 
-func (s Server) PollLogs(req PollLogsRequest, resp *PollLogsResponse) error {
+func (s *Server) PollLogs(req PollLogsRequest, resp *PollLogsResponse) error {
 	if req.Chain != "" {
 		resp.Last, resp.Logs = s.logs.SinceChain(operationOrDefault(req.Operation), req.Chain, req.Since)
 		return nil
@@ -1600,7 +1605,7 @@ func Dial(socketPath string) (*Client, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if _, err := client.PollLogs(ctx, 0); err != nil {
-		_ = client.Close()
+		logDaemonRPCError("close daemon client after failed dial", client.Close())
 		return nil, err
 	}
 	return client, nil
@@ -1829,7 +1834,8 @@ func (s *SessionClient) AddTarget(target string) error {
 }
 
 func (s *SessionClient) ClearTargets() {
-	_, _ = invoke[ChainRequest, EmptyResponse](s.client, s.ctx, "ClearTargets", ChainRequest{Operation: s.operation(), Chain: s.active()})
+	_, err := invoke[ChainRequest, EmptyResponse](s.client, s.ctx, "ClearTargets", ChainRequest{Operation: s.operation(), Chain: s.active()})
+	logDaemonRPCError("clear session targets", err)
 }
 
 func (s *SessionClient) CreateTargetSet(name string) error {
@@ -1974,9 +1980,12 @@ func invoke[Req, Res any](c *Client, ctx context.Context, method string, req Req
 	if err != nil {
 		return zero, fmt.Errorf("%s: %w", method, err)
 	}
-	defer resp.Body.Close()
+	defer func() { logDaemonRPCError("close response body", resp.Body.Close()) }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return zero, fmt.Errorf("%s: %s; additionally failed to read error response: %v", method, resp.Status, readErr)
+		}
 		message := strings.TrimSpace(string(body))
 		if message == "" {
 			message = resp.Status
@@ -2247,7 +2256,8 @@ func operatorLogFromRPC(entry OperatorLogEntry) operatorlog.Entry {
 	for name, value := range entry.Fields {
 		fields = append(fields, operatorlog.Field{Name: name, Value: value})
 	}
-	timestamp, _ := time.Parse(time.RFC3339Nano, entry.Time)
+	timestamp, err := time.Parse(time.RFC3339Nano, entry.Time)
+	logDaemonRPCError("parse operator log timestamp", err)
 	return operatorlog.Entry{
 		ID:             entry.ID,
 		Time:           timestamp,
@@ -2297,13 +2307,8 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return out
 }
 
-func cloneAnyMap(values map[string]any) map[string]any {
-	if len(values) == 0 {
-		return nil
+func logDaemonRPCError(action string, err error) {
+	if err != nil {
+		log.Printf("hovel daemon rpc: %s: %v", action, err)
 	}
-	out := make(map[string]any, len(values))
-	for key, value := range values {
-		out[key] = value
-	}
-	return out
 }

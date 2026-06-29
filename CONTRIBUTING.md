@@ -33,8 +33,8 @@ Run the same suite CI runs:
 task ci
 ```
 
-That is `task lint` (gofmt, Gazelle up-to-date, Python ruff/mypy/pydoclint,
-and Squatter C static checks), then `task docs`, `task build`, `task test`,
+That is `task lint` (gofmt, golangci-lint, Gazelle up-to-date, Rust
+rustfmt/Clippy, Python ruff/mypy/pydoclint, and Squatter C static checks), then `task docs`, `task build`, `task test`,
 `task test:race`, `task fuzz:smoke`, and `task coverage`. CI
 (`.github/workflows/ci.yml`) runs the same checks on every pull request.
 
@@ -65,10 +65,12 @@ infra    -> app -> domain
 
 ## Code style
 
-- Go code is formatted with `gofmt`; `task fmt` formats Go and Squatter C in place.
+- Go code is formatted with `gofmt` and checked with golangci-lint; `task fmt`
+  formats Go, Rust, and Squatter C in place.
 - Match the surrounding code's naming, error-wrapping, and defensive-copy
   conventions (maps/slices are cloned at boundaries).
 - Python SDK code must pass `ruff`, `mypy --strict`, and `pydoclint`.
+- Rust SDK and example code must pass `rustfmt --check` and Clippy.
 
 ## Tests
 

@@ -25,14 +25,23 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	previous, hadPrevious := os.LookupEnv("BUILD_WORKING_DIRECTORY")
-	_ = os.Setenv("BUILD_WORKING_DIRECTORY", defaultWorkspaceRoot)
+	if err := os.Setenv("BUILD_WORKING_DIRECTORY", defaultWorkspaceRoot); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	if hadPrevious {
-		_ = os.Setenv("BUILD_WORKING_DIRECTORY", previous)
+		if err := os.Setenv("BUILD_WORKING_DIRECTORY", previous); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 	} else {
-		_ = os.Unsetenv("BUILD_WORKING_DIRECTORY")
+		if err := os.Unsetenv("BUILD_WORKING_DIRECTORY"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 	}
-	_ = os.RemoveAll(defaultWorkspaceRoot)
+	if err := os.RemoveAll(defaultWorkspaceRoot); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 	os.Exit(code)
 }
 
@@ -1644,7 +1653,9 @@ func TestCapturedStderrWaitsForLateWrite(t *testing.T) {
 	go func() {
 		defer close(done)
 		time.Sleep(10 * time.Millisecond)
-		_, _ = stderr.Write([]byte("late stderr"))
+		if _, err := stderr.Write([]byte("late stderr")); err != nil {
+			t.Errorf("write captured stderr: %v", err)
+		}
 	}()
 
 	if got := stderr.StringAfter(time.Second); got != "late stderr" {
@@ -1656,10 +1667,10 @@ func TestCapturedStderrWaitsForLateWrite(t *testing.T) {
 func TestRPCClientTimeoutDoesNotCorruptNextCall(t *testing.T) {
 	moduleStdoutReader, moduleStdoutWriter := io.Pipe()
 	moduleStdinReader, moduleStdinWriter := io.Pipe()
-	defer moduleStdoutReader.Close()
-	defer moduleStdoutWriter.Close()
-	defer moduleStdinReader.Close()
-	defer moduleStdinWriter.Close()
+	defer closeTestPipeReader(t, "module stdout reader", moduleStdoutReader)
+	defer closeTestPipeWriter(t, "module stdout writer", moduleStdoutWriter)
+	defer closeTestPipeReader(t, "module stdin reader", moduleStdinReader)
+	defer closeTestPipeWriter(t, "module stdin writer", moduleStdinWriter)
 
 	client := newClient(moduleStdoutReader, moduleStdinWriter)
 	done := make(chan error, 1)
@@ -1887,4 +1898,18 @@ type fixedClock struct {
 
 func (c fixedClock) Now() time.Time {
 	return c.now
+}
+
+func closeTestPipeReader(t *testing.T, name string, pipe *io.PipeReader) {
+	t.Helper()
+	if err := pipe.Close(); err != nil {
+		t.Logf("close %s: %v", name, err)
+	}
+}
+
+func closeTestPipeWriter(t *testing.T, name string, pipe *io.PipeWriter) {
+	t.Helper()
+	if err := pipe.Close(); err != nil {
+		t.Logf("close %s: %v", name, err)
+	}
 }

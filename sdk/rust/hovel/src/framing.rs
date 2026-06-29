@@ -44,7 +44,8 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> io::Result<Option<Value>> {
     let mut body = vec![0u8; length];
     reader.read_exact(&mut body)?;
     let text = String::from_utf8(body).map_err(|_| frame_error("invalid UTF-8 frame body"))?;
-    let value = json::parse(&text).map_err(|err| frame_error(&format!("invalid JSON frame: {err}")))?;
+    let value =
+        json::parse(&text).map_err(|err| frame_error(&format!("invalid JSON frame: {err}")))?;
     Ok(Some(value))
 }
 

@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "operatorsession",
-    srcs = ["session.go"],
+    srcs = [
+        "logging.go",
+        "session.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/app/operatorsession",
     visibility = ["//:__subpackages__"],
     deps = ["//internal/app/operatorlog"],

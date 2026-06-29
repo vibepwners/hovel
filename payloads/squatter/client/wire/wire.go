@@ -206,7 +206,7 @@ func appendLenDelim(b []byte, field int, data []byte) []byte {
 }
 
 func appendVarintField(b []byte, field int, value uint64) []byte {
-	b = appendVarint(b, uint64(field<<3|0))
+	b = appendVarint(b, uint64(field<<3))
 	return appendVarint(b, value)
 }
 

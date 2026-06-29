@@ -18,10 +18,10 @@ func enterAttachTerminal(input *os.File) func() {
 	if err != nil {
 		return func() {}
 	}
-	_ = syscall.SetNonblock(int(input.Fd()), true)
+	logShellError("set attached terminal nonblocking", syscall.SetNonblock(int(input.Fd()), true))
 	return func() {
-		_ = syscall.SetNonblock(int(input.Fd()), false)
-		_ = term.Restore(input.Fd(), state)
+		logShellError("clear attached terminal nonblocking", syscall.SetNonblock(int(input.Fd()), false))
+		logShellError("restore attached terminal", term.Restore(input.Fd(), state))
 	}
 }
 

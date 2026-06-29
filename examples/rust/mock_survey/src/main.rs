@@ -38,7 +38,10 @@ impl Module for MockSurvey {
     fn run(&self, ctx: &mut Context) -> Outcome {
         let host = ctx.input_str("target.host", &ctx.target);
         let port = ctx.input_str("target.port", "unknown");
-        let fields = [("host", Value::from(host.as_str())), ("port", Value::from(port.as_str()))];
+        let fields = [
+            ("host", Value::from(host.as_str())),
+            ("port", Value::from(port.as_str())),
+        ];
 
         ctx.info("connecting to target", &fields);
         sleep(Duration::from_millis(500));

@@ -87,36 +87,36 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 
 	session, err := a.EnsureDaemon(ctx, a.workspacePath)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
-	defer session.Close()
+	defer func() { logCLIError("close daemon manager session", session.Close()) }()
 
 	daemonClient, err := daemonrpc.Dial(session.Status().Identity.SocketPath)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
-	defer daemonClient.Close()
+	defer func() { logCLIError("close daemon rpc client", daemonClient.Close()) }()
 	a = a.withDaemonSession(ctx, daemonClient)
 	if err := a.refreshWorkspaceModules(ctx); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	a.surface = newPromptSurface(prompt.NewStdoutWriter())
 
 	if cliWelcomeEnabled() {
-		fmt.Fprintln(stdout, a.WelcomeForWidth(session, terminalWidth(stdout)))
+		writeCLILine(stdout, a.WelcomeForWidth(session, terminalWidth(stdout)))
 	}
 	terminalState, err := capturePromptTerminalState()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	terminalRestored := false
 	defer func() {
 		if !terminalRestored {
-			_ = terminalState.Restore()
+			logCLIError("restore prompt terminal state", terminalState.Restore())
 		}
 	}()
 	stopLogs := a.SubscribeLogs(ctx, daemonClient, a.surface, stdout)
@@ -124,7 +124,7 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	a.Prompt(ctx, stdout, stderr).Run()
 	stopLogs()
 	if err := finishPrompt(stdout, terminalState); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	terminalRestored = true
@@ -275,8 +275,8 @@ func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surfac
 							surface.WriteAsyncLog(rendered, a.PromptPrefix())
 							continue
 						}
-						fmt.Fprintln(fallback)
-						fmt.Fprintln(fallback, rendered)
+						writeCLILine(fallback)
+						writeCLILine(fallback, rendered)
 					}
 				}
 			}
@@ -327,7 +327,7 @@ func (a App) promptWriter() prompt.ConsoleWriter {
 
 func (a *App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
 	if err := a.loadWorkspaceSession(ctx); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	trimmed := strings.TrimSpace(line)
@@ -337,7 +337,7 @@ func (a *App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wr
 	if a.wizard != nil && a.wizard.Active() {
 		code := a.wizard.HandleLine(trimmed, stdout, stderr)
 		if err := a.saveWorkspaceSession(ctx); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCLILine(stderr, err)
 			return 1
 		}
 		return code
@@ -349,13 +349,13 @@ func (a *App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wr
 		trimmed = rewritten
 	}
 	if err := a.flowError(trimmed); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	if trimmed == "chain config interactive" || trimmed == "chains config interactive" {
 		code := a.ConfigureInteractive(ctx, stdout, stderr)
 		if err := a.saveWorkspaceSession(ctx); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCLILine(stderr, err)
 			return 1
 		}
 		return code
@@ -363,7 +363,7 @@ func (a *App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wr
 	if isSessionConnectCommand(trimmed) {
 		sessionID, options, err := parseSessionConnect(trimmed)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCLILine(stderr, err)
 			return 1
 		}
 		return a.executeSessionConnect(ctx, sessionID, options, stdout, stderr)
@@ -382,12 +382,12 @@ func (a *App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wr
 	code := a.commands.ExecuteLine(ctx, trimmed, stdout, stderr)
 	if code == 0 && moduleCatalogMutationCommand(trimmed) {
 		if err := a.refreshWorkspaceModules(ctx); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCLILine(stderr, err)
 			return 1
 		}
 	}
 	if err := a.saveWorkspaceSession(ctx); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	return code
@@ -873,8 +873,17 @@ func (a App) positionalSuggestions(definition commands.Definition, commandWordCo
 			}
 		}
 		return nil, true
-	case "session connect", "sessions connect", "session tail", "sessions tail", "session read", "sessions read", "session send", "sessions send", "session write", "sessions write", "session close", "sessions close":
+	case "session connect", "sessions connect", "session tail", "sessions tail", "session read", "sessions read", "session send", "sessions send", "session write", "sessions write", "session close", "sessions close",
+		"session commands", "sessions commands", "session capabilities", "sessions capabilities":
 		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.sessionSuggestions), true
+	case "session call", "sessions call", "session command", "sessions command":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.sessionSuggestions(prefix), true
+		}
+		if len(fields) > commandWordCount && (provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace) {
+			return a.sessionCapabilitySuggestions(fields[commandWordCount], prefix), true
+		}
+		return nil, true
 	case "payloads inspect", "payload inspect", "payloads connect", "payload connect", "payloads cleanup", "payload cleanup",
 		"payloads mark-removed", "payload mark-removed", "payloads refresh", "payload refresh", "payloads commands", "payload commands",
 		"payloads capabilities", "payload capabilities", "payloads getfile", "payload getfile", "payloads putfile", "payload putfile",
@@ -985,8 +994,83 @@ func (a App) targetConfigKeySuggestions(prefix string) []prompt.Suggest {
 }
 
 func (a App) sessionSuggestions(prefix string) []prompt.Suggest {
+	sessions, ok := a.completionSessions()
+	if !ok {
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(sessions))
+	for _, session := range sessions {
+		description := strings.TrimSpace(strings.Join([]string{session.Kind, session.State, session.Target, session.Name}, " "))
+		suggestions = append(suggestions, prompt.Suggest{Text: session.ID, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) sessionCapabilitySuggestions(sessionRef, prefix string) []prompt.Suggest {
 	if a.daemonClient == nil {
 		return nil
+	}
+	sessionID, ok := a.resolveCompletionSessionID(sessionRef)
+	if !ok {
+		return nil
+	}
+	type sessionCommandResult struct {
+		commands []run.PayloadCommand
+		err      error
+	}
+	results := make(chan sessionCommandResult, 1)
+	go func() {
+		resp, err := a.daemonClient.ListSessionCommands(context.Background(), daemonrpc.SessionCommandListRequest{
+			SessionID: sessionID,
+			Request:   run.PayloadCommandListRequest{},
+		})
+		results <- sessionCommandResult{commands: resp.Commands, err: err}
+	}()
+	var sessionCommands []run.PayloadCommand
+	select {
+	case result := <-results:
+		if result.err != nil {
+			logCLIError("complete session command list", result.err)
+			return nil
+		}
+		sessionCommands = result.commands
+	case <-time.After(100 * time.Millisecond):
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(sessionCommands))
+	for _, command := range sessionCommands {
+		description := command.Summary
+		if len(command.Capabilities) > 0 {
+			description = strings.TrimSpace(description + " " + strings.Join(command.Capabilities, ","))
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: command.Name, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) resolveCompletionSessionID(sessionRef string) (string, bool) {
+	sessionRef = strings.TrimSpace(sessionRef)
+	switch sessionRef {
+	case "latest", "@latest":
+		sessions, ok := a.completionSessions()
+		if !ok {
+			return "", false
+		}
+		for i := len(sessions) - 1; i >= 0; i-- {
+			session := sessions[i]
+			if completionSessionIsActive(session) {
+				return session.ID, true
+			}
+		}
+		return "", false
+	default:
+		return sessionRef, sessionRef != ""
+	}
+}
+
+func (a App) completionSessions() ([]daemonrpc.SessionRef, bool) {
+	if a.daemonClient == nil {
+		return nil, false
 	}
 	type sessionListResult struct {
 		sessions []daemonrpc.SessionRef
@@ -997,22 +1081,25 @@ func (a App) sessionSuggestions(prefix string) []prompt.Suggest {
 		sessions, err := a.daemonClient.ListSessions(context.Background())
 		results <- sessionListResult{sessions: sessions, err: err}
 	}()
-	var sessions []daemonrpc.SessionRef
 	select {
 	case result := <-results:
 		if result.err != nil {
-			return nil
+			logCLIError("complete session list", result.err)
+			return nil, false
 		}
-		sessions = result.sessions
+		return result.sessions, true
 	case <-time.After(100 * time.Millisecond):
-		return nil
+		return nil, false
 	}
-	suggestions := make([]prompt.Suggest, 0, len(sessions))
-	for _, session := range sessions {
-		description := strings.TrimSpace(strings.Join([]string{session.Kind, session.State, session.Target, session.Name}, " "))
-		suggestions = append(suggestions, prompt.Suggest{Text: session.ID, Description: description})
+}
+
+func completionSessionIsActive(session daemonrpc.SessionRef) bool {
+	switch strings.ToLower(strings.TrimSpace(session.State)) {
+	case "", "active", "open":
+		return true
+	default:
+		return false
 	}
-	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
 }
 
 func (a App) payloadSuggestions(prefix string) []prompt.Suggest {
@@ -1166,7 +1253,7 @@ func (a App) moduleSuggestions(prefix string) []prompt.Suggest {
 
 func (a App) ConfigureInteractive(ctx context.Context, stdout, stderr io.Writer) int {
 	if err := a.refreshWorkspaceModules(ctx); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	if shouldUseHuhConfig(stdout) {
@@ -1663,7 +1750,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (string, bool, int) {
 		return "", true, 0
 	case 1:
 		if args[0] == "-h" || args[0] == "--help" {
-			fmt.Fprint(stdout, "Usage: hovel cli [--workspace <path>]\n\nLaunch the interactive Hovel prompt shell.\n")
+			writeCLIText(stdout, "Usage: hovel cli [--workspace <path>]\n\nLaunch the interactive Hovel prompt shell.\n")
 			return "", false, 0
 		}
 	case 2:
@@ -1671,7 +1758,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (string, bool, int) {
 			return args[1], true, 0
 		}
 	}
-	fmt.Fprintln(stderr, "hovel cli starts the interactive shell; use hovel <command> for one-shot invocations")
+	writeCLILine(stderr, "hovel cli starts the interactive shell; use hovel <command> for one-shot invocations")
 	return "", false, 2
 }
 

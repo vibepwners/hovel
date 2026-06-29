@@ -6,7 +6,7 @@
 //! insertion order preserved), arrays, strings, numbers, booleans, and null.
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
+use std::fmt::{self, Write as _};
 
 /// A JSON value.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,13 +63,6 @@ impl Value {
         }
     }
 
-    /// Serializes the value to a compact JSON string.
-    pub fn to_string(&self) -> String {
-        let mut out = String::new();
-        self.encode(&mut out);
-        out
-    }
-
     fn encode(&self, out: &mut String) {
         match self {
             Value::Null => out.push_str("null"),
@@ -106,6 +99,14 @@ impl Value {
                 out.push('}');
             }
         }
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut out = String::new();
+        self.encode(&mut out);
+        f.write_str(&out)
     }
 }
 
@@ -161,7 +162,10 @@ impl Parser {
     }
 
     fn skip_ws(&mut self) {
-        while matches!(self.peek(), Some(' ') | Some('\t') | Some('\n') | Some('\r')) {
+        while matches!(
+            self.peek(),
+            Some(' ') | Some('\t') | Some('\n') | Some('\r')
+        ) {
             self.pos += 1;
         }
     }

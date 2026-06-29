@@ -32,7 +32,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "connect:", err)
 		os.Exit(1)
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, "close:", err)
+		}
+	}()
 
 	client := shell.New(conn)
 	switch opts.Mode {

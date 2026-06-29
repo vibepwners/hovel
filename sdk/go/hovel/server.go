@@ -73,9 +73,9 @@ func ServeIO(module Module, in io.Reader, out io.Writer) error {
 			defer requests.Done()
 			result, derr := s.dispatch(method, params)
 			if derr != nil {
-				_ = s.writer.write(errorResponse(id, derr))
+				logSDKError("write error response", s.writer.write(errorResponse(id, derr)))
 			} else {
-				_ = s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result})
+				logSDKError("write response", s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result}))
 			}
 		}()
 		if method == "shutdown" {
@@ -523,7 +523,7 @@ func (s *server) sessionCommandRun(params json.RawMessage) (any, error) {
 }
 
 func (s *server) emitLog(record logRecord) {
-	_ = s.writer.write(map[string]any{"jsonrpc": "2.0", "method": "module/log", "params": record})
+	logSDKError("write module log notification", s.writer.write(map[string]any{"jsonrpc": "2.0", "method": "module/log", "params": record}))
 }
 
 func (s *server) emitSession(event sessionEvent) {
@@ -531,7 +531,7 @@ func (s *server) emitSession(event sessionEvent) {
 	if event.fields != nil {
 		params["fields"] = event.fields
 	}
-	_ = s.writer.write(map[string]any{"jsonrpc": "2.0", "method": "module/session", "params": params})
+	logSDKError("write module session notification", s.writer.write(map[string]any{"jsonrpc": "2.0", "method": "module/session", "params": params}))
 }
 
 func errorResponse(idRaw json.RawMessage, err error) map[string]any {

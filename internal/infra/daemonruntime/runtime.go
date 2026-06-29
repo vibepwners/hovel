@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -83,7 +84,7 @@ func Serve(ctx context.Context, args Args) error {
 	if err != nil {
 		return err
 	}
-	defer lock.Release()
+	defer func() { logDaemonRuntimeError("release workspace lock", lock.Release()) }()
 
 	store := filesystem.NewWorkspaceStore()
 	if err := store.EnsureWorkspaceDatabase(ctx, workspacePath); err != nil {
@@ -140,9 +141,9 @@ func Serve(ctx context.Context, args Args) error {
 		return err
 	}
 	if endpoint.Network == "unix" {
-		defer os.Remove(endpoint.Address)
+		defer func() { logDaemonRuntimeError("remove daemon socket", os.Remove(endpoint.Address)) }()
 	}
-	defer listener.Close()
+	defer func() { logDaemonRuntimeError("close daemon listener", listener.Close()) }()
 
 	runs := services.NewRunService(runner, events, ids, clock)
 	config, _, err := hovelconfig.Load(hovelconfig.Options{
@@ -203,12 +204,6 @@ func serveRPC(listener net.Listener, server *http.Server, errs chan<- error) {
 	errs <- nil
 }
 
-type discardEvents struct{}
-
-func (discardEvents) Append(context.Context, event.Event) error {
-	return nil
-}
-
 type publishingEventSink struct {
 	mu          sync.Mutex
 	next        services.EventSink
@@ -263,7 +258,9 @@ func (s *publishingEventSink) Append(ctx context.Context, evt event.Event) error
 		}
 	case "hovel.module.log", "module.log":
 		entry := s.moduleLogEntry(operation, chain, evt)
-		_ = s.session.AppendLogToChain(chain, entry)
+		if err := s.session.AppendLogToChain(chain, entry); err != nil {
+			return err
+		}
 		s.logs.Publish(operation, chain, entry)
 		return s.persistIfConfigured()
 	case "hovel.session.created", "session.created":
@@ -272,17 +269,23 @@ func (s *publishingEventSink) Append(ctx context.Context, evt event.Event) error
 			operatorlog.Field{Name: "kind", Value: evt.Fields["kind"]},
 			operatorlog.Field{Name: "state", Value: evt.Fields["state"]},
 		))
-		_ = s.session.AppendLogToChain(chain, entry)
+		if err := s.session.AppendLogToChain(chain, entry); err != nil {
+			return err
+		}
 		s.logs.Publish(operation, chain, entry)
 		return s.persistIfConfigured()
 	case "hovel.run.completed", "run.succeeded":
 		entry := s.runEventEntry(operation, chain, evt, operatorlog.Success("throw", "run completed"))
-		_ = s.session.AppendLogToChain(chain, entry)
+		if err := s.session.AppendLogToChain(chain, entry); err != nil {
+			return err
+		}
 		s.logs.Publish(operation, chain, entry)
 		return s.persistIfConfigured()
 	case "hovel.run.failed", "run.failed":
 		entry := s.runEventEntry(operation, chain, evt, operatorlog.Finding("throw", "run failed"))
-		_ = s.session.AppendLogToChain(chain, entry)
+		if err := s.session.AppendLogToChain(chain, entry); err != nil {
+			return err
+		}
 		s.logs.Publish(operation, chain, entry)
 		return s.persistIfConfigured()
 	}
@@ -329,6 +332,12 @@ type systemClock struct{}
 
 func (systemClock) Now() time.Time {
 	return time.Now().UTC()
+}
+
+func logDaemonRuntimeError(action string, err error) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, net.ErrClosed) {
+		log.Printf("hovel daemon runtime: %s: %v", action, err)
+	}
 }
 
 type runtimeIDs struct{}

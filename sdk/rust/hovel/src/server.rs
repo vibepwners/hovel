@@ -45,7 +45,11 @@ pub fn serve_with<R: BufRead>(
             Some(message) => message,
             None => return Ok(()),
         };
-        let method = message.get("method").and_then(Value::as_str).unwrap_or("").to_string();
+        let method = message
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         if method.is_empty() {
             continue;
         }
@@ -53,7 +57,10 @@ pub fn serve_with<R: BufRead>(
             Some(id) => id.clone(),
             None => continue, // notification: no response expected
         };
-        let params = message.get("params").cloned().unwrap_or(Value::Object(Vec::new()));
+        let params = message
+            .get("params")
+            .cloned()
+            .unwrap_or(Value::Object(Vec::new()));
         let response = match dispatch(module, &mut emitter, &method, &params) {
             Ok(result) => Value::object(vec![
                 ("jsonrpc", Value::from("2.0")),
@@ -108,7 +115,10 @@ fn handshake(module: &dyn Module) -> Value {
         ("moduleType", Value::from(info.module_type.as_str())),
         ("summary", Value::Str(info.summary)),
         ("description", Value::Str(info.description)),
-        ("tags", Value::Array(info.tags.into_iter().map(Value::Str).collect())),
+        (
+            "tags",
+            Value::Array(info.tags.into_iter().map(Value::Str).collect()),
+        ),
     ];
     if !info.discovery_context.is_empty() {
         pairs.push(("discoveryContext", Value::Object(info.discovery_context)));
@@ -136,7 +146,11 @@ fn schema(module: &dyn Module) -> Value {
 }
 
 fn execute(module: &dyn Module, emitter: &mut Emitter, params: &Value) -> Value {
-    let run_id = params.get("runId").and_then(Value::as_str).unwrap_or("").to_string();
+    let run_id = params
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let outcome = {
         let mut ctx = Context::new(emitter, &module.info().name, params);
         module.run(&mut ctx)
@@ -146,17 +160,30 @@ fn execute(module: &dyn Module, emitter: &mut Emitter, params: &Value) -> Value 
 }
 
 fn session_write(emitter: &mut Emitter, params: &Value) -> Result<Value, String> {
-    let id = params.get("sessionId").and_then(Value::as_str).unwrap_or("");
+    let id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let data = params.get("data").and_then(Value::as_str).unwrap_or("");
     let bytes = base64::decode(data)?;
-    emitter.session_write(id, &bytes).map_err(|e| e.to_string())?;
+    emitter
+        .session_write(id, &bytes)
+        .map_err(|e| e.to_string())?;
     Ok(Value::object(vec![("status", Value::from("ok"))]))
 }
 
 fn session_read(emitter: &mut Emitter, params: &Value) -> Result<Value, String> {
-    let id = params.get("sessionId").and_then(Value::as_str).unwrap_or("");
-    let wait_ms = params.get("timeoutMs").and_then(Value::as_f64).unwrap_or(1000.0) as i64;
-    let (chunk, closed) = emitter.session_read(id, wait_ms).map_err(|e| e.to_string())?;
+    let id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let wait_ms = params
+        .get("timeoutMs")
+        .and_then(Value::as_f64)
+        .unwrap_or(1000.0) as i64;
+    let (chunk, closed) = emitter
+        .session_read(id, wait_ms)
+        .map_err(|e| e.to_string())?;
     Ok(Value::object(vec![
         ("sessionId", Value::from(id)),
         ("data", Value::Str(base64::encode(&chunk))),
@@ -165,8 +192,16 @@ fn session_read(emitter: &mut Emitter, params: &Value) -> Result<Value, String> 
 }
 
 fn session_close(emitter: &mut Emitter, params: &Value) -> Result<Value, String> {
-    let id = params.get("sessionId").and_then(Value::as_str).unwrap_or("");
-    let reason = params.get("reason").and_then(Value::as_str).unwrap_or("closed");
-    emitter.session_close(id, reason).map_err(|e| e.to_string())?;
+    let id = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let reason = params
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("closed");
+    emitter
+        .session_close(id, reason)
+        .map_err(|e| e.to_string())?;
     Ok(Value::object(vec![("status", Value::from("ok"))]))
 }

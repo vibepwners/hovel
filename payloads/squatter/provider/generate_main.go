@@ -1,3 +1,5 @@
+//go:build hovel_squatter_generate
+
 package main
 
 import (

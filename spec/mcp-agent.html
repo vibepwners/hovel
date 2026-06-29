@@ -110,17 +110,25 @@ hovel_operator_list_entities
 hovel_operation_list
 hovel_workspace_snapshot
 hovel_catalog_snapshot
+hovel_module_search
+hovel_module_inspect
+hovel_chain_suggest
+hovel_launch_key_policy
 hovel_chain_apply
 hovel_command_run
+hovel_throw_plan
+hovel_throw_confirm
 hovel_throw_start
 hovel_installed_payload_list
+hovel_session_capabilities
+hovel_session_call
 hovel_payload_cmd
-hovel_payload_command_list
-hovel_payload_command_call
+hovel_payload_capabilities
+hovel_payload_call
 </code></pre>
         <p>Agents should start with <code>hovel_catalog_snapshot</code> and <code>hovel_workspace_snapshot</code>. The catalog snapshot returns the effective config source, loaded module IDs, payload-provider modules, package sources, checksums, and load errors. The workspace snapshot returns operations, chains, steps, config, target config, installed payload records, and provider readiness.</p>
         <p><code>hovel_chain_apply</code> is the normal setup tool. It creates or selects the operation and chain, adds missing modules, adds targets, sets chain and target config, fills safe defaults such as <code>target.host=&lt;target&gt;</code> and module-declared required defaults, and validates. A representative MS17-010-to-Squatter TCP bind apply call uses modules <code>ms17-010-survey@v0.1.0</code>, <code>ms17-010-exploit@v1.0.0</code>, and <code>squatter@v0.1.0</code>; target <code>192.168.122.142</code>; chain config <code>operator.confirmed_lab=true</code>; and optional chain config <code>squatter.bind_port=9100</code>. The Squatter provider step is explicit, but Hovel derives the MS17-010 payload file and target-side payload config during planning and execution.</p>
-        <p>After <code>hovel_throw_start</code>, the throw output includes installed payload readiness records with handles such as <code>p1</code>, provider readiness, provider errors, and next typed actions. Agents should call <code>hovel_installed_payload_list</code> when they need the current inventory, and <code>hovel_payload_cmd</code> for direct <code>cmd.exe</code> commands such as <code>systeminfo</code>. <code>hovel_payload_command_list</code> and <code>hovel_payload_command_call</code> remain available for provider-specific command surfaces.</p>
+        <p>After <code>hovel_throw_start</code>, the throw output includes installed payload readiness records with handles such as <code>p1</code>, provider readiness, provider errors, and next typed actions. Agents should call <code>hovel_installed_payload_list</code> when they need the current inventory, <code>hovel_payload_capabilities</code> before invoking provider-owned payload actions, and <code>hovel_payload_call</code> for provider-neutral command execution. <code>hovel_payload_cmd</code>, <code>hovel_payload_command_list</code>, and <code>hovel_payload_command_call</code> remain compatibility aliases for older payload command flows.</p>
         <p>Tool names should stay simple MCP identifiers with a <code>hovel_</code> prefix. The full parity surface should grow through domain verbs:</p>
 <pre data-lang="tools"><code>hovel_operation_list
 hovel_operation_use

@@ -46,7 +46,7 @@ func (w *promptSurface) WriteAsyncLog(rendered, prefix string) {
 		if !strings.HasSuffix(rendered, "\n") {
 			w.writer.WriteRaw([]byte("\r\n"))
 		}
-		_ = w.writer.Flush()
+		logCLIError("flush async command log", w.writer.Flush())
 		return
 	}
 	w.writer.EraseDown()
@@ -55,7 +55,7 @@ func (w *promptSurface) WriteAsyncLog(rendered, prefix string) {
 		w.writer.WriteRaw([]byte("\r\n"))
 	}
 	w.writePromptLine(prefix)
-	_ = w.writer.Flush()
+	logCLIError("flush async log", w.writer.Flush())
 }
 
 func (w *promptSurface) StartThrowing(prefix string) func() {
@@ -134,7 +134,7 @@ func (w *promptSurface) redrawPromptLine(prefix string) {
 	w.writer.WriteRaw([]byte("\r"))
 	w.writer.EraseDown()
 	w.writePromptLine(prefix)
-	_ = w.writer.Flush()
+	logCLIError("flush prompt redraw", w.writer.Flush())
 }
 
 func (w *promptSurface) writePromptLine(prefix string) {

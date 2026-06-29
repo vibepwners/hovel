@@ -26,10 +26,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || helpRequested(args) && (args[0] == "-h" || args[0] == "--help") {
 		parser := newRootParser()
 		if helpRequested(args) {
-			fmt.Fprint(stdout, parser.Usage(nil))
+			writeRootText(stdout, parser.Usage(nil))
 			return 0
 		}
-		fmt.Fprint(stderr, parser.Usage("role is required"))
+		writeRootText(stderr, parser.Usage("role is required"))
 		return 2
 	}
 	switch args[0] {
@@ -45,10 +45,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDaemon(ctx, args[1:], stdout, stderr)
 	case "tui":
 		if len(args) > 1 && helpRequested(args[1:]) {
-			fmt.Fprint(stdout, newTUIParser().Usage(nil))
+			writeRootText(stdout, newTUIParser().Usage(nil))
 			return 0
 		}
-		fmt.Fprintln(stderr, "hovel tui is not implemented yet")
+		writeRootLine(stderr, "hovel tui is not implemented yet")
 		return 1
 	case "init":
 		return commandmode.Run(ctx, append([]string{"control", "init"}, args[1:]...), stdout, stderr)
@@ -64,7 +64,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if commandmode.NewApp().Registry().HasRoot(args[0]) {
 			return commandmode.Run(ctx, args, stdout, stderr)
 		}
-		fmt.Fprint(stderr, newRootParser().Usage(fmt.Sprintf("unknown command or role %q", args[0])))
+		writeRootText(stderr, newRootParser().Usage(fmt.Sprintf("unknown command or role %q", args[0])))
 		return 2
 	}
 }
@@ -112,35 +112,35 @@ func isDirectSessionConnectCommand(args []string) bool {
 func runDirectSessionConnect(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	parsed, err := cli.ParseSessionConnectCommand(args)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeRootLine(stderr, err)
 		return 2
 	}
 	workspacePath := workspacepath.ResolvePath(parsed.Workspace)
 	status, err := daemonmanager.New().Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeRootLine(stderr, err)
 		return 1
 	}
 	if status.State != daemon.StateRunning {
-		fmt.Fprintf(stderr, "daemon is not running for workspace %s\n", status.WorkspacePath)
+		writeRootLine(stderr, "daemon is not running for workspace "+status.WorkspacePath)
 		return 1
 	}
 	client, err := daemonrpc.Dial(status.Identity.SocketPath)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeRootLine(stderr, err)
 		return 1
 	}
-	defer client.Close()
+	defer func() { logRootError("close daemon rpc client", client.Close()) }()
 	return cli.RunSessionConnect(ctx, client, parsed.SessionID, parsed.Options, stdout, stderr)
 }
 
 func runOneShotThrow(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	session, err := daemonmanager.New().Ensure(ctx, throwWorkspaceArg(args[1:]))
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeRootLine(stderr, err)
 		return 1
 	}
-	defer session.Close()
+	defer func() { logRootError("close daemon manager session", session.Close()) }()
 	return commandmode.Run(ctx, args, stdout, stderr)
 }
 
@@ -148,10 +148,10 @@ func runDaemon(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if len(args) == 0 || helpRequested(args) && (args[0] == "-h" || args[0] == "--help") {
 		parser := newDaemonParser()
 		if helpRequested(args) {
-			fmt.Fprint(stdout, parser.Usage(nil))
+			writeRootText(stdout, parser.Usage(nil))
 			return 0
 		}
-		fmt.Fprint(stderr, parser.Usage("daemon command is required"))
+		writeRootText(stderr, parser.Usage("daemon command is required"))
 		return 2
 	}
 	switch args[0] {
@@ -160,7 +160,7 @@ func runDaemon(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	case "status":
 		return commandmode.Run(ctx, append([]string{"control", "daemon", "status"}, args[1:]...), stdout, stderr)
 	default:
-		fmt.Fprint(stderr, newDaemonParser().Usage(fmt.Sprintf("unknown daemon command %q", args[0])))
+		writeRootText(stderr, newDaemonParser().Usage(fmt.Sprintf("unknown daemon command %q", args[0])))
 		return 2
 	}
 }
@@ -176,7 +176,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 		return code
 	}
 
-	fmt.Fprintf(stdout, "serving hoveld role for workspace %s\n", displayWorkspace(*workspacePath))
+	writeRootFormat(stdout, "serving hoveld role for workspace %s\n", displayWorkspace(*workspacePath))
 	if err := daemonruntime.Serve(ctx, daemonruntime.Args{
 		WorkspacePath: *workspacePath,
 		SocketPath:    *socketPath,
@@ -187,7 +187,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 		if errors.Is(err, context.Canceled) {
 			return 0
 		}
-		fmt.Fprintln(stderr, err)
+		writeRootLine(stderr, err)
 		return 1
 	}
 	return 0
@@ -234,28 +234,28 @@ func runDaemonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	}
 	session, err := daemonmanager.New().EnsureWithConfig(ctx, parsed.Workspace, "", parsed.Config)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeRootLine(stderr, err)
 		return 1
 	}
-	defer session.Close()
+	defer func() { logRootError("close daemon manager session", session.Close()) }()
 
 	client, err := daemonrpc.Dial(session.Status().Identity.SocketPath)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeRootLine(stderr, err)
 		return 1
 	}
-	defer client.Close()
+	defer func() { logRootError("close daemon rpc client", client.Close()) }()
 
 	operatorSession := daemonrpc.NewSessionClient(ctx, client)
 	if parsed.Operation != "" {
 		if err := operatorSession.UseOperation(parsed.Operation); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeRootLine(stderr, err)
 			return 1
 		}
 	}
 	if parsed.Chain != "" {
 		if err := operatorSession.UseChain(parsed.Chain); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeRootLine(stderr, err)
 			return 1
 		}
 	}
@@ -263,7 +263,7 @@ func runDaemonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	commandArgs = injectConfigForDaemonCommand(commandArgs, parsed.Config)
 	catalog, err := (pythonrpc.Runner{WorkspacePath: parsed.Workspace, HovelConfig: parsed.Config}).Catalog(ctx)
 	if err != nil {
-		fmt.Fprintf(stderr, "hovel: failed to load module catalog: %v\n", err)
+		writeRootFormat(stderr, "hovel: failed to load module catalog: %v\n", err)
 		catalog = modulecatalog.New()
 	}
 	app := commandmode.NewAppWithSessionModulesAndWorkspace(operatorSession, catalog, parsed.Workspace)
@@ -274,10 +274,10 @@ func parseRunCommandArgs(args []string, stdout, stderr io.Writer) (runCommandArg
 	if len(args) == 0 || helpRequested(args) && (args[0] == "-h" || args[0] == "--help") {
 		parser := newRunParser()
 		if helpRequested(args) {
-			fmt.Fprint(stdout, parser.Usage(nil))
+			writeRootText(stdout, parser.Usage(nil))
 			return runCommandArgs{}, false, 0
 		}
-		fmt.Fprint(stderr, parser.Usage("command is required"))
+		writeRootText(stderr, parser.Usage("command is required"))
 		return runCommandArgs{}, false, 2
 	}
 	parsed := runCommandArgs{Workspace: workspacepath.ResolvePath("")}
@@ -290,7 +290,7 @@ func parseRunCommandArgs(args []string, stdout, stderr io.Writer) (runCommandArg
 			return validateRunCommandArgs(parsed, stderr)
 		case arg == "--workspace" || arg == "-w":
 			if len(args) < 2 {
-				fmt.Fprint(stderr, newRunParser().Usage(arg+" requires a value"))
+				writeRootText(stderr, newRunParser().Usage(arg+" requires a value"))
 				return runCommandArgs{}, false, 2
 			}
 			parsed.Workspace = args[1]
@@ -300,7 +300,7 @@ func parseRunCommandArgs(args []string, stdout, stderr io.Writer) (runCommandArg
 			args = args[1:]
 		case arg == "--config":
 			if len(args) < 2 {
-				fmt.Fprint(stderr, newRunParser().Usage(arg+" requires a value"))
+				writeRootText(stderr, newRunParser().Usage(arg+" requires a value"))
 				return runCommandArgs{}, false, 2
 			}
 			parsed.Config = args[1]
@@ -310,7 +310,7 @@ func parseRunCommandArgs(args []string, stdout, stderr io.Writer) (runCommandArg
 			args = args[1:]
 		case arg == "--op" || arg == "--operation":
 			if len(args) < 2 {
-				fmt.Fprint(stderr, newRunParser().Usage(arg+" requires a value"))
+				writeRootText(stderr, newRunParser().Usage(arg+" requires a value"))
 				return runCommandArgs{}, false, 2
 			}
 			parsed.Operation = args[1]
@@ -323,7 +323,7 @@ func parseRunCommandArgs(args []string, stdout, stderr io.Writer) (runCommandArg
 			args = args[1:]
 		case arg == "--chain" || arg == "-c":
 			if len(args) < 2 {
-				fmt.Fprint(stderr, newRunParser().Usage(arg+" requires a value"))
+				writeRootText(stderr, newRunParser().Usage(arg+" requires a value"))
 				return runCommandArgs{}, false, 2
 			}
 			parsed.Chain = args[1]
@@ -332,7 +332,7 @@ func parseRunCommandArgs(args []string, stdout, stderr io.Writer) (runCommandArg
 			parsed.Chain = strings.TrimPrefix(arg, "--chain=")
 			args = args[1:]
 		case strings.HasPrefix(arg, "-"):
-			fmt.Fprint(stderr, newRunParser().Usage(fmt.Sprintf("unknown run option %q", arg)))
+			writeRootText(stderr, newRunParser().Usage(fmt.Sprintf("unknown run option %q", arg)))
 			return runCommandArgs{}, false, 2
 		default:
 			parsed.Command = append([]string(nil), args...)
@@ -344,7 +344,7 @@ func parseRunCommandArgs(args []string, stdout, stderr io.Writer) (runCommandArg
 
 func validateRunCommandArgs(parsed runCommandArgs, stderr io.Writer) (runCommandArgs, bool, int) {
 	if len(parsed.Command) == 0 {
-		fmt.Fprint(stderr, newRunParser().Usage("command is required"))
+		writeRootText(stderr, newRunParser().Usage("command is required"))
 		return runCommandArgs{}, false, 2
 	}
 	return parsed, true, 0
@@ -456,7 +456,7 @@ func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		selectedTransport = mcpadapter.DefaultTransportMode
 	}
 	if selectedTransport != "stdio" && selectedTransport != "http" {
-		fmt.Fprintf(stderr, "unsupported MCP transport %q; use stdio or http\n", *transport)
+		writeRootFormat(stderr, "unsupported MCP transport %q; use stdio or http\n", *transport)
 		return 2
 	}
 	selectedOperation := *operation
@@ -479,7 +479,7 @@ func runMCP(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if errors.Is(err, context.Canceled) {
 			return 0
 		}
-		fmt.Fprintln(stderr, err)
+		writeRootLine(stderr, err)
 		return 1
 	}
 	return 0
@@ -496,11 +496,11 @@ func newTUIParser() *argparse.Parser {
 func parseArgs(parser *argparse.Parser, args []string, stdout, stderr io.Writer) (bool, int) {
 	parser.ExitOnHelp(false)
 	if helpRequested(args) {
-		fmt.Fprint(stdout, parser.Usage(nil))
+		writeRootText(stdout, parser.Usage(nil))
 		return false, 0
 	}
 	if err := parser.Parse(append([]string{"hovel"}, args...)); err != nil {
-		fmt.Fprint(stderr, parser.Usage(err))
+		writeRootText(stderr, parser.Usage(err))
 		return false, 2
 	}
 	return true, 0

@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "daemonmanager",
-    srcs = ["manager.go"],
+    srcs = [
+        "logging.go",
+        "manager.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager",
     visibility = ["//:__subpackages__"],
     deps = [

@@ -19,7 +19,11 @@ impl Finding {
     pub fn new(title: &str, severity: &str, detail: &str) -> Finding {
         Finding {
             title: title.to_string(),
-            severity: if severity.is_empty() { "info".to_string() } else { severity.to_string() },
+            severity: if severity.is_empty() {
+                "info".to_string()
+            } else {
+                severity.to_string()
+            },
             detail: detail.to_string(),
         }
     }
@@ -110,16 +114,25 @@ impl PayloadProviderRecord {
     fn to_value(&self) -> Value {
         let mut members = Vec::new();
         if !self.provider_id.is_empty() {
-            members.push(("providerId".to_string(), Value::Str(self.provider_id.clone())));
+            members.push((
+                "providerId".to_string(),
+                Value::Str(self.provider_id.clone()),
+            ));
         }
         if !self.schema.is_empty() {
             members.push(("schema".to_string(), Value::Str(self.schema.clone())));
         }
         if !self.schema_version.is_empty() {
-            members.push(("schemaVersion".to_string(), Value::Str(self.schema_version.clone())));
+            members.push((
+                "schemaVersion".to_string(),
+                Value::Str(self.schema_version.clone()),
+            ));
         }
         if !self.descriptor.is_empty() {
-            members.push(("descriptor".to_string(), Value::Object(self.descriptor.clone())));
+            members.push((
+                "descriptor".to_string(),
+                Value::Object(self.descriptor.clone()),
+            ));
         }
         Value::Object(members)
     }
@@ -211,7 +224,10 @@ impl InstalledPayloadDescriptor {
         self
     }
 
-    pub fn with_supports_reconnect(mut self, supports_reconnect: bool) -> InstalledPayloadDescriptor {
+    pub fn with_supports_reconnect(
+        mut self,
+        supports_reconnect: bool,
+    ) -> InstalledPayloadDescriptor {
         self.supports_reconnect = supports_reconnect;
         self
     }
@@ -224,7 +240,10 @@ impl InstalledPayloadDescriptor {
         self
     }
 
-    pub fn with_reconnect(mut self, reconnect: PayloadProviderRecord) -> InstalledPayloadDescriptor {
+    pub fn with_reconnect(
+        mut self,
+        reconnect: PayloadProviderRecord,
+    ) -> InstalledPayloadDescriptor {
         self.reconnect = Some(reconnect);
         self
     }
@@ -380,7 +399,12 @@ impl Outcome {
         if !self.installed_payloads.is_empty() {
             members.push((
                 "installedPayloads",
-                Value::Array(self.installed_payloads.iter().map(InstalledPayloadDescriptor::to_value).collect()),
+                Value::Array(
+                    self.installed_payloads
+                        .iter()
+                        .map(InstalledPayloadDescriptor::to_value)
+                        .collect(),
+                ),
             ));
         }
         if !self.agent_hints.is_empty() {

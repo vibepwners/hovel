@@ -149,7 +149,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	defer session.Close()
+	defer func() { logMCPError("close daemon manager session", session.Close()) }()
 
 	dial := cfg.Dial
 	if dial == nil {
@@ -161,7 +161,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { logMCPError("close daemon client", client.Close()) }()
 	throwStarter := cfg.ThrowStarter
 	commandRunner := cfg.CommandRunner
 	if throwStarter == nil {
@@ -191,7 +191,7 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	defer operator.Detach(context.Background())
+	defer func() { logMCPError("detach operator", operator.Detach(context.Background())) }()
 
 	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
 	defer stopHeartbeat()
@@ -875,7 +875,8 @@ func (s *Server) workspaceSnapshot(ctx context.Context, _ *mcpsdk.CallToolReques
 	if chain == "" {
 		chain = snapshot.ActiveChain
 	}
-	installed, _, _ := s.installedPayloadStatuses(ctx, operation, chain, "", false)
+	installed, _, err := s.installedPayloadStatuses(ctx, operation, chain, "", false)
+	logMCPError("read installed payload statuses", err)
 	out := workspaceSnapshotOutput{
 		Entity:          s.currentEntity(),
 		ActiveOperation: snapshot.ActiveOperation,
@@ -1909,8 +1910,12 @@ func (s *Server) throwPlan(ctx context.Context, _ *mcpsdk.CallToolRequest, input
 		return nil, throwPlanOutput{}, err
 	}
 	var plan commands.ThrowPlanPayload
-	if data, err := json.Marshal(out.JSON); err == nil {
-		_ = json.Unmarshal(data, &plan)
+	data, err := json.Marshal(out.JSON)
+	if err != nil {
+		return nil, throwPlanOutput{}, err
+	}
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return nil, throwPlanOutput{}, err
 	}
 	if plan.ID == "" || plan.PlanHash == "" {
 		return nil, throwPlanOutput{}, errors.New("throw plan command did not return a plan payload")
@@ -1995,7 +2000,8 @@ func (s *Server) throwStart(ctx context.Context, _ *mcpsdk.CallToolRequest, inpu
 	if out.Chain == "" {
 		out.Chain = chain
 	}
-	statuses, _, _ := s.installedPayloadStatuses(ctx, out.Operation, out.Chain, "", false)
+	statuses, _, err := s.installedPayloadStatuses(ctx, out.Operation, out.Chain, "", false)
+	logMCPError("read installed payload statuses after throw start", err)
 	out.InstalledPayloads = statuses
 	out.Summary = throwSummary(out.Results, statuses)
 	out.NextActions = append(out.NextActions, toolCallHint{
@@ -2260,7 +2266,7 @@ func (s *Server) heartbeatLoop(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = s.refresh(ctx)
+			logMCPError("refresh MCP state", s.refresh(ctx))
 		}
 	}
 }
@@ -3106,11 +3112,13 @@ func serveHTTPTransport(ctx context.Context, operator *Server, listener net.List
 		}
 		graceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(graceCtx)
+		logMCPError("shut down MCP HTTP server", server.Shutdown(graceCtx))
 	}()
 
 	if status != nil {
-		fmt.Fprintf(status, "Hovel MCP HTTP listening on http://%s\n", listener.Addr().String())
+		if _, err := fmt.Fprintf(status, "Hovel MCP HTTP listening on http://%s\n", listener.Addr().String()); err != nil {
+			logMCPError("write MCP HTTP status", err)
+		}
 	}
 	err := server.Serve(listener)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {

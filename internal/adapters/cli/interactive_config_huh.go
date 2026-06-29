@@ -22,19 +22,19 @@ type huhConfigValue struct {
 
 func (a App) runHuhConfigForm(ctx context.Context, stdout, stderr io.Writer) int {
 	if a.session == nil {
-		fmt.Fprintln(stderr, "active chain is required")
-		fmt.Fprintln(stderr, "\nStart with:\n  chain create <name>\n  chain use <name>")
+		writeCLILine(stderr, "active chain is required")
+		writeCLILine(stderr, "\nStart with:\n  chain create <name>\n  chain use <name>")
 		return 1
 	}
 	state := a.session.Snapshot()
 	if state.ActiveChain == "" {
-		fmt.Fprintln(stderr, "active chain is required")
-		fmt.Fprintln(stderr, "\nStart with:\n  chain create <name>\n  chain use <name>")
+		writeCLILine(stderr, "active chain is required")
+		writeCLILine(stderr, "\nStart with:\n  chain create <name>\n  chain use <name>")
 		return 1
 	}
 	values := newHuhConfigValues(availableConfigItems(a.modules, state))
 	if len(values) == 0 {
-		fmt.Fprintf(stdout, "No configurable values for chain %s\n", state.ActiveChain)
+		writeCLIFormat(stdout, "No configurable values for chain %s\n", state.ActiveChain)
 		return completeConfigInteraction(a.session, a.modules, stdout)
 	}
 	form := huhConfigForm(state, values, terminalWidth(stdout)).
@@ -43,14 +43,14 @@ func (a App) runHuhConfigForm(ctx context.Context, stdout, stderr io.Writer) int
 		WithOutput(stdout)
 	if err := form.Run(); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
-			fmt.Fprintf(stdout, "Chain %s configuration canceled\n", state.ActiveChain)
+			writeCLIFormat(stdout, "Chain %s configuration canceled\n", state.ActiveChain)
 			return 0
 		}
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	if err := applyHuhConfigValues(a.session, values); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	return completeConfigInteraction(a.session, a.modules, stdout)
@@ -191,13 +191,13 @@ func completeConfigInteractionForChain(session commands.OperatorSession, modules
 	state := session.Snapshot()
 	validation := commands.ValidateState(modules, state)
 	if !validation.Valid {
-		fmt.Fprintf(stdout, "Chain %s still needs attention\n", chain)
+		writeCLIFormat(stdout, "Chain %s still needs attention\n", chain)
 		for _, issue := range validation.Issues {
-			fmt.Fprintln(stdout, "[!] "+issue.Message)
+			writeCLILine(stdout, "[!] "+issue.Message)
 		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "Chain %s configuration complete\n", chain)
+	writeCLIFormat(stdout, "Chain %s configuration complete\n", chain)
 	return 0
 }
 

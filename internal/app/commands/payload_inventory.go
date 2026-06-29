@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -97,6 +99,7 @@ type InstalledPayloadEvent struct {
 
 type PayloadCommand = run.PayloadCommand
 type PayloadCommandArgument = run.PayloadCommandArgument
+type PayloadCommandArtifact = run.Artifact
 type PayloadCommandRequest = run.PayloadCommandRequest
 type PayloadCommandResult = run.PayloadCommandResult
 
@@ -212,7 +215,9 @@ func payloadsConnectHandler(runtime Runtime) Handler {
 		}
 		session, err := runtime.PayloadProviders.ConnectInstalledPayload(ctx, record)
 		if err != nil {
-			_, _ = runtime.Payloads.UpdateInstalledPayloadState(ctx, payloadWorkspace(invocation), record.Handle, PayloadStateUnreachable, err.Error())
+			if _, updateErr := runtime.Payloads.UpdateInstalledPayloadState(ctx, payloadWorkspace(invocation), record.Handle, PayloadStateUnreachable, err.Error()); updateErr != nil {
+				return Result{}, fmt.Errorf("%w; additionally failed to mark payload unreachable: %v", err, updateErr)
+			}
 			return Result{}, err
 		}
 		if session.InstalledPayloadID == "" {
@@ -292,7 +297,9 @@ func payloadsRefreshHandler(runtime Runtime) Handler {
 		}
 		refreshed, err := runtime.PayloadProviders.RefreshInstalledPayload(ctx, record)
 		if err != nil {
-			_, _ = runtime.Payloads.UpdateInstalledPayloadState(ctx, payloadWorkspace(invocation), record.Handle, PayloadStateUnreachable, err.Error())
+			if _, updateErr := runtime.Payloads.UpdateInstalledPayloadState(ctx, payloadWorkspace(invocation), record.Handle, PayloadStateUnreachable, err.Error()); updateErr != nil {
+				return Result{}, fmt.Errorf("%w; additionally failed to mark payload unreachable: %v", err, updateErr)
+			}
 			return Result{}, err
 		}
 		if refreshed.ID == "" {
@@ -424,7 +431,9 @@ func runPayloadProviderCall(ctx context.Context, runtime Runtime, invocation Inv
 	}
 	result, err := runtime.PayloadProviders.RunPayloadCommand(ctx, record, req)
 	if err != nil {
-		_, _ = runtime.Payloads.UpdateInstalledPayloadState(ctx, workspacePath, record.Handle, PayloadStateUnreachable, err.Error())
+		if _, updateErr := runtime.Payloads.UpdateInstalledPayloadState(ctx, workspacePath, record.Handle, PayloadStateUnreachable, err.Error()); updateErr != nil {
+			return Result{}, fmt.Errorf("%w; additionally failed to mark payload unreachable: %v", err, updateErr)
+		}
 		return Result{}, err
 	}
 	if len(result.Artifacts) > 0 && runtime.Artifacts != nil {
@@ -639,15 +648,19 @@ func payloadCommandLines(commands []PayloadCommand) string {
 	}
 	lines := []string{"COMMAND      EFFECT       SUMMARY"}
 	for _, command := range commands {
-		effect := "safe"
-		if command.Destructive {
-			effect = "destructive"
-		} else if !command.ReadOnly {
-			effect = "write"
-		}
-		lines = append(lines, fmt.Sprintf("%-12s %-12s %s", command.Name, effect, command.Summary))
+		lines = append(lines, fmt.Sprintf("%-12s %-12s %s", command.Name, PayloadCommandEffect(command), command.Summary))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func PayloadCommandEffect(command PayloadCommand) string {
+	if command.Destructive {
+		return "destructive"
+	}
+	if !command.ReadOnly {
+		return "write"
+	}
+	return "safe"
 }
 
 func payloadCommandResultHuman(result PayloadCommandResult) string {
@@ -664,12 +677,27 @@ func commandResultHuman(prefix string, result PayloadCommandResult) string {
 		lines = append(lines, result.Summary)
 	}
 	if result.Stdout != "" {
-		lines = append(lines, strings.TrimSpace(result.Stdout))
+		lines = append(lines, PrettyCommandOutput(result.Stdout))
+	}
+	if result.Stderr != "" {
+		lines = append(lines, PrettyCommandOutput(result.Stderr))
 	}
 	if artifactID := result.Fields["artifactId"]; artifactID != "" {
 		lines = append(lines, "artifact "+artifactID+" "+result.Fields["artifactPath"])
 	}
 	return strings.Join(lines, "\n")
+}
+
+func PrettyCommandOutput(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var pretty bytes.Buffer
+	if json.Valid([]byte(value)) && json.Indent(&pretty, []byte(value), "", "  ") == nil {
+		return pretty.String()
+	}
+	return value
 }
 
 func sortAvailablePayloads(payloads []AvailablePayload) {

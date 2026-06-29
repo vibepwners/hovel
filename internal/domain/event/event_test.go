@@ -75,8 +75,14 @@ func TestNewEventCarriesReferencesAndFields(t *testing.T) {
 }
 
 func TestFilterMatchesEnvelopeAndRefs(t *testing.T) {
-	id, _ := NewID("event-1")
-	typ, _ := NewType("hovel.throw.started")
+	id, err := NewID("event-1")
+	if err != nil {
+		t.Fatalf("NewID returned error: %v", err)
+	}
+	typ, err := NewType("hovel.throw.started")
+	if err != nil {
+		t.Fatalf("NewType returned error: %v", err)
+	}
 	evt, err := New(Args{
 		ID:        id,
 		Type:      typ,
@@ -106,9 +112,18 @@ func TestFilterMatchesEnvelopeAndRefs(t *testing.T) {
 }
 
 func TestBusFansOutToMatchingHandlers(t *testing.T) {
-	id, _ := NewID("event-1")
-	typ, _ := NewType("hovel.throw.started")
-	evt, _ := New(Args{ID: id, Type: typ, Timestamp: time.Now(), Refs: Refs{Chain: "alpha"}})
+	id, err := NewID("event-1")
+	if err != nil {
+		t.Fatalf("NewID returned error: %v", err)
+	}
+	typ, err := NewType("hovel.throw.started")
+	if err != nil {
+		t.Fatalf("NewType returned error: %v", err)
+	}
+	evt, err := New(Args{ID: id, Type: typ, Timestamp: time.Now(), Refs: Refs{Chain: "alpha"}})
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
 	alpha := &Recorder{Filter: Filter{Chain: "alpha"}}
 	beta := &Recorder{Filter: Filter{Chain: "beta"}}
 	bus := NewBus(

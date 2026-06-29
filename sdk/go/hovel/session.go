@@ -203,7 +203,7 @@ func (s *LineShellSession) Write(data []byte) error {
 func (s *LineShellSession) handleLine(command string) {
 	switch command {
 	case "exit", "logout":
-		_ = s.Close("operator requested close")
+		logSDKError("close line shell session", s.Close("operator requested close"))
 		return
 	case "":
 		s.emit([]byte(s.Prompt))
@@ -429,7 +429,7 @@ func (m *sessionManager) closeAll(reason string) {
 	}
 	m.mu.Unlock()
 	for _, id := range ids {
-		_ = m.close(id, reason)
+		logSDKError("close managed session", m.close(id, reason))
 	}
 }
 

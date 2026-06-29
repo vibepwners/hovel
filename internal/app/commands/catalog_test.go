@@ -3272,10 +3272,14 @@ func TestModuleBulkInstallInstallsHTTPSArchives(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/modules.yaml":
-			fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleInstallSet\nmodules:\n  - source: bulk-remote.tgz\n    sha256: %s\n", sum)
+			if _, err := fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleInstallSet\nmodules:\n  - source: bulk-remote.tgz\n    sha256: %s\n", sum); err != nil {
+				t.Logf("write bulk install response: %v", err)
+			}
 		case "/bulk-remote.tgz":
 			w.Header().Set("Content-Length", fmt.Sprint(len(body)))
-			_, _ = w.Write(body)
+			if _, err := w.Write(body); err != nil {
+				t.Logf("write bulk archive response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 			return
@@ -3339,10 +3343,14 @@ func TestModuleBulkInstallResolvesHTTPSManifestAbsolutePathArchives(t *testing.T
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/downloads/modules.yaml":
-			fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleInstallSet\nmodules:\n  - source: %s\n    sha256: %s\n", archivePath, sum)
+			if _, err := fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleInstallSet\nmodules:\n  - source: %s\n    sha256: %s\n", archivePath, sum); err != nil {
+				t.Logf("write bulk install response: %v", err)
+			}
 		case archivePath:
 			w.Header().Set("Content-Length", fmt.Sprint(len(body)))
-			_, _ = w.Write(body)
+			if _, err := w.Write(body); err != nil {
+				t.Logf("write release archive response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 			return
@@ -3453,13 +3461,16 @@ func TestModuleInstallResolvesHTTPSIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var server *httptest.Server
-	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/index.yaml":
-			fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleIndex\nmodules:\n  - name: remote-indexed\n    version: 0.1.0\n    url: remote-indexed.tgz\n    sha256: %s\n", sum)
+			if _, err := fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleIndex\nmodules:\n  - name: remote-indexed\n    version: 0.1.0\n    url: remote-indexed.tgz\n    sha256: %s\n", sum); err != nil {
+				t.Logf("write module index response: %v", err)
+			}
 		case "/remote-indexed.tgz":
-			_, _ = w.Write(body)
+			if _, err := w.Write(body); err != nil {
+				t.Logf("write indexed archive response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -4485,9 +4496,18 @@ func hasOption(definition Definition, name string) bool {
 type fakeWorkspaceService struct{}
 
 func (fakeWorkspaceService) InitWorkspace(context.Context, services.InitWorkspaceRequest) (services.InitWorkspaceResult, error) {
-	id, _ := workspace.NewID("workspace-1")
-	name, _ := workspace.NewName("ops")
-	ws, _ := workspace.New(id, name, ".hovel")
+	id, err := workspace.NewID("workspace-1")
+	if err != nil {
+		return services.InitWorkspaceResult{}, err
+	}
+	name, err := workspace.NewName("ops")
+	if err != nil {
+		return services.InitWorkspaceResult{}, err
+	}
+	ws, err := workspace.New(id, name, ".hovel")
+	if err != nil {
+		return services.InitWorkspaceResult{}, err
+	}
 	return services.InitWorkspaceResult{Workspace: ws, Created: true}, nil
 }
 
@@ -5095,7 +5115,7 @@ func (f fakeRunClientFactory) DialRunClient(socketPath string) (RunClient, error
 	if f.recorder != nil {
 		f.recorder.socketPath = socketPath
 	}
-	return fakeRunClient{recorder: f.recorder}, nil
+	return fakeRunClient(f), nil
 }
 
 type fakeRunClient struct {

@@ -246,13 +246,13 @@ func openDatabase(ctx context.Context, workspacePath, dbPath string) (*sql.DB, e
 	}
 	for _, pragma := range pragmas {
 		if _, err := db.ExecContext(ctx, pragma); err != nil {
-			db.Close()
-			return nil, err
+			closeErr := db.Close()
+			return nil, errors.Join(err, closeErr)
 		}
 	}
 	if err := ApplyMigrations(ctx, db); err != nil {
-		db.Close()
-		return nil, err
+		closeErr := db.Close()
+		return nil, errors.Join(err, closeErr)
 	}
 	return db, nil
 }
@@ -392,7 +392,7 @@ func ListThrowPlans(ctx context.Context, db *sql.DB) ([]commands.ThrowPlanRecord
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { logSQLiteError("close throw plan rows", rows.Close()) }()
 
 	var plans []commands.ThrowPlanRecord
 	for rows.Next() {
@@ -565,7 +565,7 @@ func ListArtifacts(ctx context.Context, db *sql.DB) ([]commands.ArtifactRecord, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { logSQLiteError("close artifact rows", rows.Close()) }()
 
 	var records []commands.ArtifactRecord
 	for rows.Next() {
@@ -637,7 +637,7 @@ func RecordInstalledPayload(ctx context.Context, db *sql.DB, record commands.Ins
 	if err != nil {
 		return commands.InstalledPayloadRecord{}, err
 	}
-	defer tx.Rollback()
+	defer func() { logSQLiteRollback("rollback installed payload transaction", tx.Rollback()) }()
 
 	existing, found, err := findInstalledPayloadIdentity(ctx, tx, record)
 	if err != nil {
@@ -706,7 +706,7 @@ func ListInstalledPayloads(ctx context.Context, db *sql.DB, workspacePath string
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { logSQLiteError("close installed payload rows", rows.Close()) }()
 	var records []commands.InstalledPayloadRecord
 	for rows.Next() {
 		var data string
@@ -762,7 +762,7 @@ func UpdateInstalledPayloadState(ctx context.Context, db *sql.DB, workspacePath,
 	if err != nil {
 		return commands.InstalledPayloadRecord{}, err
 	}
-	defer tx.Rollback()
+	defer func() { logSQLiteRollback("rollback payload state transaction", tx.Rollback()) }()
 
 	record, err := getInstalledPayloadTx(ctx, tx, workspacePath, ref)
 	if err != nil {
@@ -813,7 +813,7 @@ func ListInstalledPayloadEvents(ctx context.Context, db *sql.DB, workspacePath, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { logSQLiteError("close installed payload event rows", rows.Close()) }()
 	var events []commands.InstalledPayloadEvent
 	for rows.Next() {
 		var data string
@@ -869,7 +869,7 @@ func nextInstalledPayloadHandle(ctx context.Context, tx *sql.Tx, workspacePath s
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	defer func() { logSQLiteError("close launch key entity rows", rows.Close()) }()
 	maxHandle := 0
 	for rows.Next() {
 		var handle string
@@ -1089,7 +1089,7 @@ func ListEvents(ctx context.Context, db *sql.DB, filter event.Filter) ([]event.E
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { logSQLiteError("close run log rows", rows.Close()) }()
 	var events []event.Event
 	for rows.Next() {
 		var data string

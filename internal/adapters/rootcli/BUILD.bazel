@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "rootcli",
-    srcs = ["rootcli.go"],
+    srcs = [
+        "logging.go",
+        "rootcli.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/rootcli",
     visibility = ["//visibility:public"],
     deps = [

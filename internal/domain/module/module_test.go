@@ -120,10 +120,22 @@ func TestNewTypeValidation(t *testing.T) {
 }
 
 func TestNewDescriptorRequiresAllFields(t *testing.T) {
-	validID, _ := NewID("mod-001")
-	validName, _ := NewName("ssh-survey")
-	validVersion, _ := NewVersion("0.1.0")
-	validType, _ := NewType("survey")
+	validID, err := NewID("mod-001")
+	if err != nil {
+		t.Fatalf("NewID returned error: %v", err)
+	}
+	validName, err := NewName("ssh-survey")
+	if err != nil {
+		t.Fatalf("NewName returned error: %v", err)
+	}
+	validVersion, err := NewVersion("0.1.0")
+	if err != nil {
+		t.Fatalf("NewVersion returned error: %v", err)
+	}
+	validType, err := NewType("survey")
+	if err != nil {
+		t.Fatalf("NewType returned error: %v", err)
+	}
 
 	desc, err := New(validID, validName, validVersion, validType)
 	if err != nil {

@@ -437,8 +437,8 @@ func TestProviderPayloadCommandCatalogueIsTruthful(t *testing.T) {
 
 func TestRunProcessRunCommandParsesTypedResult(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
+	defer closeTestConn(t, "client connection", clientConn)
+	defer closeTestConn(t, "server connection", serverConn)
 
 	done := make(chan error, 1)
 	go func() {
@@ -480,8 +480,8 @@ func TestRunProcessRunCommandParsesTypedResult(t *testing.T) {
 
 func TestRunProcessRunAsUserCommandParsesTypedResult(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
+	defer closeTestConn(t, "client connection", clientConn)
+	defer closeTestConn(t, "server connection", serverConn)
 
 	done := make(chan error, 1)
 	go func() {
@@ -528,8 +528,8 @@ func slicesContain(values []string, want string) bool {
 
 func TestRunGetfileCommandReturnsBinaryFileArtifact(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
+	defer closeTestConn(t, "client connection", clientConn)
+	defer closeTestConn(t, "server connection", serverConn)
 
 	want := []byte{0x4d, 0x5a, 0x00, 0xff, 0xfe, 0x80}
 	done := make(chan error, 1)
@@ -568,7 +568,11 @@ func TestRunGetfileCommandReturnsBinaryFileArtifact(t *testing.T) {
 	if len(result.Artifacts) != 1 || result.Artifacts[0].Data != "" || result.Artifacts[0].Path == "" {
 		t.Fatalf("artifact = %#v, want file artifact without inline data", result.Artifacts)
 	}
-	t.Cleanup(func() { _ = os.Remove(result.Artifacts[0].Path) })
+	t.Cleanup(func() {
+		if err := os.Remove(result.Artifacts[0].Path); err != nil {
+			t.Logf("remove materialized artifact: %v", err)
+		}
+	})
 	got, err := os.ReadFile(result.Artifacts[0].Path)
 	if err != nil {
 		t.Fatal(err)
@@ -580,8 +584,8 @@ func TestRunGetfileCommandReturnsBinaryFileArtifact(t *testing.T) {
 
 func TestSquatterSessionRunsPayloadCommandOnExistingConnection(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-	defer serverConn.Close()
+	defer closeTestConn(t, "client connection", clientConn)
+	defer closeTestConn(t, "server connection", serverConn)
 
 	session := &squatterSession{client: shell.New(clientConn)}
 	done := make(chan error, 1)
@@ -635,7 +639,9 @@ func TestPlaceholderLPReverseTCPPreparesListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		_, _ = provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "target-1", Reason: "test"})
+		if _, err := provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "target-1", Reason: "test"}); err != nil {
+			t.Logf("cleanup payload: %v", err)
+		}
 	}()
 	if listener.Transport != "squatter/tcp-callback" || listener.Host != "127.0.0.1" || listener.Port == 0 {
 		t.Fatalf("listener = %#v", listener)
@@ -658,14 +664,16 @@ func TestPlaceholderLPReverseTCPAcceptsCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		_, _ = provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "target-1", Reason: "test"})
+		if _, err := provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "target-1", Reason: "test"}); err != nil {
+			t.Logf("cleanup payload: %v", err)
+		}
 	}()
 
 	conn, err := net.Dial("tcp", net.JoinHostPort(listener.Host, strconv.Itoa(listener.Port)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer closeTestConn(t, "connection", conn)
 	if _, err := conn.Write([]byte{'S', 'Q', 'U', 'A', 'T', 'T', 'E', 'R', 0x01, 0x00, 0x00, 0x00}); err != nil {
 		t.Fatal(err)
 	}
@@ -689,7 +697,7 @@ func TestPlaceholderLPTCPBindConnectsProviderOwnedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer closeTestListener(t, listener)
 	accepted := make(chan net.Conn, 1)
 	go func() {
 		conn, err := listener.Accept()
@@ -714,14 +722,16 @@ func TestPlaceholderLPTCPBindConnectsProviderOwnedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		_, _ = provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "127.0.0.1", Reason: "test"})
+		if _, err := provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "127.0.0.1", Reason: "test"}); err != nil {
+			t.Logf("cleanup payload: %v", err)
+		}
 	}()
 	if session.Transport != "squatter/tcp-bind" || session.Kind != "agent" || session.State != "open" {
 		t.Fatalf("session = %#v", session)
 	}
 	select {
 	case conn := <-accepted:
-		conn.Close()
+		closeTestConn(t, "accepted connection", conn)
 	case <-time.After(time.Second):
 		t.Fatal("bind listener did not receive provider connection")
 	}
@@ -732,7 +742,7 @@ func TestPlaceholderLPTCPBindReconnectUsesProviderRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer closeTestListener(t, listener)
 	accepted := make(chan net.Conn, 1)
 	go func() {
 		conn, err := listener.Accept()
@@ -759,14 +769,16 @@ func TestPlaceholderLPTCPBindReconnectUsesProviderRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		_, _ = provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "127.0.0.1", Reason: "test"})
+		if _, err := provider.CleanupPayload(hovel.CleanupPayloadRequest{Target: "127.0.0.1", Reason: "test"}); err != nil {
+			t.Logf("cleanup payload: %v", err)
+		}
 	}()
 	if session.InstalledPayloadID != "p1" || session.Transport != "squatter/tcp-bind" || session.State != "open" {
 		t.Fatalf("session = %#v", session)
 	}
 	select {
 	case conn := <-accepted:
-		conn.Close()
+		closeTestConn(t, "accepted connection", conn)
 	case <-time.After(time.Second):
 		t.Fatal("bind listener did not receive provider connection")
 	}
@@ -857,7 +869,7 @@ func TestPlaceholderLPSMBReconnectUsesProviderRecord(t *testing.T) {
 
 func TestProviderRunOpensPrettyPTYSessionOverJSONRPC(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	defer serverConn.Close()
+	defer closeTestConn(t, "server connection", serverConn)
 
 	lp := newPlaceholderLP()
 	lp.smb = &fakeSMBConnector{conn: clientConn}
@@ -917,7 +929,7 @@ func TestProviderExecuteConnectTCPBindProducesSessionCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer closeTestListener(t, listener)
 	accepted := make(chan net.Conn, 1)
 	go func() {
 		conn, err := listener.Accept()
@@ -956,7 +968,7 @@ func TestProviderExecuteConnectTCPBindProducesSessionCapability(t *testing.T) {
 	}
 	select {
 	case conn := <-accepted:
-		conn.Close()
+		closeTestConn(t, "accepted connection", conn)
 	case <-time.After(time.Second):
 		t.Fatal("bind listener did not receive provider connection")
 	}
@@ -994,7 +1006,7 @@ func TestProviderExecuteTCPCallbackAdoptsAcceptedConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer closeTestConn(t, "connection", conn)
 	if _, err := conn.Write([]byte{'S', 'Q', 'U', 'A', 'T', 'T', 'E', 'R', 0x01, 0x00, 0x00, 0x00}); err != nil {
 		t.Fatal(err)
 	}
@@ -1219,4 +1231,18 @@ func (i *fakeSMBInstaller) InstallSMB(_ hovel.StepExecuteRequest, opts smbInstal
 		return smbInstallResult{}, i.err
 	}
 	return i.result, nil
+}
+
+func closeTestConn(t *testing.T, name string, conn net.Conn) {
+	t.Helper()
+	if err := conn.Close(); err != nil {
+		t.Logf("close %s: %v", name, err)
+	}
+}
+
+func closeTestListener(t *testing.T, listener net.Listener) {
+	t.Helper()
+	if err := listener.Close(); err != nil {
+		t.Logf("close listener: %v", err)
+	}
 }

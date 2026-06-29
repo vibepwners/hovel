@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "chain_file_store.go",
         "commandmode.go",
+        "logging.go",
         "module_check.go",
         "module_install_progress.go",
         "terminal_echo_posix.go",

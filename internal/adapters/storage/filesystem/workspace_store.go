@@ -226,7 +226,7 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 	if err != nil {
 		return commands.ArtifactRecord{}, err
 	}
-	defer source.Close()
+	defer func() { logFilesystemError("close source artifact file", source.Close()) }()
 	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
 		return commands.ArtifactRecord{}, err
 	}
@@ -239,11 +239,11 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 	written, copyErr := io.Copy(io.MultiWriter(temp, hash), source)
 	closeErr := temp.Close()
 	if copyErr != nil {
-		_ = os.Remove(tempPath)
+		logFilesystemError("remove partial artifact temp file", os.Remove(tempPath))
 		return commands.ArtifactRecord{}, copyErr
 	}
 	if closeErr != nil {
-		_ = os.Remove(tempPath)
+		logFilesystemError("remove failed artifact temp file", os.Remove(tempPath))
 		return commands.ArtifactRecord{}, closeErr
 	}
 	sha := hex.EncodeToString(hash.Sum(nil))
@@ -251,11 +251,11 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 	relPath := artifactStoragePath(materialization, artifactID)
 	absPath := filepath.Join(workspacePath, relPath)
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-		_ = os.Remove(tempPath)
+		logFilesystemError("remove unstaged artifact temp file", os.Remove(tempPath))
 		return commands.ArtifactRecord{}, err
 	}
 	if err := os.Rename(tempPath, absPath); err != nil {
-		_ = os.Remove(tempPath)
+		logFilesystemError("remove unrenamed artifact temp file", os.Remove(tempPath))
 		return commands.ArtifactRecord{}, err
 	}
 	createdAt := materialization.CreatedAt

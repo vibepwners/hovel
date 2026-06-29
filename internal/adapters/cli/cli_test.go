@@ -4,18 +4,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 	prompt "github.com/c-bata/go-prompt"
 )
@@ -335,6 +340,45 @@ func TestPositionalSuggestionsUseCurrentOperatorState(t *testing.T) {
 	}
 	if suggestions := app.Suggestions("target config set mock://router-01 target.p"); !containsSuggestion(suggestions, "target.port") {
 		t.Fatalf("target config key suggestions = %#v, missing target.port", suggestions)
+	}
+}
+
+func TestSessionCommandSuggestionsUseDaemonState(t *testing.T) {
+	broker := fakeCompletionSessionBroker{
+		sessions: []run.SessionRef{
+			{ID: "session-closed", Kind: "agent", State: "closed", Target: "mock://old"},
+			{ID: "session-1", Kind: "agent", State: "active", Target: "mock://router-01", Name: "Squatter session"},
+		},
+		commands: []run.PayloadCommand{
+			{Name: "process.list", Summary: "list processes", ReadOnly: true},
+			{Name: "process.run", Summary: "run process", Destructive: true},
+		},
+	}
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{
+		ModuleRunner:   fakeCompletionModuleRunner{},
+		ModuleSessions: broker,
+	})
+	client, err := daemonrpc.Dial(fixture.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := client.Close(); err != nil {
+			t.Logf("close daemon rpc client: %v", err)
+		}
+	}()
+	app := newTestApp().withDaemonSession(context.Background(), client)
+
+	for _, line := range []string{"session call ", "session capabilities "} {
+		if suggestions := app.Suggestions(line); !containsSuggestion(suggestions, "session-1") {
+			t.Fatalf("%q suggestions = %#v, missing session-1", line, suggestions)
+		}
+	}
+	if suggestions := app.Suggestions("session call session-1 "); !containsSuggestion(suggestions, "process.list") {
+		t.Fatalf("session call capability suggestions = %#v, missing process.list", suggestions)
+	}
+	if suggestions := app.Suggestions("session call latest process."); !containsSuggestion(suggestions, "process.list") {
+		t.Fatalf("latest session capability suggestions = %#v, missing process.list", suggestions)
 	}
 }
 
@@ -1032,4 +1076,43 @@ func containsSuggestionDescription(suggestions []prompt.Suggest, want string) bo
 		}
 	}
 	return false
+}
+
+type fakeCompletionModuleRunner struct{}
+
+func (fakeCompletionModuleRunner) Run(context.Context, run.Request) (run.Result, error) {
+	return run.Result{}, errors.New("module runner is not used by completion tests")
+}
+
+type fakeCompletionSessionBroker struct {
+	sessions []run.SessionRef
+	commands []run.PayloadCommand
+}
+
+func (b fakeCompletionSessionBroker) ListSessions(context.Context) ([]run.SessionRef, error) {
+	return append([]run.SessionRef(nil), b.sessions...), nil
+}
+
+func (fakeCompletionSessionBroker) WriteSession(context.Context, string, []byte) error {
+	return nil
+}
+
+func (fakeCompletionSessionBroker) ReadSession(context.Context, string, time.Duration) (run.SessionChunk, error) {
+	return run.SessionChunk{}, nil
+}
+
+func (fakeCompletionSessionBroker) TailSession(context.Context, string, run.SessionTailOptions) (run.SessionChunk, error) {
+	return run.SessionChunk{}, nil
+}
+
+func (fakeCompletionSessionBroker) CloseSession(context.Context, string) error {
+	return nil
+}
+
+func (b fakeCompletionSessionBroker) ListSessionCommands(context.Context, string, run.PayloadCommandListRequest) ([]run.PayloadCommand, error) {
+	return append([]run.PayloadCommand(nil), b.commands...), nil
+}
+
+func (fakeCompletionSessionBroker) RunSessionCommand(context.Context, string, run.PayloadCommandRequest) (run.PayloadCommandResult, error) {
+	return run.PayloadCommandResult{}, nil
 }

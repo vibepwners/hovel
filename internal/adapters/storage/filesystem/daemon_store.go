@@ -102,21 +102,21 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	committed := false
 	defer func() {
 		if !committed {
-			_ = os.Remove(tmpPath)
+			logFilesystemError("remove daemon status temp file", os.Remove(tmpPath))
 		}
 	}()
 
 	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return err
+		closeErr := file.Close()
+		return errors.Join(err, closeErr)
 	}
 	if err := file.Chmod(perm); err != nil {
-		_ = file.Close()
-		return err
+		closeErr := file.Close()
+		return errors.Join(err, closeErr)
 	}
 	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
+		closeErr := file.Close()
+		return errors.Join(err, closeErr)
 	}
 	if err := file.Close(); err != nil {
 		return err

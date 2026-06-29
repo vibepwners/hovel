@@ -358,7 +358,12 @@ func newRPCConn(t *testing.T, module Module) *rpcConn {
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- ServeIO(module, inR, outW); outW.Close() }()
+	go func() {
+		done <- ServeIO(module, inR, outW)
+		if err := outW.Close(); err != nil {
+			t.Logf("close rpc output pipe: %v", err)
+		}
+	}()
 	return &rpcConn{t: t, in: inW, out: bufio.NewReader(outR), done: done}
 }
 
@@ -407,7 +412,11 @@ func (c *rpcConn) readFrame() map[string]any {
 			break
 		}
 		if name, value, ok := strings.Cut(line, ":"); ok && strings.EqualFold(strings.TrimSpace(name), "content-length") {
-			length, _ = strconv.Atoi(strings.TrimSpace(value))
+			var err error
+			length, err = strconv.Atoi(strings.TrimSpace(value))
+			if err != nil {
+				c.t.Fatalf("parse content-length %q: %v", value, err)
+			}
 		}
 	}
 	body := make([]byte, length)
@@ -426,7 +435,9 @@ func (c *rpcConn) close() {
 	if err := <-c.done; err != nil {
 		c.t.Fatalf("serve returned error: %v", err)
 	}
-	c.in.Close()
+	if err := c.in.Close(); err != nil {
+		c.t.Logf("close rpc input pipe: %v", err)
+	}
 }
 
 func TestServePayloadProviderMethods(t *testing.T) {
@@ -444,6 +455,7 @@ func TestServePayloadProviderMethods(t *testing.T) {
 		// Method results that are arrays decode directly through rpcConn as nil
 		// because it expects object results. Exercise object-returning methods
 		// below and keep this call as a dispatch smoke check.
+		t.Log("list_payloads returned a non-object result")
 	}
 
 	resolved := conn.call("resolve_payload", map[string]any{"format": "pe-exe"})
@@ -688,7 +700,10 @@ func readSession(t *testing.T, conn *rpcConn, sessionID string) string {
 	for i := 0; i < 5; i++ {
 		resp := conn.call("session/read", map[string]any{"sessionId": sessionID, "timeoutMs": 200})
 		data, _ := resp["data"].(string)
-		decoded, _ := base64.StdEncoding.DecodeString(data)
+		decoded, err := base64.StdEncoding.DecodeString(data)
+		if err != nil {
+			t.Fatalf("decode session data: %v", err)
+		}
 		builder.Write(decoded)
 		if len(decoded) == 0 {
 			break
@@ -753,7 +768,10 @@ func TestServeSessionReadDoesNotBlockWrite(t *testing.T) {
 			seenRead = true
 			result, _ := message["result"].(map[string]any)
 			data, _ := result["data"].(string)
-			decoded, _ := base64.StdEncoding.DecodeString(data)
+			decoded, err := base64.StdEncoding.DecodeString(data)
+			if err != nil {
+				t.Fatalf("decode pending session data: %v", err)
+			}
 			if len(decoded) == 0 {
 				t.Fatal("pending session/read returned no data after session/write")
 			}
@@ -783,12 +801,20 @@ func responseID(message map[string]any) (int, bool) {
 
 func TestLineShellSessionExit(t *testing.T) {
 	shell := &LineShellSession{Handle: func(string) (string, error) { return "ok", nil }}
-	_ = shell.Open()
-	_ = shell.Write([]byte("exit\n"))
+	if err := shell.Open(); err != nil {
+		t.Fatalf("open shell: %v", err)
+	}
+	if err := shell.Write([]byte("exit\n")); err != nil {
+		t.Fatalf("write shell: %v", err)
+	}
 	if !shell.Closed() {
 		t.Fatal("shell should be closed after exit")
 	}
-	if data, _ := shell.Read(10 * time.Millisecond); len(data) != 0 && !shell.Closed() {
+	data, err := shell.Read(10 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("read shell: %v", err)
+	}
+	if len(data) != 0 && !shell.Closed() {
 		t.Fatalf("unexpected data after close: %q", data)
 	}
 }
@@ -805,7 +831,11 @@ func TestPTYSessionUsesTerminalLineDiscipline(t *testing.T) {
 	if err := session.Open(); err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close("test")
+	t.Cleanup(func() {
+		if err := session.Close("test"); err != nil {
+			t.Logf("close pty session: %v", err)
+		}
+	})
 
 	if err := session.Write([]byte{'a', 'b', 0x7f, 'c', '\n'}); err != nil {
 		t.Fatal(err)
@@ -830,7 +860,7 @@ func TestSessionManagerMarksPTYSessionCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close("test")
+	defer closeTestSession(t, session)
 	if !hasString(ref.Capabilities, CapabilityTerminalPTY) {
 		t.Fatalf("capabilities = %#v, want %q", ref.Capabilities, CapabilityTerminalPTY)
 	}
@@ -854,7 +884,7 @@ func TestPTYSessionUsesSeparateInputOutputHandles(t *testing.T) {
 	if err := session.Open(); err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close("test")
+	defer closeTestSession(t, session)
 
 	output := readPTYSession(t, session)
 	if !strings.Contains(output, "separate handles") {
@@ -871,7 +901,7 @@ func TestPTYSessionDrainsLargeFrontendOutput(t *testing.T) {
 	if err := session.Open(); err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close("test")
+	defer closeTestSession(t, session)
 
 	output := readPTYSessionUntil(t, session, len(payload), 2*time.Second)
 	if len(output) < len(payload) || !strings.Contains(output, "0123456789abcdef") {
@@ -919,4 +949,11 @@ func hasString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func closeTestSession(t *testing.T, session *PTYSession) {
+	t.Helper()
+	if err := session.Close("test"); err != nil {
+		t.Logf("close pty session: %v", err)
+	}
 }
