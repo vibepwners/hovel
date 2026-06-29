@@ -167,6 +167,13 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 				}},
 			}, nil
 		},
+		CommandRunner: func(_ context.Context, input commandRunInput) (commandRunOutput, error) {
+			return commandRunOutput{
+				Args:     append([]string(nil), input.Args...),
+				ExitCode: 0,
+				JSON:     []any{"ok", map[string]any{"nested": true}},
+			}, nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
@@ -209,6 +216,9 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 	names := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
+		if tool.Name == ToolCommandRun {
+			assertCommandRunJSONOutputSchema(t, tool)
+		}
 		if tool.Name == ToolChainApply || tool.Name == ToolCommandRun || tool.Name == ToolThrowPlan || tool.Name == ToolThrowConfirm || tool.Name == ToolThrowStart || tool.Name == ToolSessionCall || tool.Name == ToolPayloadCmd || tool.Name == ToolPayloadCall || tool.Name == ToolPayloadCommandCall {
 			if tool.Annotations == nil || tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || !*tool.Annotations.DestructiveHint {
 				t.Fatalf("tool %s is missing destructive annotations", tool.Name)
@@ -224,6 +234,21 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 	sort.Strings(wantNames)
 	if !reflect.DeepEqual(names, wantNames) {
 		t.Fatalf("tool names = %#v, want %#v", names, wantNames)
+	}
+
+	commandResult, err := session.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name:      ToolCommandRun,
+		Arguments: map[string]any{"args": []string{"status"}},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(%s) returned error: %v", ToolCommandRun, err)
+	}
+	commandOut := decodeStructured[commandRunOutput](t, commandResult)
+	if !commandOut.OK || commandOut.ExitCode != 0 {
+		t.Fatalf("command output = %#v", commandOut)
+	}
+	if values, ok := commandOut.JSON.([]any); !ok || len(values) != 2 || values[0] != "ok" {
+		t.Fatalf("command json = %#v", commandOut.JSON)
 	}
 
 	identityResult, err := session.CallTool(ctx, &mcpsdk.CallToolParams{Name: ToolOperatorIdentity})
@@ -1094,6 +1119,35 @@ func decodeStructured[T any](t *testing.T, result *mcpsdk.CallToolResult) T {
 		t.Fatalf("decode structured content %s: %v", data, err)
 	}
 	return out
+}
+
+func assertCommandRunJSONOutputSchema(t *testing.T, tool *mcpsdk.Tool) {
+	t.Helper()
+	if tool.OutputSchema == nil {
+		t.Fatal("hovel_command_run output schema is nil")
+	}
+	data, err := json.Marshal(tool.OutputSchema)
+	if err != nil {
+		t.Fatalf("marshal command output schema: %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatalf("decode command output schema: %v", err)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("command output schema properties = %#v", schema["properties"])
+	}
+	if _, bad := properties["json"].(bool); bad {
+		t.Fatalf("command output schema json property is a boolean schema: %s", data)
+	}
+	jsonProperty, ok := properties["json"].(map[string]any)
+	if !ok {
+		t.Fatalf("command output schema json property = %#v", properties["json"])
+	}
+	if anyOf, ok := jsonProperty["anyOf"].([]any); !ok || len(anyOf) == 0 {
+		t.Fatalf("command output schema json anyOf = %#v", jsonProperty["anyOf"])
+	}
 }
 
 type fakeDaemon struct {

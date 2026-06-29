@@ -344,10 +344,11 @@ func (s *Server) RegisterTools(server *mcpsdk.Server) {
 		Annotations: destructiveTool("Apply Chain State"),
 	}, s.chainApply)
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
-		Name:        ToolCommandRun,
-		Title:       "Run Hovel Command",
-		Description: "Run one Hovel command-mode command through the daemon-backed MCP operator session. Use this for setup and inspection commands such as op use, chain create, chain add, target add, target config set, chain config set, validate, payloads list for provider-buildable payloads, payloads installed for installed payload records, artifacts list, and chain logs. Pass args without a leading hovel or run.",
-		Annotations: destructiveTool("Run Hovel Command"),
+		Name:         ToolCommandRun,
+		Title:        "Run Hovel Command",
+		Description:  "Run one Hovel command-mode command through the daemon-backed MCP operator session. Use this for setup and inspection commands such as op use, chain create, chain add, target add, target config set, chain config set, validate, payloads list for provider-buildable payloads, payloads installed for installed payload records, artifacts list, and chain logs. Pass args without a leading hovel or run.",
+		Annotations:  destructiveTool("Run Hovel Command"),
+		OutputSchema: commandRunOutputSchema(),
 	}, s.commandRun)
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        ToolThrowPlan,
@@ -698,6 +699,41 @@ type commandRunOutput struct {
 	Stdout    string   `json:"stdout,omitempty"`
 	Stderr    string   `json:"stderr,omitempty"`
 	JSON      any      `json:"json,omitempty"`
+}
+
+func commandRunOutputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"args": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"type": "string"},
+			},
+			"operation": map[string]any{"type": "string"},
+			"chain":     map[string]any{"type": "string"},
+			"exitCode":  map[string]any{"type": "integer"},
+			"ok":        map[string]any{"type": "boolean"},
+			"stdout":    map[string]any{"type": "string"},
+			"stderr":    map[string]any{"type": "string"},
+			"json":      anyJSONValueSchema("Decoded JSON from stdout when the command emits valid JSON."),
+		},
+		"required":             []string{"args", "exitCode", "ok"},
+		"additionalProperties": false,
+	}
+}
+
+func anyJSONValueSchema(description string) map[string]any {
+	return map[string]any{
+		"description": description,
+		"anyOf": []any{
+			map[string]any{"type": "object"},
+			map[string]any{"type": "array"},
+			map[string]any{"type": "string"},
+			map[string]any{"type": "number"},
+			map[string]any{"type": "boolean"},
+			map[string]any{"type": "null"},
+		},
+	}
 }
 
 type chainApplyOutput struct {
