@@ -24,6 +24,7 @@ import (
 type Client struct {
 	conn io.ReadWriteCloser
 	r    *bufio.Reader
+	mu   sync.Mutex
 	sid  uint64
 }
 
@@ -31,7 +32,22 @@ func New(conn io.ReadWriteCloser) *Client {
 	return &Client{conn: conn, r: bufio.NewReader(conn)}
 }
 
-func (c *Client) nextSID() uint64 { c.sid++; return c.sid }
+func (c *Client) nextSID() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.nextSIDLocked()
+}
+
+func (c *Client) nextSIDLocked() uint64 { c.sid++; return c.sid }
+
+// WithLockedTransport gives callers exclusive access to the Squatter frame
+// transport. It lets Hovel run typed session tasks over the existing connection
+// without interleaving frames with the interactive prompt.
+func (c *Client) WithLockedTransport(fn func(conn io.Writer, reader *bufio.Reader, sid uint64) error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return fn(c.conn, c.r, c.nextSIDLocked())
+}
 
 func emit(out io.Writer, payload []byte) error {
 	if err := writeFully(out, payload); err != nil {
@@ -78,6 +94,11 @@ func (c *Client) Run(in io.Reader, out io.Writer) {
 	fmt.Fprintln(out, "squatter shell -- run a module: <name> [args...]   (e.g. 'echo a b')")
 	fmt.Fprintln(out, "  echo <args...>                  open the echo module (interactive)")
 	fmt.Fprintln(out, "  cmd [command...]                open cmd.exe, or run one command through cmd.exe /c")
+	fmt.Fprintln(out, "  wininfo                         collect native Windows host facts")
+	fmt.Fprintln(out, "  process.list                    list processes")
+	fmt.Fprintln(out, "  process.run <command> [ms]      run a process with typed exit metadata")
+	fmt.Fprintln(out, "  process.run_as_user <command>   launch a process with an interactive user token")
+	fmt.Fprintln(out, "  payload.status                  show Squatter lifecycle status")
 	fmt.Fprintln(out, "  getfile <remote> [local]        download a file (fixed memory)")
 	fmt.Fprintln(out, "  putfile <local> <remote>        upload a file (fixed memory)")
 	fmt.Fprintln(out, "  quit                            exit; inside a module, Ctrl-D detaches")
@@ -134,6 +155,8 @@ func (c *Client) RunPromptIO(input *os.File, output io.Writer, title string) {
 
 // RunDemo executes the scripted echo walkthrough used by squatterctl.
 func (c *Client) RunDemo(out io.Writer) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if err := c.openStream(1, "echo", []string{"alpha", "beta", "gamma"}); err != nil {
 		fmt.Fprintf(out, "[open failed: %v]\n", err)
 		return
@@ -172,6 +195,8 @@ func (c *Client) RunDemo(out io.Writer) {
 
 // RunStreams runs the parallel stream smoke mode used by squatterctl.
 func (c *Client) RunStreams(out io.Writer, n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for s := 0; s < n; s++ {
 		_ = c.openStream(uint64(100+s), "echo", []string{fmt.Sprintf("task%d", s)})
 	}
@@ -192,6 +217,12 @@ func (c *Client) RunStreams(out io.Writer, n int) {
 }
 
 func (c *Client) runCommand(out io.Writer, sid uint64, module string, args []string, in *bufio.Reader) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.runCommandLocked(out, sid, module, args, in)
+}
+
+func (c *Client) runCommandLocked(out io.Writer, sid uint64, module string, args []string, in *bufio.Reader) bool {
 	start := c.startStream(out, sid, module, args)
 	if !start.alive || !start.active {
 		return start.alive
@@ -475,6 +506,12 @@ func moduleArgsFromLine(line string, parts []string) (string, []string) {
 }
 
 func (c *Client) cmdGetfile(out io.Writer, sid uint64, args []string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cmdGetfileLocked(out, sid, args)
+}
+
+func (c *Client) cmdGetfileLocked(out io.Writer, sid uint64, args []string) bool {
 	if len(args) < 1 {
 		fmt.Fprintln(out, "usage: getfile <remote-path> [local-path]")
 		return true
@@ -503,6 +540,12 @@ func (c *Client) cmdGetfile(out io.Writer, sid uint64, args []string) bool {
 }
 
 func (c *Client) cmdPutfile(out io.Writer, sid uint64, args []string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cmdPutfileLocked(out, sid, args)
+}
+
+func (c *Client) cmdPutfileLocked(out io.Writer, sid uint64, args []string) bool {
 	if len(args) < 2 {
 		fmt.Fprintln(out, "usage: putfile <local-path> <remote-path>")
 		return true
@@ -540,6 +583,7 @@ type interactiveShell struct {
 	active   string
 	activeID uint64
 	raw      bool
+	locked   bool
 }
 
 type promptTerminal interface {
@@ -753,21 +797,25 @@ func (s *interactiveShell) execute(line string) {
 		_ = s.client.cmdPutfile(s.output(), sid, parts[1:])
 	default:
 		module, args := moduleArgsFromLine(line, parts)
+		s.client.mu.Lock()
 		start := s.client.startStream(s.output(), sid, module, args)
 		if !start.alive {
+			s.client.mu.Unlock()
 			s.done = true
 			return
 		}
 		if !start.active {
+			s.client.mu.Unlock()
 			return
 		}
 		if start.raw && s.input != nil {
 			if !s.client.attachTerminal(s.input, s.output(), sid) {
 				s.done = true
 			}
+			s.client.mu.Unlock()
 			return
 		}
-		s.setActive(module, sid, start.raw)
+		s.setActive(module, sid, start.raw, true)
 	}
 }
 
@@ -781,6 +829,7 @@ func (s *interactiveShell) executeActive(line string) {
 	case "quit", "exit":
 		_ = wire.WriteFrame(s.client.conn, wire.KindClose, activeID, nil)
 		s.done = true
+		s.clearActive()
 		return
 	}
 	payload := []byte(line)
@@ -790,6 +839,7 @@ func (s *interactiveShell) executeActive(line string) {
 	if err := wire.WriteFrame(s.client.conn, wire.KindData, activeID, payload); err != nil {
 		fmt.Fprintln(s.output(), errorStyle().Render("[disconnected]"))
 		s.done = true
+		s.clearActive()
 		return
 	}
 	if raw {
@@ -808,20 +858,26 @@ func (s *interactiveShell) complete(document prompt.Document) []prompt.Suggest {
 	return Suggestions(active, document.TextBeforeCursor())
 }
 
-func (s *interactiveShell) setActive(module string, sid uint64, raw bool) {
+func (s *interactiveShell) setActive(module string, sid uint64, raw bool, locked bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.active = module
 	s.activeID = sid
 	s.raw = raw
+	s.locked = locked
 }
 
 func (s *interactiveShell) clearActive() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := s.locked
 	s.active = ""
 	s.activeID = 0
 	s.raw = false
+	s.locked = false
+	s.mu.Unlock()
+	if locked {
+		s.client.mu.Unlock()
+	}
 }
 
 func (s *interactiveShell) activeState() (string, uint64, bool) {
@@ -836,6 +892,12 @@ func (s *interactiveShell) printHelp() {
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	fmt.Fprintln(out, style.Render("commands"))
 	fmt.Fprintln(out, "  cmd [command...]          "+muted.Render("open cmd.exe, or run through cmd.exe /c"))
+	fmt.Fprintln(out, "  wininfo                   "+muted.Render("collect native Windows host facts"))
+	fmt.Fprintln(out, "  process.list              "+muted.Render("list processes"))
+	fmt.Fprintln(out, "  process.run <cmd> [ms]    "+muted.Render("run a process with exit metadata"))
+	fmt.Fprintln(out, "  process.run_as_user <command> "+muted.Render("launch with an interactive user token"))
+	fmt.Fprintln(out, "  payload.status            "+muted.Render("show Squatter lifecycle status"))
+	fmt.Fprintln(out, "  payload.cleanup           "+muted.Render("request Squatter self-cleanup"))
 	fmt.Fprintln(out, "  echo <args...>            "+muted.Render("open the echo module"))
 	fmt.Fprintln(out, "  getfile <remote> [local]  "+muted.Render("download from target"))
 	fmt.Fprintln(out, "  putfile <local> <remote>  "+muted.Render("upload to target"))
@@ -1181,6 +1243,33 @@ func Suggestions(activeModule, line string) []prompt.Suggest {
 			{Text: "hostname", Description: "print target host name"},
 			{Text: "echo hello", Description: "small output smoke test"},
 		}, prefix)
+	case "process.run":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: "hostname", Description: "small process smoke test"},
+			{Text: "ipconfig /all", Description: "network configuration"},
+			{Text: "10000", Description: "timeout in milliseconds"},
+		}, prefix)
+	case "process.run_as_user":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: `C:\WINDOWS\explorer.exe`, Description: "restart Explorer on the interactive desktop"},
+			{Text: `C:\WINDOWS\system32\notepad.exe`, Description: "small desktop process smoke test"},
+			{Text: `C:\WINDOWS`, Description: "optional working directory"},
+		}, prefix)
+	case "file.stat":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: `C:\Windows\System32\cmd.exe`, Description: "common system binary"},
+			{Text: `C:\boot.ini`, Description: "small XP-era smoke-test file"},
+		}, prefix)
+	case "registry.query":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: "HKLM", Description: "local machine hive"},
+			{Text: `SOFTWARE\Microsoft\Windows NT\CurrentVersion`, Description: "Windows version key"},
+		}, prefix)
+	case "eventlog.query":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: "System", Description: "system event log"},
+			{Text: "Application", Description: "application event log"},
+		}, prefix)
 	default:
 		return nil
 	}
@@ -1192,6 +1281,18 @@ func topLevelSuggestions() []prompt.Suggest {
 		{Text: "echo", Description: "open the echo module"},
 		{Text: "getfile", Description: "download a file from target"},
 		{Text: "putfile", Description: "upload a file to target"},
+		{Text: "wininfo", Description: "collect native Windows host facts"},
+		{Text: "process.list", Description: "list processes"},
+		{Text: "process.run", Description: "run process with typed exit metadata"},
+		{Text: "process.run_as_user", Description: "launch process with an interactive user token"},
+		{Text: "payload.status", Description: "show Squatter lifecycle status"},
+		{Text: "payload.cleanup", Description: "request Squatter self-cleanup"},
+		{Text: "file.stat", Description: "stat and hash a file"},
+		{Text: "registry.query", Description: "query a registry value"},
+		{Text: "eventlog.query", Description: "read recent event log records"},
+		{Text: "drive.list", Description: "list logical drives"},
+		{Text: "share.list", Description: "list local shares"},
+		{Text: "acl.stat", Description: "return SDDL for a path"},
 		{Text: "help", Description: "show command summary"},
 		{Text: "quit", Description: "close squatterctl"},
 		{Text: "exit", Description: "close squatterctl"},

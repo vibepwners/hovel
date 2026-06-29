@@ -471,6 +471,7 @@ func (a App) groupParser(prefix []string) *argparse.Parser {
 type commandParserBindings struct {
 	positionals map[string]*string
 	options     map[string]*string
+	optionLists map[string]*[]string
 	flags       map[string]*bool
 }
 
@@ -479,6 +480,7 @@ func commandParser(definition commands.Definition) (*argparse.Parser, commandPar
 	bindings := commandParserBindings{
 		positionals: make(map[string]*string, len(definition.Positionals)),
 		options:     make(map[string]*string),
+		optionLists: make(map[string]*[]string),
 		flags:       make(map[string]*bool),
 	}
 	for _, positional := range definition.Positionals {
@@ -495,6 +497,8 @@ func commandParser(definition commands.Definition) (*argparse.Parser, commandPar
 		switch option.Kind {
 		case commands.OptionBool:
 			bindings.flags[option.Name] = parser.Flag(option.Short, option.Name, options)
+		case commands.OptionStringList:
+			bindings.optionLists[option.Name] = parser.StringList(option.Short, option.Name, options)
 		default:
 			bindings.options[option.Name] = parser.String(option.Short, option.Name, options)
 		}
@@ -512,6 +516,7 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, bi
 	invocation := commands.Invocation{
 		Positionals: map[string]string{},
 		Options:     map[string]string{},
+		OptionLists: map[string][]string{},
 		Flags:       map[string]bool{},
 	}
 	for _, positional := range definition.Positionals {
@@ -521,6 +526,8 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, bi
 		switch option.Kind {
 		case commands.OptionBool:
 			invocation.Flags[option.Name] = *bindings.flags[option.Name]
+		case commands.OptionStringList:
+			invocation.OptionLists[option.Name] = append([]string(nil), *bindings.optionLists[option.Name]...)
 		default:
 			invocation.Options[option.Name] = strings.TrimSpace(*bindings.options[option.Name])
 		}
@@ -996,7 +1003,9 @@ func (s payloadProviderService) RunPayloadCommand(ctx context.Context, record co
 	base.InputData = request.InputData
 	base.InputEncoding = request.InputEncoding
 	if request.Config != nil {
-		base.Config = cloneStringMap(request.Config)
+		for key, value := range request.Config {
+			base.Config[key] = value
+		}
 	}
 	if request.Reconnect != nil {
 		base.Reconnect = request.Reconnect
@@ -1211,6 +1220,24 @@ func (c daemonRunClient) WriteSession(ctx context.Context, sessionID string, dat
 
 func (c daemonRunClient) CloseSession(ctx context.Context, sessionID string) error {
 	return c.client.CloseSession(ctx, sessionID)
+}
+
+func (c daemonRunClient) ListSessionCommands(ctx context.Context, sessionID string, req commands.RunSessionCommandListRequest) ([]commands.PayloadCommand, error) {
+	resp, err := c.client.ListSessionCommands(ctx, daemonrpc.SessionCommandListRequest{
+		SessionID: sessionID,
+		Request:   req,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append([]commands.PayloadCommand(nil), resp.Commands...), nil
+}
+
+func (c daemonRunClient) RunSessionCommand(ctx context.Context, req commands.RunSessionCommandRunRequest) (commands.PayloadCommandResult, error) {
+	return c.client.RunSessionCommand(ctx, daemonrpc.SessionCommandRunRequest{
+		SessionID: req.SessionID,
+		Request:   req.Request,
+	})
 }
 
 func findingsFromRPC(findings []daemonrpc.Finding) []commands.Finding {

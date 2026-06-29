@@ -2018,6 +2018,46 @@ func (b *SessionBroker) CloseSession(ctx context.Context, sessionID string) erro
 	return callErr
 }
 
+func (b *SessionBroker) ListSessionCommands(ctx context.Context, sessionID string, request run.PayloadCommandListRequest) ([]run.PayloadCommand, error) {
+	session, err := b.lookup(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	values, err := session.process.client.call(ctx, "session.command.list", map[string]any{
+		"sessionId": sessionID,
+		"request":   request,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var decoded struct {
+		Commands []run.PayloadCommand `json:"commands"`
+	}
+	if err := decodeRPCMap(values, &decoded); err != nil {
+		return nil, services.NewModuleExecutionFailure("module returned invalid session command list", err)
+	}
+	return decoded.Commands, nil
+}
+
+func (b *SessionBroker) RunSessionCommand(ctx context.Context, sessionID string, request run.PayloadCommandRequest) (run.PayloadCommandResult, error) {
+	session, err := b.lookup(sessionID)
+	if err != nil {
+		return run.PayloadCommandResult{}, err
+	}
+	values, err := session.process.client.call(ctx, "session.command.run", map[string]any{
+		"sessionId": sessionID,
+		"request":   request,
+	})
+	if err != nil {
+		return run.PayloadCommandResult{}, err
+	}
+	var decoded run.PayloadCommandResult
+	if err := decodeRPCMap(values, &decoded); err != nil {
+		return run.PayloadCommandResult{}, services.NewModuleExecutionFailure("module returned invalid session command result", err)
+	}
+	return decoded, nil
+}
+
 func (b *SessionBroker) adopt(process *moduleProcess, sessions []run.SessionRef) {
 	b.mu.Lock()
 	if b.sessions == nil {

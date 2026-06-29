@@ -28,8 +28,14 @@
 #define WIN32_LEAN_AND_MEAN 1 /* Drop GDI/OLE/etc. we never touch. */
 #endif
 
+#include <aclapi.h>   /* GetNamedSecurityInfoW */
+#include <iphlpapi.h> /* GetAdaptersInfo */
+#include <lm.h>       /* NetShareEnum */
 #include <mswsock.h>  /* AcceptEx, GetAcceptExSockaddrs, the WSAID_* GUIDs */
+#include <sddl.h>     /* SDDL conversion */
 #include <shlwapi.h>  /* wnsprintf/wvnsprintf: bounded, CRT-free formatting */
+#include <tlhelp32.h> /* process snapshots */
+#include <wincrypt.h> /* CryptoAPI hashing */
 #include <windows.h>  /* CreateIoCompletionPort, threads, handles */
 #include <winsock2.h> /* must be first */
 #include <ws2tcpip.h> /* getaddrinfo, getnameinfo, IPv6 sockaddr */

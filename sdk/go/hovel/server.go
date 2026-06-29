@@ -125,6 +125,10 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.sessionRead(params)
 	case "session/close":
 		return s.sessionClose(params)
+	case "session.command.list":
+		return s.sessionCommandList(params)
+	case "session.command.run":
+		return s.sessionCommandRun(params)
 	case "shutdown":
 		s.sessions.closeAll("shutdown")
 		return map[string]any{"status": "ok"}, nil
@@ -490,6 +494,32 @@ func (s *server) sessionClose(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"status": "ok"}, nil
+}
+
+func (s *server) sessionCommandList(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string                    `json:"sessionId"`
+		Request   PayloadCommandListRequest `json:"request"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+	commands, err := s.sessions.listCommands(p.SessionID, p.Request)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"commands": commands}, nil
+}
+
+func (s *server) sessionCommandRun(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string                `json:"sessionId"`
+		Request   PayloadCommandRequest `json:"request"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+	return s.sessions.runCommand(p.SessionID, p.Request)
 }
 
 func (s *server) emitLog(record logRecord) {

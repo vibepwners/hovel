@@ -317,6 +317,8 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[SessionTailRequest, SessionChunk](mux, "TailSession", rpcServer.tailSessionRPC)
 	registerUnary[SessionWriteRequest, EmptyResponse](mux, "WriteSession", rpcServer.writeSessionRPC)
 	registerUnary[SessionCloseRequest, EmptyResponse](mux, "CloseSession", rpcServer.closeSessionRPC)
+	registerUnary[SessionCommandListRequest, SessionCommandListResponse](mux, "ListSessionCommands", rpcServer.listSessionCommandsRPC)
+	registerUnary[SessionCommandRunRequest, SessionCommandRunResponse](mux, "RunSessionCommand", rpcServer.runSessionCommandRPC)
 	registerUnary[OperationRequest, EmptyResponse](mux, "CreateOperation", rpcServer.createOperationRPC)
 	registerUnary[OperationRequest, EmptyResponse](mux, "UseOperation", rpcServer.useOperationRPC)
 	registerUnary[ChainRequest, EmptyResponse](mux, "CreateChain", rpcServer.createChainRPC)
@@ -514,6 +516,22 @@ type SessionCloseRequest struct {
 	SessionID string
 }
 
+type SessionCommandListRequest struct {
+	SessionID string                        `json:"sessionId"`
+	Request   run.PayloadCommandListRequest `json:"request"`
+}
+
+type SessionCommandListResponse struct {
+	Commands []run.PayloadCommand `json:"commands"`
+}
+
+type SessionCommandRunRequest struct {
+	SessionID string                    `json:"sessionId"`
+	Request   run.PayloadCommandRequest `json:"request"`
+}
+
+type SessionCommandRunResponse = run.PayloadCommandResult
+
 type ListSessionsResponse struct {
 	Sessions []SessionRef
 }
@@ -646,6 +664,48 @@ func (s *Server) closeSessionRPC(ctx context.Context, req SessionCloseRequest) (
 		return EmptyResponse{}, errors.New("session broker is not configured")
 	}
 	return EmptyResponse{}, s.moduleSessions.CloseSession(ctx, req.SessionID)
+}
+
+func (s Server) ListSessionCommands(req SessionCommandListRequest, resp *SessionCommandListResponse) error {
+	if s.moduleSessions == nil {
+		return errors.New("session broker is not configured")
+	}
+	commands, err := s.moduleSessions.ListSessionCommands(context.Background(), req.SessionID, req.Request)
+	if err != nil {
+		return err
+	}
+	resp.Commands = commands
+	return nil
+}
+
+func (s *Server) listSessionCommandsRPC(ctx context.Context, req SessionCommandListRequest) (SessionCommandListResponse, error) {
+	if s.moduleSessions == nil {
+		return SessionCommandListResponse{}, errors.New("session broker is not configured")
+	}
+	commands, err := s.moduleSessions.ListSessionCommands(ctx, req.SessionID, req.Request)
+	if err != nil {
+		return SessionCommandListResponse{}, err
+	}
+	return SessionCommandListResponse{Commands: commands}, nil
+}
+
+func (s Server) RunSessionCommand(req SessionCommandRunRequest, resp *SessionCommandRunResponse) error {
+	if s.moduleSessions == nil {
+		return errors.New("session broker is not configured")
+	}
+	result, err := s.moduleSessions.RunSessionCommand(context.Background(), req.SessionID, req.Request)
+	if err != nil {
+		return err
+	}
+	*resp = result
+	return nil
+}
+
+func (s *Server) runSessionCommandRPC(ctx context.Context, req SessionCommandRunRequest) (SessionCommandRunResponse, error) {
+	if s.moduleSessions == nil {
+		return SessionCommandRunResponse{}, errors.New("session broker is not configured")
+	}
+	return s.moduleSessions.RunSessionCommand(ctx, req.SessionID, req.Request)
 }
 
 type ChainRequest struct {
@@ -1625,6 +1685,14 @@ func (c *Client) WriteSession(ctx context.Context, sessionID string, data []byte
 func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
 	_, err := invoke[SessionCloseRequest, EmptyResponse](c, ctx, "CloseSession", SessionCloseRequest{SessionID: sessionID})
 	return err
+}
+
+func (c *Client) ListSessionCommands(ctx context.Context, req SessionCommandListRequest) (SessionCommandListResponse, error) {
+	return invoke[SessionCommandListRequest, SessionCommandListResponse](c, ctx, "ListSessionCommands", req)
+}
+
+func (c *Client) RunSessionCommand(ctx context.Context, req SessionCommandRunRequest) (SessionCommandRunResponse, error) {
+	return invoke[SessionCommandRunRequest, SessionCommandRunResponse](c, ctx, "RunSessionCommand", req)
 }
 
 func (c *Client) PollLogs(ctx context.Context, since uint64) (PollLogsResponse, error) {

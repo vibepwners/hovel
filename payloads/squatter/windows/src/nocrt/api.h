@@ -31,6 +31,7 @@ typedef WORD ATOM;
 typedef unsigned long DWORD;
 typedef long LONG;
 typedef unsigned int UINT;
+typedef unsigned long ULONG;
 typedef uintptr_t UINT_PTR;
 typedef uintptr_t ULONG_PTR;
 typedef intptr_t LONG_PTR;
@@ -61,15 +62,23 @@ typedef CHAR *LPSTR;
 typedef const CHAR *LPCSTR;
 typedef BYTE *LPBYTE;
 typedef DWORD *LPDWORD;
+typedef DWORD *PDWORD;
 typedef LONG *LPLONG;
+typedef ULONG *PULONG;
 typedef ULONG_PTR SIZE_T;
 typedef LONG_PTR SSIZE_T;
+typedef DWORD LSTATUS;
+typedef DWORD REGSAM;
+typedef DWORD NET_API_STATUS;
+typedef DWORD SECURITY_INFORMATION;
+typedef unsigned int ALG_ID;
 
 typedef struct _FILETIME
 {
         DWORD dwLowDateTime;
         DWORD dwHighDateTime;
 } FILETIME;
+typedef FILETIME *PFILETIME;
 
 typedef struct _SYSTEMTIME
 {
@@ -104,7 +113,64 @@ typedef struct _OVERLAPPED OVERLAPPED;
 typedef OVERLAPPED *LPOVERLAPPED;
 typedef struct _STARTUPINFOW STARTUPINFOW;
 typedef struct _PROCESS_INFORMATION PROCESS_INFORMATION;
+typedef struct _SYSTEM_INFO SYSTEM_INFO;
+typedef SYSTEM_INFO *LPSYSTEM_INFO;
+typedef struct _OSVERSIONINFOW OSVERSIONINFOW;
+typedef OSVERSIONINFOW *LPOSVERSIONINFOW;
+typedef struct tagPROCESSENTRY32W PROCESSENTRY32W;
+typedef PROCESSENTRY32W *LPPROCESSENTRY32W;
 typedef struct _EXCEPTION_POINTERS EXCEPTION_POINTERS;
+typedef int COMPUTER_NAME_FORMAT;
+typedef int GET_FILEEX_INFO_LEVELS;
+typedef HANDLE *PHANDLE;
+typedef HANDLE HKEY;
+typedef HKEY *PHKEY;
+typedef HANDLE HCRYPTPROV;
+typedef HANDLE HCRYPTHASH;
+typedef HANDLE HCRYPTKEY;
+typedef struct _IP_ADAPTER_INFO IP_ADAPTER_INFO;
+typedef IP_ADAPTER_INFO *PIP_ADAPTER_INFO;
+typedef void *PSECURITY_DESCRIPTOR;
+typedef void *PSID;
+typedef void *PACL;
+typedef enum _SE_OBJECT_TYPE
+{
+        SQ_SE_UNKNOWN_OBJECT_TYPE = 0,
+        SQ_SE_FILE_OBJECT = 1,
+} SE_OBJECT_TYPE;
+typedef enum _TOKEN_INFORMATION_CLASS
+{
+        SQ_TokenPrivileges = 3,
+} TOKEN_INFORMATION_CLASS;
+typedef enum _TOKEN_TYPE
+{
+        SQ_TokenPrimary = 1,
+        SQ_TokenImpersonation = 2,
+} TOKEN_TYPE;
+typedef enum _SECURITY_IMPERSONATION_LEVEL
+{
+        SQ_SecurityAnonymous = 0,
+        SQ_SecurityIdentification = 1,
+        SQ_SecurityImpersonation = 2,
+        SQ_SecurityDelegation = 3,
+} SECURITY_IMPERSONATION_LEVEL;
+typedef struct _LUID
+{
+        DWORD LowPart;
+        LONG HighPart;
+} LUID;
+typedef LUID *PLUID;
+typedef struct _LUID_AND_ATTRIBUTES
+{
+        LUID Luid;
+        DWORD Attributes;
+} LUID_AND_ATTRIBUTES;
+typedef struct _TOKEN_PRIVILEGES
+{
+        DWORD PrivilegeCount;
+        LUID_AND_ATTRIBUTES Privileges[1];
+} TOKEN_PRIVILEGES;
+typedef TOKEN_PRIVILEGES *PTOKEN_PRIVILEGES;
 typedef long(WINAPI *PTOP_LEVEL_EXCEPTION_FILTER)(EXCEPTION_POINTERS *);
 typedef BOOL(WINAPI *PHANDLER_ROUTINE)(DWORD);
 typedef DWORD(WINAPI *LPTHREAD_START_ROUTINE)(LPVOID);

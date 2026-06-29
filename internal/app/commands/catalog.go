@@ -66,6 +66,8 @@ type RunClient interface {
 	TailSession(context.Context, string, SessionTailOptions) (SessionChunk, error)
 	WriteSession(context.Context, string, []byte) error
 	CloseSession(context.Context, string) error
+	ListSessionCommands(context.Context, string, RunSessionCommandListRequest) ([]PayloadCommand, error)
+	RunSessionCommand(context.Context, RunSessionCommandRunRequest) (PayloadCommandResult, error)
 }
 
 type RunLogPoller interface {
@@ -239,6 +241,7 @@ type RunMockExploitRequest struct {
 }
 
 type RunPayloadCommandListRequest = run.PayloadCommandListRequest
+type RunSessionCommandListRequest = run.PayloadCommandListRequest
 type GeneratePayloadRequest = run.GeneratePayloadRequest
 type PayloadArtifactSet = run.PayloadArtifactSet
 type PayloadArtifact = run.PayloadArtifact
@@ -247,6 +250,11 @@ type RunPayloadCommandRunRequest struct {
 	Operation string
 	Chain     string
 	ModuleID  string
+	Request   run.PayloadCommandRequest
+}
+
+type RunSessionCommandRunRequest struct {
+	SessionID string
 	Request   run.PayloadCommandRequest
 }
 
@@ -1096,8 +1104,8 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"payloads", "commands"},
-			Aliases: [][]string{{"payload", "commands"}},
-			Summary: "List provider-owned commands for an installed payload.",
+			Aliases: [][]string{{"payload", "commands"}, {"payloads", "capabilities"}, {"payload", "capabilities"}},
+			Summary: "List provider-owned payload capabilities for an installed payload.",
 			Positionals: []Positional{
 				{Name: "payload", Help: "Payload handle or record ID", Required: true},
 			},
@@ -1106,6 +1114,25 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: payloadsCommandsHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"payloads", "call"},
+			Aliases: [][]string{{"payload", "call"}, {"payloads", "command"}, {"payload", "command"}},
+			Summary: "Call a provider-owned payload capability outside an interactive session.",
+			Positionals: []Positional{
+				{Name: "payload", Help: "Payload handle or record ID", Required: true},
+				{Name: "capability", Help: "Provider capability or command name", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringListOption("arg", "a", "Capability argument; repeat for multiple args"),
+				stringListOption("set", "s", "Request config override as key=value; repeat for multiple values"),
+				stringOption("input-file", "", "Local file path to pass as provider input"),
+				stringOption("input-data", "", "Inline provider input data"),
+				stringOption("input-encoding", "", "Encoding for inline input data"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: payloadsCallHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"payloads", "getfile"},
@@ -1375,11 +1402,49 @@ func HovelRegistry(runtime Runtime) Registry {
 			},
 			Handler: sessionCloseHandler(runtime),
 		},
+		Definition{
+			Path:           []string{"session", "commands"},
+			Aliases:        [][]string{{"sessions", "commands"}, {"session", "capabilities"}, {"sessions", "capabilities"}},
+			Summary:        "List typed capabilities exposed by an active session.",
+			RequiresDaemon: true,
+			Positionals: []Positional{
+				{Name: "session", Help: "Session ID", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: sessionCommandsHandler(runtime),
+		},
+		Definition{
+			Path:           []string{"session", "call"},
+			Aliases:        [][]string{{"sessions", "call"}, {"session", "command"}, {"sessions", "command"}},
+			Summary:        "Call a typed session capability without using the interactive byte stream.",
+			RequiresDaemon: true,
+			Positionals: []Positional{
+				{Name: "session", Help: "Session ID", Required: true},
+				{Name: "capability", Help: "Session capability or command name", Required: true},
+			},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				stringListOption("arg", "a", "Capability argument; repeat for multiple args"),
+				stringListOption("set", "s", "Request config override as key=value; repeat for multiple values"),
+				stringOption("input-file", "", "Local file path to pass as provider input"),
+				stringOption("input-data", "", "Inline provider input data"),
+				stringOption("input-encoding", "", "Encoding for inline input data"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: sessionCallHandler(runtime),
+		},
 	)...)
 }
 
 func stringOption(name, short, help string) Option {
 	return Option{Name: name, Short: short, Help: help, Kind: OptionString}
+}
+
+func stringListOption(name, short, help string) Option {
+	return Option{Name: name, Short: short, Help: help, Kind: OptionStringList}
 }
 
 func boolOption(name, short, help string) Option {

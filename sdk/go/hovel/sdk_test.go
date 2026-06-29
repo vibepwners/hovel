@@ -38,12 +38,12 @@ func (m fakeModule) Run(ctx *Context) (Result, error) {
 	ctx.Log.Info("running", "target", ctx.Target)
 	host := ctx.InputString("target.host", ctx.Target)
 	if m.withSession {
-		shell := &LineShellSession{Prompt: "mock$ ", Echo: true, Handle: func(command string) (string, error) {
+		shell := &fakeCommandSession{LineShellSession: &LineShellSession{Prompt: "mock$ ", Echo: true, Handle: func(command string) (string, error) {
 			if command == "whoami" {
 				return "mock-operator", nil
 			}
 			return "unknown: " + command, nil
-		}}
+		}}}
 		ref, err := ctx.OpenSession(shell, WithName("mock shell"), WithCapabilities("read", "write", "exec", "close"))
 		if err != nil {
 			return Result{}, err
@@ -56,6 +56,23 @@ func (m fakeModule) Run(ctx *Context) (Result, error) {
 		WithFindings(Finding{Title: "reachable", Severity: "info"}),
 		WithArtifacts(TextArtifact("note.txt", "hi")),
 	), nil
+}
+
+type fakeCommandSession struct {
+	*LineShellSession
+}
+
+func (s *fakeCommandSession) ListPayloadCommands(PayloadCommandListRequest) ([]PayloadCommand, error) {
+	return []PayloadCommand{{Name: "session.info", Summary: "return mock session facts", ReadOnly: true}}, nil
+}
+
+func (s *fakeCommandSession) RunPayloadCommand(req PayloadCommandRequest) (PayloadCommandResult, error) {
+	return PayloadCommandResult{
+		Command: req.Command,
+		Summary: "session command completed",
+		Stdout:  "mock session info",
+		Fields:  map[string]string{"args": strings.Join(req.Args, ",")},
+	}, nil
 }
 
 type fakePayloadProvider struct{}
@@ -624,6 +641,44 @@ func TestServeSessionRoundTrip(t *testing.T) {
 	closeResult := conn.call("session/close", map[string]any{"sessionId": sessionID, "reason": "done"})
 	if closeResult["status"] != "ok" {
 		t.Fatalf("close result = %#v", closeResult)
+	}
+}
+
+func TestServeSessionCommandRoundTrip(t *testing.T) {
+	conn := newRPCConn(t, fakeModule{withSession: true})
+	defer conn.close()
+
+	result := conn.call("execute", map[string]any{"runId": "run-1", "moduleId": "fake", "target": "mock://host"})
+	sessions, _ := result["sessions"].([]any)
+	ref, _ := sessions[0].(map[string]any)
+	sessionID, _ := ref["id"].(string)
+	if sessionID == "" {
+		t.Fatalf("session ref missing id: %#v", ref)
+	}
+
+	list := conn.call("session.command.list", map[string]any{"sessionId": sessionID})
+	commands, _ := list["commands"].([]any)
+	if len(commands) != 1 {
+		t.Fatalf("commands = %#v, want one", list["commands"])
+	}
+	command, _ := commands[0].(map[string]any)
+	if command["name"] != "session.info" {
+		t.Fatalf("command = %#v, want session.info", command)
+	}
+
+	run := conn.call("session.command.run", map[string]any{
+		"sessionId": sessionID,
+		"request": map[string]any{
+			"command": "session.info",
+			"args":    []string{"one", "two"},
+		},
+	})
+	if run["command"] != "session.info" || run["stdout"] != "mock session info" {
+		t.Fatalf("session command result = %#v", run)
+	}
+	fields, _ := run["fields"].(map[string]any)
+	if fields["args"] != "one,two" {
+		t.Fatalf("session command fields = %#v", fields)
 	}
 }
 

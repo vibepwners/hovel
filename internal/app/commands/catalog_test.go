@@ -66,8 +66,10 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"module", "uninstall"},
 		{"payloads", "available"},
 		{"payloads", "cleanup"},
+		{"payloads", "call"},
 		{"payloads", "cmd"},
 		{"payloads", "connect"},
+		{"payloads", "capabilities"},
 		{"payloads", "commands"},
 		{"payloads", "getfile"},
 		{"payloads", "inspect"},
@@ -107,6 +109,8 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"chains", "load"},
 		{"chains", "save"},
 		{"modules", "list"},
+		{"payload", "call"},
+		{"payload", "capabilities"},
 		{"run"},
 		{"targets", "add"},
 		{"targets", "set", "create"},
@@ -1009,6 +1013,66 @@ func TestPayloadsConnectCleanupAndRefreshUseProviderService(t *testing.T) {
 	}
 	if repository.records["p1"].State != PayloadStateRemoved || providers.cleaned.Handle != "p1" {
 		t.Fatalf("cleanup state/provider = %#v %#v", repository.records["p1"], providers.cleaned)
+	}
+}
+
+func TestPayloadsCapabilitiesAndCallUseGenericProviderInterface(t *testing.T) {
+	record := payloadRecordFixture("p1", PayloadStateInstalled)
+	repository := newFakePayloadRepository([]InstalledPayloadRecord{record})
+	providers := &fakePayloadProviderService{
+		commands: []PayloadCommand{
+			{Name: "wininfo", Summary: "collect native Windows host facts", ReadOnly: true, Capabilities: []string{"host.info"}},
+			{Name: "process.run", Summary: "run a process", Destructive: true, Capabilities: []string{"process.exec"}},
+		},
+		result: PayloadCommandResult{Command: "process.run", Summary: "process completed", Stdout: "ok\n"},
+	}
+	registry := HovelRegistry(Runtime{
+		Modules:          exampleCatalog(),
+		Payloads:         repository,
+		PayloadProviders: providers,
+	})
+	capabilitiesDefinition, _ := registry.Find("payloads", "capabilities")
+	callDefinition, _ := registry.Find("payloads", "call")
+
+	capabilities, err := capabilitiesDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(capabilities.Human, "wininfo") || !strings.Contains(capabilities.Human, "process.run") {
+		t.Fatalf("capabilities output = %q", capabilities.Human)
+	}
+	if got, ok := capabilities.JSON.([]PayloadCommand); !ok || len(got) != 2 {
+		t.Fatalf("capabilities json = %#v", capabilities.JSON)
+	}
+
+	result, err := callDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1", "capability": "process.run"},
+		Options: map[string]string{
+			"workspace":      ".hovel",
+			"input-data":     "stdin",
+			"input-encoding": "",
+		},
+		OptionLists: map[string][]string{
+			"arg": {"cmd.exe /c whoami", "5000", `C:\Windows`},
+			"set": {"timeout.ms=5000", "mode=typed"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "Payload command completed: process.run") || !strings.Contains(result.Human, "ok") {
+		t.Fatalf("call output = %q", result.Human)
+	}
+	if providers.ran.Command != "process.run" ||
+		!reflect.DeepEqual(providers.ran.Args, []string{"cmd.exe /c whoami", "5000", `C:\Windows`}) ||
+		providers.ran.InputData != "stdin" ||
+		providers.ran.InputEncoding != "utf-8" ||
+		providers.ran.Config["timeout.ms"] != "5000" ||
+		providers.ran.Config["mode"] != "typed" {
+		t.Fatalf("provider request = %#v", providers.ran)
 	}
 }
 
@@ -3678,6 +3742,52 @@ func TestSessionCommandsResolveLatestSession(t *testing.T) {
 	}
 }
 
+func TestSessionCallUsesTypedSessionCommandChannel(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{
+		sessions: []SessionRef{{ID: "session-1", State: "active"}},
+	}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+
+	capabilities, _ := registry.Find("session", "capabilities")
+	result, err := capabilities.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "latest"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "process.list") {
+		t.Fatalf("capabilities output = %q, want process.list", result.Human)
+	}
+
+	call, _ := registry.Find("session", "call")
+	result, err = call.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "latest", "capability": "process.list"},
+		Options:     map[string]string{},
+		Flags:       map[string]bool{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "Session command completed: process.list") {
+		t.Fatalf("call output = %q, want session command completion", result.Human)
+	}
+	if len(recorder.sessionCommandRequests) != 1 {
+		t.Fatalf("session command requests = %#v, want one", recorder.sessionCommandRequests)
+	}
+	request := recorder.sessionCommandRequests[0]
+	if request.sessionID != "session-1" || request.request.Command != "process.list" {
+		t.Fatalf("session command request = %#v, want session-1/process.list", request)
+	}
+	if len(recorder.writes) != 0 {
+		t.Fatalf("session writes = %#v, want no interactive write", recorder.writes)
+	}
+}
+
 func TestSessionLatestUsesLastActiveSessionInDaemonOrder(t *testing.T) {
 	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
 	recorder := &fakeRunRecorder{
@@ -4466,16 +4576,18 @@ func (c *fakePendingThrowCoordinator) CancelPendingThrow(_ context.Context, sock
 }
 
 type fakeRunRecorder struct {
-	socketPath        string
-	generations       []fakePayloadGeneration
-	requests          []RunMockExploitRequest
-	artifacts         []Artifact
-	installedPayloads []InstalledPayloadDescriptor
-	sessions          []SessionRef
-	reads             []SessionChunk
-	tail              SessionChunk
-	tails             []fakeSessionTail
-	writes            []fakeSessionWrite
+	socketPath             string
+	generations            []fakePayloadGeneration
+	requests               []RunMockExploitRequest
+	artifacts              []Artifact
+	installedPayloads      []InstalledPayloadDescriptor
+	sessions               []SessionRef
+	reads                  []SessionChunk
+	tail                   SessionChunk
+	tails                  []fakeSessionTail
+	writes                 []fakeSessionWrite
+	sessionCommands        []fakeSessionCommandList
+	sessionCommandRequests []fakeSessionCommandRun
 }
 
 type fakePayloadGeneration struct {
@@ -4491,6 +4603,16 @@ type fakeSessionTail struct {
 type fakeSessionWrite struct {
 	sessionID string
 	data      []byte
+}
+
+type fakeSessionCommandList struct {
+	sessionID string
+	request   RunSessionCommandListRequest
+}
+
+type fakeSessionCommandRun struct {
+	sessionID string
+	request   PayloadCommandRequest
 }
 
 type fakePlanRecorder struct {
@@ -4686,6 +4808,7 @@ type fakePayloadProviderService struct {
 	refresh   func(InstalledPayloadRecord) InstalledPayloadRecord
 	commands  []PayloadCommand
 	result    PayloadCommandResult
+	ran       PayloadCommandRequest
 }
 
 func (s *fakePayloadProviderService) ListAvailablePayloads(context.Context) ([]AvailablePayload, error) {
@@ -4720,7 +4843,8 @@ func (s *fakePayloadProviderService) ListPayloadCommands(context.Context, Instal
 	return append([]PayloadCommand(nil), s.commands...), nil
 }
 
-func (s *fakePayloadProviderService) RunPayloadCommand(context.Context, InstalledPayloadRecord, PayloadCommandRequest) (PayloadCommandResult, error) {
+func (s *fakePayloadProviderService) RunPayloadCommand(_ context.Context, _ InstalledPayloadRecord, request PayloadCommandRequest) (PayloadCommandResult, error) {
+	s.ran = request
 	if s.result.Command != "" {
 		return s.result, nil
 	}
@@ -5092,6 +5216,23 @@ func (fakeRunClient) ListPayloadCommands(context.Context, string, RunPayloadComm
 
 func (fakeRunClient) RunPayloadCommand(context.Context, RunPayloadCommandRunRequest) (PayloadCommandResult, error) {
 	return PayloadCommandResult{Command: "cmd", Summary: "command completed", Stdout: "ok\n"}, nil
+}
+
+func (c fakeRunClient) ListSessionCommands(_ context.Context, sessionID string, req RunSessionCommandListRequest) ([]PayloadCommand, error) {
+	if c.recorder != nil {
+		c.recorder.sessionCommands = append(c.recorder.sessionCommands, fakeSessionCommandList{sessionID: sessionID, request: req})
+	}
+	return []PayloadCommand{{Name: "process.list", Summary: "list processes", ReadOnly: true}}, nil
+}
+
+func (c fakeRunClient) RunSessionCommand(_ context.Context, req RunSessionCommandRunRequest) (PayloadCommandResult, error) {
+	if c.recorder != nil {
+		c.recorder.sessionCommandRequests = append(c.recorder.sessionCommandRequests, fakeSessionCommandRun{
+			sessionID: req.SessionID,
+			request:   req.Request,
+		})
+	}
+	return PayloadCommandResult{Command: req.Request.Command, Summary: "session task completed", Stdout: "[]"}, nil
 }
 
 func writeCommandModuleArchive(t *testing.T, dir, name string) string {

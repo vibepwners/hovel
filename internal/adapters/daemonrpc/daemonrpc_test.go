@@ -922,6 +922,12 @@ func TestSessionRPCPropagatesRequestContext(t *testing.T) {
 	if _, err := server.closeSessionRPC(ctx, SessionCloseRequest{SessionID: "s1"}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("close session error = %v, want context canceled", err)
 	}
+	if _, err := server.listSessionCommandsRPC(ctx, SessionCommandListRequest{SessionID: "s1"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("list session commands error = %v, want context canceled", err)
+	}
+	if _, err := server.runSessionCommandRPC(ctx, SessionCommandRunRequest{SessionID: "s1", Request: run.PayloadCommandRequest{Command: "process.list"}}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("run session command error = %v, want context canceled", err)
+	}
 }
 
 func operatorlogEntryFromTest(message string) operatorlog.Entry {
@@ -948,6 +954,14 @@ func (contextCheckingSessionBroker) TailSession(ctx context.Context, _ string, _
 
 func (contextCheckingSessionBroker) CloseSession(ctx context.Context, _ string) error {
 	return contextOrMissing(ctx)
+}
+
+func (contextCheckingSessionBroker) ListSessionCommands(ctx context.Context, _ string, _ run.PayloadCommandListRequest) ([]run.PayloadCommand, error) {
+	return nil, contextOrMissing(ctx)
+}
+
+func (contextCheckingSessionBroker) RunSessionCommand(ctx context.Context, _ string, _ run.PayloadCommandRequest) (run.PayloadCommandResult, error) {
+	return run.PayloadCommandResult{}, contextOrMissing(ctx)
 }
 
 func contextOrMissing(ctx context.Context) error {

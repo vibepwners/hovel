@@ -144,6 +144,9 @@ func (s *PTYSession) Closed() bool {
 	return s.closed
 }
 
+// TerminalPTYSession reports that this session is backed by a local PTY.
+func (s *PTYSession) TerminalPTYSession() bool { return true }
+
 func (s *PTYSession) readMaster(master *os.File) {
 	buf := make([]byte, 4096)
 	for {
@@ -214,3 +217,4 @@ func writeAll(w io.Writer, data []byte) error {
 }
 
 var _ Session = (*PTYSession)(nil)
+var _ TerminalPTYSession = (*PTYSession)(nil)

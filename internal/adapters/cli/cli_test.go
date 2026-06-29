@@ -45,7 +45,7 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 		t.Fatalf("control suggestions = %#v, want daemon and init", controlChildren)
 	}
 	payloadChildren := app.Suggestions("payloads ")
-	for _, want := range []string{"available", "installed", "inspect", "connect", "cleanup", "mark-removed", "refresh"} {
+	for _, want := range []string{"available", "installed", "inspect", "connect", "cleanup", "mark-removed", "refresh", "capabilities", "call"} {
 		if !containsSuggestion(payloadChildren, want) {
 			t.Fatalf("payload suggestions = %#v, missing %s", payloadChildren, want)
 		}
@@ -904,19 +904,33 @@ func TestThrowAnimationOnlyWrapsThrowExecution(t *testing.T) {
 
 func TestExecuteLineInjectsShellWorkspaceForWorkspaceCommands(t *testing.T) {
 	var capturedWorkspace string
-	registry, err := commands.NewRegistry(commands.Definition{
-		Path:        []string{"throw"},
-		Summary:     "Run a throw.",
-		Positionals: []commands.Positional{{Name: "chain_file", Required: true}},
-		Options: []commands.Option{
-			{Name: "workspace", Short: "w", ValueName: "path", Kind: commands.OptionString},
-			{Name: "now", Short: "n", Kind: commands.OptionBool},
+	registry, err := commands.NewRegistry(
+		commands.Definition{
+			Path:        []string{"throw"},
+			Summary:     "Run a throw.",
+			Positionals: []commands.Positional{{Name: "chain_file", Required: true}},
+			Options: []commands.Option{
+				{Name: "workspace", Short: "w", ValueName: "path", Kind: commands.OptionString},
+				{Name: "now", Short: "n", Kind: commands.OptionBool},
+			},
+			Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+				capturedWorkspace = invocation.Option("workspace")
+				return commands.Result{Human: "ok"}, nil
+			},
 		},
-		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
-			capturedWorkspace = invocation.Option("workspace")
-			return commands.Result{Human: "ok"}, nil
+		commands.Definition{
+			Path:        []string{"payloads", "call"},
+			Summary:     "Call a payload.",
+			Positionals: []commands.Positional{{Name: "payload", Required: true}, {Name: "capability", Required: true}},
+			Options: []commands.Option{
+				{Name: "workspace", Short: "w", ValueName: "path", Kind: commands.OptionString},
+			},
+			Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+				capturedWorkspace = invocation.Option("workspace")
+				return commands.Result{Human: "ok"}, nil
+			},
 		},
-	})
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -941,6 +955,14 @@ func TestExecuteLineInjectsShellWorkspaceForWorkspaceCommands(t *testing.T) {
 	}
 	if capturedWorkspace != workspacePath {
 		t.Fatalf("workspace = %q, want %q", capturedWorkspace, workspacePath)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "payloads call p1 wininfo", &stdout, &stderr); code != 0 {
+		t.Fatalf("payload call exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if capturedWorkspace != workspacePath {
+		t.Fatalf("payload workspace = %q, want %q", capturedWorkspace, workspacePath)
 	}
 	stdout.Reset()
 	stderr.Reset()

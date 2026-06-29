@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf16"
 
+	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell"
 	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/wire"
 	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
 	"github.com/Vibe-Pwners/hovel/sdk/go/hoveltest"
@@ -362,13 +363,167 @@ func TestProviderSatisfiesPayloadProviderRPCContract(t *testing.T) {
 		WantFormat:    formatPEEXE,
 		WantTransport: tcpCallback,
 		WantCapabilities: []string{
+			"host.info",
 			"file.get",
 			"file.put",
+			"file.stat",
+			"file.hash",
+			"registry.query",
+			"eventlog.query",
+			"drive.list",
+			"share.list",
+			"acl.stat",
 			"process.exec",
+			"process.exec.as_user",
+			"process.run",
+			"process.list",
 			"process.tasklist",
-			"library.rundll",
+			"process.kill",
+			"payload.status",
+			"payload.cleanup",
 		},
 	})
+}
+
+func TestProviderPayloadCommandCatalogueIsTruthful(t *testing.T) {
+	commands, err := newProvider().ListPayloadCommands(hovel.PayloadCommandListRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]hovel.PayloadCommand{}
+	for _, command := range commands {
+		byName[command.Name] = command
+		for _, capability := range command.Capabilities {
+			if capability == "library.rundll" {
+				t.Fatalf("unsafe unimplemented capability advertised by %s", command.Name)
+			}
+		}
+	}
+	for _, name := range []string{
+		"wininfo",
+		"process.list",
+		"process.run",
+		"process.run_as_user",
+		"process.kill",
+		"payload.status",
+		"payload.cleanup",
+		"file.stat",
+		"registry.query",
+		"eventlog.query",
+		"drive.list",
+		"share.list",
+		"acl.stat",
+		"getfile",
+		"putfile",
+		"cmd",
+	} {
+		if _, ok := byName[name]; !ok {
+			t.Fatalf("payload command %s not advertised in %#v", name, commands)
+		}
+	}
+	if !byName["wininfo"].ReadOnly || !byName["process.list"].ReadOnly || !byName["payload.status"].ReadOnly {
+		t.Fatalf("read-only commands misclassified: %#v", byName)
+	}
+	if !byName["process.run"].Destructive || !byName["process.run_as_user"].Destructive || !byName["process.kill"].Destructive || !byName["payload.cleanup"].Destructive {
+		t.Fatalf("destructive commands misclassified: %#v", byName)
+	}
+	if !slicesContain(byName["process.list"].Capabilities, "process.tasklist") {
+		t.Fatalf("process.list capabilities = %#v, want process.tasklist alias", byName["process.list"].Capabilities)
+	}
+	if !slicesContain(byName["process.run_as_user"].Capabilities, "process.exec.as_user") {
+		t.Fatalf("process.run_as_user capabilities = %#v, want process.exec.as_user", byName["process.run_as_user"].Capabilities)
+	}
+}
+
+func TestRunProcessRunCommandParsesTypedResult(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		kind, streamID, payload, err := wire.ReadFrame(serverConn)
+		if err != nil {
+			done <- err
+			return
+		}
+		if kind != wire.KindOpen || streamID != 1 || !bytes.Contains(payload, []byte("process.run")) {
+			done <- fmt.Errorf("open frame kind=%d stream=%d payload=%q", kind, streamID, payload)
+			return
+		}
+		body := []byte(`{"command":"hostname","pid":42,"exitCode":0,"timedOut":false,"stdout":"host\r\n","stderr":""}`)
+		if err := wire.WriteFrame(serverConn, wire.KindData, 1, body); err != nil {
+			done <- err
+			return
+		}
+		if err := wire.WriteFrame(serverConn, wire.KindControl, 1, wire.EncodeStreamEvent(wire.StreamEvent{Kind: wire.EventExited, Code: 0})); err != nil {
+			done <- err
+			return
+		}
+		done <- wire.WriteFrame(serverConn, wire.KindClose, 1, nil)
+	}()
+
+	result, err := runProcessRunCommand(clientConn, bufio.NewReader(clientConn), 1, hovel.PayloadCommandRequest{
+		Command: "process.run",
+		Args:    []string{"hostname", "1000"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if result.Stdout != "host\r\n" || result.Stderr != "" || result.Fields["pid"] != "42" || result.Fields["exitCode"] != "0" {
+		t.Fatalf("process.run result = %#v", result)
+	}
+}
+
+func TestRunProcessRunAsUserCommandParsesTypedResult(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		kind, streamID, payload, err := wire.ReadFrame(serverConn)
+		if err != nil {
+			done <- err
+			return
+		}
+		if kind != wire.KindOpen || streamID != 1 || !bytes.Contains(payload, []byte("process.run_as_user")) {
+			done <- fmt.Errorf("open frame kind=%d stream=%d payload=%q", kind, streamID, payload)
+			return
+		}
+		body := []byte(`{"pid":43,"sourcePid":1364,"sessionId":0,"command":"C:\\WINDOWS\\explorer.exe","cwd":"C:\\WINDOWS","usedEnvironment":true}`)
+		if err := wire.WriteFrame(serverConn, wire.KindData, 1, body); err != nil {
+			done <- err
+			return
+		}
+		done <- wire.WriteFrame(serverConn, wire.KindClose, 1, nil)
+	}()
+
+	result, err := runPayloadCommandOnTransport(clientConn, bufio.NewReader(clientConn), 1, hovel.PayloadCommandRequest{
+		Command: "process.run_as_user",
+		Args:    []string{`C:\WINDOWS\explorer.exe`, `C:\WINDOWS`, "1364"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary != "process launched as interactive user" || result.Fields["pid"] != "43" || result.Fields["sourcePid"] != "1364" || result.Fields["sessionId"] != "0" {
+		t.Fatalf("process.run_as_user result = %#v", result)
+	}
+}
+
+func slicesContain(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRunGetfileCommandReturnsBinaryFileArtifact(t *testing.T) {
@@ -403,7 +558,7 @@ func TestRunGetfileCommandReturnsBinaryFileArtifact(t *testing.T) {
 		done <- wire.WriteFrame(serverConn, wire.KindClose, 1, nil)
 	}()
 
-	result, err := runGetfileCommand(clientConn, bufio.NewReader(clientConn), hovel.PayloadCommandRequest{Args: []string{`C:\Temp\payload.exe`}})
+	result, err := runGetfileCommand(clientConn, bufio.NewReader(clientConn), 1, hovel.PayloadCommandRequest{Args: []string{`C:\Temp\payload.exe`}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,6 +575,50 @@ func TestRunGetfileCommandReturnsBinaryFileArtifact(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("artifact bytes = %x, want %x", got, want)
+	}
+}
+
+func TestSquatterSessionRunsPayloadCommandOnExistingConnection(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	session := &squatterSession{client: shell.New(clientConn)}
+	done := make(chan error, 1)
+	go func() {
+		kind, streamID, payload, err := wire.ReadFrame(serverConn)
+		if err != nil {
+			done <- err
+			return
+		}
+		if kind != wire.KindOpen {
+			done <- fmt.Errorf("frame kind=%d, want open", kind)
+			return
+		}
+		if streamID == 0 {
+			done <- fmt.Errorf("stream ID must be non-zero")
+			return
+		}
+		if !bytes.Contains(payload, []byte("process.list")) {
+			done <- fmt.Errorf("open payload %x does not contain process.list", payload)
+			return
+		}
+		if err := wire.WriteFrame(serverConn, wire.KindData, streamID, []byte("[]")); err != nil {
+			done <- err
+			return
+		}
+		done <- wire.WriteFrame(serverConn, wire.KindClose, streamID, nil)
+	}()
+
+	result, err := session.RunPayloadCommand(hovel.PayloadCommandRequest{Command: "process.list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if result.Command != "process.list" || result.Stdout != "[]" {
+		t.Fatalf("result = %#v, want process.list output", result)
 	}
 }
 

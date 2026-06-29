@@ -14,12 +14,14 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
@@ -417,7 +419,7 @@ func commandLineUsesWorkspace(line string) bool {
 		return false
 	}
 	switch fields[0] {
-	case "throw", "throws", "confirm", "review", "artifact", "artifacts", "session", "sessions", "module", "modules":
+	case "throw", "throws", "confirm", "review", "artifact", "artifacts", "session", "sessions", "module", "modules", "payload", "payloads":
 		return true
 	default:
 		return false
@@ -873,6 +875,19 @@ func (a App) positionalSuggestions(definition commands.Definition, commandWordCo
 		return nil, true
 	case "session connect", "sessions connect", "session tail", "sessions tail", "session read", "sessions read", "session send", "sessions send", "session write", "sessions write", "session close", "sessions close":
 		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.sessionSuggestions), true
+	case "payloads inspect", "payload inspect", "payloads connect", "payload connect", "payloads cleanup", "payload cleanup",
+		"payloads mark-removed", "payload mark-removed", "payloads refresh", "payload refresh", "payloads commands", "payload commands",
+		"payloads capabilities", "payload capabilities", "payloads getfile", "payload getfile", "payloads putfile", "payload putfile",
+		"payloads cmd", "payload cmd":
+		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.payloadSuggestions), true
+	case "payloads call", "payload call", "payloads command", "payload command":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.payloadSuggestions(prefix), true
+		}
+		if len(fields) > commandWordCount && (provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace) {
+			return a.payloadCapabilitySuggestions(fields[commandWordCount], prefix), true
+		}
+		return nil, true
 	default:
 		return nil, false
 	}
@@ -998,6 +1013,117 @@ func (a App) sessionSuggestions(prefix string) []prompt.Suggest {
 		suggestions = append(suggestions, prompt.Suggest{Text: session.ID, Description: description})
 	}
 	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) payloadSuggestions(prefix string) []prompt.Suggest {
+	records, err := filesystem.NewWorkspaceStore().ListInstalledPayloads(context.Background(), workspace.ResolvePath(a.workspacePath), commands.InstalledPayloadFilter{})
+	if err != nil {
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(records))
+	for _, record := range records {
+		description := strings.TrimSpace(strings.Join([]string{record.State, record.Provider, record.Target, record.Transport}, " "))
+		suggestions = append(suggestions, prompt.Suggest{Text: record.Handle, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) payloadCapabilitySuggestions(payloadRef, prefix string) []prompt.Suggest {
+	if a.daemonClient == nil {
+		return nil
+	}
+	record, err := filesystem.NewWorkspaceStore().GetInstalledPayload(context.Background(), workspace.ResolvePath(a.workspacePath), payloadRef)
+	if err != nil {
+		return nil
+	}
+	moduleID := a.payloadProviderModuleID(record.Provider)
+	if moduleID == "" {
+		moduleID = record.Provider
+	}
+	type payloadCommandResult struct {
+		commands []run.PayloadCommand
+		err      error
+	}
+	results := make(chan payloadCommandResult, 1)
+	go func() {
+		resp, err := a.daemonClient.ListPayloadCommands(context.Background(), daemonrpc.PayloadCommandListRequest{
+			ModuleID: moduleID,
+			Request: run.PayloadCommandListRequest{
+				InstalledPayloadID: record.Handle,
+				Target:             record.Target,
+				PayloadID:          record.PayloadID,
+				Config:             cliInstalledPayloadConfig(record),
+				Reconnect:          cliPayloadProviderRecordToRun(record.Reconnect),
+			},
+		})
+		results <- payloadCommandResult{commands: resp.Commands, err: err}
+	}()
+	var payloadCommands []run.PayloadCommand
+	select {
+	case result := <-results:
+		if result.err != nil {
+			return nil
+		}
+		payloadCommands = result.commands
+	case <-time.After(100 * time.Millisecond):
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(payloadCommands))
+	for _, command := range payloadCommands {
+		description := command.Summary
+		if len(command.Capabilities) > 0 {
+			description = strings.TrimSpace(description + " " + strings.Join(command.Capabilities, ","))
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: command.Name, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) payloadProviderModuleID(provider string) string {
+	if module, ok := a.modules.Find(provider); ok && module.Type == modulecatalog.TypePayloadProvider {
+		return module.ID
+	}
+	for _, module := range a.modules.ByType(modulecatalog.TypePayloadProvider) {
+		if strings.EqualFold(module.Name, provider) || strings.EqualFold(module.ID, provider) {
+			return module.ID
+		}
+	}
+	return ""
+}
+
+func cliInstalledPayloadConfig(record commands.InstalledPayloadRecord) map[string]string {
+	config := map[string]string{}
+	if record.Reconnect != nil {
+		for key, value := range record.Reconnect.Descriptor {
+			text := fmt.Sprint(value)
+			if text != "" {
+				config[key] = text
+			}
+		}
+	}
+	if record.Transport != "" {
+		config["payload.transport"] = record.Transport
+	}
+	if record.Target != "" {
+		config["target.host"] = record.Target
+	}
+	return config
+}
+
+func cliPayloadProviderRecordToRun(record *commands.PayloadProviderRecord) *run.PayloadProviderRecord {
+	if record == nil {
+		return nil
+	}
+	descriptor := make(map[string]any, len(record.Descriptor))
+	for key, value := range record.Descriptor {
+		descriptor[key] = value
+	}
+	return &run.PayloadProviderRecord{
+		ProviderID:    record.ProviderID,
+		Schema:        record.Schema,
+		SchemaVersion: record.SchemaVersion,
+		Descriptor:    descriptor,
+	}
 }
 
 func configKeySuggestions(requirements map[string]modulecatalog.Requirement, existing map[string]string, prefix string) []prompt.Suggest {

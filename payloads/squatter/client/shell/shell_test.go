@@ -198,7 +198,7 @@ func (w *partialWriter) Write(payload []byte) (int, error) {
 
 func TestSuggestionsCoverTopLevelAndActiveModule(t *testing.T) {
 	top := Suggestions("", "")
-	if !hasSuggestion(top, "cmd") || !hasSuggestion(top, "echo") || !hasSuggestion(top, "getfile") || !hasSuggestion(top, "putfile") {
+	if !hasSuggestion(top, "cmd") || !hasSuggestion(top, "echo") || !hasSuggestion(top, "getfile") || !hasSuggestion(top, "putfile") || !hasSuggestion(top, "process.run_as_user") {
 		t.Fatalf("top suggestions = %#v", top)
 	}
 	filtered := Suggestions("", "pu")

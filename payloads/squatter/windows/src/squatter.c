@@ -14,8 +14,12 @@
 #include "base/win.h"
 #include "modules/cmd.h"
 #include "modules/echo.h"
+#include "modules/evidence.h"
 #include "modules/getfile.h"
+#include "modules/payload.h"
+#include "modules/process.h"
 #include "modules/putfile.h"
+#include "modules/wininfo.h"
 #include "runtime/channel.h"
 #include "runtime/module.h"
 #include "runtime/session.h"
@@ -574,8 +578,21 @@ int wmain(int argc, wchar_t **argv)
         static const sq_module modules[] = {
             {"cmd", sq_cmd_module_main},
             {"echo", sq_echo_module_main},
+            {"acl.stat", sq_acl_stat_module_main},
+            {"drive.list", sq_drive_list_module_main},
+            {"eventlog.query", sq_eventlog_query_module_main},
+            {"file.stat", sq_file_stat_module_main},
             {"getfile", sq_getfile_module_main},
+            {"payload.cleanup", sq_payload_cleanup_module_main},
+            {"payload.status", sq_payload_status_module_main},
+            {"process.kill", sq_process_kill_module_main},
+            {"process.list", sq_process_list_module_main},
+            {"process.run", sq_process_run_module_main},
+            {"process.run_as_user", sq_process_run_as_user_module_main},
             {"putfile", sq_putfile_module_main},
+            {"registry.query", sq_registry_query_module_main},
+            {"share.list", sq_share_list_module_main},
+            {"wininfo", sq_wininfo_module_main},
         };
         static const sq_module_table table = {modules, (int)(sizeof modules / sizeof modules[0])};
         wchar_t configured_port_buffer[16];

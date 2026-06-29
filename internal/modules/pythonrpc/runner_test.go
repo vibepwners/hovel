@@ -1332,6 +1332,11 @@ while True:
             send({"jsonrpc": "2.0", "id": rid, "result": {"data": base64.b64encode(b"sq> ").decode()}})
         else:
             send({"jsonrpc": "2.0", "id": rid, "result": {"data": ""}})
+    elif method == "session.command.list":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"commands": [{"name": "process.list", "summary": "list processes", "readOnly": True}]}})
+    elif method == "session.command.run":
+        request = params.get("request", {})
+        send({"jsonrpc": "2.0", "id": rid, "result": {"command": request.get("command", ""), "summary": "session command completed", "stdout": "[]"}})
     elif method == "session/close":
         session_open = False
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
@@ -1378,6 +1383,20 @@ while True:
 	}
 	if string(chunk.Data) != "sq> " {
 		t.Fatalf("session data = %q, want prompt", string(chunk.Data))
+	}
+	commands, err := sessions.ListSessionCommands(context.Background(), "session-1", run.PayloadCommandListRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 || commands[0].Name != "process.list" {
+		t.Fatalf("session commands = %#v, want process.list", commands)
+	}
+	commandResult, err := sessions.RunSessionCommand(context.Background(), "session-1", run.PayloadCommandRequest{Command: "process.list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commandResult.Command != "process.list" || commandResult.Stdout != "[]" {
+		t.Fatalf("session command result = %#v", commandResult)
 	}
 	if err := sessions.CloseSession(context.Background(), "session-1"); err != nil {
 		t.Fatal(err)

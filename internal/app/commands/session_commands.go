@@ -252,6 +252,51 @@ func sessionCloseHandler(runtime Runtime) Handler {
 	}
 }
 
+func sessionCommandsHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		client, closeClient, err := dialDaemonRunClient(ctx, runtime, invocation.Option("workspace"))
+		if err != nil {
+			return Result{}, err
+		}
+		defer closeClient()
+		sessionID, err := resolveSessionID(ctx, client, invocation.Positional("session"))
+		if err != nil {
+			return Result{}, err
+		}
+		commands, err := client.ListSessionCommands(ctx, sessionID, RunSessionCommandListRequest{})
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Human: payloadCommandLines(commands), JSON: commands}, nil
+	}
+}
+
+func sessionCallHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		client, closeClient, err := dialDaemonRunClient(ctx, runtime, invocation.Option("workspace"))
+		if err != nil {
+			return Result{}, err
+		}
+		defer closeClient()
+		sessionID, err := resolveSessionID(ctx, client, invocation.Positional("session"))
+		if err != nil {
+			return Result{}, err
+		}
+		req, err := payloadCommandRequestFromGenericInvocation(invocation.Positional("capability"), invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		result, err := client.RunSessionCommand(ctx, RunSessionCommandRunRequest{
+			SessionID: sessionID,
+			Request:   req,
+		})
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Human: sessionCommandResultHuman(result), JSON: result}, nil
+	}
+}
+
 func resolveSessionID(ctx context.Context, client RunClient, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	switch requested {
