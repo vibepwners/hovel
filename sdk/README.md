@@ -10,6 +10,11 @@ The practical contract is simple:
   debug logs, or child-process output there.
 - logs and diagnostics go through the SDK logger or stderr.
 - `handshake` and `schema` must be cheap and side-effect free.
+- `handshake` is the authoritative source for module identity, type, summary,
+  tags, and context. `name`, `version`, and `moduleType` are required there.
+- `hovel-module.yaml` is for package installation and launch instructions. It
+  may include light `metadata.name`/`metadata.version` hints for offline tools,
+  but runtime catalog/install identity is resolved from the RPC handshake.
 - target interaction belongs in `execute`, `step.execute`, or explicit provider
   methods after the operator has a persisted plan and confirmation.
 - return artifacts, sessions, findings, outputs, and installed payload records

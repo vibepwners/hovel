@@ -12,6 +12,8 @@ from hovel_sdk.logging import setup_logging
 from hovel_sdk.module import HovelModule
 from hovel_sdk.session import SessionManager
 
+_MODULE_TYPES = {"survey", "exploit", "payload_provider"}
+
 
 class JSONRPCServer:
     def __init__(self, module: HovelModule, stdin: BinaryIO, stdout: BinaryIO) -> None:
@@ -69,7 +71,9 @@ class JSONRPCServer:
 
     def _dispatch(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if method == "handshake":
-            return self._module.info()
+            info = self._module.info()
+            _validate_handshake_info(info)
+            return info
         if method == "schema":
             return self._module.module_schema()
         if method.startswith("step."):
@@ -140,3 +144,18 @@ def serve(module: HovelModule, stdin: BinaryIO | None = None, stdout: BinaryIO |
     except FrameError as exc:
         sys.stderr.write(f"hovel sdk frame error: {exc}\n")
         raise SystemExit(2) from exc
+
+
+def _required_handshake_string(info: dict[str, Any], key: str) -> str:
+    value = info.get(key, "")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"module handshake {key} is required")
+    return value.strip()
+
+
+def _validate_handshake_info(info: dict[str, Any]) -> None:
+    _required_handshake_string(info, "name")
+    _required_handshake_string(info, "version")
+    module_type = _required_handshake_string(info, "moduleType")
+    if module_type not in _MODULE_TYPES:
+        raise ValueError(f"module handshake moduleType {module_type!r} is invalid")

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -2795,6 +2796,208 @@ launch:
 	}
 }
 
+func TestModuleManualInstallWritesManagedPackageCommand(t *testing.T) {
+	workspace := t.TempDir()
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "manual-stdio")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New()})
+	definition, ok := registry.Find("module", "manualinstall")
+	if !ok {
+		t.Fatal("module manualinstall alias was not registered")
+	}
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "manual-dev"},
+		Options: map[string]string{
+			"workspace": workspace,
+			"type":      "survey",
+			"summary":   "Manual dev module",
+		},
+		OptionLists: map[string][]string{"tag": []string{"dev", " dangerous "}},
+		Flags:       map[string]bool{"no-check": true},
+		Passthrough: []string{"manual-stdio", "anarg", "--anotherarg"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "manual-dev@0.0.0-manual") {
+		t.Fatalf("manual install result = %q", result.Human)
+	}
+	root := filepath.Join(workspace, "modules", "manual-dev", "0.0.0-manual")
+	pkg, err := modulepackage.LoadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkg.Manifest.Metadata.Summary != "Manual dev module" {
+		t.Fatalf("summary = %q", pkg.Manifest.Metadata.Summary)
+	}
+	if !reflect.DeepEqual(pkg.Manifest.Metadata.Tags, []string{"dev", "dangerous"}) {
+		t.Fatalf("tags = %#v", pkg.Manifest.Metadata.Tags)
+	}
+	entry, err := pkg.LaunchEntry(goruntime.GOOS, goruntime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(entry.Command, []string{commandPath, "anarg", "--anotherarg"}) {
+		t.Fatalf("command = %#v, want executable path and args", entry.Command)
+	}
+	lock, err := modulepackage.LoadLock(filepath.Join(workspace, "module-lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lock.Modules) != 1 || lock.Modules[0].Linked || lock.Modules[0].Source != root {
+		t.Fatalf("lock = %#v", lock.Modules)
+	}
+	installedDefinition, _ := registry.Find("module", "installed")
+	installedResult, err := installedDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(installedResult.Human, "manual-dev@0.0.0-manual") {
+		t.Fatalf("installed result = %q", installedResult.Human)
+	}
+}
+
+func TestModuleManualInstallUsesRPCIdentityAndDoesNotRequireType(t *testing.T) {
+	workspace := t.TempDir()
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "manual-stdio")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inspector := &recordingModuleInspector{module: modulecatalog.Module{
+		ID:          "rpc-manual@v9",
+		Name:        "RPC Manual",
+		Version:     "v9",
+		Type:        modulecatalog.TypeExploit,
+		Summary:     "metadata from rpc",
+		RuntimeKind: modulecatalog.RuntimeJSONRPCStdio,
+		Enabled:     true,
+	}}
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New(), ModuleInspector: inspector})
+	definition, _ := registry.Find("module", "manualinstall")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "yaml-hint"},
+		Options:     map[string]string{"workspace": workspace},
+		Flags:       map[string]bool{"no-check": true},
+		Passthrough: []string{commandPath, "--from-cli"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := result.JSON.(ModuleInstallPayload)
+	if payload.Name != "rpc-manual" || payload.Version != "v9" {
+		t.Fatalf("payload = %#v, want RPC identity", payload)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "modules", "rpc-manual", "v9", modulepackage.ManifestName)); err != nil {
+		t.Fatalf("RPC-identified install root missing: %v", err)
+	}
+	if len(inspector.packages) != 1 {
+		t.Fatalf("inspector packages = %#v", inspector.packages)
+	}
+}
+
+func TestModuleManualInstallCheckFailureDoesNotInstall(t *testing.T) {
+	workspace := t.TempDir()
+	checker := &recordingModuleChecker{report: ModuleCheckReport{
+		Status: ModuleCheckFail,
+		Checks: []ModuleCheckItem{{
+			Name:    "rpc discovery",
+			Status:  ModuleCheckFail,
+			Message: "handshake failed",
+		}},
+	}}
+	registry := HovelRegistry(Runtime{
+		Modules:      modulecatalog.New(),
+		ModuleChecks: checker,
+	})
+	definition, _ := registry.Find("module", "manual-install")
+
+	_, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "broken-manual"},
+		Options: map[string]string{
+			"workspace": workspace,
+			"type":      "survey",
+		},
+		Passthrough: []string{"/bin/sh"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "manual module validation failed") {
+		t.Fatalf("manual install error = %v", err)
+	}
+	if len(checker.requests) != 1 {
+		t.Fatalf("check requests = %#v", checker.requests)
+	}
+	if checker.requests[0].Workspace != workspace || !strings.Contains(filepath.Base(checker.requests[0].Reference), ".manual-module-") {
+		t.Fatalf("check request = %#v", checker.requests[0])
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "modules", "broken-manual", "0.0.0-manual")); !os.IsNotExist(err) {
+		t.Fatalf("manual module root exists after failed check: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "module-lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("module lock exists after failed check: %v", err)
+	}
+}
+
+func TestModuleInstallLinkUsesRPCIdentityOverManifestHints(t *testing.T) {
+	workspace := t.TempDir()
+	root := packageDir(t, `apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: yaml-hint
+  version: 0.1.0
+  moduleType: survey
+launch:
+  - selector: {}
+    command: ["/bin/sh"]
+`)
+	inspector := &recordingModuleInspector{module: modulecatalog.Module{
+		ID:          "rpc-install@v2",
+		Name:        "RPC Install",
+		Version:     "v2",
+		Type:        modulecatalog.TypeExploit,
+		Summary:     "metadata from rpc",
+		RuntimeKind: modulecatalog.RuntimeJSONRPCStdio,
+		Enabled:     true,
+	}}
+	registry := HovelRegistry(Runtime{Modules: modulecatalog.New(), ModuleInspector: inspector})
+	installDefinition, _ := registry.Find("module", "install")
+
+	result, err := installDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace, "link": root},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := result.JSON.(ModuleInstallPayload)
+	if payload.Name != "rpc-install" || payload.Version != "v2" || !payload.Linked {
+		t.Fatalf("payload = %#v, want linked RPC identity", payload)
+	}
+	lock, err := modulepackage.LoadLock(filepath.Join(workspace, "module-lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lock.Modules) != 1 || lock.Modules[0].Name != "rpc-install" || lock.Modules[0].Version != "v2" {
+		t.Fatalf("lock = %#v, want RPC identity", lock.Modules)
+	}
+	installedDefinition, _ := registry.Find("module", "installed")
+	installed, err := installedDefinition.Execute(context.Background(), Invocation{
+		Options: map[string]string{"workspace": workspace},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(installed.Human, "rpc-install@v2") || !strings.Contains(installed.Human, "metadata from rpc") {
+		t.Fatalf("installed output = %q, want RPC metadata", installed.Human)
+	}
+}
+
 func TestModuleInstallAndUninstallGlobalUseUserDataScope(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dataHome := t.TempDir()
@@ -5109,6 +5312,40 @@ func (f fakeModuleChecker) CheckModule(_ context.Context, request ModuleCheckReq
 		Status:  ModuleCheckPass,
 		Checks:  []ModuleCheckItem{{Name: "fake", Status: ModuleCheckPass, Message: "ok"}},
 	}, nil
+}
+
+type recordingModuleChecker struct {
+	requests []ModuleCheckRequest
+	report   ModuleCheckReport
+}
+
+func (c *recordingModuleChecker) CheckModule(_ context.Context, request ModuleCheckRequest) (ModuleCheckReport, error) {
+	c.requests = append(c.requests, request)
+	report := c.report
+	if report.Subject == "" {
+		report.Subject = request.Reference
+	}
+	return report, nil
+}
+
+type recordingModuleInspector struct {
+	packages []modulepackage.Package
+	module   modulecatalog.Module
+	err      error
+}
+
+func (i *recordingModuleInspector) InspectPackage(_ context.Context, pkg modulepackage.Package) (modulecatalog.Module, error) {
+	i.packages = append(i.packages, pkg)
+	return i.module, i.err
+}
+
+func packageDir(t *testing.T, manifest string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, modulepackage.ManifestName), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
 func (f fakeRunClientFactory) DialRunClient(socketPath string) (RunClient, error) {

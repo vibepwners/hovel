@@ -49,6 +49,8 @@ Rules that matter in real integrations:
 
 - Never print to stdout. The SDK owns stdout for framed JSON-RPC messages.
 - Use `ctx.info` and `ctx.error` for module logs.
+- Return `Info` with `name`, `version`, and `module_type`. Hovel uses this
+  handshake metadata instead of package-manifest hints.
 - Keep `info` and `schema` cheap and side-effect free.
 - Return `Outcome::ok` or `Outcome::failed`; attach `Finding`, `Artifact`,
   `SessionRef`, and `InstalledPayloadDescriptor` values explicitly.

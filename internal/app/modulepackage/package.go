@@ -159,6 +159,25 @@ func LoadDir(root string) (Package, error) {
 	return Package{Root: root, Manifest: manifest}, nil
 }
 
+func WriteManifest(root string, manifest Manifest) error {
+	root, err := requiredAbsPath(root, "module package root is required")
+	if err != nil {
+		return err
+	}
+	manifest.normalize()
+	if err := manifest.validate(); err != nil {
+		return err
+	}
+	body, err := yaml.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(root, ManifestName), body, 0o644)
+}
+
 func LoadManifestArchive(path string) (Manifest, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -345,15 +364,6 @@ func (m Manifest) validate() error {
 	if m.Kind != Kind {
 		return fmt.Errorf("unsupported kind %q", m.Kind)
 	}
-	if m.Metadata.Name == "" {
-		return errors.New("metadata.name is required")
-	}
-	if m.Metadata.Version == "" {
-		return errors.New("metadata.version is required")
-	}
-	if m.Metadata.ModuleType == "" {
-		return errors.New("metadata.moduleType is required")
-	}
 	if m.Runtime.Protocol != ProtocolJSONRPCStdio {
 		return fmt.Errorf("unsupported runtime protocol %q", m.Runtime.Protocol)
 	}
@@ -513,7 +523,13 @@ type InstallOptions struct {
 	PythonBuildStandaloneArchive  string
 	Client                        *http.Client
 	Progress                      func(InstallProgress)
+	ResolveIdentity               func(Package) (InstallIdentity, error)
 	Now                           time.Time
+}
+
+type InstallIdentity struct {
+	Name    string
+	Version string
 }
 
 type InstallResult struct {
@@ -581,10 +597,46 @@ func InstallLink(opts InstallOptions) (InstallResult, error) {
 	if _, err := pkg.SelectLaunch(opts.HostOS, opts.HostArch); err != nil {
 		return InstallResult{}, err
 	}
-	if err := installPackage(pkg, workspace, source, "", true, opts); err != nil {
+	if err := preparePackageRuntime(pkg, opts); err != nil {
 		return InstallResult{}, err
 	}
-	return InstallResult{Name: pkg.Manifest.Metadata.Name, Version: pkg.Manifest.Metadata.Version, Source: source}, nil
+	identity, err := installIdentity(pkg, opts)
+	if err != nil {
+		return InstallResult{}, err
+	}
+	if err := installPackage(pkg, identity, workspace, source, "", true, opts); err != nil {
+		return InstallResult{}, err
+	}
+	return InstallResult{Name: identity.Name, Version: identity.Version, Source: source}, nil
+}
+
+func InstallPreparedDir(opts InstallOptions) (InstallResult, error) {
+	workspace, err := requiredAbsPath(opts.Workspace, "workspace is required")
+	if err != nil {
+		return InstallResult{}, err
+	}
+	source, err := requiredAbsPath(opts.SourceDir, "module package root is required")
+	if err != nil {
+		return InstallResult{}, err
+	}
+	pkg, err := LoadDir(source)
+	if err != nil {
+		return InstallResult{}, err
+	}
+	if _, err := pkg.SelectLaunch(opts.HostOS, opts.HostArch); err != nil {
+		return InstallResult{}, err
+	}
+	if err := preparePackageRuntime(pkg, opts); err != nil {
+		return InstallResult{}, err
+	}
+	identity, err := installIdentity(pkg, opts)
+	if err != nil {
+		return InstallResult{}, err
+	}
+	if err := installPackage(pkg, identity, workspace, source, "", false, opts); err != nil {
+		return InstallResult{}, err
+	}
+	return InstallResult{Name: identity.Name, Version: identity.Version, Source: source}, nil
 }
 
 func InstallArchive(opts InstallOptions) (InstallResult, error) {
@@ -631,13 +683,20 @@ func InstallArchive(opts InstallOptions) (InstallResult, error) {
 	if _, err := pkg.SelectLaunch(opts.HostOS, opts.HostArch); err != nil {
 		return InstallResult{}, err
 	}
-	dest := filepath.Join(workspace, "modules", pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version)
+	if err := preparePackageRuntime(pkg, opts); err != nil {
+		return InstallResult{}, err
+	}
+	identity, err := installIdentity(pkg, opts)
+	if err != nil {
+		return InstallResult{}, err
+	}
+	dest := filepath.Join(workspace, "modules", identity.Name, identity.Version)
 	lock, err := LoadLock(filepath.Join(workspace, "module-lock.yaml"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return InstallResult{}, err
 	}
-	if existing, ok := lock.find(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version); ok && existing.SHA256 != "" && existing.SHA256 != sum && !opts.Replace {
-		return InstallResult{}, fmt.Errorf("module %s@%s is already installed with a different sha256; use --replace", pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version)
+	if existing, ok := lock.find(identity.Name, identity.Version); ok && existing.SHA256 != "" && existing.SHA256 != sum && !opts.Replace {
+		return InstallResult{}, fmt.Errorf("module %s@%s is already installed with a different sha256; use --replace", identity.Name, identity.Version)
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return InstallResult{}, err
@@ -667,7 +726,7 @@ func InstallArchive(opts InstallOptions) (InstallResult, error) {
 		restoreInstallBackup(dest, backup, backupParent)
 		return InstallResult{}, err
 	}
-	if err := installPackage(pkg, workspace, dest, sum, false, opts); err != nil {
+	if err := installPackage(pkg, identity, workspace, dest, sum, false, opts); err != nil {
 		logCleanup("remove failed install destination", func() error { return os.RemoveAll(dest) })
 		restoreInstallBackup(dest, backup, backupParent)
 		return InstallResult{}, err
@@ -679,11 +738,11 @@ func InstallArchive(opts InstallOptions) (InstallResult, error) {
 		Stage:   InstallProgressArchiveComplete,
 		Source:  source,
 		Archive: source,
-		Name:    pkg.Manifest.Metadata.Name,
-		Version: pkg.Manifest.Metadata.Version,
+		Name:    identity.Name,
+		Version: identity.Version,
 		SHA256:  sum,
 	})
-	return InstallResult{Name: pkg.Manifest.Metadata.Name, Version: pkg.Manifest.Metadata.Version, Source: dest}, nil
+	return InstallResult{Name: identity.Name, Version: identity.Version, Source: dest}, nil
 }
 
 func InstallURL(opts InstallOptions) (InstallResult, error) {
@@ -889,6 +948,37 @@ func preparePackageRuntime(pkg Package, opts InstallOptions) error {
 		return nil
 	}
 	return ensureManagedPython(pkg, *launch.Python, opts)
+}
+
+func installIdentity(pkg Package, opts InstallOptions) (InstallIdentity, error) {
+	if opts.ResolveIdentity != nil {
+		return validateInstallIdentity(opts.ResolveIdentity(pkg))
+	}
+	return validateInstallIdentity(InstallIdentity{
+		Name:    pkg.Manifest.Metadata.Name,
+		Version: pkg.Manifest.Metadata.Version,
+	}, nil)
+}
+
+func validateInstallIdentity(identity InstallIdentity, err error) (InstallIdentity, error) {
+	if err != nil {
+		return InstallIdentity{}, err
+	}
+	identity.Name = strings.TrimSpace(identity.Name)
+	identity.Version = strings.TrimSpace(identity.Version)
+	if identity.Name == "" {
+		return InstallIdentity{}, errors.New("module identity name is required")
+	}
+	if identity.Version == "" {
+		return InstallIdentity{}, errors.New("module identity version is required")
+	}
+	if identity.Name == "." || identity.Name == ".." || strings.ContainsAny(identity.Name, `/\`) {
+		return InstallIdentity{}, errors.New("module identity name must be a single path segment")
+	}
+	if identity.Version == "." || identity.Version == ".." || strings.ContainsAny(identity.Version, `/\`) {
+		return InstallIdentity{}, errors.New("module identity version must be a single path segment")
+	}
+	return identity, nil
 }
 
 func ensureManagedPython(pkg Package, py Python, opts InstallOptions) error {
@@ -1295,7 +1385,7 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-func installPackage(pkg Package, workspace, source, sha string, linked bool, opts InstallOptions) error {
+func installPackage(pkg Package, identity InstallIdentity, workspace, source, sha string, linked bool, opts InstallOptions) error {
 	if err := preparePackageRuntime(pkg, opts); err != nil {
 		return err
 	}
@@ -1317,8 +1407,8 @@ func installPackage(pkg Package, workspace, source, sha string, linked bool, opt
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if existing, ok := lock.find(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version); ok && existing.SHA256 != "" && existing.SHA256 != sha && !opts.Replace {
-		return fmt.Errorf("module %s@%s is already installed with a different sha256; use --replace", pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version)
+	if existing, ok := lock.find(identity.Name, identity.Version); ok && existing.SHA256 != "" && existing.SHA256 != sha && !opts.Replace {
+		return fmt.Errorf("module %s@%s is already installed with a different sha256; use --replace", identity.Name, identity.Version)
 	}
 	if !opts.NoScripts {
 		if err := runScript(pkg.Root, pkg.Manifest.Scripts.PostInstall, env); err != nil {
@@ -1328,8 +1418,8 @@ func installPackage(pkg Package, workspace, source, sha string, linked bool, opt
 	lock.APIVersion = APIVersion
 	lock.Kind = LockKind
 	lock.upsert(LockRecord{
-		Name:        pkg.Manifest.Metadata.Name,
-		Version:     pkg.Manifest.Metadata.Version,
+		Name:        identity.Name,
+		Version:     identity.Version,
 		SHA256:      sha,
 		Source:      source,
 		Linked:      linked,

@@ -168,6 +168,30 @@ impl Module for FakeModule {
     }
 }
 
+struct MissingVersionModule;
+
+impl Module for MissingVersionModule {
+    fn info(&self) -> Info {
+        Info {
+            name: "missing-version".into(),
+            version: String::new(),
+            module_type: ModuleType::Survey,
+            summary: String::new(),
+            description: String::new(),
+            tags: Vec::new(),
+            discovery_context: Vec::new(),
+        }
+    }
+
+    fn schema(&self) -> Schema {
+        Schema::default()
+    }
+
+    fn run(&self, _ctx: &mut Context) -> Outcome {
+        Outcome::ok(Vec::new())
+    }
+}
+
 struct AgentAwareModule;
 
 impl Module for AgentAwareModule {
@@ -301,6 +325,20 @@ fn serve_handshake_schema_execute() {
     assert_eq!(
         execute.get("summary").and_then(Value::as_str),
         Some("surveyed example.test")
+    );
+}
+
+#[test]
+fn serve_handshake_requires_identity() {
+    let input = frame(request(1, "handshake", Value::Object(vec![])));
+    let messages = run_session(input, MissingVersionModule);
+    let responses = responses(&messages);
+    assert_eq!(responses.len(), 1);
+
+    let error = responses[0].get("error").unwrap();
+    assert_eq!(
+        error.get("message").and_then(Value::as_str),
+        Some("module handshake version is required")
     );
 }
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	goruntime "runtime"
@@ -28,6 +29,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	domainmodule "github.com/Vibe-Pwners/hovel/internal/domain/module"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 )
@@ -216,6 +218,7 @@ type Runtime struct {
 	Session            OperatorSession
 	Modules            ModuleDatabase
 	ModuleChecks       ModuleChecker
+	ModuleInspector    ModuleInspector
 	Payloads           PayloadRepository
 	PayloadProviders   PayloadProviderService
 }
@@ -227,6 +230,10 @@ type ModuleDatabase interface {
 	Find(string) (modulecatalog.Module, bool)
 	Validate(modulecatalog.ConfigView) modulecatalog.Validation
 	ResolveStepAvailability([]modulecatalog.Capability) []modulecatalog.StepAvailability
+}
+
+type ModuleInspector interface {
+	InspectPackage(context.Context, modulepackage.Package) (modulecatalog.Module, error)
 }
 
 type RunMockExploitRequest struct {
@@ -934,6 +941,27 @@ func HovelRegistry(runtime Runtime) Registry {
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: modulesInstallHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"module", "manual-install"},
+			Aliases: [][]string{{"modules", "manual-install"}, {"module", "manualinstall"}, {"modules", "manualinstall"}},
+			Summary: "Install a local stdio command as a development module.",
+			Positionals: []Positional{
+				{Name: "name", Help: "Module package name", Required: true},
+			},
+			Passthrough: Passthrough{Name: "command", Help: "Stdio command and arguments", Required: true},
+			Options: []Option{
+				stringOption("workspace", "w", "Workspace path"),
+				boolOption("global", "", "Use the global module install scope"),
+				stringOption("type", "t", "Optional package type hint: survey, exploit, or payload_provider"),
+				stringOption("version", "", "Module package version (default 0.0.0-manual)"),
+				stringOption("summary", "", "Module package summary"),
+				stringListOption("tag", "", "Module tag; repeat for multiple tags"),
+				boolOption("replace", "", "Replace an installed manual module with the same name and version"),
+				boolOption("no-check", "", "Skip stdio module validation before installing"),
+				boolOption("json", "j", "Emit JSON output"),
+			},
+			Handler: modulesManualInstallHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"module", "bulk-install"},
@@ -1689,7 +1717,7 @@ func chainAddHandler(runtime Runtime) Handler {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		db, err := moduleDBForInvocation(runtime, invocation)
+		db, err := moduleDBForInvocation(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -1879,7 +1907,7 @@ func chainValidateHandler(runtime Runtime) Handler {
 		if err != nil {
 			return Result{}, err
 		}
-		db, err := moduleDBForInvocation(runtime, invocation)
+		db, err := moduleDBForInvocation(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -2018,7 +2046,7 @@ func chainConfigListHandler(runtime Runtime) Handler {
 		if err != nil {
 			return Result{}, err
 		}
-		db, err := moduleDBForInvocation(runtime, invocation)
+		db, err := moduleDBForInvocation(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -2196,7 +2224,7 @@ func targetsConfigListHandler(runtime Runtime) Handler {
 		}
 		target := invocation.Positional("target")
 		config, ok := state.TargetConfigs[target]
-		db, err := moduleDBForInvocation(runtime, invocation)
+		db, err := moduleDBForInvocation(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -2314,7 +2342,7 @@ func modulesInstalledHandler(runtime Runtime) Handler {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		records, err := installedModuleRecordsForInvocation(invocation)
+		records, err := installedModuleRecordsForInvocation(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -2343,7 +2371,7 @@ func modulesInstallHandler(runtime Runtime) Handler {
 				return Result{}, err
 			}
 		}
-		result, linked, err := installModuleSource(workspacePath, source, linkPath, sha, invocation)
+		result, linked, err := installModuleSource(ctx, runtime, workspacePath, source, linkPath, sha, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -2362,6 +2390,314 @@ func modulesInstallHandler(runtime Runtime) Handler {
 	}
 }
 
+func modulesManualInstallHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		workspacePath := workspaceFromInvocation(invocation)
+		name, version, err := manualInstallIdentity(invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		command, err := normalizeManualInstallCommand(invocation.PassthroughArgs())
+		if err != nil {
+			return Result{}, err
+		}
+		options, err := moduleInstallOptions(ctx, runtime, workspacePath, invocation)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+			return Result{}, err
+		}
+		tempRoot, err := os.MkdirTemp(workspacePath, ".manual-module-*")
+		if err != nil {
+			return Result{}, err
+		}
+		tempActive := true
+		defer func() {
+			if tempActive {
+				removePathBestEffort(tempRoot)
+			}
+		}()
+		typeHint := strings.TrimSpace(invocation.Option("type"))
+		if typeHint != "" {
+			if _, err := modulecatalog.NewModuleType(typeHint); err != nil {
+				return Result{}, err
+			}
+		}
+		manifest := modulepackage.Manifest{
+			APIVersion: modulepackage.APIVersion,
+			Kind:       modulepackage.Kind,
+			Metadata: modulepackage.Metadata{
+				Name:       name,
+				Version:    version,
+				ModuleType: typeHint,
+				Summary:    invocation.Option("summary"),
+				Tags:       trimmedList(invocation.OptionList("tag")),
+			},
+			Runtime: modulepackage.Runtime{Protocol: modulepackage.ProtocolJSONRPCStdio},
+			Launch: []modulepackage.Launch{{
+				Selector: modulepackage.Selector{},
+				Command:  command,
+			}},
+		}
+		if err := modulepackage.WriteManifest(tempRoot, manifest); err != nil {
+			return Result{}, err
+		}
+		if !invocation.Flag("no-check") {
+			if err := checkManualInstallModule(ctx, runtime, tempRoot, workspacePath, invocation.Option("config")); err != nil {
+				return Result{}, err
+			}
+		}
+		identity, err := manualInstallResolvedIdentity(ctx, runtime, tempRoot, name, version)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := ensureManualInstallAvailable(workspacePath, identity.Name, identity.Version, invocation.Flag("replace")); err != nil {
+			return Result{}, err
+		}
+		root := manualInstallRoot(workspacePath, identity.Name, identity.Version)
+		if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil {
+			return Result{}, err
+		}
+		backup, err := moveManualInstallRootAside(root, invocation.Flag("replace"))
+		if err != nil {
+			return Result{}, err
+		}
+		if err := os.Rename(tempRoot, root); err != nil {
+			restoreManualInstallRoot(backup)
+			return Result{}, err
+		}
+		tempActive = false
+		options.SourceDir = root
+		options.ResolveIdentity = func(modulepackage.Package) (modulepackage.InstallIdentity, error) {
+			return identity, nil
+		}
+		result, err := modulepackage.InstallPreparedDir(options)
+		if err != nil {
+			removePathBestEffort(root)
+			restoreManualInstallRoot(backup)
+			return Result{}, err
+		}
+		removeManualInstallBackup(backup)
+		payload := ModuleInstallPayload{
+			Name:      result.Name,
+			Version:   result.Version,
+			Reference: modulecatalog.CanonicalID(result.Name, result.Version),
+			Source:    result.Source,
+			Workspace: workspacePath,
+			Linked:    false,
+		}
+		return Result{
+			Human: fmt.Sprintf("Installed manual module %s from %s", payload.Reference, strings.Join(command, " ")),
+			JSON:  payload,
+		}, nil
+	}
+}
+
+func manualInstallIdentity(invocation Invocation) (string, string, error) {
+	name := strings.TrimSpace(invocation.Positional("name"))
+	if _, err := domainmodule.NewName(name); err != nil {
+		return "", "", err
+	}
+	version := strings.TrimSpace(invocation.Option("version"))
+	if version == "" {
+		version = "0.0.0-manual"
+	}
+	if _, err := domainmodule.NewVersion(version); err != nil {
+		return "", "", err
+	}
+	if err := requirePathSegment(version, "module version"); err != nil {
+		return "", "", err
+	}
+	return name, version, nil
+}
+
+func requirePathSegment(value, label string) error {
+	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, `/\`) {
+		return fmt.Errorf("%s must be a single path segment", label)
+	}
+	return nil
+}
+
+func manualInstallResolvedIdentity(ctx context.Context, runtime Runtime, root, fallbackName, fallbackVersion string) (modulepackage.InstallIdentity, error) {
+	identity := modulepackage.InstallIdentity{Name: fallbackName, Version: fallbackVersion}
+	if runtime.ModuleInspector != nil {
+		pkg, err := modulepackage.LoadDir(root)
+		if err != nil {
+			return modulepackage.InstallIdentity{}, err
+		}
+		module, err := runtime.ModuleInspector.InspectPackage(ctx, pkg)
+		if err != nil {
+			return modulepackage.InstallIdentity{}, err
+		}
+		identity = installIdentityFromModule(module)
+	}
+	if err := requirePathSegment(identity.Name, "module name"); err != nil {
+		return modulepackage.InstallIdentity{}, err
+	}
+	if err := requirePathSegment(identity.Version, "module version"); err != nil {
+		return modulepackage.InstallIdentity{}, err
+	}
+	return identity, nil
+}
+
+func installIdentityFromModule(module modulecatalog.Module) modulepackage.InstallIdentity {
+	name, version, _ := modulecatalog.SplitID(module.ID)
+	if name == "" {
+		name = module.Name
+	}
+	if version == "" {
+		version = module.Version
+	}
+	return modulepackage.InstallIdentity{Name: strings.TrimSpace(name), Version: strings.TrimSpace(version)}
+}
+
+func normalizeManualInstallCommand(command []string) ([]string, error) {
+	out := append([]string(nil), command...)
+	if len(out) == 0 {
+		return nil, fmt.Errorf("command after -- is required")
+	}
+	first := strings.TrimSpace(out[0])
+	if first == "" {
+		return nil, fmt.Errorf("command after -- is required")
+	}
+	switch {
+	case filepath.IsAbs(first):
+		out[0] = filepath.Clean(first)
+	case strings.ContainsAny(first, `/\`):
+		abs, err := filepath.Abs(first)
+		if err != nil {
+			return nil, err
+		}
+		out[0] = abs
+	default:
+		path, err := exec.LookPath(first)
+		if err != nil {
+			return nil, fmt.Errorf("manual module command %q was not found on PATH", first)
+		}
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+		out[0] = path
+	}
+	return out, nil
+}
+
+func ensureManualInstallAvailable(workspacePath, name, version string, replace bool) error {
+	lock, err := modulepackage.LoadLock(filepath.Join(workspacePath, "module-lock.yaml"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err == nil {
+		for _, record := range lock.Modules {
+			if record.Name == name && record.Version == version {
+				if replace {
+					break
+				}
+				return fmt.Errorf("module %s is already installed; use --replace", modulecatalog.CanonicalID(name, version))
+			}
+		}
+	}
+	root := manualInstallRoot(workspacePath, name, version)
+	if _, err := os.Stat(root); err == nil && !replace {
+		return fmt.Errorf("module package directory %s already exists; use --replace", root)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func manualInstallRoot(workspacePath, name, version string) string {
+	return filepath.Join(workspacePath, "modules", name, version)
+}
+
+type manualInstallBackup struct {
+	parent string
+	path   string
+	root   string
+}
+
+func moveManualInstallRootAside(root string, replace bool) (manualInstallBackup, error) {
+	if !replace {
+		return manualInstallBackup{}, nil
+	}
+	if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+		return manualInstallBackup{}, nil
+	} else if err != nil {
+		return manualInstallBackup{}, err
+	}
+	parent, err := os.MkdirTemp(filepath.Dir(root), ".replace-*")
+	if err != nil {
+		return manualInstallBackup{}, err
+	}
+	backup := manualInstallBackup{
+		parent: parent,
+		path:   filepath.Join(parent, filepath.Base(root)),
+		root:   root,
+	}
+	if err := os.Rename(root, backup.path); err != nil {
+		removePathBestEffort(parent)
+		return manualInstallBackup{}, err
+	}
+	return backup, nil
+}
+
+func restoreManualInstallRoot(backup manualInstallBackup) {
+	if backup.path == "" {
+		return
+	}
+	removePathBestEffort(backup.root)
+	if err := os.Rename(backup.path, backup.root); err != nil {
+		return
+	}
+	removePathBestEffort(backup.parent)
+}
+
+func removeManualInstallBackup(backup manualInstallBackup) {
+	if backup.parent != "" {
+		removePathBestEffort(backup.parent)
+	}
+}
+
+func checkManualInstallModule(ctx context.Context, runtime Runtime, root, workspacePath, configPath string) error {
+	if runtime.ModuleChecks == nil {
+		return nil
+	}
+	report, err := runtime.ModuleChecks.CheckModule(ctx, ModuleCheckRequest{
+		Reference: root,
+		Workspace: workspacePath,
+		Config:    configPath,
+	})
+	if err != nil {
+		return err
+	}
+	report.Normalize()
+	if report.Failures() == 0 {
+		return nil
+	}
+	return fmt.Errorf("manual module validation failed\n\n%s", singleModuleCheckHuman(report))
+}
+
+func trimmedList(values []string) []string {
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func removePathBestEffort(path string) {
+	if err := os.RemoveAll(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return
+	}
+}
+
 func modulesBulkInstallHandler(runtime Runtime) Handler {
 	return func(ctx context.Context, invocation Invocation) (Result, error) {
 		if err := ctx.Err(); err != nil {
@@ -2369,7 +2705,7 @@ func modulesBulkInstallHandler(runtime Runtime) Handler {
 		}
 		workspacePath := workspaceFromInvocation(invocation)
 		manifestPath := invocation.Positional("manifest")
-		baseOptions, err := moduleInstallOptions(workspacePath, invocation)
+		baseOptions, err := moduleInstallOptions(ctx, runtime, workspacePath, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -2390,7 +2726,7 @@ func modulesBulkInstallHandler(runtime Runtime) Handler {
 					Count:  len(set.Modules),
 				})
 			}
-			result, linked, err := installModuleSource(workspacePath, source, "", item.SHA256, invocation)
+			result, linked, err := installModuleSource(ctx, runtime, workspacePath, source, "", item.SHA256, invocation)
 			if err != nil {
 				return Result{}, err
 			}
@@ -2444,8 +2780,8 @@ func modulesUninstallHandler(runtime Runtime) Handler {
 	}
 }
 
-func installModuleSource(workspacePath, source, linkPath, sha string, invocation Invocation) (modulepackage.InstallResult, bool, error) {
-	base, err := moduleInstallOptions(workspacePath, invocation)
+func installModuleSource(ctx context.Context, runtime Runtime, workspacePath, source, linkPath, sha string, invocation Invocation) (modulepackage.InstallResult, bool, error) {
+	base, err := moduleInstallOptions(ctx, runtime, workspacePath, invocation)
 	if err != nil {
 		return modulepackage.InstallResult{}, false, err
 	}
@@ -2471,7 +2807,7 @@ func installModuleSource(workspacePath, source, linkPath, sha string, invocation
 	}
 }
 
-func moduleInstallOptions(workspacePath string, invocation Invocation) (modulepackage.InstallOptions, error) {
+func moduleInstallOptions(ctx context.Context, runtime Runtime, workspacePath string, invocation Invocation) (modulepackage.InstallOptions, error) {
 	config, _, err := hovelconfig.Load(hovelconfig.Options{
 		Workspace:    workspacePath,
 		ExplicitPath: invocation.Option("config"),
@@ -2479,7 +2815,7 @@ func moduleInstallOptions(workspacePath string, invocation Invocation) (modulepa
 	if err != nil {
 		return modulepackage.InstallOptions{}, err
 	}
-	return modulepackage.InstallOptions{
+	options := modulepackage.InstallOptions{
 		Workspace:                    workspacePath,
 		HostOS:                       goruntime.GOOS,
 		HostArch:                     goruntime.GOARCH,
@@ -2489,7 +2825,17 @@ func moduleInstallOptions(workspacePath string, invocation Invocation) (modulepa
 		Replace:                      invocation.Flag("replace"),
 		PythonBuildStandaloneRelease: config.Runtime.Python.PythonBuildStandalone.Release,
 		Progress:                     invocation.InstallProgress,
-	}, nil
+	}
+	if runtime.ModuleInspector != nil {
+		options.ResolveIdentity = func(pkg modulepackage.Package) (modulepackage.InstallIdentity, error) {
+			module, err := runtime.ModuleInspector.InspectPackage(ctx, pkg)
+			if err != nil {
+				return modulepackage.InstallIdentity{}, err
+			}
+			return installIdentityFromModule(module), nil
+		}
+	}
+	return options, nil
 }
 
 func resolveInstallReference(workspacePath, source, sha string, invocation Invocation) (string, string, string, error) {
@@ -2866,7 +3212,7 @@ func modulesInspectHandler(runtime Runtime) Handler {
 			return Result{}, err
 		}
 		moduleID := invocation.Positional("module")
-		db, err := moduleDBForInvocation(runtime, invocation)
+		db, err := moduleDBForInvocation(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -2888,7 +3234,7 @@ func modulesAvailableHandler(runtime Runtime) Handler {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
-		records, err := availableModuleRecordsForInvocation(runtime, invocation)
+		records, err := availableModuleRecordsForInvocation(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -2953,7 +3299,7 @@ func throwHandler(runtime Runtime) Handler {
 		if runtime.Daemons == nil {
 			return Result{}, fmt.Errorf("daemon service is not configured")
 		}
-		db, err := moduleDBForInvocation(runtime, invocation)
+		db, err := moduleDBForInvocation(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -4742,16 +5088,16 @@ func displayValue(value, fallback string) string {
 	return value
 }
 
-func installedModuleRecordsForInvocation(invocation Invocation) ([]ModuleInventoryRecord, error) {
+func installedModuleRecordsForInvocation(ctx context.Context, runtime Runtime, invocation Invocation) ([]ModuleInventoryRecord, error) {
 	workspacePath := workspaceFromInvocation(invocation)
 	scope := "workspace"
 	if invocation.Flag("global") {
 		scope = "global"
 	}
-	return installedModuleRecords(workspacePath, scope)
+	return installedModuleRecords(ctx, runtime, workspacePath, scope)
 }
 
-func installedModuleRecords(workspacePath, scope string) ([]ModuleInventoryRecord, error) {
+func installedModuleRecords(ctx context.Context, runtime Runtime, workspacePath, scope string) ([]ModuleInventoryRecord, error) {
 	lock, err := modulepackage.LoadLock(filepath.Join(workspacePath, "module-lock.yaml"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -4765,7 +5111,11 @@ func installedModuleRecords(workspacePath, scope string) ([]ModuleInventoryRecor
 		if err != nil {
 			return nil, fmt.Errorf("load installed module %s@%s: %w", lockRecord.Name, lockRecord.Version, err)
 		}
-		record := moduleInventoryRecordFromManifest(pkg.Manifest, scope, "installed", lockRecord.Source)
+		module, err := moduleFromPackage(ctx, runtime, pkg)
+		if err != nil {
+			return nil, fmt.Errorf("inspect installed module %s@%s: %w", lockRecord.Name, lockRecord.Version, err)
+		}
+		record := moduleInventoryRecordFromModule(module, scope, "installed", lockRecord.Source)
 		record.SHA256 = lockRecord.SHA256
 		record.Linked = lockRecord.Linked
 		record.Installed = true
@@ -4776,7 +5126,7 @@ func installedModuleRecords(workspacePath, scope string) ([]ModuleInventoryRecor
 	return records, nil
 }
 
-func availableModuleRecordsForInvocation(runtime Runtime, invocation Invocation) ([]ModuleInventoryRecord, error) {
+func availableModuleRecordsForInvocation(ctx context.Context, runtime Runtime, invocation Invocation) ([]ModuleInventoryRecord, error) {
 	workspacePath := workspaceFromInvocation(invocation)
 	config, _, err := hovelconfig.Load(hovelconfig.Options{
 		Workspace:    workspacePath,
@@ -4790,12 +5140,12 @@ func availableModuleRecordsForInvocation(runtime Runtime, invocation Invocation)
 	for _, module := range moduleDB(runtime).List() {
 		records = append(records, moduleInventoryRecordFromModule(module, "runtime", "catalog", "configured catalog"))
 	}
-	installed, err := installedModuleRecordsForInvocation(invocation)
+	installed, err := installedModuleRecordsForInvocation(ctx, runtime, invocation)
 	if err != nil {
 		return nil, err
 	}
 	records = append(records, installed...)
-	searchRecords, err := moduleInventoryRecordsFromSearchPaths(config.Modules.SearchPaths, "local", "search-path")
+	searchRecords, err := moduleInventoryRecordsFromSearchPaths(ctx, runtime, config.Modules.SearchPaths, "local", "search-path")
 	if err != nil {
 		return nil, err
 	}
@@ -4806,7 +5156,7 @@ func availableModuleRecordsForInvocation(runtime Runtime, invocation Invocation)
 			return nil, err
 		}
 		if _, err := os.Stat(cachePath); err == nil {
-			cacheRecords, err := moduleInventoryRecordsFromSearchPaths([]string{cachePath}, "cache", "cache")
+			cacheRecords, err := moduleInventoryRecordsFromSearchPaths(ctx, runtime, []string{cachePath}, "cache", "cache")
 			if err != nil {
 				return nil, err
 			}
@@ -4888,7 +5238,7 @@ func dedupeStrings(values []string) []string {
 	return out
 }
 
-func moduleInventoryRecordsFromSearchPaths(paths []string, scope, sourceKind string) ([]ModuleInventoryRecord, error) {
+func moduleInventoryRecordsFromSearchPaths(ctx context.Context, runtime Runtime, paths []string, scope, sourceKind string) ([]ModuleInventoryRecord, error) {
 	var records []ModuleInventoryRecord
 	for _, path := range paths {
 		path = strings.TrimSpace(path)
@@ -4914,7 +5264,11 @@ func moduleInventoryRecordsFromSearchPaths(paths []string, scope, sourceKind str
 			if err != nil {
 				return nil, err
 			}
-			records = append(records, moduleInventoryRecordFromManifest(pkg.Manifest, scope, sourceKind, pkg.Root))
+			module, err := moduleFromPackage(ctx, runtime, pkg)
+			if err != nil {
+				return nil, err
+			}
+			records = append(records, moduleInventoryRecordFromModule(module, scope, sourceKind, pkg.Root))
 			continue
 		}
 		entries, err := os.ReadDir(path)
@@ -4931,7 +5285,11 @@ func moduleInventoryRecordsFromSearchPaths(paths []string, scope, sourceKind str
 				if err != nil {
 					return nil, err
 				}
-				records = append(records, moduleInventoryRecordFromManifest(pkg.Manifest, scope, sourceKind, pkg.Root))
+				module, err := moduleFromPackage(ctx, runtime, pkg)
+				if err != nil {
+					return nil, err
+				}
+				records = append(records, moduleInventoryRecordFromModule(module, scope, sourceKind, pkg.Root))
 				continue
 			}
 			record, ok, err := moduleInventoryRecordFromPackageFile(child, scope, sourceKind)
@@ -5167,7 +5525,7 @@ func moduleDB(runtime Runtime) ModuleDatabase {
 	return modulecatalog.BuiltIns()
 }
 
-func moduleDBForInvocation(runtime Runtime, invocation Invocation) (ModuleDatabase, error) {
+func moduleDBForInvocation(ctx context.Context, runtime Runtime, invocation Invocation) (ModuleDatabase, error) {
 	base := moduleDB(runtime)
 	workspacePath := workspaceFromInvocation(invocation)
 	config, _, err := hovelconfig.Load(hovelconfig.Options{
@@ -5178,11 +5536,11 @@ func moduleDBForInvocation(runtime Runtime, invocation Invocation) (ModuleDataba
 		return nil, err
 	}
 	searchPaths := append([]string(nil), config.Modules.SearchPaths...)
-	configured, err := modulesFromSearchPaths(searchPaths)
+	configured, err := modulesFromSearchPaths(ctx, runtime, searchPaths)
 	if err != nil {
 		return nil, err
 	}
-	installed, err := installedPackageModules(workspacePath)
+	installed, err := installedPackageModules(ctx, runtime, workspacePath)
 	if err != nil {
 		return nil, err
 	}
@@ -5196,7 +5554,7 @@ func moduleDBForInvocation(runtime Runtime, invocation Invocation) (ModuleDataba
 	return catalog, nil
 }
 
-func modulesFromSearchPaths(paths []string) ([]modulecatalog.Module, error) {
+func modulesFromSearchPaths(ctx context.Context, runtime Runtime, paths []string) ([]modulecatalog.Module, error) {
 	var modules []modulecatalog.Module
 	for _, path := range paths {
 		path = strings.TrimSpace(path)
@@ -5215,7 +5573,11 @@ func modulesFromSearchPaths(paths []string) ([]modulecatalog.Module, error) {
 			if err != nil {
 				return nil, err
 			}
-			modules = append(modules, moduleFromPackage(pkg))
+			module, err := moduleFromPackage(ctx, runtime, pkg)
+			if err != nil {
+				return nil, err
+			}
+			modules = append(modules, module)
 			continue
 		}
 		entries, err := os.ReadDir(path)
@@ -5232,7 +5594,11 @@ func modulesFromSearchPaths(paths []string) ([]modulecatalog.Module, error) {
 				if err != nil {
 					return nil, err
 				}
-				modules = append(modules, moduleFromPackage(pkg))
+				module, err := moduleFromPackage(ctx, runtime, pkg)
+				if err != nil {
+					return nil, err
+				}
+				modules = append(modules, module)
 				continue
 			}
 		}
@@ -5240,7 +5606,7 @@ func modulesFromSearchPaths(paths []string) ([]modulecatalog.Module, error) {
 	return modules, nil
 }
 
-func installedPackageModules(workspacePath string) ([]modulecatalog.Module, error) {
+func installedPackageModules(ctx context.Context, runtime Runtime, workspacePath string) ([]modulecatalog.Module, error) {
 	lock, err := modulepackage.LoadLock(filepath.Join(workspacePath, "module-lock.yaml"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -5254,18 +5620,25 @@ func installedPackageModules(workspacePath string) ([]modulecatalog.Module, erro
 		if err != nil {
 			return nil, fmt.Errorf("load installed module %s@%s: %w", record.Name, record.Version, err)
 		}
-		modules = append(modules, moduleFromPackage(pkg))
+		module, err := moduleFromPackage(ctx, runtime, pkg)
+		if err != nil {
+			return nil, fmt.Errorf("inspect installed module %s@%s: %w", record.Name, record.Version, err)
+		}
+		modules = append(modules, module)
 	}
 	return modules, nil
 }
 
-func moduleFromPackage(pkg modulepackage.Package) modulecatalog.Module {
-	return moduleFromManifest(pkg.Manifest)
+func moduleFromPackage(ctx context.Context, runtime Runtime, pkg modulepackage.Package) (modulecatalog.Module, error) {
+	if runtime.ModuleInspector != nil {
+		return runtime.ModuleInspector.InspectPackage(ctx, pkg)
+	}
+	return moduleFromManifest(pkg.Manifest), nil
 }
 
 func moduleFromManifest(manifest modulepackage.Manifest) modulecatalog.Module {
 	return modulecatalog.Module{
-		ID:          manifest.Metadata.Name,
+		ID:          modulecatalog.CanonicalID(manifest.Metadata.Name, manifest.Metadata.Version),
 		Name:        manifest.Metadata.Name,
 		Type:        modulecatalog.ModuleType(manifest.Metadata.ModuleType),
 		Version:     manifest.Metadata.Version,

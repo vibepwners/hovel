@@ -36,6 +36,9 @@ Rules that matter in real integrations:
   notifications.
 - Use `ctx.log` for progress and diagnostics; Hovel turns those into
   `module/log` notifications.
+- Set `name`, `version`, and `module_type`. The SDK rejects a handshake without
+  them, and Hovel uses that handshake metadata instead of package-manifest
+  hints.
 - Keep `info()` and `module_schema()` side-effect free. Hovel calls them while
   cataloging modules.
 - Use `Result.ok` or `Result.failed`; attach `Finding`, `Artifact`,

@@ -11,7 +11,7 @@ from hovel_sdk.result import Result
 
 class HovelModule(ABC):
     name: str = ""
-    version: str = "0.0.0"
+    version: str = ""
     summary: str = ""
     module_type: str = ""
     description: str = ""

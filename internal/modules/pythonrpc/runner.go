@@ -152,9 +152,6 @@ func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Mod
 
 func (r Runner) InspectEntry(ctx context.Context, entry ModuleEntry) (modulecatalog.Module, error) {
 	entry.ID = strings.TrimSpace(entry.ID)
-	if entry.ID == "" {
-		return modulecatalog.Module{}, errors.New("module id is required")
-	}
 	return r.inspect(ctx, entry.ID, func(ctx context.Context) (*moduleProcess, error) {
 		return r.startEntry(ctx, entry)
 	})
@@ -414,10 +411,11 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 	if err != nil {
 		return run.Result{}, err
 	}
-	if ok {
-		request.ModuleID = entry.ID
+	if !ok {
+		return run.Result{}, fmt.Errorf("unknown module %q", request.ModuleID)
 	}
-	process, err := r.start(context.Background(), request.ModuleID)
+	request.ModuleID = entry.ID
+	process, err := r.startEntry(context.Background(), entry)
 	if err != nil {
 		return run.Result{}, err
 	}
@@ -502,9 +500,6 @@ func (r Runner) start(ctx context.Context, moduleID string) (*moduleProcess, err
 func (r Runner) startEntry(ctx context.Context, entrypoint ModuleEntry) (*moduleProcess, error) {
 	entrypoint.ID = strings.TrimSpace(entrypoint.ID)
 	entrypoint.Runtime = strings.TrimSpace(entrypoint.Runtime)
-	if entrypoint.ID == "" {
-		return nil, errors.New("module id is required")
-	}
 	if entrypoint.Runtime == "" {
 		entrypoint.Runtime = modulecatalog.RuntimeJSONRPCStdio
 	}
@@ -864,9 +859,38 @@ func (r Runner) moduleEntry(moduleID string) (ModuleEntry, bool, error) {
 	if err != nil {
 		return ModuleEntry{}, false, err
 	}
+	_, _, hasVersion := modulecatalog.SplitID(moduleID)
 	moduleName := modulecatalog.ReferenceName(moduleID)
 	for _, entry := range entries {
-		if entry.ID == moduleID || modulecatalog.ReferenceName(entry.ID) == moduleName {
+		if entry.ID == moduleID {
+			return entry, true, nil
+		}
+	}
+	if !hasVersion {
+		for _, entry := range entries {
+			if modulecatalog.ReferenceName(entry.ID) == moduleName {
+				return entry, true, nil
+			}
+		}
+	} else {
+		for _, entry := range entries {
+			_, _, entryHasVersion := modulecatalog.SplitID(entry.ID)
+			if !entryHasVersion && modulecatalog.ReferenceName(entry.ID) == moduleName {
+				return entry, true, nil
+			}
+		}
+	}
+	for _, entry := range entries {
+		module, err := r.InspectEntry(context.Background(), entry)
+		if err != nil {
+			return ModuleEntry{}, false, err
+		}
+		if module.ID == moduleID {
+			entry.ID = module.ID
+			return entry, true, nil
+		}
+		if !hasVersion && modulecatalog.ReferenceName(module.ID) == moduleName {
+			entry.ID = module.ID
 			return entry, true, nil
 		}
 	}
@@ -958,7 +982,7 @@ func (r Runner) installedModuleEntries() ([]ModuleEntry, error) {
 			return nil, err
 		}
 		entries = append(entries, ModuleEntry{
-			ID:         modulecatalog.CanonicalID(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version),
+			ID:         modulecatalog.CanonicalID(record.Name, record.Version),
 			Runtime:    launch.Runtime,
 			ProjectDir: launch.ProjectDir,
 			Module:     launch.Module,
@@ -1536,16 +1560,9 @@ func logsFromRPC(request run.Request, logs []rpcLog) []run.LogEntry {
 	return out
 }
 
-func moduleFromRPC(moduleID string, info, schema map[string]any, stepContractValues ...map[string]any) (modulecatalog.Module, error) {
+func moduleFromRPC(_ string, info, schema map[string]any, stepContractValues ...map[string]any) (modulecatalog.Module, error) {
 	name := strings.TrimSpace(stringValue(info["name"]))
-	configName, configVersion, configHasVersion := modulecatalog.SplitID(moduleID)
-	if name == "" {
-		name = configName
-	}
 	version := strings.TrimSpace(stringValue(info["version"]))
-	if version == "" && configHasVersion {
-		version = configVersion
-	}
 	if name == "" {
 		return modulecatalog.Module{}, errors.New("module handshake missing name")
 	}

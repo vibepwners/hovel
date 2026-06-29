@@ -26,6 +26,12 @@ type Positional struct {
 	Required bool
 }
 
+type Passthrough struct {
+	Name     string
+	Help     string
+	Required bool
+}
+
 type Option struct {
 	Name      string
 	Short     string
@@ -42,6 +48,7 @@ type Definition struct {
 	Aliases        [][]string
 	Summary        string
 	Positionals    []Positional
+	Passthrough    Passthrough
 	Options        []Option
 	RequiresDaemon bool
 	Handler        Handler
@@ -65,6 +72,7 @@ type Invocation struct {
 	Options         map[string]string
 	OptionLists     map[string][]string
 	Flags           map[string]bool
+	Passthrough     []string
 	Input           Input
 	Output          io.Writer
 	NonInteractive  bool
@@ -98,6 +106,10 @@ func (i Invocation) Flag(name string) bool {
 		return false
 	}
 	return i.Flags[name]
+}
+
+func (i Invocation) PassthroughArgs() []string {
+	return append([]string(nil), i.Passthrough...)
 }
 
 type Result struct {
@@ -310,6 +322,15 @@ func validateDefinition(definition Definition) error {
 			return fmt.Errorf("command %q duplicates argument %q", definition.PathString(), positional.Name)
 		}
 		seen[positional.Name] = struct{}{}
+	}
+	if definition.Passthrough.Name != "" {
+		if strings.TrimSpace(definition.Passthrough.Name) == "" {
+			return fmt.Errorf("command %q has unnamed passthrough", definition.PathString())
+		}
+		if _, ok := seen[definition.Passthrough.Name]; ok {
+			return fmt.Errorf("command %q duplicates argument %q", definition.PathString(), definition.Passthrough.Name)
+		}
+		seen[definition.Passthrough.Name] = struct{}{}
 	}
 	for _, option := range definition.Options {
 		if strings.TrimSpace(option.Name) == "" {

@@ -108,7 +108,9 @@ func Req(key, valueType, description string) Requirement {
 	return Requirement{Key: key, Type: valueType, Required: true, Description: description}
 }
 
-// Info is the metadata a module reports during the handshake.
+// Info is the metadata a module reports during the handshake. Name, Version,
+// and Type are required; Hovel treats this handshake as authoritative over any
+// package-manifest hints.
 type Info struct {
 	Name             string
 	Version          string

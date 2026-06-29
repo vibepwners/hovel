@@ -154,16 +154,12 @@ def module_source(archive: Path, base_url: str) -> str:
     return archive.name
 
 
-def native_manifest(name: str, version: str, module_type: str, summary: str, command: str) -> str:
+def native_manifest(name: str, version: str, command: str) -> str:
     return f"""apiVersion: hovel.dev/v1alpha1
 kind: ModulePackage
 metadata:
   name: {name}
   version: {version}
-  moduleType: {module_type}
-  summary: {summary}
-runtime:
-  protocol: jsonrpc-stdio
 launch:
   - selector:
       os: {os.environ.get("HOVEL_PACKAGE_OS", host_os())}
@@ -172,16 +168,12 @@ launch:
 """
 
 
-def python_manifest(name: str, version: str, module_type: str, summary: str, module: str) -> str:
+def python_manifest(name: str, version: str, module: str) -> str:
     return f"""apiVersion: hovel.dev/v1alpha1
 kind: ModulePackage
 metadata:
   name: {name}
   version: {version}
-  moduleType: {module_type}
-  summary: {summary}
-runtime:
-  protocol: jsonrpc-stdio
 launch:
   - python:
       managed:
@@ -191,11 +183,11 @@ launch:
 """
 
 
-def package_native(name: str, version: str, module_type: str, summary: str, binary: str) -> tuple[str, str, Path]:
+def package_native(name: str, version: str, _module_type: str, _summary: str, binary: str) -> tuple[str, str, Path]:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         command = Path(binary).name
-        write(root / "hovel-module.yaml", native_manifest(name, version, module_type, summary, command))
+        write(root / "hovel-module.yaml", native_manifest(name, version, command))
         dst = root / "bin" / command
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / binary, dst)
@@ -209,11 +201,18 @@ def package_native(name: str, version: str, module_type: str, summary: str, bina
         return name, version, archive
 
 
-def package_python(name: str, version: str, module_type: str, summary: str, source: str, module: str) -> tuple[str, str, Path]:
+def package_python(
+    name: str,
+    version: str,
+    _module_type: str,
+    _summary: str,
+    source: str,
+    module: str,
+) -> tuple[str, str, Path]:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         copytree(ROOT / source, root)
-        write(root / "hovel-module.yaml", python_manifest(name, version, module_type, summary, module))
+        write(root / "hovel-module.yaml", python_manifest(name, version, module))
         write(root / "requirements.txt", "hovel-sdk\n")
         archive = OUT / f"{name}-{version}.tgz"
         archive_dir(root, archive)

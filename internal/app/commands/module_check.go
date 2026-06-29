@@ -52,7 +52,7 @@ func modulesCheckHandler(runtime Runtime) Handler {
 		if runtime.ModuleChecks == nil {
 			return Result{}, fmt.Errorf("module checks are not configured")
 		}
-		references, err := moduleCheckReferences(runtime, invocation)
+		references, err := moduleCheckReferences(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
@@ -88,13 +88,13 @@ func modulesCheckHandler(runtime Runtime) Handler {
 	}
 }
 
-func moduleCheckReferences(runtime Runtime, invocation Invocation) ([]string, error) {
+func moduleCheckReferences(ctx context.Context, runtime Runtime, invocation Invocation) ([]string, error) {
 	reference := strings.TrimSpace(invocation.Positional("module"))
 	if invocation.Flag("all") {
 		if reference != "" {
 			return nil, fmt.Errorf("--all cannot be combined with a module reference")
 		}
-		db, err := moduleDBForInvocation(runtime, invocation)
+		db, err := moduleDBForInvocation(ctx, runtime, invocation)
 		if err != nil {
 			return nil, err
 		}
