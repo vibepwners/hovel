@@ -195,6 +195,15 @@ func TestLaunchKeyDisabledAddsNoRequiredApprovers(t *testing.T) {
 	if decision := pending.Decision(); !decision.Ready {
 		t.Fatalf("decision = %#v, want launch-key ready when disabled", decision)
 	}
+	// With no required approvers, confirming the already-ready throw is a vacuous
+	// no-op so the default plan -> confirm -> start workflow succeeds.
+	confirmed, err := pending.Approve("entity-mcp", "hash-1", ApprovalFlags{}, now)
+	if err != nil {
+		t.Fatalf("Approve with no required approvers returned error: %v", err)
+	}
+	if decision := confirmed.Decision(); !decision.Ready || len(decision.RequiredApproverIDs) != 0 {
+		t.Fatalf("decision after no-op approve = %#v, want ready with no approvers", decision)
+	}
 }
 
 func TestPendingThrowQuorumAllowsAnyNMatchingApprovers(t *testing.T) {

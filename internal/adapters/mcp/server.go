@@ -1959,7 +1959,7 @@ func (s *Server) throwConfirm(ctx context.Context, _ *mcpsdk.CallToolRequest, in
 	}
 	pending, err := s.daemon.ConfirmPendingThrow(ctx, daemonrpc.ConfirmPendingThrowRequest{
 		ID:             input.PendingID,
-		EntityID:       s.entity.ID,
+		EntityID:       s.currentEntity().ID,
 		PlanHash:       input.PlanHash,
 		AllowDangerous: input.AllowDangerous,
 		NowBypass:      input.NowBypass,

@@ -233,6 +233,14 @@ func (p PendingThrow) Approve(entityID, planHash string, flags ApprovalFlags, ap
 		return PendingThrow{}, fmt.Errorf("approval flags do not match pending throw flags")
 	}
 	if !p.requiresApprover(entityID) {
+		// When the launch-key policy requires no approvers (e.g. the default
+		// "anyone" mode) the pending throw is already ready, so confirming it is a
+		// vacuous no-op rather than an error. This keeps the default
+		// plan -> confirm -> start workflow working. An entity that is simply not
+		// part of a non-empty required set is still rejected.
+		if len(p.requiredApproverIDs) == 0 {
+			return p.clone(), nil
+		}
 		return PendingThrow{}, fmt.Errorf("entity %s is not a required approver", entityID)
 	}
 	if approvedAt.IsZero() {
