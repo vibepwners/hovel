@@ -76,23 +76,16 @@ pub struct Info {
     pub summary: String,
     pub description: String,
     pub tags: Vec<String>,
+    pub discovery_context: Vec<(String, Value)>,
 }
 
 /// The configuration contract a module reports.
+#[derive(Default)]
 pub struct Schema {
     pub chain_config: Vec<Requirement>,
     pub target_config: Vec<Requirement>,
     pub outputs: Vec<(String, Value)>,
-}
-
-impl Default for Schema {
-    fn default() -> Schema {
-        Schema {
-            chain_config: Vec::new(),
-            target_config: Vec::new(),
-            outputs: Vec::new(),
-        }
-    }
+    pub planning_context: Vec<(String, Value)>,
 }
 
 /// Implemented by every Hovel module. `info` and `schema` must be cheap and

@@ -27,6 +27,7 @@ go_binary(
     srcs = ["provider_main.go"],
     data = ["//payloads/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
+    gotags = ["hovel_squatter_provider"],
 )
 
 go_binary(
@@ -34,6 +35,7 @@ go_binary(
     srcs = ["generate_main.go"],
     data = ["//payloads/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
+    gotags = ["hovel_squatter_generate"],
 )
 
 go_test(
@@ -42,6 +44,7 @@ go_test(
     data = ["//payloads/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
     deps = [
+        "//payloads/squatter/client/shell",
         "//payloads/squatter/client/wire",
         "//sdk/go/hovel",
         "//sdk/go/hoveltest",

@@ -2,6 +2,7 @@ package commandview
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -39,6 +40,14 @@ func (r Renderer) Render(result commands.Result) (string, bool) {
 		return r.installedPayloads(payload), true
 	case []commands.AvailablePayload:
 		return r.availablePayloads(payload), true
+	case []commands.SessionRef:
+		return r.sessions(payload), true
+	case commands.SessionRef:
+		return r.session(payload), true
+	case []commands.PayloadCommand:
+		return r.payloadCommands(payload), true
+	case commands.PayloadCommandResult:
+		return r.payloadCommandResult(result.Human, payload), true
 	case []commands.ThrowPlanRecord:
 		return r.throwPlans(payload), true
 	case commands.ThrowInspectPayload:
@@ -224,6 +233,131 @@ func (r Renderer) installedPayloads(records []commands.InstalledPayloadRecord) s
 		rows = append(rows, []string{record.Handle, record.State, record.Provider, record.Target, display(record.Transport), display(record.Endpoint)})
 	}
 	return r.styles.Table([]string{"ID", "STATE", "PROVIDER", "TARGET", "TRANSPORT", "ENDPOINT"}, rows, r.tableWidth())
+}
+
+func (r Renderer) sessions(sessions []commands.SessionRef) string {
+	if len(sessions) == 0 {
+		return r.styles.Muted.Render("No sessions")
+	}
+	rows := make([][]string, 0, len(sessions))
+	for _, session := range sessions {
+		rows = append(rows, []string{
+			wrapCell(session.ID, 28),
+			display(session.Kind),
+			r.styles.Status(display(session.State)),
+			wrapCell(display(session.Target), 20),
+			wrapCell(display(session.Name), 48),
+		})
+	}
+	return r.styles.Table([]string{"ID", "KIND", "STATE", "TARGET", "NAME"}, rows, 0)
+}
+
+func (r Renderer) session(session commands.SessionRef) string {
+	rows := [][2]string{
+		{"id", r.styles.Header.Render(session.ID)},
+		{"kind", display(session.Kind)},
+		{"state", r.styles.Status(display(session.State))},
+		{"target", display(session.Target)},
+		{"name", display(session.Name)},
+		{"transport", display(session.Transport)},
+	}
+	if session.RunID != "" {
+		rows = append(rows, [2]string{"run", session.RunID})
+	}
+	if session.ModuleID != "" {
+		rows = append(rows, [2]string{"module", session.ModuleID})
+	}
+	if session.InstalledPayloadID != "" {
+		rows = append(rows, [2]string{"payload", session.InstalledPayloadID})
+	}
+	if len(session.Capabilities) > 0 {
+		rows = append(rows, [2]string{"capabilities", strings.Join(session.Capabilities, ", ")})
+	}
+	return r.styles.Panel("SESSION", session.ID, r.styles.KeyValue(rows), r.panelWidth())
+}
+
+func (r Renderer) payloadCommands(commandsList []commands.PayloadCommand) string {
+	if len(commandsList) == 0 {
+		return r.styles.Muted.Render("No payload commands")
+	}
+	width := r.tableWidth()
+	rows := make([][]string, 0, len(commandsList))
+	for _, command := range commandsList {
+		rows = append(rows, []string{
+			wrapCell(command.Name, 22),
+			r.styles.Status(commands.PayloadCommandEffect(command)),
+			wrapCell(display(command.Summary), bounded(width/2, 24, 52)),
+		})
+	}
+	return r.styles.Table([]string{"COMMAND", "EFFECT", "SUMMARY"}, rows, width)
+}
+
+func (r Renderer) payloadCommandResult(human string, result commands.PayloadCommandResult) string {
+	title := commandResultTitle(human)
+	sections := []string{}
+	if result.Summary != "" {
+		sections = append(sections, r.styles.Header.Render(result.Summary))
+	}
+	if len(result.Fields) > 0 {
+		sections = append(sections, r.commandFields(result.Fields))
+	}
+	if result.Stdout != "" {
+		sections = append(sections, r.commandOutput("STDOUT", result.Stdout))
+	}
+	if result.Stderr != "" {
+		sections = append(sections, r.commandOutput("STDERR", result.Stderr))
+	}
+	if len(result.Artifacts) > 0 {
+		sections = append(sections, r.commandArtifacts(result.Artifacts))
+	}
+	body := strings.Join(nonEmpty(sections), "\n\n")
+	if body == "" {
+		body = r.styles.Muted.Render("No output")
+	}
+	return r.styles.Panel(title, result.Command, body, r.panelWidth())
+}
+
+func commandResultTitle(human string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(human), "\n")
+	line = strings.ToLower(line)
+	switch {
+	case strings.HasPrefix(line, "session command"):
+		return "SESSION COMMAND"
+	case strings.HasPrefix(line, "payload command"):
+		return "PAYLOAD COMMAND"
+	default:
+		return "COMMAND"
+	}
+}
+
+func (r Renderer) commandFields(fields map[string]string) string {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	rows := make([][2]string, 0, len(keys))
+	for _, key := range keys {
+		rows = append(rows, [2]string{key, fields[key]})
+	}
+	return r.styles.Header.Render("FIELDS") + "\n" + r.styles.KeyValue(rows)
+}
+
+func (r Renderer) commandOutput(title, value string) string {
+	return r.styles.Header.Render(title) + "\n" + commands.PrettyCommandOutput(value)
+}
+
+func (r Renderer) commandArtifacts(artifacts []commands.PayloadCommandArtifact) string {
+	rows := make([][]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		rows = append(rows, []string{
+			wrapCell(display(artifact.Name), 24),
+			display(artifact.Kind),
+			wrapCell(display(artifact.Path), 36),
+		})
+	}
+	return r.styles.Header.Render("ARTIFACTS") + "\n" +
+		r.styles.Table([]string{"NAME", "KIND", "PATH"}, rows, r.contentWidth())
 }
 
 func (r Renderer) throwPlans(plans []commands.ThrowPlanRecord) string {

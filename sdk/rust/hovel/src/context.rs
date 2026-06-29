@@ -82,8 +82,13 @@ impl Emitter {
             capabilities: opts.capabilities,
         };
         session.open()?;
-        self.sessions
-            .insert(id.clone(), ManagedSession { sref: sref.clone(), session });
+        self.sessions.insert(
+            id.clone(),
+            ManagedSession {
+                sref: sref.clone(),
+                session,
+            },
+        );
         self.fire_session("session.created", &sref, None);
         Ok(sref)
     }
@@ -161,7 +166,10 @@ impl Emitter {
 }
 
 fn unknown_session(id: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::NotFound, format!("hovel: unknown session {id:?}"))
+    io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("hovel: unknown session {id:?}"),
+    )
 }
 
 /// Everything a module needs for one execution.
@@ -179,7 +187,13 @@ pub struct Context<'a> {
 
 impl<'a> Context<'a> {
     pub(crate) fn new(emitter: &'a mut Emitter, module_name: &str, params: &Value) -> Context<'a> {
-        let field = |key: &str| params.get(key).and_then(Value::as_str).unwrap_or("").to_string();
+        let field = |key: &str| {
+            params
+                .get(key)
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
         let object = |key: &str| match params.get(key) {
             Some(value @ Value::Object(_)) => value.clone(),
             _ => Value::Object(Vec::new()),
@@ -234,7 +248,12 @@ impl<'a> Context<'a> {
         if !fields.is_empty() {
             members.push((
                 "fields",
-                Value::Object(fields.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()),
+                Value::Object(
+                    fields
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.clone()))
+                        .collect(),
+                ),
             ));
         }
         self.emitter.log(Value::object(members));

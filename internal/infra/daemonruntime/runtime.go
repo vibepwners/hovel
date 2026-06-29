@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -15,11 +16,13 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
+	"github.com/Vibe-Pwners/hovel/internal/app/hovelconfig"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
 )
@@ -81,7 +84,7 @@ func Serve(ctx context.Context, args Args) error {
 	if err != nil {
 		return err
 	}
-	defer lock.Release()
+	defer func() { logDaemonRuntimeError("release workspace lock", lock.Release()) }()
 
 	store := filesystem.NewWorkspaceStore()
 	if err := store.EnsureWorkspaceDatabase(ctx, workspacePath); err != nil {
@@ -138,12 +141,19 @@ func Serve(ctx context.Context, args Args) error {
 		return err
 	}
 	if endpoint.Network == "unix" {
-		defer os.Remove(endpoint.Address)
+		defer func() { logDaemonRuntimeError("remove daemon socket", os.Remove(endpoint.Address)) }()
 	}
-	defer listener.Close()
+	defer func() { logDaemonRuntimeError("close daemon listener", listener.Close()) }()
 
 	runs := services.NewRunService(runner, events, ids, clock)
-	handler, err := daemonrpc.NewHandler(runs, daemonrpc.WithSession(session), daemonrpc.WithLogBroker(logs), daemonrpc.WithSessionPersistence(persistSession), daemonrpc.WithModuleSessions(sessionBroker))
+	config, _, err := hovelconfig.Load(hovelconfig.Options{
+		Workspace:    workspacePath,
+		ExplicitPath: args.HovelConfig,
+	})
+	if err != nil {
+		return err
+	}
+	handler, err := daemonrpc.NewHandler(runs, daemonrpc.WithSession(session), daemonrpc.WithLogBroker(logs), daemonrpc.WithSessionPersistence(persistSession), daemonrpc.WithModuleSessions(sessionBroker), daemonrpc.WithLaunchKeyPolicy(launchKeyPolicyFromConfig(config.Policy.LaunchKey)))
 	if err != nil {
 		return err
 	}
@@ -172,6 +182,19 @@ func Serve(ctx context.Context, args Args) error {
 	return nil
 }
 
+func launchKeyPolicyFromConfig(config hovelconfig.LaunchKeyPolicy) operatordomain.LaunchKeyPolicy {
+	policy := operatordomain.LaunchKeyPolicy{
+		Mode:   operatordomain.LaunchKeyMode(config.Mode),
+		Quorum: config.Quorum,
+	}
+	if timeout := config.HeartbeatTimeout; timeout != "" {
+		if parsed, err := time.ParseDuration(timeout); err == nil {
+			policy.HeartbeatTimeout = parsed
+		}
+	}
+	return operatordomain.NormalizeLaunchKeyPolicy(policy)
+}
+
 func serveRPC(listener net.Listener, server *http.Server, errs chan<- error) {
 	err := server.Serve(listener)
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -179,12 +202,6 @@ func serveRPC(listener net.Listener, server *http.Server, errs chan<- error) {
 		return
 	}
 	errs <- nil
-}
-
-type discardEvents struct{}
-
-func (discardEvents) Append(context.Context, event.Event) error {
-	return nil
 }
 
 type publishingEventSink struct {
@@ -241,7 +258,9 @@ func (s *publishingEventSink) Append(ctx context.Context, evt event.Event) error
 		}
 	case "hovel.module.log", "module.log":
 		entry := s.moduleLogEntry(operation, chain, evt)
-		_ = s.session.AppendLogToChain(chain, entry)
+		if err := s.session.AppendLogToChain(chain, entry); err != nil {
+			return err
+		}
 		s.logs.Publish(operation, chain, entry)
 		return s.persistIfConfigured()
 	case "hovel.session.created", "session.created":
@@ -250,17 +269,23 @@ func (s *publishingEventSink) Append(ctx context.Context, evt event.Event) error
 			operatorlog.Field{Name: "kind", Value: evt.Fields["kind"]},
 			operatorlog.Field{Name: "state", Value: evt.Fields["state"]},
 		))
-		_ = s.session.AppendLogToChain(chain, entry)
+		if err := s.session.AppendLogToChain(chain, entry); err != nil {
+			return err
+		}
 		s.logs.Publish(operation, chain, entry)
 		return s.persistIfConfigured()
 	case "hovel.run.completed", "run.succeeded":
 		entry := s.runEventEntry(operation, chain, evt, operatorlog.Success("throw", "run completed"))
-		_ = s.session.AppendLogToChain(chain, entry)
+		if err := s.session.AppendLogToChain(chain, entry); err != nil {
+			return err
+		}
 		s.logs.Publish(operation, chain, entry)
 		return s.persistIfConfigured()
 	case "hovel.run.failed", "run.failed":
 		entry := s.runEventEntry(operation, chain, evt, operatorlog.Finding("throw", "run failed"))
-		_ = s.session.AppendLogToChain(chain, entry)
+		if err := s.session.AppendLogToChain(chain, entry); err != nil {
+			return err
+		}
 		s.logs.Publish(operation, chain, entry)
 		return s.persistIfConfigured()
 	}
@@ -307,6 +332,12 @@ type systemClock struct{}
 
 func (systemClock) Now() time.Time {
 	return time.Now().UTC()
+}
+
+func logDaemonRuntimeError(action string, err error) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, net.ErrClosed) {
+		log.Printf("hovel daemon runtime: %s: %v", action, err)
+	}
 }
 
 type runtimeIDs struct{}

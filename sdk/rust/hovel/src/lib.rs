@@ -32,7 +32,7 @@
 //!     }
 //! }
 //!
-//! fn main() { hovel::serve(Hello); }
+//! hovel::serve(Hello);
 //! ```
 
 pub mod base64;

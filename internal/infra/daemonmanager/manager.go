@@ -58,7 +58,7 @@ func (m Manager) EnsureWithConfig(ctx context.Context, workspacePath, moduleConf
 			}
 			return &Session{status: status}, nil
 		}
-		_ = filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), workspacePath)
+		logDaemonManagerError("clear stale daemon status", filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), workspacePath))
 		if status, ok := m.statusFromReachableSocket(ctx, workspacePath); ok {
 			if err := ensureSameHovelConfig(status.Identity.HovelConfig, hovelConfig); err != nil {
 				return nil, err
@@ -170,12 +170,9 @@ func socketReachable(ctx context.Context, socketPath string) bool {
 	if err != nil {
 		return false
 	}
-	defer client.Close()
+	defer func() { logDaemonManagerError("close daemon health-check client", client.Close()) }()
 	_, err = client.PollLogs(ctx, 0)
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 func (m Manager) waitRunning(ctx context.Context, workspacePath string, done <-chan error) (daemon.Status, error) {

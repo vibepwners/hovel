@@ -2,7 +2,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "mcp",
-    srcs = ["server.go"],
+    srcs = [
+        "logging.go",
+        "server.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/mcp",
     visibility = ["//:__subpackages__"],
     deps = [

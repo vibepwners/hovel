@@ -304,8 +304,14 @@ func TestStoreInstalledPayloadStateTransitionsAndActiveFilter(t *testing.T) {
 
 func TestStorePersistsStructuredEvents(t *testing.T) {
 	store := NewStore(t.TempDir())
-	id, _ := event.NewID("event-1")
-	typ, _ := event.NewType("hovel.throw.started")
+	id, err := event.NewID("event-1")
+	if err != nil {
+		t.Fatalf("NewID returned error: %v", err)
+	}
+	typ, err := event.NewType("hovel.throw.started")
+	if err != nil {
+		t.Fatalf("NewType returned error: %v", err)
+	}
 	evt, err := event.New(event.Args{
 		ID:        id,
 		Type:      typ,

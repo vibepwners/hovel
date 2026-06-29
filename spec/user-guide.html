@@ -263,6 +263,11 @@ h0v3l [demo/mock-survey-exploit] &gt; session read latest
 h0v3l [demo/mock-survey-exploit] &gt; session connect latest --no-history
 h0v3l [demo/mock-survey-exploit] &gt; session close latest</code></pre>
         <p><code>session connect</code> attaches interactively inside <code>hovel cli</code> or from a direct <code>hovel session connect</code> command. Use <code>session read</code>, <code>session tail</code>, and <code>session send</code> for non-attached request/response interaction.</p>
+        <p>Provider-backed agent sessions can also expose typed commands that do not write to the interactive byte stream. Discover them with <code>session commands</code> or the <code>session capabilities</code> alias, then call one with <code>session call</code>:</p>
+<pre data-lang="cli"><code>h0v3l [demo/mock-survey-exploit] &gt; session capabilities latest
+h0v3l [demo/mock-survey-exploit] &gt; session call latest process.list
+h0v3l [demo/mock-survey-exploit] &gt; session call latest registry.query --arg HKLM --arg "SOFTWARE\Microsoft\Windows NT\CurrentVersion" --arg ProductName</code></pre>
+        <p>Typed command lists render as tables with safe/write/destructive effect labels. If a provider command returns JSON on stdout or stderr, Hovel pretty-prints that JSON in human output and still exposes the raw structured result through <code>--json</code>.</p>
 
         <div class="demo-series">
           <figure class="demo-figure">
@@ -280,8 +285,14 @@ h0v3l [demo/mock-survey-exploit] &gt; session close latest</code></pre>
 <pre data-lang="cli"><code>h0v3l [demo/mock-survey-exploit] &gt; payloads available
 h0v3l [demo/mock-survey-exploit] &gt; payloads installed
 h0v3l [demo/mock-survey-exploit] &gt; payloads inspect p1 --events
+h0v3l [demo/mock-survey-exploit] &gt; payloads capabilities p1
+h0v3l [demo/mock-survey-exploit] &gt; payloads call p1 wininfo
+h0v3l [demo/mock-survey-exploit] &gt; payloads call p1 process.list
+h0v3l [demo/mock-survey-exploit] &gt; payloads getfile p1 C:\Windows\win.ini
+h0v3l [demo/mock-survey-exploit] &gt; payloads putfile p1 ./note.txt C:\Windows\Temp\note.txt
+h0v3l [demo/mock-survey-exploit] &gt; payloads cmd p1 whoami
 h0v3l [demo/mock-survey-exploit] &gt; payloads mark-removed p1 --reason rebuilt</code></pre>
-        <p>Use payload inventory demos only with fixtures that create deterministic installed payload records. Avoid implying that a log line, artifact name, or connection attempt creates inventory.</p>
+        <p><code>payloads capabilities</code> is an alias for <code>payloads commands</code>. <code>payloads call</code> is the provider-neutral path for typed actions; <code>payloads getfile</code>, <code>payloads putfile</code>, and <code>payloads cmd</code> are compatibility shortcuts for common Squatter commands. Use payload inventory demos only with fixtures that create deterministic installed payload records. Avoid implying that a log line, artifact name, or connection attempt creates inventory.</p>
 
         <h2>Save And Reuse</h2>
         <p>Once an interactive chain is configured, save it when it should be reviewed, shared, or run later from one-shot mode.</p>

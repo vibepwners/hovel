@@ -4,6 +4,7 @@ go_library(
     name = "services",
     srcs = [
         "daemon.go",
+        "logging.go",
         "run.go",
         "workspace.go",
     ],

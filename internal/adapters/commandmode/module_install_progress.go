@@ -117,20 +117,20 @@ func (r *installProgressRenderer) renderProgress(event modulepackage.InstallProg
 	}
 	r.bar.Width = available
 	line := prefix + "  " + r.bar.ViewAs(percent) + "  " + suffix
-	fmt.Fprintf(r.out, "\r\x1b[2K%s", line)
+	writeCommandFormat(r.out, "\r\x1b[2K%s", line)
 	r.activeLine = true
 }
 
 func (r *installProgressRenderer) finishActiveLine() {
 	if r.activeLine {
-		fmt.Fprintln(r.out)
+		writeCommandLine(r.out)
 		r.activeLine = false
 	}
 }
 
 func (r *installProgressRenderer) println(parts ...string) {
 	r.finishActiveLine()
-	fmt.Fprintln(r.out, strings.Join(nonEmptyProgress(parts), " "))
+	writeCommandLine(r.out, strings.Join(nonEmptyProgress(parts), " "))
 }
 
 func displayInstallSource(source string) string {

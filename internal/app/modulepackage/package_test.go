@@ -672,7 +672,9 @@ func TestInstallURLDownloadsCachesAndInstallsArchive(t *testing.T) {
 	}
 	sum := fileSHA256(t, archive)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(body)
+		if _, err := w.Write(body); err != nil {
+			t.Logf("write archive response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -710,7 +712,9 @@ func TestInstallURLReportsDownloadProgress(t *testing.T) {
 	sum := fileSHA256(t, archive)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprint(len(body)))
-		_, _ = w.Write(body)
+		if _, err := w.Write(body); err != nil {
+			t.Logf("write progress archive response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -808,11 +812,8 @@ func packageArchive(t *testing.T, files map[string]string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer out.Close()
 	gz := gzip.NewWriter(out)
-	defer gz.Close()
 	tw := tar.NewWriter(gz)
-	defer tw.Close()
 	for name, body := range files {
 		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(body))}); err != nil {
 			t.Fatal(err)
@@ -820,6 +821,15 @@ func packageArchive(t *testing.T, files map[string]string) string {
 		if _, err := tw.Write([]byte(body)); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
 	}
 	return path
 }

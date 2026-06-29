@@ -6,6 +6,7 @@ go_library(
         "cli.go",
         "interactive_config.go",
         "interactive_config_huh.go",
+        "logging.go",
         "prompt_writer.go",
         "session_connect.go",
         "session_persistence.go",
@@ -18,6 +19,7 @@ go_library(
     deps = [
         "//internal/adapters/commandmode",
         "//internal/adapters/daemonrpc",
+        "//internal/adapters/storage/filesystem",
         "//internal/adapters/storage/sqlite",
         "//internal/adapters/terminallog",
         "//internal/app/commands",
@@ -89,9 +91,12 @@ go_test(
     tags = ["unit"],
     deps = [
         "//internal/adapters/commandmode",
+        "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/sqlite",
         "//internal/app/modulecatalog",
         "//internal/app/operatorsession",
+        "//internal/domain/run",
+        "//internal/infra/daemonruntime",
         "//internal/testsupport",
         "@com_github_c_bata_go_prompt//:go-prompt",
     ],

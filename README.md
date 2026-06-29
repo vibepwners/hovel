@@ -78,30 +78,10 @@ Useful tasks:
 | `task mcp` | Launch the MCP agent front end for the dev workspace. |
 | `task build` | Build all targets. |
 | `task test` | Run all Bazel tests. |
-| `task lint` | Run Go, Gazelle, Python, and Squatter C checks. |
+| `task lint` | Run Go formatting, golangci-lint, Gazelle, Rust, Python, and Squatter C checks. |
 | `task docs` | Build cached demos, stage the Pages site, generate SDK API docs, and check internal links. |
 | `task coverage` | Run domain, application, and Python SDK coverage ratchets. |
 | `task ci` | Run the local gate: lint, version-update tests, docs, build, tests, race, fuzz smoke, and coverage. |
-
-## Repository Map
-
-| Path | What it is |
-| --- | --- |
-| `cmd/hovel` | The `hovel` mono-binary entry point. |
-| `internal/domain` | Pure domain model. |
-| `internal/app` | Application services, command registry, operator session. |
-| `internal/adapters` | CLI, daemon RPC, MCP, descriptor, storage, and terminal adapters. |
-| `internal/infra` | Daemon manager and runtime. |
-| `internal/modules` | In-tree module runners and mock modules. |
-| [`sdk`](sdk/README.md) | SDK overview for module authors. |
-| `examples` | Go, Python, and Rust example modules. |
-| `payloads/squatter` | Squatter payload provider and Windows payload. |
-| `schemas` | JSON schemas for descriptors, chains, events, and throw plans. |
-| `spec` | GitHub Pages book source. |
-
-The architecture follows a hexagonal layering: `adapters -> app -> domain` and
-`infra -> app -> domain`. The domain package must not import CLI, storage, RPC,
-or concrete module/service code.
 
 ## Contributing
 

@@ -6,6 +6,7 @@ go_library(
         "agent.go",
         "context.go",
         "framing.go",
+        "logging.go",
         "module.go",
         "payload.go",
         "pty_linux.go",

@@ -113,7 +113,11 @@ impl LineShellSession {
         F: FnMut(&str) -> String + Send + 'static,
     {
         LineShellSession {
-            prompt: if prompt.is_empty() { "$ ".to_string() } else { prompt.to_string() },
+            prompt: if prompt.is_empty() {
+                "$ ".to_string()
+            } else {
+                prompt.to_string()
+            },
             echo,
             handler: Box::new(handler),
             buffer: Vec::new(),

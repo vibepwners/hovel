@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"strconv"
 	"strings"
 	"testing"
@@ -29,7 +30,9 @@ func NewRPCConn(t testing.TB, module hovel.Module) *RPCConn {
 	done := make(chan error, 1)
 	go func() {
 		done <- hovel.ServeIO(module, inR, outW)
-		_ = outW.Close()
+		if err := outW.Close(); err != nil {
+			log.Printf("hoveltest: close RPC output pipe: %v", err)
+		}
 	}()
 	return &RPCConn{t: t, in: inW, out: bufio.NewReader(outR), done: done}
 }
@@ -72,7 +75,9 @@ func (c *RPCConn) Close() {
 	if err := <-c.done; err != nil {
 		c.t.Fatalf("serve returned error: %v", err)
 	}
-	_ = c.in.Close()
+	if err := c.in.Close(); err != nil {
+		c.t.Logf("close RPC input pipe: %v", err)
+	}
 }
 
 func (c *RPCConn) readFrame() map[string]json.RawMessage {
@@ -89,7 +94,11 @@ func (c *RPCConn) readFrame() map[string]json.RawMessage {
 		}
 		name, value, ok := strings.Cut(line, ":")
 		if ok && strings.EqualFold(strings.TrimSpace(name), "content-length") {
-			length, _ = strconv.Atoi(strings.TrimSpace(value))
+			var err error
+			length, err = strconv.Atoi(strings.TrimSpace(value))
+			if err != nil {
+				c.t.Fatalf("parse content-length %q: %v", value, err)
+			}
 		}
 	}
 	body := make([]byte, length)

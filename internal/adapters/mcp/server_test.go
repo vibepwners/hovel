@@ -71,7 +71,7 @@ func TestHTTPTransportServesMCPTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -171,7 +171,7 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -188,7 +188,9 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 		t.Fatalf("client connect returned error: %v", err)
 	}
 	defer func() {
-		_ = session.Close()
+		if err := session.Close(); err != nil {
+			t.Logf("close mcp sdk session: %v", err)
+		}
 		cancel()
 		select {
 		case err := <-serverDone:
@@ -207,7 +209,7 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 	names := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {
 		names = append(names, tool.Name)
-		if tool.Name == ToolChainApply || tool.Name == ToolCommandRun || tool.Name == ToolThrowStart || tool.Name == ToolPayloadCmd || tool.Name == ToolPayloadCommandCall {
+		if tool.Name == ToolChainApply || tool.Name == ToolCommandRun || tool.Name == ToolThrowPlan || tool.Name == ToolThrowConfirm || tool.Name == ToolThrowStart || tool.Name == ToolSessionCall || tool.Name == ToolPayloadCmd || tool.Name == ToolPayloadCall || tool.Name == ToolPayloadCommandCall {
 			if tool.Annotations == nil || tool.Annotations.ReadOnlyHint || tool.Annotations.DestructiveHint == nil || !*tool.Annotations.DestructiveHint {
 				t.Fatalf("tool %s is missing destructive annotations", tool.Name)
 			}
@@ -218,7 +220,7 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 		}
 	}
 	sort.Strings(names)
-	wantNames := []string{ToolCatalogSnapshot, ToolChainApply, ToolCommandRun, ToolInstalledPayloadList, ToolOperationList, ToolOperatorIdentity, ToolOperatorListEntities, ToolPayloadCmd, ToolPayloadCommandCall, ToolPayloadCommandList, ToolThrowStart, ToolWorkspaceSnapshot}
+	wantNames := []string{ToolCatalogSnapshot, ToolChainApply, ToolChainSuggest, ToolCommandRun, ToolInstalledPayloadList, ToolLaunchKeyPolicy, ToolModuleInspect, ToolModuleSearch, ToolOperationList, ToolOperatorIdentity, ToolOperatorListEntities, ToolPayloadCall, ToolPayloadCapabilities, ToolPayloadCmd, ToolPayloadCommandCall, ToolPayloadCommandList, ToolSessionCall, ToolSessionCapabilities, ToolThrowConfirm, ToolThrowPlan, ToolThrowStart, ToolWorkspaceSnapshot}
 	sort.Strings(wantNames)
 	if !reflect.DeepEqual(names, wantNames) {
 		t.Fatalf("tool names = %#v, want %#v", names, wantNames)
@@ -255,6 +257,9 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 	snapshot := decodeStructured[workspaceSnapshotOutput](t, snapshotResult)
 	if snapshot.ActiveOperation != "redteam-lab" || snapshot.ActiveChain != "alpha" {
 		t.Fatalf("snapshot context = %s/%s", snapshot.ActiveOperation, snapshot.ActiveChain)
+	}
+	if snapshot.Catalog != nil {
+		t.Fatalf("snapshot included catalog by default: %#v", snapshot.Catalog)
 	}
 	if len(snapshot.Operations) != 1 || snapshot.Operations[0].Name != "redteam-lab" {
 		t.Fatalf("operations = %#v", snapshot.Operations)
@@ -319,7 +324,7 @@ func TestMCPCommandRunCarriesOperationAndChainContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	call := func(args ...string) commandRunOutput {
 		t.Helper()
@@ -358,6 +363,33 @@ func TestMCPCommandRunCarriesOperationAndChainContext(t *testing.T) {
 	}
 }
 
+func TestMCPCommandRunRejectsLaunchKeyPolicyMutation(t *testing.T) {
+	daemon := newFakeDaemon()
+	called := false
+	attached, err := Attach(context.Background(), daemon, OperatorOptions{
+		EntityID:    "mcp-command-policy-test",
+		DisplayName: "MCP command policy test",
+		CommandRunner: func(context.Context, commandRunInput) (commandRunOutput, error) {
+			called = true
+			return commandRunOutput{ExitCode: 0}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Attach returned error: %v", err)
+	}
+	defer detachTestOperator(t, attached)
+
+	_, _, err = attached.commandRun(context.Background(), nil, commandRunInput{
+		Args: []string{"hovel", "launch-key", "policy", "set", "all_connected"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "human-only") {
+		t.Fatalf("commandRun returned %v, want human-only policy error", err)
+	}
+	if called {
+		t.Fatal("command runner was invoked for a human-only policy mutation")
+	}
+}
+
 func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	testsupport.UseExampleModuleConfig(t)
 	fixture := testsupport.StartDaemon(t, daemonruntime.Args{})
@@ -365,7 +397,7 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeMCPTestClient(t, client)
 
 	attached, err := Attach(context.Background(), client, OperatorOptions{
 		EntityID:      "mcp-command-daemon-test",
@@ -376,7 +408,7 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	run := func(args ...string) commandRunOutput {
 		t.Helper()
@@ -400,7 +432,7 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	run("target", "config", "set", "192.168.122.142", "target.host", "192.168.122.142")
 	run("chain", "config", "set", "operator.confirmed_lab", "true")
 
-	_, snapshot, err := attached.workspaceSnapshot(context.Background(), nil, operationContextInput{})
+	_, snapshot, err := attached.workspaceSnapshot(context.Background(), nil, workspaceSnapshotInput{})
 	if err != nil {
 		t.Fatalf("workspaceSnapshot returned error: %v", err)
 	}
@@ -422,6 +454,168 @@ func TestMCPCommandRunExecutesThroughDaemonSession(t *testing.T) {
 	}
 	if got := operation.Chains[0].Config["operator.confirmed_lab"]; got != "true" {
 		t.Fatalf("operator.confirmed_lab = %q", got)
+	}
+}
+
+func TestMCPThrowPlanAndConfirmUseLaunchKeyPendingThrow(t *testing.T) {
+	daemon := newFakeDaemon()
+	var commandRequests []commandRunInput
+	attached, err := Attach(context.Background(), daemon, OperatorOptions{
+		EntityID:    "mcp-throw-approval-test",
+		DisplayName: "MCP throw approval test",
+		Operation:   "redteam-lab",
+		ActiveChain: "alpha",
+		CommandRunner: func(_ context.Context, input commandRunInput) (commandRunOutput, error) {
+			commandRequests = append(commandRequests, commandRunInput{
+				Args:      append([]string(nil), input.Args...),
+				Operation: input.Operation,
+				Chain:     input.Chain,
+			})
+			return commandRunOutput{
+				Args:     append([]string(nil), input.Args...),
+				ExitCode: 0,
+				JSON: commands.ThrowPlanPayload{
+					ID:       "plan-1",
+					PlanHash: "hash-1",
+					Chain:    input.Chain,
+					Targets:  []string{"mock://router-01"},
+				},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Attach returned error: %v", err)
+	}
+	defer detachTestOperator(t, attached)
+
+	_, planOut, err := attached.throwPlan(context.Background(), nil, throwPlanInput{
+		AllowDangerous: true,
+		NowBypass:      true,
+	})
+	if err != nil {
+		t.Fatalf("throwPlan returned error: %v", err)
+	}
+	wantPendingID := launchKeyPendingThrowID("hash-1", true, true)
+	if planOut.Pending.ID != wantPendingID || planOut.Pending.Operation != "redteam-lab" || planOut.Pending.Chain != "alpha" {
+		t.Fatalf("pending = %#v, want %s redteam-lab/alpha", planOut.Pending, wantPendingID)
+	}
+	if planOut.Policy.Operation != "redteam-lab" || planOut.Policy.Policy.Mode != "anyone" {
+		t.Fatalf("policy = %#v", planOut.Policy)
+	}
+	if !planOut.Preflight.AllowDangerous || !planOut.Preflight.NowBypass {
+		t.Fatalf("preflight flags = %#v", planOut.Preflight)
+	}
+	if !containsString(planOut.Preflight.RequiredConfirmations, "nowBypass") {
+		t.Fatalf("preflight confirmations = %#v", planOut.Preflight.RequiredConfirmations)
+	}
+	if len(commandRequests) != 1 || !reflect.DeepEqual(commandRequests[0].Args, []string{"throw", "plan", "--chain", "alpha", "--json"}) {
+		t.Fatalf("command requests = %#v", commandRequests)
+	}
+	if commandRequests[0].Operation != "redteam-lab" || commandRequests[0].Chain != "alpha" {
+		t.Fatalf("command request context = %#v", commandRequests[0])
+	}
+
+	_, confirmOut, err := attached.throwConfirm(context.Background(), nil, throwConfirmInput{
+		PendingID:      planOut.Pending.ID,
+		PlanHash:       "hash-1",
+		NuclearKey:     "turn both keys",
+		AllowDangerous: true,
+		NowBypass:      true,
+	})
+	if err != nil {
+		t.Fatalf("throwConfirm returned error: %v", err)
+	}
+	if !confirmOut.NuclearKeyAccepted || !confirmOut.Pending.Ready {
+		t.Fatalf("confirm output = %#v", confirmOut)
+	}
+	data, err := json.Marshal(confirmOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "turn both keys") {
+		t.Fatalf("confirmation output leaked nuclear key: %s", data)
+	}
+	if len(daemon.confirmRequests) != 1 {
+		t.Fatalf("confirm requests = %#v, want one", daemon.confirmRequests)
+	}
+	if got := daemon.confirmRequests[0]; got.EntityID != "mcp-throw-approval-test" || got.PlanHash != "hash-1" || !got.AllowDangerous || !got.NowBypass {
+		t.Fatalf("confirm request = %#v", got)
+	}
+}
+
+func TestMCPChainSuggestReturnsCatalogMatchesAndExampleDraft(t *testing.T) {
+	configPath := testsupport.WritePythonModuleFixtures(t,
+		testsupport.PythonModuleFixture{
+			ID: "ms17-010-survey",
+			Body: schemaModuleFixtureBody("ms17-010-survey", "v0.1.0", "survey", `[]`, `[
+		{"key": "target.host", "type": "host", "required": True},
+		{"key": "target.port", "type": "port", "required": True, "default": "445"}
+	]`),
+		},
+		testsupport.PythonModuleFixture{
+			ID: "ms17-010-exploit",
+			Body: schemaModuleFixtureBodyWithExtras("ms17-010-exploit", "v1.0.0", "exploit", `[
+		{"key": "operator.confirmed_lab", "type": "bool", "required": True}
+	]`, `[
+		{"key": "target.host", "type": "host", "required": True},
+		{"key": "target.port", "type": "port", "required": True, "default": "445"},
+		{"key": "payload.bind_port", "type": "port", "required": False}
+	]`, `, "planningContext": {
+		"keywords": ["ms17-010", "squatter", "tcp-bind"],
+		"examples": [{
+			"name": "ms17-010 squatter tcp bind",
+			"description": "Declared example chain for MS17-010 with Squatter TCP bind.",
+			"modules": ["ms17-010-survey", "ms17-010-exploit", "squatter"],
+			"chainConfig": {"operator.confirmed_lab": "true", "payload.bind_port": "9100"}
+		}]
+	}`),
+		},
+		testsupport.PythonModuleFixture{
+			ID:   "squatter",
+			Body: schemaModuleFixtureBody("squatter", "v0.1.0", "payload_provider", `[]`, `[]`),
+		},
+	)
+	attached, err := Attach(context.Background(), newFakeDaemon(), OperatorOptions{
+		EntityID:    "mcp-suggest-test",
+		DisplayName: "MCP suggest test",
+		CatalogPath: configPath,
+	})
+	if err != nil {
+		t.Fatalf("Attach returned error: %v", err)
+	}
+	defer detachTestOperator(t, attached)
+
+	_, out, err := attached.chainSuggest(context.Background(), nil, chainSuggestInput{
+		Intent:  "MS17-010 Windows XP to Squatter TCP bind",
+		Targets: []string{"192.168.122.142"},
+	})
+	if err != nil {
+		t.Fatalf("chainSuggest returned error: %v", err)
+	}
+	if !moduleMatchesContain(out.Matches.SurveyModules, "ms17-010-survey@v0.1.0") {
+		t.Fatalf("survey matches = %#v", out.Matches.SurveyModules)
+	}
+	if !moduleMatchesContain(out.Matches.ExploitModules, "ms17-010-exploit@v1.0.0") {
+		t.Fatalf("exploit matches = %#v", out.Matches.ExploitModules)
+	}
+	if !moduleMatchesContain(out.Matches.PayloadProviders, "squatter@v0.1.0") {
+		t.Fatalf("payload provider matches = %#v", out.Matches.PayloadProviders)
+	}
+	if !configRequirementsContain(out.RequiredConfig, "ms17-010-exploit@v1.0.0", "chain", "operator.confirmed_lab") {
+		t.Fatalf("required config = %#v", out.RequiredConfig)
+	}
+	if len(out.Candidates) != 1 {
+		t.Fatalf("candidates = %#v", out.Candidates)
+	}
+	candidate := out.Candidates[0]
+	if got, want := candidate.Modules, []string{"ms17-010-survey@v0.1.0", "ms17-010-exploit@v1.0.0", "squatter@v0.1.0"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidate modules = %#v, want %#v", got, want)
+	}
+	if candidate.ChainApply.ChainConfig["payload.bind_port"] != "9100" || !containsString(candidate.Targets, "192.168.122.142") {
+		t.Fatalf("candidate apply = %#v", candidate.ChainApply)
+	}
+	if len(out.NextActions) == 0 || out.NextActions[0].Tool != ToolModuleSearch {
+		t.Fatalf("next actions = %#v", out.NextActions)
 	}
 }
 
@@ -451,7 +645,7 @@ func TestMCPChainApplyBuildsMS17010SquatterWithoutCLIProbing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeMCPTestClient(t, client)
 
 	attached, err := Attach(context.Background(), client, OperatorOptions{
 		EntityID:      "mcp-chain-apply-test",
@@ -463,7 +657,7 @@ func TestMCPChainApplyBuildsMS17010SquatterWithoutCLIProbing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, out, err := attached.chainApply(context.Background(), nil, chainApplyInput{
 		Operation: "o1",
@@ -478,8 +672,14 @@ func TestMCPChainApplyBuildsMS17010SquatterWithoutCLIProbing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !out.Validation.OK || !strings.Contains(out.Validation.Stdout, "Chain xp valid") {
+	if out.Validation == nil || !out.Validation.Valid || len(out.Validation.Issues) != 0 {
 		t.Fatalf("validation = %#v", out.Validation)
+	}
+	if out.Snapshot.Catalog != nil {
+		t.Fatalf("chain apply included catalog by default: %#v", out.Snapshot.Catalog)
+	}
+	if len(out.NextActions) == 0 || out.NextActions[0].Tool != ToolThrowPlan {
+		t.Fatalf("chain apply next actions = %#v", out.NextActions)
 	}
 	operation := out.Snapshot.Operations[0]
 	if len(operation.Chains) != 1 || len(operation.Chains[0].Steps) != 3 {
@@ -503,7 +703,7 @@ func TestMCPThrowStartPersistsNowBypassAuditTrail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeMCPTestClient(t, client)
 
 	attached, err := Attach(context.Background(), client, OperatorOptions{
 		EntityID:      "mcp-throw-contract",
@@ -518,19 +718,45 @@ func TestMCPThrowStartPersistsNowBypassAuditTrail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, applyOut, err := attached.chainApply(context.Background(), nil, chainApplyInput{
 		Operation: "mcp-contract",
 		Chain:     "lab",
 		Modules:   []string{"mock-exploit"},
 		Targets:   []string{"mock://target"},
+		ChainConfig: map[string]string{
+			"operator.confirmed_lab": "true",
+		},
+		TargetConfigs: map[string]map[string]string{
+			"mock://target": {
+				"target.host": "target",
+				"target.port": "445",
+			},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !applyOut.Validation.OK {
+	if applyOut.Validation == nil || !applyOut.Validation.Valid {
 		t.Fatalf("chain validation = %#v", applyOut.Validation)
+	}
+	_, planOut, err := attached.throwPlan(context.Background(), nil, throwPlanInput{
+		Operation: "mcp-contract",
+		Chain:     "lab",
+		NowBypass: true,
+	})
+	if err != nil {
+		t.Fatalf("throwPlan returned error: %v", err)
+	}
+	if len(planOut.Preflight.Targets) != 1 || planOut.Preflight.Targets[0] != "mock://target" {
+		t.Fatalf("preflight targets = %#v", planOut.Preflight.Targets)
+	}
+	if len(planOut.Preflight.Steps) != 1 || !strings.HasPrefix(planOut.Preflight.Steps[0].ModuleID, "mock-exploit@") {
+		t.Fatalf("preflight steps = %#v", planOut.Preflight.Steps)
+	}
+	if !effectiveConfigContains(planOut.Preflight.EffectiveConfig, "operator.confirmed_lab", "true", "chainConfig") {
+		t.Fatalf("preflight effective config = %#v", planOut.Preflight.EffectiveConfig)
 	}
 
 	_, throwOut, err := attached.throwStart(context.Background(), nil, throwStartInput{
@@ -543,6 +769,12 @@ func TestMCPThrowStartPersistsNowBypassAuditTrail(t *testing.T) {
 	}
 	if throwOut.Chain != "lab" || len(throwOut.Results) != 1 || throwOut.Results[0].State != "succeeded" {
 		t.Fatalf("throw output = %#v", throwOut)
+	}
+	if len(throwOut.Summary.Targets) != 1 || throwOut.Summary.Targets[0].Target != "mock://target" || throwOut.Summary.Targets[0].State != "succeeded" {
+		t.Fatalf("throw summary = %#v", throwOut.Summary)
+	}
+	if len(throwOut.NextActions) == 0 || throwOut.NextActions[0].Tool != ToolInstalledPayloadList {
+		t.Fatalf("throw next actions = %#v", throwOut.NextActions)
 	}
 	testsupport.AssertThrowAuditTrail(t, fixture.WorkspacePath, testsupport.ThrowAuditObservation{
 		PlanID:         throwOut.Plan.ID,
@@ -573,7 +805,7 @@ func TestMCPInstalledPayloadListReportsProviderReadiness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
 
 	_, out, err := attached.installedPayloadList(context.Background(), nil, installedPayloadListInput{})
 	if err != nil {
@@ -582,12 +814,22 @@ func TestMCPInstalledPayloadListReportsProviderReadiness(t *testing.T) {
 	if len(out.Records) != 1 {
 		t.Fatalf("records = %#v", out.Records)
 	}
+	if out.Catalog != nil {
+		t.Fatalf("installed payload list included catalog by default: %#v", out.Catalog)
+	}
 	payload := out.Records[0]
 	if payload.Record.Handle != "p1" || payload.ProviderConfigured {
 		t.Fatalf("payload status = %#v", payload)
 	}
 	if !strings.Contains(payload.ProviderError, "active module catalog") || !strings.Contains(payload.ProviderError, "squatter") {
 		t.Fatalf("provider error = %q", payload.ProviderError)
+	}
+	_, withCatalog, err := attached.installedPayloadList(context.Background(), nil, installedPayloadListInput{IncludeCatalog: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withCatalog.Catalog == nil {
+		t.Fatalf("catalog opt-in output = %#v", withCatalog.Catalog)
 	}
 }
 
@@ -607,7 +849,15 @@ func TestMCPPayloadCmdRunsCmdThroughInstalledPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Attach returned error: %v", err)
 	}
-	defer attached.Detach(context.Background())
+	defer detachTestOperator(t, attached)
+
+	_, listed, err := attached.installedPayloadList(context.Background(), nil, installedPayloadListInput{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Records) != 1 || len(listed.Records[0].NextActions) != 2 || listed.Records[0].NextActions[0].Tool != ToolPayloadCapabilities || listed.Records[0].NextActions[1].Tool != ToolPayloadCall {
+		t.Fatalf("installed payload next actions = %#v", listed.Records)
+	}
 
 	_, out, err := attached.payloadCmd(context.Background(), nil, payloadCmdInput{Payload: "p1", Command: "systeminfo"})
 	if err != nil {
@@ -616,12 +866,74 @@ func TestMCPPayloadCmdRunsCmdThroughInstalledPayload(t *testing.T) {
 	if out.Command != "systeminfo" || out.Result.Stdout != "host\n" {
 		t.Fatalf("payload cmd output = %#v", out)
 	}
+	if out.Invocation.ProviderCommand != "cmd" || !reflect.DeepEqual(out.Invocation.Args, []string{"systeminfo"}) || !strings.Contains(out.Invocation.Semantics, "provider-owned") {
+		t.Fatalf("payload invocation = %#v", out.Invocation)
+	}
 	if len(daemon.payloadCommandRequests) != 1 {
 		t.Fatalf("payload command requests = %#v", daemon.payloadCommandRequests)
 	}
 	req := daemon.payloadCommandRequests[0]
 	if req.ModuleID != "squatter" || req.Request.Command != "cmd" || !reflect.DeepEqual(req.Request.Args, []string{"systeminfo"}) {
 		t.Fatalf("payload command request = %#v", req)
+	}
+
+	_, callOut, err := attached.payloadCall(context.Background(), nil, payloadCommandCallInput{
+		Payload:    "p1",
+		Capability: "wininfo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callOut.Invocation.ProviderCommand != "wininfo" {
+		t.Fatalf("payload call output = %#v", callOut)
+	}
+	req = daemon.payloadCommandRequests[1]
+	if req.Request.Command != "wininfo" {
+		t.Fatalf("payload capability request = %#v", req)
+	}
+}
+
+func TestMCPSessionCallRunsTypedSessionCommand(t *testing.T) {
+	daemon := newFakeDaemon()
+	daemon.sessionCommandResponse = run.PayloadCommandResult{Command: "process.list", Summary: "process list collected", Stdout: "[]"}
+	attached, err := Attach(context.Background(), daemon, OperatorOptions{
+		EntityID:    "mcp-session-call-test",
+		DisplayName: "MCP session call test",
+		Operation:   "o1",
+		ActiveChain: "c1",
+	})
+	if err != nil {
+		t.Fatalf("Attach returned error: %v", err)
+	}
+	defer detachTestOperator(t, attached)
+
+	_, capabilities, err := attached.sessionCapabilities(context.Background(), nil, sessionCommandListInput{Session: "session-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capabilities.Session != "session-1" || len(capabilities.Commands) != 1 || capabilities.Commands[0].Name != "process.list" {
+		t.Fatalf("session capabilities = %#v", capabilities)
+	}
+
+	_, out, err := attached.sessionCall(context.Background(), nil, sessionCommandCallInput{
+		Session:    "session-1",
+		Capability: "process.list",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Session != "session-1" || out.Result.Command != "process.list" {
+		t.Fatalf("session call output = %#v", out)
+	}
+	if len(daemon.sessionCommandRequests) != 1 {
+		t.Fatalf("session command requests = %#v, want one", daemon.sessionCommandRequests)
+	}
+	req := daemon.sessionCommandRequests[0]
+	if req.SessionID != "session-1" || req.Request.Command != "process.list" {
+		t.Fatalf("session command request = %#v", req)
+	}
+	if len(daemon.payloadCommandRequests) != 0 {
+		t.Fatalf("payload command requests = %#v, want none", daemon.payloadCommandRequests)
 	}
 }
 
@@ -687,6 +999,10 @@ while True:
 }
 
 func schemaModuleFixtureBody(name, version, moduleType, chainConfig, targetConfig string) string {
+	return schemaModuleFixtureBodyWithExtras(name, version, moduleType, chainConfig, targetConfig, "")
+}
+
+func schemaModuleFixtureBodyWithExtras(name, version, moduleType, chainConfig, targetConfig, schemaExtras string) string {
 	return `
 while True:
     request = json.loads(read().decode())
@@ -695,7 +1011,7 @@ while True:
     if method == "handshake":
         response["result"] = {"name": "` + name + `", "version": "` + version + `", "moduleType": "` + moduleType + `"}
     elif method == "schema":
-        response["result"] = {"chainConfig": ` + chainConfig + `, "targetConfig": ` + targetConfig + `, "outputs": {}}
+        response["result"] = {"chainConfig": ` + chainConfig + `, "targetConfig": ` + targetConfig + `, "outputs": {}` + schemaExtras + `}
     elif method == "shutdown":
         response["result"] = {}
         send(response)
@@ -734,6 +1050,33 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
+func moduleMatchesContain(values []moduleMatchOutput, want string) bool {
+	for _, value := range values {
+		if value.ID == want {
+			return true
+		}
+	}
+	return false
+}
+
+func configRequirementsContain(values []configRequirementOutput, module, scope, key string) bool {
+	for _, value := range values {
+		if value.Module == module && value.Scope == scope && value.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func effectiveConfigContains(values []effectiveConfigOutput, key, value, source string) bool {
+	for _, candidate := range values {
+		if candidate.Key == key && candidate.Value == value && candidate.Source == source {
+			return true
+		}
+	}
+	return false
+}
+
 func decodeStructured[T any](t *testing.T, result *mcpsdk.CallToolResult) T {
 	t.Helper()
 	if result == nil {
@@ -766,12 +1109,23 @@ type fakeDaemon struct {
 	payloadCommandRequests []daemonrpc.PayloadCommandRunRequest
 	payloadCommandResponse daemonrpc.PayloadCommandRunResponse
 	payloadCommandError    error
+	sessionCommandRequests []daemonrpc.SessionCommandRunRequest
+	sessionCommandResponse daemonrpc.SessionCommandRunResponse
+	sessionCommandError    error
+	pending                map[string]daemonrpc.PendingThrowResponse
+	confirmRequests        []daemonrpc.ConfirmPendingThrowRequest
+	policy                 daemonrpc.LaunchKeyPolicyResponse
 }
 
 func newFakeDaemon() *fakeDaemon {
 	return &fakeDaemon{
 		now:      time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC),
 		entities: map[string]daemonrpc.OperatorEntity{},
+		pending:  map[string]daemonrpc.PendingThrowResponse{},
+		policy: daemonrpc.LaunchKeyPolicyResponse{
+			Operation: "default",
+			Policy:    daemonrpc.LaunchKeyPolicyOutput{Mode: "anyone"},
+		},
 	}
 }
 
@@ -845,6 +1199,54 @@ func (f *fakeDaemon) Snapshot(_ context.Context, req daemonrpc.SnapshotRequest) 
 	return f.snapshot, nil
 }
 
+func (f *fakeDaemon) GetLaunchKeyPolicy(_ context.Context, req daemonrpc.LaunchKeyPolicyRequest) (daemonrpc.LaunchKeyPolicyResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := f.policy
+	if req.Operation != "" {
+		out.Operation = req.Operation
+	}
+	return out, nil
+}
+
+func (f *fakeDaemon) CreatePendingThrow(_ context.Context, req daemonrpc.CreatePendingThrowRequest) (daemonrpc.PendingThrowResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.pending[req.ID]; ok {
+		return daemonrpc.PendingThrowResponse{}, errors.New("pending throw " + req.ID + " already exists")
+	}
+	out := daemonrpc.PendingThrowResponse{
+		ID:             req.ID,
+		Operation:      req.Operation,
+		Chain:          req.Chain,
+		PlanHash:       req.PlanHash,
+		AllowDangerous: req.AllowDangerous,
+		NowBypass:      req.NowBypass,
+		Ready:          true,
+	}
+	f.pending[req.ID] = out
+	return out, nil
+}
+
+func (f *fakeDaemon) ConfirmPendingThrow(_ context.Context, req daemonrpc.ConfirmPendingThrowRequest) (daemonrpc.PendingThrowResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.confirmRequests = append(f.confirmRequests, req)
+	out, ok := f.pending[req.ID]
+	if !ok {
+		return daemonrpc.PendingThrowResponse{}, errors.New("pending throw " + req.ID + " does not exist")
+	}
+	if req.PlanHash != out.PlanHash {
+		return daemonrpc.PendingThrowResponse{}, errors.New("plan hash mismatch")
+	}
+	if req.AllowDangerous != out.AllowDangerous || req.NowBypass != out.NowBypass {
+		return daemonrpc.PendingThrowResponse{}, errors.New("approval flags mismatch")
+	}
+	out.Ready = true
+	f.pending[req.ID] = out
+	return out, nil
+}
+
 func (f *fakeDaemon) ListPayloadCommands(context.Context, daemonrpc.PayloadCommandListRequest) (daemonrpc.PayloadCommandListResponse, error) {
 	return daemonrpc.PayloadCommandListResponse{}, nil
 }
@@ -859,4 +1261,32 @@ func (f *fakeDaemon) RunPayloadCommand(_ context.Context, req daemonrpc.PayloadC
 	return f.payloadCommandResponse, nil
 }
 
+func (f *fakeDaemon) ListSessionCommands(context.Context, daemonrpc.SessionCommandListRequest) (daemonrpc.SessionCommandListResponse, error) {
+	return daemonrpc.SessionCommandListResponse{Commands: []run.PayloadCommand{{Name: "process.list", Summary: "list processes", ReadOnly: true}}}, nil
+}
+
+func (f *fakeDaemon) RunSessionCommand(_ context.Context, req daemonrpc.SessionCommandRunRequest) (daemonrpc.SessionCommandRunResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sessionCommandRequests = append(f.sessionCommandRequests, req)
+	if f.sessionCommandError != nil {
+		return daemonrpc.SessionCommandRunResponse{}, f.sessionCommandError
+	}
+	return f.sessionCommandResponse, nil
+}
+
 func (f *fakeDaemon) Close() error { return nil }
+
+func detachTestOperator(t *testing.T, server *Server) {
+	t.Helper()
+	if err := server.Detach(context.Background()); err != nil {
+		t.Logf("detach test operator: %v", err)
+	}
+}
+
+func closeMCPTestClient(t *testing.T, client *daemonrpc.Client) {
+	t.Helper()
+	if err := client.Close(); err != nil {
+		t.Logf("close mcp test daemon client: %v", err)
+	}
+}

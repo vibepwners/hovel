@@ -181,7 +181,7 @@ func (s WorkspaceStore) MaterializeArtifact(ctx context.Context, materialization
 	sum := sha256.Sum256(data)
 	sha := hex.EncodeToString(sum[:])
 	artifactID := artifactRecordID(materialization, sha)
-	relPath := filepath.Join("artifacts", materialization.ThrowID, materialization.RunID, safeArtifactName(materialization.Artifact.Name))
+	relPath := artifactStoragePath(materialization, artifactID)
 	absPath := filepath.Join(workspacePath, relPath)
 	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 		return commands.ArtifactRecord{}, err
@@ -226,34 +226,44 @@ func (s WorkspaceStore) registerFileArtifact(ctx context.Context, workspacePath 
 	if err != nil {
 		return commands.ArtifactRecord{}, err
 	}
-	defer source.Close()
-	relPath := filepath.Join("artifacts", materialization.ThrowID, materialization.RunID, safeArtifactName(materialization.Artifact.Name))
-	absPath := filepath.Join(workspacePath, relPath)
-	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+	defer func() { logFilesystemError("close source artifact file", source.Close()) }()
+	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
 		return commands.ArtifactRecord{}, err
 	}
-	destination, err := os.OpenFile(absPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	temp, err := os.CreateTemp(workspacePath, "artifact-*")
 	if err != nil {
 		return commands.ArtifactRecord{}, err
 	}
+	tempPath := temp.Name()
 	hash := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(destination, hash), source)
-	closeErr := destination.Close()
+	written, copyErr := io.Copy(io.MultiWriter(temp, hash), source)
+	closeErr := temp.Close()
 	if copyErr != nil {
-		_ = os.Remove(absPath)
+		logFilesystemError("remove partial artifact temp file", os.Remove(tempPath))
 		return commands.ArtifactRecord{}, copyErr
 	}
 	if closeErr != nil {
-		_ = os.Remove(absPath)
+		logFilesystemError("remove failed artifact temp file", os.Remove(tempPath))
 		return commands.ArtifactRecord{}, closeErr
 	}
 	sha := hex.EncodeToString(hash.Sum(nil))
+	artifactID := artifactRecordID(materialization, sha)
+	relPath := artifactStoragePath(materialization, artifactID)
+	absPath := filepath.Join(workspacePath, relPath)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		logFilesystemError("remove unstaged artifact temp file", os.Remove(tempPath))
+		return commands.ArtifactRecord{}, err
+	}
+	if err := os.Rename(tempPath, absPath); err != nil {
+		logFilesystemError("remove unrenamed artifact temp file", os.Remove(tempPath))
+		return commands.ArtifactRecord{}, err
+	}
 	createdAt := materialization.CreatedAt
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
 	record := commands.ArtifactRecord{
-		ID:        artifactRecordID(materialization, sha),
+		ID:        artifactID,
 		Workspace: workspacePath,
 		ThrowID:   materialization.ThrowID,
 		RunID:     materialization.RunID,
@@ -282,6 +292,16 @@ func artifactRecordID(materialization commands.ArtifactMaterialization, contentS
 		contentSHA,
 	}, "\x00")))
 	return "artifact-" + hex.EncodeToString(sum[:16])
+}
+
+func artifactStoragePath(materialization commands.ArtifactMaterialization, artifactID string) string {
+	return filepath.Join(
+		"artifacts",
+		materialization.ThrowID,
+		materialization.RunID,
+		artifactID,
+		safeArtifactName(materialization.Artifact.Name),
+	)
 }
 
 func (s WorkspaceStore) RecordEvent(ctx context.Context, workspacePath string, evt event.Event) error {

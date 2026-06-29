@@ -60,11 +60,19 @@ func NewAppWithSessionAndModules(session commands.OperatorSession, modules modul
 	return NewAppWithRuntime(defaultRuntimeWithCatalog(session, modules))
 }
 
+func NewAppWithSessionModulesAndWorkspace(session commands.OperatorSession, modules modulecatalog.Catalog, workspacePath string) App {
+	return NewAppWithRuntime(defaultRuntimeWithCatalogAndWorkspace(session, modules, workspacePath))
+}
+
 func defaultRuntime(session commands.OperatorSession) commands.Runtime {
 	return defaultRuntimeWithCatalog(session, pythonrpc.MustConfiguredCatalog())
 }
 
 func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulecatalog.Catalog) commands.Runtime {
+	return defaultRuntimeWithCatalogAndWorkspace(session, catalog, "")
+}
+
+func defaultRuntimeWithCatalogAndWorkspace(session commands.OperatorSession, catalog modulecatalog.Catalog, workspacePath string) commands.Runtime {
 	store := filesystem.NewWorkspaceStore()
 	pythonSessions := pythonrpc.NewSessionBroker()
 	stepProcesses := pythonrpc.NewStepProcessBroker()
@@ -74,6 +82,7 @@ func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulec
 		Clock:         systemClock{},
 		Sessions:      pythonSessions,
 		StepProcesses: stepProcesses,
+		WorkspacePath: workspacePath,
 	}
 	stepRunner := pythonrpc.StepRuntimeRunner{Runner: runner}
 	return commands.Runtime{
@@ -84,6 +93,8 @@ func defaultRuntimeWithCatalog(session commands.OperatorSession, catalog modulec
 			systemClock{},
 		),
 		Daemons:            services.NewDaemonService(store),
+		PendingThrows:      daemonPendingThrows{},
+		LaunchKeyPolicies:  daemonLaunchKeyPolicies{},
 		Runs:               daemonRunClients{},
 		CapabilityChains:   capabilityChainExecutor{catalog: catalog, runner: stepRunner},
 		Plans:              store,
@@ -121,20 +132,20 @@ func (a App) run(ctx context.Context, args []string, stdout, stderr io.Writer, e
 	if len(args) == 0 || topLevelHelpRequested(args) {
 		parser := a.rootParser()
 		if topLevelHelpRequested(args) {
-			fmt.Fprint(stdout, parser.Usage(nil))
+			writeCommandText(stdout, parser.Usage(nil))
 			return 0
 		}
-		fmt.Fprint(stderr, parser.Usage("command is required"))
+		writeCommandText(stderr, parser.Usage("command is required"))
 		return 2
 	}
 
 	definition, commandArgs, ok := a.matchDefinition(args)
 	if !ok {
 		if group, rest, groupOK := a.matchGroup(args); groupOK && helpRequested(rest) {
-			fmt.Fprint(stdout, a.groupParser(group).Usage(nil))
+			writeCommandText(stdout, a.groupParser(group).Usage(nil))
 			return 0
 		}
-		fmt.Fprint(stderr, a.rootParser().Usage(fmt.Sprintf("unknown command %q", strings.Join(commandPath(args), " "))))
+		writeCommandText(stderr, a.rootParser().Usage(fmt.Sprintf("unknown command %q", strings.Join(commandPath(args), " "))))
 		return 2
 	}
 	return a.runDefinition(ctx, definition, commandArgs, stdout, stderr, echoConfirmationAnswer)
@@ -162,7 +173,7 @@ func normalizeLeadingConfig(args []string) []string {
 func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
 	fields, err := splitCommandLine(line)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCommandLine(stderr, err)
 		return 2
 	}
 	if len(fields) == 0 {
@@ -221,7 +232,7 @@ func splitCommandLine(line string) ([]string, error) {
 func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
 	parser, bindings := commandParser(definition)
 	if helpRequested(args) {
-		fmt.Fprint(stdout, usage(definition, parser, nil))
+		writeCommandText(stdout, usage(definition, parser, nil))
 		return 0
 	}
 
@@ -248,17 +259,17 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 			}
 			renderMu.Lock()
 			defer renderMu.Unlock()
-			fmt.Fprintln(stdout, rendered)
+			writeCommandLine(stdout, rendered)
 		}
 	}
 	result, err := definition.Execute(ctx, parsed)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCommandLine(stderr, err)
 		return 1
 	}
 	if parsed.Flag("json") {
 		if err := json.NewEncoder(stdout).Encode(result.JSON); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCommandLine(stderr, err)
 			return 1
 		}
 		return resultCode(result)
@@ -268,12 +279,12 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 		if parsed.Flag("no-color") {
 			renderer = terminallog.NewPlainRenderer()
 		}
-		fmt.Fprintln(stdout, renderer.Render(result.Log))
+		writeCommandLine(stdout, renderer.Render(result.Log))
 		return resultCode(result)
 	}
 	if len(result.Raw) > 0 {
 		if _, err := stdout.Write(result.Raw); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCommandLine(stderr, err)
 			return 1
 		}
 		return resultCode(result)
@@ -285,7 +296,7 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 				human = rendered
 			}
 		}
-		fmt.Fprintln(stdout, human)
+		writeCommandLine(stdout, human)
 	}
 	return resultCode(result)
 }
@@ -341,8 +352,8 @@ func (c terminalInput) Confirm(ctx context.Context, prompt commands.Confirmation
 		return commands.ConfirmationAnswer{}, err
 	}
 	if c.out != nil {
-		fmt.Fprintf(c.out, "%s\n", confirmationPromptTextBlock(prompt))
-		fmt.Fprintf(c.out, "%s ", confirmationPromptText(prompt))
+		writeCommandFormat(c.out, "%s\n", confirmationPromptTextBlock(prompt))
+		writeCommandFormat(c.out, "%s ", confirmationPromptText(prompt))
 	}
 	restoreTerminal, terminalEchoEnabled := func() (func() error, bool) {
 		if !c.echoAnswer {
@@ -351,14 +362,14 @@ func (c terminalInput) Confirm(ctx context.Context, prompt commands.Confirmation
 		return enableTerminalEcho()
 	}()
 	if restoreTerminal != nil {
-		defer restoreTerminal()
+		defer func() { logCommandModeError("restore terminal echo", restoreTerminal()) }()
 	}
 	var answer string
 	if _, err := fmt.Fscan(c.in, &answer); err != nil {
 		return commands.ConfirmationAnswer{}, fmt.Errorf("read confirmation: %w", err)
 	}
 	if c.echoAnswer && !terminalEchoEnabled && c.out != nil {
-		fmt.Fprintln(c.out, answer)
+		writeCommandLine(c.out, answer)
 	}
 	return commands.ConfirmationAnswer{Value: answer}, nil
 }
@@ -460,6 +471,7 @@ func (a App) groupParser(prefix []string) *argparse.Parser {
 type commandParserBindings struct {
 	positionals map[string]*string
 	options     map[string]*string
+	optionLists map[string]*[]string
 	flags       map[string]*bool
 }
 
@@ -468,6 +480,7 @@ func commandParser(definition commands.Definition) (*argparse.Parser, commandPar
 	bindings := commandParserBindings{
 		positionals: make(map[string]*string, len(definition.Positionals)),
 		options:     make(map[string]*string),
+		optionLists: make(map[string]*[]string),
 		flags:       make(map[string]*bool),
 	}
 	for _, positional := range definition.Positionals {
@@ -484,6 +497,8 @@ func commandParser(definition commands.Definition) (*argparse.Parser, commandPar
 		switch option.Kind {
 		case commands.OptionBool:
 			bindings.flags[option.Name] = parser.Flag(option.Short, option.Name, options)
+		case commands.OptionStringList:
+			bindings.optionLists[option.Name] = parser.StringList(option.Short, option.Name, options)
 		default:
 			bindings.options[option.Name] = parser.String(option.Short, option.Name, options)
 		}
@@ -494,13 +509,14 @@ func commandParser(definition commands.Definition) (*argparse.Parser, commandPar
 func parseDefinition(definition commands.Definition, parser *argparse.Parser, bindings commandParserBindings, args []string, stderr io.Writer) (commands.Invocation, bool, int) {
 	parser.ExitOnHelp(false)
 	if err := parser.Parse(append([]string{"hovel"}, args...)); err != nil {
-		fmt.Fprint(stderr, usage(definition, parser, err))
+		writeCommandText(stderr, usage(definition, parser, err))
 		return commands.Invocation{}, false, 2
 	}
 
 	invocation := commands.Invocation{
 		Positionals: map[string]string{},
 		Options:     map[string]string{},
+		OptionLists: map[string][]string{},
 		Flags:       map[string]bool{},
 	}
 	for _, positional := range definition.Positionals {
@@ -510,6 +526,8 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, bi
 		switch option.Kind {
 		case commands.OptionBool:
 			invocation.Flags[option.Name] = *bindings.flags[option.Name]
+		case commands.OptionStringList:
+			invocation.OptionLists[option.Name] = append([]string(nil), *bindings.optionLists[option.Name]...)
 		default:
 			invocation.Options[option.Name] = strings.TrimSpace(*bindings.options[option.Name])
 		}
@@ -565,6 +583,9 @@ func commandPath(args []string) []string {
 }
 
 type daemonRunClients struct{}
+
+type daemonPendingThrows struct{}
+type daemonLaunchKeyPolicies struct{}
 
 type capabilityChainExecutor struct {
 	catalog modulecatalog.Catalog
@@ -743,6 +764,102 @@ func (daemonRunClients) DialRunClient(socketPath string) (commands.RunClient, er
 	return daemonRunClient{client: client}, nil
 }
 
+func (daemonPendingThrows) CreatePendingThrow(ctx context.Context, socketPath string, req commands.PendingThrowCreateRequest) (commands.PendingThrowSnapshot, error) {
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		return commands.PendingThrowSnapshot{}, err
+	}
+	defer func() { logCommandModeError("close pending throw daemon client", client.Close()) }()
+	resp, err := client.CreatePendingThrow(ctx, daemonrpc.CreatePendingThrowRequest{
+		ID:             req.ID,
+		Operation:      req.Operation,
+		Chain:          req.Chain,
+		PlanHash:       req.PlanHash,
+		AllowDangerous: req.AllowDangerous,
+		NowBypass:      req.NowBypass,
+	})
+	if err != nil {
+		return commands.PendingThrowSnapshot{}, err
+	}
+	return pendingThrowSnapshot(resp), nil
+}
+
+func (daemonPendingThrows) RequirePendingThrowReady(ctx context.Context, socketPath, id string) (commands.PendingThrowSnapshot, error) {
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		return commands.PendingThrowSnapshot{}, err
+	}
+	defer func() { logCommandModeError("close pending throw daemon client", client.Close()) }()
+	resp, err := client.RequirePendingThrowReady(ctx, daemonrpc.PendingThrowRequest{ID: id})
+	if err != nil {
+		return pendingThrowSnapshot(resp), err
+	}
+	return pendingThrowSnapshot(resp), nil
+}
+
+func (daemonPendingThrows) CancelPendingThrow(ctx context.Context, socketPath, id string) error {
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		return err
+	}
+	defer func() { logCommandModeError("close daemon client", client.Close()) }()
+	return client.CancelPendingThrow(ctx, daemonrpc.PendingThrowRequest{ID: id})
+}
+
+func pendingThrowSnapshot(resp daemonrpc.PendingThrowResponse) commands.PendingThrowSnapshot {
+	return commands.PendingThrowSnapshot{
+		ID:                  resp.ID,
+		Operation:           resp.Operation,
+		Chain:               resp.Chain,
+		PlanHash:            resp.PlanHash,
+		AllowDangerous:      resp.AllowDangerous,
+		NowBypass:           resp.NowBypass,
+		Ready:               resp.Ready,
+		RequiredApproverIDs: append([]string(nil), resp.RequiredApproverIDs...),
+		MissingApproverIDs:  append([]string(nil), resp.MissingApproverIDs...),
+	}
+}
+
+func (daemonLaunchKeyPolicies) GetLaunchKeyPolicy(ctx context.Context, socketPath, operation string) (commands.LaunchKeyPolicySnapshot, error) {
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		return commands.LaunchKeyPolicySnapshot{}, err
+	}
+	defer func() { logCommandModeError("close daemon client", client.Close()) }()
+	resp, err := client.GetLaunchKeyPolicy(ctx, daemonrpc.LaunchKeyPolicyRequest{Operation: operation})
+	if err != nil {
+		return commands.LaunchKeyPolicySnapshot{}, err
+	}
+	return launchKeyPolicySnapshot(resp), nil
+}
+
+func (daemonLaunchKeyPolicies) SetLaunchKeyPolicy(ctx context.Context, socketPath string, req commands.LaunchKeyPolicySetRequest) (commands.LaunchKeyPolicySnapshot, error) {
+	client, err := daemonrpc.Dial(socketPath)
+	if err != nil {
+		return commands.LaunchKeyPolicySnapshot{}, err
+	}
+	defer func() { logCommandModeError("close daemon client", client.Close()) }()
+	resp, err := client.SetLaunchKeyPolicy(ctx, daemonrpc.SetLaunchKeyPolicyRequest{
+		Operation:        req.Operation,
+		Mode:             req.Mode,
+		Quorum:           req.Quorum,
+		HeartbeatTimeout: req.HeartbeatTimeout,
+	})
+	if err != nil {
+		return commands.LaunchKeyPolicySnapshot{}, err
+	}
+	return launchKeyPolicySnapshot(resp), nil
+}
+
+func launchKeyPolicySnapshot(resp daemonrpc.LaunchKeyPolicyResponse) commands.LaunchKeyPolicySnapshot {
+	return commands.LaunchKeyPolicySnapshot{
+		Operation:        resp.Operation,
+		Mode:             resp.Policy.Mode,
+		Quorum:           resp.Policy.Quorum,
+		HeartbeatTimeout: resp.Policy.HeartbeatTimeout,
+	}
+}
+
 type payloadProviderService struct {
 	daemons  commands.DaemonStatusProvider
 	runs     commands.RunClientFactory
@@ -830,7 +947,7 @@ func (s payloadProviderService) ConnectInstalledPayload(ctx context.Context, rec
 	if err != nil {
 		return commands.SessionRef{}, err
 	}
-	defer client.Close()
+	defer func() { logCommandModeError("close daemon client", client.Close()) }()
 	config := installedPayloadReconnectConfig(record)
 	result, err := client.RunMockExploit(ctx, commands.RunMockExploitRequest{
 		Operation:    record.Operation,
@@ -886,7 +1003,9 @@ func (s payloadProviderService) RunPayloadCommand(ctx context.Context, record co
 	base.InputData = request.InputData
 	base.InputEncoding = request.InputEncoding
 	if request.Config != nil {
-		base.Config = cloneStringMap(request.Config)
+		for key, value := range request.Config {
+			base.Config[key] = value
+		}
 	}
 	if request.Reconnect != nil {
 		base.Reconnect = request.Reconnect
@@ -918,7 +1037,7 @@ func (s payloadProviderService) payloadCommandClient(ctx context.Context, record
 	if err != nil {
 		return nil, "", func() {}, err
 	}
-	return client, moduleID, func() { _ = client.Close() }, nil
+	return client, moduleID, func() { logCommandModeError("close daemon client", client.Close()) }, nil
 }
 
 func commandsPayloadListRequest(record commands.InstalledPayloadRecord) commands.RunPayloadCommandListRequest {
@@ -1103,6 +1222,24 @@ func (c daemonRunClient) CloseSession(ctx context.Context, sessionID string) err
 	return c.client.CloseSession(ctx, sessionID)
 }
 
+func (c daemonRunClient) ListSessionCommands(ctx context.Context, sessionID string, req commands.RunSessionCommandListRequest) ([]commands.PayloadCommand, error) {
+	resp, err := c.client.ListSessionCommands(ctx, daemonrpc.SessionCommandListRequest{
+		SessionID: sessionID,
+		Request:   req,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append([]commands.PayloadCommand(nil), resp.Commands...), nil
+}
+
+func (c daemonRunClient) RunSessionCommand(ctx context.Context, req commands.RunSessionCommandRunRequest) (commands.PayloadCommandResult, error) {
+	return c.client.RunSessionCommand(ctx, daemonrpc.SessionCommandRunRequest{
+		SessionID: req.SessionID,
+		Request:   req.Request,
+	})
+}
+
 func findingsFromRPC(findings []daemonrpc.Finding) []commands.Finding {
 	out := make([]commands.Finding, 0, len(findings))
 	for _, finding := range findings {
@@ -1173,7 +1310,8 @@ func publishedLogsFromRPC(logs []daemonrpc.PublishedLog) []commands.RunPublished
 }
 
 func operatorLogEntryFromRPC(entry daemonrpc.OperatorLogEntry) operatorlog.Entry {
-	timestamp, _ := time.Parse(time.RFC3339Nano, entry.Time)
+	timestamp, err := time.Parse(time.RFC3339Nano, entry.Time)
+	logCommandModeError("parse operator log timestamp", err)
 	return operatorlog.Entry{
 		ID:             entry.ID,
 		Time:           timestamp,

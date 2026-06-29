@@ -234,6 +234,24 @@
                 return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10);                                            \
         }
 
+#define API11(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)                                            \
+        typedef ret(WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11);                                  \
+        ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11);                                                 \
+        static name##_fn name##_ptr;                                                                                   \
+        ret WINAPI name(t1 a1, t2 a2, t3 a3, t4 a4, t5 a5, t6 a6, t7 a7, t8 a8, t9 a9, t10 a10, t11 a11)               \
+        {                                                                                                              \
+                if (name##_ptr == NULL)                                                                                \
+                {                                                                                                      \
+                        union {                                                                                        \
+                                void *addr;                                                                            \
+                                name##_fn fn;                                                                          \
+                        } resolved;                                                                                    \
+                        resolved.addr = sq_resolve_api(dll, #name);                                                    \
+                        name##_ptr = resolved.fn;                                                                      \
+                }                                                                                                      \
+                return name##_ptr(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);                                       \
+        }
+
 #define API12(ret, dll, name, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12)                                       \
         typedef ret(WINAPI *name##_fn)(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12);                             \
         ret WINAPI name(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12);                                            \
@@ -260,10 +278,14 @@ API8(HANDLE, "kernel32.dll", CreateNamedPipeW, LPCWSTR, DWORD, DWORD, DWORD, DWO
 API4(BOOL, "kernel32.dll", CreatePipe, HANDLE *, HANDLE *, LPSECURITY_ATTRIBUTES, DWORD)
 API10(BOOL, "kernel32.dll", CreateProcessW, LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES, BOOL, DWORD,
       LPVOID, LPCWSTR, STARTUPINFOW *, PROCESS_INFORMATION *)
+API11(BOOL, "advapi32.dll", CreateProcessAsUserW, HANDLE, LPCWSTR, LPWSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
+      BOOL, DWORD, LPVOID, LPCWSTR, STARTUPINFOW *, PROCESS_INFORMATION *)
 API4(HANDLE, "kernel32.dll", CreateSemaphoreW, LPSECURITY_ATTRIBUTES, LONG, LONG, LPCWSTR)
 API6(HANDLE, "kernel32.dll", CreateThread, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD,
      LPDWORD)
+API2(HANDLE, "kernel32.dll", CreateToolhelp32Snapshot, DWORD, DWORD)
 API1(BOOL, "kernel32.dll", CancelIo, HANDLE)
+API1(BOOL, "kernel32.dll", DeleteFileW, LPCWSTR)
 API2(BOOL, "kernel32.dll", TerminateProcess, HANDLE, UINT)
 API0V("kernel32.dll", DebugBreak)
 API1V("kernel32.dll", DeleteCriticalSection, LPCRITICAL_SECTION)
@@ -271,18 +293,29 @@ API1V("kernel32.dll", EnterCriticalSection, LPCRITICAL_SECTION)
 API1V("kernel32.dll", ExitProcess, UINT)
 API1(BOOL, "kernel32.dll", FlushFileBuffers, HANDLE)
 API7(DWORD, "kernel32.dll", FormatMessageW, DWORD, LPCVOID, DWORD, DWORD, LPWSTR, DWORD, va_list *)
+API2(BOOL, "kernel32.dll", GetComputerNameW, LPWSTR, LPDWORD)
+API3(BOOL, "kernel32.dll", GetComputerNameExW, COMPUTER_NAME_FORMAT, LPWSTR, LPDWORD)
 API2(BOOL, "kernel32.dll", GetConsoleMode, HANDLE, LPDWORD)
 API2(BOOL, "kernel32.dll", GetConsoleScreenBufferInfo, HANDLE, CONSOLE_SCREEN_BUFFER_INFO *)
 API0(HANDLE, "kernel32.dll", GetCurrentProcess)
 API0(DWORD, "kernel32.dll", GetCurrentProcessId)
 API0(DWORD, "kernel32.dll", GetCurrentThreadId)
+API3(DWORD, "kernel32.dll", GetEnvironmentVariableW, LPCWSTR, LPWSTR, DWORD)
+API3(BOOL, "kernel32.dll", GetFileAttributesExW, LPCWSTR, GET_FILEEX_INFO_LEVELS, LPVOID)
 API2(BOOL, "kernel32.dll", GetFileSizeEx, HANDLE, LARGE_INTEGER *)
 API0(DWORD, "kernel32.dll", GetLastError)
+API2(DWORD, "kernel32.dll", GetLogicalDriveStringsW, DWORD, LPWSTR)
 API1V("kernel32.dll", GetLocalTime, SYSTEMTIME *)
+API3(DWORD, "kernel32.dll", GetModuleFileNameW, HMODULE, LPWSTR, DWORD)
+API1V("kernel32.dll", GetNativeSystemInfo, LPSYSTEM_INFO)
 API4(BOOL, "kernel32.dll", GetOverlappedResult, HANDLE, LPOVERLAPPED, LPDWORD, BOOL)
 API2(BOOL, "kernel32.dll", GetExitCodeProcess, HANDLE, LPDWORD)
 API0(HANDLE, "kernel32.dll", GetProcessHeap)
 API1(HANDLE, "kernel32.dll", GetStdHandle, DWORD)
+API0(DWORD, "kernel32.dll", GetTickCount)
+API0(DWORD, "kernel32.dll", WTSGetActiveConsoleSessionId)
+API1(UINT, "kernel32.dll", GetDriveTypeW, LPCWSTR)
+API1(BOOL, "kernel32.dll", GetVersionExW, LPOSVERSIONINFOW)
 API3(LPVOID, "kernel32.dll", HeapAlloc, HANDLE, DWORD, SIZE_T)
 API3(BOOL, "kernel32.dll", HeapFree, HANDLE, DWORD, LPVOID)
 API1V("kernel32.dll", InitializeCriticalSection, LPCRITICAL_SECTION)
@@ -291,8 +324,13 @@ API1V("kernel32.dll", LeaveCriticalSection, LPCRITICAL_SECTION)
 API1(int, "kernel32.dll", lstrlenW, LPCWSTR)
 API3(LPWSTR, "kernel32.dll", lstrcpynW, LPWSTR, LPCWSTR, int)
 API1(HMODULE, "kernel32.dll", GetModuleHandleW, LPCWSTR)
+API1(HLOCAL, "kernel32.dll", LocalFree, HLOCAL)
 API6(int, "kernel32.dll", MultiByteToWideChar, UINT, DWORD, LPCSTR, int, LPWSTR, int)
+API3(HANDLE, "kernel32.dll", OpenProcess, DWORD, BOOL, DWORD)
 API1V("kernel32.dll", OutputDebugStringW, LPCWSTR)
+API2(BOOL, "kernel32.dll", Process32FirstW, HANDLE, LPPROCESSENTRY32W)
+API2(BOOL, "kernel32.dll", Process32NextW, HANDLE, LPPROCESSENTRY32W)
+API2(BOOL, "kernel32.dll", ProcessIdToSessionId, DWORD, DWORD *)
 API7(BOOL, "kernel32.dll", DuplicateHandle, HANDLE, HANDLE, HANDLE, HANDLE *, DWORD, BOOL, DWORD)
 API1(BOOL, "kernel32.dll", ResetEvent, HANDLE)
 API3(BOOL, "kernel32.dll", ReleaseSemaphore, HANDLE, LONG, LPLONG)
@@ -315,6 +353,39 @@ API5(BOOL, "kernel32.dll", WriteFile, HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAP
 API3(SERVICE_STATUS_HANDLE, "advapi32.dll", RegisterServiceCtrlHandlerExW, LPCWSTR, LPHANDLER_FUNCTION_EX, LPVOID)
 API2(BOOL, "advapi32.dll", SetServiceStatus, SERVICE_STATUS_HANDLE, LPSERVICE_STATUS)
 API1(BOOL, "advapi32.dll", StartServiceCtrlDispatcherW, const SERVICE_TABLE_ENTRYW *)
+API6(BOOL, "advapi32.dll", AdjustTokenPrivileges, HANDLE, BOOL, PTOKEN_PRIVILEGES, DWORD, PTOKEN_PRIVILEGES, PDWORD)
+API1(BOOL, "advapi32.dll", CloseEventLog, HANDLE)
+API5(BOOL, "advapi32.dll", ConvertSecurityDescriptorToStringSecurityDescriptorW, PSECURITY_DESCRIPTOR, DWORD,
+     SECURITY_INFORMATION, LPWSTR *, PULONG)
+API5(BOOL, "advapi32.dll", CryptAcquireContextW, HCRYPTPROV *, LPCWSTR, LPCWSTR, DWORD, DWORD)
+API5(BOOL, "advapi32.dll", CryptCreateHash, HCRYPTPROV, ALG_ID, HCRYPTKEY, DWORD, HCRYPTHASH *)
+API1(BOOL, "advapi32.dll", CryptDestroyHash, HCRYPTHASH)
+API5(BOOL, "advapi32.dll", CryptGetHashParam, HCRYPTHASH, DWORD, BYTE *, DWORD *, DWORD)
+API4(BOOL, "advapi32.dll", CryptHashData, HCRYPTHASH, const BYTE *, DWORD, DWORD)
+API2(BOOL, "advapi32.dll", CryptReleaseContext, HCRYPTPROV, DWORD)
+API8(DWORD, "advapi32.dll", GetNamedSecurityInfoW, LPWSTR, SE_OBJECT_TYPE, SECURITY_INFORMATION, PSID *, PSID *, PACL *,
+     PACL *, PSECURITY_DESCRIPTOR *)
+API5(BOOL, "advapi32.dll", GetTokenInformation, HANDLE, TOKEN_INFORMATION_CLASS, LPVOID, DWORD, PDWORD)
+API2(BOOL, "advapi32.dll", GetUserNameW, LPWSTR, LPDWORD)
+API4(BOOL, "advapi32.dll", LookupPrivilegeNameW, LPCWSTR, PLUID, LPWSTR, LPDWORD)
+API3(BOOL, "advapi32.dll", LookupPrivilegeValueW, LPCWSTR, LPCWSTR, PLUID)
+API2(HANDLE, "advapi32.dll", OpenEventLogW, LPCWSTR, LPCWSTR)
+API3(BOOL, "advapi32.dll", OpenProcessToken, HANDLE, DWORD, PHANDLE)
+API6(BOOL, "advapi32.dll", DuplicateTokenEx, HANDLE, DWORD, LPSECURITY_ATTRIBUTES, SECURITY_IMPERSONATION_LEVEL,
+     TOKEN_TYPE, PHANDLE)
+API7(BOOL, "advapi32.dll", ReadEventLogW, HANDLE, DWORD, DWORD, LPVOID, DWORD, DWORD *, DWORD *)
+API1(LSTATUS, "advapi32.dll", RegCloseKey, HKEY)
+API8(LSTATUS, "advapi32.dll", RegEnumKeyExW, HKEY, DWORD, LPWSTR, LPDWORD, LPDWORD, LPWSTR, LPDWORD, PFILETIME)
+API5(LSTATUS, "advapi32.dll", RegOpenKeyExW, HKEY, LPCWSTR, DWORD, REGSAM, PHKEY)
+API6(LSTATUS, "advapi32.dll", RegQueryValueExW, HKEY, LPCWSTR, LPDWORD, LPDWORD, LPBYTE, LPDWORD)
+
+API2(DWORD, "iphlpapi.dll", GetAdaptersInfo, PIP_ADAPTER_INFO, PULONG)
+
+API1(NET_API_STATUS, "netapi32.dll", NetApiBufferFree, LPVOID)
+API7(NET_API_STATUS, "netapi32.dll", NetShareEnum, LPWSTR, DWORD, LPBYTE *, DWORD, LPDWORD, LPDWORD, LPDWORD)
+
+API3(BOOL, "userenv.dll", CreateEnvironmentBlock, LPVOID *, HANDLE, BOOL)
+API1(BOOL, "userenv.dll", DestroyEnvironmentBlock, LPVOID)
 
 API4(LRESULT, "user32.dll", DefWindowProcW, HWND, UINT, WPARAM, LPARAM)
 API1(LRESULT, "user32.dll", DispatchMessageW, const MSG *)

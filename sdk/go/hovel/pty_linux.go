@@ -16,23 +16,23 @@ func openPTY() (*os.File, *os.File, *os.File, error) {
 	}
 	master := os.NewFile(uintptr(masterFD), "/dev/ptmx")
 	if err := unlockPTY(masterFD); err != nil {
-		_ = master.Close()
+		logSDKError("close PTY master after unlock failure", master.Close())
 		return nil, nil, nil, err
 	}
 	slaveName, err := ptsName(masterFD)
 	if err != nil {
-		_ = master.Close()
+		logSDKError("close PTY master after slave lookup failure", master.Close())
 		return nil, nil, nil, err
 	}
 	inputFD, err := unix.Open(slaveName, unix.O_RDWR|unix.O_NOCTTY, 0)
 	if err != nil {
-		_ = master.Close()
+		logSDKError("close PTY master after input slave failure", master.Close())
 		return nil, nil, nil, fmt.Errorf("open pty input slave: %w", err)
 	}
 	outputFD, err := unix.Open(slaveName, unix.O_RDWR|unix.O_NOCTTY, 0)
 	if err != nil {
-		_ = master.Close()
-		_ = unix.Close(inputFD)
+		logSDKError("close PTY master after output slave failure", master.Close())
+		logSDKError("close PTY input slave after output slave failure", unix.Close(inputFD))
 		return nil, nil, nil, fmt.Errorf("open pty output slave: %w", err)
 	}
 	return master, os.NewFile(uintptr(inputFD), slaveName), os.NewFile(uintptr(outputFD), slaveName), nil

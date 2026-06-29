@@ -4,10 +4,32 @@ load("@rules_python//python/entry_points:py_console_script_binary.bzl", "py_cons
 package(default_visibility = ["//visibility:public"])
 
 py_binary(
+    name = "format_rust_workspace",
+    srcs = ["format_rust_workspace.py"],
+    args = ["--rustfmt=$(rootpath @@rules_rust++rust+rustfmt_nightly-2026-04-16__x86_64-unknown-linux-gnu_tools//:rustfmt_bin)"],
+    data = ["@@rules_rust++rust+rustfmt_nightly-2026-04-16__x86_64-unknown-linux-gnu_tools//:rustfmt_bin"],
+    python_version = "PY3",
+)
+
+py_binary(
     name = "format_squatter_c",
     srcs = ["format_squatter_c.py"],
     python_version = "PY3",
     deps = ["@lint_pypi//clang_format"],
+)
+
+py_binary(
+    name = "golangci_lint_workspace",
+    srcs = ["golangci_lint_workspace.py"],
+    args = [
+        "--golangci-lint=$(rootpath @golangci_lint_linux_amd64//:golangci_lint_bin)",
+        "--go=$(rootpath @go_sdk//:bin/go)",
+    ],
+    data = [
+        "@go_sdk//:bin/go",
+        "@golangci_lint_linux_amd64//:golangci_lint_bin",
+    ],
+    python_version = "PY3",
 )
 
 py_binary(

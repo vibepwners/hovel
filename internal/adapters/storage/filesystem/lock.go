@@ -28,7 +28,9 @@ func AcquireWorkspaceLock(workspacePath, owner string) (*WorkspaceLock, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if errors.Is(err, os.ErrExist) {
 		if stalePIDWorkspaceLock(path) {
-			_ = os.Remove(path)
+			if err := os.Remove(path); err != nil {
+				return nil, err
+			}
 			file, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		}
 		if errors.Is(err, os.ErrExist) {
@@ -39,9 +41,9 @@ func AcquireWorkspaceLock(workspacePath, owner string) (*WorkspaceLock, error) {
 		return nil, err
 	}
 	if _, err := file.WriteString(owner + "\n"); err != nil {
-		file.Close()
-		os.Remove(path)
-		return nil, err
+		closeErr := file.Close()
+		removeErr := os.Remove(path)
+		return nil, errors.Join(err, closeErr, removeErr)
 	}
 	return &WorkspaceLock{path: path, file: file}, nil
 }

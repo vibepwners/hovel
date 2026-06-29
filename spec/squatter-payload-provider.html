@@ -131,9 +131,10 @@
           The provider is written in Go using Hovel's Go SDK. The Windows payload is C
           code built with a pinned MinGW cross toolchain. The current payload includes
           the mux runtime, TCP bind, reverse TCP, SMB named-pipe support, interactive
-          and one-shot <code>cmd.exe</code> execution, <code>echo</code>,
-          <code>getfile</code>, and <code>putfile</code>. PE and source-contract tests
-          protect the no-import-table payload shape and the expected source layout.
+          shell transport, one-shot <code>cmd.exe</code> execution, typed Windows
+          collection commands, process control, file transfer, payload status, and
+          auditable self-cleanup. PE and source-contract tests protect the
+          no-import-table payload shape and the expected source layout.
         </p>
 
         <h2>Module Contract</h2>
@@ -204,11 +205,24 @@ squatter.agent.max_chunk_size = 65536
   "testedOS": ["windows-7"],
   "formats": ["pe-exe"],
   "capabilities": [
+    "host.info",
     "file.get",
     "file.put",
+    "file.stat",
+    "file.hash",
+    "registry.query",
+    "eventlog.query",
+    "drive.list",
+    "share.list",
+    "acl.stat",
     "process.exec",
+    "process.exec.as_user",
+    "process.run",
+    "process.list",
     "process.tasklist",
-    "library.rundll"
+    "process.kill",
+    "payload.status",
+    "payload.cleanup"
   ],
   "transport": {
     "kind": "smb-named-pipe",
@@ -223,9 +237,9 @@ squatter.agent.max_chunk_size = 65536
   }
 }</code></pre>
         <p>
-          DLL output is part of the contract, but the first build target should focus on a
-          PE EXE. DLL/rundll support adds export and loader semantics and should follow
-          once provider orchestration is stable.
+          DLL output is no longer advertised by the current provider command surface.
+          DLL/rundll support would add export and loader semantics and should follow
+          only after the PE EXE orchestration and typed command surface stay stable.
         </p>
 
         <h2>Transports</h2>
@@ -331,11 +345,15 @@ collision strategy: fail after confirmation</code></pre>
 <pre data-lang="session"><code>session kind        agent
 session owner       payload_provider
 transport           squatter/smb-named-pipe, squatter/tcp-bind, or squatter/tcp-callback
-capabilities        file.get, file.put, process.exec, process.tasklist, library.rundll</code></pre>
+capabilities        host.info, file.get, file.put, file.stat, registry.query,
+                    eventlog.query, process.exec, process.list, payload.cleanup</code></pre>
         <p>
           The provider may present a shell-like operator experience through Hovel's
           session API, but the LP-to-payload protocol should be typed and robust. Hovel
           should not treat a Squatter session as a raw <code>cmd.exe</code> terminal.
+          Operators can discover typed session actions with <code>session commands</code>
+          or <code>session capabilities</code>, then call them with
+          <code>session call</code> without touching the interactive byte stream.
         </p>
         <p>
           Operators may detach from a live Squatter session and reconnect later when the
@@ -380,6 +398,24 @@ capabilities        file.get, file.put, process.exec, process.tasklist, library.
           to the installed payload. On failure, Hovel records the exact provider error and
           marks the installed payload <code>unreachable</code>; it does not delete the
           record.
+        </p>
+        <p>
+          <code>payloads commands p1</code> and its <code>payloads capabilities p1</code>
+          alias ask the provider for the installed payload's typed action catalog.
+          <code>payloads call p1 &lt;command&gt;</code> invokes one provider-owned action
+          without opening an interactive session. The convenience commands
+          <code>payloads getfile</code>, <code>payloads putfile</code>, and
+          <code>payloads cmd</code> are compatibility shims over the same provider call
+          path. Command results can produce artifacts; Hovel materializes those artifacts
+          into the workspace and prints the artifact id and path instead of binary bytes.
+        </p>
+        <p>
+          <code>payloads register-squatter &lt;target&gt; --host &lt;host&gt; --port &lt;port&gt;</code>
+          is a development and lab helper for manually started TCP-bind Squatter
+          instances. It creates a normal installed-payload record with a provider-owned
+          reconnect descriptor, so the same <code>payloads connect</code>,
+          <code>payloads commands</code>, and <code>payloads call</code> paths can operate
+          it.
         </p>
         <p>
           Squatter may support more than one reconnect endpoint for a deployed agent later.
@@ -505,16 +541,36 @@ windows_multiplatform(
         </p>
         <p>Provider-reported Squatter capabilities:</p>
         <ol>
-          <li>Get a file from the target.</li>
-          <li>Put a file onto the target.</li>
-          <li>Run a process through <code>cmd.exe</code>.</li>
-          <li>Report process/task-list capability.</li>
-          <li>Report DLL/rundll capability.</li>
+          <li>Collect native host facts.</li>
+          <li>Download, upload, stat, and hash files.</li>
+          <li>Query registry values, recent event log records, logical drives, local shares, and file ACLs.</li>
+          <li>Run processes, launch through an interactive user token when available, list processes, and kill processes by PID.</li>
+          <li>Report payload status and request auditable payload cleanup.</li>
         </ol>
         <p>
-          The concrete provider-owned payload commands currently exposed through Hovel
-          are <code>getfile</code>, <code>putfile</code>, and <code>cmd</code>. The
-          payload also includes an <code>echo</code> module for mux and functional tests.
+          The concrete provider-owned commands currently exposed through Hovel are:
+        </p>
+<pre data-lang="commands"><code>wininfo
+process.list
+process.run
+process.run_as_user
+process.kill
+payload.status
+payload.cleanup
+file.stat
+registry.query
+eventlog.query
+drive.list
+share.list
+acl.stat
+getfile
+putfile
+cmd</code></pre>
+        <p>
+          Safe collection commands are marked read-only in the provider catalog.
+          Process execution, process termination, file upload, and payload cleanup are
+          marked destructive. The payload also includes an <code>echo</code> module for
+          mux and functional tests, but that test module is not an operator command.
         </p>
 
         <h2>Current Implementation Status</h2>
@@ -526,7 +582,9 @@ windows_multiplatform(
           <li>SMB install preparation for neutral service names, staged filenames, pipe names, endpoint config, and planned cleanup handles. Credential creation remains a separate module step.</li>
           <li>SMB named-pipe connect through explicit credentials, TCP bind connect, and TCP callback listener/connect paths that can emit <code>SessionRef</code> capability records.</li>
           <li>Durable installed payload inventory with short handles, provider-owned reconnect descriptors, provider-owned cleanup descriptors, and Hovel-owned persistence.</li>
-          <li>Provider-owned payload command surfaces for <code>getfile</code>, <code>putfile</code>, and <code>cmd</code>, exposed through CLI and MCP payload-command flows.</li>
+          <li>Provider-owned payload command surfaces for host facts, process list/run/kill, file get/put/stat/hash, registry query, event log query, drive/share listing, ACL stat, payload status, payload cleanup, and <code>cmd.exe</code> execution.</li>
+          <li>CLI and MCP typed command discovery and invocation through <code>payloads commands</code>/<code>payloads call</code>, <code>session commands</code>/<code>session call</code>, <code>hovel_payload_capabilities</code>/<code>hovel_payload_call</code>, and <code>hovel_session_capabilities</code>/<code>hovel_session_call</code>.</li>
+          <li>Human-readable command tables with safe/write/destructive effect labels and pretty-printed JSON command output.</li>
         </ol>
         <p>The Squatter path still avoids:</p>
         <ol>

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"io"
 	"strconv"
 	"strings"
@@ -70,14 +69,14 @@ func (w *interactiveConfigWizard) ValuePrompt() (string, bool) {
 
 func (w *interactiveConfigWizard) Start(stdout, stderr io.Writer) int {
 	if w.session == nil {
-		fmt.Fprintln(stderr, "active chain is required")
-		fmt.Fprintln(stderr, "\nStart with:\n  chain create <name>\n  chain use <name>")
+		writeCLILine(stderr, "active chain is required")
+		writeCLILine(stderr, "\nStart with:\n  chain create <name>\n  chain use <name>")
 		return 1
 	}
 	state := w.session.Snapshot()
 	if state.ActiveChain == "" {
-		fmt.Fprintln(stderr, "active chain is required")
-		fmt.Fprintln(stderr, "\nStart with:\n  chain create <name>\n  chain use <name>")
+		writeCLILine(stderr, "active chain is required")
+		writeCLILine(stderr, "\nStart with:\n  chain create <name>\n  chain use <name>")
 		return 1
 	}
 
@@ -92,7 +91,7 @@ func (w *interactiveConfigWizard) HandleLine(line string, stdout, stderr io.Writ
 	if strings.EqualFold(answer, "cancel") {
 		chain := w.chain
 		w.reset()
-		fmt.Fprintf(stdout, "Chain %s configuration canceled\n", chain)
+		writeCLIFormat(stdout, "Chain %s configuration canceled\n", chain)
 		return 0
 	}
 
@@ -142,14 +141,14 @@ func (w *interactiveConfigWizard) selectCurrent(answer string, stdout, stderr io
 
 	index, err := strconv.Atoi(answer)
 	if err != nil || index < 1 || index > len(w.items) {
-		fmt.Fprintln(stdout, "invalid selection")
+		writeCLILine(stdout, "invalid selection")
 		w.renderCurrentMenu(stdout)
 		return 0
 	}
 
 	w.selected = w.items[index-1]
 	w.stage = interactiveConfigSetCurrent
-	fmt.Fprintf(stdout, "Editing %s\n", w.selected.Label())
+	writeCLIFormat(stdout, "Editing %s\n", w.selected.Label())
 	return 0
 }
 
@@ -165,7 +164,7 @@ func (w *interactiveConfigWizard) acceptValue(answer string, stdout, stderr io.W
 	}
 
 	if err := validateConfigValue(item.Requirement, value); err != nil {
-		fmt.Fprintf(stdout, "invalid value for %s: %v\n", item.Key, err)
+		writeCLIFormat(stdout, "invalid value for %s: %v\n", item.Key, err)
 		return 0
 	}
 
@@ -176,7 +175,7 @@ func (w *interactiveConfigWizard) acceptValue(answer string, stdout, stderr io.W
 		err = w.session.SetChainConfig(item.Key, value)
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		w.reset()
 		return 1
 	}
@@ -190,7 +189,7 @@ func (w *interactiveConfigWizard) acceptValue(answer string, stdout, stderr io.W
 
 func (w *interactiveConfigWizard) beginMissing(stdout, stderr io.Writer) int {
 	w.announcedMissing = true
-	fmt.Fprintf(stdout, "Remaining configuration for chain %s\n", w.chain)
+	writeCLIFormat(stdout, "Remaining configuration for chain %s\n", w.chain)
 	return w.promptNextMissing(stdout, stderr)
 }
 
@@ -206,7 +205,7 @@ func (w *interactiveConfigWizard) promptNextMissing(stdout, stderr io.Writer) in
 	w.stage = interactiveConfigSetMissing
 	if !w.announcedMissing {
 		w.announcedMissing = true
-		fmt.Fprintf(stdout, "Remaining configuration for chain %s\n", w.chain)
+		writeCLIFormat(stdout, "Remaining configuration for chain %s\n", w.chain)
 	}
 	return 0
 }
@@ -223,15 +222,15 @@ func (w *interactiveConfigWizard) renderCurrentMenu(stdout io.Writer) {
 	w.selected = configItem{}
 	w.stage = interactiveConfigSelectCurrent
 
-	fmt.Fprintf(stdout, "Available configuration for chain %s\n", w.chain)
+	writeCLIFormat(stdout, "Available configuration for chain %s\n", w.chain)
 	if len(w.items) == 0 {
-		fmt.Fprintln(stdout, "No configurable values.")
+		writeCLILine(stdout, "No configurable values.")
 	}
 	for i, item := range w.items {
-		fmt.Fprintf(stdout, "%d) %s\n", i+1, item.Label())
+		writeCLIFormat(stdout, "%d) %s\n", i+1, item.Label())
 	}
-	fmt.Fprintln(stdout, "c) continue")
-	fmt.Fprintln(stdout, "select config to edit or c to continue")
+	writeCLILine(stdout, "c) continue")
+	writeCLILine(stdout, "select config to edit or c to continue")
 }
 
 func (w *interactiveConfigWizard) reset() {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,12 @@ const stderrSettleTimeout = 50 * time.Millisecond
 const maxFrameBytes = framing.DefaultMaxBytes
 
 const ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
+
+func logPythonRPCError(action string, err error) {
+	if err != nil {
+		log.Printf("python rpc: %s: %v", action, err)
+	}
+}
 
 type ModuleConfig struct {
 	Modules []ModuleEntry `json:"modules"`
@@ -112,7 +119,9 @@ func MustConfiguredCatalogWithWarning(warn io.Writer) modulecatalog.Catalog {
 	catalog, err := ConfiguredCatalog(context.Background())
 	if err != nil {
 		if warn != nil {
-			fmt.Fprintf(warn, "hovel: failed to load module catalog: %v\n", err)
+			if _, writeErr := fmt.Fprintf(warn, "hovel: failed to load module catalog: %v\n", err); writeErr != nil {
+				log.Printf("hovel pythonrpc: write catalog warning: %v", writeErr)
+			}
 		}
 		return modulecatalog.New()
 	}
@@ -180,7 +189,8 @@ func (r Runner) inspect(ctx context.Context, moduleID string, start func(context
 			return modulecatalog.Module{}, moduleFailure("module failed while reporting step contracts", "module step describe failed", err, process.stderrString())
 		}
 	}
-	_, _ = process.client.call(context.Background(), "shutdown", nil)
+	_, err = process.client.call(context.Background(), "shutdown", nil)
+	logPythonRPCError("shut down module after catalog load", err)
 	if err := process.wait(); err != nil {
 		return modulecatalog.Module{}, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
 	}
@@ -283,7 +293,8 @@ func (r Runner) callPayloadCommand(ctx context.Context, moduleID, method string,
 	if err != nil {
 		return nil, moduleFailure("module failed during payload command", "module payload command failed", err, process.stderrString())
 	}
-	_, _ = process.client.call(context.Background(), "shutdown", nil)
+	_, err = process.client.call(context.Background(), "shutdown", nil)
+	logPythonRPCError("shut down module after payload command", err)
 	if err := process.wait(); err != nil {
 		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
 	}
@@ -307,7 +318,8 @@ func (r Runner) callPayloadProvider(ctx context.Context, moduleID, method string
 	if err != nil {
 		return nil, moduleFailure("module failed during payload provider call", "module payload provider call failed", err, process.stderrString())
 	}
-	_, _ = process.client.call(context.Background(), "shutdown", nil)
+	_, err = process.client.call(context.Background(), "shutdown", nil)
+	logPythonRPCError("shut down module after payload provider call", err)
 	if err := process.wait(); err != nil {
 		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
 	}
@@ -364,7 +376,8 @@ func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, s
 		}
 	}
 	if owned {
-		_, _ = process.client.call(context.Background(), "shutdown", nil)
+		_, err = process.client.call(context.Background(), "shutdown", nil)
+		logPythonRPCError("shut down owned module process", err)
 		if err := process.wait(); err != nil {
 			return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
 		}
@@ -459,7 +472,8 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 		r.Sessions.adopt(process, result.Sessions)
 		keepProcess = true
 	} else {
-		_, _ = process.client.call(context.Background(), "shutdown", nil)
+		_, err = process.client.call(context.Background(), "shutdown", nil)
+		logPythonRPCError("shut down module without sessions", err)
 		if err := process.wait(); err != nil {
 			return run.Result{}, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
 		}
@@ -566,9 +580,9 @@ func (p *moduleProcess) killAndWait() {
 		return
 	}
 	if p.cmd.Process != nil {
-		_ = p.cmd.Process.Kill()
+		logPythonRPCError("kill module process", p.cmd.Process.Kill())
 	}
-	_ = p.wait()
+	logPythonRPCError("wait for killed module process", p.wait())
 }
 
 func (p *moduleProcess) stderrString() string {
@@ -691,7 +705,11 @@ func (b *StepProcessBroker) FinishRun(ctx context.Context, runID string) error {
 
 	var firstErr error
 	for _, process := range processes {
-		_, _ = process.client.call(ctx, "shutdown", nil)
+		_, err := process.client.call(ctx, "shutdown", nil)
+		logPythonRPCError("shut down run module process", err)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 		if err := process.wait(); err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -1136,7 +1154,11 @@ func runfileManifestLookup(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("hovel pythonrpc: close runfiles manifest: %v", err)
+		}
+	}()
 	keys := []string{
 		filepath.ToSlash(path),
 		filepath.ToSlash(filepath.Join("_main", path)),
@@ -1564,6 +1586,16 @@ func moduleFromRPC(moduleID string, info, schema map[string]any, stepContractVal
 		ChainConfig:  chainConfig,
 		TargetConfig: targetConfig,
 	}
+	discovery, err := contextFromRPC(info["discoveryContext"], "discoveryContext")
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	planning, err := contextFromRPC(schema["planningContext"], "planningContext")
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	module.Discovery = discovery
+	module.Planning = planning
 	if len(stepContractValues) > 0 {
 		stepContracts, err := stepContractsFromRPC(stepContractValues[0])
 		if err != nil {
@@ -1608,12 +1640,17 @@ func stepContractsFromRPC(value map[string]any) (modulecatalog.StepContractSet, 
 		if err != nil {
 			return set, err
 		}
+		context, err := contextFromRPC(object["context"], fmt.Sprintf("step contract %d context", index+1))
+		if err != nil {
+			return set, err
+		}
 		set.Steps = append(set.Steps, modulecatalog.StepContract{
 			ID:           strings.TrimSpace(stringValue(object["id"])),
 			Kind:         strings.TrimSpace(stringValue(object["kind"])),
 			ConfigSchema: anyMap(object["configSchema"]),
 			Requires:     requires,
 			Produces:     produces,
+			Context:      context,
 			Prepare: modulecatalog.StepPrepareContract{
 				Materializes: materializes,
 			},
@@ -1621,6 +1658,25 @@ func stepContractsFromRPC(value map[string]any) (modulecatalog.StepContractSet, 
 		})
 	}
 	return set, nil
+}
+
+func contextFromRPC(value any, label string) (modulecatalog.Context, error) {
+	if value == nil {
+		return modulecatalog.Context{}, nil
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return modulecatalog.Context{}, fmt.Errorf("%s must be an object", label)
+	}
+	data, err := json.Marshal(object)
+	if err != nil {
+		return modulecatalog.Context{}, err
+	}
+	var context modulecatalog.Context
+	if err := json.Unmarshal(data, &context); err != nil {
+		return modulecatalog.Context{}, fmt.Errorf("%s is invalid: %w", label, err)
+	}
+	return context, nil
 }
 
 func capabilityRequirementsFromRPC(value any, label string) ([]modulecatalog.CapabilityRequirement, error) {
@@ -1976,12 +2032,58 @@ func (b *SessionBroker) CloseSession(ctx context.Context, sessionID string) erro
 	})
 	b.remove(sessionID)
 	if !b.hasProcess(session.process) {
-		_, _ = session.process.client.call(context.Background(), "shutdown", nil)
+		_, err := session.process.client.call(context.Background(), "shutdown", nil)
+		if err != nil {
+			logPythonRPCError("shut down session module process", err)
+			if callErr == nil {
+				callErr = err
+			}
+		}
 		if err := session.process.wait(); err != nil && callErr == nil {
 			callErr = err
 		}
 	}
 	return callErr
+}
+
+func (b *SessionBroker) ListSessionCommands(ctx context.Context, sessionID string, request run.PayloadCommandListRequest) ([]run.PayloadCommand, error) {
+	session, err := b.lookup(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	values, err := session.process.client.call(ctx, "session.command.list", map[string]any{
+		"sessionId": sessionID,
+		"request":   request,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var decoded struct {
+		Commands []run.PayloadCommand `json:"commands"`
+	}
+	if err := decodeRPCMap(values, &decoded); err != nil {
+		return nil, services.NewModuleExecutionFailure("module returned invalid session command list", err)
+	}
+	return decoded.Commands, nil
+}
+
+func (b *SessionBroker) RunSessionCommand(ctx context.Context, sessionID string, request run.PayloadCommandRequest) (run.PayloadCommandResult, error) {
+	session, err := b.lookup(sessionID)
+	if err != nil {
+		return run.PayloadCommandResult{}, err
+	}
+	values, err := session.process.client.call(ctx, "session.command.run", map[string]any{
+		"sessionId": sessionID,
+		"request":   request,
+	})
+	if err != nil {
+		return run.PayloadCommandResult{}, err
+	}
+	var decoded run.PayloadCommandResult
+	if err := decodeRPCMap(values, &decoded); err != nil {
+		return run.PayloadCommandResult{}, services.NewModuleExecutionFailure("module returned invalid session command result", err)
+	}
+	return decoded, nil
 }
 
 func (b *SessionBroker) adopt(process *moduleProcess, sessions []run.SessionRef) {

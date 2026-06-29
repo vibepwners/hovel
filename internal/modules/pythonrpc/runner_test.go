@@ -25,14 +25,23 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	previous, hadPrevious := os.LookupEnv("BUILD_WORKING_DIRECTORY")
-	_ = os.Setenv("BUILD_WORKING_DIRECTORY", defaultWorkspaceRoot)
+	if err := os.Setenv("BUILD_WORKING_DIRECTORY", defaultWorkspaceRoot); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	if hadPrevious {
-		_ = os.Setenv("BUILD_WORKING_DIRECTORY", previous)
+		if err := os.Setenv("BUILD_WORKING_DIRECTORY", previous); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 	} else {
-		_ = os.Unsetenv("BUILD_WORKING_DIRECTORY")
+		if err := os.Unsetenv("BUILD_WORKING_DIRECTORY"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
 	}
-	_ = os.RemoveAll(defaultWorkspaceRoot)
+	if err := os.RemoveAll(defaultWorkspaceRoot); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 	os.Exit(code)
 }
 
@@ -742,10 +751,13 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "result": {
             "name": "stepper",
             "version": "v0.0.0-test",
-            "moduleType": "payload_provider"
+            "moduleType": "payload_provider",
+            "discoveryContext": {"summary": "Finds SMB paths", "keywords": ["ms17-010"]}
         }})
     elif method == "schema":
-        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
+        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {},
+            "planningContext": {"risk": {"level": "medium", "reasons": ["opens a session"]}}
+        }})
     elif method == "step.describe":
         send({"jsonrpc": "2.0", "id": rid, "result": {"version": "contracts-v1", "steps": [{
             "id": "squatter.connect_smb",
@@ -757,6 +769,7 @@ while True:
             "produces": [
                 {"type": "SessionRef", "schemaVersion": "v1", "attributes": {"provider": "squatter", "transport": "smb-named-pipe"}}
             ],
+            "context": {"summary": "Connect to SMB named-pipe payload", "capabilities": ["session.shell"]},
             "prepare": {"materializes": []}
         }]}})
     elif method == "shutdown":
@@ -774,6 +787,12 @@ while True:
 	if module.StepContracts.Version != "contracts-v1" {
 		t.Fatalf("contract version = %q", module.StepContracts.Version)
 	}
+	if module.Discovery.Summary != "Finds SMB paths" || module.Discovery.Keywords[0] != "ms17-010" {
+		t.Fatalf("discovery context = %#v", module.Discovery)
+	}
+	if module.Planning.Risk.Level != "medium" {
+		t.Fatalf("planning context = %#v", module.Planning)
+	}
 	if len(module.StepContracts.Steps) != 1 {
 		t.Fatalf("steps = %#v, want one", module.StepContracts.Steps)
 	}
@@ -783,6 +802,9 @@ while True:
 	}
 	if step.Requires[1].Attributes["protocol"] != "smb" {
 		t.Fatalf("credential requirement = %#v", step.Requires[1])
+	}
+	if step.Context.Summary != "Connect to SMB named-pipe payload" || step.Context.Capabilities[0] != "session.shell" {
+		t.Fatalf("step context = %#v", step.Context)
 	}
 }
 
@@ -1319,6 +1341,11 @@ while True:
             send({"jsonrpc": "2.0", "id": rid, "result": {"data": base64.b64encode(b"sq> ").decode()}})
         else:
             send({"jsonrpc": "2.0", "id": rid, "result": {"data": ""}})
+    elif method == "session.command.list":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"commands": [{"name": "process.list", "summary": "list processes", "readOnly": True}]}})
+    elif method == "session.command.run":
+        request = params.get("request", {})
+        send({"jsonrpc": "2.0", "id": rid, "result": {"command": request.get("command", ""), "summary": "session command completed", "stdout": "[]"}})
     elif method == "session/close":
         session_open = False
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
@@ -1365,6 +1392,20 @@ while True:
 	}
 	if string(chunk.Data) != "sq> " {
 		t.Fatalf("session data = %q, want prompt", string(chunk.Data))
+	}
+	commands, err := sessions.ListSessionCommands(context.Background(), "session-1", run.PayloadCommandListRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 || commands[0].Name != "process.list" {
+		t.Fatalf("session commands = %#v, want process.list", commands)
+	}
+	commandResult, err := sessions.RunSessionCommand(context.Background(), "session-1", run.PayloadCommandRequest{Command: "process.list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commandResult.Command != "process.list" || commandResult.Stdout != "[]" {
+		t.Fatalf("session command result = %#v", commandResult)
 	}
 	if err := sessions.CloseSession(context.Background(), "session-1"); err != nil {
 		t.Fatal(err)
@@ -1612,7 +1653,9 @@ func TestCapturedStderrWaitsForLateWrite(t *testing.T) {
 	go func() {
 		defer close(done)
 		time.Sleep(10 * time.Millisecond)
-		_, _ = stderr.Write([]byte("late stderr"))
+		if _, err := stderr.Write([]byte("late stderr")); err != nil {
+			t.Errorf("write captured stderr: %v", err)
+		}
 	}()
 
 	if got := stderr.StringAfter(time.Second); got != "late stderr" {
@@ -1624,10 +1667,10 @@ func TestCapturedStderrWaitsForLateWrite(t *testing.T) {
 func TestRPCClientTimeoutDoesNotCorruptNextCall(t *testing.T) {
 	moduleStdoutReader, moduleStdoutWriter := io.Pipe()
 	moduleStdinReader, moduleStdinWriter := io.Pipe()
-	defer moduleStdoutReader.Close()
-	defer moduleStdoutWriter.Close()
-	defer moduleStdinReader.Close()
-	defer moduleStdinWriter.Close()
+	defer closeTestPipeReader(t, "module stdout reader", moduleStdoutReader)
+	defer closeTestPipeWriter(t, "module stdout writer", moduleStdoutWriter)
+	defer closeTestPipeReader(t, "module stdin reader", moduleStdinReader)
+	defer closeTestPipeWriter(t, "module stdin writer", moduleStdinWriter)
 
 	client := newClient(moduleStdoutReader, moduleStdinWriter)
 	done := make(chan error, 1)
@@ -1855,4 +1898,18 @@ type fixedClock struct {
 
 func (c fixedClock) Now() time.Time {
 	return c.now
+}
+
+func closeTestPipeReader(t *testing.T, name string, pipe *io.PipeReader) {
+	t.Helper()
+	if err := pipe.Close(); err != nil {
+		t.Logf("close %s: %v", name, err)
+	}
+}
+
+func closeTestPipeWriter(t *testing.T, name string, pipe *io.PipeWriter) {
+	t.Helper()
+	if err := pipe.Close(); err != nil {
+		t.Logf("close %s: %v", name, err)
+	}
 }

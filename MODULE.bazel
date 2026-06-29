@@ -1,6 +1,6 @@
 module(
     name = "hovel",
-    version = "0.1.9",
+    version = "0.2.0",
 )
 
 bazel_dep(name = "gazelle", version = "0.50.0")
@@ -60,6 +60,21 @@ lint_pip.parse(
 use_repo(lint_pip, "lint_pypi")
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "golangci_lint_linux_amd64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "golangci_lint_bin",
+    srcs = ["golangci-lint"],
+)
+""",
+    sha256 = "8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553",
+    strip_prefix = "golangci-lint-2.12.2-linux-amd64",
+    urls = ["https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-linux-amd64.tar.gz"],
+)
 
 http_archive(
     name = "vhs_linux_x86_64",

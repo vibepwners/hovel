@@ -1,7 +1,9 @@
 package modulecatalog
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +82,56 @@ func TestCatalogNormalizesVersionedIdentityAndResolvesLatest(t *testing.T) {
 	}
 	if _, ok := catalog.Find("loader@v1.1.0"); !ok {
 		t.Fatal("Find(loader@v1.1.0) failed")
+	}
+}
+
+func TestCatalogSearchesAndClonesModuleContext(t *testing.T) {
+	catalog := New(Module{
+		ID:      "ctx-module",
+		Type:    TypeExploit,
+		Version: "v1.0.0",
+		Discovery: Context{
+			Keywords:     []string{"ms17-010"},
+			Capabilities: []string{"remote-exec"},
+		},
+		Planning: Context{
+			Risk: RiskContext{Level: "high", Reasons: []string{"writes payload"}},
+			Examples: []ContextExample{{
+				Name:        "bind shell",
+				Modules:     []string{"ctx-module@v1.0.0"},
+				ChainConfig: map[string]string{"operator.confirmed_lab": "true"},
+			}},
+		},
+	})
+	if got := catalog.Search("remote-exec"); len(got) != 1 || got[0].ID != "ctx-module@v1.0.0" {
+		t.Fatalf("search = %#v, want context module", got)
+	}
+	module, ok := catalog.Find("ctx-module")
+	if !ok {
+		t.Fatal("Find(ctx-module) failed")
+	}
+	module.Planning.Examples[0].ChainConfig["operator.confirmed_lab"] = "false"
+	again, _ := catalog.Find("ctx-module")
+	if again.Planning.Examples[0].ChainConfig["operator.confirmed_lab"] != "true" {
+		t.Fatalf("catalog context was mutated through clone: %#v", again.Planning.Examples[0].ChainConfig)
+	}
+}
+
+func TestContextJSONOmitsAbsentNestedRisk(t *testing.T) {
+	data, err := json.Marshal(Context{Summary: "Find SMB exposure"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"risk"`) {
+		t.Fatalf("context JSON includes absent risk: %s", data)
+	}
+
+	data, err = json.Marshal(Context{Risk: RiskContext{Level: "high"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"risk"`) || !strings.Contains(string(data), `"level":"high"`) {
+		t.Fatalf("context JSON missing present risk: %s", data)
 	}
 }
 

@@ -61,7 +61,7 @@ func (p *promptPTYParser) Setup() error {
 	}
 	p.state = state
 	if err := syscall.SetNonblock(int(p.file.Fd()), true); err != nil {
-		_ = term.Restore(p.file.Fd(), state)
+		logShellError("restore prompt terminal after nonblock failure", term.Restore(p.file.Fd(), state))
 		p.state = nil
 		return err
 	}

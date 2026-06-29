@@ -47,8 +47,8 @@ or ffmpeg until they have a pinned execution toolchain.
 | `task test` | Run all tests. |
 | `task test -- //internal/domain/...` | Run specific tests. |
 | `task run -- //cmd/hovel -- daemon status` | Run an arbitrary target. |
-| `task lint` | Go formatting + Gazelle + Python + Squatter C checks (read-only). |
-| `task fmt` | Auto-format: rewrite Go source, regenerate BUILD files, and format Squatter C. |
+| `task lint` | Go formatting + golangci-lint + Gazelle + Rust + Python + Squatter C checks (read-only). |
+| `task fmt` | Auto-format: rewrite Go source, regenerate BUILD files, and format Rust and Squatter C. |
 | `task coverage` | Run domain, application, and Python SDK coverage ratchets. |
 | `task check` (`task ci`) | Lint, docs, build, test, race, fuzz smoke, and coverage — the full gate. |
 | `task start` (`cli`) / `task daemon` | Launch the interactive CLI / the daemon. |
@@ -69,7 +69,7 @@ Task-backed checks across pre-commit (`task precommit`) and pre-push
 If you added, moved, or removed Go files or imports, run **`task fmt`** so
 `gofmt` and Gazelle-generated `BUILD.bazel` files are up to date; otherwise
 `task lint` will fail on the Gazelle diff check. `task fmt` also formats
-Squatter C sources. When you add a new test target, also add it to the
+Rust and Squatter C sources. When you add a new test target, also add it to the
 `test_suite` in the root `BUILD.bazel`.
 
 ## Architecture guardrails

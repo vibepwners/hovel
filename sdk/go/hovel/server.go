@@ -73,9 +73,9 @@ func ServeIO(module Module, in io.Reader, out io.Writer) error {
 			defer requests.Done()
 			result, derr := s.dispatch(method, params)
 			if derr != nil {
-				_ = s.writer.write(errorResponse(id, derr))
+				logSDKError("write error response", s.writer.write(errorResponse(id, derr)))
 			} else {
-				_ = s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result})
+				logSDKError("write response", s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result}))
 			}
 		}()
 		if method == "shutdown" {
@@ -125,6 +125,10 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.sessionRead(params)
 	case "session/close":
 		return s.sessionClose(params)
+	case "session.command.list":
+		return s.sessionCommandList(params)
+	case "session.command.run":
+		return s.sessionCommandRun(params)
 	case "shutdown":
 		s.sessions.closeAll("shutdown")
 		return map[string]any{"status": "ok"}, nil
@@ -139,7 +143,7 @@ func (s *server) handshake() map[string]any {
 	if tags == nil {
 		tags = []string{}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"name":        info.Name,
 		"version":     info.Version,
 		"moduleType":  string(info.Type),
@@ -147,6 +151,10 @@ func (s *server) handshake() map[string]any {
 		"description": info.Description,
 		"tags":        tags,
 	}
+	if contextPresent(info.DiscoveryContext) {
+		out["discoveryContext"] = info.DiscoveryContext
+	}
+	return out
 }
 
 func (s *server) schema() map[string]any {
@@ -155,11 +163,29 @@ func (s *server) schema() map[string]any {
 	if outputs == nil {
 		outputs = map[string]any{}
 	}
-	return map[string]any{
+	out := map[string]any{
 		"chainConfig":  requirementsToRPC(schema.ChainConfig),
 		"targetConfig": requirementsToRPC(schema.TargetConfig),
 		"outputs":      outputs,
 	}
+	if contextPresent(schema.PlanningContext) {
+		out["planningContext"] = schema.PlanningContext
+	}
+	return out
+}
+
+func contextPresent(context ModuleContext) bool {
+	return context.Summary != "" ||
+		len(context.Keywords) > 0 ||
+		len(context.Platforms) > 0 ||
+		len(context.Targets) > 0 ||
+		len(context.Capabilities) > 0 ||
+		len(context.Preconditions) > 0 ||
+		len(context.SideEffects) > 0 ||
+		context.Cleanup != "" ||
+		riskContextPresent(context.Risk) ||
+		len(context.Examples) > 0 ||
+		len(context.AgentHints) > 0
 }
 
 func (s *server) payloadProvider() (PayloadProvider, error) {
@@ -470,8 +496,34 @@ func (s *server) sessionClose(params json.RawMessage) (any, error) {
 	return map[string]any{"status": "ok"}, nil
 }
 
+func (s *server) sessionCommandList(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string                    `json:"sessionId"`
+		Request   PayloadCommandListRequest `json:"request"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+	commands, err := s.sessions.listCommands(p.SessionID, p.Request)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"commands": commands}, nil
+}
+
+func (s *server) sessionCommandRun(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID string                `json:"sessionId"`
+		Request   PayloadCommandRequest `json:"request"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+	return s.sessions.runCommand(p.SessionID, p.Request)
+}
+
 func (s *server) emitLog(record logRecord) {
-	_ = s.writer.write(map[string]any{"jsonrpc": "2.0", "method": "module/log", "params": record})
+	logSDKError("write module log notification", s.writer.write(map[string]any{"jsonrpc": "2.0", "method": "module/log", "params": record}))
 }
 
 func (s *server) emitSession(event sessionEvent) {
@@ -479,7 +531,7 @@ func (s *server) emitSession(event sessionEvent) {
 	if event.fields != nil {
 		params["fields"] = event.fields
 	}
-	_ = s.writer.write(map[string]any{"jsonrpc": "2.0", "method": "module/session", "params": params})
+	logSDKError("write module session notification", s.writer.write(map[string]any{"jsonrpc": "2.0", "method": "module/session", "params": params}))
 }
 
 func errorResponse(idRaw json.RawMessage, err error) map[string]any {

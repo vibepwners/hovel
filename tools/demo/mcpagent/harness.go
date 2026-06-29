@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"sort"
@@ -108,11 +109,11 @@ func runWithConnect(ctx context.Context, opts Options, connect connectFunc) erro
 	session, stderr, err := connect(ctx, opts)
 	if err != nil {
 		if stderr != "" {
-			fmt.Fprintf(opts.Err, "%s\n", stderr)
+			logHarnessWrite(opts.Err, "%s\n", stderr)
 		}
 		return err
 	}
-	defer session.Close()
+	defer func() { logHarnessError("close MCP session", session.Close()) }()
 
 	tools, err := session.ListTools(ctx, &mcpsdk.ListToolsParams{})
 	if err != nil {
@@ -223,11 +224,11 @@ func runSquatterWithConnect(ctx context.Context, opts Options, connect connectFu
 	session, stderr, err := connect(ctx, opts)
 	if err != nil {
 		if stderr != "" {
-			fmt.Fprintf(opts.Err, "%s\n", stderr)
+			logHarnessWrite(opts.Err, "%s\n", stderr)
 		}
 		return err
 	}
-	defer session.Close()
+	defer func() { logHarnessError("close MCP session", session.Close()) }()
 
 	tools, err := session.ListTools(ctx, &mcpsdk.ListToolsParams{})
 	if err != nil {
@@ -337,7 +338,7 @@ func connectPipeSession(ctx context.Context, opts Options) (mcpSession, string, 
 	}
 	writer, err := os.OpenFile(opts.MCPWritePath, os.O_RDWR, 0)
 	if err != nil {
-		_ = reader.Close()
+		logHarnessError("close MCP read pipe after write-pipe open failure", reader.Close())
 		return nil, "", fmt.Errorf("open MCP write pipe: %w", err)
 	}
 
@@ -351,8 +352,8 @@ func connectPipeSession(ctx context.Context, opts Options) (mcpSession, string, 
 		Writer: writer,
 	}, nil)
 	if err != nil {
-		_ = reader.Close()
-		_ = writer.Close()
+		logHarnessError("close MCP read pipe after connect failure", reader.Close())
+		logHarnessError("close MCP write pipe after connect failure", writer.Close())
 		return nil, "", fmt.Errorf("connect to hovel mcp pipes: %w", err)
 	}
 	return session, "", nil
@@ -855,7 +856,19 @@ func (r *transcriptRenderer) renderPrompt(width int) string {
 }
 
 func (r *transcriptRenderer) printf(format string, args ...any) {
-	fmt.Fprintf(r.out, format, args...)
+	logHarnessWrite(r.out, format, args...)
+}
+
+func logHarnessWrite(out io.Writer, format string, args ...any) {
+	if _, err := fmt.Fprintf(out, format, args...); err != nil {
+		log.Printf("hovel demo mcpagent: write output: %v", err)
+	}
+}
+
+func logHarnessError(action string, err error) {
+	if err != nil {
+		log.Printf("hovel demo mcpagent: %s: %v", action, err)
+	}
 }
 
 func (r *transcriptRenderer) pause() {

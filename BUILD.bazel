@@ -1,4 +1,5 @@
 load("@gazelle//:def.bzl", "gazelle")
+load("@rules_rust//rust:defs.bzl", "rust_clippy", "rustfmt_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -115,6 +116,28 @@ _CI_TESTS = [
     "//tools/modules:package_examples_test",
     "//tools/modules:workspace_module_install_test",
 ]
+
+_RUST_LINT_TARGETS = [
+    "//examples/rust/mock_exploit:mock-exploit-rust",
+    "//examples/rust/mock_exploit:mock_exploit_rust_test",
+    "//examples/rust/mock_exploit_session:mock-exploit-session-rust",
+    "//examples/rust/mock_exploit_session:mock_exploit_session_rust_test",
+    "//examples/rust/mock_survey:mock-survey-rust",
+    "//examples/rust/mock_survey:mock_survey_rust_test",
+    "//sdk/rust/hovel:hovel",
+    "//sdk/rust/hovel:hovel_test",
+]
+
+rust_clippy(
+    name = "rust_clippy",
+    testonly = True,
+    deps = _RUST_LINT_TARGETS,
+)
+
+rustfmt_test(
+    name = "rustfmt_check",
+    targets = _RUST_LINT_TARGETS,
+)
 
 test_suite(
     name = "test",

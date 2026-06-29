@@ -15,7 +15,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfigPath())
+	if err := os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfigPath()); err != nil {
+		panic(err)
+	}
 	os.Exit(m.Run())
 }
 
@@ -65,7 +67,9 @@ func TestEnsureWithModuleConfigPassesConfigToStartedDaemon(t *testing.T) {
 			return err
 		}
 		<-ctx.Done()
-		_ = filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), args.WorkspacePath)
+		if err := filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), args.WorkspacePath); err != nil {
+			t.Logf("clear daemon status: %v", err)
+		}
 		return ctx.Err()
 	}
 
@@ -73,7 +77,7 @@ func TestEnsureWithModuleConfigPassesConfigToStartedDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer closeManagerSession(t, session)
 	args := <-argsSeen
 	if args.ModuleConfig != moduleConfig {
 		t.Fatalf("ModuleConfig = %q, want %q", args.ModuleConfig, moduleConfig)
@@ -102,7 +106,9 @@ func TestEnsureWithConfigPassesHovelConfigToStartedDaemon(t *testing.T) {
 			return err
 		}
 		<-ctx.Done()
-		_ = filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), args.WorkspacePath)
+		if err := filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), args.WorkspacePath); err != nil {
+			t.Logf("clear daemon status: %v", err)
+		}
 		return ctx.Err()
 	}
 
@@ -110,7 +116,7 @@ func TestEnsureWithConfigPassesHovelConfigToStartedDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer closeManagerSession(t, session)
 	args := <-argsSeen
 	if args.HovelConfig != hovelConfig {
 		t.Fatalf("HovelConfig = %q, want %q", args.HovelConfig, hovelConfig)
@@ -124,7 +130,7 @@ func TestEnsureRejectsRunningDaemonWithDifferentHovelConfig(t *testing.T) {
 
 	session, err := New().EnsureWithConfig(context.Background(), fixture.WorkspacePath, "", secondConfig)
 	if err == nil {
-		session.Close()
+		closeManagerSession(t, session)
 		t.Fatal("EnsureWithConfig succeeded, want config mismatch error")
 	}
 	if !strings.Contains(err.Error(), "different hovel config") {
@@ -179,7 +185,7 @@ func TestEnsureStartsManagedDaemonWhenStatusSocketIsStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer closeManagerSession(t, session)
 
 	if !session.Owned() {
 		t.Fatal("session owned = false, want true")
@@ -252,5 +258,12 @@ func TestEnsureAttachesWhenStatusSocketPathIsRelative(t *testing.T) {
 	}
 	if err := session.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func closeManagerSession(t *testing.T, session *Session) {
+	t.Helper()
+	if err := session.Close(); err != nil {
+		t.Logf("close daemon manager session: %v", err)
 	}
 }

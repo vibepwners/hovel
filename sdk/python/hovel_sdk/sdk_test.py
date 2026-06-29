@@ -42,6 +42,16 @@ class EchoModule(HovelModule):
         return Result.ok({"target": ctx.target}, summary="echo done")
 
 
+class ContextModule(HovelModule):
+    name = "context-module"
+    module_type = "survey"
+    discovery_context: ClassVar[dict[str, Any]] = {"summary": "Find SMB exposure", "keywords": ["ms17-010"]}
+    planning_context: ClassVar[dict[str, Any]] = {"risk": {"level": "low"}}
+
+    def run(self, _ctx: Context) -> Result:
+        return Result.ok({})
+
+
 class TestShell(LineShellSession):
     async def handle_command(self, command: str) -> str:
         if command == "whoami":
@@ -295,6 +305,12 @@ class SDKTest(unittest.TestCase):
         assert message is not None
         self.assertEqual(message["result"]["chainConfig"][0]["key"], "operator.confirmed_lab")
         self.assertEqual(message["result"]["targetConfig"][0]["type"], "host")
+
+    def test_context_fields_are_optional_and_opt_in(self) -> None:
+        self.assertNotIn("discoveryContext", EchoModule().info())
+        self.assertNotIn("planningContext", EchoModule().module_schema())
+        self.assertEqual(ContextModule().info()["discoveryContext"]["keywords"], ["ms17-010"])
+        self.assertEqual(ContextModule().module_schema()["planningContext"]["risk"]["level"], "low")
 
     def test_execute_exposes_optional_agent_context(self) -> None:
         without_agent = io.BytesIO(

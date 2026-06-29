@@ -13,8 +13,10 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -229,21 +231,49 @@ func (p Provider) Run(ctx *hovel.Context) (hovel.Result, error) {
 }
 
 func openSquatterSession(ctx *hovel.Context, conn io.ReadWriteCloser, transport string) (hovel.SessionRef, error) {
+	client := shell.New(conn)
 	return ctx.OpenSession(
-		&hovel.PTYSession{Frontend: func(input io.Reader, output io.Writer) error {
-			defer conn.Close()
-			inputFile, ok := input.(*os.File)
-			if !ok {
-				return fmt.Errorf("squatter PTY input is %T, want *os.File", input)
-			}
-			shell.New(conn).RunPromptIO(inputFile, output, transport)
-			return nil
-		}},
+		&squatterSession{
+			PTYSession: &hovel.PTYSession{Frontend: func(input io.Reader, output io.Writer) error {
+				defer func() {
+					if err := conn.Close(); err != nil {
+						ctx.Log.Warn("Squatter session close failed", "error", err.Error())
+					}
+				}()
+				inputFile, ok := input.(*os.File)
+				if !ok {
+					return fmt.Errorf("squatter PTY input is %T, want *os.File", input)
+				}
+				client.RunPromptIO(inputFile, output, transport)
+				return nil
+			}},
+			client: client,
+		},
 		hovel.WithName("Squatter session"),
 		hovel.WithKind("agent"),
 		hovel.WithTransport(transport),
 		hovel.WithCapabilities(capabilities()...),
 	)
+}
+
+type squatterSession struct {
+	*hovel.PTYSession
+	client *shell.Client
+}
+
+func (s *squatterSession) ListPayloadCommands(req hovel.PayloadCommandListRequest) ([]hovel.PayloadCommand, error) {
+	return Provider{}.ListPayloadCommands(req)
+}
+
+func (s *squatterSession) RunPayloadCommand(req hovel.PayloadCommandRequest) (result hovel.PayloadCommandResult, err error) {
+	if s.client == nil {
+		return hovel.PayloadCommandResult{}, fmt.Errorf("squatter session client is not configured")
+	}
+	err = s.client.WithLockedTransport(func(conn io.Writer, reader *bufio.Reader, sid uint64) error {
+		result, err = runPayloadCommandOnTransport(conn, reader, sid, req)
+		return err
+	})
+	return result, err
 }
 
 func stringConfigFromContext(ctx *hovel.Context) map[string]string {
@@ -1405,6 +1435,129 @@ func (p Provider) ConnectSession(req hovel.ConnectSessionRequest) (hovel.Session
 func (Provider) ListPayloadCommands(hovel.PayloadCommandListRequest) ([]hovel.PayloadCommand, error) {
 	return []hovel.PayloadCommand{
 		{
+			Name:         "wininfo",
+			Summary:      "collect native Windows host facts",
+			Usage:        "wininfo",
+			ReadOnly:     true,
+			Capabilities: []string{"host.info", "windows.info"},
+		},
+		{
+			Name:         "process.list",
+			Summary:      "list processes using the native process snapshot API",
+			Usage:        "process.list",
+			ReadOnly:     true,
+			Capabilities: []string{"process.list", "process.tasklist"},
+		},
+		{
+			Name:         "process.run",
+			Summary:      "run a process with typed exit metadata and split stdout/stderr",
+			Usage:        "process.run <command> [timeout-ms] [cwd]",
+			Destructive:  true,
+			Capabilities: []string{"process.exec", "process.run"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "command", Help: "Command line", Required: true},
+				{Name: "timeoutMs", Help: "Optional timeout in milliseconds"},
+				{Name: "cwd", Help: "Optional working directory"},
+			},
+		},
+		{
+			Name:         "process.run_as_user",
+			Summary:      "launch a process using an interactive user token",
+			Usage:        "process.run_as_user <command-line> [cwd] [source-pid]",
+			Destructive:  true,
+			Capabilities: []string{"process.exec", "process.exec.as_user"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "command", Help: "Command line", Required: true},
+				{Name: "cwd", Help: "Optional working directory"},
+				{Name: "sourcePid", Help: "Optional source process ID; defaults to active-session explorer.exe"},
+			},
+		},
+		{
+			Name:         "process.kill",
+			Summary:      "terminate a process by PID",
+			Usage:        "process.kill <pid>",
+			Destructive:  true,
+			Capabilities: []string{"process.kill"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "pid", Help: "Process ID", Required: true},
+			},
+		},
+		{
+			Name:         "payload.status",
+			Summary:      "report the installed Squatter instance status",
+			Usage:        "payload.status",
+			ReadOnly:     true,
+			Capabilities: []string{"payload.status", "payload.lifecycle"},
+		},
+		{
+			Name:         "payload.cleanup",
+			Summary:      "request auditable Squatter self-cleanup",
+			Usage:        "payload.cleanup [--delete-file] [--no-stop]",
+			Destructive:  true,
+			Capabilities: []string{"payload.cleanup", "payload.lifecycle"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "--delete-file", Help: "Schedule delayed deletion of the running Squatter executable"},
+				{Name: "--no-stop", Help: "Report cleanup without stopping the payload process"},
+			},
+		},
+		{
+			Name:         "file.stat",
+			Summary:      "stat and SHA-256 hash a file",
+			Usage:        "file.stat <path>",
+			ReadOnly:     true,
+			Capabilities: []string{"file.stat", "file.hash"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "path", Help: "Remote path", Required: true},
+			},
+		},
+		{
+			Name:         "registry.query",
+			Summary:      "query one registry value",
+			Usage:        "registry.query <HKLM|HKCU|HKCR|HKU> <key> [value]",
+			ReadOnly:     true,
+			Capabilities: []string{"registry.query"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "hive", Help: "Registry hive", Required: true},
+				{Name: "key", Help: "Registry key path", Required: true},
+				{Name: "value", Help: "Optional registry value"},
+			},
+		},
+		{
+			Name:         "eventlog.query",
+			Summary:      "read recent Windows event log records",
+			Usage:        "eventlog.query <log> [limit]",
+			ReadOnly:     true,
+			Capabilities: []string{"eventlog.query"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "log", Help: "Event log name such as System or Application", Required: true},
+				{Name: "limit", Help: "Optional record limit"},
+			},
+		},
+		{
+			Name:         "drive.list",
+			Summary:      "list logical drives",
+			Usage:        "drive.list",
+			ReadOnly:     true,
+			Capabilities: []string{"drive.list"},
+		},
+		{
+			Name:         "share.list",
+			Summary:      "list local Windows shares",
+			Usage:        "share.list",
+			ReadOnly:     true,
+			Capabilities: []string{"share.list"},
+		},
+		{
+			Name:         "acl.stat",
+			Summary:      "return owner and DACL as SDDL for a path",
+			Usage:        "acl.stat <path>",
+			ReadOnly:     true,
+			Capabilities: []string{"acl.stat"},
+			Arguments: []hovel.PayloadCommandArgument{
+				{Name: "path", Help: "Remote path", Required: true},
+			},
+		},
+		{
 			Name:         "getfile",
 			Summary:      "download a file from Squatter",
 			Usage:        "getfile <remote>",
@@ -1442,21 +1595,54 @@ func (p Provider) RunPayloadCommand(req hovel.PayloadCommandRequest) (hovel.Payl
 	if err != nil {
 		return hovel.PayloadCommandResult{}, err
 	}
-	defer conn.Close()
+	defer func() { logProviderError("close payload command connection", conn.Close()) }()
+	return runPayloadCommandOnTransport(conn, reader, 1, req)
+}
+
+func runPayloadCommandOnTransport(conn io.Writer, reader *bufio.Reader, sid uint64, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
 	switch req.Command {
 	case "getfile":
-		return runGetfileCommand(conn, reader, req)
+		return runGetfileCommand(conn, reader, sid, req)
 	case "putfile":
-		return runPutfileCommand(conn, reader, req)
+		return runPutfileCommand(conn, reader, sid, req)
 	case "cmd":
-		return runCmdCommand(conn, reader, req)
+		return runCmdCommand(conn, reader, sid, req)
+	case "wininfo", "process.list", "process.kill", "payload.status", "payload.cleanup", "file.stat", "registry.query",
+		"eventlog.query", "drive.list", "share.list", "acl.stat":
+		return runJSONPayloadCommand(conn, reader, sid, req, req.Command, req.Args)
+	case "process.run":
+		return runProcessRunCommand(conn, reader, sid, req)
+	case "process.run_as_user":
+		return runProcessRunAsUserCommand(conn, reader, sid, req)
 	default:
 		return hovel.PayloadCommandResult{}, fmt.Errorf("unsupported Squatter payload command %q", req.Command)
 	}
 }
 
 func (p Provider) CleanupPayload(req hovel.CleanupPayloadRequest) (hovel.CleanupResult, error) {
-	return p.listeningPost().Cleanup(req)
+	cleanup, err := p.listeningPost().Cleanup(req)
+	if err != nil {
+		return cleanup, err
+	}
+	if req.Cleanup == nil {
+		return cleanup, nil
+	}
+	args := []string{}
+	if req.Cleanup.Descriptor["remotePath"] != nil {
+		args = append(args, "--delete-file")
+	}
+	config := recordDescriptorStringMap(req.Cleanup)
+	_, err = p.RunPayloadCommand(hovel.PayloadCommandRequest{
+		InstalledPayloadID: req.InstalledPayloadID,
+		Target:             req.Target,
+		PayloadID:          req.PayloadID,
+		Command:            "payload.cleanup",
+		Args:               args,
+		Config:             config,
+		Agent:              req.Agent,
+	})
+	logProviderError("run payload cleanup command", err)
+	return cleanup, nil
 }
 
 func (Provider) ReadPayloadChunk(req hovel.ReadPayloadChunkRequest) (hovel.PayloadChunk, error) {
@@ -1495,7 +1681,7 @@ func (p Provider) payloadCommandConn(req hovel.PayloadCommandRequest) (io.ReadWr
 	return conn, bufio.NewReader(conn), nil
 }
 
-func runGetfileCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
+func runGetfileCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
 	if len(req.Args) < 1 || strings.TrimSpace(req.Args[0]) == "" {
 		return hovel.PayloadCommandResult{}, fmt.Errorf("getfile requires remote path")
 	}
@@ -1505,14 +1691,14 @@ func runGetfileCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCo
 		return hovel.PayloadCommandResult{}, err
 	}
 	path := file.Name()
-	n, err := xfer.GetFile(conn, reader, 1, remote, file)
+	n, err := xfer.GetFile(conn, reader, sid, remote, file)
 	closeErr := file.Close()
 	if err != nil {
-		_ = os.Remove(path)
+		logProviderError("remove partial getfile artifact", os.Remove(path))
 		return hovel.PayloadCommandResult{}, err
 	}
 	if closeErr != nil {
-		_ = os.Remove(path)
+		logProviderError("remove failed getfile artifact", os.Remove(path))
 		return hovel.PayloadCommandResult{}, closeErr
 	}
 	name := filepath.Base(strings.ReplaceAll(remote, "\\", "/"))
@@ -1529,7 +1715,7 @@ func runGetfileCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCo
 	}, nil
 }
 
-func runPutfileCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
+func runPutfileCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
 	if len(req.Args) < 1 || strings.TrimSpace(req.Args[0]) == "" {
 		return hovel.PayloadCommandResult{}, fmt.Errorf("putfile requires remote path")
 	}
@@ -1539,7 +1725,7 @@ func runPutfileCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCo
 		return hovel.PayloadCommandResult{}, err
 	}
 	defer closeSrc()
-	sent, ack, err := xfer.PutFile(conn, reader, 1, src, remote)
+	sent, ack, err := xfer.PutFile(conn, reader, sid, src, remote)
 	if err != nil {
 		return hovel.PayloadCommandResult{}, err
 	}
@@ -1557,7 +1743,7 @@ func payloadCommandInput(req hovel.PayloadCommandRequest) (io.Reader, func(), er
 		if err != nil {
 			return nil, func() {}, err
 		}
-		return file, func() { _ = file.Close() }, nil
+		return file, func() { logProviderError("close payload command input file", file.Close()) }, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(req.InputEncoding)) {
 	case "", "utf-8", "text":
@@ -1573,16 +1759,16 @@ func payloadCommandInput(req hovel.PayloadCommandRequest) (io.Reader, func(), er
 	}
 }
 
-func runCmdCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
+func runCmdCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
 	if len(req.Args) < 1 || strings.TrimSpace(req.Args[0]) == "" {
 		return hovel.PayloadCommandResult{}, fmt.Errorf("cmd requires command line")
 	}
 	if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
-		_ = deadline.SetDeadline(time.Now().Add(15 * time.Second))
-		defer deadline.SetDeadline(time.Time{})
+		logProviderError("set cmd payload command deadline", deadline.SetDeadline(time.Now().Add(15*time.Second)))
+		defer func() { logProviderError("clear cmd payload command deadline", deadline.SetDeadline(time.Time{})) }()
 	}
 	command := req.Args[0]
-	if err := wire.WriteFrame(conn, wire.KindOpen, 1, wire.EncodeOpen("cmd", []string{command})); err != nil {
+	if err := wire.WriteFrame(conn, wire.KindOpen, sid, wire.EncodeOpen("cmd", []string{command})); err != nil {
 		return hovel.PayloadCommandResult{}, err
 	}
 	var out bytes.Buffer
@@ -1600,9 +1786,182 @@ func runCmdCommand(conn io.Writer, reader *bufio.Reader, req hovel.PayloadComman
 				Fields:  map[string]string{"command": command},
 			}, nil
 		case wire.KindData:
-			_, _ = out.Write(payload)
+			if _, err := out.Write(payload); err != nil {
+				return hovel.PayloadCommandResult{}, err
+			}
 		}
 	}
+}
+
+func runJSONPayloadCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req hovel.PayloadCommandRequest, module string, args []string) (hovel.PayloadCommandResult, error) {
+	if deadline, ok := conn.(interface{ SetDeadline(time.Time) error }); ok {
+		logProviderError("set JSON payload command deadline", deadline.SetDeadline(time.Now().Add(payloadCommandTimeout(req))))
+		defer func() { logProviderError("clear JSON payload command deadline", deadline.SetDeadline(time.Time{})) }()
+	}
+	if err := wire.WriteFrame(conn, wire.KindOpen, sid, wire.EncodeOpen(module, args)); err != nil {
+		return hovel.PayloadCommandResult{}, err
+	}
+	var out bytes.Buffer
+	fields := map[string]string{"module": module}
+	var streamErr string
+	for {
+		kind, _, payload, err := wire.ReadFrame(reader)
+		if err != nil {
+			return hovel.PayloadCommandResult{}, err
+		}
+		switch kind {
+		case wire.KindClose:
+			if streamErr != "" {
+				return hovel.PayloadCommandResult{}, fmt.Errorf("%s failed: %s", module, streamErr)
+			}
+			return hovel.PayloadCommandResult{
+				Command: req.Command,
+				Summary: payloadCommandSummary(req.Command),
+				Stdout:  out.String(),
+				Fields:  fields,
+			}, nil
+		case wire.KindData:
+			if _, err := out.Write(payload); err != nil {
+				return hovel.PayloadCommandResult{}, err
+			}
+		case wire.KindControl:
+			event, err := wire.DecodeStreamEvent(payload)
+			if err != nil {
+				continue
+			}
+			switch event.Kind {
+			case wire.EventError:
+				streamErr = event.Message
+				if streamErr == "" {
+					streamErr = fmt.Sprintf("event error code %d", event.Code)
+				}
+			case wire.EventExited:
+				fields["exitCode"] = strconv.FormatUint(uint64(event.Code), 10)
+			}
+		}
+	}
+}
+
+func runProcessRunCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
+	if len(req.Args) < 1 || strings.TrimSpace(req.Args[0]) == "" {
+		return hovel.PayloadCommandResult{}, fmt.Errorf("process.run requires command line")
+	}
+	result, err := runJSONPayloadCommand(conn, reader, sid, req, "process.run", req.Args)
+	if err != nil {
+		return hovel.PayloadCommandResult{}, err
+	}
+	var parsed struct {
+		Command  string `json:"command"`
+		PID      int    `json:"pid"`
+		ExitCode int    `json:"exitCode"`
+		TimedOut bool   `json:"timedOut"`
+		Stdout   string `json:"stdout"`
+		Stderr   string `json:"stderr"`
+	}
+	if err := json.Unmarshal([]byte(result.Stdout), &parsed); err != nil {
+		result.Summary = "process completed; raw JSON returned"
+		return result, nil
+	}
+	result.Summary = "process completed"
+	result.Stdout = parsed.Stdout
+	result.Stderr = parsed.Stderr
+	result.Fields = map[string]string{
+		"command":  parsed.Command,
+		"pid":      strconv.Itoa(parsed.PID),
+		"exitCode": strconv.Itoa(parsed.ExitCode),
+		"timedOut": strconv.FormatBool(parsed.TimedOut),
+	}
+	return result, nil
+}
+
+func runProcessRunAsUserCommand(conn io.Writer, reader *bufio.Reader, sid uint64, req hovel.PayloadCommandRequest) (hovel.PayloadCommandResult, error) {
+	if len(req.Args) < 1 || strings.TrimSpace(req.Args[0]) == "" {
+		return hovel.PayloadCommandResult{}, fmt.Errorf("process.run_as_user requires command line")
+	}
+	result, err := runJSONPayloadCommand(conn, reader, sid, req, "process.run_as_user", req.Args)
+	if err != nil {
+		return hovel.PayloadCommandResult{}, err
+	}
+	var parsed struct {
+		PID             int     `json:"pid"`
+		SourcePID       int     `json:"sourcePid"`
+		SessionID       *int    `json:"sessionId"`
+		Command         string  `json:"command"`
+		CWD             *string `json:"cwd"`
+		UsedEnvironment bool    `json:"usedEnvironment"`
+	}
+	if err := json.Unmarshal([]byte(result.Stdout), &parsed); err != nil {
+		result.Summary = "process launched as interactive user; raw JSON returned"
+		return result, nil
+	}
+	fields := map[string]string{
+		"command":         parsed.Command,
+		"pid":             strconv.Itoa(parsed.PID),
+		"sourcePid":       strconv.Itoa(parsed.SourcePID),
+		"usedEnvironment": strconv.FormatBool(parsed.UsedEnvironment),
+	}
+	if parsed.SessionID != nil {
+		fields["sessionId"] = strconv.Itoa(*parsed.SessionID)
+	}
+	if parsed.CWD != nil {
+		fields["cwd"] = *parsed.CWD
+	}
+	result.Summary = "process launched as interactive user"
+	result.Fields = fields
+	return result, nil
+}
+
+func payloadCommandTimeout(req hovel.PayloadCommandRequest) time.Duration {
+	if req.Command == "process.run" && len(req.Args) > 1 {
+		if ms, err := strconv.Atoi(req.Args[1]); err == nil && ms > 0 {
+			return time.Duration(ms+5000) * time.Millisecond
+		}
+	}
+	return 30 * time.Second
+}
+
+func payloadCommandSummary(command string) string {
+	switch command {
+	case "wininfo":
+		return "Windows host facts collected"
+	case "process.list":
+		return "process list collected"
+	case "process.kill":
+		return "process termination requested"
+	case "process.run_as_user":
+		return "process launched as interactive user"
+	case "payload.status":
+		return "payload status collected"
+	case "payload.cleanup":
+		return "payload cleanup requested"
+	case "file.stat":
+		return "file evidence collected"
+	case "registry.query":
+		return "registry value collected"
+	case "eventlog.query":
+		return "event log records collected"
+	case "drive.list":
+		return "drive list collected"
+	case "share.list":
+		return "share list collected"
+	case "acl.stat":
+		return "ACL evidence collected"
+	default:
+		return "payload command completed"
+	}
+}
+
+func recordDescriptorStringMap(record *hovel.PayloadProviderRecord) map[string]string {
+	if record == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for key, value := range record.Descriptor {
+		if text := fmt.Sprint(value); text != "" {
+			out[key] = text
+		}
+	}
+	return out
 }
 
 func payloadInfo(transport string) hovel.PayloadInfo {
@@ -1649,10 +2008,29 @@ func canonicalTransport(transport string) string {
 
 func capabilities() []string {
 	return []string{
+		"host.info",
 		"file.get",
 		"file.put",
+		"file.stat",
+		"file.hash",
+		"registry.query",
+		"eventlog.query",
+		"drive.list",
+		"share.list",
+		"acl.stat",
 		"process.exec",
+		"process.exec.as_user",
+		"process.run",
+		"process.list",
 		"process.tasklist",
-		"library.rundll",
+		"process.kill",
+		"payload.status",
+		"payload.cleanup",
+	}
+}
+
+func logProviderError(action string, err error) {
+	if err != nil {
+		log.Printf("squatter provider: %s: %v", action, err)
 	}
 }

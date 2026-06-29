@@ -117,6 +117,64 @@ func TestRendererUsesCharmTableForArtifacts(t *testing.T) {
 	}
 }
 
+func TestRendererUsesCharmTableForSessions(t *testing.T) {
+	rendered, ok := New(100).Render(commands.Result{JSON: []commands.SessionRef{{
+		ID:        "id-3601208-20-session-1",
+		Kind:      "agent",
+		State:     "active",
+		Target:    "192.168.122.142",
+		Name:      "Squatter session",
+		Transport: "smb",
+	}}})
+	if !ok {
+		t.Fatal("renderer did not handle session list")
+	}
+	plain := stripANSI(rendered)
+	for _, want := range []string{"╭", "ID", "KIND", "STATE", "TARGET", "NAME", "id-3601208-20-session-1", "Squatter session"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("rendered sessions missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(plain, "TRANSPORT") {
+		t.Fatalf("session list should not include transport column:\n%s", rendered)
+	}
+}
+
+func TestRendererUsesCharmTableForPayloadCommands(t *testing.T) {
+	rendered, ok := New(100).Render(commands.Result{JSON: []commands.PayloadCommand{
+		{Name: "process.list", ReadOnly: true, Summary: "list processes using the native process snapshot API"},
+		{Name: "process.run", Destructive: true, Summary: "run a process"},
+	}})
+	if !ok {
+		t.Fatal("renderer did not handle payload commands")
+	}
+	plain := stripANSI(rendered)
+	for _, want := range []string{"╭", "COMMAND", "EFFECT", "SUMMARY", "process.list", "safe", "process.run", "destructive"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("rendered payload commands missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestRendererPrettyPrintsCommandResultJSON(t *testing.T) {
+	rendered, ok := New(100).Render(commands.Result{
+		Human: "Session command completed: process.list",
+		JSON: commands.PayloadCommandResult{
+			Command: "process.list",
+			Stdout:  `[{"pid":520,"imageName":"85f70dc2654a.exe"}]`,
+		},
+	})
+	if !ok {
+		t.Fatal("renderer did not handle command result")
+	}
+	plain := stripANSI(rendered)
+	for _, want := range []string{"SESSION COMMAND", "process.list", "STDOUT", "[", "  {", "    \"pid\": 520"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("rendered command result missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestRendererBuildsArtifactInspectCard(t *testing.T) {
 	rendered, ok := New(96).Render(commands.Result{JSON: commands.ArtifactRecord{
 		ID:        "artifact-abc",

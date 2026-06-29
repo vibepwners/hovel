@@ -15,7 +15,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Setenv("HOVEL_MODULE_CONFIG", "examples/python/hovel-modules.json")
+	if err := os.Setenv("HOVEL_MODULE_CONFIG", "examples/python/hovel-modules.json"); err != nil {
+		panic(err)
+	}
 	os.Exit(m.Run())
 }
 
@@ -114,7 +116,7 @@ func TestServeRunsMockExploitOverRPC(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		client.Close()
+		closeRuntimeClient(t, client)
 		return true
 	})
 
@@ -122,7 +124,7 @@ func TestServeRunsMockExploitOverRPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeRuntimeClient(t, client)
 
 	result, err := client.RunMockExploit(context.Background(), daemonrpc.RunMockExploitRequest{
 		ModuleID: "mock-exploit",
@@ -162,7 +164,7 @@ func TestServeRestoresOperatorSessionFromWorkspaceDatabase(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		client.Close()
+		closeRuntimeClient(t, client)
 		return true
 	})
 
@@ -183,7 +185,7 @@ func TestServeRestoresOperatorSessionFromWorkspaceDatabase(t *testing.T) {
 	if _, err := session.AddModule("mock-survey"); err != nil {
 		t.Fatal(err)
 	}
-	client.Close()
+	closeRuntimeClient(t, client)
 	cancel()
 	if err := <-errs; err != nil {
 		t.Fatal(err)
@@ -220,7 +222,7 @@ func TestServeRestoresOperatorSessionFromWorkspaceDatabase(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		client.Close()
+		closeRuntimeClient(t, client)
 		return true
 	})
 
@@ -228,7 +230,7 @@ func TestServeRestoresOperatorSessionFromWorkspaceDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeRuntimeClient(t, client)
 	restored := daemonrpc.NewSessionClient(context.Background(), client)
 	if err := restored.UseOperation("redteam-lab"); err != nil {
 		t.Fatal(err)
@@ -255,7 +257,11 @@ func shortTempDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Logf("remove test daemon dir: %v", err)
+		}
+	})
 	return dir
 }
 
@@ -307,4 +313,11 @@ func waitFor(t *testing.T, condition func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("condition was not met before deadline")
+}
+
+func closeRuntimeClient(t *testing.T, client *daemonrpc.Client) {
+	t.Helper()
+	if err := client.Close(); err != nil {
+		t.Logf("close daemon runtime client: %v", err)
+	}
 }

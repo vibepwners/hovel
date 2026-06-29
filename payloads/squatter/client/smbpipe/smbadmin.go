@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -65,7 +67,7 @@ type InstallResult struct {
 }
 
 func UploadAndStart(ctx context.Context, opts InstallOptions) (InstallResult, error) {
-	opts.Options = opts.Options.normalized()
+	opts.Options = opts.normalized()
 	if err := validateInstallOptions(opts); err != nil {
 		return InstallResult{}, err
 	}
@@ -73,7 +75,7 @@ func UploadAndStart(ctx context.Context, opts InstallOptions) (InstallResult, er
 	if err != nil {
 		return InstallResult{}, err
 	}
-	defer c.conn.Close()
+	defer func() { logSMBError("close install SMB connection", c.conn.Close()) }()
 
 	written, err := c.uploadAdminFile(opts.RemotePath, opts.Payload)
 	if err != nil {
@@ -118,7 +120,7 @@ func ScheduleCommand(ctx context.Context, opts Options, command string, delay ti
 	if err != nil {
 		return 0, 0, err
 	}
-	defer c.conn.Close()
+	defer func() { logSMBError("close schedule SMB connection", c.conn.Close()) }()
 	return c.scheduleATAt(command, c.currentServerTime().Add(delay))
 }
 
@@ -128,7 +130,7 @@ func ReadAdminFile(ctx context.Context, opts Options, remotePath string) ([]byte
 	if err != nil {
 		return nil, err
 	}
-	defer c.conn.Close()
+	defer func() { logSMBError("close read SMB connection", c.conn.Close()) }()
 	return c.readAdminFile(remotePath)
 }
 
@@ -174,7 +176,7 @@ func (c *pipeConn) uploadAdminFile(remotePath string, data []byte) (int, error) 
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = c.closeFile(fid) }()
+	defer func() { logSMBError("close uploaded admin file", c.closeFile(fid)) }()
 
 	written := 0
 	for written < len(data) {
@@ -256,7 +258,7 @@ func (c *pipeConn) readAdminFile(remotePath string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = c.closeFile(fid) }()
+	defer func() { logSMBError("close downloaded admin file", c.closeFile(fid)) }()
 
 	out := make([]byte, 0, 4096)
 	offset := uint32(0)
@@ -307,33 +309,6 @@ func (c *pipeConn) readFileAndX(fid uint16, offset uint32, max int) ([]byte, err
 	return append([]byte(nil), res.raw[dataOffset:dataOffset+length]...), nil
 }
 
-func (c *pipeConn) readFile(fid uint16, offset uint32, max int) ([]byte, error) {
-	params := make([]byte, 10)
-	binary.LittleEndian.PutUint16(params[0:], fid)
-	binary.LittleEndian.PutUint16(params[2:], uint16(max))
-	binary.LittleEndian.PutUint32(params[4:], offset)
-	binary.LittleEndian.PutUint16(params[8:], uint16(max))
-	req := buildSMB(cmdRead, c, 5, params, nil)
-	res, err := c.exchange(req)
-	if err != nil {
-		return nil, err
-	}
-	if err := checkStatus(res, statusOK, "SMB1 read file"); err != nil {
-		return nil, err
-	}
-	if len(res.params) < 2 {
-		return nil, fmt.Errorf("SMB1 read file response too short")
-	}
-	if len(res.data) < 3 {
-		return nil, fmt.Errorf("SMB1 read file response data too short")
-	}
-	length := int(binary.LittleEndian.Uint16(res.data[1:3]))
-	if 3+length > len(res.data) {
-		return nil, fmt.Errorf("SMB1 read file response has invalid data bounds")
-	}
-	return append([]byte(nil), res.data[3:3+length]...), nil
-}
-
 func (c *pipeConn) writeFile(fid uint16, data []byte, offset uint32) (int, error) {
 	return c.writeAndXTo(fid, data, offset, 0)
 }
@@ -356,7 +331,7 @@ func (c *pipeConn) startService(name, binaryPath string) (uint32, uint32, uint32
 	if err := c.openPipe("svcctl"); err != nil {
 		return 0, 0, 0, "", err
 	}
-	defer func() { _ = c.closeFID() }()
+	defer func() { logSMBError("close svcctl pipe", c.closeFID()) }()
 
 	svc := serviceControl{client: c}
 	if err := svc.bind(); err != nil {
@@ -366,12 +341,12 @@ func (c *pipeConn) startService(name, binaryPath string) (uint32, uint32, uint32
 	if err != nil {
 		return 0, 0, 0, "", err
 	}
-	defer svc.closeHandle(scm)
+	defer func() { logSMBError("close service control manager handle", svc.closeHandle(scm)) }()
 	service, err := svc.createService(scm, name, binaryPath)
 	if err != nil {
 		return 0, 0, 0, "", err
 	}
-	defer svc.closeHandle(service)
+	defer func() { logSMBError("close service handle", svc.closeHandle(service)) }()
 	startStatus, err := svc.startService(service)
 	if err != nil {
 		return 0, 0, 0, "", err
@@ -394,7 +369,7 @@ func (c *pipeConn) scheduleATAt(command string, when time.Time) (uint32, uint32,
 	if err := c.openPipe("atsvc"); err != nil {
 		return 0, 0, err
 	}
-	defer func() { _ = c.closeFID() }()
+	defer func() { logSMBError("close atsvc pipe", c.closeFID()) }()
 
 	at := atService{client: c}
 	if err := at.bind(); err != nil {
@@ -572,8 +547,8 @@ func (s *serviceControl) createService(scm []byte, name, binaryPath string) ([]b
 	if err != nil {
 		return nil, err
 	}
-	_ = s.deleteService(stale)
-	_ = s.closeHandle(stale)
+	logSMBError("delete stale service", s.deleteService(stale))
+	logSMBError("close stale service handle", s.closeHandle(stale))
 	handle, status, err = s.tryCreateService(scm, name, binaryPath)
 	if err != nil {
 		return nil, err
@@ -715,36 +690,61 @@ func dcerpcHeader(packetType byte, callID uint32, body []byte) []byte {
 }
 
 func dcerpcUUID(text string, version uint16) []byte {
-	parts := strings.Split(text, "-")
+	parts := strings.Split(strings.ToLower(strings.TrimSpace(text)), "-")
 	if len(parts) != 5 {
 		return nil
 	}
+	if len(parts[0]) != 8 || len(parts[1]) != 4 || len(parts[2]) != 4 || len(parts[3]) != 4 || len(parts[4]) != 12 {
+		return nil
+	}
 	out := make([]byte, 0, 20)
-	appendReversedHex := func(hexText string, byteCount int) {
+	appendReversedHex := func(hexText string, byteCount int) bool {
 		start := len(out)
 		for i := 0; i < byteCount; i++ {
-			var b byte
-			fmt.Sscanf(hexText[i*2:i*2+2], "%02x", &b)
+			b, ok := parseHexByte(hexText[i*2 : i*2+2])
+			if !ok {
+				return false
+			}
 			out = append(out, b)
 		}
 		for i, j := start, len(out)-1; i < j; i, j = i+1, j-1 {
 			out[i], out[j] = out[j], out[i]
 		}
+		return true
 	}
-	appendHex := func(hexText string) {
+	appendHex := func(hexText string) bool {
 		for i := 0; i < len(hexText); i += 2 {
-			var b byte
-			fmt.Sscanf(hexText[i:i+2], "%02x", &b)
+			b, ok := parseHexByte(hexText[i : i+2])
+			if !ok {
+				return false
+			}
 			out = append(out, b)
 		}
+		return true
 	}
-	appendReversedHex(parts[0], 4)
-	appendReversedHex(parts[1], 2)
-	appendReversedHex(parts[2], 2)
-	appendHex(parts[3])
-	appendHex(parts[4])
+	if !appendReversedHex(parts[0], 4) ||
+		!appendReversedHex(parts[1], 2) ||
+		!appendReversedHex(parts[2], 2) ||
+		!appendHex(parts[3]) ||
+		!appendHex(parts[4]) {
+		return nil
+	}
 	out = binary.LittleEndian.AppendUint16(out, version)
 	return binary.LittleEndian.AppendUint16(out, 0)
+}
+
+func parseHexByte(text string) (byte, bool) {
+	value, err := strconv.ParseUint(text, 16, 8)
+	if err != nil {
+		return 0, false
+	}
+	return byte(value), true
+}
+
+func logSMBError(action string, err error) {
+	if err != nil {
+		log.Printf("smbpipe: %s: %v", action, err)
+	}
 }
 
 func ndrWString(text string) []byte {

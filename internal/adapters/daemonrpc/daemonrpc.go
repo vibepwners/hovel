@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"sort"
@@ -193,6 +194,7 @@ type ListEntitiesResponse struct {
 type CreatePendingThrowRequest struct {
 	ID             string `json:"id"`
 	Operation      string `json:"operation"`
+	Chain          string `json:"chain"`
 	PlanHash       string `json:"planHash"`
 	AllowDangerous bool   `json:"allowDangerous,omitempty"`
 	NowBypass      bool   `json:"nowBypass,omitempty"`
@@ -213,6 +215,7 @@ type PendingThrowRequest struct {
 type PendingThrowResponse struct {
 	ID                  string   `json:"id"`
 	Operation           string   `json:"operation"`
+	Chain               string   `json:"chain"`
 	PlanHash            string   `json:"planHash"`
 	AllowDangerous      bool     `json:"allowDangerous,omitempty"`
 	NowBypass           bool     `json:"nowBypass,omitempty"`
@@ -220,6 +223,28 @@ type PendingThrowResponse struct {
 	Ready               bool     `json:"ready"`
 	RequiredApproverIDs []string `json:"requiredApproverIds"`
 	MissingApproverIDs  []string `json:"missingApproverIds"`
+}
+
+type LaunchKeyPolicyRequest struct {
+	Operation string `json:"operation,omitempty"`
+}
+
+type SetLaunchKeyPolicyRequest struct {
+	Operation        string `json:"operation,omitempty"`
+	Mode             string `json:"mode"`
+	Quorum           int    `json:"quorum,omitempty"`
+	HeartbeatTimeout string `json:"heartbeatTimeout,omitempty"`
+}
+
+type LaunchKeyPolicyResponse struct {
+	Operation string                `json:"operation"`
+	Policy    LaunchKeyPolicyOutput `json:"policy"`
+}
+
+type LaunchKeyPolicyOutput struct {
+	Mode             string `json:"mode"`
+	Quorum           int    `json:"quorum,omitempty"`
+	HeartbeatTimeout string `json:"heartbeatTimeout,omitempty"`
 }
 
 type PayloadCommand = run.PayloadCommand
@@ -266,6 +291,7 @@ type Server struct {
 	entities        map[string]operatordomain.Entity
 	launchKeys      *launchkey.Coordinator
 	launchKeyPolicy operatordomain.LaunchKeyPolicy
+	launchKeyByOp   map[string]operatordomain.LaunchKeyPolicy
 	clock           operatorClock
 	persistSession  func(operatorsession.PersistedState) error
 	mu              sync.Mutex
@@ -292,6 +318,8 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[SessionTailRequest, SessionChunk](mux, "TailSession", rpcServer.tailSessionRPC)
 	registerUnary[SessionWriteRequest, EmptyResponse](mux, "WriteSession", rpcServer.writeSessionRPC)
 	registerUnary[SessionCloseRequest, EmptyResponse](mux, "CloseSession", rpcServer.closeSessionRPC)
+	registerUnary[SessionCommandListRequest, SessionCommandListResponse](mux, "ListSessionCommands", rpcServer.listSessionCommandsRPC)
+	registerUnary[SessionCommandRunRequest, SessionCommandRunResponse](mux, "RunSessionCommand", rpcServer.runSessionCommandRPC)
 	registerUnary[OperationRequest, EmptyResponse](mux, "CreateOperation", rpcServer.createOperationRPC)
 	registerUnary[OperationRequest, EmptyResponse](mux, "UseOperation", rpcServer.useOperationRPC)
 	registerUnary[ChainRequest, EmptyResponse](mux, "CreateChain", rpcServer.createChainRPC)
@@ -320,6 +348,8 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[ConfirmPendingThrowRequest, PendingThrowResponse](mux, "ConfirmPendingThrow", rpcServer.confirmPendingThrowRPC)
 	registerUnary[PendingThrowRequest, PendingThrowResponse](mux, "RequirePendingThrowReady", rpcServer.requirePendingThrowReadyRPC)
 	registerUnary[PendingThrowRequest, EmptyResponse](mux, "CancelPendingThrow", rpcServer.cancelPendingThrowRPC)
+	registerUnary[LaunchKeyPolicyRequest, LaunchKeyPolicyResponse](mux, "GetLaunchKeyPolicy", rpcServer.getLaunchKeyPolicyRPC)
+	registerUnary[SetLaunchKeyPolicyRequest, LaunchKeyPolicyResponse](mux, "SetLaunchKeyPolicy", rpcServer.setLaunchKeyPolicyRPC)
 	registerUnary[PayloadGenerateRequest, PayloadGenerateResponse](mux, "GeneratePayload", rpcServer.generatePayloadRPC)
 	registerUnary[PayloadCommandListRequest, PayloadCommandListResponse](mux, "ListPayloadCommands", rpcServer.listPayloadCommandsRPC)
 	registerUnary[PayloadCommandRunRequest, PayloadCommandRunResponse](mux, "RunPayloadCommand", rpcServer.runPayloadCommandRPC)
@@ -341,7 +371,7 @@ func registerUnary[Req, Res any](mux *http.ServeMux, method string, fn func(cont
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		defer r.Body.Close()
+		defer func() { logDaemonRPCError("close request body", r.Body.Close()) }()
 		var req Req
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid JSON request: "+err.Error(), http.StatusBadRequest)
@@ -399,11 +429,11 @@ func WithOperatorClock(clock operatorClock) ServerOption {
 
 func WithLaunchKeyPolicy(policy operatordomain.LaunchKeyPolicy) ServerOption {
 	return func(server *Server) {
-		server.launchKeyPolicy = policy
+		server.launchKeyPolicy = operatordomain.NormalizeLaunchKeyPolicy(policy)
 	}
 }
 
-func (s Server) RunMockExploit(req RunMockExploitRequest, resp *RunMockExploitResponse) error {
+func (s *Server) RunMockExploit(req RunMockExploitRequest, resp *RunMockExploitResponse) error {
 	return s.ExecuteModule(ExecuteModuleRequest(req), (*ExecuteModuleResponse)(resp))
 }
 
@@ -413,14 +443,18 @@ func (s *Server) executeModuleRPC(ctx context.Context, req ExecuteModuleRequest)
 	return resp, err
 }
 
-func (s Server) ExecuteModule(req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
+func (s *Server) ExecuteModule(req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
 	return s.executeModule(context.Background(), req, resp)
 }
 
-func (s Server) executeModule(ctx context.Context, req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
+func (s *Server) executeModule(ctx context.Context, req ExecuteModuleRequest, resp *ExecuteModuleResponse) error {
 	var throwStarted time.Time
 	if req.ThrowStarted != "" {
-		throwStarted, _ = time.Parse(time.RFC3339Nano, req.ThrowStarted)
+		var err error
+		throwStarted, err = time.Parse(time.RFC3339Nano, req.ThrowStarted)
+		if err != nil {
+			return fmt.Errorf("parse throw started timestamp: %w", err)
+		}
 	}
 	result, err := s.runs.ExecuteModule(ctx, services.ExecuteModuleRequest{
 		Operation:    req.Operation,
@@ -487,11 +521,27 @@ type SessionCloseRequest struct {
 	SessionID string
 }
 
+type SessionCommandListRequest struct {
+	SessionID string                        `json:"sessionId"`
+	Request   run.PayloadCommandListRequest `json:"request"`
+}
+
+type SessionCommandListResponse struct {
+	Commands []run.PayloadCommand `json:"commands"`
+}
+
+type SessionCommandRunRequest struct {
+	SessionID string                    `json:"sessionId"`
+	Request   run.PayloadCommandRequest `json:"request"`
+}
+
+type SessionCommandRunResponse = run.PayloadCommandResult
+
 type ListSessionsResponse struct {
 	Sessions []SessionRef
 }
 
-func (s Server) ListSessions(_ EmptyRequest, resp *ListSessionsResponse) error {
+func (s *Server) ListSessions(_ EmptyRequest, resp *ListSessionsResponse) error {
 	if s.moduleSessions == nil {
 		resp.Sessions = nil
 		return nil
@@ -517,7 +567,7 @@ func (s *Server) listSessionsRPC(ctx context.Context, _ EmptyRequest) (ListSessi
 	return resp, nil
 }
 
-func (s Server) ReadSession(req SessionReadRequest, resp *SessionChunk) error {
+func (s *Server) ReadSession(req SessionReadRequest, resp *SessionChunk) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
@@ -552,7 +602,7 @@ func (s *Server) readSessionRPC(ctx context.Context, req SessionReadRequest) (Se
 	return resp, nil
 }
 
-func (s Server) TailSession(req SessionTailRequest, resp *SessionChunk) error {
+func (s *Server) TailSession(req SessionTailRequest, resp *SessionChunk) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
@@ -593,7 +643,7 @@ func (s *Server) tailSessionRPC(ctx context.Context, req SessionTailRequest) (Se
 	return resp, nil
 }
 
-func (s Server) WriteSession(req SessionWriteRequest, resp *EmptyResponse) error {
+func (s *Server) WriteSession(req SessionWriteRequest, resp *EmptyResponse) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
@@ -607,7 +657,7 @@ func (s *Server) writeSessionRPC(ctx context.Context, req SessionWriteRequest) (
 	return EmptyResponse{}, s.moduleSessions.WriteSession(ctx, req.SessionID, req.Data)
 }
 
-func (s Server) CloseSession(req SessionCloseRequest, resp *EmptyResponse) error {
+func (s *Server) CloseSession(req SessionCloseRequest, resp *EmptyResponse) error {
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
@@ -619,6 +669,48 @@ func (s *Server) closeSessionRPC(ctx context.Context, req SessionCloseRequest) (
 		return EmptyResponse{}, errors.New("session broker is not configured")
 	}
 	return EmptyResponse{}, s.moduleSessions.CloseSession(ctx, req.SessionID)
+}
+
+func (s *Server) ListSessionCommands(req SessionCommandListRequest, resp *SessionCommandListResponse) error {
+	if s.moduleSessions == nil {
+		return errors.New("session broker is not configured")
+	}
+	commands, err := s.moduleSessions.ListSessionCommands(context.Background(), req.SessionID, req.Request)
+	if err != nil {
+		return err
+	}
+	resp.Commands = commands
+	return nil
+}
+
+func (s *Server) listSessionCommandsRPC(ctx context.Context, req SessionCommandListRequest) (SessionCommandListResponse, error) {
+	if s.moduleSessions == nil {
+		return SessionCommandListResponse{}, errors.New("session broker is not configured")
+	}
+	commands, err := s.moduleSessions.ListSessionCommands(ctx, req.SessionID, req.Request)
+	if err != nil {
+		return SessionCommandListResponse{}, err
+	}
+	return SessionCommandListResponse{Commands: commands}, nil
+}
+
+func (s *Server) RunSessionCommand(req SessionCommandRunRequest, resp *SessionCommandRunResponse) error {
+	if s.moduleSessions == nil {
+		return errors.New("session broker is not configured")
+	}
+	result, err := s.moduleSessions.RunSessionCommand(context.Background(), req.SessionID, req.Request)
+	if err != nil {
+		return err
+	}
+	*resp = result
+	return nil
+}
+
+func (s *Server) runSessionCommandRPC(ctx context.Context, req SessionCommandRunRequest) (SessionCommandRunResponse, error) {
+	if s.moduleSessions == nil {
+		return SessionCommandRunResponse{}, errors.New("session broker is not configured")
+	}
+	return s.moduleSessions.RunSessionCommand(ctx, req.SessionID, req.Request)
 }
 
 type ChainRequest struct {
@@ -801,10 +893,12 @@ func (s *Server) ListEntities(req ListEntitiesRequest, resp *ListEntitiesRespons
 }
 
 func (s *Server) CreatePendingThrow(req CreatePendingThrowRequest, resp *PendingThrowResponse) error {
-	entities, policy, now := s.launchKeyInputs()
+	operation := operationOrDefault(req.Operation)
+	entities, policy, now := s.launchKeyInputs(operation)
 	snapshot, err := s.launchKeyCoordinator().CreatePending(launchkey.CreatePendingRequest{
 		ID:        req.ID,
-		Operation: operationOrDefault(req.Operation),
+		Operation: operation,
+		Chain:     strings.TrimSpace(req.Chain),
 		PlanHash:  req.PlanHash,
 		Flags:     approvalFlags(req.AllowDangerous, req.NowBypass),
 		Entities:  entities,
@@ -815,6 +909,29 @@ func (s *Server) CreatePendingThrow(req CreatePendingThrowRequest, resp *Pending
 		return err
 	}
 	*resp = pendingThrowResponse(snapshot)
+	return nil
+}
+
+func (s *Server) GetLaunchKeyPolicy(req LaunchKeyPolicyRequest, resp *LaunchKeyPolicyResponse) error {
+	operation := operationOrDefault(req.Operation)
+	policy := s.launchKeyPolicyForOperation(operation)
+	*resp = launchKeyPolicyResponse(operation, policy)
+	return nil
+}
+
+func (s *Server) SetLaunchKeyPolicy(req SetLaunchKeyPolicyRequest, resp *LaunchKeyPolicyResponse) error {
+	operation := operationOrDefault(req.Operation)
+	policy, err := launchKeyPolicyFromRequest(req)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.launchKeyByOp == nil {
+		s.launchKeyByOp = map[string]operatordomain.LaunchKeyPolicy{}
+	}
+	s.launchKeyByOp[operation] = policy
+	s.mu.Unlock()
+	*resp = launchKeyPolicyResponse(operation, policy)
 	return nil
 }
 
@@ -1104,7 +1221,7 @@ func (s *Server) AppendLog(req AppendLogRequest, resp *EmptyResponse) error {
 	return s.persistLocked()
 }
 
-func (s Server) PollLogs(req PollLogsRequest, resp *PollLogsResponse) error {
+func (s *Server) PollLogs(req PollLogsRequest, resp *PollLogsResponse) error {
 	if req.Chain != "" {
 		resp.Last, resp.Logs = s.logs.SinceChain(operationOrDefault(req.Operation), req.Chain, req.Since)
 		return nil
@@ -1281,6 +1398,18 @@ func (s *Server) cancelPendingThrowRPC(_ context.Context, req PendingThrowReques
 	return resp, err
 }
 
+func (s *Server) getLaunchKeyPolicyRPC(_ context.Context, req LaunchKeyPolicyRequest) (LaunchKeyPolicyResponse, error) {
+	var resp LaunchKeyPolicyResponse
+	err := s.GetLaunchKeyPolicy(req, &resp)
+	return resp, err
+}
+
+func (s *Server) setLaunchKeyPolicyRPC(_ context.Context, req SetLaunchKeyPolicyRequest) (LaunchKeyPolicyResponse, error) {
+	var resp LaunchKeyPolicyResponse
+	err := s.SetLaunchKeyPolicy(req, &resp)
+	return resp, err
+}
+
 func (s *Server) publish(operation, chain string, entries ...operatorlog.Entry) {
 	s.logs.Publish(operation, chain, entries...)
 }
@@ -1338,7 +1467,7 @@ func (s *Server) ensureEntitiesLocked() {
 	}
 }
 
-func (s *Server) launchKeyInputs() ([]operatordomain.Entity, operatordomain.LaunchKeyPolicy, time.Time) {
+func (s *Server) launchKeyInputs(operation string) ([]operatordomain.Entity, operatordomain.LaunchKeyPolicy, time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ensureEntitiesLocked()
@@ -1346,7 +1475,7 @@ func (s *Server) launchKeyInputs() ([]operatordomain.Entity, operatordomain.Laun
 	for _, entity := range s.entities {
 		entities = append(entities, entity)
 	}
-	return entities, s.launchKeyPolicy, s.now()
+	return entities, s.launchKeyPolicyForOperationLocked(operation), s.now()
 }
 
 func (s *Server) launchKeyCoordinator() *launchkey.Coordinator {
@@ -1373,6 +1502,7 @@ func pendingThrowResponse(snapshot launchkey.PendingSnapshot) PendingThrowRespon
 	return PendingThrowResponse{
 		ID:                  snapshot.ID,
 		Operation:           snapshot.Operation,
+		Chain:               snapshot.Chain,
 		PlanHash:            snapshot.PlanHash,
 		AllowDangerous:      snapshot.Flags.AllowDangerous,
 		NowBypass:           snapshot.Flags.NowBypass,
@@ -1380,6 +1510,62 @@ func pendingThrowResponse(snapshot launchkey.PendingSnapshot) PendingThrowRespon
 		Ready:               snapshot.Ready,
 		RequiredApproverIDs: append([]string(nil), snapshot.RequiredApproverIDs...),
 		MissingApproverIDs:  append([]string(nil), snapshot.MissingApproverIDs...),
+	}
+}
+
+func (s *Server) launchKeyPolicyForOperation(operation string) operatordomain.LaunchKeyPolicy {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.launchKeyPolicyForOperationLocked(operation)
+}
+
+func (s *Server) launchKeyPolicyForOperationLocked(operation string) operatordomain.LaunchKeyPolicy {
+	operation = operationOrDefault(operation)
+	if s.launchKeyByOp != nil {
+		if policy, ok := s.launchKeyByOp[operation]; ok {
+			return operatordomain.NormalizeLaunchKeyPolicy(policy)
+		}
+	}
+	return operatordomain.NormalizeLaunchKeyPolicy(s.launchKeyPolicy)
+}
+
+func launchKeyPolicyFromRequest(req SetLaunchKeyPolicyRequest) (operatordomain.LaunchKeyPolicy, error) {
+	policy := operatordomain.LaunchKeyPolicy{
+		Mode:   operatordomain.LaunchKeyMode(strings.TrimSpace(req.Mode)),
+		Quorum: req.Quorum,
+	}
+	switch policy.Mode {
+	case operatordomain.LaunchKeyAnyone, operatordomain.LaunchKeyAllConnected:
+	case operatordomain.LaunchKeyQuorum:
+		if policy.Quorum < 1 {
+			return operatordomain.LaunchKeyPolicy{}, errors.New("launch-key quorum must be at least 1")
+		}
+	default:
+		return operatordomain.LaunchKeyPolicy{}, fmt.Errorf("unsupported launch-key mode %q", req.Mode)
+	}
+	if timeout := strings.TrimSpace(req.HeartbeatTimeout); timeout != "" {
+		parsed, err := time.ParseDuration(timeout)
+		if err != nil {
+			return operatordomain.LaunchKeyPolicy{}, fmt.Errorf("invalid launch-key heartbeat timeout: %w", err)
+		}
+		policy.HeartbeatTimeout = parsed
+	}
+	return operatordomain.NormalizeLaunchKeyPolicy(policy), nil
+}
+
+func launchKeyPolicyResponse(operation string, policy operatordomain.LaunchKeyPolicy) LaunchKeyPolicyResponse {
+	policy = operatordomain.NormalizeLaunchKeyPolicy(policy)
+	timeout := ""
+	if policy.HeartbeatTimeout != 0 {
+		timeout = policy.HeartbeatTimeout.String()
+	}
+	return LaunchKeyPolicyResponse{
+		Operation: operationOrDefault(operation),
+		Policy: LaunchKeyPolicyOutput{
+			Mode:             string(policy.Mode),
+			Quorum:           policy.Quorum,
+			HeartbeatTimeout: timeout,
+		},
 	}
 }
 
@@ -1419,7 +1605,7 @@ func Dial(socketPath string) (*Client, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if _, err := client.PollLogs(ctx, 0); err != nil {
-		_ = client.Close()
+		logDaemonRPCError("close daemon client after failed dial", client.Close())
 		return nil, err
 	}
 	return client, nil
@@ -1506,6 +1692,14 @@ func (c *Client) CloseSession(ctx context.Context, sessionID string) error {
 	return err
 }
 
+func (c *Client) ListSessionCommands(ctx context.Context, req SessionCommandListRequest) (SessionCommandListResponse, error) {
+	return invoke[SessionCommandListRequest, SessionCommandListResponse](c, ctx, "ListSessionCommands", req)
+}
+
+func (c *Client) RunSessionCommand(ctx context.Context, req SessionCommandRunRequest) (SessionCommandRunResponse, error) {
+	return invoke[SessionCommandRunRequest, SessionCommandRunResponse](c, ctx, "RunSessionCommand", req)
+}
+
 func (c *Client) PollLogs(ctx context.Context, since uint64) (PollLogsResponse, error) {
 	return c.pollLogs(ctx, "", "", since)
 }
@@ -1558,6 +1752,14 @@ func (c *Client) RequirePendingThrowReady(ctx context.Context, req PendingThrowR
 func (c *Client) CancelPendingThrow(ctx context.Context, req PendingThrowRequest) error {
 	_, err := invoke[PendingThrowRequest, EmptyResponse](c, ctx, "CancelPendingThrow", req)
 	return err
+}
+
+func (c *Client) GetLaunchKeyPolicy(ctx context.Context, req LaunchKeyPolicyRequest) (LaunchKeyPolicyResponse, error) {
+	return invoke[LaunchKeyPolicyRequest, LaunchKeyPolicyResponse](c, ctx, "GetLaunchKeyPolicy", req)
+}
+
+func (c *Client) SetLaunchKeyPolicy(ctx context.Context, req SetLaunchKeyPolicyRequest) (LaunchKeyPolicyResponse, error) {
+	return invoke[SetLaunchKeyPolicyRequest, LaunchKeyPolicyResponse](c, ctx, "SetLaunchKeyPolicy", req)
 }
 
 type SessionClient struct {
@@ -1632,7 +1834,8 @@ func (s *SessionClient) AddTarget(target string) error {
 }
 
 func (s *SessionClient) ClearTargets() {
-	_, _ = invoke[ChainRequest, EmptyResponse](s.client, s.ctx, "ClearTargets", ChainRequest{Operation: s.operation(), Chain: s.active()})
+	_, err := invoke[ChainRequest, EmptyResponse](s.client, s.ctx, "ClearTargets", ChainRequest{Operation: s.operation(), Chain: s.active()})
+	logDaemonRPCError("clear session targets", err)
 }
 
 func (s *SessionClient) CreateTargetSet(name string) error {
@@ -1777,9 +1980,12 @@ func invoke[Req, Res any](c *Client, ctx context.Context, method string, req Req
 	if err != nil {
 		return zero, fmt.Errorf("%s: %w", method, err)
 	}
-	defer resp.Body.Close()
+	defer func() { logDaemonRPCError("close response body", resp.Body.Close()) }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return zero, fmt.Errorf("%s: %s; additionally failed to read error response: %v", method, resp.Status, readErr)
+		}
 		message := strings.TrimSpace(string(body))
 		if message == "" {
 			message = resp.Status
@@ -2050,7 +2256,8 @@ func operatorLogFromRPC(entry OperatorLogEntry) operatorlog.Entry {
 	for name, value := range entry.Fields {
 		fields = append(fields, operatorlog.Field{Name: name, Value: value})
 	}
-	timestamp, _ := time.Parse(time.RFC3339Nano, entry.Time)
+	timestamp, err := time.Parse(time.RFC3339Nano, entry.Time)
+	logDaemonRPCError("parse operator log timestamp", err)
 	return operatorlog.Entry{
 		ID:             entry.ID,
 		Time:           timestamp,
@@ -2100,13 +2307,8 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return out
 }
 
-func cloneAnyMap(values map[string]any) map[string]any {
-	if len(values) == 0 {
-		return nil
+func logDaemonRPCError(action string, err error) {
+	if err != nil {
+		log.Printf("hovel daemon rpc: %s: %v", action, err)
 	}
-	out := make(map[string]any, len(values))
-	for key, value := range values {
-		out[key] = value
-	}
-	return out
 }

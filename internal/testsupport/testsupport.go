@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,7 +88,11 @@ func runfileManifestLookup(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("hovel testsupport: close runfiles manifest: %v", err)
+		}
+	}()
 	keys := []string{
 		filepath.ToSlash(path),
 		filepath.ToSlash(filepath.Join("_main", path)),
@@ -123,7 +128,11 @@ func TempDir(t testing.TB) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Logf("remove test temp dir: %v", err)
+		}
+	})
 	return dir
 }
 

@@ -281,8 +281,10 @@ target set inspect &lt;name&gt;
           The <code>payloads</code> command suite is the operator surface for payload
           discovery, stamped generated artifacts, installed payload inventory, reconnect,
           refresh, and cleanup. It is intentionally separate from <code>session</code>:
-          payload commands answer what is available or installed; session commands answer
-          what is connected now.
+          payload inventory commands answer what is available or installed; session
+          commands answer what is connected now. Both suites can also expose typed
+          provider-owned actions through their <code>commands</code>/<code>call</code>
+          subcommands.
         </p>
         <p>Implemented commands:</p>
 <pre data-lang="commands"><code>payloads available
@@ -295,6 +297,13 @@ payloads connect &lt;payload-id&gt; [--json]
 payloads refresh &lt;payload-id&gt; [--json]
 payloads cleanup &lt;payload-id&gt; [--reason &lt;reason&gt;] [--json]
 payloads mark-removed &lt;payload-id&gt; [--reason &lt;reason&gt;] [--json]
+payloads register-squatter &lt;target&gt; [--host &lt;host&gt;] [--port &lt;port&gt;] [--json]
+payloads commands &lt;payload-id&gt; [--json]
+payloads capabilities &lt;payload-id&gt; [--json]
+payloads call &lt;payload-id&gt; &lt;capability&gt; [--arg &lt;value&gt; ...] [--set &lt;key=value&gt; ...] [--json]
+payloads getfile &lt;payload-id&gt; &lt;remote-path&gt; [--json]
+payloads putfile &lt;payload-id&gt; &lt;local-path&gt; &lt;remote-path&gt; [--json]
+payloads cmd &lt;payload-id&gt; &lt;command-line&gt; [--json]
 </code></pre>
         <p>
           Installed payload IDs use short operator-facing handles such as
@@ -318,6 +327,15 @@ payloads mark-removed &lt;payload-id&gt; [--reason &lt;reason&gt;] [--json]
           the record remains visible with reconnect marked unavailable.
         </p>
         <p>
+          <code>payloads commands</code> and the <code>payloads capabilities</code> alias
+          list provider-owned typed actions for an installed payload. <code>payloads
+          call</code> invokes one of those actions without opening an interactive
+          session. <code>payloads getfile</code>, <code>payloads putfile</code>, and
+          <code>payloads cmd</code> are compatibility shortcuts over the same call path.
+          Human output renders command catalogs as tables with safe/write/destructive
+          effect labels and pretty-prints JSON command stdout or stderr.
+        </p>
+        <p>
           <code>payloads connect &lt;payload-id&gt;</code> creates a normal Hovel session when
           reconnect succeeds. The session appears in <code>session list</code> and links
           back to the installed payload id. The MS17-010-to-Squatter bridge performs this
@@ -329,10 +347,8 @@ payloads mark-removed &lt;payload-id&gt; [--reason &lt;reason&gt;] [--json]
         </p>
         <p>
           Cleanup has two explicit paths. <code>payloads cleanup &lt;payload-id&gt;</code>
-          is the planned provider-executed removal path. The Go provider RPC surface
-          implements <code>cleanup_payload</code>, but the current command-mode provider
-          cleanup service is not wired yet and returns an explicit error directing the
-          operator to <code>payloads mark-removed</code> after manual cleanup.
+          asks the provider to execute its cleanup descriptor, then marks the installed
+          payload record removed if provider cleanup succeeds.
           <code>payloads mark-removed &lt;payload-id&gt;</code> records operator bookkeeping
           when the payload is already gone or the target was rebuilt.
         </p>
@@ -392,6 +408,9 @@ session tail &lt;session-id&gt; [--lines &lt;n&gt;|--bytes &lt;n&gt;] [--json]
 session read &lt;session-id&gt; [--tail] [--json]
 session send &lt;session-id&gt; &lt;data&gt; [--end &lt;terminator&gt;|--no-newline] [--json]
 session close &lt;session-id&gt; [--json]
+session commands &lt;session-id&gt; [--json]
+session capabilities &lt;session-id&gt; [--json]
+session call &lt;session-id&gt; &lt;capability&gt; [--arg &lt;value&gt; ...] [--set &lt;key=value&gt; ...] [--json]
 </code></pre>
         <p>
           <code>session connect</code> attaches the terminal to an active daemon-backed
@@ -403,6 +422,11 @@ session close &lt;session-id&gt; [--json]
           <code>session send</code> appends a newline by default; use
           <code>--no-newline</code> or <code>--end</code> for exact terminators. The
           <code>session write</code> alias maps to <code>session send</code>.
+          <code>session commands</code> and <code>session capabilities</code> list typed
+          provider-owned actions for an active session. <code>session call</code> invokes
+          one action without writing bytes to the interactive stream, which is useful
+          for agent sessions such as Squatter where tasking is typed even when an
+          interactive shell-like view is also available.
         </p>
         <div class="demo-series">
           <figure class="demo-figure">

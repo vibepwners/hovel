@@ -72,6 +72,28 @@ func TestLeadingConfigOptionIsForwardedToCommand(t *testing.T) {
 	}
 }
 
+func TestStringListOptionsAreForwardedToCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"collect"},
+		Summary: "Collect values.",
+		Options: []commands.Option{
+			{Name: "arg", Kind: commands.OptionStringList},
+		},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: strings.Join(invocation.OptionList("arg"), ",")}, nil
+		},
+	})
+
+	code := NewAppWithRegistry(registry).Run(context.Background(), []string{"collect", "--arg", "one", "--arg", "two"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "one,two" {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
 func TestResultExitCodeIsReturnedAfterPrintingReport(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	registry := commands.MustRegistry(commands.Definition{

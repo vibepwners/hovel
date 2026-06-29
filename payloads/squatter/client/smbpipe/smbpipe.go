@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -65,15 +66,6 @@ const (
 	capLargeReadX     = 0x00004000
 	capLargeWriteX    = 0x00008000
 
-	fileReadData        = 0x00000001
-	fileWriteData       = 0x00000002
-	fileReadEA          = 0x00000008
-	fileWriteEA         = 0x00000010
-	fileReadAttributes  = 0x00000080
-	fileWriteAttributes = 0x00000100
-	readControl         = 0x00020000
-	synchronize         = 0x00100000
-
 	fileShareRead    = 0x00000001
 	fileShareWrite   = 0x00000002
 	pipeAccess       = 0x0002019f
@@ -114,19 +106,7 @@ func (d Dialer) Dial(ctx context.Context, opts Options) (io.ReadWriteCloser, err
 	if err := opts.validate(); err != nil {
 		return nil, err
 	}
-
-	done := make(chan dialResult, 1)
-	go func() {
-		conn, err := dial(ctx, opts)
-		done <- dialResult{conn: conn, err: err}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case result := <-done:
-		return result.conn, result.err
-	}
+	return dial(ctx, opts)
 }
 
 func NormalizePipePath(pipe string) string {
@@ -169,11 +149,6 @@ func (o Options) validate() error {
 	return nil
 }
 
-type dialResult struct {
-	conn io.ReadWriteCloser
-	err  error
-}
-
 func dial(ctx context.Context, opts Options) (io.ReadWriteCloser, error) {
 	conn, err := dialMode(ctx, opts, authExtended)
 	if isStatus(err, statusLogonFailure) {
@@ -194,11 +169,11 @@ func dialMode(ctx context.Context, opts Options, auth authMode) (io.ReadWriteClo
 		return nil, err
 	}
 	if err := c.treeConnectShare("IPC$"); err != nil {
-		_ = c.conn.Close()
+		logSMBPipeError("close SMB connection after tree connect failure", c.conn.Close())
 		return nil, err
 	}
 	if err := c.openPipe(opts.Pipe); err != nil {
-		_ = c.conn.Close()
+		logSMBPipeError("close SMB connection after pipe open failure", c.conn.Close())
 		return nil, err
 	}
 	return c, nil
@@ -223,7 +198,7 @@ func dialSessionMode(ctx context.Context, opts Options, auth authMode) (*pipeCon
 	c.debug = os.Getenv("HOVEL_SMB_DEBUG") != ""
 	go c.readResponses()
 	if err := c.handshake(opts); err != nil {
-		_ = netConn.Close()
+		logSMBPipeError("close SMB connection after handshake failure", netConn.Close())
 		return nil, err
 	}
 	return c, nil
@@ -294,10 +269,7 @@ func (c *pipeConn) Write(p []byte) (int, error) {
 
 	c.frameMu.Lock()
 	c.writeBuf = append(c.writeBuf, p...)
-	for {
-		if len(c.writeBuf) < 16 {
-			break
-		}
+	for len(c.writeBuf) >= 16 {
 		frameLen := 16 + int(binary.LittleEndian.Uint32(c.writeBuf[0:4]))
 		if len(c.writeBuf) < frameLen {
 			break
@@ -346,31 +318,6 @@ func (c *pipeConn) writeAll(p []byte) (int, error) {
 
 func (c *pipeConn) transactPipe(data []byte) ([]byte, error) {
 	return c.transaction(transactNmPipe, data, 0x1000)
-}
-
-func (c *pipeConn) writeNMPipe(data []byte) (int, error) {
-	_, err := c.transaction(transWriteNmPipe, data, 0)
-	if err != nil {
-		return 0, err
-	}
-	return len(data), nil
-}
-
-func (c *pipeConn) readNMPipe(max int) ([]byte, error) {
-	return c.transaction(transReadNmPipe, nil, uint16(max))
-}
-
-func (c *pipeConn) peekNMPipe() (int, error) {
-	data, err := c.transaction(transPeekNmPipe, nil, 0x10)
-	if err != nil {
-		return 0, err
-	}
-	if len(data) < 2 {
-		return 0, fmt.Errorf("SMB1 peek named pipe response too short")
-	}
-	available := int(binary.LittleEndian.Uint16(data[0:2]))
-	c.debugf("peek pipe available=%d raw=%d", available, len(data))
-	return available, nil
 }
 
 func (c *pipeConn) transaction(subcommand uint16, data []byte, maxData uint16) ([]byte, error) {
@@ -435,13 +382,15 @@ func (c *pipeConn) transaction(subcommand uint16, data []byte, maxData uint16) (
 }
 
 func (c *pipeConn) Close() error {
+	var fidErr error
 	if c.fid != 0 && !c.hasPendingRequests() {
-		_ = c.closeFID()
+		fidErr = c.closeFID()
+		logSMBPipeError("close SMB pipe FID", fidErr)
 		c.fid = 0
 	}
 	err := c.conn.Close()
 	c.failPending(io.ErrClosedPipe)
-	return err
+	return errors.Join(fidErr, err)
 }
 
 func (c *pipeConn) hasPendingRequests() bool {
@@ -782,39 +731,6 @@ func (c *pipeConn) openPipePathASCII(name string) error {
 	return nil
 }
 
-func (c *pipeConn) readAndX(max int) ([]byte, error) {
-	params := make([]byte, 20)
-	params[0] = 0xff
-	binary.LittleEndian.PutUint16(params[4:], c.fid)
-	binary.LittleEndian.PutUint16(params[10:], uint16(max))
-	binary.LittleEndian.PutUint16(params[12:], 1)
-	binary.LittleEndian.PutUint32(params[14:], 0xffffffff)
-	binary.LittleEndian.PutUint16(params[18:], uint16(max))
-	c.debugf("read fid=%d max=%d", c.fid, max)
-	req := buildSMB(cmdReadAndX, c, 10, params, nil)
-	res, err := c.exchange(req)
-	if err != nil {
-		return nil, err
-	}
-	if err := checkStatus(res, statusOK, "SMB1 read named pipe"); err != nil {
-		return nil, err
-	}
-	if len(res.params) < 14 {
-		return nil, fmt.Errorf("SMB1 read response too short")
-	}
-	length := int(binary.LittleEndian.Uint16(res.params[10:12]))
-	offset := int(binary.LittleEndian.Uint16(res.params[12:14]))
-	if offset < smbHeaderLen || offset+length > len(res.raw) {
-		return nil, fmt.Errorf("SMB1 read response has invalid data bounds")
-	}
-	c.debugf("read status=0x%08x bytes=%d", res.status, length)
-	return append([]byte(nil), res.raw[offset:offset+length]...), nil
-}
-
-func (c *pipeConn) readClassic(max int) ([]byte, error) {
-	return c.readClassicWithTimeout(max, c.timeout)
-}
-
 func (c *pipeConn) readClassicBlocking(max int) ([]byte, error) {
 	return c.readClassicWithTimeout(max, 0)
 }
@@ -952,7 +868,9 @@ func (c *pipeConn) legacy() bool {
 
 func (c *pipeConn) debugf(format string, args ...any) {
 	if c.debug {
-		fmt.Fprintf(os.Stderr, "smbpipe: "+format+"\n", args...)
+		if _, err := fmt.Fprintf(os.Stderr, "smbpipe: "+format+"\n", args...); err != nil {
+			logSMBPipeError("write SMB debug output", err)
+		}
 	}
 }
 
@@ -1037,13 +955,21 @@ func (c *pipeConn) unregisterPending(mid uint16, err error) {
 
 func (c *pipeConn) writeRequest(req []byte) error {
 	if c.timeout > 0 {
-		_ = c.conn.SetWriteDeadline(time.Now().Add(c.timeout))
-		defer func() { _ = c.conn.SetWriteDeadline(time.Time{}) }()
+		if err := c.conn.SetWriteDeadline(time.Now().Add(c.timeout)); err != nil {
+			logSMBPipeError("set SMB write deadline", err)
+		}
+		defer func() { logSMBPipeError("clear SMB write deadline", c.conn.SetWriteDeadline(time.Time{})) }()
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	_, err := c.conn.Write(req)
 	return err
+}
+
+func logSMBPipeError(action string, err error) {
+	if err != nil {
+		log.Printf("smbpipe: %s: %v", action, err)
+	}
 }
 
 func (c *pipeConn) readResponses() {
@@ -1175,17 +1101,6 @@ func isStatus(err error, status uint32) bool {
 		return e.status == status
 	}
 	return false
-}
-
-func desiredPipeAccess() uint32 {
-	return fileReadData |
-		fileWriteData |
-		fileReadEA |
-		fileWriteEA |
-		fileReadAttributes |
-		fileWriteAttributes |
-		readControl |
-		synchronize
 }
 
 func clientCapabilities(legacy bool) uint32 {

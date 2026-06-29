@@ -407,10 +407,10 @@ func (s *Session) Import(state PersistedState) {
 func (s *Session) Attachment(operation, chain string) *Session {
 	attachment := NewWithStore(s.chainStore())
 	if normalizeOperation(operation) != "" {
-		_ = attachment.UseOperation(operation)
+		logSessionError("attach operation", attachment.UseOperation(operation))
 	}
 	if normalizeName(chain) != "" {
-		_ = attachment.UseChain(chain)
+		logSessionError("attach chain", attachment.UseChain(chain))
 	}
 	return attachment
 }

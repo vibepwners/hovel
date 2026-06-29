@@ -37,6 +37,7 @@ type StepContract struct {
 	ConfigSchema map[string]any          `json:"configSchema,omitempty"`
 	Requires     []CapabilityRequirement `json:"requires,omitempty"`
 	Produces     []CapabilityRequirement `json:"produces,omitempty"`
+	Context      *ModuleContext          `json:"context,omitempty"`
 	Prepare      StepPrepareContract     `json:"prepare,omitempty"`
 	Cleanup      *StepCleanupContract    `json:"cleanup,omitempty"`
 }

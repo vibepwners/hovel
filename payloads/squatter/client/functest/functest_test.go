@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -41,8 +42,12 @@ func findSquatter() (string, error) {
 func wineEnv() []string {
 	prefix := filepath.Join(os.TempDir(), "sq-functest-wine")
 	xdg := filepath.Join(os.TempDir(), "sq-functest-xdg")
-	_ = os.MkdirAll(prefix, 0o755)
-	_ = os.MkdirAll(xdg, 0o700)
+	if err := os.MkdirAll(prefix, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "create wine prefix:", err)
+	}
+	if err := os.MkdirAll(xdg, 0o700); err != nil {
+		fmt.Fprintln(os.Stderr, "create wine runtime dir:", err)
+	}
 	// Force a UTF-8 unix locale: wine derives its unix filesystem codepage from
 	// the locale, and the test sandbox scrubs LANG. Without this, wine maps
 	// wide (UTF-16) filenames through an ASCII/POSIX codepage and CreateFileW on
@@ -62,7 +67,11 @@ func freePort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer l.Close()
+	defer func() {
+		if err := l.Close(); err != nil {
+			fmt.Fprintln(os.Stderr, "close free-port listener:", err)
+		}
+	}()
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
@@ -71,7 +80,9 @@ func waitListen(port int, timeout time.Duration) bool {
 	for time.Now().Before(deadline) {
 		c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
 		if err == nil {
-			c.Close()
+			if err := c.Close(); err != nil {
+				fmt.Fprintln(os.Stderr, "close wait-listen probe:", err)
+			}
 			return true
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -127,16 +138,24 @@ func TestMain(m *testing.M) {
 	}
 	// First wine boot can be slow; give it room.
 	if !waitListen(serverPort, 60*time.Second) {
-		_ = cmd.Process.Kill()
+		if err := cmd.Process.Kill(); err != nil {
+			fmt.Fprintln(os.Stderr, "kill wine:", err)
+		}
 		fmt.Fprintln(os.Stderr, "squatter did not start listening")
 		os.Exit(2)
 	}
 
 	code := m.Run()
 
-	_ = cmd.Process.Kill()
-	_, _ = cmd.Process.Wait()
-	os.RemoveAll(serverDir)
+	if err := cmd.Process.Kill(); err != nil {
+		fmt.Fprintln(os.Stderr, "kill wine:", err)
+	}
+	if _, err := cmd.Process.Wait(); err != nil {
+		fmt.Fprintln(os.Stderr, "wait wine:", err)
+	}
+	if err := os.RemoveAll(serverDir); err != nil {
+		fmt.Fprintln(os.Stderr, "remove squatter functest server dir:", err)
+	}
 	os.Exit(code)
 }
 
@@ -146,7 +165,11 @@ func dial(t *testing.T) (net.Conn, *bufio.Reader) {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Logf("close squatter functest connection: %v", err)
+		}
+	})
 	return conn, bufio.NewReader(conn)
 }
 
@@ -172,6 +195,13 @@ func readData(t *testing.T, r *bufio.Reader) (uint64, []byte) {
 	return sid, payload
 }
 
+func writeTestFrame(t *testing.T, w io.Writer, kind uint16, sid uint64, payload []byte) {
+	t.Helper()
+	if err := wire.WriteFrame(w, kind, sid, payload); err != nil {
+		t.Fatalf("write frame: %v", err)
+	}
+}
+
 func TestEcho(t *testing.T) {
 	conn, r := dial(t)
 	if err := wire.WriteFrame(conn, wire.KindOpen, 1, wire.EncodeOpen("echo", []string{"a", "b"})); err != nil {
@@ -182,13 +212,13 @@ func TestEcho(t *testing.T) {
 		t.Fatalf("argv echo = %q", got)
 	}
 
-	_ = wire.WriteFrame(conn, wire.KindData, 1, []byte("hello world"))
+	writeTestFrame(t, conn, wire.KindData, 1, []byte("hello world"))
 	_, p = readData(t, r)
 	if got := string(p); got != "hello world" {
 		t.Fatalf("echo = %q", got)
 	}
 
-	_ = wire.WriteFrame(conn, wire.KindData, 1, []byte("END"))
+	writeTestFrame(t, conn, wire.KindData, 1, []byte("END"))
 	k, _, _ := readSkippingControl(t, r)
 	if k != wire.KindClose {
 		t.Fatalf("expected CLOSE, got kind %d", k)
@@ -213,13 +243,13 @@ func TestEchoUnicode(t *testing.T) {
 
 	// Raw DATA is a byte passthrough; arbitrary UTF-8 must return unchanged.
 	payload := []byte("Ünïcödé ☃ \U0001F4E6")
-	_ = wire.WriteFrame(conn, wire.KindData, 1, payload)
+	writeTestFrame(t, conn, wire.KindData, 1, payload)
 	_, p = readData(t, r)
 	if !bytes.Equal(p, payload) {
 		t.Fatalf("unicode data echo = %q, want %q", p, payload)
 	}
 
-	_ = wire.WriteFrame(conn, wire.KindData, 1, []byte("END"))
+	writeTestFrame(t, conn, wire.KindData, 1, []byte("END"))
 	if k, _, _ := readSkippingControl(t, r); k != wire.KindClose {
 		t.Fatalf("expected CLOSE, got kind %d", k)
 	}
@@ -228,7 +258,11 @@ func TestEchoUnicode(t *testing.T) {
 func TestCmdInteractiveEcho(t *testing.T) {
 	conn, r := dial(t)
 	if tcp, ok := conn.(*net.TCPConn); ok {
-		t.Cleanup(func() { _ = tcp.SetDeadline(time.Time{}) })
+		t.Cleanup(func() {
+			if err := tcp.SetDeadline(time.Time{}); err != nil {
+				t.Logf("clear TCP deadline: %v", err)
+			}
+		})
 	}
 	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		t.Fatal(err)
@@ -287,7 +321,7 @@ func TestCmdInteractiveEcho(t *testing.T) {
 		t.Fatal("cmd did not return interactive echo output")
 	}
 
-	_ = wire.WriteFrame(conn, wire.KindData, 1, []byte("exit\r\n"))
+	writeTestFrame(t, conn, wire.KindData, 1, []byte("exit\r\n"))
 }
 
 func TestCmdInteractiveDebug(t *testing.T) {
@@ -345,7 +379,7 @@ func TestCmdInteractiveDebug(t *testing.T) {
 		t.Fatal("cmd --debug did not return echo output")
 	}
 
-	_ = wire.WriteFrame(conn, wire.KindData, 1, []byte("exit\r\n"))
+	writeTestFrame(t, conn, wire.KindData, 1, []byte("exit\r\n"))
 }
 
 // TestFileTransferUnicodeName proves CreateFileW path handling: a file named
@@ -390,7 +424,7 @@ func TestManyStreams(t *testing.T) {
 	conn, r := dial(t)
 	const n = 5
 	for s := 0; s < n; s++ {
-		_ = wire.WriteFrame(conn, wire.KindOpen, uint64(10+s), wire.EncodeOpen("echo", []string{fmt.Sprintf("s%d", s)}))
+		writeTestFrame(t, conn, wire.KindOpen, uint64(10+s), wire.EncodeOpen("echo", []string{fmt.Sprintf("s%d", s)}))
 	}
 	// argv echoes, bucketed by stream id (they may interleave)
 	argv := map[uint64]string{}
@@ -406,7 +440,7 @@ func TestManyStreams(t *testing.T) {
 	}
 	// interleaved data, each must come back on its own stream
 	for s := 0; s < n; s++ {
-		_ = wire.WriteFrame(conn, wire.KindData, uint64(10+s), []byte(fmt.Sprintf("p%d", s)))
+		writeTestFrame(t, conn, wire.KindData, uint64(10+s), []byte(fmt.Sprintf("p%d", s)))
 	}
 	echoed := map[uint64]string{}
 	for i := 0; i < n; i++ {

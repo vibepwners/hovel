@@ -24,15 +24,19 @@ func capturePromptTerminalState() (*promptTerminalState, error) {
 	}
 	current, err := termios.Tcgetattr(tty.Fd())
 	if err != nil {
-		_ = tty.Close()
+		logCLIError("close tty after capture failure", tty.Close())
 		return nil, fmt.Errorf("capture terminal state: %w", err)
 	}
 	saved := *current
 	return &promptTerminalState{
 		restore: func() error {
-			defer tty.Close()
-			if err := termios.Tcsetattr(tty.Fd(), termios.TCSANOW, &saved); err != nil {
-				return fmt.Errorf("restore terminal state: %w", err)
+			restoreErr := termios.Tcsetattr(tty.Fd(), termios.TCSANOW, &saved)
+			closeErr := tty.Close()
+			if restoreErr != nil {
+				return fmt.Errorf("restore terminal state: %w", restoreErr)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close terminal: %w", closeErr)
 			}
 			return nil
 		},

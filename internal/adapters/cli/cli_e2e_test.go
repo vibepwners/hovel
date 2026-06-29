@@ -74,12 +74,12 @@ func TestDaemonLogSubscriptionOnlyShowsActiveChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer alphaClient.Close()
+	defer closeDaemonRPCClient(t, alphaClient)
 	betaClient, err := daemonrpc.Dial(fixture.SocketPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer betaClient.Close()
+	defer closeDaemonRPCClient(t, betaClient)
 
 	alpha := newTestApp().withDaemonSession(ctx, alphaClient)
 	beta := newTestApp().withDaemonSession(ctx, betaClient)
@@ -125,7 +125,7 @@ func TestDaemonLogSubscriptionFollowsActiveOperation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeDaemonRPCClient(t, client)
 
 	app := newTestApp().withDaemonSession(ctx, client)
 	if err := app.session.UseOperation("test"); err != nil {
@@ -160,7 +160,7 @@ func TestDaemonLogSubscriptionReceivesThrowRuntimeLogs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeDaemonRPCClient(t, client)
 
 	app := newTestApp().withDaemonSession(ctx, client)
 	if err := app.session.UseOperation("test-op"); err != nil {
@@ -208,7 +208,7 @@ func TestDaemonSessionKeepsInjectedModuleCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeDaemonRPCClient(t, client)
 	modules := modulecatalog.New(modulecatalog.Module{
 		ID:          "custom-module@v1",
 		Name:        "Custom Module",
@@ -247,7 +247,7 @@ func TestDaemonCLIConfigListRedactsSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeDaemonRPCClient(t, client)
 
 	modules := modulecatalog.New(modulecatalog.Module{
 		ID:          "secret-exploit@v1",
@@ -433,6 +433,64 @@ func TestE2EChainFileSaveLoadRoundTripThenThrows(t *testing.T) {
 	}
 }
 
+func TestE2EInstalledModuleRefreshesLiveCatalog(t *testing.T) {
+	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
+	workspacePath := fixture.WorkspacePath
+	moduleRoot := writeRPCModulePackage(t, "live-installed", "exploit", `{"chainConfig": [], "targetConfig": [], "outputs": {}}`, `{
+  "version": "contracts-v1",
+  "steps": [{"id": "live.step", "kind": "action", "requires": [], "produces": []}]
+}`)
+	chainFile := filepath.Join(t.TempDir(), "live-installed.chain.yaml")
+	if err := os.WriteFile(chainFile, []byte(`apiVersion: hovel.dev/v1alpha1
+kind: Chain
+metadata:
+  name: live-installed
+spec:
+  mode: configured
+  steps:
+    - id: live
+      uses: module:live-installed@0.1.0
+      step: live.step
+  targets:
+    - id: mock://target
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := newAppWithSessionAndModules(operatorsession.New(), modulecatalog.New())
+	app.workspacePath = workspacePath
+	var stdout, stderr bytes.Buffer
+	for _, line := range []string{
+		"op use test-op",
+		"chain use live-installed",
+		"module install --link " + quoteCommandArg(moduleRoot) + " --no-scripts --workspace " + quoteCommandArg(workspacePath),
+	} {
+		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q exit code = %d, stderr = %s, stdout = %s", line, code, stderr.String(), stdout.String())
+		}
+	}
+
+	if suggestions := app.Suggestions("chain add live"); !containsSuggestion(suggestions, "live-installed@0.1.0") {
+		t.Fatalf("chain add suggestions = %#v, want installed module", suggestions)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "chain load "+quoteCommandArg(chainFile), &stdout, &stderr); code != 0 {
+		t.Fatalf("chain load exit code = %d, stderr = %s, stdout = %s", code, stderr.String(), stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code := app.ExecuteLine(context.Background(), "throw --workspace "+quoteCommandArg(workspacePath)+" --now --json", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("throw exit code = %d, stderr = %s", code, stderr.String())
+	}
+	payload := decodeThrowJSON(t, stdout.Bytes())
+	if payload.Chain != "live-installed" || len(payload.Results) != 1 || payload.Results[0].State != "succeeded" {
+		t.Fatalf("installed module throw payload = %#v", payload)
+	}
+}
+
 func TestE2ESessionConnectHandlesRawTerminalCarriageReturn(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
 	workspacePath := fixture.WorkspacePath
@@ -476,7 +534,7 @@ func TestE2ESessionConnectHandlesRawTerminalCarriageReturn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeDaemonRPCClient(t, client)
 
 	stdout.Reset()
 	stderr.Reset()
@@ -619,7 +677,7 @@ func TestDaemonRestartRestoresRemoteChainAndCanThrow(t *testing.T) {
 		"target config set mock://router-01 target.host router-01",
 		"target config set mock://router-01 target.port 22",
 	)
-	client.Close()
+	closeDaemonRPCClient(t, client)
 	stopCLITestDaemon(t, cancel, errs)
 
 	socketPath = workspacePath + "/hoveld-restarted.sock"
@@ -630,7 +688,7 @@ func TestDaemonRestartRestoresRemoteChainAndCanThrow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer client.Close()
+	defer closeDaemonRPCClient(t, client)
 	app = newTestApp().withDaemonSession(context.Background(), client)
 	stdout.Reset()
 	stderr.Reset()
@@ -679,7 +737,7 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer closeDaemonManagerSession(t, session)
 
 	welcome := app.Welcome(session)
 	for _, want := range []string{
@@ -733,7 +791,7 @@ func TestEnsureDaemonStartsManagedDaemonForCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer closeDaemonManagerSession(t, session)
 
 	if !session.Owned() {
 		t.Fatal("session owned = false, want true")
@@ -756,7 +814,7 @@ func TestEnsureDaemonAttachesToWorkspaceDaemonForCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close()
+	defer closeDaemonManagerSession(t, session)
 
 	if session.Owned() {
 		t.Fatal("session owned = true, want false")
@@ -913,5 +971,19 @@ func stopCLITestDaemon(t *testing.T, cancel context.CancelFunc, errs chan error)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("daemon did not stop")
+	}
+}
+
+func closeDaemonRPCClient(t *testing.T, client *daemonrpc.Client) {
+	t.Helper()
+	if err := client.Close(); err != nil {
+		t.Logf("close daemon rpc client: %v", err)
+	}
+}
+
+func closeDaemonManagerSession(t *testing.T, session interface{ Close() error }) {
+	t.Helper()
+	if err := session.Close(); err != nil {
+		t.Logf("close daemon manager session: %v", err)
 	}
 }

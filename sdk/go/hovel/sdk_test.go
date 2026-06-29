@@ -38,12 +38,12 @@ func (m fakeModule) Run(ctx *Context) (Result, error) {
 	ctx.Log.Info("running", "target", ctx.Target)
 	host := ctx.InputString("target.host", ctx.Target)
 	if m.withSession {
-		shell := &LineShellSession{Prompt: "mock$ ", Echo: true, Handle: func(command string) (string, error) {
+		shell := &fakeCommandSession{LineShellSession: &LineShellSession{Prompt: "mock$ ", Echo: true, Handle: func(command string) (string, error) {
 			if command == "whoami" {
 				return "mock-operator", nil
 			}
 			return "unknown: " + command, nil
-		}}
+		}}}
 		ref, err := ctx.OpenSession(shell, WithName("mock shell"), WithCapabilities("read", "write", "exec", "close"))
 		if err != nil {
 			return Result{}, err
@@ -56,6 +56,23 @@ func (m fakeModule) Run(ctx *Context) (Result, error) {
 		WithFindings(Finding{Title: "reachable", Severity: "info"}),
 		WithArtifacts(TextArtifact("note.txt", "hi")),
 	), nil
+}
+
+type fakeCommandSession struct {
+	*LineShellSession
+}
+
+func (s *fakeCommandSession) ListPayloadCommands(PayloadCommandListRequest) ([]PayloadCommand, error) {
+	return []PayloadCommand{{Name: "session.info", Summary: "return mock session facts", ReadOnly: true}}, nil
+}
+
+func (s *fakeCommandSession) RunPayloadCommand(req PayloadCommandRequest) (PayloadCommandResult, error) {
+	return PayloadCommandResult{
+		Command: req.Command,
+		Summary: "session command completed",
+		Stdout:  "mock session info",
+		Fields:  map[string]string{"args": strings.Join(req.Args, ",")},
+	}, nil
 }
 
 type fakePayloadProvider struct{}
@@ -79,6 +96,28 @@ func (fakePayloadProvider) Schema() Schema {
 func (fakePayloadProvider) Run(*Context) (Result, error) {
 	return Ok(map[string]any{"status": "not-used"}, WithSummary("payload provider execute placeholder")), nil
 }
+
+type fakeContextModule struct{}
+
+func (fakeContextModule) Info() Info {
+	return Info{
+		Name:    "fake-context",
+		Version: "v0.0.0-test",
+		Type:    TypeSurvey,
+		DiscoveryContext: ModuleContext{
+			Summary:  "Find SMB exposure",
+			Keywords: []string{"ms17-010"},
+		},
+	}
+}
+
+func (fakeContextModule) Schema() Schema {
+	return Schema{
+		PlanningContext: ModuleContext{Risk: RiskContext{Level: "low"}},
+	}
+}
+
+func (fakeContextModule) Run(*Context) (Result, error) { return Ok(nil), nil }
 
 func (fakePayloadProvider) ListPayloads(PayloadQuery) ([]PayloadInfo, error) {
 	return []PayloadInfo{fakePayloadInfo()}, nil
@@ -319,7 +358,12 @@ func newRPCConn(t *testing.T, module Module) *rpcConn {
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- ServeIO(module, inR, outW); outW.Close() }()
+	go func() {
+		done <- ServeIO(module, inR, outW)
+		if err := outW.Close(); err != nil {
+			t.Logf("close rpc output pipe: %v", err)
+		}
+	}()
 	return &rpcConn{t: t, in: inW, out: bufio.NewReader(outR), done: done}
 }
 
@@ -368,7 +412,11 @@ func (c *rpcConn) readFrame() map[string]any {
 			break
 		}
 		if name, value, ok := strings.Cut(line, ":"); ok && strings.EqualFold(strings.TrimSpace(name), "content-length") {
-			length, _ = strconv.Atoi(strings.TrimSpace(value))
+			var err error
+			length, err = strconv.Atoi(strings.TrimSpace(value))
+			if err != nil {
+				c.t.Fatalf("parse content-length %q: %v", value, err)
+			}
 		}
 	}
 	body := make([]byte, length)
@@ -387,7 +435,9 @@ func (c *rpcConn) close() {
 	if err := <-c.done; err != nil {
 		c.t.Fatalf("serve returned error: %v", err)
 	}
-	c.in.Close()
+	if err := c.in.Close(); err != nil {
+		c.t.Logf("close rpc input pipe: %v", err)
+	}
 }
 
 func TestServePayloadProviderMethods(t *testing.T) {
@@ -405,6 +455,7 @@ func TestServePayloadProviderMethods(t *testing.T) {
 		// Method results that are arrays decode directly through rpcConn as nil
 		// because it expects object results. Exercise object-returning methods
 		// below and keep this call as a dispatch smoke check.
+		t.Log("list_payloads returned a non-object result")
 	}
 
 	resolved := conn.call("resolve_payload", map[string]any{"format": "pe-exe"})
@@ -486,6 +537,33 @@ func TestServeHandshakeSchemaExecute(t *testing.T) {
 	findings, _ := result["findings"].([]any)
 	if len(findings) != 1 {
 		t.Fatalf("findings = %#v", result["findings"])
+	}
+}
+
+func TestServeOptionalContextFields(t *testing.T) {
+	conn := newRPCConn(t, fakeContextModule{})
+	defer conn.close()
+
+	info := conn.call("handshake", nil)
+	discovery, _ := info["discoveryContext"].(map[string]any)
+	if discovery["summary"] != "Find SMB exposure" {
+		t.Fatalf("discovery context = %#v", discovery)
+	}
+	if _, ok := discovery["risk"]; ok {
+		t.Fatalf("discovery context included absent risk: %#v", discovery)
+	}
+	schema := conn.call("schema", nil)
+	planning, _ := schema["planningContext"].(map[string]any)
+	risk, _ := planning["risk"].(map[string]any)
+	if risk["level"] != "low" {
+		t.Fatalf("planning context = %#v", planning)
+	}
+
+	plain := newRPCConn(t, fakeModule{})
+	defer plain.close()
+	plainInfo := plain.call("handshake", nil)
+	if _, ok := plainInfo["discoveryContext"]; ok {
+		t.Fatalf("plain handshake has discoveryContext: %#v", plainInfo)
 	}
 }
 
@@ -578,13 +656,54 @@ func TestServeSessionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestServeSessionCommandRoundTrip(t *testing.T) {
+	conn := newRPCConn(t, fakeModule{withSession: true})
+	defer conn.close()
+
+	result := conn.call("execute", map[string]any{"runId": "run-1", "moduleId": "fake", "target": "mock://host"})
+	sessions, _ := result["sessions"].([]any)
+	ref, _ := sessions[0].(map[string]any)
+	sessionID, _ := ref["id"].(string)
+	if sessionID == "" {
+		t.Fatalf("session ref missing id: %#v", ref)
+	}
+
+	list := conn.call("session.command.list", map[string]any{"sessionId": sessionID})
+	commands, _ := list["commands"].([]any)
+	if len(commands) != 1 {
+		t.Fatalf("commands = %#v, want one", list["commands"])
+	}
+	command, _ := commands[0].(map[string]any)
+	if command["name"] != "session.info" {
+		t.Fatalf("command = %#v, want session.info", command)
+	}
+
+	run := conn.call("session.command.run", map[string]any{
+		"sessionId": sessionID,
+		"request": map[string]any{
+			"command": "session.info",
+			"args":    []string{"one", "two"},
+		},
+	})
+	if run["command"] != "session.info" || run["stdout"] != "mock session info" {
+		t.Fatalf("session command result = %#v", run)
+	}
+	fields, _ := run["fields"].(map[string]any)
+	if fields["args"] != "one,two" {
+		t.Fatalf("session command fields = %#v", fields)
+	}
+}
+
 func readSession(t *testing.T, conn *rpcConn, sessionID string) string {
 	t.Helper()
 	var builder strings.Builder
 	for i := 0; i < 5; i++ {
 		resp := conn.call("session/read", map[string]any{"sessionId": sessionID, "timeoutMs": 200})
 		data, _ := resp["data"].(string)
-		decoded, _ := base64.StdEncoding.DecodeString(data)
+		decoded, err := base64.StdEncoding.DecodeString(data)
+		if err != nil {
+			t.Fatalf("decode session data: %v", err)
+		}
 		builder.Write(decoded)
 		if len(decoded) == 0 {
 			break
@@ -649,7 +768,10 @@ func TestServeSessionReadDoesNotBlockWrite(t *testing.T) {
 			seenRead = true
 			result, _ := message["result"].(map[string]any)
 			data, _ := result["data"].(string)
-			decoded, _ := base64.StdEncoding.DecodeString(data)
+			decoded, err := base64.StdEncoding.DecodeString(data)
+			if err != nil {
+				t.Fatalf("decode pending session data: %v", err)
+			}
 			if len(decoded) == 0 {
 				t.Fatal("pending session/read returned no data after session/write")
 			}
@@ -679,12 +801,20 @@ func responseID(message map[string]any) (int, bool) {
 
 func TestLineShellSessionExit(t *testing.T) {
 	shell := &LineShellSession{Handle: func(string) (string, error) { return "ok", nil }}
-	_ = shell.Open()
-	_ = shell.Write([]byte("exit\n"))
+	if err := shell.Open(); err != nil {
+		t.Fatalf("open shell: %v", err)
+	}
+	if err := shell.Write([]byte("exit\n")); err != nil {
+		t.Fatalf("write shell: %v", err)
+	}
 	if !shell.Closed() {
 		t.Fatal("shell should be closed after exit")
 	}
-	if data, _ := shell.Read(10 * time.Millisecond); len(data) != 0 && !shell.Closed() {
+	data, err := shell.Read(10 * time.Millisecond)
+	if err != nil {
+		t.Fatalf("read shell: %v", err)
+	}
+	if len(data) != 0 && !shell.Closed() {
 		t.Fatalf("unexpected data after close: %q", data)
 	}
 }
@@ -701,7 +831,11 @@ func TestPTYSessionUsesTerminalLineDiscipline(t *testing.T) {
 	if err := session.Open(); err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close("test")
+	t.Cleanup(func() {
+		if err := session.Close("test"); err != nil {
+			t.Logf("close pty session: %v", err)
+		}
+	})
 
 	if err := session.Write([]byte{'a', 'b', 0x7f, 'c', '\n'}); err != nil {
 		t.Fatal(err)
@@ -726,7 +860,7 @@ func TestSessionManagerMarksPTYSessionCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close("test")
+	defer closeTestSession(t, session)
 	if !hasString(ref.Capabilities, CapabilityTerminalPTY) {
 		t.Fatalf("capabilities = %#v, want %q", ref.Capabilities, CapabilityTerminalPTY)
 	}
@@ -750,7 +884,7 @@ func TestPTYSessionUsesSeparateInputOutputHandles(t *testing.T) {
 	if err := session.Open(); err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close("test")
+	defer closeTestSession(t, session)
 
 	output := readPTYSession(t, session)
 	if !strings.Contains(output, "separate handles") {
@@ -767,7 +901,7 @@ func TestPTYSessionDrainsLargeFrontendOutput(t *testing.T) {
 	if err := session.Open(); err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close("test")
+	defer closeTestSession(t, session)
 
 	output := readPTYSessionUntil(t, session, len(payload), 2*time.Second)
 	if len(output) < len(payload) || !strings.Contains(output, "0123456789abcdef") {
@@ -815,4 +949,11 @@ func hasString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func closeTestSession(t *testing.T, session *PTYSession) {
+	t.Helper()
+	if err := session.Close("test"); err != nil {
+		t.Logf("close pty session: %v", err)
+	}
 }

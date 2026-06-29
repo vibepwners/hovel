@@ -14,12 +14,14 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
 	"github.com/Vibe-Pwners/hovel/internal/modules/pythonrpc"
@@ -43,6 +45,7 @@ type App struct {
 	moduleCount   int
 	workspacePath string
 	surface       *promptSurface
+	workspaceIDs  map[string]bool
 }
 
 func NewApp() App {
@@ -84,36 +87,36 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 
 	session, err := a.EnsureDaemon(ctx, a.workspacePath)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
-	defer session.Close()
+	defer func() { logCLIError("close daemon manager session", session.Close()) }()
 
 	daemonClient, err := daemonrpc.Dial(session.Status().Identity.SocketPath)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
-	defer daemonClient.Close()
+	defer func() { logCLIError("close daemon rpc client", daemonClient.Close()) }()
 	a = a.withDaemonSession(ctx, daemonClient)
 	if err := a.refreshWorkspaceModules(ctx); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	a.surface = newPromptSurface(prompt.NewStdoutWriter())
 
 	if cliWelcomeEnabled() {
-		fmt.Fprintln(stdout, a.WelcomeForWidth(session, terminalWidth(stdout)))
+		writeCLILine(stdout, a.WelcomeForWidth(session, terminalWidth(stdout)))
 	}
 	terminalState, err := capturePromptTerminalState()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	terminalRestored := false
 	defer func() {
 		if !terminalRestored {
-			_ = terminalState.Restore()
+			logCLIError("restore prompt terminal state", terminalState.Restore())
 		}
 	}()
 	stopLogs := a.SubscribeLogs(ctx, daemonClient, a.surface, stdout)
@@ -121,7 +124,7 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	a.Prompt(ctx, stdout, stderr).Run()
 	stopLogs()
 	if err := finishPrompt(stdout, terminalState); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	terminalRestored = true
@@ -136,7 +139,7 @@ func (a App) withDaemonSession(ctx context.Context, client *daemonrpc.Client) Ap
 	session := daemonrpc.NewSessionClient(ctx, client)
 	a.daemonClient = client
 	a.session = session
-	a.commands = commandmode.NewAppWithSessionAndModules(session, a.modules)
+	a.commands = commandmode.NewAppWithSessionModulesAndWorkspace(session, a.modules, a.workspacePath)
 	a.wizard = newInteractiveConfigWizard(session, a.modules)
 	return a
 }
@@ -147,11 +150,11 @@ func (a *App) refreshWorkspaceModules(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if len(installed) == 0 {
-		return nil
-	}
-	a.modules = mergeModuleCatalogs(a.modules, modulecatalog.New(installed...))
-	a.commands = commandmode.NewAppWithSessionAndModules(a.session, a.modules)
+	base := moduleCatalogWithoutIDs(a.modules, a.workspaceIDs)
+	workspaceCatalog := modulecatalog.New(installed...)
+	a.modules = mergeModuleCatalogs(base, workspaceCatalog)
+	a.workspaceIDs = moduleIDSet(installed)
+	a.commands = commandmode.NewAppWithSessionModulesAndWorkspace(a.session, a.modules, workspacePath)
 	if a.wizard == nil {
 		a.wizard = newInteractiveConfigWizard(a.session, a.modules)
 	} else {
@@ -204,6 +207,28 @@ func mergeModuleCatalogs(catalogs ...modulecatalog.Catalog) modulecatalog.Catalo
 	return modulecatalog.New(modules...)
 }
 
+func moduleCatalogWithoutIDs(catalog modulecatalog.Catalog, ids map[string]bool) modulecatalog.Catalog {
+	if len(ids) == 0 {
+		return catalog
+	}
+	modules := catalog.List()
+	filtered := modules[:0]
+	for _, module := range modules {
+		if !ids[module.ID] {
+			filtered = append(filtered, module)
+		}
+	}
+	return modulecatalog.New(filtered...)
+}
+
+func moduleIDSet(modules []modulecatalog.Module) map[string]bool {
+	ids := make(map[string]bool, len(modules))
+	for _, module := range modules {
+		ids[module.ID] = true
+	}
+	return ids
+}
+
 func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surface *promptSurface, fallback io.Writer) func() {
 	initial, err := client.PollLogs(ctx, 0)
 	if err != nil {
@@ -250,8 +275,8 @@ func (a App) SubscribeLogs(ctx context.Context, client *daemonrpc.Client, surfac
 							surface.WriteAsyncLog(rendered, a.PromptPrefix())
 							continue
 						}
-						fmt.Fprintln(fallback)
-						fmt.Fprintln(fallback, rendered)
+						writeCLILine(fallback)
+						writeCLILine(fallback, rendered)
 					}
 				}
 			}
@@ -300,9 +325,9 @@ func (a App) promptWriter() prompt.ConsoleWriter {
 	return newPromptSurface(prompt.NewStdoutWriter())
 }
 
-func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
+func (a *App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
 	if err := a.loadWorkspaceSession(ctx); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	trimmed := strings.TrimSpace(line)
@@ -312,7 +337,7 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 	if a.wizard != nil && a.wizard.Active() {
 		code := a.wizard.HandleLine(trimmed, stdout, stderr)
 		if err := a.saveWorkspaceSession(ctx); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCLILine(stderr, err)
 			return 1
 		}
 		return code
@@ -324,13 +349,13 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 		trimmed = rewritten
 	}
 	if err := a.flowError(trimmed); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	if trimmed == "chain config interactive" || trimmed == "chains config interactive" {
 		code := a.ConfigureInteractive(ctx, stdout, stderr)
 		if err := a.saveWorkspaceSession(ctx); err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCLILine(stderr, err)
 			return 1
 		}
 		return code
@@ -338,7 +363,7 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 	if isSessionConnectCommand(trimmed) {
 		sessionID, options, err := parseSessionConnect(trimmed)
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			writeCLILine(stderr, err)
 			return 1
 		}
 		return a.executeSessionConnect(ctx, sessionID, options, stdout, stderr)
@@ -355,8 +380,14 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 		}()
 	}
 	code := a.commands.ExecuteLine(ctx, trimmed, stdout, stderr)
+	if code == 0 && moduleCatalogMutationCommand(trimmed) {
+		if err := a.refreshWorkspaceModules(ctx); err != nil {
+			writeCLILine(stderr, err)
+			return 1
+		}
+	}
 	if err := a.saveWorkspaceSession(ctx); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	return code
@@ -388,7 +419,25 @@ func commandLineUsesWorkspace(line string) bool {
 		return false
 	}
 	switch fields[0] {
-	case "throw", "throws", "confirm", "review", "artifact", "artifacts", "session", "sessions", "module", "modules":
+	case "throw", "throws", "confirm", "review", "artifact", "artifacts", "session", "sessions", "module", "modules", "payload", "payloads":
+		return true
+	default:
+		return false
+	}
+}
+
+func moduleCatalogMutationCommand(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return false
+	}
+	switch fields[0] {
+	case "module", "modules":
+	default:
+		return false
+	}
+	switch fields[1] {
+	case "install", "bulk-install", "uninstall":
 		return true
 	default:
 		return false
@@ -476,7 +525,7 @@ func (a App) PromptPrefix() string {
 	return a.theme.PromptPrefix(state.ActiveOperation, state.ActiveChain, len(state.Steps), len(state.Targets))
 }
 
-func (a App) Completer(document prompt.Document) []prompt.Suggest {
+func (a *App) Completer(document prompt.Document) []prompt.Suggest {
 	if a.surface != nil {
 		a.surface.SetDocument(document)
 	}
@@ -824,8 +873,30 @@ func (a App) positionalSuggestions(definition commands.Definition, commandWordCo
 			}
 		}
 		return nil, true
-	case "session connect", "sessions connect", "session tail", "sessions tail", "session read", "sessions read", "session send", "sessions send", "session write", "sessions write", "session close", "sessions close":
+	case "session connect", "sessions connect", "session tail", "sessions tail", "session read", "sessions read", "session send", "sessions send", "session write", "sessions write", "session close", "sessions close",
+		"session commands", "sessions commands", "session capabilities", "sessions capabilities":
 		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.sessionSuggestions), true
+	case "session call", "sessions call", "session command", "sessions command":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.sessionSuggestions(prefix), true
+		}
+		if len(fields) > commandWordCount && (provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace) {
+			return a.sessionCapabilitySuggestions(fields[commandWordCount], prefix), true
+		}
+		return nil, true
+	case "payloads inspect", "payload inspect", "payloads connect", "payload connect", "payloads cleanup", "payload cleanup",
+		"payloads mark-removed", "payload mark-removed", "payloads refresh", "payload refresh", "payloads commands", "payload commands",
+		"payloads capabilities", "payload capabilities", "payloads getfile", "payload getfile", "payloads putfile", "payload putfile",
+		"payloads cmd", "payload cmd":
+		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.payloadSuggestions), true
+	case "payloads call", "payload call", "payloads command", "payload command":
+		if provided == 0 || provided == 1 && !endsWithSpace {
+			return a.payloadSuggestions(prefix), true
+		}
+		if len(fields) > commandWordCount && (provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace) {
+			return a.payloadCapabilitySuggestions(fields[commandWordCount], prefix), true
+		}
+		return nil, true
 	default:
 		return nil, false
 	}
@@ -923,8 +994,83 @@ func (a App) targetConfigKeySuggestions(prefix string) []prompt.Suggest {
 }
 
 func (a App) sessionSuggestions(prefix string) []prompt.Suggest {
+	sessions, ok := a.completionSessions()
+	if !ok {
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(sessions))
+	for _, session := range sessions {
+		description := strings.TrimSpace(strings.Join([]string{session.Kind, session.State, session.Target, session.Name}, " "))
+		suggestions = append(suggestions, prompt.Suggest{Text: session.ID, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) sessionCapabilitySuggestions(sessionRef, prefix string) []prompt.Suggest {
 	if a.daemonClient == nil {
 		return nil
+	}
+	sessionID, ok := a.resolveCompletionSessionID(sessionRef)
+	if !ok {
+		return nil
+	}
+	type sessionCommandResult struct {
+		commands []run.PayloadCommand
+		err      error
+	}
+	results := make(chan sessionCommandResult, 1)
+	go func() {
+		resp, err := a.daemonClient.ListSessionCommands(context.Background(), daemonrpc.SessionCommandListRequest{
+			SessionID: sessionID,
+			Request:   run.PayloadCommandListRequest{},
+		})
+		results <- sessionCommandResult{commands: resp.Commands, err: err}
+	}()
+	var sessionCommands []run.PayloadCommand
+	select {
+	case result := <-results:
+		if result.err != nil {
+			logCLIError("complete session command list", result.err)
+			return nil
+		}
+		sessionCommands = result.commands
+	case <-time.After(100 * time.Millisecond):
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(sessionCommands))
+	for _, command := range sessionCommands {
+		description := command.Summary
+		if len(command.Capabilities) > 0 {
+			description = strings.TrimSpace(description + " " + strings.Join(command.Capabilities, ","))
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: command.Name, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) resolveCompletionSessionID(sessionRef string) (string, bool) {
+	sessionRef = strings.TrimSpace(sessionRef)
+	switch sessionRef {
+	case "latest", "@latest":
+		sessions, ok := a.completionSessions()
+		if !ok {
+			return "", false
+		}
+		for i := len(sessions) - 1; i >= 0; i-- {
+			session := sessions[i]
+			if completionSessionIsActive(session) {
+				return session.ID, true
+			}
+		}
+		return "", false
+	default:
+		return sessionRef, sessionRef != ""
+	}
+}
+
+func (a App) completionSessions() ([]daemonrpc.SessionRef, bool) {
+	if a.daemonClient == nil {
+		return nil, false
 	}
 	type sessionListResult struct {
 		sessions []daemonrpc.SessionRef
@@ -935,22 +1081,136 @@ func (a App) sessionSuggestions(prefix string) []prompt.Suggest {
 		sessions, err := a.daemonClient.ListSessions(context.Background())
 		results <- sessionListResult{sessions: sessions, err: err}
 	}()
-	var sessions []daemonrpc.SessionRef
+	select {
+	case result := <-results:
+		if result.err != nil {
+			logCLIError("complete session list", result.err)
+			return nil, false
+		}
+		return result.sessions, true
+	case <-time.After(100 * time.Millisecond):
+		return nil, false
+	}
+}
+
+func completionSessionIsActive(session daemonrpc.SessionRef) bool {
+	switch strings.ToLower(strings.TrimSpace(session.State)) {
+	case "", "active", "open":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a App) payloadSuggestions(prefix string) []prompt.Suggest {
+	records, err := filesystem.NewWorkspaceStore().ListInstalledPayloads(context.Background(), workspace.ResolvePath(a.workspacePath), commands.InstalledPayloadFilter{})
+	if err != nil {
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(records))
+	for _, record := range records {
+		description := strings.TrimSpace(strings.Join([]string{record.State, record.Provider, record.Target, record.Transport}, " "))
+		suggestions = append(suggestions, prompt.Suggest{Text: record.Handle, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) payloadCapabilitySuggestions(payloadRef, prefix string) []prompt.Suggest {
+	if a.daemonClient == nil {
+		return nil
+	}
+	record, err := filesystem.NewWorkspaceStore().GetInstalledPayload(context.Background(), workspace.ResolvePath(a.workspacePath), payloadRef)
+	if err != nil {
+		return nil
+	}
+	moduleID := a.payloadProviderModuleID(record.Provider)
+	if moduleID == "" {
+		moduleID = record.Provider
+	}
+	type payloadCommandResult struct {
+		commands []run.PayloadCommand
+		err      error
+	}
+	results := make(chan payloadCommandResult, 1)
+	go func() {
+		resp, err := a.daemonClient.ListPayloadCommands(context.Background(), daemonrpc.PayloadCommandListRequest{
+			ModuleID: moduleID,
+			Request: run.PayloadCommandListRequest{
+				InstalledPayloadID: record.Handle,
+				Target:             record.Target,
+				PayloadID:          record.PayloadID,
+				Config:             cliInstalledPayloadConfig(record),
+				Reconnect:          cliPayloadProviderRecordToRun(record.Reconnect),
+			},
+		})
+		results <- payloadCommandResult{commands: resp.Commands, err: err}
+	}()
+	var payloadCommands []run.PayloadCommand
 	select {
 	case result := <-results:
 		if result.err != nil {
 			return nil
 		}
-		sessions = result.sessions
+		payloadCommands = result.commands
 	case <-time.After(100 * time.Millisecond):
 		return nil
 	}
-	suggestions := make([]prompt.Suggest, 0, len(sessions))
-	for _, session := range sessions {
-		description := strings.TrimSpace(strings.Join([]string{session.Kind, session.State, session.Target, session.Name}, " "))
-		suggestions = append(suggestions, prompt.Suggest{Text: session.ID, Description: description})
+	suggestions := make([]prompt.Suggest, 0, len(payloadCommands))
+	for _, command := range payloadCommands {
+		description := command.Summary
+		if len(command.Capabilities) > 0 {
+			description = strings.TrimSpace(description + " " + strings.Join(command.Capabilities, ","))
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: command.Name, Description: description})
 	}
 	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) payloadProviderModuleID(provider string) string {
+	if module, ok := a.modules.Find(provider); ok && module.Type == modulecatalog.TypePayloadProvider {
+		return module.ID
+	}
+	for _, module := range a.modules.ByType(modulecatalog.TypePayloadProvider) {
+		if strings.EqualFold(module.Name, provider) || strings.EqualFold(module.ID, provider) {
+			return module.ID
+		}
+	}
+	return ""
+}
+
+func cliInstalledPayloadConfig(record commands.InstalledPayloadRecord) map[string]string {
+	config := map[string]string{}
+	if record.Reconnect != nil {
+		for key, value := range record.Reconnect.Descriptor {
+			text := fmt.Sprint(value)
+			if text != "" {
+				config[key] = text
+			}
+		}
+	}
+	if record.Transport != "" {
+		config["payload.transport"] = record.Transport
+	}
+	if record.Target != "" {
+		config["target.host"] = record.Target
+	}
+	return config
+}
+
+func cliPayloadProviderRecordToRun(record *commands.PayloadProviderRecord) *run.PayloadProviderRecord {
+	if record == nil {
+		return nil
+	}
+	descriptor := make(map[string]any, len(record.Descriptor))
+	for key, value := range record.Descriptor {
+		descriptor[key] = value
+	}
+	return &run.PayloadProviderRecord{
+		ProviderID:    record.ProviderID,
+		Schema:        record.Schema,
+		SchemaVersion: record.SchemaVersion,
+		Descriptor:    descriptor,
+	}
 }
 
 func configKeySuggestions(requirements map[string]modulecatalog.Requirement, existing map[string]string, prefix string) []prompt.Suggest {
@@ -993,7 +1253,7 @@ func (a App) moduleSuggestions(prefix string) []prompt.Suggest {
 
 func (a App) ConfigureInteractive(ctx context.Context, stdout, stderr io.Writer) int {
 	if err := a.refreshWorkspaceModules(ctx); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	if shouldUseHuhConfig(stdout) {
@@ -1490,7 +1750,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (string, bool, int) {
 		return "", true, 0
 	case 1:
 		if args[0] == "-h" || args[0] == "--help" {
-			fmt.Fprint(stdout, "Usage: hovel cli [--workspace <path>]\n\nLaunch the interactive Hovel prompt shell.\n")
+			writeCLIText(stdout, "Usage: hovel cli [--workspace <path>]\n\nLaunch the interactive Hovel prompt shell.\n")
 			return "", false, 0
 		}
 	case 2:
@@ -1498,7 +1758,7 @@ func parseArgs(args []string, stdout, stderr io.Writer) (string, bool, int) {
 			return args[1], true, 0
 		}
 	}
-	fmt.Fprintln(stderr, "hovel cli starts the interactive shell; use hovel <command> for one-shot invocations")
+	writeCLILine(stderr, "hovel cli starts the interactive shell; use hovel <command> for one-shot invocations")
 	return "", false, 2
 }
 
@@ -1545,14 +1805,6 @@ const hovelCompactWordmark = "                          \n" +
 
 const wideMastheadColumns = 69
 
-func splitStyledLines(values []string) []string {
-	var lines []string
-	for _, value := range values {
-		lines = append(lines, strings.Split(value, "\n")...)
-	}
-	return lines
-}
-
 func centerBlock(value string, width int) string {
 	lines := strings.Split(value, "\n")
 	for i, line := range lines {
@@ -1572,31 +1824,4 @@ func thickRoundedBorder() lipgloss.Border {
 		BottomLeft:  "╰",
 		BottomRight: "╯",
 	}
-}
-
-func joinColumns(left, right []string, gap int) string {
-	width := 0
-	for _, line := range left {
-		if lipgloss.Width(line) > width {
-			width = lipgloss.Width(line)
-		}
-	}
-	var out []string
-	rows := len(left)
-	if len(right) > rows {
-		rows = len(right)
-	}
-	spacer := strings.Repeat(" ", gap)
-	for i := 0; i < rows; i++ {
-		leftLine := ""
-		if i < len(left) {
-			leftLine = left[i]
-		}
-		rightLine := ""
-		if i < len(right) {
-			rightLine = right[i]
-		}
-		out = append(out, leftLine+strings.Repeat(" ", width-lipgloss.Width(leftLine))+spacer+rightLine)
-	}
-	return strings.Join(out, "\n")
 }

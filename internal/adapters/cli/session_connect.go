@@ -37,7 +37,7 @@ func defaultSessionConnectOptions() SessionConnectOptions {
 
 func (a App) executeSessionConnect(ctx context.Context, sessionID string, options SessionConnectOptions, stdout, stderr io.Writer) int {
 	if a.daemonClient == nil {
-		fmt.Fprintln(stderr, "session connect needs an interactive daemon session; run hovel cli")
+		writeCLILine(stderr, "session connect needs an interactive daemon session; run hovel cli")
 		return 1
 	}
 	return RunSessionConnect(ctx, a.daemonClient, sessionID, options, stdout, stderr)
@@ -46,7 +46,7 @@ func (a App) executeSessionConnect(ctx context.Context, sessionID string, option
 func RunSessionConnect(ctx context.Context, client *daemonrpc.Client, sessionID string, options SessionConnectOptions, stdout, stderr io.Writer) int {
 	input, cleanup, rawOutput, err := openSessionConnectInput()
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	defer cleanup()
@@ -55,7 +55,7 @@ func RunSessionConnect(ctx context.Context, client *daemonrpc.Client, sessionID 
 		output = crlfWriter{writer: stdout}
 	}
 	if err := ConnectSession(ctx, client, sessionID, input, output, options); err != nil {
-		fmt.Fprintln(stderr, err)
+		writeCLILine(stderr, err)
 		return 1
 	}
 	return 0
@@ -80,7 +80,7 @@ func ConnectSession(ctx context.Context, client *daemonrpc.Client, sessionID str
 		options = connectOptions[0]
 	}
 
-	fmt.Fprintf(output, "Connected to session %s. Press Ctrl-] to detach.\n", sessionID)
+	writeCLIFormat(output, "Connected to session %s. Press Ctrl-] to detach.\n", sessionID)
 	ptySession := sessionHasCapability(ctx, client, sessionID, sessionCapabilityTerminalPTY)
 	if err := printSessionConnectHistory(ctx, client, sessionID, output, ptySession, options); err != nil {
 		return err
@@ -101,13 +101,13 @@ func ConnectSession(ctx context.Context, client *daemonrpc.Client, sessionID str
 	case event.err != nil:
 		return event.err
 	case event.closed:
-		fmt.Fprintf(output, "\nSession closed: %s\n", sessionID)
+		writeCLIFormat(output, "\nSession closed: %s\n", sessionID)
 		return nil
 	default:
 		if err := drainSessionOutput(ctx, client, sessionID, output); err != nil {
 			return err
 		}
-		fmt.Fprintf(output, "\nDetached from session %s\n", sessionID)
+		writeCLIFormat(output, "\nDetached from session %s\n", sessionID)
 		return nil
 	}
 }
@@ -309,11 +309,6 @@ func sessionConnectHelpRequested(fields []string) bool {
 	return false
 }
 
-func parseSessionConnectID(line string) (string, error) {
-	sessionID, _, err := parseSessionConnect(line)
-	return sessionID, err
-}
-
 func parseSessionConnect(line string) (string, SessionConnectOptions, error) {
 	parsed, err := ParseSessionConnectCommand(strings.Fields(line))
 	if err != nil {
@@ -417,12 +412,12 @@ func openSessionConnectInput() (io.Reader, func(), bool, error) {
 	}
 	state, err := term.MakeRaw(tty.Fd())
 	if err != nil {
-		_ = tty.Close()
+		logCLIError("close session terminal after raw mode failure", tty.Close())
 		return nil, nil, false, fmt.Errorf("enter session terminal mode: %w", err)
 	}
 	cleanup := func() {
-		_ = term.Restore(tty.Fd(), state)
-		_ = tty.Close()
+		logCLIError("restore session terminal", term.Restore(tty.Fd(), state))
+		logCLIError("close session terminal", tty.Close())
 	}
 	return tty, cleanup, true, nil
 }

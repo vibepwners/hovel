@@ -29,6 +29,8 @@ type SessionBroker interface {
 	ReadSession(context.Context, string, time.Duration) (run.SessionChunk, error)
 	TailSession(context.Context, string, run.SessionTailOptions) (run.SessionChunk, error)
 	CloseSession(context.Context, string) error
+	ListSessionCommands(context.Context, string, run.PayloadCommandListRequest) ([]run.PayloadCommand, error)
+	RunSessionCommand(context.Context, string, run.PayloadCommandRequest) (run.PayloadCommandResult, error)
 }
 
 type ModuleExecutionFailure interface {
@@ -157,7 +159,7 @@ func (s RunService) RunPayloadCommand(ctx context.Context, req PayloadCommandRun
 		return run.PayloadCommandResult{}, err
 	}
 	if s.events != nil {
-		_ = s.appendPayloadCommandEvent(ctx, req, result)
+		logServiceError("append payload command event", s.appendPayloadCommandEvent(ctx, req, result))
 	}
 	return result, nil
 }

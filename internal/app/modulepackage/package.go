@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -29,6 +30,7 @@ const (
 	ManifestName         = "hovel-module.yaml"
 	ProtocolJSONRPCStdio = "jsonrpc-stdio"
 	DefaultPBSRelease    = "20260610"
+	defaultHTTPTimeout   = 30 * time.Second
 )
 
 type Package struct {
@@ -162,12 +164,12 @@ func LoadManifestArchive(path string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	defer file.Close()
+	defer logCleanup("close manifest archive", file.Close)
 	gz, err := gzip.NewReader(file)
 	if err != nil {
 		return Manifest{}, err
 	}
-	defer gz.Close()
+	defer logCleanup("close manifest gzip reader", gz.Close)
 	tr := tar.NewReader(gz)
 	for {
 		header, err := tr.Next()
@@ -219,15 +221,12 @@ func LoadInstallSetURL(source string, opts InstallOptions) (InstallSet, error) {
 	if opts.Offline {
 		return InstallSet{}, errors.New("offline module bulk-install cannot download a remote manifest")
 	}
-	client := opts.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := installHTTPClient(opts)
 	resp, err := client.Get(source)
 	if err != nil {
 		return InstallSet{}, err
 	}
-	defer resp.Body.Close()
+	defer logCleanup("close install set response body", resp.Body.Close)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return InstallSet{}, fmt.Errorf("download %s failed: %s", source, resp.Status)
 	}
@@ -621,7 +620,7 @@ func InstallArchive(opts InstallOptions) (InstallResult, error) {
 	if err != nil {
 		return InstallResult{}, err
 	}
-	defer os.RemoveAll(temp)
+	defer logCleanup("remove extracted module temp directory", func() error { return os.RemoveAll(temp) })
 	if err := extractTGZ(source, temp); err != nil {
 		return InstallResult{}, err
 	}
@@ -652,7 +651,7 @@ func InstallArchive(opts InstallOptions) (InstallResult, error) {
 		}
 		backup = filepath.Join(backupParent, filepath.Base(dest))
 		if err := os.Rename(dest, backup); err != nil {
-			_ = os.RemoveAll(backupParent)
+			logCleanup("remove install backup directory", func() error { return os.RemoveAll(backupParent) })
 			return InstallResult{}, err
 		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -664,17 +663,17 @@ func InstallArchive(opts InstallOptions) (InstallResult, error) {
 	}
 	pkg, err = LoadDir(dest)
 	if err != nil {
-		_ = os.RemoveAll(dest)
+		logCleanup("remove failed install destination", func() error { return os.RemoveAll(dest) })
 		restoreInstallBackup(dest, backup, backupParent)
 		return InstallResult{}, err
 	}
 	if err := installPackage(pkg, workspace, dest, sum, false, opts); err != nil {
-		_ = os.RemoveAll(dest)
+		logCleanup("remove failed install destination", func() error { return os.RemoveAll(dest) })
 		restoreInstallBackup(dest, backup, backupParent)
 		return InstallResult{}, err
 	}
 	if backupParent != "" {
-		_ = os.RemoveAll(backupParent)
+		logCleanup("remove install backup directory", func() error { return os.RemoveAll(backupParent) })
 	}
 	reportInstallProgress(opts, InstallProgress{
 		Stage:   InstallProgressArchiveComplete,
@@ -726,19 +725,16 @@ func InstallURL(opts InstallOptions) (InstallResult, error) {
 		return InstallResult{}, err
 	}
 	tempPath := temp.Name()
-	defer os.Remove(tempPath)
-	client := opts.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
+	defer logCleanup("remove module download temp file", func() error { return os.Remove(tempPath) })
+	client := installHTTPClient(opts)
 	resp, err := client.Get(source)
 	if err != nil {
-		_ = temp.Close()
+		logCleanup("close module download temp file", temp.Close)
 		return InstallResult{}, err
 	}
-	defer resp.Body.Close()
+	defer logCleanup("close module download response body", resp.Body.Close)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		_ = temp.Close()
+		logCleanup("close module download temp file", temp.Close)
 		return InstallResult{}, fmt.Errorf("download %s failed: %s", source, resp.Status)
 	}
 	total := resp.ContentLength
@@ -752,13 +748,16 @@ func InstallURL(opts InstallOptions) (InstallResult, error) {
 		Source: source,
 		Total:  total,
 	}); err != nil {
-		_ = temp.Close()
+		logCleanup("close module download temp file", temp.Close)
 		return InstallResult{}, err
 	}
 	if err := temp.Close(); err != nil {
 		return InstallResult{}, err
 	}
-	size, _ := fileSize(tempPath)
+	size, err := fileSize(tempPath)
+	if err != nil {
+		log.Printf("hovel module package cleanup: stat downloaded module package: %v", err)
+	}
 	reportInstallProgress(opts, InstallProgress{
 		Stage:  InstallProgressDownloadComplete,
 		Source: source,
@@ -816,10 +815,12 @@ func restoreInstallBackup(dest, backup, backupParent string) {
 	if backup == "" {
 		return
 	}
-	_ = os.RemoveAll(dest)
-	_ = os.Rename(backup, dest)
+	logCleanup("remove failed install destination", func() error { return os.RemoveAll(dest) })
+	if err := os.Rename(backup, dest); err != nil {
+		log.Printf("hovel module package cleanup: restore install backup: %v", err)
+	}
 	if backupParent != "" {
-		_ = os.RemoveAll(backupParent)
+		logCleanup("remove install backup directory", func() error { return os.RemoveAll(backupParent) })
 	}
 }
 
@@ -1004,7 +1005,7 @@ func ensureExtractedPBS(archive, root, goos string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(temp)
+	defer logCleanup("remove python runtime temp directory", func() error { return os.RemoveAll(temp) })
 	if err := extractTGZ(archive, temp); err != nil {
 		return "", err
 	}
@@ -1083,10 +1084,7 @@ var pbsAssetPattern = regexp.MustCompile(`^cpython-([0-9]+\.[0-9]+\.[0-9]+)\+[^-
 
 func selectPBSAsset(release, platform string, versions []string, opts InstallOptions) (pbsAsset, error) {
 	apiURL := "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/" + release
-	client := opts.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := installHTTPClient(opts)
 	if opts.Offline {
 		return pbsAsset{}, errors.New("managed python asset metadata is not available offline")
 	}
@@ -1094,7 +1092,7 @@ func selectPBSAsset(release, platform string, versions []string, opts InstallOpt
 	if err != nil {
 		return pbsAsset{}, err
 	}
-	defer resp.Body.Close()
+	defer logCleanup("close python release response body", resp.Body.Close)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return pbsAsset{}, fmt.Errorf("load python-build-standalone release %s failed: %s", release, resp.Status)
 	}
@@ -1113,7 +1111,7 @@ func selectPBSAsset(release, platform string, versions []string, opts InstallOpt
 		version := versionParts(match[1])
 		stripped := match[3] != ""
 		if best.Name == "" || compareVersionParts(version, bestVersion) > 0 || compareVersionParts(version, bestVersion) == 0 && stripped && !bestStripped {
-			best = pbsAsset{Name: asset.Name, URL: asset.URL}
+			best = pbsAsset(asset)
 			bestVersion = version
 			bestStripped = stripped
 		}
@@ -1191,13 +1189,13 @@ func downloadFile(source, dest string, client *http.Client, opts InstallOptions)
 		return err
 	}
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultInstallHTTPClient()
 	}
 	resp, err := client.Get(source)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer logCleanup("close download response body", resp.Body.Close)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("download %s failed: %s", source, resp.Status)
 	}
@@ -1212,19 +1210,22 @@ func downloadFile(source, dest string, client *http.Client, opts InstallOptions)
 		return err
 	}
 	tempPath := temp.Name()
-	defer os.Remove(tempPath)
+	defer logCleanup("remove download temp file", func() error { return os.Remove(tempPath) })
 	if _, err := copyWithInstallProgress(temp, resp.Body, opts, InstallProgress{
 		Stage:  InstallProgressDownloadProgress,
 		Source: source,
 		Total:  total,
 	}); err != nil {
-		_ = temp.Close()
+		logCleanup("close download temp file", temp.Close)
 		return err
 	}
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	size, _ := fileSize(tempPath)
+	size, err := fileSize(tempPath)
+	if err != nil {
+		log.Printf("hovel module package cleanup: stat downloaded file: %v", err)
+	}
 	reportInstallProgress(opts, InstallProgress{
 		Stage:  InstallProgressDownloadComplete,
 		Source: source,
@@ -1232,6 +1233,21 @@ func downloadFile(source, dest string, client *http.Client, opts InstallOptions)
 		Total:  total,
 	})
 	return os.Rename(tempPath, dest)
+}
+
+func installHTTPClient(opts InstallOptions) *http.Client {
+	if opts.Client != nil {
+		return opts.Client
+	}
+	return defaultInstallHTTPClient()
+}
+
+func defaultInstallHTTPClient() *http.Client {
+	client := *http.DefaultClient
+	if client.Timeout == 0 {
+		client.Timeout = defaultHTTPTimeout
+	}
+	return &client
 }
 
 func reportInstallProgress(opts InstallOptions, event InstallProgress) {
@@ -1368,7 +1384,7 @@ func FileSHA256(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer logCleanup("close file after sha256", file.Close)
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", err
@@ -1381,12 +1397,12 @@ func extractTGZ(path, root string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer logCleanup("close archive file", file.Close)
 	gz, err := gzip.NewReader(file)
 	if err != nil {
 		return err
 	}
-	defer gz.Close()
+	defer logCleanup("close archive gzip reader", gz.Close)
 	tr := tar.NewReader(gz)
 	for {
 		header, err := tr.Next()
@@ -1405,7 +1421,7 @@ func extractTGZ(path, root string) error {
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
@@ -1435,6 +1451,12 @@ func extractTGZ(path, root string) error {
 		default:
 			return fmt.Errorf("unsupported archive entry %s", header.Name)
 		}
+	}
+}
+
+func logCleanup(action string, fn func() error) {
+	if err := fn(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("hovel module package cleanup: %s: %v", action, err)
 	}
 }
 

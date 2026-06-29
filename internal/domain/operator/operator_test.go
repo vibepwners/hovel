@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestPendingThrowRequiresEveryLiveEntityInOperation(t *testing.T) {
+func TestPendingThrowRequiresEveryLiveEntityInOperationAndChain(t *testing.T) {
 	now := time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)
 	entities := []Entity{
 		mustEntity(t, EntityArgs{
@@ -15,6 +15,7 @@ func TestPendingThrowRequiresEveryLiveEntityInOperation(t *testing.T) {
 			Kind:        KindCLI,
 			DisplayName: "human",
 			Operation:   "op-alpha",
+			ActiveChain: "chain-alpha",
 			ConnectedAt: now.Add(-time.Minute),
 			LastSeenAt:  now,
 		}),
@@ -24,6 +25,7 @@ func TestPendingThrowRequiresEveryLiveEntityInOperation(t *testing.T) {
 			DisplayName: "codex",
 			Agent:       true,
 			Operation:   "op-alpha",
+			ActiveChain: "chain-alpha",
 			ConnectedAt: now.Add(-time.Minute),
 			LastSeenAt:  now,
 		}),
@@ -32,6 +34,16 @@ func TestPendingThrowRequiresEveryLiveEntityInOperation(t *testing.T) {
 			Kind:        KindTUI,
 			DisplayName: "observer",
 			Operation:   "op-beta",
+			ActiveChain: "chain-alpha",
+			ConnectedAt: now.Add(-time.Minute),
+			LastSeenAt:  now,
+		}),
+		mustEntity(t, EntityArgs{
+			ID:          "entity-other-chain",
+			Kind:        KindTUI,
+			DisplayName: "other chain",
+			Operation:   "op-alpha",
+			ActiveChain: "chain-beta",
 			ConnectedAt: now.Add(-time.Minute),
 			LastSeenAt:  now,
 		}),
@@ -48,6 +60,7 @@ func TestPendingThrowRequiresEveryLiveEntityInOperation(t *testing.T) {
 			Kind:        KindREST,
 			DisplayName: "stale rest",
 			Operation:   "op-alpha",
+			ActiveChain: "chain-alpha",
 			ConnectedAt: now.Add(-time.Hour),
 			LastSeenAt:  now.Add(-10 * time.Minute),
 		}),
@@ -56,6 +69,7 @@ func TestPendingThrowRequiresEveryLiveEntityInOperation(t *testing.T) {
 			Kind:        KindOneShot,
 			DisplayName: "completed one-shot",
 			Operation:   "op-alpha",
+			ActiveChain: "chain-alpha",
 			ConnectedAt: now.Add(-time.Minute),
 			LastSeenAt:  now,
 		}),
@@ -63,10 +77,11 @@ func TestPendingThrowRequiresEveryLiveEntityInOperation(t *testing.T) {
 	pending, err := NewPendingThrow(PendingThrowArgs{
 		ID:        "pending-1",
 		Operation: "op-alpha",
+		Chain:     "chain-alpha",
 		PlanHash:  "hash-1",
 		Flags:     ApprovalFlags{AllowDangerous: true},
 		Entities:  entities,
-		Policy:    LaunchKeyPolicy{Enabled: true, HeartbeatTimeout: 2 * time.Minute},
+		Policy:    LaunchKeyPolicy{Mode: LaunchKeyAllConnected, HeartbeatTimeout: 2 * time.Minute},
 		Now:       now,
 	})
 	if err != nil {
@@ -101,13 +116,14 @@ func TestPendingThrowApprovalsMustMatchPlanHashAndFlags(t *testing.T) {
 	pending := mustPendingThrow(t, PendingThrowArgs{
 		ID:        "pending-1",
 		Operation: "op-alpha",
+		Chain:     "chain-alpha",
 		PlanHash:  "hash-1",
 		Flags:     ApprovalFlags{AllowDangerous: true, NowBypass: true},
 		Entities: []Entity{
-			mustEntity(t, EntityArgs{ID: "entity-cli", Kind: KindCLI, DisplayName: "human", Operation: "op-alpha", ConnectedAt: now, LastSeenAt: now}),
-			mustEntity(t, EntityArgs{ID: "entity-mcp", Kind: KindMCP, DisplayName: "codex", Agent: true, Operation: "op-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, EntityArgs{ID: "entity-cli", Kind: KindCLI, DisplayName: "human", Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, EntityArgs{ID: "entity-mcp", Kind: KindMCP, DisplayName: "codex", Agent: true, Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
 		},
-		Policy: LaunchKeyPolicy{Enabled: true, HeartbeatTimeout: time.Minute},
+		Policy: LaunchKeyPolicy{Mode: LaunchKeyAllConnected, HeartbeatTimeout: time.Minute},
 		Now:    now,
 	})
 
@@ -140,12 +156,13 @@ func TestPendingThrowSnapshotsRequiredApprovers(t *testing.T) {
 	pending := mustPendingThrow(t, PendingThrowArgs{
 		ID:        "pending-1",
 		Operation: "op-alpha",
+		Chain:     "chain-alpha",
 		PlanHash:  "hash-1",
 		Entities: []Entity{
-			mustEntity(t, EntityArgs{ID: "entity-cli", Kind: KindCLI, DisplayName: "human", Operation: "op-alpha", ConnectedAt: now, LastSeenAt: now}),
-			mustEntity(t, EntityArgs{ID: "entity-mcp", Kind: KindMCP, DisplayName: "codex", Agent: true, Operation: "op-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, EntityArgs{ID: "entity-cli", Kind: KindCLI, DisplayName: "human", Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, EntityArgs{ID: "entity-mcp", Kind: KindMCP, DisplayName: "codex", Agent: true, Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
 		},
-		Policy: LaunchKeyPolicy{Enabled: true, HeartbeatTimeout: time.Minute},
+		Policy: LaunchKeyPolicy{Mode: LaunchKeyAllConnected, HeartbeatTimeout: time.Minute},
 		Now:    now,
 	})
 
@@ -163,12 +180,13 @@ func TestLaunchKeyDisabledAddsNoRequiredApprovers(t *testing.T) {
 	pending := mustPendingThrow(t, PendingThrowArgs{
 		ID:        "pending-1",
 		Operation: "op-alpha",
+		Chain:     "chain-alpha",
 		PlanHash:  "hash-1",
 		Entities: []Entity{
-			mustEntity(t, EntityArgs{ID: "entity-cli", Kind: KindCLI, DisplayName: "human", Operation: "op-alpha", ConnectedAt: now, LastSeenAt: now}),
-			mustEntity(t, EntityArgs{ID: "entity-mcp", Kind: KindMCP, DisplayName: "codex", Agent: true, Operation: "op-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, EntityArgs{ID: "entity-cli", Kind: KindCLI, DisplayName: "human", Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, EntityArgs{ID: "entity-mcp", Kind: KindMCP, DisplayName: "codex", Agent: true, Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
 		},
-		Policy: LaunchKeyPolicy{Enabled: false, HeartbeatTimeout: time.Minute},
+		Policy: LaunchKeyPolicy{Mode: LaunchKeyAnyone, HeartbeatTimeout: time.Minute},
 		Now:    now,
 	})
 	if got := pending.RequiredApproverIDs(); len(got) != 0 {
@@ -176,6 +194,50 @@ func TestLaunchKeyDisabledAddsNoRequiredApprovers(t *testing.T) {
 	}
 	if decision := pending.Decision(); !decision.Ready {
 		t.Fatalf("decision = %#v, want launch-key ready when disabled", decision)
+	}
+	// With no required approvers, confirming the already-ready throw is a vacuous
+	// no-op so the default plan -> confirm -> start workflow succeeds.
+	confirmed, err := pending.Approve("entity-mcp", "hash-1", ApprovalFlags{}, now)
+	if err != nil {
+		t.Fatalf("Approve with no required approvers returned error: %v", err)
+	}
+	if decision := confirmed.Decision(); !decision.Ready || len(decision.RequiredApproverIDs) != 0 {
+		t.Fatalf("decision after no-op approve = %#v, want ready with no approvers", decision)
+	}
+}
+
+func TestPendingThrowQuorumAllowsAnyNMatchingApprovers(t *testing.T) {
+	now := time.Date(2026, 6, 20, 12, 0, 0, 0, time.UTC)
+	pending := mustPendingThrow(t, PendingThrowArgs{
+		ID:        "pending-1",
+		Operation: "op-alpha",
+		Chain:     "chain-alpha",
+		PlanHash:  "hash-1",
+		Entities: []Entity{
+			mustEntity(t, EntityArgs{ID: "entity-a", Kind: KindCLI, Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, EntityArgs{ID: "entity-b", Kind: KindMCP, Agent: true, Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
+			mustEntity(t, EntityArgs{ID: "entity-c", Kind: KindTUI, Operation: "op-alpha", ActiveChain: "chain-alpha", ConnectedAt: now, LastSeenAt: now}),
+		},
+		Policy: LaunchKeyPolicy{Mode: LaunchKeyQuorum, Quorum: 2, HeartbeatTimeout: time.Minute},
+		Now:    now,
+	})
+	if got, want := pending.RequiredApproverIDs(), []string{"entity-a", "entity-b", "entity-c"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("required approvers = %#v, want eligible snapshot %#v", got, want)
+	}
+	var err error
+	pending, err = pending.Approve("entity-c", "hash-1", ApprovalFlags{}, now)
+	if err != nil {
+		t.Fatalf("Approve entity-c returned error: %v", err)
+	}
+	if decision := pending.Decision(); decision.Ready {
+		t.Fatalf("decision after one approval = %#v, want not ready", decision)
+	}
+	pending, err = pending.Approve("entity-a", "hash-1", ApprovalFlags{}, now)
+	if err != nil {
+		t.Fatalf("Approve entity-a returned error: %v", err)
+	}
+	if decision := pending.Decision(); !decision.Ready || len(decision.MissingApproverIDs) != 0 {
+		t.Fatalf("decision after quorum = %#v, want ready", decision)
 	}
 }
 

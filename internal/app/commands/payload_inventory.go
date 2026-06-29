@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -97,6 +99,7 @@ type InstalledPayloadEvent struct {
 
 type PayloadCommand = run.PayloadCommand
 type PayloadCommandArgument = run.PayloadCommandArgument
+type PayloadCommandArtifact = run.Artifact
 type PayloadCommandRequest = run.PayloadCommandRequest
 type PayloadCommandResult = run.PayloadCommandResult
 
@@ -212,7 +215,9 @@ func payloadsConnectHandler(runtime Runtime) Handler {
 		}
 		session, err := runtime.PayloadProviders.ConnectInstalledPayload(ctx, record)
 		if err != nil {
-			_, _ = runtime.Payloads.UpdateInstalledPayloadState(ctx, payloadWorkspace(invocation), record.Handle, PayloadStateUnreachable, err.Error())
+			if _, updateErr := runtime.Payloads.UpdateInstalledPayloadState(ctx, payloadWorkspace(invocation), record.Handle, PayloadStateUnreachable, err.Error()); updateErr != nil {
+				return Result{}, fmt.Errorf("%w; additionally failed to mark payload unreachable: %v", err, updateErr)
+			}
 			return Result{}, err
 		}
 		if session.InstalledPayloadID == "" {
@@ -292,7 +297,9 @@ func payloadsRefreshHandler(runtime Runtime) Handler {
 		}
 		refreshed, err := runtime.PayloadProviders.RefreshInstalledPayload(ctx, record)
 		if err != nil {
-			_, _ = runtime.Payloads.UpdateInstalledPayloadState(ctx, payloadWorkspace(invocation), record.Handle, PayloadStateUnreachable, err.Error())
+			if _, updateErr := runtime.Payloads.UpdateInstalledPayloadState(ctx, payloadWorkspace(invocation), record.Handle, PayloadStateUnreachable, err.Error()); updateErr != nil {
+				return Result{}, fmt.Errorf("%w; additionally failed to mark payload unreachable: %v", err, updateErr)
+			}
 			return Result{}, err
 		}
 		if refreshed.ID == "" {
@@ -394,39 +401,51 @@ func payloadsCommandsHandler(runtime Runtime) Handler {
 	}
 }
 
-func payloadsRunCommandHandler(runtime Runtime, command string) Handler {
+func payloadsCallHandler(runtime Runtime) Handler {
 	return func(ctx context.Context, invocation Invocation) (Result, error) {
-		if runtime.Payloads == nil {
-			return Result{}, fmt.Errorf("payload repository is not configured")
-		}
-		if runtime.PayloadProviders == nil {
-			return Result{}, fmt.Errorf("payload provider service is not configured")
-		}
-		workspacePath := payloadWorkspace(invocation)
-		record, err := runtime.Payloads.GetInstalledPayload(ctx, workspacePath, invocation.Positional("payload"))
-		if err != nil {
-			return Result{}, err
-		}
-		req, err := payloadCommandRequestFromInvocation(command, invocation)
-		if err != nil {
-			return Result{}, err
-		}
-		result, err := runtime.PayloadProviders.RunPayloadCommand(ctx, record, req)
-		if err != nil {
-			_, _ = runtime.Payloads.UpdateInstalledPayloadState(ctx, workspacePath, record.Handle, PayloadStateUnreachable, err.Error())
-			return Result{}, err
-		}
-		if len(result.Artifacts) > 0 && runtime.Artifacts != nil {
-			result, err = materializePayloadCommandArtifacts(ctx, runtime, workspacePath, record, result)
-			if err != nil {
-				return Result{}, err
-			}
-		}
-		return Result{Human: payloadCommandResultHuman(result), JSON: result}, nil
+		return runPayloadProviderCall(ctx, runtime, invocation, invocation.Positional("capability"), payloadCommandRequestFromGenericInvocation)
 	}
 }
 
-func payloadCommandRequestFromInvocation(command string, invocation Invocation) (PayloadCommandRequest, error) {
+func payloadsRunCommandHandler(runtime Runtime, command string) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		return runPayloadProviderCall(ctx, runtime, invocation, command, payloadCommandRequestFromLegacyInvocation)
+	}
+}
+
+func runPayloadProviderCall(ctx context.Context, runtime Runtime, invocation Invocation, command string, requestFromInvocation func(string, Invocation) (PayloadCommandRequest, error)) (Result, error) {
+	if runtime.Payloads == nil {
+		return Result{}, fmt.Errorf("payload repository is not configured")
+	}
+	if runtime.PayloadProviders == nil {
+		return Result{}, fmt.Errorf("payload provider service is not configured")
+	}
+	workspacePath := payloadWorkspace(invocation)
+	record, err := runtime.Payloads.GetInstalledPayload(ctx, workspacePath, invocation.Positional("payload"))
+	if err != nil {
+		return Result{}, err
+	}
+	req, err := requestFromInvocation(command, invocation)
+	if err != nil {
+		return Result{}, err
+	}
+	result, err := runtime.PayloadProviders.RunPayloadCommand(ctx, record, req)
+	if err != nil {
+		if _, updateErr := runtime.Payloads.UpdateInstalledPayloadState(ctx, workspacePath, record.Handle, PayloadStateUnreachable, err.Error()); updateErr != nil {
+			return Result{}, fmt.Errorf("%w; additionally failed to mark payload unreachable: %v", err, updateErr)
+		}
+		return Result{}, err
+	}
+	if len(result.Artifacts) > 0 && runtime.Artifacts != nil {
+		result, err = materializePayloadCommandArtifacts(ctx, runtime, workspacePath, record, result)
+		if err != nil {
+			return Result{}, err
+		}
+	}
+	return Result{Human: payloadCommandResultHuman(result), JSON: result}, nil
+}
+
+func payloadCommandRequestFromLegacyInvocation(command string, invocation Invocation) (PayloadCommandRequest, error) {
 	req := PayloadCommandRequest{Command: command}
 	switch command {
 	case "getfile":
@@ -444,6 +463,57 @@ func payloadCommandRequestFromInvocation(command string, invocation Invocation) 
 		return PayloadCommandRequest{}, fmt.Errorf("unsupported payload command %q", command)
 	}
 	return req, nil
+}
+
+func payloadCommandRequestFromGenericInvocation(command string, invocation Invocation) (PayloadCommandRequest, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return PayloadCommandRequest{}, fmt.Errorf("payload capability is required")
+	}
+	req := PayloadCommandRequest{
+		Command:       command,
+		Args:          invocation.OptionList("arg"),
+		InputData:     invocation.Option("input-data"),
+		InputEncoding: strings.TrimSpace(invocation.Option("input-encoding")),
+	}
+	inputFile := strings.TrimSpace(invocation.Option("input-file"))
+	if inputFile != "" && req.InputData != "" {
+		return PayloadCommandRequest{}, fmt.Errorf("--input-file and --input-data cannot be used together")
+	}
+	if inputFile != "" {
+		path, err := filepath.Abs(inputFile)
+		if err != nil {
+			return PayloadCommandRequest{}, err
+		}
+		req.InputPath = path
+	}
+	if req.InputData != "" && req.InputEncoding == "" {
+		req.InputEncoding = "utf-8"
+	}
+	config, err := parsePayloadCallConfig(invocation.OptionList("set"))
+	if err != nil {
+		return PayloadCommandRequest{}, err
+	}
+	if len(config) > 0 {
+		req.Config = config
+	}
+	return req, nil
+}
+
+func parsePayloadCallConfig(values []string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	config := make(map[string]string, len(values))
+	for _, value := range values {
+		key, val, ok := strings.Cut(value, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("--set must use key=value: %q", value)
+		}
+		config[key] = strings.TrimSpace(val)
+	}
+	return config, nil
 }
 
 func materializePayloadCommandArtifacts(ctx context.Context, runtime Runtime, workspacePath string, record InstalledPayloadRecord, result PayloadCommandResult) (PayloadCommandResult, error) {
@@ -578,29 +648,56 @@ func payloadCommandLines(commands []PayloadCommand) string {
 	}
 	lines := []string{"COMMAND      EFFECT       SUMMARY"}
 	for _, command := range commands {
-		effect := "safe"
-		if command.Destructive {
-			effect = "destructive"
-		} else if !command.ReadOnly {
-			effect = "write"
-		}
-		lines = append(lines, fmt.Sprintf("%-12s %-12s %s", command.Name, effect, command.Summary))
+		lines = append(lines, fmt.Sprintf("%-12s %-12s %s", command.Name, PayloadCommandEffect(command), command.Summary))
 	}
 	return strings.Join(lines, "\n")
 }
 
+func PayloadCommandEffect(command PayloadCommand) string {
+	if command.Destructive {
+		return "destructive"
+	}
+	if !command.ReadOnly {
+		return "write"
+	}
+	return "safe"
+}
+
 func payloadCommandResultHuman(result PayloadCommandResult) string {
-	lines := []string{fmt.Sprintf("Payload command completed: %s", result.Command)}
+	return commandResultHuman("Payload command", result)
+}
+
+func sessionCommandResultHuman(result PayloadCommandResult) string {
+	return commandResultHuman("Session command", result)
+}
+
+func commandResultHuman(prefix string, result PayloadCommandResult) string {
+	lines := []string{fmt.Sprintf("%s completed: %s", prefix, result.Command)}
 	if result.Summary != "" {
 		lines = append(lines, result.Summary)
 	}
 	if result.Stdout != "" {
-		lines = append(lines, strings.TrimSpace(result.Stdout))
+		lines = append(lines, PrettyCommandOutput(result.Stdout))
+	}
+	if result.Stderr != "" {
+		lines = append(lines, PrettyCommandOutput(result.Stderr))
 	}
 	if artifactID := result.Fields["artifactId"]; artifactID != "" {
 		lines = append(lines, "artifact "+artifactID+" "+result.Fields["artifactPath"])
 	}
 	return strings.Join(lines, "\n")
+}
+
+func PrettyCommandOutput(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var pretty bytes.Buffer
+	if json.Valid([]byte(value)) && json.Indent(&pretty, []byte(value), "", "  ") == nil {
+		return pretty.String()
+	}
+	return value
 }
 
 func sortAvailablePayloads(payloads []AvailablePayload) {

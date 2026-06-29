@@ -15,8 +15,9 @@ import (
 type OptionKind string
 
 const (
-	OptionString OptionKind = "string"
-	OptionBool   OptionKind = "bool"
+	OptionString     OptionKind = "string"
+	OptionStringList OptionKind = "stringList"
+	OptionBool       OptionKind = "bool"
 )
 
 type Positional struct {
@@ -62,6 +63,7 @@ type Invocation struct {
 	Definition      Definition
 	Positionals     map[string]string
 	Options         map[string]string
+	OptionLists     map[string][]string
 	Flags           map[string]bool
 	Input           Input
 	Output          io.Writer
@@ -82,6 +84,13 @@ func (i Invocation) Option(name string) string {
 		return ""
 	}
 	return i.Options[name]
+}
+
+func (i Invocation) OptionList(name string) []string {
+	if i.OptionLists == nil {
+		return nil
+	}
+	return append([]string(nil), i.OptionLists[name]...)
 }
 
 func (i Invocation) Flag(name string) bool {

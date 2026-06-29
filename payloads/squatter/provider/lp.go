@@ -129,7 +129,7 @@ func (lp *placeholderLP) ConnectSession(req hovel.ConnectSessionRequest) (hovel.
 		return hovel.SessionRef{}, fmt.Errorf("target is required")
 	}
 	transport := "squatter/" + smbNamedPipe
-	state := "pending_post_throw_connect"
+	var state string
 	switch canonicalTransport(req.Config["payload.transport"]) {
 	case tcpCallback:
 		transport = "squatter/" + tcpCallback
@@ -149,7 +149,7 @@ func (lp *placeholderLP) ConnectSession(req hovel.ConnectSessionRequest) (hovel.
 		state = "open"
 		lp.mu.Lock()
 		if existing, ok := lp.bindConns[req.Target]; ok {
-			_ = existing.Close()
+			logProviderError("close existing TCP bind session", existing.Close())
 		}
 		lp.bindConns[req.Target] = conn
 		lp.mu.Unlock()
@@ -161,7 +161,7 @@ func (lp *placeholderLP) ConnectSession(req hovel.ConnectSessionRequest) (hovel.
 		state = "open"
 		lp.mu.Lock()
 		if existing, ok := lp.smbConns[req.Target]; ok {
-			_ = existing.Close()
+			logProviderError("close existing SMB session", existing.Close())
 		}
 		lp.smbConns[req.Target] = conn
 		lp.mu.Unlock()
@@ -249,13 +249,13 @@ func (lp *placeholderLP) Cleanup(req hovel.CleanupPayloadRequest) (hovel.Cleanup
 			listener.close()
 		}
 		for _, callback := range lp.callbacks {
-			_ = callback.conn.Close()
+			logProviderError("close reverse TCP callback", callback.conn.Close())
 		}
 		for _, conn := range lp.smbConns {
-			_ = conn.Close()
+			logProviderError("close SMB session", conn.Close())
 		}
 		for _, conn := range lp.bindConns {
-			_ = conn.Close()
+			logProviderError("close TCP bind session", conn.Close())
 		}
 		lp.listeners = map[string]hovel.ListenerRef{}
 		lp.sessions = map[string]hovel.SessionRef{}
@@ -269,13 +269,13 @@ func (lp *placeholderLP) Cleanup(req hovel.CleanupPayloadRequest) (hovel.Cleanup
 		listener.close()
 	}
 	if callback, ok := lp.callbacks[req.Target]; ok {
-		_ = callback.conn.Close()
+		logProviderError("close reverse TCP callback", callback.conn.Close())
 	}
 	if conn, ok := lp.smbConns[req.Target]; ok {
-		_ = conn.Close()
+		logProviderError("close SMB session", conn.Close())
 	}
 	if conn, ok := lp.bindConns[req.Target]; ok {
-		_ = conn.Close()
+		logProviderError("close TCP bind session", conn.Close())
 	}
 	delete(lp.listeners, req.Target)
 	delete(lp.sessions, req.Target)
@@ -453,10 +453,11 @@ func (listener *reverseTCPListener) acceptOne() {
 	}
 
 	buffer := make([]byte, 12)
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	n, _ := io.ReadFull(conn, buffer)
+	logProviderError("set reverse TCP callback read deadline", conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	n, err := io.ReadFull(conn, buffer)
+	logProviderError("read reverse TCP callback hello", err)
 	if n <= 0 {
-		_ = conn.Close()
+		logProviderError("close empty reverse TCP callback", conn.Close())
 		return
 	}
 
@@ -469,7 +470,7 @@ func (listener *reverseTCPListener) acceptOne() {
 	select {
 	case listener.accepted <- callback:
 	case <-listener.closed:
-		_ = conn.Close()
+		logProviderError("close reverse TCP callback after listener close", conn.Close())
 	}
 }
 
@@ -480,10 +481,10 @@ func (listener *reverseTCPListener) close() {
 	default:
 		close(listener.closed)
 	}
-	_ = listener.listener.Close()
+	logProviderError("close reverse TCP listener", listener.listener.Close())
 	select {
 	case callback := <-listener.accepted:
-		_ = callback.conn.Close()
+		logProviderError("close accepted reverse TCP callback", callback.conn.Close())
 	default:
 	}
 }

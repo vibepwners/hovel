@@ -25,6 +25,13 @@ type SessionRef struct {
 // CapabilityTerminalPTY marks sessions backed by a local pseudoterminal.
 const CapabilityTerminalPTY = "terminal.pty"
 
+// TerminalPTYSession is implemented by sessions that expose a local
+// pseudoterminal. PTYSession implements it directly; wrappers can embed
+// PTYSession and keep the terminal capability visible to Hovel.
+type TerminalPTYSession interface {
+	TerminalPTYSession() bool
+}
+
 // ListenerRef describes a provider-managed listener used to acquire sessions.
 type ListenerRef struct {
 	ID        string            `json:"id"`
@@ -196,7 +203,7 @@ func (s *LineShellSession) Write(data []byte) error {
 func (s *LineShellSession) handleLine(command string) {
 	switch command {
 	case "exit", "logout":
-		_ = s.Close("operator requested close")
+		logSDKError("close line shell session", s.Close("operator requested close"))
 		return
 	case "":
 		s.emit([]byte(s.Prompt))
@@ -310,7 +317,7 @@ func (m *sessionManager) open(scope sessionScope, session Session, opts ...sessi
 		options = opts[0]
 	}
 	capabilities := append([]string(nil), options.capabilities...)
-	if _, ok := session.(*PTYSession); ok {
+	if terminal, ok := session.(TerminalPTYSession); ok && terminal.TerminalPTYSession() {
 		capabilities = appendSessionCapability(capabilities, CapabilityTerminalPTY)
 	}
 	m.mu.Lock()
@@ -390,6 +397,30 @@ func (m *sessionManager) close(id, reason string) error {
 	return nil
 }
 
+func (m *sessionManager) listCommands(id string, req PayloadCommandListRequest) ([]PayloadCommand, error) {
+	managed, err := m.lookup(id)
+	if err != nil {
+		return nil, err
+	}
+	provider, ok := managed.session.(PayloadCommandProvider)
+	if !ok {
+		return nil, fmt.Errorf("hovel: session %q does not expose payload commands", id)
+	}
+	return provider.ListPayloadCommands(req)
+}
+
+func (m *sessionManager) runCommand(id string, req PayloadCommandRequest) (PayloadCommandResult, error) {
+	managed, err := m.lookup(id)
+	if err != nil {
+		return PayloadCommandResult{}, err
+	}
+	provider, ok := managed.session.(PayloadCommandProvider)
+	if !ok {
+		return PayloadCommandResult{}, fmt.Errorf("hovel: session %q does not expose payload commands", id)
+	}
+	return provider.RunPayloadCommand(req)
+}
+
 func (m *sessionManager) closeAll(reason string) {
 	m.mu.Lock()
 	ids := make([]string, 0, len(m.sessions))
@@ -398,7 +429,7 @@ func (m *sessionManager) closeAll(reason string) {
 	}
 	m.mu.Unlock()
 	for _, id := range ids {
-		_ = m.close(id, reason)
+		logSDKError("close managed session", m.close(id, reason))
 	}
 }
 

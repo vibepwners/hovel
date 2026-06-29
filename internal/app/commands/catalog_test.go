@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -65,8 +66,10 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"module", "uninstall"},
 		{"payloads", "available"},
 		{"payloads", "cleanup"},
+		{"payloads", "call"},
 		{"payloads", "cmd"},
 		{"payloads", "connect"},
+		{"payloads", "capabilities"},
 		{"payloads", "commands"},
 		{"payloads", "getfile"},
 		{"payloads", "inspect"},
@@ -89,8 +92,11 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"confirm"},
 		{"run"},
 		{"throw"},
+		{"throw", "plan"},
 		{"throw", "inspect"},
 		{"throw", "list"},
+		{"launch-key", "policy", "inspect"},
+		{"launch-key", "policy", "set"},
 	} {
 		if _, ok := registry.Find(path...); !ok {
 			t.Fatalf("missing command path %q", strings.Join(path, " "))
@@ -103,6 +109,8 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"chains", "load"},
 		{"chains", "save"},
 		{"modules", "list"},
+		{"payload", "call"},
+		{"payload", "capabilities"},
 		{"run"},
 		{"targets", "add"},
 		{"targets", "set", "create"},
@@ -427,6 +435,176 @@ func TestThrowNowRecordsBypassConfirmation(t *testing.T) {
 	}
 	if len(recorder.requests) != 1 {
 		t.Fatalf("run requests = %#v, want one", recorder.requests)
+	}
+}
+
+func TestThrowRequiresReadyLaunchKeyBeforeRun(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &fakeRunRecorder{}
+	pending := &fakePendingThrowCoordinator{}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		PendingThrows: pending,
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+	})
+	definition, _ := registry.Find("throw")
+
+	_, err = definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "mock://target",
+		},
+		Flags: map[string]bool{"now": true, "allow-dangerous": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPlan := newThrowPlanForExecution(".hovel", throwExecution{Operation: operatorsession.DefaultOperation, Chain: "mock-exploit", Targets: []string{"mock://target"}, Modules: []string{"mock-exploit@v0.0.0-example"}, ChainConfig: map[string]string{}, TargetConfigs: map[string]map[string]string{}})
+	wantPendingID := launchKeyPendingThrowID(wantPlan, true, true)
+	if pending.createSocket != "/tmp/hovel.sock" || pending.readySocket != "/tmp/hovel.sock" {
+		t.Fatalf("launch-key sockets = %q/%q, want daemon socket", pending.createSocket, pending.readySocket)
+	}
+	if !reflect.DeepEqual(pending.createRequest, PendingThrowCreateRequest{
+		ID:             wantPendingID,
+		Operation:      operatorsession.DefaultOperation,
+		Chain:          "mock-exploit",
+		PlanHash:       wantPlan.PlanHash,
+		AllowDangerous: true,
+		NowBypass:      true,
+	}) {
+		t.Fatalf("pending create request = %#v", pending.createRequest)
+	}
+	if pending.readyID != wantPendingID {
+		t.Fatalf("ready id = %q, want %q", pending.readyID, wantPendingID)
+	}
+	if pending.cancelSocket != "/tmp/hovel.sock" || pending.cancelID != wantPendingID {
+		t.Fatalf("cancel = %q/%q, want daemon socket and %q", pending.cancelSocket, pending.cancelID, wantPendingID)
+	}
+	if len(recorder.requests) != 1 {
+		t.Fatalf("run requests = %#v, want one", recorder.requests)
+	}
+}
+
+func TestThrowStopsWhenLaunchKeyApprovalsAreMissing(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &fakeRunRecorder{}
+	pending := &fakePendingThrowCoordinator{readyErr: errors.New("launch-key approvals missing: cli-1")}
+	registry := HovelRegistry(Runtime{
+		Workspaces:    fakeWorkspaceService{},
+		Daemons:       fakeDaemonService{status: daemon.Running(identity)},
+		PendingThrows: pending,
+		Runs:          fakeRunClientFactory{recorder: recorder},
+		Modules:       exampleCatalog(),
+		Plans:         &fakePlanRecorder{},
+		Confirmations: &fakeConfirmationRecorder{},
+	})
+	definition, _ := registry.Find("throw")
+
+	_, err = definition.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"chain":     "mock-exploit",
+			"target":    "mock://target",
+		},
+		Flags: map[string]bool{"now": true},
+	})
+	if err == nil || !strings.Contains(err.Error(), "launch-key approvals missing") {
+		t.Fatalf("error = %v, want launch-key failure", err)
+	}
+	if len(recorder.requests) != 0 {
+		t.Fatalf("run requests = %#v, want none", recorder.requests)
+	}
+	if pending.cancelID != "" {
+		t.Fatalf("cancel id = %q, want no cancel before ready", pending.cancelID)
+	}
+}
+
+func TestLaunchKeyPolicyCommandsInspectAndSetThroughCLI(t *testing.T) {
+	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
+		WorkspacePath: ".hovel",
+		PID:           12345,
+		SocketPath:    "/tmp/hovel.sock",
+		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+		Health:        daemon.HealthHealthy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := &fakeLaunchKeyPolicyManager{
+		getSnapshot: LaunchKeyPolicySnapshot{Operation: "redteam-lab", Mode: "anyone"},
+		setSnapshot: LaunchKeyPolicySnapshot{Operation: "redteam-lab", Mode: "quorum", Quorum: 2, HeartbeatTimeout: "45s"},
+	}
+	registry := HovelRegistry(Runtime{
+		Daemons:           fakeDaemonService{status: daemon.Running(identity)},
+		LaunchKeyPolicies: policies,
+	})
+
+	inspect, _ := registry.Find("launch-key", "policy", "inspect")
+	result, err := inspect.Execute(context.Background(), Invocation{
+		Options: map[string]string{
+			"workspace": ".hovel",
+			"operation": "redteam-lab",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policies.getSocket != "/tmp/hovel.sock" || policies.getOperation != "redteam-lab" {
+		t.Fatalf("inspect request = %q/%q", policies.getSocket, policies.getOperation)
+	}
+	if snapshot, ok := result.JSON.(LaunchKeyPolicySnapshot); !ok || snapshot.Mode != "anyone" {
+		t.Fatalf("inspect json = %#v", result.JSON)
+	}
+
+	set, _ := registry.Find("launch-key", "policy", "set")
+	result, err = set.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"mode": "quorum"},
+		Options: map[string]string{
+			"workspace":         ".hovel",
+			"operation":         "redteam-lab",
+			"quorum":            "2",
+			"heartbeat-timeout": "45s",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policies.setSocket != "/tmp/hovel.sock" {
+		t.Fatalf("set socket = %q, want daemon socket", policies.setSocket)
+	}
+	if !reflect.DeepEqual(policies.setRequest, LaunchKeyPolicySetRequest{
+		Operation:        "redteam-lab",
+		Mode:             "quorum",
+		Quorum:           2,
+		HeartbeatTimeout: "45s",
+	}) {
+		t.Fatalf("set request = %#v", policies.setRequest)
+	}
+	if snapshot, ok := result.JSON.(LaunchKeyPolicySnapshot); !ok || snapshot.Mode != "quorum" || snapshot.Quorum != 2 {
+		t.Fatalf("set json = %#v", result.JSON)
 	}
 }
 
@@ -835,6 +1013,66 @@ func TestPayloadsConnectCleanupAndRefreshUseProviderService(t *testing.T) {
 	}
 	if repository.records["p1"].State != PayloadStateRemoved || providers.cleaned.Handle != "p1" {
 		t.Fatalf("cleanup state/provider = %#v %#v", repository.records["p1"], providers.cleaned)
+	}
+}
+
+func TestPayloadsCapabilitiesAndCallUseGenericProviderInterface(t *testing.T) {
+	record := payloadRecordFixture("p1", PayloadStateInstalled)
+	repository := newFakePayloadRepository([]InstalledPayloadRecord{record})
+	providers := &fakePayloadProviderService{
+		commands: []PayloadCommand{
+			{Name: "wininfo", Summary: "collect native Windows host facts", ReadOnly: true, Capabilities: []string{"host.info"}},
+			{Name: "process.run", Summary: "run a process", Destructive: true, Capabilities: []string{"process.exec"}},
+		},
+		result: PayloadCommandResult{Command: "process.run", Summary: "process completed", Stdout: "ok\n"},
+	}
+	registry := HovelRegistry(Runtime{
+		Modules:          exampleCatalog(),
+		Payloads:         repository,
+		PayloadProviders: providers,
+	})
+	capabilitiesDefinition, _ := registry.Find("payloads", "capabilities")
+	callDefinition, _ := registry.Find("payloads", "call")
+
+	capabilities, err := capabilitiesDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1"},
+		Options:     map[string]string{"workspace": ".hovel"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(capabilities.Human, "wininfo") || !strings.Contains(capabilities.Human, "process.run") {
+		t.Fatalf("capabilities output = %q", capabilities.Human)
+	}
+	if got, ok := capabilities.JSON.([]PayloadCommand); !ok || len(got) != 2 {
+		t.Fatalf("capabilities json = %#v", capabilities.JSON)
+	}
+
+	result, err := callDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"payload": "p1", "capability": "process.run"},
+		Options: map[string]string{
+			"workspace":      ".hovel",
+			"input-data":     "stdin",
+			"input-encoding": "",
+		},
+		OptionLists: map[string][]string{
+			"arg": {"cmd.exe /c whoami", "5000", `C:\Windows`},
+			"set": {"timeout.ms=5000", "mode=typed"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "Payload command completed: process.run") || !strings.Contains(result.Human, "ok") {
+		t.Fatalf("call output = %q", result.Human)
+	}
+	if providers.ran.Command != "process.run" ||
+		!reflect.DeepEqual(providers.ran.Args, []string{"cmd.exe /c whoami", "5000", `C:\Windows`}) ||
+		providers.ran.InputData != "stdin" ||
+		providers.ran.InputEncoding != "utf-8" ||
+		providers.ran.Config["timeout.ms"] != "5000" ||
+		providers.ran.Config["mode"] != "typed" {
+		t.Fatalf("provider request = %#v", providers.ran)
 	}
 }
 
@@ -3034,10 +3272,14 @@ func TestModuleBulkInstallInstallsHTTPSArchives(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/modules.yaml":
-			fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleInstallSet\nmodules:\n  - source: bulk-remote.tgz\n    sha256: %s\n", sum)
+			if _, err := fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleInstallSet\nmodules:\n  - source: bulk-remote.tgz\n    sha256: %s\n", sum); err != nil {
+				t.Logf("write bulk install response: %v", err)
+			}
 		case "/bulk-remote.tgz":
 			w.Header().Set("Content-Length", fmt.Sprint(len(body)))
-			_, _ = w.Write(body)
+			if _, err := w.Write(body); err != nil {
+				t.Logf("write bulk archive response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 			return
@@ -3101,10 +3343,14 @@ func TestModuleBulkInstallResolvesHTTPSManifestAbsolutePathArchives(t *testing.T
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/downloads/modules.yaml":
-			fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleInstallSet\nmodules:\n  - source: %s\n    sha256: %s\n", archivePath, sum)
+			if _, err := fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleInstallSet\nmodules:\n  - source: %s\n    sha256: %s\n", archivePath, sum); err != nil {
+				t.Logf("write bulk install response: %v", err)
+			}
 		case archivePath:
 			w.Header().Set("Content-Length", fmt.Sprint(len(body)))
-			_, _ = w.Write(body)
+			if _, err := w.Write(body); err != nil {
+				t.Logf("write release archive response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 			return
@@ -3215,13 +3461,16 @@ func TestModuleInstallResolvesHTTPSIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var server *httptest.Server
-	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/index.yaml":
-			fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleIndex\nmodules:\n  - name: remote-indexed\n    version: 0.1.0\n    url: remote-indexed.tgz\n    sha256: %s\n", sum)
+			if _, err := fmt.Fprintf(w, "apiVersion: hovel.dev/v1alpha1\nkind: ModuleIndex\nmodules:\n  - name: remote-indexed\n    version: 0.1.0\n    url: remote-indexed.tgz\n    sha256: %s\n", sum); err != nil {
+				t.Logf("write module index response: %v", err)
+			}
 		case "/remote-indexed.tgz":
-			_, _ = w.Write(body)
+			if _, err := w.Write(body); err != nil {
+				t.Logf("write indexed archive response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -3501,6 +3750,52 @@ func TestSessionCommandsResolveLatestSession(t *testing.T) {
 	}
 	if len(recorder.writes) != 1 || recorder.writes[0].sessionID != "session-1" {
 		t.Fatalf("writes = %#v, want write to latest session", recorder.writes)
+	}
+}
+
+func TestSessionCallUsesTypedSessionCommandChannel(t *testing.T) {
+	identity := daemon.Identity{SocketPath: "/tmp/hovel.sock", PID: 42}
+	recorder := &fakeRunRecorder{
+		sessions: []SessionRef{{ID: "session-1", State: "active"}},
+	}
+	registry := HovelRegistry(Runtime{
+		Daemons: fakeDaemonService{status: daemon.Running(identity)},
+		Runs:    fakeRunClientFactory{recorder: recorder},
+		Modules: exampleCatalog(),
+	})
+
+	capabilities, _ := registry.Find("session", "capabilities")
+	result, err := capabilities.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "latest"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "process.list") {
+		t.Fatalf("capabilities output = %q, want process.list", result.Human)
+	}
+
+	call, _ := registry.Find("session", "call")
+	result, err = call.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"session": "latest", "capability": "process.list"},
+		Options:     map[string]string{},
+		Flags:       map[string]bool{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Human, "Session command completed: process.list") {
+		t.Fatalf("call output = %q, want session command completion", result.Human)
+	}
+	if len(recorder.sessionCommandRequests) != 1 {
+		t.Fatalf("session command requests = %#v, want one", recorder.sessionCommandRequests)
+	}
+	request := recorder.sessionCommandRequests[0]
+	if request.sessionID != "session-1" || request.request.Command != "process.list" {
+		t.Fatalf("session command request = %#v, want session-1/process.list", request)
+	}
+	if len(recorder.writes) != 0 {
+		t.Fatalf("session writes = %#v, want no interactive write", recorder.writes)
 	}
 }
 
@@ -4201,9 +4496,18 @@ func hasOption(definition Definition, name string) bool {
 type fakeWorkspaceService struct{}
 
 func (fakeWorkspaceService) InitWorkspace(context.Context, services.InitWorkspaceRequest) (services.InitWorkspaceResult, error) {
-	id, _ := workspace.NewID("workspace-1")
-	name, _ := workspace.NewName("ops")
-	ws, _ := workspace.New(id, name, ".hovel")
+	id, err := workspace.NewID("workspace-1")
+	if err != nil {
+		return services.InitWorkspaceResult{}, err
+	}
+	name, err := workspace.NewName("ops")
+	if err != nil {
+		return services.InitWorkspaceResult{}, err
+	}
+	ws, err := workspace.New(id, name, ".hovel")
+	if err != nil {
+		return services.InitWorkspaceResult{}, err
+	}
 	return services.InitWorkspaceResult{Workspace: ws, Created: true}, nil
 }
 
@@ -4218,17 +4522,92 @@ func (s fakeDaemonService) Status(context.Context, services.DaemonStatusRequest)
 	return s.status, nil
 }
 
+type fakePendingThrowCoordinator struct {
+	createSocket  string
+	createRequest PendingThrowCreateRequest
+	createErr     error
+	readySocket   string
+	readyID       string
+	readyErr      error
+	cancelSocket  string
+	cancelID      string
+	cancelErr     error
+}
+
+type fakeLaunchKeyPolicyManager struct {
+	getSocket    string
+	getOperation string
+	getSnapshot  LaunchKeyPolicySnapshot
+	getErr       error
+	setSocket    string
+	setRequest   LaunchKeyPolicySetRequest
+	setSnapshot  LaunchKeyPolicySnapshot
+	setErr       error
+}
+
+func (m *fakeLaunchKeyPolicyManager) GetLaunchKeyPolicy(_ context.Context, socketPath, operation string) (LaunchKeyPolicySnapshot, error) {
+	m.getSocket = socketPath
+	m.getOperation = operation
+	if m.getErr != nil {
+		return LaunchKeyPolicySnapshot{}, m.getErr
+	}
+	return m.getSnapshot, nil
+}
+
+func (m *fakeLaunchKeyPolicyManager) SetLaunchKeyPolicy(_ context.Context, socketPath string, req LaunchKeyPolicySetRequest) (LaunchKeyPolicySnapshot, error) {
+	m.setSocket = socketPath
+	m.setRequest = req
+	if m.setErr != nil {
+		return LaunchKeyPolicySnapshot{}, m.setErr
+	}
+	return m.setSnapshot, nil
+}
+
+func (c *fakePendingThrowCoordinator) CreatePendingThrow(_ context.Context, socketPath string, req PendingThrowCreateRequest) (PendingThrowSnapshot, error) {
+	c.createSocket = socketPath
+	c.createRequest = req
+	if c.createErr != nil {
+		return PendingThrowSnapshot{}, c.createErr
+	}
+	return PendingThrowSnapshot{
+		ID:             req.ID,
+		Operation:      req.Operation,
+		Chain:          req.Chain,
+		PlanHash:       req.PlanHash,
+		AllowDangerous: req.AllowDangerous,
+		NowBypass:      req.NowBypass,
+		Ready:          true,
+	}, nil
+}
+
+func (c *fakePendingThrowCoordinator) RequirePendingThrowReady(_ context.Context, socketPath, id string) (PendingThrowSnapshot, error) {
+	c.readySocket = socketPath
+	c.readyID = id
+	if c.readyErr != nil {
+		return PendingThrowSnapshot{ID: id}, c.readyErr
+	}
+	return PendingThrowSnapshot{ID: id, Ready: true}, nil
+}
+
+func (c *fakePendingThrowCoordinator) CancelPendingThrow(_ context.Context, socketPath, id string) error {
+	c.cancelSocket = socketPath
+	c.cancelID = id
+	return c.cancelErr
+}
+
 type fakeRunRecorder struct {
-	socketPath        string
-	generations       []fakePayloadGeneration
-	requests          []RunMockExploitRequest
-	artifacts         []Artifact
-	installedPayloads []InstalledPayloadDescriptor
-	sessions          []SessionRef
-	reads             []SessionChunk
-	tail              SessionChunk
-	tails             []fakeSessionTail
-	writes            []fakeSessionWrite
+	socketPath             string
+	generations            []fakePayloadGeneration
+	requests               []RunMockExploitRequest
+	artifacts              []Artifact
+	installedPayloads      []InstalledPayloadDescriptor
+	sessions               []SessionRef
+	reads                  []SessionChunk
+	tail                   SessionChunk
+	tails                  []fakeSessionTail
+	writes                 []fakeSessionWrite
+	sessionCommands        []fakeSessionCommandList
+	sessionCommandRequests []fakeSessionCommandRun
 }
 
 type fakePayloadGeneration struct {
@@ -4244,6 +4623,16 @@ type fakeSessionTail struct {
 type fakeSessionWrite struct {
 	sessionID string
 	data      []byte
+}
+
+type fakeSessionCommandList struct {
+	sessionID string
+	request   RunSessionCommandListRequest
+}
+
+type fakeSessionCommandRun struct {
+	sessionID string
+	request   PayloadCommandRequest
 }
 
 type fakePlanRecorder struct {
@@ -4439,6 +4828,7 @@ type fakePayloadProviderService struct {
 	refresh   func(InstalledPayloadRecord) InstalledPayloadRecord
 	commands  []PayloadCommand
 	result    PayloadCommandResult
+	ran       PayloadCommandRequest
 }
 
 func (s *fakePayloadProviderService) ListAvailablePayloads(context.Context) ([]AvailablePayload, error) {
@@ -4473,7 +4863,8 @@ func (s *fakePayloadProviderService) ListPayloadCommands(context.Context, Instal
 	return append([]PayloadCommand(nil), s.commands...), nil
 }
 
-func (s *fakePayloadProviderService) RunPayloadCommand(context.Context, InstalledPayloadRecord, PayloadCommandRequest) (PayloadCommandResult, error) {
+func (s *fakePayloadProviderService) RunPayloadCommand(_ context.Context, _ InstalledPayloadRecord, request PayloadCommandRequest) (PayloadCommandResult, error) {
+	s.ran = request
 	if s.result.Command != "" {
 		return s.result, nil
 	}
@@ -4724,7 +5115,7 @@ func (f fakeRunClientFactory) DialRunClient(socketPath string) (RunClient, error
 	if f.recorder != nil {
 		f.recorder.socketPath = socketPath
 	}
-	return fakeRunClient{recorder: f.recorder}, nil
+	return fakeRunClient(f), nil
 }
 
 type fakeRunClient struct {
@@ -4845,6 +5236,23 @@ func (fakeRunClient) ListPayloadCommands(context.Context, string, RunPayloadComm
 
 func (fakeRunClient) RunPayloadCommand(context.Context, RunPayloadCommandRunRequest) (PayloadCommandResult, error) {
 	return PayloadCommandResult{Command: "cmd", Summary: "command completed", Stdout: "ok\n"}, nil
+}
+
+func (c fakeRunClient) ListSessionCommands(_ context.Context, sessionID string, req RunSessionCommandListRequest) ([]PayloadCommand, error) {
+	if c.recorder != nil {
+		c.recorder.sessionCommands = append(c.recorder.sessionCommands, fakeSessionCommandList{sessionID: sessionID, request: req})
+	}
+	return []PayloadCommand{{Name: "process.list", Summary: "list processes", ReadOnly: true}}, nil
+}
+
+func (c fakeRunClient) RunSessionCommand(_ context.Context, req RunSessionCommandRunRequest) (PayloadCommandResult, error) {
+	if c.recorder != nil {
+		c.recorder.sessionCommandRequests = append(c.recorder.sessionCommandRequests, fakeSessionCommandRun{
+			sessionID: req.SessionID,
+			request:   req.Request,
+		})
+	}
+	return PayloadCommandResult{Command: req.Request.Command, Summary: "session task completed", Stdout: "[]"}, nil
 }
 
 func writeCommandModuleArchive(t *testing.T, dir, name string) string {

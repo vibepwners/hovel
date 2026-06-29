@@ -4,19 +4,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
+	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 	prompt "github.com/c-bata/go-prompt"
 )
@@ -46,7 +50,7 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 		t.Fatalf("control suggestions = %#v, want daemon and init", controlChildren)
 	}
 	payloadChildren := app.Suggestions("payloads ")
-	for _, want := range []string{"available", "installed", "inspect", "connect", "cleanup", "mark-removed", "refresh"} {
+	for _, want := range []string{"available", "installed", "inspect", "connect", "cleanup", "mark-removed", "refresh", "capabilities", "call"} {
 		if !containsSuggestion(payloadChildren, want) {
 			t.Fatalf("payload suggestions = %#v, missing %s", payloadChildren, want)
 		}
@@ -339,11 +343,51 @@ func TestPositionalSuggestionsUseCurrentOperatorState(t *testing.T) {
 	}
 }
 
+func TestSessionCommandSuggestionsUseDaemonState(t *testing.T) {
+	broker := fakeCompletionSessionBroker{
+		sessions: []run.SessionRef{
+			{ID: "session-closed", Kind: "agent", State: "closed", Target: "mock://old"},
+			{ID: "session-1", Kind: "agent", State: "active", Target: "mock://router-01", Name: "Squatter session"},
+		},
+		commands: []run.PayloadCommand{
+			{Name: "process.list", Summary: "list processes", ReadOnly: true},
+			{Name: "process.run", Summary: "run process", Destructive: true},
+		},
+	}
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{
+		ModuleRunner:   fakeCompletionModuleRunner{},
+		ModuleSessions: broker,
+	})
+	client, err := daemonrpc.Dial(fixture.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := client.Close(); err != nil {
+			t.Logf("close daemon rpc client: %v", err)
+		}
+	}()
+	app := newTestApp().withDaemonSession(context.Background(), client)
+
+	for _, line := range []string{"session call ", "session capabilities "} {
+		if suggestions := app.Suggestions(line); !containsSuggestion(suggestions, "session-1") {
+			t.Fatalf("%q suggestions = %#v, missing session-1", line, suggestions)
+		}
+	}
+	if suggestions := app.Suggestions("session call session-1 "); !containsSuggestion(suggestions, "process.list") {
+		t.Fatalf("session call capability suggestions = %#v, missing process.list", suggestions)
+	}
+	if suggestions := app.Suggestions("session call latest process."); !containsSuggestion(suggestions, "process.list") {
+		t.Fatalf("latest session capability suggestions = %#v, missing process.list", suggestions)
+	}
+}
+
 func TestExecuteLineUsesCommandMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	workspacePath := t.TempDir()
 
-	code := newTestApp().ExecuteLine(context.Background(), "control init --workspace "+workspacePath+" --json", &stdout, &stderr)
+	app := newTestApp()
+	code := app.ExecuteLine(context.Background(), "control init --workspace "+workspacePath+" --json", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
@@ -833,80 +877,7 @@ const (
 
 func installRPCModulePackage(t *testing.T, workspace, name, moduleType, schemaJSON, stepsJSON string) {
 	t.Helper()
-	moduleRoot := filepath.Join(t.TempDir(), name)
-	if err := os.MkdirAll(filepath.Join(moduleRoot, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
-kind: ModulePackage
-metadata:
-  name: `+name+`
-  version: 0.1.0
-  moduleType: `+moduleType+`
-runtime:
-  protocol: jsonrpc-stdio
-launch:
-  - selector:
-      os: linux
-      arch: amd64
-    command: ["bin/`+name+`"]
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	script := `#!/usr/bin/env python3
-import json
-import sys
-
-INFO = {
-    "name": ` + strconv.Quote(name) + `,
-    "version": "0.1.0",
-    "moduleType": ` + strconv.Quote(moduleType) + `,
-    "summary": "installed test module",
-    "tags": [],
-}
-SCHEMA = json.loads(` + strconv.Quote(schemaJSON) + `)
-STEPS = json.loads(` + strconv.Quote(stepsJSON) + `)
-
-def read():
-    headers = {}
-    while True:
-        line = sys.stdin.buffer.readline()
-        if line in (b"\r\n", b"\n", b""):
-            break
-        key, value = line.decode().split(":", 1)
-        headers[key.lower()] = value.strip()
-    length = int(headers.get("content-length", "0"))
-    if length == 0:
-        return None
-    return json.loads(sys.stdin.buffer.read(length))
-
-def send(message):
-    body = json.dumps(message).encode()
-    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body))
-    sys.stdout.buffer.write(body)
-    sys.stdout.buffer.flush()
-
-while True:
-    request = read()
-    if not request:
-        break
-    method = request.get("method")
-    rid = request.get("id")
-    if method == "handshake":
-        send({"jsonrpc": "2.0", "id": rid, "result": INFO})
-    elif method == "schema":
-        send({"jsonrpc": "2.0", "id": rid, "result": SCHEMA})
-    elif method == "step.describe":
-        send({"jsonrpc": "2.0", "id": rid, "result": STEPS})
-    elif method == "shutdown":
-        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
-        break
-    else:
-        send({"jsonrpc": "2.0", "id": rid, "error": {"message": "unknown method " + str(method)}})
-`
-	if err := os.WriteFile(filepath.Join(moduleRoot, "bin", name), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	moduleRoot := writeRPCModulePackage(t, name, moduleType, schemaJSON, stepsJSON)
 	if _, err := modulepackage.InstallLink(modulepackage.InstallOptions{
 		Workspace: workspace,
 		SourceDir: moduleRoot,
@@ -977,19 +948,33 @@ func TestThrowAnimationOnlyWrapsThrowExecution(t *testing.T) {
 
 func TestExecuteLineInjectsShellWorkspaceForWorkspaceCommands(t *testing.T) {
 	var capturedWorkspace string
-	registry, err := commands.NewRegistry(commands.Definition{
-		Path:        []string{"throw"},
-		Summary:     "Run a throw.",
-		Positionals: []commands.Positional{{Name: "chain_file", Required: true}},
-		Options: []commands.Option{
-			{Name: "workspace", Short: "w", ValueName: "path", Kind: commands.OptionString},
-			{Name: "now", Short: "n", Kind: commands.OptionBool},
+	registry, err := commands.NewRegistry(
+		commands.Definition{
+			Path:        []string{"throw"},
+			Summary:     "Run a throw.",
+			Positionals: []commands.Positional{{Name: "chain_file", Required: true}},
+			Options: []commands.Option{
+				{Name: "workspace", Short: "w", ValueName: "path", Kind: commands.OptionString},
+				{Name: "now", Short: "n", Kind: commands.OptionBool},
+			},
+			Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+				capturedWorkspace = invocation.Option("workspace")
+				return commands.Result{Human: "ok"}, nil
+			},
 		},
-		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
-			capturedWorkspace = invocation.Option("workspace")
-			return commands.Result{Human: "ok"}, nil
+		commands.Definition{
+			Path:        []string{"payloads", "call"},
+			Summary:     "Call a payload.",
+			Positionals: []commands.Positional{{Name: "payload", Required: true}, {Name: "capability", Required: true}},
+			Options: []commands.Option{
+				{Name: "workspace", Short: "w", ValueName: "path", Kind: commands.OptionString},
+			},
+			Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+				capturedWorkspace = invocation.Option("workspace")
+				return commands.Result{Human: "ok"}, nil
+			},
 		},
-	})
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1014,6 +999,14 @@ func TestExecuteLineInjectsShellWorkspaceForWorkspaceCommands(t *testing.T) {
 	}
 	if capturedWorkspace != workspacePath {
 		t.Fatalf("workspace = %q, want %q", capturedWorkspace, workspacePath)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := app.ExecuteLine(context.Background(), "payloads call p1 wininfo", &stdout, &stderr); code != 0 {
+		t.Fatalf("payload call exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if capturedWorkspace != workspacePath {
+		t.Fatalf("payload workspace = %q, want %q", capturedWorkspace, workspacePath)
 	}
 	stdout.Reset()
 	stderr.Reset()
@@ -1076,15 +1069,6 @@ func contains(values []string, want string) bool {
 	return false
 }
 
-func containsSuggestion(suggestions []prompt.Suggest, want string) bool {
-	for _, suggestion := range suggestions {
-		if suggestion.Text == want {
-			return true
-		}
-	}
-	return false
-}
-
 func containsSuggestionDescription(suggestions []prompt.Suggest, want string) bool {
 	for _, suggestion := range suggestions {
 		if strings.Contains(suggestion.Description, want) {
@@ -1092,4 +1076,43 @@ func containsSuggestionDescription(suggestions []prompt.Suggest, want string) bo
 		}
 	}
 	return false
+}
+
+type fakeCompletionModuleRunner struct{}
+
+func (fakeCompletionModuleRunner) Run(context.Context, run.Request) (run.Result, error) {
+	return run.Result{}, errors.New("module runner is not used by completion tests")
+}
+
+type fakeCompletionSessionBroker struct {
+	sessions []run.SessionRef
+	commands []run.PayloadCommand
+}
+
+func (b fakeCompletionSessionBroker) ListSessions(context.Context) ([]run.SessionRef, error) {
+	return append([]run.SessionRef(nil), b.sessions...), nil
+}
+
+func (fakeCompletionSessionBroker) WriteSession(context.Context, string, []byte) error {
+	return nil
+}
+
+func (fakeCompletionSessionBroker) ReadSession(context.Context, string, time.Duration) (run.SessionChunk, error) {
+	return run.SessionChunk{}, nil
+}
+
+func (fakeCompletionSessionBroker) TailSession(context.Context, string, run.SessionTailOptions) (run.SessionChunk, error) {
+	return run.SessionChunk{}, nil
+}
+
+func (fakeCompletionSessionBroker) CloseSession(context.Context, string) error {
+	return nil
+}
+
+func (b fakeCompletionSessionBroker) ListSessionCommands(context.Context, string, run.PayloadCommandListRequest) ([]run.PayloadCommand, error) {
+	return append([]run.PayloadCommand(nil), b.commands...), nil
+}
+
+func (fakeCompletionSessionBroker) RunSessionCommand(context.Context, string, run.PayloadCommandRequest) (run.PayloadCommandResult, error) {
+	return run.PayloadCommandResult{}, nil
 }

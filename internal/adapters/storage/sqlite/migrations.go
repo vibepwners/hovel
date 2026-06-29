@@ -208,7 +208,7 @@ func Apply(ctx context.Context, db *sql.DB, migrations []Migration) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { logSQLiteRollback("rollback migration transaction", tx.Rollback()) }()
 
 	if _, err := tx.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -288,7 +288,7 @@ func appliedMigrations(ctx context.Context, tx *sql.Tx) (map[int]migrationRecord
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { logSQLiteError("close applied migrations rows", rows.Close()) }()
 
 	applied := map[int]migrationRecord{}
 	for rows.Next() {

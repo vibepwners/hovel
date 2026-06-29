@@ -209,7 +209,11 @@ func TestWriteAndXParamsEncodeFileOffset(t *testing.T) {
 
 func TestExchangeDemuxesOutOfOrderResponsesByMID(t *testing.T) {
 	client, server := net.Pipe()
-	defer server.Close()
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Logf("close SMB test server pipe: %v", err)
+		}
+	})
 
 	c := &pipeConn{
 		conn:    client,
@@ -219,7 +223,11 @@ func TestExchangeDemuxesOutOfOrderResponsesByMID(t *testing.T) {
 		pending: make(map[uint16]chan exchangeResult),
 	}
 	go c.readResponses()
-	defer c.Close()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Logf("close SMB pipe client: %v", err)
+		}
+	})
 
 	req1 := buildSMB(cmdRead, c, 0, nil, nil)
 	req2 := buildSMB(cmdWriteAndX, c, 0, nil, nil)
@@ -275,7 +283,11 @@ func TestExchangeDemuxesOutOfOrderResponsesByMID(t *testing.T) {
 
 func TestPipeReadBlocksOnSMBReadAndAllowsConcurrentWrite(t *testing.T) {
 	client, server := net.Pipe()
-	defer server.Close()
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Logf("close SMB test server pipe: %v", err)
+		}
+	})
 
 	c := &pipeConn{
 		conn:    client,
@@ -286,7 +298,11 @@ func TestPipeReadBlocksOnSMBReadAndAllowsConcurrentWrite(t *testing.T) {
 		pending: make(map[uint16]chan exchangeResult),
 	}
 	go c.readResponses()
-	defer c.Close()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Logf("close SMB pipe client: %v", err)
+		}
+	})
 
 	readDone := make(chan readResult, 1)
 	go func() {

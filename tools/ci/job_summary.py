@@ -55,7 +55,7 @@ JOBS = {
     "ci-lint": JobSummary(
         title="CI Lint",
         commands=("task lint",),
-        details=("Includes Go formatting, Gazelle, Python checks, and Squatter C checks.",),
+        details=("Includes Go formatting, Gazelle, Rust checks, Python checks, and Squatter C checks.",),
     ),
     "pages-build": JobSummary(
         title="Pages Build",

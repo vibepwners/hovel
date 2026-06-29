@@ -19,6 +19,7 @@ type Config struct {
 	Kind       string        `yaml:"kind"`
 	Workspace  string        `yaml:"workspace,omitempty"`
 	Modules    Modules       `yaml:"modules,omitempty"`
+	Policy     Policy        `yaml:"policy,omitempty"`
 	Cache      Cache         `yaml:"cache,omitempty"`
 	Runtime    Runtime       `yaml:"runtime,omitempty"`
 	Logging    LoggingConfig `yaml:"logging,omitempty"`
@@ -31,6 +32,16 @@ type Modules struct {
 
 type Cache struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+type Policy struct {
+	LaunchKey LaunchKeyPolicy `yaml:"launchKey,omitempty"`
+}
+
+type LaunchKeyPolicy struct {
+	Mode             string `yaml:"mode,omitempty"`
+	Quorum           int    `yaml:"quorum,omitempty"`
+	HeartbeatTimeout string `yaml:"heartbeatTimeout,omitempty"`
 }
 
 type Runtime struct {
@@ -60,6 +71,7 @@ type rawConfig struct {
 	Kind       *string     `yaml:"kind"`
 	Workspace  *string     `yaml:"workspace"`
 	Modules    *rawModules `yaml:"modules"`
+	Policy     *rawPolicy  `yaml:"policy"`
 	Cache      *rawCache   `yaml:"cache"`
 	Runtime    *rawRuntime `yaml:"runtime"`
 	Logging    *rawLogging `yaml:"logging"`
@@ -72,6 +84,16 @@ type rawModules struct {
 
 type rawCache struct {
 	Enabled *bool `yaml:"enabled"`
+}
+
+type rawPolicy struct {
+	LaunchKey *rawLaunchKeyPolicy `yaml:"launchKey"`
+}
+
+type rawLaunchKeyPolicy struct {
+	Mode             *string `yaml:"mode"`
+	Quorum           *int    `yaml:"quorum"`
+	HeartbeatTimeout *string `yaml:"heartbeatTimeout"`
 }
 
 type rawRuntime struct {
@@ -94,6 +116,7 @@ func Defaults() Config {
 	return Config{
 		APIVersion: APIVersion,
 		Kind:       Kind,
+		Policy:     Policy{LaunchKey: LaunchKeyPolicy{Mode: "anyone"}},
 		Cache:      Cache{Enabled: true},
 	}
 }
@@ -189,6 +212,18 @@ func mergeRaw(config *Config, raw rawConfig) {
 		}
 		if raw.Modules.Indexes != nil {
 			config.Modules.Indexes = cleanStrings(*raw.Modules.Indexes)
+		}
+	}
+	if raw.Policy != nil && raw.Policy.LaunchKey != nil {
+		policy := raw.Policy.LaunchKey
+		if policy.Mode != nil {
+			config.Policy.LaunchKey.Mode = strings.TrimSpace(*policy.Mode)
+		}
+		if policy.Quorum != nil {
+			config.Policy.LaunchKey.Quorum = *policy.Quorum
+		}
+		if policy.HeartbeatTimeout != nil {
+			config.Policy.LaunchKey.HeartbeatTimeout = strings.TrimSpace(*policy.HeartbeatTimeout)
 		}
 	}
 	if raw.Cache != nil && raw.Cache.Enabled != nil {
