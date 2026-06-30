@@ -2886,7 +2886,6 @@ func TestModuleManualInstallUsesRPCIdentityAndDoesNotRequireType(t *testing.T) {
 	result, err := definition.Execute(context.Background(), Invocation{
 		Positionals: map[string]string{"name": "yaml-hint"},
 		Options:     map[string]string{"workspace": workspace},
-		Flags:       map[string]bool{"no-check": true},
 		Passthrough: []string{commandPath, "--from-cli"},
 	})
 	if err != nil {
@@ -2901,6 +2900,56 @@ func TestModuleManualInstallUsesRPCIdentityAndDoesNotRequireType(t *testing.T) {
 	}
 	if len(inspector.packages) != 1 {
 		t.Fatalf("inspector packages = %#v", inspector.packages)
+	}
+}
+
+func TestModuleManualInstallNoCheckUsesRequestedIdentityWithoutInspection(t *testing.T) {
+	workspace := t.TempDir()
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "manual-stdio")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inspector := &recordingModuleInspector{err: errors.New("inspection should not run")}
+	checker := &recordingModuleChecker{report: ModuleCheckReport{
+		Status: ModuleCheckFail,
+		Checks: []ModuleCheckItem{{
+			Name:    "rpc discovery",
+			Status:  ModuleCheckFail,
+			Message: "handshake failed",
+		}},
+	}}
+	registry := HovelRegistry(Runtime{
+		Modules:         modulecatalog.New(),
+		ModuleChecks:    checker,
+		ModuleInspector: inspector,
+	})
+	definition, _ := registry.Find("module", "manualinstall")
+
+	result, err := definition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"name": "yaml-hint"},
+		Options: map[string]string{
+			"workspace": workspace,
+			"version":   "v1",
+		},
+		Flags:       map[string]bool{"no-check": true},
+		Passthrough: []string{commandPath, "--from-cli"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := result.JSON.(ModuleInstallPayload)
+	if payload.Name != "yaml-hint" || payload.Version != "v1" {
+		t.Fatalf("payload = %#v, want requested identity", payload)
+	}
+	if len(checker.requests) != 0 {
+		t.Fatalf("check requests = %#v, want none", checker.requests)
+	}
+	if len(inspector.packages) != 0 {
+		t.Fatalf("inspector packages = %#v, want none", inspector.packages)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "modules", "yaml-hint", "v1", modulepackage.ManifestName)); err != nil {
+		t.Fatalf("requested-identity install root missing: %v", err)
 	}
 }
 

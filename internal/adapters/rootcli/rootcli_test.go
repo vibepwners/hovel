@@ -245,6 +245,22 @@ func TestRunCommandInjectsWorkspaceForDaemonCommands(t *testing.T) {
 	}
 }
 
+func TestRunCommandInjectsOptionsBeforePassthroughDelimiter(t *testing.T) {
+	args := []string{"module", "manual-install", "devmod", "--", "stdio-cmd", "--workspace", "module-owned", "--config", "module.yaml"}
+	args = injectWorkspaceForDaemonCommand(args, "/tmp/hovel")
+	args = injectConfigForDaemonCommand(args, "/tmp/hovel.yaml")
+	want := []string{
+		"module", "manual-install", "devmod",
+		"--workspace", "/tmp/hovel",
+		"--config", "/tmp/hovel.yaml",
+		"--",
+		"stdio-cmd", "--workspace", "module-owned", "--config", "module.yaml",
+	}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
 func TestRunCommandNormalizesActiveChainAliases(t *testing.T) {
 	args := normalizeRunCommand([]string{"add", "squatter@v0.1.0"})
 	want := []string{"chain", "add", "squatter@v0.1.0"}

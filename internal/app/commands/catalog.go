@@ -2451,8 +2451,13 @@ func modulesManualInstallHandler(runtime Runtime) Handler {
 				return Result{}, err
 			}
 		}
-		identity, err := manualInstallResolvedIdentity(ctx, runtime, tempRoot, name, version)
-		if err != nil {
+		identity := modulepackage.InstallIdentity{Name: name, Version: version}
+		if !invocation.Flag("no-check") {
+			identity, err = manualInstallResolvedIdentity(ctx, runtime, tempRoot, name, version)
+			if err != nil {
+				return Result{}, err
+			}
+		} else if identity, err = validateManualInstallIdentity(identity); err != nil {
 			return Result{}, err
 		}
 		if err := ensureManualInstallAvailable(workspacePath, identity.Name, identity.Version, invocation.Flag("replace")); err != nil {
@@ -2535,6 +2540,12 @@ func manualInstallResolvedIdentity(ctx context.Context, runtime Runtime, root, f
 		}
 		identity = installIdentityFromModule(module)
 	}
+	return validateManualInstallIdentity(identity)
+}
+
+func validateManualInstallIdentity(identity modulepackage.InstallIdentity) (modulepackage.InstallIdentity, error) {
+	identity.Name = strings.TrimSpace(identity.Name)
+	identity.Version = strings.TrimSpace(identity.Version)
 	if err := requirePathSegment(identity.Name, "module name"); err != nil {
 		return modulepackage.InstallIdentity{}, err
 	}

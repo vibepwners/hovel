@@ -365,8 +365,7 @@ func injectWorkspaceForDaemonCommand(args []string, workspace string) []string {
 	if workspace == "" || hasWorkspaceArg(args) || !commandUsesWorkspace(args) {
 		return append([]string(nil), args...)
 	}
-	out := append([]string(nil), args...)
-	return append(out, "--workspace", workspace)
+	return insertRunInjectedOption(args, "--workspace", workspace)
 }
 
 func injectConfigForDaemonCommand(args []string, configPath string) []string {
@@ -374,8 +373,20 @@ func injectConfigForDaemonCommand(args []string, configPath string) []string {
 	if configPath == "" || hasConfigArg(args) {
 		return append([]string(nil), args...)
 	}
-	out := append([]string(nil), args...)
-	return append(out, "--config", configPath)
+	return insertRunInjectedOption(args, "--config", configPath)
+}
+
+func insertRunInjectedOption(args []string, name, value string) []string {
+	delimiter := passthroughDelimiterIndex(args)
+	if delimiter < 0 {
+		out := append([]string(nil), args...)
+		return append(out, name, value)
+	}
+	out := make([]string, 0, len(args)+2)
+	out = append(out, args[:delimiter]...)
+	out = append(out, name, value)
+	out = append(out, args[delimiter:]...)
+	return out
 }
 
 func normalizeRunCommand(args []string) []string {
@@ -394,6 +405,7 @@ func normalizeRunCommand(args []string) []string {
 }
 
 func hasWorkspaceArg(args []string) bool {
+	args = argsBeforePassthrough(args)
 	for i, arg := range args {
 		if arg == "--workspace" || arg == "-w" {
 			return i+1 < len(args)
@@ -406,6 +418,7 @@ func hasWorkspaceArg(args []string) bool {
 }
 
 func hasConfigArg(args []string) bool {
+	args = argsBeforePassthrough(args)
 	for i, arg := range args {
 		if arg == "--config" {
 			return i+1 < len(args)
@@ -415,6 +428,23 @@ func hasConfigArg(args []string) bool {
 		}
 	}
 	return false
+}
+
+func argsBeforePassthrough(args []string) []string {
+	delimiter := passthroughDelimiterIndex(args)
+	if delimiter < 0 {
+		return args
+	}
+	return args[:delimiter]
+}
+
+func passthroughDelimiterIndex(args []string) int {
+	for i, arg := range args {
+		if arg == "--" {
+			return i
+		}
+	}
+	return -1
 }
 
 func commandUsesWorkspace(args []string) bool {
