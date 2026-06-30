@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import platform
 import shutil
 import tarfile
 import tempfile
@@ -22,26 +21,34 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "dist" / "modules"
 
 
+SUPPORTED_HOSTS = [
+    ("linux", "amd64", "linux-amd64", ""),
+    ("linux", "arm64", "linux-arm64", ""),
+    ("windows", "amd64", "windows-amd64", ".exe"),
+    ("windows", "arm64", "windows-arm64", ".exe"),
+    ("darwin", "arm64", "darwin-arm64", ""),
+]
+
 NATIVE_MODULES = [
-    ("mock-survey-go", "v0.0.0-example", "survey", "Example Go survey module.", "examples/bin/mock-survey-go"),
-    ("mock-exploit-go", "v0.0.0-example", "exploit", "Example Go exploit module.", "examples/bin/mock-exploit-go"),
+    ("mock-survey-go", "v0.0.0-example", "survey", "Example Go survey module.", "mock-survey-go"),
+    ("mock-exploit-go", "v0.0.0-example", "exploit", "Example Go exploit module.", "mock-exploit-go"),
     (
         "mock-exploit-session-go",
         "v0.0.0-example",
         "exploit",
         "Example Go exploit module that opens a fake shell session.",
-        "examples/bin/mock-exploit-session-go",
+        "mock-exploit-session-go",
     ),
-    ("mock-survey-rust", "v0.0.0-example", "survey", "Example Rust survey module.", "examples/bin/mock-survey-rust"),
-    ("mock-exploit-rust", "v0.0.0-example", "exploit", "Example Rust exploit module.", "examples/bin/mock-exploit-rust"),
+    ("mock-survey-rust", "v0.0.0-example", "survey", "Example Rust survey module.", "mock-survey-rust"),
+    ("mock-exploit-rust", "v0.0.0-example", "exploit", "Example Rust exploit module.", "mock-exploit-rust"),
     (
         "mock-exploit-session-rust",
         "v0.0.0-example",
         "exploit",
         "Example Rust exploit module that opens a fake shell session.",
-        "examples/bin/mock-exploit-session-rust",
+        "mock-exploit-session-rust",
     ),
-    ("squatter", "v0.1.0", "payload_provider", "Squatter payload provider module.", "examples/bin/squatter-provider"),
+    ("squatter", "v0.1.0", "payload_provider", "Squatter payload provider module.", "squatter-provider"),
 ]
 
 PYTHON_MODULES = [
@@ -86,24 +93,6 @@ PYTHON_MODULES = [
         "hovel_ms17_010_exploit",
     ),
 ]
-
-
-def host_os() -> str:
-    name = platform.system().lower()
-    if name == "darwin":
-        return "darwin"
-    if name == "windows":
-        return "windows"
-    return "linux"
-
-
-def host_arch() -> str:
-    machine = platform.machine().lower()
-    if machine in {"x86_64", "amd64"}:
-        return "amd64"
-    if machine in {"aarch64", "arm64"}:
-        return "arm64"
-    return machine
 
 
 def write(path: Path, body: str) -> None:
@@ -155,17 +144,24 @@ def module_source(archive: Path, base_url: str) -> str:
 
 
 def native_manifest(name: str, version: str, command: str) -> str:
-    return f"""apiVersion: hovel.dev/v1alpha1
-kind: ModulePackage
-metadata:
-  name: {name}
-  version: {version}
-launch:
-  - selector:
-      os: {os.environ.get("HOVEL_PACKAGE_OS", host_os())}
-      arch: {os.environ.get("HOVEL_PACKAGE_ARCH", host_arch())}
-    command: ["bin/{command}"]
-"""
+    lines = [
+        "apiVersion: hovel.dev/v1alpha1",
+        "kind: ModulePackage",
+        "metadata:",
+        f"  name: {name}",
+        f"  version: {version}",
+        "launch:",
+    ]
+    for os_name, arch, host_dir, exe in SUPPORTED_HOSTS:
+        lines.extend(
+            [
+                "  - selector:",
+                f"      os: {os_name}",
+                f"      arch: {arch}",
+                f'    command: ["bin/{host_dir}/{command}{exe}"]',
+            ]
+        )
+    return "\n".join(lines) + "\n"
 
 
 def python_manifest(name: str, version: str, module: str) -> str:
@@ -183,15 +179,16 @@ launch:
 """
 
 
-def package_native(name: str, version: str, _module_type: str, _summary: str, binary: str) -> tuple[str, str, Path]:
+def package_native(name: str, version: str, _module_type: str, _summary: str, command: str) -> tuple[str, str, Path]:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        command = Path(binary).name
         write(root / "hovel-module.yaml", native_manifest(name, version, command))
-        dst = root / "bin" / command
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / binary, dst)
-        dst.chmod(0o755)
+        for _, _, host_dir, exe in SUPPORTED_HOSTS:
+            filename = f"{command}{exe}"
+            dst = root / "bin" / host_dir / filename
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / "examples" / "bin" / host_dir / filename, dst)
+            dst.chmod(0o755)
         if name == "squatter":
             payload = root / "bin" / "squatter.exe"
             shutil.copy2(ROOT / "examples/bin/squatter.exe", payload)
