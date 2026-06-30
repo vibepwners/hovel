@@ -302,17 +302,34 @@ func TestModuleEntriesResolvesCommandPaths(t *testing.T) {
 	}
 }
 
+func TestModuleEntryPrefersExactVersionBeforeNameMatch(t *testing.T) {
+	config := ModuleConfig{Modules: []ModuleEntry{
+		{ID: "dupe@v1", Runtime: "jsonrpc-stdio", Command: []string{"/bin/sh"}},
+		{ID: "dupe@v2", Runtime: "jsonrpc-stdio", Command: []string{"/bin/sh"}},
+	}}
+	configBody, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	entry, ok, err := (Runner{ConfigPath: configPath}).moduleEntry("dupe@v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || entry.ID != "dupe@v2" {
+		t.Fatalf("entry = %#v ok=%v, want exact v2 match", entry, ok)
+	}
+}
+
 func TestModuleEntriesIncludeWorkspaceModuleLock(t *testing.T) {
 	workspace := t.TempDir()
 	moduleRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
 kind: ModulePackage
-metadata:
-  name: locked
-  version: 0.1.0
-  moduleType: survey
-runtime:
-  protocol: jsonrpc-stdio
 launch:
   - selector:
       os: linux
@@ -353,6 +370,58 @@ modules:
 	}
 	if entries[0].ID != "locked@0.1.0" || entries[0].Command[0] != filepath.Join(moduleRoot, "bin", "locked") {
 		t.Fatalf("entry = %#v", entries[0])
+	}
+}
+
+func TestRunnerRunsInstalledPackageWithLaunchOnlyManifest(t *testing.T) {
+	python, err := (Runner{}).pythonPath()
+	if err != nil {
+		t.Skipf("python interpreter unavailable: %v", err)
+	}
+	workspace := t.TempDir()
+	moduleRoot := filepath.Join(workspace, "modules", "rpc-installed", "v1")
+	if err := os.MkdirAll(moduleRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := writeCommandModuleScript(t, `{
+            "name": "rpc-installed",
+            "version": "v1",
+            "moduleType": "survey",
+            "summary": "installed from handshake"
+        }`)
+	manifest := fmt.Sprintf(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+launch:
+  - selector: {}
+    command: [%q, %q]
+`, python, script)
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "module-lock.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: ModuleLock
+modules:
+  - name: rpc-installed
+    version: v1
+    source: `+moduleRoot+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	request, err := run.NewRequest(run.RequestArgs{ID: "run-1", ModuleID: "rpc-installed@v1", Target: "mock://target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Runner{WorkspacePath: workspace, ConfigPath: configPath, Timeout: 2 * time.Second}.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ModuleID != "rpc-installed@v1" || result.Summary != "command module executed" {
+		t.Fatalf("result = %#v, want RPC-installed module result", result)
 	}
 }
 
@@ -462,6 +531,58 @@ modules:
 	}
 	if entries[0].ID != "configured@0.1.0" || entries[0].Command[0] != filepath.Join(moduleRoot, "bin", "configured") {
 		t.Fatalf("entry = %#v", entries[0])
+	}
+}
+
+func TestRunnerRunsConfiguredPackageByRPCIdentityWhenManifestIsLaunchOnly(t *testing.T) {
+	python, err := (Runner{}).pythonPath()
+	if err != nil {
+		t.Skipf("python interpreter unavailable: %v", err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	workspace := t.TempDir()
+	packageParent := filepath.Join(workspace, "packages")
+	moduleRoot := filepath.Join(packageParent, "configured")
+	if err := os.MkdirAll(moduleRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := writeCommandModuleScript(t, `{
+            "name": "rpc-configured",
+            "version": "v2",
+            "moduleType": "exploit",
+            "summary": "configured from handshake"
+        }`)
+	manifest := fmt.Sprintf(`apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+launch:
+  - command: [%q, %q]
+`, python, script)
+	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "config.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+modules:
+  searchPaths:
+    - `+packageParent+`
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacyConfigPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(legacyConfigPath, []byte(`{"modules":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	request, err := run.NewRequest(run.RequestArgs{ID: "run-1", ModuleID: "rpc-configured@v2", Target: "mock://target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Runner{WorkspacePath: workspace, ConfigPath: legacyConfigPath, Timeout: 2 * time.Second}.Run(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ModuleID != "rpc-configured@v2" || result.Summary != "command module executed" {
+		t.Fatalf("result = %#v, want RPC-configured module result", result)
 	}
 }
 
@@ -665,6 +786,58 @@ func TestRunnerInspectsPythonModuleDeclaredSchema(t *testing.T) {
 	}
 }
 
+func TestRunnerInspectEntryUsesHandshakeIdentityWithoutConfiguredID(t *testing.T) {
+	python, err := (Runner{}).pythonPath()
+	if err != nil {
+		t.Skipf("python interpreter unavailable: %v", err)
+	}
+	script := writeCommandModuleScript(t, `{
+            "name": "rpc-only",
+            "version": "v0.0.1",
+            "moduleType": "survey",
+            "summary": "from handshake"
+        }`)
+
+	module, err := Runner{Timeout: 2 * time.Second}.InspectEntry(context.Background(), ModuleEntry{
+		Runtime: "jsonrpc-stdio",
+		Command: []string{python, script},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if module.ID != "rpc-only@v0.0.1" || module.Summary != "from handshake" {
+		t.Fatalf("module = %#v, want RPC identity and metadata", module)
+	}
+}
+
+func TestRunnerRequiresHandshakeIdentity(t *testing.T) {
+	python, err := (Runner{}).pythonPath()
+	if err != nil {
+		t.Skipf("python interpreter unavailable: %v", err)
+	}
+	cases := []struct {
+		name      string
+		handshake string
+		want      string
+	}{
+		{name: "missing name", handshake: `{"version":"v0.0.1","moduleType":"survey"}`, want: "module handshake missing name"},
+		{name: "missing version", handshake: `{"name":"rpc-only","moduleType":"survey"}`, want: "module handshake missing version"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			script := writeCommandModuleScript(t, tc.handshake)
+			_, err := Runner{Timeout: 2 * time.Second}.InspectEntry(context.Background(), ModuleEntry{
+				ID:      "configured-fallback@v9",
+				Runtime: "jsonrpc-stdio",
+				Command: []string{python, script},
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunnerRejectsMalformedSchemaRequirementShapes(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -725,6 +898,10 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "result": %s})
     elif method == "step.describe":
         send({"jsonrpc": "2.0", "id": rid, "result": {"steps": []}})
+    elif method == "execute":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "status": "succeeded", "summary": "command module executed",
+            "findings": [], "artifacts": [], "outputs": {}, "sessions": []}})
     elif method == "shutdown":
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
         break
@@ -1866,6 +2043,54 @@ def send(message):
 		t.Fatal(err)
 	}
 	return configPath
+}
+
+func writeCommandModuleScript(t *testing.T, handshake string) string {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "module.py")
+	body := `import json
+import sys
+
+def read():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line in (b"\r\n", b"\n", b""):
+            break
+        name, value = line.decode().split(":", 1)
+        headers[name.lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(length) or b"{}")
+
+def send(message):
+    out = json.dumps(message).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(out))
+    sys.stdout.buffer.write(out)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read()
+    method = msg.get("method")
+    rid = msg.get("id")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": ` + handshake + `})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"steps": []}})
+    elif method == "execute":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "status": "succeeded", "summary": "command module executed",
+            "findings": [], "artifacts": [], "outputs": {}, "sessions": []}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+`
+	if err := os.WriteFile(script, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return script
 }
 
 type eventRecorder struct {

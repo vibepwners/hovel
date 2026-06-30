@@ -1,6 +1,14 @@
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load(
+    "//tools/modules:release_modules.bzl",
+    "declare_release_module_binaries",
+    "release_module_data",
+    "release_module_stage_args",
+)
 
 package(default_visibility = ["//visibility:public"])
+
+declare_release_module_binaries()
 
 py_binary(
     name = "stage_examples",
@@ -14,7 +22,7 @@ py_binary(
         "--module=mock-exploit-session-rust=$(rootpath //examples/rust/mock_exploit_session:mock-exploit-session-rust)",
         "--module=squatter-provider=$(rootpath //payloads/squatter/provider:squatter-provider)",
         "--module=squatter.exe=$(rootpath //payloads/squatter/windows:squatter_x86_exe)",
-    ],
+    ] + release_module_stage_args(),
     data = [
         "//examples/go/mock_exploit",
         "//examples/go/mock_exploit_session",
@@ -24,7 +32,7 @@ py_binary(
         "//examples/rust/mock_survey:mock-survey-rust",
         "//payloads/squatter/provider:squatter-provider",
         "//payloads/squatter/windows:squatter_x86_exe",
-    ],
+    ] + release_module_data(),
     python_version = "PY3",
 )
 

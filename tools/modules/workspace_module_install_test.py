@@ -10,18 +10,25 @@ from pathlib import Path
 
 
 MODULES = (
-    ("ms17-010-survey", "survey", "python", "ms17_010_survey", "hovel_ms17_010_survey"),
-    ("ms17-010-exploit", "exploit", "python", "ms17_010_exploit", "hovel_ms17_010_exploit"),
-    ("mock-survey", "survey", "python", "mock_survey", "hovel_example_survey"),
-    ("mock-exploit", "exploit", "python", "mock_exploit", "hovel_example_exploit"),
-    ("mock-exploit-session", "exploit", "python", "mock_exploit_session", "hovel_example_exploit_session"),
-    ("mock-survey-go", "survey", "command", "0", ""),
-    ("mock-exploit-go", "exploit", "command", "1", ""),
-    ("mock-exploit-session-go", "exploit", "command", "2", ""),
-    ("mock-survey-rust", "survey", "command", "3", ""),
-    ("mock-exploit-rust", "exploit", "command", "4", ""),
-    ("mock-exploit-session-rust", "exploit", "command", "5", ""),
-    ("squatter", "payload_provider", "command", "6", ""),
+    ("ms17-010-survey", "v0.1.0", "survey", "python", "ms17_010_survey", "hovel_ms17_010_survey"),
+    ("ms17-010-exploit", "v1.0.0", "exploit", "python", "ms17_010_exploit", "hovel_ms17_010_exploit"),
+    ("mock-survey", "v0.0.0-example", "survey", "python", "mock_survey", "hovel_example_survey"),
+    ("mock-exploit", "v0.0.0-example", "exploit", "python", "mock_exploit", "hovel_example_exploit"),
+    (
+        "mock-exploit-session",
+        "v0.0.0-example",
+        "exploit",
+        "python",
+        "mock_exploit_session",
+        "hovel_example_exploit_session",
+    ),
+    ("mock-survey-go", "v0.0.0-example", "survey", "command", "0", ""),
+    ("mock-exploit-go", "v0.0.0-example", "exploit", "command", "1", ""),
+    ("mock-exploit-session-go", "v0.0.0-example", "exploit", "command", "2", ""),
+    ("mock-survey-rust", "v0.0.0-example", "survey", "command", "3", ""),
+    ("mock-exploit-rust", "v0.0.0-example", "exploit", "command", "4", ""),
+    ("mock-exploit-session-rust", "v0.0.0-example", "exploit", "command", "5", ""),
+    ("squatter", "v0.1.0", "payload_provider", "command", "6", ""),
 )
 
 
@@ -46,7 +53,7 @@ def main() -> int:
         }
 
         run([str(hovel_bin), "init", "--workspace", str(workspace), "--json"], env=env)
-        for name, module_type, kind, value, module in MODULES:
+        for name, _version, module_type, kind, value, module in MODULES:
             if kind == "python":
                 write_python_package(packages, name, module_type, python_root / value, module, sdk_root)
             else:
@@ -63,8 +70,8 @@ def main() -> int:
             raise AssertionError(f"module lock contains {lock_count} modules, want 12\n{lock.read_text()}")
 
         list_out = run([str(hovel_bin), "module", "list", "--workspace", str(workspace)], env=env)
-        for name, *_ in MODULES:
-            require_contains(list_out, f"{name}@0.1.0")
+        for name, version, *_ in MODULES:
+            require_contains(list_out, f"{name}@{version}")
 
         check_out = run([str(hovel_bin), "module", "check", "--all", "--workspace", str(workspace)], env=env)
         require_contains(check_out, "MODULE CHECKS")
@@ -72,19 +79,26 @@ def main() -> int:
     return 0
 
 
-def write_command_package(packages: Path, name: str, module_type: str, binary: Path) -> None:
+def write_command_package(packages: Path, name: str, _module_type: str, binary: Path) -> None:
     root = packages / name
     (root / "bin").mkdir(parents=True)
-    write_manifest(root, name, module_type)
+    write_manifest(root, name)
     target = root / "bin" / name
     shutil.copy2(binary, target)
     target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def write_python_package(packages: Path, name: str, module_type: str, project_dir: Path, module: str, sdk_root: Path) -> None:
+def write_python_package(
+    packages: Path,
+    name: str,
+    _module_type: str,
+    project_dir: Path,
+    module: str,
+    sdk_root: Path,
+) -> None:
     root = packages / name
     (root / "bin").mkdir(parents=True)
-    write_manifest(root, name, module_type)
+    write_manifest(root, name)
     launcher = root / "bin" / name
     launcher.write_text(
         "#!/usr/bin/env python3\n"
@@ -98,17 +112,13 @@ def write_python_package(packages: Path, name: str, module_type: str, project_di
     launcher.chmod(0o755)
 
 
-def write_manifest(root: Path, name: str, module_type: str) -> None:
+def write_manifest(root: Path, name: str) -> None:
     (root / "hovel-module.yaml").write_text(
         f"""apiVersion: hovel.dev/v1alpha1
 kind: ModulePackage
 metadata:
   name: {name}
   version: 0.1.0
-  moduleType: {module_type}
-  summary: In-tree functional test package for {name}
-runtime:
-  protocol: jsonrpc-stdio
 launch:
   - selector:
       os: linux

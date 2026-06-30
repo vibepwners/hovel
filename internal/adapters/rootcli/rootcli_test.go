@@ -95,19 +95,63 @@ func writeRootCLIModuleConfig(t *testing.T) string {
 	}
 	if err := os.WriteFile(filepath.Join(moduleRoot, "hovel-module.yaml"), []byte(`apiVersion: hovel.dev/v1alpha1
 kind: ModulePackage
-metadata:
-  name: root-config-survey
-  version: 0.1.0
-  moduleType: survey
-  summary: Root config module
-runtime:
-  protocol: jsonrpc-stdio
 launch:
-  - selector:
-      os: linux
-      arch: amd64
-    command: ["bin/root-config-survey"]
+  - command: ["bin/root-config-survey"]
 `), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(moduleRoot, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	moduleScript := `#!/usr/bin/env python3
+import json
+import sys
+
+
+def read():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line in (b"\r\n", b"\n", b""):
+            break
+        name, value = line.decode().split(":", 1)
+        headers[name.lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(length) or b"{}")
+
+
+def send(message):
+    body = json.dumps(message).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body))
+    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.flush()
+
+
+while True:
+    message = read()
+    method = message.get("method")
+    request_id = message.get("id")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": request_id, "result": {
+            "name": "root-config-survey",
+            "version": "0.1.0",
+            "moduleType": "survey",
+            "summary": "Root config module"
+        }})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": request_id, "result": {
+            "chainConfig": [],
+            "targetConfig": [],
+            "outputs": {}
+        }})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": request_id, "result": {"steps": []}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": request_id, "result": {"status": "ok"}})
+        break
+`
+	if err := os.WriteFile(filepath.Join(binDir, "root-config-survey"), []byte(moduleScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -201,6 +245,22 @@ func TestRunCommandInjectsWorkspaceForDaemonCommands(t *testing.T) {
 	}
 }
 
+func TestRunCommandInjectsOptionsBeforePassthroughDelimiter(t *testing.T) {
+	args := []string{"module", "manual-install", "devmod", "--", "stdio-cmd", "--workspace", "module-owned", "--config", "module.yaml"}
+	args = injectWorkspaceForDaemonCommand(args, "/tmp/hovel")
+	args = injectConfigForDaemonCommand(args, "/tmp/hovel.yaml")
+	want := []string{
+		"module", "manual-install", "devmod",
+		"--workspace", "/tmp/hovel",
+		"--config", "/tmp/hovel.yaml",
+		"--",
+		"stdio-cmd", "--workspace", "module-owned", "--config", "module.yaml",
+	}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
 func TestRunCommandNormalizesActiveChainAliases(t *testing.T) {
 	args := normalizeRunCommand([]string{"add", "squatter@v0.1.0"})
 	want := []string{"chain", "add", "squatter@v0.1.0"}
@@ -211,6 +271,18 @@ func TestRunCommandNormalizesActiveChainAliases(t *testing.T) {
 	want = []string{"target", "add", "t1"}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestRunCommandPreservesManualInstallDelimiter(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	parsed, ok, code := parseRunCommandArgs([]string{"--workspace", ".hovel", "--", "module", "manualinstall", "devmod", "--type", "survey", "--", "stdio-cmd", "--anotherarg"}, &stdout, &stderr)
+	if !ok || code != 0 {
+		t.Fatalf("parse failed: ok=%v code=%d stderr=%s", ok, code, stderr.String())
+	}
+	want := []string{"module", "manualinstall", "devmod", "--type", "survey", "--", "stdio-cmd", "--anotherarg"}
+	if strings.Join(parsed.Command, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("command = %#v, want %#v", parsed.Command, want)
 	}
 }
 

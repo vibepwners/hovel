@@ -33,6 +33,7 @@ from hovel_sdk.testing import ModuleRPC, RPCError, drive_module
 
 class EchoModule(HovelModule):
     name = "echo"
+    version = "v0.0.0-test"
     module_type = "survey"
     global_config: ClassVar[tuple[Requirement, ...]] = (Requirement("operator.confirmed_lab", "bool"),)
     target_config: ClassVar[tuple[Requirement, ...]] = (Requirement("target.host", "host"),)
@@ -44,6 +45,7 @@ class EchoModule(HovelModule):
 
 class ContextModule(HovelModule):
     name = "context-module"
+    version = "v0.0.0-test"
     module_type = "survey"
     discovery_context: ClassVar[dict[str, Any]] = {"summary": "Find SMB exposure", "keywords": ["ms17-010"]}
     planning_context: ClassVar[dict[str, Any]] = {"risk": {"level": "low"}}
@@ -61,6 +63,7 @@ class TestShell(LineShellSession):
 
 class SessionModule(HovelModule):
     name = "session-echo"
+    version = "v0.0.0-test"
     module_type = "exploit"
 
     async def run(self, ctx: Context) -> Result:
@@ -74,6 +77,7 @@ class SessionModule(HovelModule):
 
 class StepModule(HovelModule):
     name = "step-module"
+    version = "v0.0.0-test"
     module_type = "payload_provider"
 
     def describe_steps(self) -> dict[str, Any]:
@@ -166,6 +170,7 @@ class StepModule(HovelModule):
 
 class AgentAwareModule(HovelModule):
     name = "agent-aware"
+    version = "v0.0.0-test"
     module_type = "survey"
 
     def run(self, ctx: Context) -> Result:
@@ -555,6 +560,22 @@ class SDKTest(unittest.TestCase):
             self.assertEqual(result["summary"], "echo done")
             self.assertEqual(rpc.notifications[0]["method"], "module/log")
             self.assertEqual(rpc.notifications[0]["params"]["fields"]["target"], "mock://target")
+
+    def test_handshake_requires_identity_and_type(self) -> None:
+        class MissingVersionModule(HovelModule):
+            name = "missing-version"
+            module_type = "survey"
+
+            def run(self, _ctx: Context) -> Result:
+                return Result.ok({})
+
+        with ModuleRPC(MissingVersionModule()) as rpc:
+            try:
+                rpc.call("handshake")
+            except RPCError as exc:
+                self.assertIn("module handshake version is required", str(exc))
+            else:
+                self.fail("handshake succeeded, want missing version error")
 
     def test_module_rpc_helper_drives_session_round_trip(self) -> None:
         with ModuleRPC(SessionModule()) as rpc:

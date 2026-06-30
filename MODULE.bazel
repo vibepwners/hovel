@@ -1,6 +1,6 @@
 module(
     name = "hovel",
-    version = "0.2.1",
+    version = "0.2.2",
 )
 
 bazel_dep(name = "gazelle", version = "0.50.0")
@@ -91,9 +91,60 @@ filegroup(
     urls = ["https://github.com/charmbracelet/vhs/releases/download/v0.11.0/vhs_0.11.0_Linux_x86_64.tar.gz"],
 )
 
+http_archive(
+    name = "llvm_mingw_ucrt_linux_x86_64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "aarch64_libs",
+    srcs = glob(["aarch64-w64-mingw32/lib/*"]),
+)
+
+filegroup(
+    name = "x86_64_libs",
+    srcs = glob(["x86_64-w64-mingw32/lib/*"]),
+)
+
+filegroup(
+    name = "compiler_rt_windows",
+    srcs = glob(["lib/clang/*/lib/windows/*"]),
+)
+""",
+    sha256 = "534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4deda",
+    strip_prefix = "llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64",
+    urls = ["https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64.tar.xz"],
+)
+
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
-rust.toolchain(
+rust.repository_set(
+    name = "rust_linux_x86_64_musl_targets",
+    allocator_library = "@rules_rust//rust/private/cc:empty",
     edition = "2021",
+    exec_triple = "x86_64-unknown-linux-gnu",
+    target_compatible_with = [
+        "//platforms:musl",
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+    target_triple = "aarch64-unknown-linux-musl",
+    versions = ["1.84.0"],
+)
+rust.toolchain(
+    allocator_library = "@rules_rust//rust/private/cc:empty",
+    edition = "2021",
+    extra_rustc_flags_triples = {
+        "aarch64-apple-darwin": [
+            "-Clink-arg=-undefined",
+            "-Clink-arg=dynamic_lookup",
+        ],
+    },
+    extra_target_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-pc-windows-gnullvm",
+        "x86_64-pc-windows-gnullvm",
+        "x86_64-unknown-linux-gnu",
+    ],
     versions = ["1.84.0"],
 )
 use_repo(rust, "rust_toolchains")

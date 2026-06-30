@@ -41,17 +41,61 @@ kind: ModulePackage
 metadata:
   name: linked-demo
   version: 0.1.0
-  moduleType: survey
-  summary: Linked demo module package
-runtime:
-  protocol: jsonrpc-stdio
 launch:
   - selector:
       os: linux
       arch: amd64
     command: ["bin/linked-demo"]
 YAML
-  printf '#!/bin/sh\n' >"$HOVEL_DEMO_PACKAGE/bin/linked-demo"
+  cat >"$HOVEL_DEMO_PACKAGE/bin/linked-demo" <<'PY'
+#!/usr/bin/env python3
+import json
+import sys
+
+
+def read():
+    headers = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line in (b"\r\n", b"\n", b""):
+            break
+        name, value = line.decode().split(":", 1)
+        headers[name.lower()] = value.strip()
+    length = int(headers.get("content-length", "0"))
+    return json.loads(sys.stdin.buffer.read(length) or b"{}")
+
+
+def send(message):
+    body = json.dumps(message).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(body))
+    sys.stdout.buffer.write(body)
+    sys.stdout.buffer.flush()
+
+
+while True:
+    message = read()
+    method = message.get("method")
+    request_id = message.get("id")
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": request_id, "result": {
+            "name": "linked-demo",
+            "version": "0.1.0",
+            "moduleType": "survey",
+            "summary": "Linked demo module package",
+            "tags": []
+        }})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": request_id, "result": {
+            "chainConfig": [],
+            "targetConfig": [],
+            "outputs": {}
+        }})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": request_id, "result": {"steps": []}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": request_id, "result": {"status": "ok"}})
+        break
+PY
   chmod +x "$HOVEL_DEMO_PACKAGE/bin/linked-demo"
 }
 

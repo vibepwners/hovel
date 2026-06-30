@@ -96,9 +96,6 @@ kind: ModulePackage
 metadata:
   name: `+name+`
   version: 0.1.0
-  moduleType: `+moduleType+`
-runtime:
-  protocol: jsonrpc-stdio
 launch:
   - selector:
       os: linux

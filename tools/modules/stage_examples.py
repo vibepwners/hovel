@@ -31,6 +31,7 @@ def main() -> int:
             raise SystemExit(f"invalid --module value: {item!r}")
         src = resolve_runfile(runfile)
         target = dest / name
+        target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists() and same_file_contents(src, target):
             current += 1
         else:

@@ -72,6 +72,7 @@ func TestInvocationAccessorsUseCentralNames(t *testing.T) {
 		Positionals: map[string]string{"module": "mock-exploit"},
 		Options:     map[string]string{"workspace": ".hovel"},
 		Flags:       map[string]bool{"json": true},
+		Passthrough: []string{"cmd", "--flag"},
 	}
 
 	if got := invocation.Positional("module"); got != "mock-exploit" {
@@ -82,6 +83,9 @@ func TestInvocationAccessorsUseCentralNames(t *testing.T) {
 	}
 	if !invocation.Flag("json") {
 		t.Fatal("json flag = false, want true")
+	}
+	if got := invocation.PassthroughArgs(); len(got) != 2 || got[0] != "cmd" || got[1] != "--flag" {
+		t.Fatalf("passthrough = %#v", got)
 	}
 }
 

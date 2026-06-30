@@ -93,7 +93,7 @@ fn dispatch(
     params: &Value,
 ) -> Result<Value, String> {
     match method {
-        "handshake" => Ok(handshake(module)),
+        "handshake" => handshake(module),
         "schema" => Ok(schema(module)),
         "execute" => Ok(execute(module, emitter, params)),
         "session/write" => session_write(emitter, params),
@@ -107,8 +107,14 @@ fn dispatch(
     }
 }
 
-fn handshake(module: &dyn Module) -> Value {
+fn handshake(module: &dyn Module) -> Result<Value, String> {
     let info = module.info();
+    if info.name.trim().is_empty() {
+        return Err("module handshake name is required".to_string());
+    }
+    if info.version.trim().is_empty() {
+        return Err("module handshake version is required".to_string());
+    }
     let mut pairs = vec![
         ("name", Value::Str(info.name)),
         ("version", Value::Str(info.version)),
@@ -123,7 +129,7 @@ fn handshake(module: &dyn Module) -> Value {
     if !info.discovery_context.is_empty() {
         pairs.push(("discoveryContext", Value::Object(info.discovery_context)));
     }
-    Value::object(pairs)
+    Ok(Value::object(pairs))
 }
 
 fn schema(module: &dyn Module) -> Value {

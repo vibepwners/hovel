@@ -19,6 +19,23 @@ import (
 
 type moduleChecker struct{}
 
+type moduleInspector struct {
+	runner pythonrpc.Runner
+}
+
+func (i moduleInspector) InspectPackage(ctx context.Context, pkg modulepackage.Package) (modulecatalog.Module, error) {
+	entry, err := pkg.LaunchEntry(goRuntime.GOOS, goRuntime.GOARCH)
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
+	return i.runner.InspectEntry(ctx, pythonrpc.ModuleEntry{
+		Runtime:    entry.Runtime,
+		ProjectDir: entry.ProjectDir,
+		Module:     entry.Module,
+		Command:    append([]string(nil), entry.Command...),
+	})
+}
+
 func (moduleChecker) CheckModule(ctx context.Context, request commands.ModuleCheckRequest) (commands.ModuleCheckReport, error) {
 	if err := ctx.Err(); err != nil {
 		return commands.ModuleCheckReport{}, err

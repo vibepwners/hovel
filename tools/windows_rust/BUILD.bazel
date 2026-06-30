@@ -1,0 +1,23 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+load("//tools/windows_rust:stage_llvm_mingw_libs.bzl", "stage_llvm_mingw_libs")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "stage_llvm_mingw_libs_tool",
+    srcs = ["stage_llvm_mingw_libs.py"],
+    main = "stage_llvm_mingw_libs.py",
+    python_version = "PY3",
+)
+
+stage_llvm_mingw_libs(
+    name = "llvm_mingw_aarch64_libs",
+    compiler_rt = ["@llvm_mingw_ucrt_linux_x86_64//:compiler_rt_windows"],
+    target_libs = ["@llvm_mingw_ucrt_linux_x86_64//:aarch64_libs"],
+)
+
+stage_llvm_mingw_libs(
+    name = "llvm_mingw_x86_64_libs",
+    compiler_rt = ["@llvm_mingw_ucrt_linux_x86_64//:compiler_rt_windows"],
+    target_libs = ["@llvm_mingw_ucrt_linux_x86_64//:x86_64_libs"],
+)

@@ -1,0 +1,6 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "sdk_files",
+    srcs = glob(["MacOSX.sdk/**"]),
+)

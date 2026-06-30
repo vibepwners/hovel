@@ -94,6 +94,49 @@ func TestStringListOptionsAreForwardedToCommand(t *testing.T) {
 	}
 }
 
+func TestPassthroughArgumentsAreForwardedAfterDelimiter(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"module", "manual-install"},
+		Summary: "Install manual module.",
+		Positionals: []commands.Positional{
+			{Name: "name", Required: true},
+		},
+		Passthrough: commands.Passthrough{Name: "command", Required: true},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: invocation.Positional("name") + ":" + strings.Join(invocation.PassthroughArgs(), "|")}, nil
+		},
+	})
+
+	code := NewAppWithRegistry(registry).Run(context.Background(), []string{"module", "manual-install", "devmod", "--", "stdio-cmd", "--help", "--flag"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "devmod:stdio-cmd|--help|--flag" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestPassthroughArgumentsAreRequiredWhenDeclared(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	registry := commands.MustRegistry(commands.Definition{
+		Path:        []string{"install"},
+		Summary:     "Install.",
+		Passthrough: commands.Passthrough{Name: "command", Required: true},
+		Handler: func(_ context.Context, _ commands.Invocation) (commands.Result, error) {
+			return commands.Result{}, nil
+		},
+	})
+
+	code := NewAppWithRegistry(registry).Run(context.Background(), []string{"install"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "command after -- is required") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func TestResultExitCodeIsReturnedAfterPrintingReport(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	registry := commands.MustRegistry(commands.Definition{

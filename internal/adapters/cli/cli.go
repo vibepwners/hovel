@@ -185,7 +185,7 @@ func installedWorkspaceModules(ctx context.Context, workspacePath string) ([]mod
 			return nil, fmt.Errorf("load installed module %s@%s launcher: %w", record.Name, record.Version, err)
 		}
 		module, err := runner.InspectEntry(ctx, pythonrpc.ModuleEntry{
-			ID:         modulecatalog.CanonicalID(pkg.Manifest.Metadata.Name, pkg.Manifest.Metadata.Version),
+			ID:         modulecatalog.CanonicalID(record.Name, record.Version),
 			Runtime:    launch.Runtime,
 			ProjectDir: launch.ProjectDir,
 			Module:     launch.Module,

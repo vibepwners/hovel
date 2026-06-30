@@ -50,6 +50,8 @@ Rules that matter in real integrations:
 
 - Never write to stdout yourself. The SDK owns stdout for JSON-RPC frames.
 - Put progress on `ctx.Log`; it becomes structured `module/log` notifications.
+- Return `Info` with `Name`, `Version`, and `Type`. Hovel uses this handshake
+  metadata instead of package-manifest hints.
 - Keep `Info` and `Schema` cheap and side-effect free.
 - Return `hovel.Result` with explicit outputs, artifacts, findings, sessions,
   and installed payload descriptors.

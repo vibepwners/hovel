@@ -110,6 +110,7 @@ func defaultRuntimeWithCatalogAndWorkspace(session commands.OperatorSession, cat
 		Session:            session,
 		Modules:            catalog,
 		ModuleChecks:       moduleChecker{},
+		ModuleInspector:    moduleInspector{runner: runner},
 		Payloads:           store,
 		PayloadProviders:   payloadProviderService{daemons: services.NewDaemonService(store), runs: daemonRunClients{}, modules: catalog, payloads: runner},
 	}
@@ -231,7 +232,7 @@ func splitCommandLine(line string) ([]string, error) {
 
 func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
 	parser, bindings := commandParser(definition)
-	if helpRequested(args) {
+	if commandHelpRequested(definition, args) {
 		writeCommandText(stdout, usage(definition, parser, nil))
 		return 0
 	}
@@ -508,7 +509,12 @@ func commandParser(definition commands.Definition) (*argparse.Parser, commandPar
 
 func parseDefinition(definition commands.Definition, parser *argparse.Parser, bindings commandParserBindings, args []string, stderr io.Writer) (commands.Invocation, bool, int) {
 	parser.ExitOnHelp(false)
-	if err := parser.Parse(append([]string{"hovel"}, args...)); err != nil {
+	parseArgs, passthrough := splitPassthrough(definition, args)
+	if definition.Passthrough.Required && len(passthrough) == 0 {
+		writeCommandText(stderr, usage(definition, parser, definition.Passthrough.Name+" after -- is required"))
+		return commands.Invocation{}, false, 2
+	}
+	if err := parser.Parse(append([]string{"hovel"}, parseArgs...)); err != nil {
 		writeCommandText(stderr, usage(definition, parser, err))
 		return commands.Invocation{}, false, 2
 	}
@@ -518,6 +524,7 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, bi
 		Options:     map[string]string{},
 		OptionLists: map[string][]string{},
 		Flags:       map[string]bool{},
+		Passthrough: append([]string(nil), passthrough...),
 	}
 	for _, positional := range definition.Positionals {
 		invocation.Positionals[positional.Name] = strings.TrimSpace(*bindings.positionals[positional.Name])
@@ -533,6 +540,23 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, bi
 		}
 	}
 	return invocation, true, 0
+}
+
+func commandHelpRequested(definition commands.Definition, args []string) bool {
+	parseArgs, _ := splitPassthrough(definition, args)
+	return helpRequested(parseArgs)
+}
+
+func splitPassthrough(definition commands.Definition, args []string) ([]string, []string) {
+	if definition.Passthrough.Name == "" {
+		return args, nil
+	}
+	for i, arg := range args {
+		if arg == "--" {
+			return args[:i], args[i+1:]
+		}
+	}
+	return args, nil
 }
 
 func usage(definition commands.Definition, parser *argparse.Parser, msg any) string {

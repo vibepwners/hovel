@@ -53,6 +53,26 @@ launch:
 	}
 }
 
+func TestLoadDirAllowsLaunchOnlyManifest(t *testing.T) {
+	root := packageDir(t, `apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+launch:
+  - selector: {}
+    command: ["bin/portable"]
+`)
+	pkg, err := LoadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := pkg.LaunchEntry("linux", "amd64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.ID != "" || entry.Runtime != "jsonrpc-stdio" {
+		t.Fatalf("entry = %#v, want launch entry without YAML identity", entry)
+	}
+}
+
 func TestSelectLaunchRejectsAmbiguousMatches(t *testing.T) {
 	root := packageDir(t, `apiVersion: hovel.dev/v1alpha1
 kind: ModulePackage
@@ -277,6 +297,53 @@ exit 1
 	}
 	if _, err := os.Stat(wantPython); err != nil {
 		t.Fatalf("managed venv python missing: %v", err)
+	}
+}
+
+func TestInstallPreparedDirWritesManagedLockAndUninstallRemovesRoot(t *testing.T) {
+	workspace := t.TempDir()
+	root := packageDir(t, `apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: prepared
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector: {}
+    command: ["/bin/sh"]
+`)
+
+	result, err := InstallPreparedDir(InstallOptions{
+		Workspace: workspace,
+		SourceDir: root,
+		HostOS:    "linux",
+		HostArch:  "amd64",
+		Now:       time.Date(2026, 6, 23, 9, 30, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Name != "prepared" || result.Version != "0.1.0" || result.Source != root {
+		t.Fatalf("result = %#v", result)
+	}
+	lock, err := LoadLock(filepath.Join(workspace, "module-lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lock.Modules) != 1 || lock.Modules[0].Linked || lock.Modules[0].Source != root {
+		t.Fatalf("lock modules = %#v", lock.Modules)
+	}
+	if _, err := Uninstall(UninstallOptions{
+		Workspace: workspace,
+		Name:      "prepared",
+		Version:   "0.1.0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("root exists after uninstall: %v", err)
 	}
 }
 
@@ -849,9 +916,6 @@ kind: ModulePackage
 metadata:
   name: ` + name + `
   version: 0.1.0
-  moduleType: survey
-runtime:
-  protocol: jsonrpc-stdio
 launch:
   - selector:
       os: linux

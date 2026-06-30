@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -88,7 +89,7 @@ func ServeIO(module Module, in io.Reader, out io.Writer) error {
 func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 	switch method {
 	case "handshake":
-		return s.handshake(), nil
+		return s.handshake()
 	case "schema":
 		return s.schema(), nil
 	case "list_payloads":
@@ -137,8 +138,11 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 	}
 }
 
-func (s *server) handshake() map[string]any {
+func (s *server) handshake() (map[string]any, error) {
 	info := s.module.Info()
+	if err := validateInfo(info); err != nil {
+		return nil, err
+	}
 	tags := info.Tags
 	if tags == nil {
 		tags = []string{}
@@ -154,7 +158,22 @@ func (s *server) handshake() map[string]any {
 	if contextPresent(info.DiscoveryContext) {
 		out["discoveryContext"] = info.DiscoveryContext
 	}
-	return out
+	return out, nil
+}
+
+func validateInfo(info Info) error {
+	if strings.TrimSpace(info.Name) == "" {
+		return fmt.Errorf("module handshake name is required")
+	}
+	if strings.TrimSpace(info.Version) == "" {
+		return fmt.Errorf("module handshake version is required")
+	}
+	switch info.Type {
+	case TypeSurvey, TypeExploit, TypePayloadProvider:
+		return nil
+	default:
+		return fmt.Errorf("module handshake moduleType %q is invalid", info.Type)
+	}
 }
 
 func (s *server) schema() map[string]any {

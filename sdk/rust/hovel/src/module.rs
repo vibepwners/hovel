@@ -68,7 +68,9 @@ impl Requirement {
     }
 }
 
-/// The metadata a module reports during the handshake.
+/// The metadata a module reports during the handshake. `name`, `version`, and
+/// `module_type` are required; Hovel treats this handshake as authoritative
+/// over any package-manifest hints.
 pub struct Info {
     pub name: String,
     pub version: String,

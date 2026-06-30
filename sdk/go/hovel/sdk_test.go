@@ -58,6 +58,16 @@ func (m fakeModule) Run(ctx *Context) (Result, error) {
 	), nil
 }
 
+type missingVersionModule struct{}
+
+func (missingVersionModule) Info() Info {
+	return Info{Name: "missing-version", Type: TypeSurvey}
+}
+
+func (missingVersionModule) Schema() Schema { return Schema{} }
+
+func (missingVersionModule) Run(*Context) (Result, error) { return Ok(nil), nil }
+
 type fakeCommandSession struct {
 	*LineShellSession
 }
@@ -385,6 +395,24 @@ func (c *rpcConn) call(method string, params map[string]any) map[string]any {
 	}
 }
 
+func (c *rpcConn) callError(method string, params map[string]any) string {
+	c.t.Helper()
+	c.id++
+	c.writeRequest(c.id, method, params)
+	for {
+		message := c.readFrame()
+		if _, hasID := message["id"]; !hasID {
+			continue
+		}
+		errObj, ok := message["error"].(map[string]any)
+		if !ok {
+			c.t.Fatalf("rpc %s returned success, want error: %#v", method, message)
+		}
+		messageText, _ := errObj["message"].(string)
+		return messageText
+	}
+}
+
 func (c *rpcConn) writeRequest(id int, method string, params map[string]any) {
 	c.t.Helper()
 	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
@@ -537,6 +565,15 @@ func TestServeHandshakeSchemaExecute(t *testing.T) {
 	findings, _ := result["findings"].([]any)
 	if len(findings) != 1 {
 		t.Fatalf("findings = %#v", result["findings"])
+	}
+}
+
+func TestServeHandshakeRequiresIdentityAndType(t *testing.T) {
+	conn := newRPCConn(t, missingVersionModule{})
+	defer conn.close()
+
+	if got := conn.callError("handshake", nil); got != "module handshake version is required" {
+		t.Fatalf("handshake error = %q", got)
 	}
 }
 
