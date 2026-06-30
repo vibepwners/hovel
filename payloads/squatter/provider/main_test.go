@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -342,6 +343,18 @@ func TestPayloadConfigOffsetSkipsNonConfigMarker(t *testing.T) {
 	if offset != configOffset {
 		t.Fatalf("config offset = %d, want %d", offset, configOffset)
 	}
+}
+
+func TestPayloadBinaryCandidatesIncludeInstalledPackagePayload(t *testing.T) {
+	root := t.TempDir()
+	exe := filepath.Join(root, "bin", "linux-amd64", "squatter-provider")
+	want := filepath.Join(root, "bin", "squatter.exe")
+	for _, candidate := range payloadBinaryCandidates("", exe) {
+		if candidate == want {
+			return
+		}
+	}
+	t.Fatalf("payload candidates missing %s", want)
 }
 
 func TestProviderNormalizesRemoteSMBPipePathForPayload(t *testing.T) {

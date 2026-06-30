@@ -1390,16 +1390,33 @@ func normalizeNamedPipe(pipe string) string {
 }
 
 func loadPayloadBinary() ([]byte, error) {
+	exe := ""
+	if path, err := os.Executable(); err == nil {
+		exe = path
+	}
+
+	for _, candidate := range payloadBinaryCandidates(os.Getenv("RUNFILES_DIR"), exe) {
+		body, err := os.ReadFile(candidate)
+		if err == nil {
+			return body, nil
+		}
+	}
+
+	return nil, fmt.Errorf("squatter payload binary not found; run through Bazel runfiles or install the packaged provider with bin/squatter.exe")
+}
+
+func payloadBinaryCandidates(runfiles, exe string) []string {
 	var candidates []string
 
-	if runfiles := os.Getenv("RUNFILES_DIR"); runfiles != "" {
+	if runfiles != "" {
 		candidates = appendRunfileCandidates(candidates, runfiles)
 	}
 
-	if exe, err := os.Executable(); err == nil {
+	if exe != "" {
 		exeDir := filepath.Dir(exe)
 		candidates = append(candidates,
 			filepath.Join(exeDir, "squatter.exe"),
+			filepath.Join(filepath.Dir(exeDir), "squatter.exe"),
 			filepath.Join(filepath.Dir(exeDir), "bin", "squatter.exe"),
 		)
 		candidates = appendRunfileCandidates(candidates, exe+".runfiles")
@@ -1410,14 +1427,7 @@ func loadPayloadBinary() ([]byte, error) {
 		filepath.Join("payloads", "squatter", "windows", "squatter.exe"),
 	)
 
-	for _, candidate := range candidates {
-		body, err := os.ReadFile(candidate)
-		if err == nil {
-			return body, nil
-		}
-	}
-
-	return nil, fmt.Errorf("squatter payload binary not found; run through Bazel runfiles or install the packaged provider with bin/squatter.exe")
+	return candidates
 }
 
 func appendRunfileCandidates(candidates []string, root string) []string {
