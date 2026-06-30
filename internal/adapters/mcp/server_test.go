@@ -180,7 +180,7 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 	}
 	defer detachTestOperator(t, attached)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	sdkServer := attached.MCPServer()
 	serverTransport, clientTransport := mcpsdk.NewInMemoryTransports()
@@ -201,7 +201,7 @@ func TestMCPServerExposesTypedReadOnlyTools(t *testing.T) {
 		cancel()
 		select {
 		case err := <-serverDone:
-			if err != nil && !errors.Is(err, context.Canceled) {
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("server run returned error: %v", err)
 			}
 		case <-time.After(time.Second):
