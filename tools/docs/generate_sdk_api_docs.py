@@ -60,7 +60,15 @@ def main() -> None:
     )
 
 
-def main_with_paths(repo_root: Path, site_root: Path, output: Path) -> None:
+def main_with_paths(
+    repo_root: Path,
+    site_root: Path,
+    output: Path,
+    *,
+    uv_bin: Path | None = None,
+    go_bin: Path | None = None,
+    rustdoc_bin: Path | None = None,
+) -> None:
     repo = repo_root.resolve()
     site_root = site_root.resolve()
     output = output.resolve()
@@ -69,19 +77,22 @@ def main_with_paths(repo_root: Path, site_root: Path, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
 
     pages = [
-        generate_python_docs(repo, output),
-        *generate_go_docs(repo, site_root, output),
-        generate_rust_docs(repo, output),
+        generate_python_docs(repo, output, uv_bin=uv_bin),
+        *generate_go_docs(repo, site_root, output, go_bin=go_bin),
+        generate_rust_docs(repo, output, rustdoc_bin=rustdoc_bin),
     ]
     write_index(output / "index.html", site_root, pages)
 
 
-def generate_python_docs(repo: Path, output: Path) -> ApiPage:
+def generate_python_docs(repo: Path, output: Path, *, uv_bin: Path | None = None) -> ApiPage:
     source = repo / "tools/docs/python_api"
-    with tempfile.TemporaryDirectory(prefix="hovel-sphinx-doctrees-") as doctrees:
+    with (
+        tempfile.TemporaryDirectory(prefix="hovel-sphinx-doctrees-") as doctrees,
+        tempfile.TemporaryDirectory(prefix="hovel-uv-env-") as uv_env,
+    ):
         run(
             [
-                "uv",
+                str(uv_bin or "uv"),
                 "run",
                 "--project",
                 str(repo / "sdk/python"),
@@ -98,7 +109,11 @@ def generate_python_docs(repo: Path, output: Path) -> ApiPage:
                 str(output / "python"),
             ],
             cwd=repo,
-            env={"HOVEL_DOCS_REPO_ROOT": str(repo)},
+            env={
+                "HOVEL_DOCS_REPO_ROOT": str(repo),
+                "UV_LINK_MODE": "copy",
+                "UV_PROJECT_ENVIRONMENT": uv_env,
+            },
         )
     return ApiPage(
         title="Python SDK API",
@@ -108,10 +123,10 @@ def generate_python_docs(repo: Path, output: Path) -> ApiPage:
     )
 
 
-def generate_go_docs(repo: Path, site_root: Path, output: Path) -> list[ApiPage]:
+def generate_go_docs(repo: Path, site_root: Path, output: Path, *, go_bin: Path | None = None) -> list[ApiPage]:
     pages: list[ApiPage] = []
     go_output = output / "go"
-    with run_pkgsite(repo) as base_url:
+    with run_pkgsite(repo, go_bin=go_bin) as base_url:
         write_go_index(go_output / "index.html", site_root)
         for title, import_path, href, snapshot_href, description in PKGSITE_PACKAGES:
             snapshot_pkgsite_package(base_url, go_output, import_path)
@@ -120,14 +135,14 @@ def generate_go_docs(repo: Path, site_root: Path, output: Path) -> list[ApiPage]
     return pages
 
 
-def generate_rust_docs(repo: Path, output: Path) -> ApiPage:
+def generate_rust_docs(repo: Path, output: Path, *, rustdoc_bin: Path | None = None) -> ApiPage:
     rust_output = output / "rust"
     rust_output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="hovel-rustdoc-") as tmp:
         tmp_output = Path(tmp) / "doc"
         run(
             [
-                "rustdoc",
+                str(rustdoc_bin or "rustdoc"),
                 "--crate-name",
                 "hovel",
                 "--edition=2021",
@@ -150,7 +165,7 @@ def generate_rust_docs(repo: Path, output: Path) -> ApiPage:
 
 
 @contextmanager
-def run_pkgsite(repo: Path):
+def run_pkgsite(repo: Path, *, go_bin: Path | None = None):
     port = free_port()
     base_url = f"http://127.0.0.1:{port}"
     with tempfile.TemporaryDirectory(prefix="hovel-pkgsite-") as tmp:
@@ -158,7 +173,7 @@ def run_pkgsite(repo: Path):
         with log_path.open("w+") as log:
             process = subprocess.Popen(
                 [
-                    "go",
+                    str(go_bin or "go"),
                     "run",
                     f"golang.org/x/pkgsite/cmd/pkgsite@{PKGSITE_VERSION}",
                     f"-http=127.0.0.1:{port}",

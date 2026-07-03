@@ -57,6 +57,10 @@ py_binary(
     name = "run_squatter_cppcheck",
     srcs = ["run_squatter_cppcheck.py"],
     python_version = "PY3",
+    deps = [
+        "@lint_pypi//cppcheck",
+        "@lint_pypi//importlib_metadata",
+    ],
 )
 
 py_binary(

@@ -2,6 +2,7 @@
 
 _MINGW_INCLUDE_MARKER = "@mingw_i686//:i686-w64-mingw32/include/winsock2.h"
 _MINGW_TOOLCHAIN = "@mingw_i686//:toolchain_all"
+_CLANG_TIDY = "@llvm_mingw_ucrt_linux_x86_64//:clang_tidy_bin"
 _RUNNER = "//tools/lint:run_squatter_clang_tidy"
 
 def _check_name(src):
@@ -9,7 +10,7 @@ def _check_name(src):
 
 def _tool_files(ctx):
     return depset(
-        [ctx.executable._runner],
+        [ctx.executable._runner, ctx.file._clang_tidy],
         transitive = [
             ctx.attr._runner[DefaultInfo].files,
             ctx.attr._runner[DefaultInfo].default_runfiles.files,
@@ -20,6 +21,7 @@ def _tool_files(ctx):
 def _clang_tidy_check_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".stamp")
     args = ctx.actions.args()
+    args.add("--clang-tidy", ctx.file._clang_tidy)
     args.add("--stamp", out)
     args.add("--source", ctx.file.src)
     args.add("--mingw-marker", ctx.file._mingw_include_marker)
@@ -47,6 +49,10 @@ _clang_tidy_check = rule(
         ),
         "_mingw_toolchain": attr.label(
             default = _MINGW_TOOLCHAIN,
+        ),
+        "_clang_tidy": attr.label(
+            default = _CLANG_TIDY,
+            allow_single_file = True,
         ),
         "_runner": attr.label(
             default = _RUNNER,

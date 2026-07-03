@@ -25,6 +25,7 @@ generate_sdk_api_docs = load_helper("generate_sdk_api_docs")
 
 
 def main() -> int:
+    uv_bin, go_bin, rustdoc_bin = parse_tool_args(sys.argv[1:])
     repo = Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path.cwd())).resolve()
     fingerprint = docs_fingerprint(repo)
     site = repo / "_site"
@@ -47,11 +48,33 @@ def main() -> int:
         repo_root=repo,
         site_root=site,
         output=site / "api/sdk",
+        uv_bin=uv_bin,
+        go_bin=go_bin,
+        rustdoc_bin=rustdoc_bin,
     )
     check_site_links.check_site(site)
     (site / ".nojekyll").touch()
     stamp.write_text(fingerprint + "\n")
     return 0
+
+
+def parse_tool_args(args: list[str]) -> tuple[Path | None, Path | None, Path | None]:
+    uv_bin: Path | None = None
+    go_bin: Path | None = None
+    rustdoc_bin: Path | None = None
+    for arg in args:
+        key, sep, value = arg.partition("=")
+        if sep != "=":
+            raise SystemExit(f"unexpected argument: {arg}")
+        if key == "--uv-bin":
+            uv_bin = resolve_runfile(value)
+        elif key == "--go-bin":
+            go_bin = resolve_runfile(value)
+        elif key == "--rustdoc-bin":
+            rustdoc_bin = resolve_runfile(value)
+        else:
+            raise SystemExit(f"unexpected argument: {key}")
+    return uv_bin, go_bin, rustdoc_bin
 
 
 def docs_fingerprint(repo: Path) -> str:

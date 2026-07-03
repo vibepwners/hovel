@@ -44,6 +44,7 @@ def _vhs_demo_impl(ctx):
     args.add("--duration-checker", ctx.file.duration_checker)
     args.add("--vhs-bin", ctx.file._vhs)
     args.add("--vhs-version-file", ctx.file.vhs_version)
+    args.add("--chrome-bin", ctx.file._chrome)
 
     inputs = [
         ctx.file.tape,
@@ -60,6 +61,7 @@ def _vhs_demo_impl(ctx):
         tools.extend(files)
         transitive_tools.extend(transitive)
     tools.append(ctx.file._vhs)
+    tools.extend(ctx.files._chrome_files)
 
     if ctx.attr.wine:
         args.add("--wine")
@@ -111,6 +113,15 @@ _vhs_demo_rule = rule(
         "_vhs": attr.label(
             default = "@vhs_linux_x86_64//:vhs_bin",
             allow_single_file = True,
+            cfg = "exec",
+        ),
+        "_chrome": attr.label(
+            default = "@chrome_for_testing_linux_x86_64//:chrome_bin",
+            allow_single_file = True,
+            cfg = "exec",
+        ),
+        "_chrome_files": attr.label(
+            default = "@chrome_for_testing_linux_x86_64//:chrome_files",
             cfg = "exec",
         ),
         "vhs_version": attr.label(allow_single_file = True, mandatory = True),

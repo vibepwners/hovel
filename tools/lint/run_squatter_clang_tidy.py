@@ -2,29 +2,23 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run clang-tidy for one Squatter C source.")
+    parser.add_argument("--clang-tidy", type=Path, required=True)
     parser.add_argument("--stamp", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--mingw-marker", type=Path, required=True)
     parser.add_argument("--project-include", required=True)
     args = parser.parse_args()
 
-    clang_tidy = shutil.which("clang-tidy")
-    if not clang_tidy:
-        print("clang-tidy is required for task squatter:clang-tidy", file=sys.stderr)
-        return 127
-
     mingw_include = args.mingw_marker.resolve().parent
     subprocess.run(
         [
-            clang_tidy,
+            str(args.clang_tidy),
             "--quiet",
             "--checks=clang-analyzer-*,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling",
             "--warnings-as-errors=*",

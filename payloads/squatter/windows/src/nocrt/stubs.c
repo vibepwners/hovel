@@ -322,6 +322,7 @@ API1V("kernel32.dll", InitializeCriticalSection, LPCRITICAL_SECTION)
 API0(BOOL, "kernel32.dll", IsDebuggerPresent)
 API1V("kernel32.dll", LeaveCriticalSection, LPCRITICAL_SECTION)
 API1(int, "kernel32.dll", lstrlenW, LPCWSTR)
+// cppcheck-suppress CastIntegerToAddressAtReturn
 API3(LPWSTR, "kernel32.dll", lstrcpynW, LPWSTR, LPCWSTR, int)
 API1(HMODULE, "kernel32.dll", GetModuleHandleW, LPCWSTR)
 API1(HLOCAL, "kernel32.dll", LocalFree, HLOCAL)

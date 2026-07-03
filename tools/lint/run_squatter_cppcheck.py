@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import subprocess
-import sys
 from pathlib import Path
+
+import cppcheck as cppcheck_package
 
 
 def main() -> int:
@@ -15,18 +15,16 @@ def main() -> int:
     parser.add_argument("sources", nargs="+", type=Path)
     args = parser.parse_args()
 
-    cppcheck = shutil.which("cppcheck")
-    if not cppcheck:
-        print("cppcheck is required for task squatter:cppcheck", file=sys.stderr)
-        return 127
+    cppcheck = Path(cppcheck_package.__file__).resolve().parent / "Cppcheck/cppcheck"
 
     subprocess.run(
         [
-            cppcheck,
+            str(cppcheck),
             "--quiet",
             "--enable=warning,performance,portability",
             "--error-exitcode=1",
             "--force",
+            "--check-level=exhaustive",
             "--inline-suppr",
             "--std=c11",
             "--suppress=missingIncludeSystem",

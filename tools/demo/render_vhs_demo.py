@@ -26,6 +26,7 @@ def main() -> int:
     parser.add_argument("--duration-checker", required=True, type=Path)
     parser.add_argument("--vhs-bin", required=True, type=Path)
     parser.add_argument("--vhs-version-file", type=Path)
+    parser.add_argument("--chrome-bin", required=True, type=Path)
     parser.add_argument("--squatter-provider", type=Path)
     parser.add_argument("--squatter-exe", type=Path)
     parser.add_argument("--dockerfile", type=Path)
@@ -45,6 +46,7 @@ def main() -> int:
         work = Path(work_raw)
         repo = work / "repo"
         build_synthetic_repo(repo, args)
+        chrome_wrapper = write_chrome_wrapper(repo / "demo/tmp/chrome-bin/chrome", executable_path(args.chrome_bin))
         env = os.environ | {
             "TMPDIR": str(repo / "demo/tmp/vhs-tmp"),
             "HOME": str(repo / "demo/tmp/home"),
@@ -52,7 +54,7 @@ def main() -> int:
             "HOVEL_REPO_ROOT": str(repo),
             "HOVEL_DEMO_HOVEL_BIN": str(repo / "demo/tmp/hovel"),
             "HOVEL_DEMO_AGENT_BIN": str(repo / "demo/tmp/hovel-mock-agent"),
-            "PATH": tool_path(Path(vhs).parent),
+            "PATH": tool_path(chrome_wrapper.parent, Path(vhs).parent),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         run_vhs(vhs, args.tape_rel, repo, env)
@@ -161,6 +163,24 @@ def install(src: Path, dest: Path, executable: bool = True) -> None:
 
 def write_module_config(path: Path, modules: list[dict[str, object]]) -> None:
     path.write_text(json.dumps({"modules": modules}, indent=2) + "\n")
+
+
+def write_chrome_wrapper(path: Path, chrome: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "import sys\n"
+        f"chrome = {chrome!r}\n"
+        "flags = [\n"
+        "    '--no-sandbox',\n"
+        "    '--disable-dev-shm-usage',\n"
+        "    '--disable-gpu',\n"
+        "]\n"
+        "os.execv(chrome, [chrome, *flags, *sys.argv[1:]])\n"
+    )
+    path.chmod(0o755)
+    return path
 
 
 def rendered_output(repo: Path, tape: Path) -> Path:

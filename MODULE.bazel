@@ -92,6 +92,41 @@ filegroup(
 )
 
 http_archive(
+    name = "uv_linux_x86_64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "uv_bin",
+    srcs = ["uv"],
+)
+""",
+    sha256 = "6426a73c3837e6e2483ee344cbc00f36394d179afcba6183cb77437e67db4af0",
+    strip_prefix = "uv-x86_64-unknown-linux-gnu",
+    urls = ["https://github.com/astral-sh/uv/releases/download/0.11.26/uv-x86_64-unknown-linux-gnu.tar.gz"],
+)
+
+http_archive(
+    name = "chrome_for_testing_linux_x86_64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "chrome_bin",
+    srcs = ["chrome-linux64/chrome"],
+)
+
+filegroup(
+    name = "chrome_files",
+    srcs = glob(["chrome-linux64/**"]),
+)
+""",
+    sha256 = "ad115a7498a17f53f6ed0914458326c6516addc756224db14c32184a9b1ab078",
+    strip_prefix = "",
+    urls = ["https://storage.googleapis.com/chrome-for-testing-public/150.0.7871.46/linux64/chrome-linux64.zip"],
+)
+
+http_archive(
     name = "llvm_mingw_ucrt_linux_x86_64",
     build_file_content = """\
 package(default_visibility = ["//visibility:public"])
@@ -109,6 +144,11 @@ filegroup(
 filegroup(
     name = "compiler_rt_windows",
     srcs = glob(["lib/clang/*/lib/windows/*"]),
+)
+
+filegroup(
+    name = "clang_tidy_bin",
+    srcs = ["bin/clang-tidy"],
 )
 """,
     sha256 = "534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4deda",
