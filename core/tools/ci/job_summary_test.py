@@ -44,23 +44,12 @@ class JobSummaryTest(unittest.TestCase):
             with patched_root(root), patched_env(JOB_STATUS="success", GITHUB_WORKFLOW="CI", GITHUB_JOB="build-test"):
                 rendered = job_summary.render_summary(job_summary.JOBS["ci-build-test"])
 
-        self.assertIn("## CI Build and Test", rendered)
+        self.assertIn("## CI Core Gate", rendered)
+        self.assertIn("`task lint`", rendered)
+        self.assertIn("`task build -- //:build`", rendered)
         self.assertIn("`task coverage`", rendered)
         self.assertIn("### Coverage Ratchets", rendered)
         self.assertIn("| domain | pass |", rendered)
-
-    def test_demos_summary_lists_generated_artifacts(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = pathlib.Path(tmp)
-            artifact = root / "demo/out/demo.gif"
-            artifact.parent.mkdir(parents=True)
-            artifact.write_bytes(b"GIF89a")
-            with patched_root(root), patched_env(JOB_STATUS="success"):
-                rendered = job_summary.render_summary(job_summary.JOBS["ci-demos"])
-
-        self.assertIn("1 file(s) matched `demo/out/*.gif`.", rendered)
-        self.assertIn("`demo/out/demo.gif`", rendered)
-        self.assertIn("6 B", rendered)
 
     def test_publish_summary_lists_release_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -77,9 +66,11 @@ class JobSummaryTest(unittest.TestCase):
 
     def test_pages_summary_reports_site_stats(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = pathlib.Path(tmp)
-            site = root / "_site"
-            site.mkdir()
+            repo = pathlib.Path(tmp)
+            root = repo / "core"
+            root.mkdir()
+            site = repo / "docs/site"
+            site.mkdir(parents=True)
             (site / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
             with patched_root(root), patched_env(JOB_STATUS="success"):
                 rendered = job_summary.render_summary(job_summary.JOBS["pages-build"])
@@ -94,13 +85,13 @@ class JobSummaryTest(unittest.TestCase):
             with (
                 patched_root(root),
                 patched_env(GITHUB_STEP_SUMMARY=str(summary_path), JOB_STATUS="failure"),
-                mock.patch.object(sys, "argv", ["job_summary.py", "ci-lint"]),
+                mock.patch.object(sys, "argv", ["job_summary.py", "ci-build-test"]),
             ):
                 self.assertEqual(job_summary.main(), 0)
 
             written = summary_path.read_text(encoding="utf-8")
 
-        self.assertIn("## CI Lint", written)
+        self.assertIn("## CI Core Gate", written)
         self.assertIn("| Status | failure |", written)
         self.assertIn("`task lint`", written)
 

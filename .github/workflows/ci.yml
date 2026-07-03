@@ -14,7 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-test:
+  core:
+    name: Core fmt, lint, build, test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +26,7 @@ jobs:
           path: |
             ~/.cache/bazelisk
             ~/.cache/bazel-repository
-          key: bazel-repository-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}
+          key: bazel-repository-${{ runner.os }}-${{ hashFiles('core/MODULE.bazel.lock', 'core/.bazelversion') }}
           restore-keys: |
             bazel-repository-${{ runner.os }}-
 
@@ -63,33 +64,36 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: core/go.mod
           cache: false
 
-      - name: Build
+      - name: Checkout slices
+        run: task checkout:status
+
+      - name: Format and lint checks
+        run: task lint
+
+      - name: Full core build
         run: task build -- //:build
 
-      - name: Build release wheels
-        run: task release:hovel-wheels
-
-      - name: Test
+      - name: Core CI tests
         run: task test -- //:ci_test
 
-      - name: Race tests
-        run: task test:race
-
-      - name: Fuzz smoke
-        run: task fuzz:smoke
+      - name: Race and fuzz smoke tests
+        run: task test -- //:race_test //:fuzz_smoke_test
 
       - name: Coverage
         run: task coverage
+
+      - name: Build release wheels
+        run: task release:hovel-wheels
 
       - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: bazel-testlogs
-          path: bazel-testlogs/
+          path: core/bazel-testlogs/
           if-no-files-found: ignore
 
       - name: Job summary
@@ -97,296 +101,3 @@ jobs:
         env:
           JOB_STATUS: ${{ job.status }}
         run: task actions:summary -- ci-build-test
-
-  demos:
-    runs-on: ubuntu-24.04
-    needs: build-test
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache Bazelisk and repository downloads
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/bazelisk
-            ~/.cache/bazel-repository
-          key: bazel-repository-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}
-          restore-keys: |
-            bazel-repository-${{ runner.os }}-
-
-      - name: Install Task
-        uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure Bazel cache
-        shell: bash
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: |
-          set +x
-          ci_bazelrc="${RUNNER_TEMP}/bazel-ci.bazelrc"
-          {
-            echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository"
-          } > "${ci_bazelrc}"
-          bazel_configs="--config=github-actions"
-          if [[ -n "${BUILDBUDDY_API_KEY}" ]]; then
-            echo "::add-mask::${BUILDBUDDY_API_KEY}"
-            {
-              echo "common --noannounce_rc"
-              echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
-            } >> "${ci_bazelrc}"
-            bazel_configs="${bazel_configs} --config=ci"
-          else
-            echo "BuildBuddy cache disabled: BUILDBUDDY_API_KEY is not available."
-          fi
-          chmod 600 "${ci_bazelrc}"
-          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${ci_bazelrc}" >> "$GITHUB_ENV"
-          echo "HOVEL_BAZEL_ARGS=${bazel_configs}" >> "$GITHUB_ENV"
-
-      - name: Install demo host tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg ttyd tmux fonts-dejavu-core
-
-      - name: Verify demo host tools
-        run: |
-          ffmpeg -version | head -n 1
-          ttyd --version
-          tmux -V
-          docker version --format 'Docker server {{.Server.Version}}'
-
-      - name: Generate demos
-        run: |
-          task demos
-          task demo:squatter-wine
-
-      - name: Upload demo artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: hovel-demos
-          path: demo/out/*.gif
-          if-no-files-found: error
-
-      - name: Job summary
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: task actions:summary -- ci-demos
-
-  docs:
-    runs-on: ubuntu-latest
-    needs: demos
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache Bazelisk and repository downloads
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/bazelisk
-            ~/.cache/bazel-repository
-          key: bazel-repository-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}
-          restore-keys: |
-            bazel-repository-${{ runner.os }}-
-
-      - name: Install Task
-        uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure Bazel cache
-        shell: bash
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: |
-          set +x
-          ci_bazelrc="${RUNNER_TEMP}/bazel-ci.bazelrc"
-          {
-            echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository"
-          } > "${ci_bazelrc}"
-          bazel_configs="--config=github-actions"
-          if [[ -n "${BUILDBUDDY_API_KEY}" ]]; then
-            echo "::add-mask::${BUILDBUDDY_API_KEY}"
-            {
-              echo "common --noannounce_rc"
-              echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
-            } >> "${ci_bazelrc}"
-            bazel_configs="${bazel_configs} --config=ci"
-          else
-            echo "BuildBuddy cache disabled: BUILDBUDDY_API_KEY is not available."
-          fi
-          chmod 600 "${ci_bazelrc}"
-          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${ci_bazelrc}" >> "$GITHUB_ENV"
-          echo "HOVEL_BAZEL_ARGS=${bazel_configs}" >> "$GITHUB_ENV"
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.84.0
-
-      - name: Download demo artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: hovel-demos
-          path: demo/out
-
-      - name: Build docs
-        run: task docs:stage
-
-      - name: Job summary
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: task actions:summary -- ci-docs
-
-  squatter-wine:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache Bazelisk and repository downloads
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/bazelisk
-            ~/.cache/bazel-repository
-          key: bazel-repository-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}
-          restore-keys: |
-            bazel-repository-${{ runner.os }}-
-
-      - name: Install Task
-        uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure Bazel cache
-        shell: bash
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: |
-          set +x
-          ci_bazelrc="${RUNNER_TEMP}/bazel-ci.bazelrc"
-          {
-            echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository"
-          } > "${ci_bazelrc}"
-          bazel_configs="--config=github-actions"
-          if [[ -n "${BUILDBUDDY_API_KEY}" ]]; then
-            echo "::add-mask::${BUILDBUDDY_API_KEY}"
-            {
-              echo "common --noannounce_rc"
-              echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
-            } >> "${ci_bazelrc}"
-            bazel_configs="${bazel_configs} --config=ci"
-          else
-            echo "BuildBuddy cache disabled: BUILDBUDDY_API_KEY is not available."
-          fi
-          chmod 600 "${ci_bazelrc}"
-          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${ci_bazelrc}" >> "$GITHUB_ENV"
-          echo "HOVEL_BAZEL_ARGS=${bazel_configs}" >> "$GITHUB_ENV"
-
-      - name: Install Wine
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine
-          wine --version
-
-      - name: Squatter Wine tests
-        run: task squatter:test:wine
-
-      - name: Upload test logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bazel-testlogs-squatter-wine
-          path: bazel-testlogs/
-          if-no-files-found: ignore
-
-      - name: Job summary
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: task actions:summary -- ci-squatter-wine
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache Bazelisk and repository downloads
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/bazelisk
-            ~/.cache/bazel-repository
-          key: bazel-repository-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}
-          restore-keys: |
-            bazel-repository-${{ runner.os }}-
-
-      - name: Install Task
-        uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure Bazel cache
-        shell: bash
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: |
-          set +x
-          ci_bazelrc="${RUNNER_TEMP}/bazel-ci.bazelrc"
-          {
-            echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository"
-          } > "${ci_bazelrc}"
-          bazel_configs="--config=github-actions"
-          if [[ -n "${BUILDBUDDY_API_KEY}" ]]; then
-            echo "::add-mask::${BUILDBUDDY_API_KEY}"
-            {
-              echo "common --noannounce_rc"
-              echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
-            } >> "${ci_bazelrc}"
-            bazel_configs="${bazel_configs} --config=ci"
-          else
-            echo "BuildBuddy cache disabled: BUILDBUDDY_API_KEY is not available."
-          fi
-          chmod 600 "${ci_bazelrc}"
-          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${ci_bazelrc}" >> "$GITHUB_ENV"
-          echo "HOVEL_BAZEL_ARGS=${bazel_configs}" >> "$GITHUB_ENV"
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Install C analysis tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cppcheck clang-tidy
-
-      - name: Verify lint tools
-        run: |
-          go version
-          cppcheck --version
-          clang-tidy --version
-
-      - name: Lint
-        run: task lint
-
-      - name: Job summary
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: task actions:summary -- ci-lint

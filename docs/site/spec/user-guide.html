@@ -321,8 +321,7 @@ h0v3l [demo/mock-survey-exploit] &gt; chain load mock-survey-exploit.chain.yaml<
 
         <h2>Write Or Register A Module</h2>
         <p>Module authors should start with the language-specific examples, keep metadata paths cheap and side-effect free, declare every operator-controlled value, and use the SDK logging rail instead of stdout. Package finished modules as <code>.tgz</code> archives with a <code>hovel-module.yaml</code> manifest.</p>
-<pre data-lang="shell"><code>task modules:build
-hovel module install --link "$PWD/examples/modules/mock-survey"
+<pre data-lang="shell"><code>hovel module install --link "$PWD/modules/examples/go/mock_survey"
 hovel module installed
 hovel module inspect mock-survey-go</code></pre>
 

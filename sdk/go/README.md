@@ -91,25 +91,16 @@ func TestProviderContract(t *testing.T) {
 Focused checks:
 
 ```sh
-task test -- //sdk/go/hovel:hovel_test
-task test -- //sdk/go/hoveltest:hoveltest_test
-task test -- //examples/go/...
+task sdk:fmt
+task check
 ```
 
-Build staged example binaries:
-
-```sh
-task modules:build
-```
-
-Full gate:
-
-```sh
-task ci
-```
+The Go SDK and Go examples are outside the core Bazel workspace after the
+partial-checkout split. Restore slice-local test/package tasks before
+documenting focused SDK labels or staged example binary builds again.
 
 Copy from these examples first:
 
-- [`../../examples/go/mock_survey`](../../examples/go/mock_survey)
-- [`../../examples/go/mock_exploit`](../../examples/go/mock_exploit)
-- [`../../examples/go/mock_exploit_session`](../../examples/go/mock_exploit_session)
+- [`../../modules/examples/go/mock_survey`](../../modules/examples/go/mock_survey)
+- [`../../modules/examples/go/mock_exploit`](../../modules/examples/go/mock_exploit)
+- [`../../modules/examples/go/mock_exploit_session`](../../modules/examples/go/mock_exploit_session)

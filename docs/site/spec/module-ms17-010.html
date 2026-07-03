@@ -67,8 +67,8 @@
           dangerous action.
         </p>
         <p>
-          Both modules live under <code>examples/python/ms17_010_survey/</code> and
-          <code>examples/python/ms17_010_exploit/</code>. They are pure-Python and carry no third-party
+          Both modules live under <code>modules/examples/python/ms17_010_survey/</code> and
+          <code>modules/examples/python/ms17_010_exploit/</code>. They are pure-Python and carry no third-party
           dependencies — the SMB and DCE/RPC wire formats are assembled by hand with
           <code>struct</code> — so they run straight from source through the daemon's interpreter,
           exactly like the mock examples.
@@ -237,7 +237,7 @@
           the per-target configuration; <code>run</code> performs the chain. The shape will be
           familiar from the <a href="module-python.html">Python guide</a>:
         </p>
-<pre data-lang="examples/python/ms17_010_exploit/.../module.py"><code>class MS17010ExploitModule(HovelModule):
+<pre data-lang="modules/examples/python/ms17_010_exploit/.../module.py"><code>class MS17010ExploitModule(HovelModule):
     name = "ms17-010-exploit"
     module_type = "exploit"
     summary = "MS17-010 SMBv1 srv.sys RCE — runs a command as SYSTEM."
@@ -380,8 +380,8 @@ squatter.connect_smb
         </p>
 <pre data-lang="shell"><code>hovel module install ./ms17-010-survey-1.0.0.tgz
 hovel module install ./ms17-010-exploit-1.0.0.tgz
-hovel module install --link "$PWD/examples/python/ms17_010_survey"
-hovel module install --link "$PWD/examples/python/ms17_010_exploit"</code></pre>
+hovel module install --link "$PWD/modules/examples/python/ms17_010_survey"
+hovel module install --link "$PWD/modules/examples/python/ms17_010_exploit"</code></pre>
         <p>A throw supplies the target configuration and the confirmation:</p>
 <pre data-lang="execute params"><code>{
   "target": "10.0.0.42",
@@ -402,8 +402,8 @@ hovel module install --link "$PWD/examples/python/ms17_010_exploit"</code></pre>
 
         <h2 id="files">Where to look</h2>
         <ul>
-          <li><code>examples/python/ms17_010_survey/</code> — the survey module and its SMB touch.</li>
-          <li><code>examples/python/ms17_010_exploit/</code> — the exploit module, primitive, and SCM
+          <li><code>modules/examples/python/ms17_010_survey/</code> — the survey module and its SMB touch.</li>
+          <li><code>modules/examples/python/ms17_010_exploit/</code> — the exploit module, primitive, and SCM
             client.</li>
           <li><a href="module-python.html">Python Modules</a> — the SDK surface these are built on.</li>
           <li><a href="safety.html">Safety and Scope</a> — the trust model the dangerous tag plugs

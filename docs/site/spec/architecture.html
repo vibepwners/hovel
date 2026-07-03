@@ -268,48 +268,45 @@ hovel throw &lt;chain-file&gt; --now
         <p>Command handlers receive validated invocation objects from the registry layer. They must not parse raw shell strings or argv themselves.</p>
 
         <h2>Package Layout</h2>
-        <p>The current repository keeps the domain core, application services, adapters, infrastructure, SDKs, examples, payloads, schemas, docs, and release tooling in one tree:</p>
+        <p>The repository is split into sparse-checkout friendly slices. The framework binary and daemon live in a standalone core workspace; SDKs, modules, and docs live beside it:</p>
 <pre data-lang="tree"><code>hovel/
-  cmd/
-    hovel/
-  internal/
-    app/
-    domain/
-    adapters/
-      cli/
-      mcp/
-      daemonrpc/
-      rootcli/
-      storage/
-      commandmode/
-      terminallog/
-      descriptor/
-    infra/
-      daemonmanager/
-      daemonruntime/
-    modules/
-      pythonrpc/
-      mockexploit/
+  core/
+    cmd/
+      hovel/
+    internal/
+      app/
+      domain/
+      adapters/
+      infra/
+      moduleruntime/
+      testmodules/
+    schemas/
+    tools/
+      lint/
+      release/
+      tests/
   sdk/
     go/
     python/
     rust/
-  examples/
-    go/
-    python/
-    rust/
-  payloads/
+  modules/
+    examples/
+      go/
+      python/
+      rust/
     squatter/
       provider/
       client/
       windows/
-  schemas/
-  spec/
-  tools/
-    docs/
-    lint/
-    modules/
-    release/
+    tools/
+    lab/
+  docs/
+    site/
+      spec/
+      assets/
+    demo/
+    tools/
+  repo-tools/
 </code></pre>
 
         <h2>Multi-Client Attach</h2>

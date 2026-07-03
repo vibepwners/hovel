@@ -64,7 +64,7 @@
           hand-rolls a tiny JSON layer and base64 codec rather than pulling in
           <code>serde_json</code>, so the whole crate builds with nothing but the standard
           library. Real modules are free to add whatever crates they like. The worked examples
-          are under <code>examples/rust/</code>. The generated source reference is published at
+          are under <code>modules/examples/rust/</code>. The generated source reference is published at
           <a href="../api/sdk/rust/hovel/index.html">Rust SDK API</a>.
         </p>
         <blockquote>
@@ -113,7 +113,7 @@ fn main() { hovel::serve(MyModule); }</code></pre>
         </p>
 
         <h2>A survey module</h2>
-<pre data-lang="examples/rust/mock_survey/src/main.rs"><code>use hovel::json::Value;
+<pre data-lang="modules/examples/rust/mock_survey/src/main.rs"><code>use hovel::json::Value;
 use hovel::{Context, Info, Module, ModuleType, Outcome, Requirement, Schema};
 
 struct MockSurvey;
@@ -262,8 +262,12 @@ fn info_is_a_rust_exploit() {
     assert_eq!(info.name, "mock-exploit-rust");
     assert_eq!(info.module_type, ModuleType::Exploit);
 }</code></pre>
-<pre data-lang="shell"><code>task test -- //examples/rust/mock_exploit:mock_exploit_rust_test
-task test -- //sdk/rust/hovel:hovel_test</code></pre>
+<p>
+          The Rust SDK and in-repo Rust examples now live outside the core Bazel
+          workspace. Restore a slice-local SDK/modules check before documenting
+          focused <code>//modules/examples/rust:...</code> or <code>//sdk/rust:...</code>
+          labels again.
+        </p>
         <p>
           For real exploit work, keep parsers, packet builders, state machines, and
           result construction behind testable functions. Reserve live target execution
@@ -272,13 +276,12 @@ task test -- //sdk/rust/hovel:hovel_test</code></pre>
 
         <h2>Build, package, and run</h2>
         <p>
-          Rust is wired into Bazel via <code>rules_rust</code> (declared in
-          <code>MODULE.bazel</code>), so <code>task build</code> and <code>task ci</code> cover
-          it alongside Go and Python. BUILD files are hand-written
-          (<code>rust_binary</code> + <code>rust_test</code>); release packages carry the
-          compiled binaries and host-platform launch entries.
+          Rust examples are part of the <code>modules/</code> slice after the
+          partial-checkout split. Their previous Bazel build and package tasks
+          should be restored as module-slice tasks instead of being described as
+          part of the core <code>task build</code> or <code>task ci</code> gate.
         </p>
-<pre data-lang="examples/rust/mock_survey/BUILD.bazel"><code>rust_binary(
+<pre data-lang="modules/examples/rust/mock_survey/BUILD.bazel"><code>rust_binary(
     name = "mock-survey-rust",
     srcs = ["src/main.rs"],
     edition = "2021",
@@ -297,8 +300,7 @@ launch:
       os: linux
       arch: amd64
     command: ["bin/linux-amd64/mock-survey-rust"]</code></pre>
-<pre data-lang="shell"><code>task modules:build
-hovel module install --link "$PWD/examples/rust/mock_survey"
+<pre data-lang="shell"><code>hovel module install --link "$PWD/modules/examples/rust/mock_survey"
 task start
 hovel&gt; module installed   # ... mock-survey-rust, mock-exploit-rust, mock-exploit-session-rust</code></pre>
         <p>

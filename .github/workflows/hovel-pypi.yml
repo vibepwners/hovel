@@ -29,13 +29,23 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: core/go.mod
           cache: false
 
       - name: Check committed version
         shell: bash
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
+          core_version="$(tr -d '[:space:]' < core/VERSION)"
+          sdk_version="$(python -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("sdk/python/pyproject.toml").read_text())["project"]["version"])')"
+          if [[ "${version}" != "${core_version}" ]]; then
+            echo "::error::root VERSION ${version} does not match core/VERSION ${core_version}"
+            exit 1
+          fi
+          if [[ "${version}" != "${sdk_version}" ]]; then
+            echo "::error::root VERSION ${version} does not match sdk/python/pyproject.toml ${sdk_version}"
+            exit 1
+          fi
           if [[ "${{ github.event_name }}" == "release" && "${GITHUB_REF_NAME#v}" != "${version}" ]]; then
             echo "::error::release tag ${GITHUB_REF_NAME} does not match committed VERSION ${version}"
             exit 1
@@ -49,7 +59,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hovel-wheels
-          path: dist/*.whl
+          path: core/dist/*.whl
           if-no-files-found: error
 
       - name: Job summary
@@ -57,69 +67,6 @@ jobs:
         env:
           JOB_STATUS: ${{ job.status }}
         run: task actions:summary -- publish-hovel-build
-
-  modules:
-    name: Build module release packages
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Task
-        uses: arduino/setup-task@v2
-        with:
-          version: 3.x
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Check committed version
-        shell: bash
-        run: |
-          version="$(tr -d '[:space:]' < VERSION)"
-          if [[ "${{ github.event_name }}" == "release" && "${GITHUB_REF_NAME#v}" != "${version}" ]]; then
-            echo "::error::release tag ${GITHUB_REF_NAME} does not match committed VERSION ${version}"
-            exit 1
-          fi
-          echo "Packaging release module artifacts from committed VERSION ${version}"
-
-      - name: Build module packages
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "release" ]]; then
-            HOVEL_MODULE_RELEASE_BASE_URL="https://github.com/${{ github.repository }}/releases/download/${GITHUB_REF_NAME}" task modules:package
-          else
-            task modules:package
-          fi
-
-      - name: Upload module package artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hovel-module-packages
-          path: dist/modules/*
-          if-no-files-found: error
-
-      - name: Upload module packages to GitHub Release
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/modules/* --clobber
-
-      - name: Job summary
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-        run: task actions:summary -- publish-hovel-modules
 
   publish:
     needs: build

@@ -68,6 +68,47 @@ tasks:
     cmds:
       - task coverage
 
+  upver:
+    desc: Update the lockstep Hovel core and SDK version.
+    dir: core
+    cmds:
+      - task upver -- {{.CLI_ARGS}}
+
+  upver:test:
+    desc: Check the lockstep Hovel version updater.
+    dir: core
+    cmds:
+      - task upver:test
+
+  release:hovel-wheel:
+    desc: Build the PyPI wheel that packages the Hovel Go binary.
+    dir: core
+    cmds:
+      - task release:hovel-wheel
+
+  release:hovel-wheels:
+    desc: Cross-build all Hovel PyPI wheels from Linux through Bazel.
+    dir: core
+    cmds:
+      - task release:hovel-wheels
+
+  release:hovel-sdk-dist:
+    desc: Build the Python SDK source and wheel distributions.
+    cmds:
+      - uv build sdk/python --out-dir dist
+
+  actions:summary:
+    desc: Append a GitHub Actions job summary for wired core jobs.
+    dir: core
+    cmds:
+      - task actions:summary -- {{.CLI_ARGS}}
+
+  actions:summary:test:
+    desc: Check the GitHub Actions summary renderer.
+    dir: core
+    cmds:
+      - task actions:summary:test
+
   core:build:
     desc: Build the core Hovel binary workspace.
     dir: core

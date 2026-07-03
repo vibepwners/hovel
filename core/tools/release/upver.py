@@ -16,7 +16,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", nargs="?", help="new version, with or without leading v")
     parser.add_argument("--sync", action="store_true", help="rewrite derived version fields from VERSION")
-    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[3])
     args = parser.parse_args()
 
     current = read_current(args.root)
@@ -51,15 +51,22 @@ def normalize(version: str) -> str:
 
 def write_version(root: Path, version: str) -> None:
     (root / "VERSION").write_text(version + "\n", encoding="utf-8")
+    (root / "core" / "VERSION").write_text(version + "\n", encoding="utf-8")
 
 
 def sync(root: Path, version: str) -> None:
     replace_one(
-        root / "MODULE.bazel",
+        root / "core" / "MODULE.bazel",
         r'(module\(\n\s+name = "hovel",\n\s+version = ")[^"]+(")',
         rf"\g<1>{version}\2",
     )
-    replace_one(root / "internal/version/version.go", r'const Version = "[^"]+"', f'const Version = "{version}"')
+    replace_one(root / "core" / "internal" / "version" / "version.go", r'const Version = "[^"]+"', f'const Version = "{version}"')
+    replace_one(root / "sdk" / "python" / "pyproject.toml", r'(version = ")[^"]+(")', rf"\g<1>{version}\2")
+    replace_one(
+        root / "sdk" / "python" / "uv.lock",
+        r'(\[\[package\]\]\nname = "hovel-sdk"\nversion = ")[^"]+(")',
+        rf"\g<1>{version}\2",
+    )
 
 
 def replace_one(path: Path, pattern: str, replacement: str) -> None:

@@ -27,6 +27,16 @@ jobs:
         shell: bash
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
+          core_version="$(tr -d '[:space:]' < core/VERSION)"
+          sdk_version="$(python -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("sdk/python/pyproject.toml").read_text())["project"]["version"])')"
+          if [[ "${version}" != "${core_version}" ]]; then
+            echo "::error::root VERSION ${version} does not match core/VERSION ${core_version}"
+            exit 1
+          fi
+          if [[ "${version}" != "${sdk_version}" ]]; then
+            echo "::error::root VERSION ${version} does not match sdk/python/pyproject.toml ${sdk_version}"
+            exit 1
+          fi
           if [[ "${{ github.event_name }}" == "release" && "${GITHUB_REF_NAME#v}" != "${version}" ]]; then
             echo "::error::release tag ${GITHUB_REF_NAME} does not match committed VERSION ${version}"
             exit 1

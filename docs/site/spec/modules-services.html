@@ -77,10 +77,11 @@
         <p>
           The in-tree examples are deliberately benign and exercise the orchestration
           surface: survey, exploit, and session modules exist in Python, Go, and Rust.
-          The Go and Rust examples plus the Squatter provider are built by
-          <code>task modules:build</code>; release tasks package them as <code>.tgz</code>
-          artifacts. Python examples can be linked during development or packaged with a
-          managed Python launcher.
+          These examples and Squatter now live in the <code>modules/</code> slice.
+          Their previous aggregate build/package tasks are not wired into the
+          current root dispatcher; restore them as module-slice tasks before
+          treating them as part of the default core gate. Python examples can be
+          linked during development or packaged with a managed Python launcher.
         </p>
 
         <h2>Module Lifecycle</h2>
@@ -265,19 +266,19 @@ close_session(sessionRef) -&gt; CloseResult
               <td><a href="module-python.html">Python</a></td>
               <td>Subclass <code>HovelModule</code>; implement sync or async <code>run</code>.</td>
               <td>Package launcher using managed Python, an interpreter path, or a bundled interpreter.</td>
-              <td><code>examples/python/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
+              <td><code>modules/examples/python/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
             </tr>
             <tr>
               <td><a href="module-go.html">Go</a></td>
               <td>Implement <code>hovel.Module</code>; optionally <code>StepProvider</code> or <code>PayloadProvider</code>.</td>
               <td>Package launch entry pointing at a compiled binary.</td>
-              <td><code>examples/go/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
+              <td><code>modules/examples/go/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
             </tr>
             <tr>
               <td><a href="module-rust.html">Rust</a></td>
               <td>Implement the <code>hovel::Module</code> trait and return <code>Outcome</code>.</td>
               <td>Package launch entry pointing at a compiled binary.</td>
-              <td><code>examples/rust/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
+              <td><code>modules/examples/rust/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
             </tr>
           </tbody>
         </table>

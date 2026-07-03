@@ -121,12 +121,12 @@ tasks:
       - go mod tidy
 
   upver:
-    desc: 'Update Hovel core version: task upver -- 0.2.0.'
+    desc: 'Update the lockstep Hovel core and SDK version: task upver -- 0.2.0.'
     cmds:
       - python3 tools/release/upver.py {{.CLI_ARGS}}
 
   upver:test:
-    desc: Check the version updater.
+    desc: Check the lockstep Hovel version updater.
     cmds:
       - python3 tools/release/upver_test.py
 

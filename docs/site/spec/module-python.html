@@ -62,7 +62,7 @@
           Python is the quickest way to write a Hovel module: there is no build step, and the
           daemon launches it straight from source through the interpreter. The SDK lives at
           <code>sdk/python/hovel_sdk</code>; the worked examples are under
-          <code>examples/python/</code>.
+          <code>modules/examples/python/</code>.
         </p>
 
         <h2>The SDK in one import</h2>
@@ -112,7 +112,7 @@
           become the <code>handshake</code> and <code>schema</code> responses; <code>run</code>
           becomes <code>execute</code>.
         </p>
-<pre data-lang="examples/python/mock_survey/.../module.py"><code>from hovel_sdk import Context, HovelModule, Requirement, Result
+<pre data-lang="modules/examples/python/mock_survey/.../module.py"><code>from hovel_sdk import Context, HovelModule, Requirement, Result
 
 
 class MockSurvey(HovelModule):
@@ -302,7 +302,7 @@ class MockExploitSession(HovelModule):
 
         <h2>Entry point</h2>
         <p>Each module package has a <code>__main__.py</code> so the daemon can run <code>python -m &lt;module&gt;</code>.</p>
-<pre data-lang="examples/python/mock_survey/.../__main__.py"><code>from hovel_example_survey.module import MockSurvey
+<pre data-lang="modules/examples/python/mock_survey/.../__main__.py"><code>from hovel_example_survey.module import MockSurvey
 from hovel_sdk import serve
 
 
@@ -368,8 +368,11 @@ def test_session_over_framed_rpc() -&gt; None:
           <code>drive_module(module, script)</code> is a shorter wrapper for tests that
           only need the final notification list.
         </p>
-<pre data-lang="shell"><code>task test -- //examples/python:mock_exploit_test
-task test -- //examples/python:mock_exploit_session_test</code></pre>
+<p>
+          The Python SDK and in-repo Python examples now live outside the core Bazel
+          workspace. Restore a slice-local SDK/modules check before documenting
+          focused <code>//modules/examples/python:...</code> labels again.
+        </p>
         <p>
           Move to daemon or CLI tests only after pure parsing, schema, failure paths,
           artifact construction, and session behavior are covered. Real network-facing
@@ -393,7 +396,7 @@ launch:
       managed:
         versions: ["3.10-3.14"]
       command: ["{python}", "-m", "hovel_example_survey"]</code></pre>
-<pre data-lang="shell"><code>hovel module install --link "$PWD/examples/python/mock_survey"
+<pre data-lang="shell"><code>hovel module install --link "$PWD/modules/examples/python/mock_survey"
 hovel module check mock-survey
 task start
 hovel&gt; module installed  # mock-survey, mock-exploit, mock-exploit-session ...</code></pre>

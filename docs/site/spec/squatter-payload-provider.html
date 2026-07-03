@@ -96,7 +96,7 @@
         </ol>
 
         <h2>Repository Shape</h2>
-<pre data-lang="tree"><code>payloads/
+<pre data-lang="tree"><code>modules/
   squatter/
     README.md
     BUILD.bazel
@@ -484,12 +484,12 @@ capabilities        host.info, file.get, file.put, file.stat, registry.query,
 
         <h2>Build Contract</h2>
         <p>
-          Squatter is part of Hovel's default build graph. <code>task build</code>
-          builds the provider and the Windows payload target through
-          <code>//payloads/squatter:build</code>. <code>task test</code> includes
-          provider tests, PE/source-contract tests, and platform-compatible Squatter
-          tests. CI also runs <code>task squatter:test:wine</code> for the Windows C++
-          and functional tests that need Wine.
+          Squatter now lives in the <code>modules/</code> slice, outside the core
+          Hovel framework workspace. The previous root Bazel labels and
+          aggregate tasks for Squatter are not wired into the current root
+          dispatcher. Restore a module-slice build workspace before documenting
+          <code>//modules/squatter:...</code> labels or Wine-backed Squatter CI
+          tasks again.
         </p>
         <p>
           The Windows payload uses repo-local Bazel rules over a pinned MinGW archive:

@@ -71,16 +71,13 @@ task check
         <p><code>task ci</code> first requires a full checkout. It then runs lint, version-updater tests, demo-backed documentation staging, build, tests, the Go race gate, fuzz smoke, and coverage ratchets. The docs step builds the Bazel-declared VHS demo outputs, stages the GitHub Pages site, generates SDK API pages, and runs the internal link checker.</p>
 
         <h2>CI Gate</h2>
-        <p>The GitHub Actions workflow is split so slow or environment-specific work is visible:</p>
+        <p>The repository split changed the CI shape. The currently wired local gate is core-centered:</p>
         <ol>
-          <li><code>build-test</code>: <code>task build</code>, release-wheel build, <code>task test</code>, <code>task test:race</code>, <code>task fuzz:smoke</code>, and <code>task coverage</code>.</li>
-          <li><code>demos</code>: cacheable Bazel outputs for the standard terminal demos and the Docker/Wine Squatter MCP demo.</li>
-          <li><code>docs</code>: stages the Pages site from the generated demo artifacts with <code>task docs:stage</code>.</li>
-          <li><code>squatter-wine</code>: runs Squatter Windows C++ and functional tests through <code>task squatter:test:wine</code>.</li>
-          <li><code>lint</code>: <code>task lint</code>.</li>
+          <li><code>core</code>: <code>task build</code>, <code>task test</code>, race tests, fuzz smoke, lint, and coverage for the core workspace.</li>
+          <li><code>sdk</code>, <code>modules</code>, and <code>docs</code>: detected by <code>task check</code>, but slice-local checks still need to be restored.</li>
         </ol>
         <p>CI, Pages, and publish jobs append GitHub Actions job summaries with the commands they ran, coverage ratchets, generated artifacts, staged site statistics, or publish targets where those details apply.</p>
-        <p>GitHub Pages deploys only after the CI workflow succeeds, then runs <code>task docs</code> again before publishing the staged site.</p>
+        <p>Docs and demo checks should come back as docs-slice tasks rather than as dependencies of every core checkout.</p>
 
         <h2>Test Inventory</h2>
         <p>The root Bazel test suite covers the main product surfaces:</p>

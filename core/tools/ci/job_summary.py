@@ -24,44 +24,24 @@ class JobSummary:
 
 JOBS = {
     "ci-build-test": JobSummary(
-        title="CI Build and Test",
+        title="CI Core Gate",
         commands=(
-            "task build",
+            "task checkout:status",
+            "task lint",
+            "task build -- //:build",
             "task release:hovel-wheels",
-            "task test",
-            "task test:race",
-            "task fuzz:smoke",
+            "task test -- //:ci_test",
+            "task test -- //:race_test //:fuzz_smoke_test",
             "task coverage",
         ),
         details=("Bazel test logs are uploaded as an artifact when this job fails.",),
         coverage=True,
     ),
-    "ci-demos": JobSummary(
-        title="CI Demos",
-        commands=("task demos", "task demo:squatter-wine"),
-        artifact_glob="demo/out/*.gif",
-    ),
-    "ci-docs": JobSummary(
-        title="CI Docs",
-        commands=("task docs:stage",),
-        details=("This job stages the GitHub Pages site from generated demo artifacts.",),
-        site_root="_site",
-    ),
-    "ci-squatter-wine": JobSummary(
-        title="CI Squatter Wine",
-        commands=("task squatter:test:wine",),
-        details=("Bazel test logs are uploaded as an artifact when this job fails.",),
-    ),
-    "ci-lint": JobSummary(
-        title="CI Lint",
-        commands=("task lint",),
-        details=("Includes Go formatting, Gazelle, Rust checks, Python checks, and Squatter C checks.",),
-    ),
     "pages-build": JobSummary(
         title="Pages Build",
-        commands=("task docs", "actions/upload-pages-artifact"),
-        details=("This job rebuilds the full Pages site before deployment.",),
-        site_root="_site",
+        commands=("actions/upload-pages-artifact",),
+        details=("This job publishes the checked-in docs/site tree. Docs-slice generation is not wired yet.",),
+        site_root="../docs/site",
     ),
     "publish-hovel-build": JobSummary(
         title="Publish Hovel Wheels",
@@ -69,17 +49,11 @@ JOBS = {
         details=("The release tag must match the committed VERSION before wheels are built.",),
         artifact_glob="dist/hovel-*.whl",
     ),
-    "publish-hovel-modules": JobSummary(
-        title="Publish Hovel Module Packages",
-        commands=("task modules:package", "actions/upload-artifact", "gh release upload"),
-        details=("Release uploads run only for published-release events and include the bulk-install manifest.",),
-        artifact_glob="dist/modules/*",
-    ),
     "publish-sdk-build": JobSummary(
         title="Publish Hovel SDK Distribution",
         commands=("task release:hovel-sdk-dist", "actions/upload-artifact"),
         details=("The release tag must match the committed VERSION before the SDK distribution is built.",),
-        artifact_glob="dist/*",
+        artifact_glob="../dist/*",
     ),
 }
 

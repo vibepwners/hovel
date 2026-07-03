@@ -227,7 +227,7 @@ hovel module uninstall squatter@{{HOVEL_VERSION}}
         <p>Installing the same <code>name@version</code> with a different SHA-256 fails unless <code>--replace</code> is supplied. Bulk install accepts local manifest files or HTTPS manifest URLs. Relative sources in a downloaded manifest resolve against the manifest URL. Bulk install runs in order, stops on the first failure, and does not roll back earlier successful installs.</p>
 
         <h2>Indexes And Bulk Manifests</h2>
-        <p>Hovel has no default internet index. An operator may configure or pass an index explicitly. Source-tree development also discovers the local <code>dist/modules/module-index.yaml</code> produced by <code>task modules:package</code> when <code>HOVEL_MODULE_CONFIG</code> points at the in-repo examples catalog. The same task also writes <code>dist/modules/module-install-set.yaml</code> for bulk installs. Cached HTTPS indexes are available offline after the first explicit fetch.</p>
+        <p>Hovel has no default internet index. An operator may configure or pass an index explicitly. Source-tree development can discover local module indexes when <code>HOVEL_MODULE_CONFIG</code> points at an in-repo or private module catalog. The old aggregate <code>task modules:package</code> flow is not wired into the current root dispatcher; module index/package generation should be restored as a module-slice task. Cached HTTPS indexes are available offline after the first explicit fetch.</p>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleIndex
 modules:
@@ -281,15 +281,14 @@ modules:
           <li>Own generated schemas and contract-test outputs.</li>
           <li>Produce release archives, PyPI wheels, and module packages.</li>
         </ol>
-        <p>The minimum repository contract is, with <a href="https://taskfile.dev/">Task</a> as the single entry point:</p>
+        <p>The current repository contract is, with <a href="https://taskfile.dev/">Task</a> as the single entry point:</p>
 <pre data-lang="bash"><code>task build
 task test
-task fmt     # gofmt + Gazelle + Squatter C format
-task modules:package
+task fmt     # wired formatters: core Go/Gazelle plus Go SDK
 task check   # checks available in this checkout
-task ci      # full-checkout gate
+task ci      # full-checkout guard plus wired core gate
 </code></pre>
-        <p><code>Taskfile.yml</code> is the one correct way to build, test, lint, format, and run; contributors, CI, and tooling never invoke Bazel, gofmt, uv, or lefthook directly. Tasks are thin wrappers over Bazel targets, not an alternate build system. <code>task check</code> is tolerant of partial checkouts and runs the slices present in the working tree. <code>task ci</code> requires the full checkout so release and merge gates cannot accidentally omit docs, modules, payloads, or coverage.</p>
+        <p><code>Taskfile.yml</code> is the one correct way to build, test, lint, format, and run; contributors, CI, and tooling never invoke Bazel, gofmt, uv, or lefthook directly. The root task file is a sparse-checkout tolerant dispatcher. Today the wired build/test/lint/coverage gate is centered on <code>core/</code>; SDK, module, and docs slice checks should be restored as slice-local workspaces instead of forcing every sparse checkout to carry the full tree.</p>
 
         <h2>Distribution</h2>
         <p>The released Go mono-binary is still available directly from GitHub Releases:</p>

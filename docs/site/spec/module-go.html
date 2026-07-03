@@ -63,7 +63,7 @@
           A Go module compiles to a single static binary that the daemon launches by path. The
           SDK is standard-library only and lives at <code>sdk/go/hovel</code>
           (<code>github.com/Vibe-Pwners/hovel/sdk/go/hovel</code>); the worked examples are
-          under <code>examples/go/</code>. The shapes mirror the
+          under <code>modules/examples/go/</code>. The shapes mirror the
           <a href="module-python.html">Python SDK</a> one-to-one.
           Generated references are published for
           <a href="../api/sdk/go/hovel/index.html">hovel</a> and
@@ -92,7 +92,7 @@ func main() { hovel.Serve(MyModule{}) }</code></pre>
         </p>
 
         <h2>A survey module</h2>
-<pre data-lang="examples/go/mock_survey/main.go"><code>package main
+<pre data-lang="modules/examples/go/mock_survey/main.go"><code>package main
 
 import (
     "fmt"
@@ -281,8 +281,12 @@ return hovel.Ok(
           JSON-RPC surface, including handshake, schema, step methods, payload-provider
           methods, and shutdown behavior.
         </p>
-<pre data-lang="shell"><code>task test -- //examples/go/mock_exploit:mock_exploit_test
-task test -- //sdk/go/hoveltest:hoveltest_test</code></pre>
+<p>
+          The Go SDK and in-repo Go examples now live outside the core Bazel
+          workspace. Restore a slice-local SDK/modules check before documenting
+          focused <code>//modules/examples/go:...</code> or <code>//sdk/go:...</code>
+          labels again.
+        </p>
 
         <h2>Build, package, and run</h2>
         <p>
@@ -290,7 +294,7 @@ task test -- //sdk/go/hoveltest:hoveltest_test</code></pre>
           <code>task fmt</code>). The release package carries the compiled binary and a
           <code>hovel-module.yaml</code> launch entry for each supported host platform.
         </p>
-<pre data-lang="examples/go/mock_survey/BUILD.bazel"><code>go_binary(
+<pre data-lang="modules/examples/go/mock_survey/BUILD.bazel"><code>go_binary(
     name = "mock_survey",
     embed = [":mock_survey_lib"],
 )</code></pre>
@@ -311,13 +315,13 @@ launch:
       os: darwin
       arch: arm64
     command: ["bin/darwin-arm64/mock-survey-go"]</code></pre>
-<pre data-lang="shell"><code>task modules:build
-hovel module install --link "$PWD/examples/go/mock_survey"
+<pre data-lang="shell"><code>hovel module install --link "$PWD/modules/examples/go/mock_survey"
 task start
 hovel&gt; module installed   # ... mock-survey-go, mock-exploit-go, mock-exploit-session-go</code></pre>
         <p>
-          Add new test targets to the <code>test_suite</code> in the root
-          <code>BUILD.bazel</code>, then gate with <code>task ci</code>.
+          Module-slice build and packaging tasks are not wired into the root
+          dispatcher yet. Add new core tests to <code>core/BUILD.bazel</code>;
+          add module tests to the module slice once its local workspace is restored.
         </p>
       </article>
 
