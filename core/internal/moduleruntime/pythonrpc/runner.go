@@ -846,9 +846,13 @@ func defaultModuleConfigCandidates() []string {
 		if root == "" {
 			continue
 		}
+		add(filepath.Join(root, "modules", "examples", "hovel-modules.json"))
+		add(filepath.Join(root, "modules", "examples", "python", "hovel-modules.json"))
 		add(filepath.Join(root, "examples", "hovel-modules.json"))
 		add(filepath.Join(root, "examples", "python", "hovel-modules.json"))
 	}
+	add(filepath.Join("modules", "examples", "hovel-modules.json"))
+	add(filepath.Join("modules", "examples", "python", "hovel-modules.json"))
 	add(filepath.Join("examples", "hovel-modules.json"))
 	add(filepath.Join("examples", "python", "hovel-modules.json"))
 	return candidates

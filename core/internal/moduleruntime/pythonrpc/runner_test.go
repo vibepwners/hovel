@@ -1905,19 +1905,19 @@ func TestRPCClientTimeoutDoesNotCorruptNextCall(t *testing.T) {
 	}
 }
 
-const exampleModuleConfig = "examples/python/hovel-modules.json"
+const exampleModuleConfig = "modules/examples/python/hovel-modules.json"
 
 func TestRunnerConfigPathDiscoversRepoDefault(t *testing.T) {
 	t.Setenv(ModuleConfigEnv, "")
 	root := t.TempDir()
-	configPath := filepath.Join(root, "examples", "hovel-modules.json")
+	configPath := filepath.Join(root, "modules", "examples", "hovel-modules.json")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(configPath, []byte(`{"modules":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(filepath.Join(root, "examples"))
+	t.Chdir(filepath.Join(root, "modules", "examples"))
 
 	if got := (Runner{}).configPath(); got != configPath {
 		t.Fatalf("configPath() = %q, want %q", got, configPath)
@@ -1927,8 +1927,8 @@ func TestRunnerConfigPathDiscoversRepoDefault(t *testing.T) {
 func TestRunnerConfigPathPrefersFullExampleCatalogOverPythonFixture(t *testing.T) {
 	t.Setenv(ModuleConfigEnv, "")
 	root := t.TempDir()
-	pythonConfig := filepath.Join(root, "examples", "python", "hovel-modules.json")
-	fullConfig := filepath.Join(root, "examples", "hovel-modules.json")
+	pythonConfig := filepath.Join(root, "modules", "examples", "python", "hovel-modules.json")
+	fullConfig := filepath.Join(root, "modules", "examples", "hovel-modules.json")
 	if err := os.MkdirAll(filepath.Dir(pythonConfig), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1947,8 +1947,8 @@ func TestRunnerConfigPathPrefersFullExampleCatalogOverPythonFixture(t *testing.T
 func TestRunnerConfigPathKeepsPythonFixtureWhenFullCatalogBinaryIsMissing(t *testing.T) {
 	t.Setenv(ModuleConfigEnv, "")
 	root := t.TempDir()
-	pythonConfig := filepath.Join(root, "examples", "python", "hovel-modules.json")
-	fullConfig := filepath.Join(root, "examples", "hovel-modules.json")
+	pythonConfig := filepath.Join(root, "modules", "examples", "python", "hovel-modules.json")
+	fullConfig := filepath.Join(root, "modules", "examples", "hovel-modules.json")
 	if err := os.MkdirAll(filepath.Dir(pythonConfig), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1968,8 +1968,8 @@ func TestRunnerConfigPathUsesBuildWorkspaceCatalogBeforeRunfilesFixture(t *testi
 	t.Setenv(ModuleConfigEnv, "")
 	t.Setenv("HOVEL_REPO_ROOT", "")
 	sourceRoot := t.TempDir()
-	sourceConfig := filepath.Join(sourceRoot, "examples", "hovel-modules.json")
-	sourceProvider := filepath.Join(sourceRoot, "examples", "bin", "squatter-provider")
+	sourceConfig := filepath.Join(sourceRoot, "modules", "examples", "hovel-modules.json")
+	sourceProvider := filepath.Join(sourceRoot, "modules", "examples", "bin", "squatter-provider")
 	if err := os.MkdirAll(filepath.Dir(sourceProvider), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1981,7 +1981,7 @@ func TestRunnerConfigPathUsesBuildWorkspaceCatalogBeforeRunfilesFixture(t *testi
 	}
 
 	runfilesRoot := t.TempDir()
-	runfilesPythonConfig := filepath.Join(runfilesRoot, "examples", "python", "hovel-modules.json")
+	runfilesPythonConfig := filepath.Join(runfilesRoot, "modules", "examples", "python", "hovel-modules.json")
 	if err := os.MkdirAll(filepath.Dir(runfilesPythonConfig), 0o755); err != nil {
 		t.Fatal(err)
 	}

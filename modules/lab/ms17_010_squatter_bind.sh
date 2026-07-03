@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 workspace="${HOVEL_WORKSPACE:-"$root/.hovel"}"
-module_config="${HOVEL_MODULE_CONFIG:-"$root/examples/hovel-modules.json"}"
+module_config="${HOVEL_MODULE_CONFIG:-"$root/modules/examples/hovel-modules.json"}"
 target_host="${HOVEL_LAB_TARGET_HOST:-192.168.122.142}"
 target_id="${HOVEL_LAB_TARGET_ID:-xp-lab}"
 transport="${HOVEL_SQUATTER_TYPE:-tcp-bind}"
@@ -28,7 +28,7 @@ if [[ -n "$remote_path" ]]; then
 fi
 
 admin_probe_ok() {
-  HOVEL_MODULE_CONFIG="$module_config" task run -- //payloads/squatter/client/cmd/smbadminctl -- \
+  HOVEL_MODULE_CONFIG="$module_config" task run -- //modules/squatter/client/cmd/smbadminctl -- \
     --user "$smb_user" --password "$smb_password" --domain "$smb_domain" --read 'C:\Windows\win.ini' "$target_host" >/dev/null
 }
 

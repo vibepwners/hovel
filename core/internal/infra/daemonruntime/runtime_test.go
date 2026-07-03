@@ -15,7 +15,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if err := os.Setenv("HOVEL_MODULE_CONFIG", "examples/python/hovel-modules.json"); err != nil {
+	if err := os.Setenv("HOVEL_MODULE_CONFIG", "modules/examples/python/hovel-modules.json"); err != nil {
 		panic(err)
 	}
 	os.Exit(m.Run())

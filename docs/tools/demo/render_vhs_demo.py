@@ -124,7 +124,7 @@ def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:
     install(args.mock_survey_go, repo / "examples/bin/mock-survey-go")
     install(args.mock_exploit_session_go, repo / "examples/bin/mock-exploit-session-go")
     write_module_config(
-        repo / "examples/hovel-modules.json",
+        repo / "modules/examples/hovel-modules.json",
         [
             {"id": "mock-survey-go", "runtime": "jsonrpc-stdio", "command": ["bin/mock-survey-go"]},
             {
@@ -142,7 +142,7 @@ def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:
         install(args.docker_entrypoint, repo / "tools/docker/squatter-wine/entrypoint.sh")
         install(args.docker_runner, repo / "tools/docker/squatter-wine/run.sh")
         write_module_config(
-            repo / "examples/hovel-modules.json",
+            repo / "modules/examples/hovel-modules.json",
             [{"id": "squatter", "runtime": "jsonrpc-stdio", "command": ["bin/squatter-provider"]}],
         )
         image = os.environ.get("HOVEL_SQUATTER_WINE_IMAGE", "hovel/squatter-wine:latest")

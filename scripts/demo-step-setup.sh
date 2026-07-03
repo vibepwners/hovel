@@ -184,7 +184,7 @@ hovel_demo_setup() {
   step_id="$(printf '%s' "$step" | cksum | awk '{print $1}')"
   local bin_dir="$repo_root/demo/tmp/b-$step_id"
 
-  export HOVEL_MODULE_CONFIG="$repo_root/examples/hovel-modules.json"
+  export HOVEL_MODULE_CONFIG="$repo_root/modules/examples/hovel-modules.json"
   export HOVEL_WORKSPACE="$repo_root/demo/tmp/w-$step_id"
   export HOVEL_DEMO_CHAIN="$chain"
   export HOVEL_CLI_NO_WELCOME=1

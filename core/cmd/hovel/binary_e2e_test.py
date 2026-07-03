@@ -24,7 +24,7 @@ def main() -> int:
     daemon: subprocess.Popen[str] | None = None
     try:
         env = os.environ | {
-            "HOVEL_MODULE_CONFIG": str(find_runfile("examples/python/hovel-modules.json")),
+            "HOVEL_MODULE_CONFIG": str(find_runfile("modules/examples/python/hovel-modules.json")),
             "HOVEL_PYTHON_SDK_ROOT": str(find_runfile("sdk/python")),
         }
         daemon_out = (workspace / "daemon.out").open("w")

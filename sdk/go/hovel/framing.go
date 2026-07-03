@@ -58,25 +58,31 @@ func (fr *frameReader) read() (map[string]json.RawMessage, error) {
 }
 
 func (fr *frameReader) readHeader() (int, error) {
-	line, err := fr.reader.ReadString('\n')
-	if err != nil {
-		return 0, err
+	size := -1
+	for {
+		line, err := fr.reader.ReadString('\n')
+		if err != nil {
+			return 0, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		name, value, ok := strings.Cut(line, ":")
+		if !ok {
+			return 0, frameError{"malformed frame header"}
+		}
+		if !strings.EqualFold(strings.TrimSpace(name), "Content-Length") {
+			continue
+		}
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || parsed < 0 {
+			return 0, frameError{"invalid Content-Length header"}
+		}
+		size = parsed
 	}
-	line = strings.TrimRight(line, "\r\n")
-	name, value, ok := strings.Cut(line, ":")
-	if !ok || !strings.EqualFold(strings.TrimSpace(name), "Content-Length") {
+	if size < 0 {
 		return 0, frameError{"missing Content-Length header"}
-	}
-	size, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil || size < 0 {
-		return 0, frameError{"invalid Content-Length header"}
-	}
-	blank, err := fr.reader.ReadString('\n')
-	if err != nil {
-		return 0, err
-	}
-	if strings.TrimRight(blank, "\r\n") != "" {
-		return 0, frameError{"expected blank line after headers"}
 	}
 	return size, nil
 }

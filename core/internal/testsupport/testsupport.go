@@ -19,7 +19,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 )
 
-const ExampleModuleConfig = "examples/python/hovel-modules.json"
+const ExampleModuleConfig = "modules/examples/python/hovel-modules.json"
 
 func UseExampleModuleConfig(t testing.TB) {
 	t.Helper()

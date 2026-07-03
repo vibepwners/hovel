@@ -24,7 +24,14 @@ env:
 
 vars:
   MODULE_CONFIG:
-    sh: echo "${HOVEL_MODULE_CONFIG:-}"
+    sh: |
+      if [ -n "${HOVEL_MODULE_CONFIG:-}" ]; then
+        echo "${HOVEL_MODULE_CONFIG}"
+      elif [ -f "$PWD/../modules/examples/hovel-modules.json" ]; then
+        echo "$PWD/../modules/examples/hovel-modules.json"
+      else
+        echo ""
+      fi
   WORKSPACE:
     sh: echo "${HOVEL_WORKSPACE:-$PWD/.hovel}"
   # Optional Bazel startup and command options for CI wrappers. Leave unset for
