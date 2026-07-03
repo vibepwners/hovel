@@ -9,14 +9,18 @@
 package hovel
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"sync"
-
-	"github.com/Vibe-Pwners/hovel/internal/protocol/framing"
 )
 
-const maxFrameBytes = framing.DefaultMaxBytes
+const maxFrameBytes = 64 * 1024 * 1024
 
 // frameError wraps a malformed or truncated frame on the wire.
 type frameError struct{ msg string }
@@ -25,24 +29,56 @@ func (e frameError) Error() string { return "hovel: " + e.msg }
 
 // frameReader decodes length-prefixed JSON-RPC messages from a stream.
 type frameReader struct {
-	reader *framing.Reader
+	reader *bufio.Reader
 }
 
 func newFrameReader(r io.Reader) *frameReader {
-	return &frameReader{reader: framing.NewReader(r, maxFrameBytes)}
+	return &frameReader{reader: bufio.NewReader(r)}
 }
 
 // read returns the next message, or io.EOF when the stream is closed cleanly
 // between frames.
 func (fr *frameReader) read() (map[string]json.RawMessage, error) {
+	size, err := fr.readHeader()
+	if err != nil {
+		return nil, err
+	}
+	if size > maxFrameBytes {
+		return nil, frameError{fmt.Sprintf("frame too large: %d bytes", size)}
+	}
+	body := make([]byte, size)
+	if _, err := io.ReadFull(fr.reader, body); err != nil {
+		return nil, err
+	}
 	var message map[string]json.RawMessage
-	if err := fr.reader.ReadJSON(&message); err != nil {
-		if err == io.EOF {
-			return nil, io.EOF
-		}
+	if err := json.Unmarshal(body, &message); err != nil {
 		return nil, frameError{err.Error()}
 	}
 	return message, nil
+}
+
+func (fr *frameReader) readHeader() (int, error) {
+	line, err := fr.reader.ReadString('\n')
+	if err != nil {
+		return 0, err
+	}
+	line = strings.TrimRight(line, "\r\n")
+	name, value, ok := strings.Cut(line, ":")
+	if !ok || !strings.EqualFold(strings.TrimSpace(name), "Content-Length") {
+		return 0, frameError{"missing Content-Length header"}
+	}
+	size, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || size < 0 {
+		return 0, frameError{"invalid Content-Length header"}
+	}
+	blank, err := fr.reader.ReadString('\n')
+	if err != nil {
+		return 0, err
+	}
+	if strings.TrimRight(blank, "\r\n") != "" {
+		return 0, frameError{"expected blank line after headers"}
+	}
+	return size, nil
 }
 
 // frameWriter encodes JSON-RPC messages with a Content-Length header. Writes are
@@ -59,5 +95,16 @@ func newFrameWriter(w io.Writer) *frameWriter {
 func (fw *frameWriter) write(message any) error {
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
-	return framing.WriteJSON(fw.writer, message)
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(message); err != nil {
+		return err
+	}
+	if body.Len() > maxFrameBytes {
+		return errors.New("hovel: frame too large")
+	}
+	if _, err := fmt.Fprintf(fw.writer, "Content-Length: %d\r\n\r\n", body.Len()); err != nil {
+		return err
+	}
+	_, err := fw.writer.Write(body.Bytes())
+	return err
 }

@@ -1,0 +1,45 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pythonrpc",
+    srcs = [
+        "runner.go",
+        "session_history.go",
+        "step_runtime.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/app/chainruntime",
+        "//internal/app/hovelconfig",
+        "//internal/app/modulecatalog",
+        "//internal/app/modulepackage",
+        "//internal/app/services",
+        "//internal/domain/event",
+        "//internal/domain/run",
+        "//internal/domain/workspace",
+        "//internal/protocol/framing",
+    ],
+)
+
+go_test(
+    name = "pythonrpc_test",
+    size = "small",
+    srcs = [
+        "runner_test.go",
+        "session_history_test.go",
+    ],
+    data = [
+    ],
+    embed = [":pythonrpc"],
+    tags = [
+        "e2e",
+        "manual",
+    ],
+    deps = [
+        "//internal/app/chainruntime",
+        "//internal/app/modulecatalog",
+        "//internal/domain/event",
+        "//internal/domain/run",
+    ],
+)

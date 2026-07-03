@@ -1,0 +1,276 @@
+version: '3'
+
+# Taskfile is the single entry point for the Hovel build system.
+#
+# Do NOT invoke bazel, gofmt, uv, or lefthook directly. Every supported
+# operation is a task below; humans, CI, git hooks, and AI agents all go
+# through `task <name>`. This keeps one correct, discoverable way to build,
+# test, lint, run, and format the project.
+#
+# Conventions:
+#   task <name>                 run a task
+#   task <name> -- <args>       forward extra args to the underlying tool
+  #                               (supported by build, test, run, throw)
+#   task --list                 list tasks
+#
+# Quick start for developers:
+#   task start                  build and launch the interactive CLI
+#   task status                 is the dev daemon running?
+#   task reset                  wipe local state and relaunch fresh
+# The dev workspace defaults to ./.hovel; override with HOVEL_WORKSPACE.
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+vars:
+  MODULE_CONFIG:
+    sh: echo "${HOVEL_MODULE_CONFIG:-}"
+  WORKSPACE:
+    sh: echo "${HOVEL_WORKSPACE:-$PWD/.hovel}"
+  # Optional Bazel startup and command options for CI wrappers. Leave unset for
+  # local development; repo-local auth overrides belong in ignored rc files.
+  BAZEL_STARTUP_ARGS:
+    sh: echo "${HOVEL_BAZEL_STARTUP_ARGS:-}"
+  BAZEL_ARGS:
+    sh: echo "${HOVEL_BAZEL_ARGS:-}"
+
+tasks:
+  default:
+    desc: List available tasks.
+    cmds:
+      - task --list
+    silent: true
+
+  # --- Developer quick start ----------------------------------------------
+
+  start:
+    aliases: [dev, up, cli]
+    desc: Build and launch the interactive Hovel CLI (auto-starts a daemon).
+    interactive: true
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- cli --workspace "{{.WORKSPACE}}"
+
+  daemon:
+    desc: Run hoveld in the foreground on the default Unix socket.
+    interactive: true
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- daemon serve --workspace "{{.WORKSPACE}}"
+
+  mcp:
+    desc: Launch the MCP agent interface for the dev workspace.
+    interactive: true
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- mcp --workspace "{{.WORKSPACE}}" --transport http --http-addr 127.0.0.1:27166 --entity-id agent1
+
+  status:
+    aliases: [st]
+    desc: Show daemon status for the dev workspace.
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- status --workspace "{{.WORKSPACE}}"
+
+  init:
+    desc: Initialize the dev workspace (./.hovel).
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- init --workspace "{{.WORKSPACE}}"
+
+  throw:
+    desc: 'One-shot throw of a saved chain file: task throw -- path/to/chain.yaml.'
+    env:
+      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- throw {{.CLI_ARGS}} --workspace "{{.WORKSPACE}}"
+
+  clean:
+    desc: Remove local dev state (./.hovel workspace and .task cache). Leaves the Bazel cache alone.
+    cmds:
+      - rm -rf "{{.WORKSPACE}}" .task
+
+  reset:
+    aliases: [fresh]
+    desc: Wipe local dev state, then launch a fresh interactive CLI.
+    cmds:
+      - task: clean
+      - task: start
+
+  # --- Build, test, run ---------------------------------------------------
+
+  build:
+    aliases: [b]
+    desc: Build Bazel targets (default //...; e.g. task build -- //cmd/hovel).
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} build {{.BAZEL_ARGS}} {{.CLI_ARGS | default "//..."}}
+
+  test:
+    aliases: [t]
+    desc: Run Bazel tests (default //...; e.g. task test -- //internal/domain/...).
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} test {{.BAZEL_ARGS}} {{.CLI_ARGS | default "//..."}}
+
+  run:
+    desc: 'Run any Bazel target: task run -- //cmd/hovel -- daemon status.'
+    env:
+      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  go:deps:
+    desc: 'Add or update Go module dependencies: task go:deps -- module@version.'
+    cmds:
+      - 'test -n "{{.CLI_ARGS}}" || { echo "usage: task go:deps -- module@version"; exit 2; }'
+      - go get {{.CLI_ARGS}}
+      - go mod tidy
+
+  upver:
+    desc: 'Update Hovel core version: task upver -- 0.2.0.'
+    cmds:
+      - python3 tools/release/upver.py {{.CLI_ARGS}}
+
+  upver:test:
+    desc: Check the version updater.
+    cmds:
+      - python3 tools/release/upver_test.py
+
+  # --- Release artifacts -------------------------------------------------
+
+  release:hovel-wheel:
+    desc: Build the PyPI wheel that packages the Hovel Go binary.
+    cmds:
+      - task build -- --compilation_mode=opt //cmd/hovel
+      - python3 tools/release/build_hovel_wheel.py
+
+  release:hovel-wheels:
+    desc: Cross-build all Hovel PyPI wheels from Linux through Bazel.
+    cmds:
+      - task build -- --compilation_mode=opt //cmd/hovel:hovel_linux_amd64
+      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-linux-amd64 --platform-tag manylinux_2_28_x86_64 --binary-name hovel
+      - task build -- --compilation_mode=opt //cmd/hovel:hovel_linux_arm64
+      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-linux-arm64 --platform-tag manylinux_2_28_aarch64 --binary-name hovel
+      - task build -- --compilation_mode=opt //cmd/hovel:hovel_darwin_arm64
+      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-darwin-arm64 --platform-tag macosx_11_0_arm64 --binary-name hovel
+      - task build -- --compilation_mode=opt //cmd/hovel:hovel_windows_amd64
+      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-windows-amd64.exe --platform-tag win_amd64 --binary-name hovel.exe
+      - task build -- --compilation_mode=opt //cmd/hovel:hovel_windows_arm64
+      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-windows-arm64.exe --platform-tag win_arm64 --binary-name hovel.exe
+
+  # --- Checks (what CI runs) ----------------------------------------------
+
+  check:
+    aliases: [ci]
+    desc: Run lint, build, test, race, fuzz smoke, and coverage for core.
+    cmds:
+      - task: lint
+      - task: actions:summary:test
+      - task: build
+        vars:
+          CLI_ARGS: //:build
+      - task: test:ci
+      - task: coverage
+
+  actions:summary:
+    desc: Append a GitHub Actions job summary for a named workflow job.
+    cmds:
+      - python3 tools/ci/job_summary.py {{.CLI_ARGS}}
+
+  actions:summary:test:
+    desc: Check the GitHub Actions job summary renderer.
+    cmds:
+      - python3 tools/ci/job_summary_test.py
+
+  coverage:
+    desc: Run coverage ratchets for domain and app layers.
+    cmds:
+      - python3 tools/tests/check_coverage.py
+
+  coverage:go:
+    desc: Run Bazel merged LCOV coverage for Go targets.
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} coverage {{.BAZEL_ARGS}} --combined_report=lcov {{.CLI_ARGS}}
+
+  test:race:
+    desc: Run Go race-detector tests for the application service layer.
+    cmds:
+      - task: test
+        vars:
+          CLI_ARGS: //:race_test
+
+  test:ci:
+    desc: Run CI tests, race tests, and fuzz smoke not already exercised by coverage ratchets.
+    cmds:
+      - task: test
+        vars:
+          CLI_ARGS: //:ci_test //:race_test //:fuzz_smoke_test
+
+  fuzz:smoke:
+    desc: Run short fuzz smoke coverage for pure domain parsers.
+    cmds:
+      - task: test
+        vars:
+          CLI_ARGS: //:fuzz_smoke_test
+
+  lint:
+    aliases: [l]
+    desc: Run core lint checks (Go formatting, golangci-lint, Gazelle).
+    cmds:
+      - task: gofmt:check
+      - task: go:lint
+      - task: gazelle:check
+
+  fmt:
+    aliases: [format]
+    desc: Auto-format core Go source and Gazelle BUILD metadata.
+    cmds:
+      - task: gofmt
+      - task: gazelle
+
+  # --- Individual quality steps (composed by lint/fmt above) --------------
+
+  gofmt:
+    desc: Format Go files in place.
+    cmds:
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=write
+
+  gofmt:check:
+    desc: Check Go formatting.
+    cmds:
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=check
+
+  go:lint:
+    desc: Run golangci-lint over Go packages.
+    cmds:
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:golangci_lint_workspace
+
+  gazelle:
+    desc: Update Go BUILD metadata with Gazelle.
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //:gazelle
+
+  gazelle:check:
+    desc: Check that Go BUILD metadata is up to date.
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //:gazelle -- -mode=diff
+
+  # --- Git hooks ----------------------------------------------------------
+
+  hooks:install:
+    desc: Install Git hooks through Lefthook.
+    cmds:
+      - lefthook install
+
+  precommit:
+    aliases: [pre-commit]
+    desc: Fast checks run by the Lefthook pre-commit hook (lint + build).
+    cmds:
+      - task: lint
+      - task: build
+
+  prepush:
+    aliases: [pre-push]
+    desc: Thorough checks run by the Lefthook pre-push hook (tests).
+    cmds:
+      - task: test

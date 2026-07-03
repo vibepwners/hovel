@@ -1,0 +1,82 @@
+load("@gazelle//:def.bzl", "gazelle")
+
+package(default_visibility = ["//visibility:public"])
+
+gazelle(
+    name = "gazelle",
+    prefix = "github.com/Vibe-Pwners/hovel",
+)
+
+filegroup(
+    name = "license",
+    srcs = ["LICENSE"],
+)
+
+filegroup(
+    name = "build",
+    srcs = [
+        "//cmd/hovel",
+        "//schemas:descriptor_schemas",
+    ],
+)
+
+_COVERAGE_LAYER_TESTS = [
+    "//internal/app/chainruntime:chainruntime_test",
+    "//internal/app/commands:commands_test",
+    "//internal/app/hovelconfig:hovelconfig_test",
+    "//internal/app/launchkey:launchkey_test",
+    "//internal/app/modulecatalog:modulecatalog_test",
+    "//internal/app/modulepackage:modulepackage_test",
+    "//internal/app/operatorlog:operatorlog_test",
+    "//internal/app/operatorsession:operatorsession_test",
+    "//internal/app/services:services_test",
+    "//internal/domain/daemon:daemon_test",
+    "//internal/domain/event:event_test",
+    "//internal/domain/module:module_test",
+    "//internal/domain/operator:operator_test",
+    "//internal/domain/run:run_test",
+    "//internal/domain/service:service_test",
+    "//internal/domain/workspace:workspace_test",
+]
+
+_CI_TESTS = [
+    "//internal/adapters/commandview:commandview_test",
+    "//internal/adapters/daemonrpc:daemonrpc_test",
+    "//internal/adapters/descriptor:descriptor_test",
+    "//internal/adapters/storage/filesystem:filesystem_test",
+    "//internal/adapters/terminallog:terminallog_test",
+    "//internal/testmodules/mockexploit:mockexploit_test",
+    "//schemas:schema_smoke_test",
+]
+
+test_suite(
+    name = "test",
+    tests = _CI_TESTS + _COVERAGE_LAYER_TESTS,
+)
+
+test_suite(
+    name = "ci_test",
+    tests = _CI_TESTS,
+)
+
+test_suite(
+    name = "race_test",
+    tags = ["manual"],
+    tests = [
+        "//internal/app/chainruntime:chainruntime_race_test",
+        "//internal/app/commands:commands_race_test",
+        "//internal/app/hovelconfig:hovelconfig_race_test",
+        "//internal/app/launchkey:launchkey_race_test",
+        "//internal/app/modulecatalog:modulecatalog_race_test",
+        "//internal/app/modulepackage:modulepackage_race_test",
+        "//internal/app/operatorlog:operatorlog_race_test",
+        "//internal/app/operatorsession:operatorsession_race_test",
+        "//internal/app/services:services_race_test",
+    ],
+)
+
+test_suite(
+    name = "fuzz_smoke_test",
+    tags = ["manual"],
+    tests = ["//internal/domain/event:event_type_fuzz_smoke_test"],
+)

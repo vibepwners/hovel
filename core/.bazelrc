@@ -1,0 +1,23 @@
+common --announce_rc
+
+build --color=yes
+build --curses=yes
+build --action_env=PYTHONDONTWRITEBYTECODE=1
+
+test --test_output=errors
+test --test_env=PYTHONDONTWRITEBYTECODE=1
+
+build:buildbuddy --bes_backend=grpcs://remote.buildbuddy.io
+build:buildbuddy --bes_results_url=https://app.buildbuddy.io/invocation/
+build:buildbuddy --remote_cache=grpcs://remote.buildbuddy.io
+build:buildbuddy --remote_cache_compression=true
+build:buildbuddy --remote_upload_local_results=false
+
+build:ci --config=buildbuddy
+build:ci --build_metadata=ROLE=CI
+build:ci --noslim_profile
+build:ci --experimental_profile_include_target_label
+build:ci --experimental_profile_include_primary_output
+build:ci --remote_upload_local_results=true
+
+try-import %workspace%/.bazelrc.user
