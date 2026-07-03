@@ -1,10 +1,10 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
-load("//payloads/squatter/bazel:copts.bzl", "SQ_COPTS")
+load("//modules/squatter/bazel:copts.bzl", "SQ_COPTS")
 
 # Demonstration binaries. The product itself is
-# //payloads/squatter/windows/src:squatter.exe; everything
+# //modules/squatter/windows/src:squatter.exe; everything
 # here is illustrative. All run under wine, e.g.:
-#   task build -- --config=win64 //payloads/squatter/examples:logdemo.exe
+#   task build -- --config=win64 //modules/squatter/examples:logdemo.exe
 
 # Toolchain smoke test (just enough to prove the cross compiler links a PE).
 cc_binary(
@@ -14,7 +14,7 @@ cc_binary(
 )
 
 # The IOCP + thread-pool TCP echo server, demonstrating the
-# //payloads/squatter/windows/src:iocpserver library
+# //modules/squatter/windows/src:iocpserver library
 # (an alternative, single-protocol transport to the multiplexed squatter).
 cc_binary(
     name = "iocp_echo_server.exe",
@@ -27,7 +27,7 @@ cc_binary(
         "-lws2_32",
     ],
     target_compatible_with = ["@platforms//os:windows"],
-    deps = ["//payloads/squatter/windows/src:iocpserver"],
+    deps = ["//modules/squatter/windows/src:iocpserver"],
 )
 
 # sqlog feature demo, in three flavors.
@@ -40,7 +40,7 @@ cc_binary(
         "-lshlwapi",
     ],
     target_compatible_with = ["@platforms//os:windows"],
-    deps = ["//payloads/squatter/windows/src:sqlog"],
+    deps = ["//modules/squatter/windows/src:sqlog"],
 )
 
 cc_binary(
@@ -52,7 +52,7 @@ cc_binary(
         "-lshlwapi",
     ],
     target_compatible_with = ["@platforms//os:windows"],
-    deps = ["//payloads/squatter/windows/src:sqlog"],
+    deps = ["//modules/squatter/windows/src:sqlog"],
 )
 
 cc_binary(
@@ -65,5 +65,5 @@ cc_binary(
         "-luser32",
     ],
     target_compatible_with = ["@platforms//os:windows"],
-    deps = ["//payloads/squatter/windows/src:sqlog_windowed"],  # built with the matching SQLOG_WINDOW=1
+    deps = ["//modules/squatter/windows/src:sqlog_windowed"],  # built with the matching SQLOG_WINDOW=1
 )

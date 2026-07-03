@@ -1,8 +1,8 @@
 """Release host matrix for compiled example modules."""
 
-load("//tools/modules:platform_binary.bzl", "platform_binary")
+load("//modules/tools:platform_binary.bzl", "platform_binary")
 
-SUPPORTED_HOSTS = [
+MODULE_HOSTS = [
     struct(
         arch = "amd64",
         dir = "linux-amd64",
@@ -22,24 +22,6 @@ SUPPORTED_HOSTS = [
         suffix = "release-linux-arm64",
     ),
     struct(
-        arch = "amd64",
-        dir = "windows-amd64",
-        exe = ".exe",
-        key = "windows_amd64",
-        os = "windows",
-        platform = "//platforms:windows_x86_64",
-        suffix = "release-windows-amd64",
-    ),
-    struct(
-        arch = "arm64",
-        dir = "windows-arm64",
-        exe = ".exe",
-        key = "windows_arm64",
-        os = "windows",
-        platform = "//platforms:windows_aarch64",
-        suffix = "release-windows-arm64",
-    ),
-    struct(
         arch = "arm64",
         dir = "darwin-arm64",
         exe = "",
@@ -50,14 +32,20 @@ SUPPORTED_HOSTS = [
     ),
 ]
 
+LINUX_HOSTS = [
+    host
+    for host in MODULE_HOSTS
+    if host.os == "linux"
+]
+
 COMPILED_MODULES = [
-    struct(binary = "//examples/go/mock_survey:mock_survey", command = "mock-survey-go", key = "mock_survey_go"),
-    struct(binary = "//examples/go/mock_exploit:mock_exploit", command = "mock-exploit-go", key = "mock_exploit_go"),
-    struct(binary = "//examples/go/mock_exploit_session:mock_exploit_session", command = "mock-exploit-session-go", key = "mock_exploit_session_go"),
-    struct(binary = "//examples/rust/mock_survey:mock-survey-rust", command = "mock-survey-rust", key = "mock_survey_rust"),
-    struct(binary = "//examples/rust/mock_exploit:mock-exploit-rust", command = "mock-exploit-rust", key = "mock_exploit_rust"),
-    struct(binary = "//examples/rust/mock_exploit_session:mock-exploit-session-rust", command = "mock-exploit-session-rust", key = "mock_exploit_session_rust"),
-    struct(binary = "//payloads/squatter/provider:squatter-provider", command = "squatter-provider", key = "squatter_provider"),
+    struct(binary = "//modules/examples/go/mock_survey:mock_survey", command = "mock-survey-go", hosts = MODULE_HOSTS, key = "mock_survey_go"),
+    struct(binary = "//modules/examples/go/mock_exploit:mock_exploit", command = "mock-exploit-go", hosts = MODULE_HOSTS, key = "mock_exploit_go"),
+    struct(binary = "//modules/examples/go/mock_exploit_session:mock_exploit_session", command = "mock-exploit-session-go", hosts = MODULE_HOSTS, key = "mock_exploit_session_go"),
+    struct(binary = "//modules/examples/rust/mock_survey:mock-survey-rust", command = "mock-survey-rust", hosts = LINUX_HOSTS, key = "mock_survey_rust"),
+    struct(binary = "//modules/examples/rust/mock_exploit:mock-exploit-rust", command = "mock-exploit-rust", hosts = LINUX_HOSTS, key = "mock_exploit_rust"),
+    struct(binary = "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust", command = "mock-exploit-session-rust", hosts = LINUX_HOSTS, key = "mock_exploit_session_rust"),
+    struct(binary = "//modules/squatter/provider:squatter-provider", command = "squatter-provider", hosts = MODULE_HOSTS, key = "squatter_provider"),
 ]
 
 def release_module_target_name(module, host):
@@ -65,7 +53,7 @@ def release_module_target_name(module, host):
 
 def declare_release_module_binaries():
     for module in COMPILED_MODULES:
-        for host in SUPPORTED_HOSTS:
+        for host in module.hosts:
             platform_binary(
                 name = release_module_target_name(module, host),
                 binary = module.binary,
@@ -77,7 +65,7 @@ def declare_release_module_binaries():
 def release_module_stage_args():
     args = []
     for module in COMPILED_MODULES:
-        for host in SUPPORTED_HOSTS:
+        for host in module.hosts:
             name = release_module_target_name(module, host)
             staged = "{}/{}{}".format(host.dir, module.command, host.exe)
             args.append("--module={}=$(rootpath :{})".format(staged, name))
@@ -86,6 +74,6 @@ def release_module_stage_args():
 def release_module_data():
     data = []
     for module in COMPILED_MODULES:
-        for host in SUPPORTED_HOSTS:
+        for host in module.hosts:
             data.append(":{}".format(release_module_target_name(module, host)))
     return data

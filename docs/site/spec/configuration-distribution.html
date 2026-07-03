@@ -66,9 +66,10 @@ hovel status
 pipx inject hovel hovel-sdk  # only needed when authoring Python modules in the same environment
 </code></pre>
         <p>The <code>hovel</code> package contains the platform-specific Go mono-binary and a tiny Python launcher that execs it. It does not download the binary during install or first run. The Python module SDK is a separate PyPI package named <code>hovel-sdk</code>.</p>
-        <p>GitHub Releases are the canonical artifact source. A release publishes native binaries, PyPI wheels, the SDK wheel/sdist, module packages, <code>module-index.yaml</code>, <code>module-install-set.yaml</code>, and <code>SHA256SUMS</code>. The PyPI projects are published from dedicated workflows:</p>
+        <p>GitHub Releases are the canonical artifact source. A release publishes native binaries, PyPI wheels, the SDK wheel/sdist, module packages, <code>module-index.yaml</code>, <code>module-install-set.yaml</code>, and <code>SHA256SUMS</code>. The PyPI projects and module package assets are published from dedicated workflows:</p>
 <pre data-lang="text"><code>.github/workflows/hovel-pypi.yml
 .github/workflows/hovel-sdk-pypi.yml
+.github/workflows/modules-release.yml
 </code></pre>
 
         <h2>Config Files</h2>
@@ -227,7 +228,7 @@ hovel module uninstall squatter@{{HOVEL_VERSION}}
         <p>Installing the same <code>name@version</code> with a different SHA-256 fails unless <code>--replace</code> is supplied. Bulk install accepts local manifest files or HTTPS manifest URLs. Relative sources in a downloaded manifest resolve against the manifest URL. Bulk install runs in order, stops on the first failure, and does not roll back earlier successful installs.</p>
 
         <h2>Indexes And Bulk Manifests</h2>
-        <p>Hovel has no default internet index. An operator may configure or pass an index explicitly. Source-tree development can discover local module indexes when <code>HOVEL_MODULE_CONFIG</code> points at an in-repo or private module catalog. The old aggregate <code>task modules:package</code> flow is not wired into the current root dispatcher; module index/package generation should be restored as a module-slice task. Cached HTTPS indexes are available offline after the first explicit fetch.</p>
+        <p>Hovel has no default internet index. An operator may configure or pass an index explicitly. Source-tree development can discover local module indexes when <code>HOVEL_MODULE_CONFIG</code> points at an in-repo or private module catalog. In-tree module release packages and indexes are generated with <code>task release:modules-package</code>, which stages declared module binaries into <code>modules/examples/bin/</code> and writes packages, <code>module-index.yaml</code>, <code>module-install-set.yaml</code>, and <code>SHA256SUMS</code> under <code>dist/modules/</code>. Cached HTTPS indexes are available offline after the first explicit fetch.</p>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleIndex
 modules:
@@ -286,9 +287,9 @@ modules:
 task test
 task fmt     # wired formatters: core Go/Gazelle plus Go SDK
 task check   # checks available in this checkout
-task ci      # full-checkout guard plus wired core gate
+task ci      # full-checkout guard plus core, SDK, modules, and docs gates
 </code></pre>
-        <p><code>Taskfile.yml</code> is the one correct way to build, test, lint, format, and run; contributors, CI, and tooling never invoke Bazel, gofmt, uv, or lefthook directly. The root task file is a sparse-checkout tolerant dispatcher. Today the wired build/test/lint/coverage gate is centered on <code>core/</code>; SDK, module, and docs slice checks should be restored as slice-local workspaces instead of forcing every sparse checkout to carry the full tree.</p>
+        <p><code>Taskfile.yml</code> is the one correct way to build, test, lint, format, and run; contributors, CI, and tooling never invoke Bazel, gofmt, uv, or lefthook directly. The root task file is a sparse-checkout tolerant dispatcher. Core work delegates into the self-contained <code>core/</code> workspace; SDK, module, and docs checks use the root integration workspace so a full checkout can validate demos, module packages, SDKs, and documentation without making those trees part of <code>core/</code>.</p>
 
         <h2>Distribution</h2>
         <p>The released Go mono-binary is still available directly from GitHub Releases:</p>
@@ -302,7 +303,7 @@ hovel-windows-amd64.exe
 <pre data-lang="bash"><code>uvx hovel throw ./ssh-memory.chain.yaml
 uvx hovel throw ./ssh-memory.chain.yaml --now
 </code></pre>
-        <p>The package includes no modules by default. In-tree modules such as MS17-010, Squatter, and the mock modules are built as separate <code>.tgz</code> artifacts with their module-declared versions and published on the GitHub Release page.</p>
+        <p>The package includes no modules by default. In-tree modules such as MS17-010, Squatter, and the mock modules are built as separate <code>.tgz</code> artifacts with their module-declared versions and published on the GitHub Release page. Current compiled module packages advertise Linux and Darwin launchers; the Windows Squatter payload is validated through the Wine-backed Squatter task and demo path until Windows compiled module launchers are restored.</p>
         <p>Release artifact authority:</p>
         <ol>
           <li>GitHub Releases own native binaries, module packages, checksums, and immutable source archives.</li>

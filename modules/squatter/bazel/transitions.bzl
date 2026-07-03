@@ -11,7 +11,7 @@ target platform *and* a distinct `--platform_suffix` (which does feed the output
 directory). The two builds get separate output trees and coexist, and the rule
 collects them under stable, ABI-named filenames:
 
-    task build -- //payloads/squatter/windows/src:squatter_all
+    task build -- //modules/squatter/windows/src:squatter_all
       -> squatter_all-x86_64.exe   (PE32+)
       -> squatter_all-i686.exe     (PE32)
 

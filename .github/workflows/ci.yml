@@ -19,23 +19,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Cache Bazelisk and repository downloads
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cache/bazelisk
             ~/.cache/bazel-repository
           key: bazel-repository-${{ runner.os }}-${{ hashFiles('core/MODULE.bazel.lock', 'core/.bazelversion') }}
-          restore-keys: |
-            bazel-repository-${{ runner.os }}-
-
-      - name: Install Task
-        uses: arduino/setup-task@v2
+          restore-keys: bazel-repository-${{ runner.os }}-
+      - uses: arduino/setup-task@v2
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Configure Bazel cache
         shell: bash
         env:
@@ -43,9 +37,7 @@ jobs:
         run: |
           set +x
           ci_bazelrc="${RUNNER_TEMP}/bazel-ci.bazelrc"
-          {
-            echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository"
-          } > "${ci_bazelrc}"
+          echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository" > "${ci_bazelrc}"
           bazel_configs="--config=github-actions"
           if [[ -n "${BUILDBUDDY_API_KEY}" ]]; then
             echo "::add-mask::${BUILDBUDDY_API_KEY}"
@@ -54,50 +46,117 @@ jobs:
               echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
             } >> "${ci_bazelrc}"
             bazel_configs="${bazel_configs} --config=ci"
-          else
-            echo "BuildBuddy cache disabled: BUILDBUDDY_API_KEY is not available."
           fi
           chmod 600 "${ci_bazelrc}"
           echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${ci_bazelrc}" >> "$GITHUB_ENV"
           echo "HOVEL_BAZEL_ARGS=${bazel_configs}" >> "$GITHUB_ENV"
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: core/go.mod
           cache: false
-
-      - name: Checkout slices
-        run: task checkout:status
-
-      - name: Format and lint checks
-        run: task lint
-
-      - name: Full core build
-        run: task build -- //:build
-
-      - name: Core CI tests
-        run: task test -- //:ci_test
-
-      - name: Race and fuzz smoke tests
-        run: task test -- //:race_test //:fuzz_smoke_test
-
-      - name: Coverage
-        run: task coverage
-
-      - name: Build release wheels
-        run: task release:hovel-wheels
-
-      - name: Upload test logs
-        if: failure()
+      - run: task checkout:status
+      - run: task lint
+      - run: task build -- //:build
+      - run: task test -- //:ci_test
+      - run: task test -- //:race_test //:fuzz_smoke_test
+      - run: task coverage
+      - run: task release:hovel-wheels
+      - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: bazel-testlogs
+          name: core-bazel-testlogs
           path: core/bazel-testlogs/
           if-no-files-found: ignore
-
-      - name: Job summary
-        if: always()
+      - if: always()
         env:
           JOB_STATUS: ${{ job.status }}
         run: task actions:summary -- ci-build-test
+
+  sdk:
+    name: SDK build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazelisk
+            ~/.cache/bazel-repository
+          key: bazel-slices-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'MODULE.bazel', '.bazelversion') }}
+          restore-keys: bazel-slices-${{ runner.os }}-
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task sdk:ci
+
+  modules:
+    name: Modules build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazelisk
+            ~/.cache/bazel-repository
+          key: bazel-slices-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'MODULE.bazel', '.bazelversion') }}
+          restore-keys: bazel-slices-${{ runner.os }}-
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task modules:ci
+      - run: task release:modules-package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: module-packages
+          path: dist/modules/
+          if-no-files-found: error
+
+  docs:
+    name: Docs build and demos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazelisk
+            ~/.cache/bazel-repository
+          key: bazel-slices-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'MODULE.bazel', '.bazelversion') }}
+          restore-keys: bazel-slices-${{ runner.os }}-
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: task docs:ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docs-site
+          path: _site/
+          if-no-files-found: error
+
+  squatter-wine:
+    name: Squatter Wine tests and demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/bazelisk
+            ~/.cache/bazel-repository
+          key: bazel-slices-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'MODULE.bazel', '.bazelversion') }}
+          restore-keys: bazel-slices-${{ runner.os }}-
+      - uses: arduino/setup-task@v2
+        with:
+          version: 3.x
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --install-recommends wine32 wine64
+      - run: task modules:wine-test
+      - run: task docs:demos:wine

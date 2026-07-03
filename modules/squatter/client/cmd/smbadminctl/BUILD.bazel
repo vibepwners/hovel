@@ -5,7 +5,7 @@ go_library(
     srcs = ["main.go"],
     importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/cmd/smbadminctl",
     visibility = ["//visibility:private"],
-    deps = ["//payloads/squatter/client/smbpipe"],
+    deps = ["//modules/squatter/client/smbpipe"],
 )
 
 go_binary(

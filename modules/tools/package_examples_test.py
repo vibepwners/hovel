@@ -21,8 +21,8 @@ def test_squatter_package_includes_provider_and_payload() -> None:
     packager = load_packager()
     with tempfile.TemporaryDirectory(prefix="hovel-package-examples-test-") as raw:
         root = Path(raw)
-        examples_bin = root / "examples" / "bin"
-        for _, _, host_dir, exe in packager.SUPPORTED_HOSTS:
+        examples_bin = root / "modules" / "examples" / "bin"
+        for _, _, host_dir, exe in packager.MODULE_HOSTS:
             host_bin = examples_bin / host_dir
             host_bin.mkdir(parents=True, exist_ok=True)
             (host_bin / f"squatter-provider{exe}").write_bytes(f"provider-{host_dir}".encode())
@@ -38,6 +38,7 @@ def test_squatter_package_includes_provider_and_payload() -> None:
             "payload_provider",
             "Squatter payload provider module.",
             "squatter-provider",
+            packager.MODULE_HOSTS,
         )
 
         with tarfile.open(archive, "r:gz") as tf:
@@ -48,7 +49,7 @@ def test_squatter_package_includes_provider_and_payload() -> None:
             payload_body = payload.read() if payload is not None else b""
 
         assert "hovel-module.yaml" in names
-        for _, _, host_dir, exe in packager.SUPPORTED_HOSTS:
+        for _, _, host_dir, exe in packager.MODULE_HOSTS:
             provider = f"bin/{host_dir}/squatter-provider{exe}"
             assert provider in names
             assert provider in manifest_body

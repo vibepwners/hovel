@@ -108,6 +108,7 @@ def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:
         Path("demo/tmp/home"),
         Path("demo/tmp/vhs-tmp"),
         Path("examples/bin"),
+        Path("modules/examples/bin"),
         Path("scripts"),
         Path("tools/demo"),
         Path("tools/docker/squatter-wine"),
@@ -121,8 +122,8 @@ def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:
     install(args.duration_checker, repo / "tools/demo/check_gif_duration.py")
     install(args.hovel_bin, repo / "demo/tmp/hovel")
     install(args.agent_bin, repo / "demo/tmp/hovel-mock-agent")
-    install(args.mock_survey_go, repo / "examples/bin/mock-survey-go")
-    install(args.mock_exploit_session_go, repo / "examples/bin/mock-exploit-session-go")
+    install(args.mock_survey_go, repo / "modules/examples/bin/mock-survey-go")
+    install(args.mock_exploit_session_go, repo / "modules/examples/bin/mock-exploit-session-go")
     write_module_config(
         repo / "modules/examples/hovel-modules.json",
         [
@@ -136,7 +137,8 @@ def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:
     )
 
     if args.wine:
-        install(args.squatter_provider, repo / "examples/bin/squatter-provider")
+        install(args.squatter_provider, repo / "modules/examples/bin/squatter-provider")
+        install(args.squatter_exe, repo / "modules/examples/bin/squatter.exe")
         install(args.squatter_exe, repo / "examples/bin/squatter.exe")
         install(args.dockerfile, repo / "tools/docker/squatter-wine/Dockerfile", executable=False)
         install(args.docker_entrypoint, repo / "tools/docker/squatter-wine/entrypoint.sh")
@@ -162,6 +164,7 @@ def install(src: Path, dest: Path, executable: bool = True) -> None:
 
 
 def write_module_config(path: Path, modules: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"modules": modules}, indent=2) + "\n")
 
 

@@ -7,7 +7,7 @@ load("@rules_go//go:def.bzl", "go_test")
 go_test(
     name = "functest_test",
     srcs = ["functest_test.go"],
-    data = ["//payloads/squatter/windows/src:squatter_all"],  # provides squatter_all-x86_64.exe in runfiles
+    data = ["//modules/squatter/windows/src:squatter_all"],  # provides squatter_all-x86_64.exe in runfiles
     tags = [
         "local",
         "requires-network",
@@ -16,8 +16,8 @@ go_test(
     # Windows platform (e.g. under --config=win64 //...).
     target_compatible_with = ["@platforms//os:linux"],
     deps = [
-        "//payloads/squatter/client/wire",
-        "//payloads/squatter/client/xfer",
+        "//modules/squatter/client/wire",
+        "//modules/squatter/client/xfer",
         "@rules_go//go/runfiles",
     ],
 )

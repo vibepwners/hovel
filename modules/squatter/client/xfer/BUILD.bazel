@@ -5,5 +5,5 @@ go_library(
     srcs = ["xfer.go"],
     importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/xfer",
     visibility = ["//visibility:public"],
-    deps = ["//payloads/squatter/client/wire"],
+    deps = ["//modules/squatter/client/wire"],
 )

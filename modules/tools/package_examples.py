@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build example Hovel module packages into dist/modules.
 
-Invoked through Task. The script assumes `task modules:build` has already
-staged native example binaries into examples/bin/. Set
+Invoked through Task. The script assumes `task release:modules-stage` has
+staged native example binaries into modules/examples/bin/. Set
 HOVEL_MODULE_RELEASE_BASE_URL to produce an HTTPS bulk-install manifest for a
 release, for example https://github.com/Vibe-Pwners/hovel/releases/download/v1.2.3.
 """
@@ -21,34 +21,36 @@ ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "dist" / "modules"
 
 
-SUPPORTED_HOSTS = [
+MODULE_HOSTS = [
     ("linux", "amd64", "linux-amd64", ""),
     ("linux", "arm64", "linux-arm64", ""),
-    ("windows", "amd64", "windows-amd64", ".exe"),
-    ("windows", "arm64", "windows-arm64", ".exe"),
     ("darwin", "arm64", "darwin-arm64", ""),
 ]
 
+LINUX_HOSTS = [host for host in MODULE_HOSTS if host[0] == "linux"]
+
 NATIVE_MODULES = [
-    ("mock-survey-go", "v0.0.0-example", "survey", "Example Go survey module.", "mock-survey-go"),
-    ("mock-exploit-go", "v0.0.0-example", "exploit", "Example Go exploit module.", "mock-exploit-go"),
+    ("mock-survey-go", "v0.0.0-example", "survey", "Example Go survey module.", "mock-survey-go", MODULE_HOSTS),
+    ("mock-exploit-go", "v0.0.0-example", "exploit", "Example Go exploit module.", "mock-exploit-go", MODULE_HOSTS),
     (
         "mock-exploit-session-go",
         "v0.0.0-example",
         "exploit",
         "Example Go exploit module that opens a fake shell session.",
         "mock-exploit-session-go",
+        MODULE_HOSTS,
     ),
-    ("mock-survey-rust", "v0.0.0-example", "survey", "Example Rust survey module.", "mock-survey-rust"),
-    ("mock-exploit-rust", "v0.0.0-example", "exploit", "Example Rust exploit module.", "mock-exploit-rust"),
+    ("mock-survey-rust", "v0.0.0-example", "survey", "Example Rust survey module.", "mock-survey-rust", LINUX_HOSTS),
+    ("mock-exploit-rust", "v0.0.0-example", "exploit", "Example Rust exploit module.", "mock-exploit-rust", LINUX_HOSTS),
     (
         "mock-exploit-session-rust",
         "v0.0.0-example",
         "exploit",
         "Example Rust exploit module that opens a fake shell session.",
         "mock-exploit-session-rust",
+        LINUX_HOSTS,
     ),
-    ("squatter", "v0.1.0", "payload_provider", "Squatter payload provider module.", "squatter-provider"),
+    ("squatter", "v0.1.0", "payload_provider", "Squatter payload provider module.", "squatter-provider", MODULE_HOSTS),
 ]
 
 PYTHON_MODULES = [
@@ -57,7 +59,7 @@ PYTHON_MODULES = [
         "v0.0.0-example",
         "survey",
         "Example Python survey module.",
-        "examples/python/mock_survey",
+        "modules/examples/python/mock_survey",
         "hovel_example_survey",
     ),
     (
@@ -65,7 +67,7 @@ PYTHON_MODULES = [
         "v0.0.0-example",
         "exploit",
         "Example Python exploit module.",
-        "examples/python/mock_exploit",
+        "modules/examples/python/mock_exploit",
         "hovel_example_exploit",
     ),
     (
@@ -73,7 +75,7 @@ PYTHON_MODULES = [
         "v0.0.0-example",
         "exploit",
         "Example Python exploit module that opens a fake shell session.",
-        "examples/python/mock_exploit_session",
+        "modules/examples/python/mock_exploit_session",
         "hovel_example_exploit_session",
     ),
     (
@@ -81,7 +83,7 @@ PYTHON_MODULES = [
         "v0.1.0",
         "survey",
         "MS17-010 SMBv1 survey module.",
-        "examples/python/ms17_010_survey",
+        "modules/examples/python/ms17_010_survey",
         "hovel_ms17_010_survey",
     ),
     (
@@ -89,7 +91,7 @@ PYTHON_MODULES = [
         "v1.0.0",
         "exploit",
         "MS17-010 SMBv1 exploit module.",
-        "examples/python/ms17_010_exploit",
+        "modules/examples/python/ms17_010_exploit",
         "hovel_ms17_010_exploit",
     ),
 ]
@@ -143,7 +145,7 @@ def module_source(archive: Path, base_url: str) -> str:
     return archive.name
 
 
-def native_manifest(name: str, version: str, command: str) -> str:
+def native_manifest(name: str, version: str, command: str, hosts: list[tuple[str, str, str, str]]) -> str:
     lines = [
         "apiVersion: hovel.dev/v1alpha1",
         "kind: ModulePackage",
@@ -152,7 +154,7 @@ def native_manifest(name: str, version: str, command: str) -> str:
         f"  version: {version}",
         "launch:",
     ]
-    for os_name, arch, host_dir, exe in SUPPORTED_HOSTS:
+    for os_name, arch, host_dir, exe in hosts:
         lines.extend(
             [
                 "  - selector:",
@@ -179,19 +181,26 @@ launch:
 """
 
 
-def package_native(name: str, version: str, _module_type: str, _summary: str, command: str) -> tuple[str, str, Path]:
+def package_native(
+    name: str,
+    version: str,
+    _module_type: str,
+    _summary: str,
+    command: str,
+    hosts: list[tuple[str, str, str, str]],
+) -> tuple[str, str, Path]:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        write(root / "hovel-module.yaml", native_manifest(name, version, command))
-        for _, _, host_dir, exe in SUPPORTED_HOSTS:
+        write(root / "hovel-module.yaml", native_manifest(name, version, command, hosts))
+        for _, _, host_dir, exe in hosts:
             filename = f"{command}{exe}"
             dst = root / "bin" / host_dir / filename
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / "examples" / "bin" / host_dir / filename, dst)
+            shutil.copy2(ROOT / "modules" / "examples" / "bin" / host_dir / filename, dst)
             dst.chmod(0o755)
         if name == "squatter":
             payload = root / "bin" / "squatter.exe"
-            shutil.copy2(ROOT / "examples/bin/squatter.exe", payload)
+            shutil.copy2(ROOT / "modules/examples/bin/squatter.exe", payload)
             payload.chmod(0o755)
         archive = OUT / f"{name}-{version}.tgz"
         archive_dir(root, archive)

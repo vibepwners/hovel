@@ -27,19 +27,19 @@ SLICES: tuple[Slice, ...] = (
         name="sdk",
         description="public Python, Go, and Rust module SDKs",
         paths=("sdk",),
-        check_task="",
+        check_task="sdk:ci",
     ),
     Slice(
         name="modules",
         description="example modules, Squatter, module packaging, and labs",
         paths=("modules",),
-        check_task="",
+        check_task="modules:ci",
     ),
     Slice(
         name="docs",
         description="static book, site assets, and demo recordings",
         paths=("docs",),
-        check_task="",
+        check_task="docs:ci",
     ),
 )
 

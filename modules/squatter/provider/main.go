@@ -44,7 +44,8 @@ const (
 	tcpBind      = "tcp-bind"
 	tcpCallback  = "tcp-callback"
 
-	payloadRunfile = "payloads/squatter/windows/squatter.exe"
+	payloadRunfile       = "modules/squatter/windows/squatter.exe"
+	legacyPayloadRunfile = "payloads/squatter/windows/squatter.exe"
 
 	payloadConfigMagic          = "SQCFG001"
 	payloadConfigKindOffset     = 8
@@ -1424,6 +1425,8 @@ func payloadBinaryCandidates(runfiles, exe string) []string {
 
 	candidates = append(candidates,
 		filepath.Join("bazel-bin", payloadRunfile),
+		filepath.Join("bazel-bin", legacyPayloadRunfile),
+		filepath.Join("modules", "squatter", "windows", "squatter.exe"),
 		filepath.Join("payloads", "squatter", "windows", "squatter.exe"),
 	)
 
@@ -1435,6 +1438,9 @@ func appendRunfileCandidates(candidates []string, root string) []string {
 		filepath.Join(root, "_main", payloadRunfile),
 		filepath.Join(root, "hovel", payloadRunfile),
 		filepath.Join(root, payloadRunfile),
+		filepath.Join(root, "_main", legacyPayloadRunfile),
+		filepath.Join(root, "hovel", legacyPayloadRunfile),
+		filepath.Join(root, legacyPayloadRunfile),
 	)
 }
 

@@ -85,7 +85,7 @@ def main_with_paths(
 
 
 def generate_python_docs(repo: Path, output: Path, *, uv_bin: Path | None = None) -> ApiPage:
-    source = repo / "tools/docs/python_api"
+    source = repo / "docs/tools/docs/python_api"
     with (
         tempfile.TemporaryDirectory(prefix="hovel-sphinx-doctrees-") as doctrees,
         tempfile.TemporaryDirectory(prefix="hovel-uv-env-") as uv_env,
@@ -169,7 +169,13 @@ def run_pkgsite(repo: Path, *, go_bin: Path | None = None):
     port = free_port()
     base_url = f"http://127.0.0.1:{port}"
     with tempfile.TemporaryDirectory(prefix="hovel-pkgsite-") as tmp:
-        log_path = Path(tmp) / "pkgsite.log"
+        tmp_root = Path(tmp)
+        pkg_root = tmp_root / "module"
+        pkg_root.mkdir()
+        copy_file(repo / "core/go.mod", pkg_root / "go.mod")
+        copy_file(repo / "core/go.sum", pkg_root / "go.sum")
+        copy_tree_contents(repo / "sdk/go", pkg_root / "sdk/go")
+        log_path = tmp_root / "pkgsite.log"
         with log_path.open("w+") as log:
             process = subprocess.Popen(
                 [
@@ -179,7 +185,7 @@ def run_pkgsite(repo: Path, *, go_bin: Path | None = None):
                     f"-http=127.0.0.1:{port}",
                     "-list=false",
                 ],
-                cwd=repo,
+                cwd=pkg_root,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -461,12 +467,18 @@ def write_missing_rustdoc_implementor_files(rust_output: Path) -> None:
 
 
 def copy_tree_contents(source: Path, dest: Path) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
     for child in source.iterdir():
         target = dest / child.name
         if child.is_dir():
             shutil.copytree(child, target, dirs_exist_ok=True)
         else:
             shutil.copy2(child, target)
+
+
+def copy_file(source: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, dest)
 
 
 def relative_prefix(path: Path, site_root: Path) -> str:

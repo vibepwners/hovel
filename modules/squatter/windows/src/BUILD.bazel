@@ -1,9 +1,9 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
-load("//payloads/squatter/bazel:copts.bzl", "SQ_COPTS")
-load("//payloads/squatter/bazel:transitions.bzl", "windows_multiplatform")
-load("//tools/lint:squatter_clang_tidy.bzl", "squatter_clang_tidy")
+load("//modules/squatter/bazel:copts.bzl", "SQ_COPTS")
+load("//modules/squatter/bazel:transitions.bzl", "windows_multiplatform")
+load("@hovel_core//tools/lint:squatter_clang_tidy.bzl", "squatter_clang_tidy")
 load(
-    "//tools/lint:static_checks.bzl",
+    "@hovel_core//tools/lint:static_checks.bzl",
     "squatter_complexity",
     "squatter_cppcheck",
     "squatter_format_check",

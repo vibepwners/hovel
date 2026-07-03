@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Stage example module binaries into examples/bin/.")
+    parser = argparse.ArgumentParser(description="Stage example module binaries into modules/examples/bin/.")
     parser.add_argument(
         "--module",
         action="append",
@@ -20,7 +20,7 @@ def main() -> int:
     args = parser.parse_args()
 
     workspace = Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path.cwd())).resolve()
-    dest = workspace / "examples" / "bin"
+    dest = workspace / "modules" / "examples" / "bin"
     dest.mkdir(parents=True, exist_ok=True)
 
     staged = 0

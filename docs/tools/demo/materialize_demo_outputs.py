@@ -19,10 +19,10 @@ def main() -> int:
     workspace = Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path.cwd())).resolve()
     manifest = resolve_runfile(args.manifest)
     outputs = [line.strip() for line in manifest.read_text().splitlines() if line.strip()]
-    dest_root = workspace / "demo/out"
+    dest_root = workspace / "docs/demo/out"
     dest_root.mkdir(parents=True, exist_ok=True)
 
-    sources = [resolve_runfile(output) for output in outputs]
+    sources = [resolve_first_runfile("docs/" + output, output) for output in outputs]
     fingerprint = digest_outputs(args.mode, outputs, sources)
     stamp = dest_root / f".{args.mode}.sha256"
     if is_current(stamp, fingerprint, workspace, outputs, sources):
@@ -31,7 +31,7 @@ def main() -> int:
 
     copied: list[Path] = []
     for output, src in zip(outputs, sources, strict=True):
-        dest = workspace / output
+        dest = workspace / "docs" / output
         dest.parent.mkdir(parents=True, exist_ok=True)
         make_writable(dest)
         shutil.copy2(src, dest)
@@ -80,7 +80,7 @@ def is_current(stamp: Path, fingerprint: str, workspace: Path, outputs: list[str
     if not stamp.exists() or stamp.read_text().strip() != fingerprint:
         return False
     for output, source in zip(outputs, sources, strict=True):
-        dest = workspace / output
+        dest = workspace / "docs" / output
         if not dest.is_file() or dest.read_bytes() != source.read_bytes():
             return False
     return True
@@ -92,21 +92,28 @@ def make_writable(path: Path) -> None:
 
 
 def resolve_runfile(path: str) -> Path:
-    raw = Path(path)
-    if raw.is_absolute() and raw.exists():
-        return raw.resolve()
+    return resolve_first_runfile(path)
+
+
+def resolve_first_runfile(*paths: str) -> Path:
+    for path in paths:
+        raw = Path(path)
+        if raw.is_absolute() and raw.exists():
+            return raw.resolve()
     for root_name in ("RUNFILES_DIR", "TEST_SRCDIR"):
         root = os.environ.get(root_name)
         if not root:
             continue
         for prefix in ("", "_main", "hovel"):
-            candidate = Path(root) / prefix / path
-            if candidate.exists():
-                return candidate.resolve()
-    candidate = Path.cwd() / path
-    if candidate.exists():
-        return candidate.resolve()
-    raise SystemExit(f"missing runfile: {path}")
+            for path in paths:
+                candidate = Path(root) / prefix / path
+                if candidate.exists():
+                    return candidate.resolve()
+    for path in paths:
+        candidate = Path.cwd() / path
+        if candidate.exists():
+            return candidate.resolve()
+    raise SystemExit(f"missing runfile: {' or '.join(paths)}")
 
 
 if __name__ == "__main__":

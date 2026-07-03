@@ -87,7 +87,7 @@ Useful tasks:
 | `task lint` | Run core Go formatting, golangci-lint, and Gazelle checks. |
 | `task fmt` | Format wired slices: core Go/Gazelle plus Go SDK sources. |
 | `task coverage` | Run core domain and application coverage ratchets. |
-| `task ci` | Require a full checkout, then run the wired core CI gate. |
+| `task ci` | Require a full checkout, then run the core, SDK, modules, and docs gates. |
 
 ## Repository layout
 
@@ -105,7 +105,8 @@ The repository is organized for Sapling sparse profiles:
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). During sparse work, use `task check` to
 run the checks available in the checkout. Changes should pass the relevant
-slice checks before landing; the fully wired gate currently centers on `core/`.
+slice checks before landing; `task ci` is the full-checkout gate for core, SDKs,
+modules, docs, demos, and release-package smoke checks.
 
 ## License
 

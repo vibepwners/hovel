@@ -22,11 +22,11 @@ py_binary(
     ],
     args = [
         "--mode=standard",
-        "--manifest=demo/standard_gif_manifest.txt",
+        "--manifest=docs/demo/standard_gif_manifest.txt",
     ],
     data = [
-        "//demo:standard_gif_manifest",
-        "//demo:standard_gifs",
+        "//docs/demo:standard_gif_manifest",
+        "//docs/demo:standard_gifs",
     ],
     main = "materialize_demo_outputs.py",
     python_version = "PY3",
@@ -41,11 +41,11 @@ py_binary(
     ],
     args = [
         "--mode=squatter-wine",
-        "--manifest=demo/squatter_wine_gif_manifest.txt",
+        "--manifest=docs/demo/squatter_wine_gif_manifest.txt",
     ],
     data = [
-        "//demo:squatter_wine_gif",
-        "//demo:squatter_wine_gif_manifest",
+        "//docs/demo:squatter_wine_gif",
+        "//docs/demo:squatter_wine_gif_manifest",
     ],
     main = "materialize_demo_outputs.py",
     python_version = "PY3",
@@ -60,11 +60,11 @@ py_binary(
     ],
     args = [
         "--mode=all",
-        "--manifest=demo/all_gif_manifest.txt",
+        "--manifest=docs/demo/all_gif_manifest.txt",
     ],
     data = [
-        "//demo:all_gif_manifest",
-        "//demo:all_gifs",
+        "//docs/demo:all_gif_manifest",
+        "//docs/demo:all_gifs",
     ],
     main = "materialize_demo_outputs.py",
     python_version = "PY3",

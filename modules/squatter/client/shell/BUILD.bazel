@@ -14,8 +14,8 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell",
     visibility = ["//visibility:public"],
     deps = [
-        "//payloads/squatter/client/wire",
-        "//payloads/squatter/client/xfer",
+        "//modules/squatter/client/wire",
+        "//modules/squatter/client/xfer",
         "@com_github_c_bata_go_prompt//:go-prompt",
         "@com_github_charmbracelet_lipgloss//:lipgloss",
     ] + select({
@@ -76,7 +76,7 @@ go_test(
     ],
     embed = [":shell"],
     deps = [
-        "//payloads/squatter/client/wire",
+        "//modules/squatter/client/wire",
         "@com_github_c_bata_go_prompt//:go-prompt",
     ],
 )

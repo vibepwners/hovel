@@ -1,12 +1,12 @@
 """Rust link inputs and flags for Windows cross builds."""
 
-_MINGW_AARCH64 = "//tools/windows_rust:llvm_mingw_aarch64_libs"
-_MINGW_X86_64 = "//tools/windows_rust:llvm_mingw_x86_64_libs"
+_MINGW_AARCH64 = Label("//tools/windows_rust:llvm_mingw_aarch64_libs")
+_MINGW_X86_64 = Label("//tools/windows_rust:llvm_mingw_x86_64_libs")
 
 def windows_rust_compile_data():
     return select({
-        "//platforms:is_windows_aarch64": [_MINGW_AARCH64],
-        "//platforms:is_windows_x86_64": [_MINGW_X86_64],
+        Label("//platforms:is_windows_aarch64"): [_MINGW_AARCH64],
+        Label("//platforms:is_windows_x86_64"): [_MINGW_X86_64],
         "//conditions:default": [],
     })
 
@@ -43,12 +43,12 @@ def _mingw_flags(label, emulation, builtins):
 
 def windows_rustc_flags():
     return select({
-        "//platforms:is_windows_aarch64": _mingw_flags(
+        Label("//platforms:is_windows_aarch64"): _mingw_flags(
             _MINGW_AARCH64,
             "arm64pe",
             "libclang_rt.builtins-aarch64.a",
         ),
-        "//platforms:is_windows_x86_64": _mingw_flags(
+        Label("//platforms:is_windows_x86_64"): _mingw_flags(
             _MINGW_X86_64,
             "i386pep",
             "libclang_rt.builtins-x86_64.a",

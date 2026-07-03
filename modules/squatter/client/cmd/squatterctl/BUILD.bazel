@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/cmd/squatterctl",
     visibility = ["//visibility:private"],
     deps = [
-        "//payloads/squatter/client/shell",
-        "//payloads/squatter/client/smbpipe",
+        "//modules/squatter/client/shell",
+        "//modules/squatter/client/smbpipe",
     ],
 )
 

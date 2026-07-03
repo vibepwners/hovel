@@ -526,7 +526,7 @@ func TestServePayloadProviderMethods(t *testing.T) {
 func TestFrameReaderRejectsOversizedFrameBeforeBodyRead(t *testing.T) {
 	reader := newFrameReader(strings.NewReader(fmt.Sprintf("Content-Length: %d\r\n\r\n", maxFrameBytes+1)))
 	_, err := reader.read()
-	if err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+	if err == nil || !strings.Contains(err.Error(), "frame too large") {
 		t.Fatalf("error = %v, want frame size error", err)
 	}
 }

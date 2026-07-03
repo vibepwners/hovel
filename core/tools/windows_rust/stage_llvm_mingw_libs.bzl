@@ -22,7 +22,7 @@ stage_llvm_mingw_libs = rule(
         "compiler_rt": attr.label_list(allow_files = True, mandatory = True),
         "target_libs": attr.label_list(allow_files = True, mandatory = True),
         "_tool": attr.label(
-            default = "//tools/windows_rust:stage_llvm_mingw_libs_tool",
+            default = Label("//tools/windows_rust:stage_llvm_mingw_libs_tool"),
             executable = True,
             cfg = "exec",
         ),

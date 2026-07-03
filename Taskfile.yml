@@ -6,6 +6,12 @@ version: '3'
 env:
   PYTHONDONTWRITEBYTECODE: '1'
 
+vars:
+  BAZEL_STARTUP_ARGS:
+    sh: echo "${HOVEL_BAZEL_STARTUP_ARGS:-}"
+  BAZEL_ARGS:
+    sh: echo "${HOVEL_BAZEL_ARGS:-}"
+
 tasks:
   default:
     desc: List available tasks.
@@ -33,6 +39,9 @@ tasks:
     cmds:
       - task: checkout:require-full
       - task: core:ci
+      - task: sdk:ci
+      - task: modules:ci
+      - task: docs:ci
 
   build:
     desc: Build the core Hovel binary workspace.
@@ -68,6 +77,21 @@ tasks:
     cmds:
       - task coverage
 
+  bazel:build:
+    desc: Build root integration Bazel targets for non-core slices.
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} build {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  bazel:test:
+    desc: Test root integration Bazel targets for non-core slices.
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} test {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  bazel:run:
+    desc: Run root integration Bazel targets for non-core slices.
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
   upver:
     desc: Update the lockstep Hovel core and SDK version.
     dir: core
@@ -96,6 +120,17 @@ tasks:
     desc: Build the Python SDK source and wheel distributions.
     cmds:
       - uv build sdk/python --out-dir dist
+
+  release:modules-stage:
+    desc: Stage in-repo module binaries into modules/examples/bin.
+    cmds:
+      - task bazel:run -- //modules/tools:stage_examples
+
+  release:modules-package:
+    desc: Build in-repo module release packages and indexes into dist/modules.
+    cmds:
+      - task: release:modules-stage
+      - python3 modules/tools/package_examples.py
 
   actions:summary:
     desc: Append a GitHub Actions job summary for wired core jobs.
@@ -144,6 +179,76 @@ tasks:
     dir: core
     cmds:
       - task run -- //tools/lint:gofmt_workspace -- --mode=write --path ../sdk/go/hovel
+
+  sdk:build:
+    desc: Build SDK targets in the root integration workspace.
+    cmds:
+      - task bazel:build -- //:sdk_build
+
+  sdk:test:
+    desc: Test SDK targets in the root integration workspace.
+    cmds:
+      - task bazel:test -- //:sdk_test
+
+  sdk:ci:
+    desc: Run the SDK slice CI gate.
+    cmds:
+      - task: sdk:build
+      - task: sdk:test
+
+  modules:build:
+    desc: Build example and Squatter module targets.
+    cmds:
+      - task bazel:build -- //:modules_build
+
+  modules:test:
+    desc: Test example/module packaging and Squatter provider targets.
+    cmds:
+      - task bazel:test -- //:modules_test
+
+  modules:wine-test:
+    desc: Run Squatter Windows tests under Wine.
+    cmds:
+      - task bazel:test -- --platforms=//platforms:windows_x86 --extra_toolchains=@mingw_i686//:toolchain --run_under=wine //:modules_wine_test
+
+  modules:ci:
+    desc: Run the modules slice CI gate.
+    cmds:
+      - task: modules:build
+      - task: modules:test
+
+  docs:build:
+    desc: Build the docs site staging tool.
+    cmds:
+      - task bazel:build -- //:docs_build
+
+  docs:test:
+    desc: Test docs helpers and standard demo flows.
+    cmds:
+      - task bazel:test -- //:docs_test
+
+  docs:demos:
+    desc: Render and materialize standard docs demo GIFs.
+    cmds:
+      - task bazel:run -- //docs/tools/demo:materialize_standard_demo_outputs
+
+  docs:demos:wine:
+    desc: Render and materialize the Squatter Wine docs demo GIF.
+    cmds:
+      - task bazel:run -- //docs/tools/demo:materialize_squatter_wine_demo_outputs
+
+  docs:stage:
+    desc: Stage the GitHub Pages site into _site.
+    cmds:
+      - task bazel:run -- //docs/tools/docs:stage_site
+
+  docs:ci:
+    desc: Run the docs slice CI gate.
+    cmds:
+      - task: docs:build
+      - task: docs:test
+      - task: docs:demos
+      - task: docs:stage
 
   start:
     aliases: [dev, up, cli]

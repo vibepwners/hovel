@@ -27,6 +27,7 @@ generate_sdk_api_docs = load_helper("generate_sdk_api_docs")
 def main() -> int:
     uv_bin, go_bin, rustdoc_bin = parse_tool_args(sys.argv[1:])
     repo = Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path.cwd())).resolve()
+    source = repo / "docs/site"
     fingerprint = docs_fingerprint(repo)
     site = repo / "_site"
     stamp = site / ".hovel_docs_inputs.sha256"
@@ -37,10 +38,10 @@ def main() -> int:
     if site.exists():
         shutil.rmtree(site)
     site.mkdir(parents=True)
-    copy_file(repo / "index.html", site / "index.html")
+    copy_file(source / "index.html", site / "index.html")
     copy_file(repo / "LICENSE", site / "LICENSE")
-    copy_tree(repo / "assets", site / "assets")
-    copy_tree(repo / "spec", site / "spec", ignore_names={"BUILD.bazel"})
+    copy_tree(source / "assets", site / "assets")
+    copy_tree(source / "spec", site / "spec", ignore_names={"BUILD.bazel"})
     replace_version_tokens(site, (repo / "VERSION").read_text().strip())
     copy_demo_outputs(repo, site)
 
@@ -81,24 +82,24 @@ def docs_fingerprint(repo: Path) -> str:
     paths: set[Path] = {
         repo / "LICENSE",
         repo / "VERSION",
-        repo / "go.mod",
-        repo / "go.sum",
-        repo / "index.html",
+        repo / "core/go.mod",
+        repo / "core/go.sum",
+        repo / "docs/site/index.html",
         repo / "sdk/python/pyproject.toml",
         repo / "sdk/python/uv.lock",
-        repo / "tools/docs/check_site_links.py",
-        repo / "tools/docs/generate_sdk_api_docs.py",
-        repo / "tools/docs/stage_site.py",
-        resolve_runfile("demo/all_gif_manifest.txt"),
+        repo / "docs/tools/docs/check_site_links.py",
+        repo / "docs/tools/docs/generate_sdk_api_docs.py",
+        repo / "docs/tools/docs/stage_site.py",
+        resolve_first_runfile("docs/demo/all_gif_manifest.txt", "demo/all_gif_manifest.txt"),
     }
     for pattern in (
-        "assets/**/*",
-        "demo/out/*.gif",
+        "docs/site/assets/**/*",
+        "docs/demo/out/*.gif",
         "sdk/go/**/*.go",
         "sdk/python/hovel_sdk/**/*.py",
         "sdk/rust/hovel/src/**/*.rs",
-        "spec/**/*.html",
-        "tools/docs/python_api/**/*",
+        "docs/site/spec/**/*.html",
+        "docs/tools/docs/python_api/**/*",
     ):
         paths.update(repo.glob(pattern))
 
@@ -147,30 +148,39 @@ def replace_version_tokens(site: Path, version: str) -> None:
 def copy_demo_outputs(repo: Path, site: Path) -> None:
     dest = site / "assets/demos"
     dest.mkdir(parents=True, exist_ok=True)
-    manifest = resolve_runfile("demo/all_gif_manifest.txt")
+    manifest = resolve_first_runfile("docs/demo/all_gif_manifest.txt", "demo/all_gif_manifest.txt")
     for output in [line.strip() for line in manifest.read_text().splitlines() if line.strip()]:
-        src = repo / output
+        src = repo / "docs" / output
+        if not src.is_file():
+            src = repo / output
         if not src.is_file() or src.stat().st_size == 0:
-            raise SystemExit(f"missing generated demo artifact: {output}\nrun task docs before staging docs")
+            raise SystemExit(f"missing generated demo artifact: {output}\nrun task docs:demos before staging docs")
         copy_file(src, dest / Path(output).name)
 
 
 def resolve_runfile(path: str) -> Path:
-    raw = Path(path)
-    if raw.is_absolute() and raw.exists():
-        return raw.resolve()
+    return resolve_first_runfile(path)
+
+
+def resolve_first_runfile(*paths: str) -> Path:
+    for path in paths:
+        raw = Path(path)
+        if raw.is_absolute() and raw.exists():
+            return raw.resolve()
     for root_name in ("RUNFILES_DIR", "TEST_SRCDIR"):
         root = os.environ.get(root_name)
         if not root:
             continue
         for prefix in ("", "_main", "hovel"):
-            candidate = Path(root) / prefix / path
-            if candidate.exists():
-                return candidate.resolve()
-    candidate = Path.cwd() / path
-    if candidate.exists():
-        return candidate.resolve()
-    raise SystemExit(f"missing runfile: {path}")
+            for path in paths:
+                candidate = Path(root) / prefix / path
+                if candidate.exists():
+                    return candidate.resolve()
+    for path in paths:
+        candidate = Path.cwd() / path
+        if candidate.exists():
+            return candidate.resolve()
+    raise SystemExit(f"missing runfile: {' or '.join(paths)}")
 
 
 if __name__ == "__main__":

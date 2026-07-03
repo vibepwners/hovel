@@ -71,13 +71,16 @@ task check
         <p><code>task ci</code> first requires a full checkout. It then runs lint, version-updater tests, demo-backed documentation staging, build, tests, the Go race gate, fuzz smoke, and coverage ratchets. The docs step builds the Bazel-declared VHS demo outputs, stages the GitHub Pages site, generates SDK API pages, and runs the internal link checker.</p>
 
         <h2>CI Gate</h2>
-        <p>The repository split changed the CI shape. The currently wired local gate is core-centered:</p>
+        <p>The repository split changed the CI shape. The local and hosted gates are modular but Task-backed:</p>
         <ol>
           <li><code>core</code>: <code>task build</code>, <code>task test</code>, race tests, fuzz smoke, lint, and coverage for the core workspace.</li>
-          <li><code>sdk</code>, <code>modules</code>, and <code>docs</code>: detected by <code>task check</code>, but slice-local checks still need to be restored.</li>
+          <li><code>sdk</code>: <code>task sdk:ci</code> builds and tests the Go, Python, and Rust SDK slices.</li>
+          <li><code>modules</code>: <code>task modules:ci</code> builds and tests in-repo examples, Squatter provider code, module packaging checks, and workspace install behavior, then <code>task release:modules-package</code> verifies the module package/index release path.</li>
+          <li><code>docs</code>: <code>task docs:ci</code> builds docs tooling, verifies demo harnesses, renders standard demos, stages <code>_site/</code>, generates SDK API pages, and runs the internal link checker.</li>
+          <li><code>squatter-wine</code>: installs Wine in CI, then runs <code>task modules:wine-test</code> and <code>task docs:demos:wine</code>.</li>
         </ol>
         <p>CI, Pages, and publish jobs append GitHub Actions job summaries with the commands they ran, coverage ratchets, generated artifacts, staged site statistics, or publish targets where those details apply.</p>
-        <p>Docs and demo checks should come back as docs-slice tasks rather than as dependencies of every core checkout.</p>
+        <p>Docs and demo checks stay in the docs slice instead of becoming dependencies of every core checkout. The full aggregate <code>task ci</code> requires a complete checkout and runs the wired slice gates together.</p>
 
         <h2>Test Inventory</h2>
         <p>The root Bazel test suite covers the main product surfaces:</p>

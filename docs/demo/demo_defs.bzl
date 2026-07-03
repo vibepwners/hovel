@@ -100,7 +100,7 @@ _vhs_demo_rule = rule(
         "mock_exploit_session_go": attr.label(executable = True, cfg = "exec", mandatory = True),
         "mock_survey_go": attr.label(executable = True, cfg = "exec", mandatory = True),
         "runner": attr.label(
-            default = "//tools/demo:render_vhs_demo",
+            default = "//docs/tools/demo:render_vhs_demo",
             executable = True,
             cfg = "exec",
         ),
@@ -145,11 +145,11 @@ def _vhs_demo(name, tape, wine = False):
     kwargs = {}
     if wine:
         kwargs = {
-            "docker_entrypoint": "//:tools/docker/squatter-wine/entrypoint.sh",
-            "docker_runner": "//:tools/docker/squatter-wine/run.sh",
-            "dockerfile": "//:tools/docker/squatter-wine/Dockerfile",
-            "squatter_exe": "//payloads/squatter/windows:squatter_x86_exe",
-            "squatter_provider": "//payloads/squatter/provider:squatter-provider",
+            "docker_entrypoint": "//modules/docker/squatter-wine:entrypoint.sh",
+            "docker_runner": "//modules/docker/squatter-wine:run.sh",
+            "dockerfile": "//modules/docker/squatter-wine:Dockerfile",
+            "squatter_exe": "//modules/squatter/windows:squatter_x86_exe",
+            "squatter_provider": "//modules/squatter/provider:squatter-provider",
         }
     _vhs_demo_rule(
         name = name + "_gif",
@@ -159,12 +159,12 @@ def _vhs_demo(name, tape, wine = False):
         chain = "chains/mock-survey-exploit.chain.yaml",
         setup_script = "//:scripts/demo-step-setup.sh",
         tmux_script = "//:scripts/demo-mcp-agent-tmux.sh",
-        duration_checker = "//tools/demo:check_gif_duration.py",
-        vhs_version = "//tools/demo:vhs_version.txt",
-        hovel = "//cmd/hovel:hovel",
-        agent = "//tools/demo/mcpagent:mcpagent",
-        mock_survey_go = "//examples/go/mock_survey:mock_survey",
-        mock_exploit_session_go = "//examples/go/mock_exploit_session:mock_exploit_session",
+        duration_checker = "//docs/tools/demo:check_gif_duration.py",
+        vhs_version = "//docs/tools/demo:vhs_version.txt",
+        hovel = "@hovel_core//cmd/hovel:hovel",
+        agent = "//docs/tools/demo/mcpagent:mcpagent",
+        mock_survey_go = "//modules/examples/go/mock_survey:mock_survey",
+        mock_exploit_session_go = "//modules/examples/go/mock_exploit_session:mock_exploit_session",
         tags = ["manual"],
         wine = wine,
         **kwargs

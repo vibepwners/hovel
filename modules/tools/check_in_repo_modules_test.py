@@ -14,7 +14,7 @@ def main() -> int:
     if len(binaries) != 7:
         raise SystemExit("expected seven module binary arguments")
 
-    python_root = find_runfile("examples/python")
+    python_root = find_first_runfile("modules/examples/python", "examples/python")
     sdk_root = find_runfile("sdk/python")
 
     with tempfile.TemporaryDirectory(prefix="hovel-module-check-", dir=test_tmpdir()) as tmp_raw:
@@ -122,12 +122,17 @@ def resolve_path(path: str) -> Path:
 
 
 def find_runfile(rel: str) -> Path:
+    return find_first_runfile(rel)
+
+
+def find_first_runfile(*rels: str) -> Path:
     for root in runfile_roots():
         for prefix in ("", "_main", "hovel"):
-            candidate = root / prefix / rel
-            if candidate.exists():
-                return candidate.resolve()
-    raise SystemExit(f"missing runfile: {rel}")
+            for rel in rels:
+                candidate = root / prefix / rel
+                if candidate.exists():
+                    return candidate.resolve()
+    raise SystemExit(f"missing runfile: {' or '.join(rels)}")
 
 
 def runfile_roots() -> list[Path]:

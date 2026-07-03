@@ -14,10 +14,10 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/provider",
     visibility = ["//visibility:private"],
     deps = [
-        "//payloads/squatter/client/shell",
-        "//payloads/squatter/client/smbpipe",
-        "//payloads/squatter/client/wire",
-        "//payloads/squatter/client/xfer",
+        "//modules/squatter/client/shell",
+        "//modules/squatter/client/smbpipe",
+        "//modules/squatter/client/wire",
+        "//modules/squatter/client/xfer",
         "//sdk/go/hovel",
     ],
 )
@@ -25,7 +25,7 @@ go_library(
 go_binary(
     name = "squatter-provider",
     srcs = ["provider_main.go"],
-    data = ["//payloads/squatter/windows:squatter_x86_exe"],
+    data = ["//modules/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
     gotags = ["hovel_squatter_provider"],
 )
@@ -33,7 +33,7 @@ go_binary(
 go_binary(
     name = "squatter-generate",
     srcs = ["generate_main.go"],
-    data = ["//payloads/squatter/windows:squatter_x86_exe"],
+    data = ["//modules/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
     gotags = ["hovel_squatter_generate"],
 )
@@ -41,11 +41,11 @@ go_binary(
 go_test(
     name = "provider_test",
     srcs = ["main_test.go"],
-    data = ["//payloads/squatter/windows:squatter_x86_exe"],
+    data = ["//modules/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
     deps = [
-        "//payloads/squatter/client/shell",
-        "//payloads/squatter/client/wire",
+        "//modules/squatter/client/shell",
+        "//modules/squatter/client/wire",
         "//sdk/go/hovel",
         "//sdk/go/hoveltest",
     ],
