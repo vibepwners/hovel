@@ -238,8 +238,3 @@ mingw_toolchain_repo(
     target = "x86_64-w64-mingw32",
     urls = ["https://github.com/Vibe-Pwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-seh-x86_64-w64-mingw32-linux-x86_64.tar.xz"],
 )
-
-register_toolchains(
-    "@mingw_i686//:toolchain",
-    "@mingw_x86_64//:toolchain",
-)
