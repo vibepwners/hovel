@@ -127,6 +127,16 @@ tasks:
       - task: modules:ci
       - task: docs:ci
 
+  ci:report:
+    desc: Run the full-checkout gate with a generated static HTML test report.
+    cmds:
+      - task: checkout:require-full
+      - task: test:report
+      - task: core:ci
+      - task: sdk:ci
+      - task: modules:ci
+      - task: docs:ci
+
   build:
     desc: Build the core Hovel binary workspace.
     cmds:
