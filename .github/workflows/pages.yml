@@ -49,15 +49,9 @@ jobs:
 
       - name: Job summary
         if: always()
-        run: |
-          {
-            echo "## Pages Build"
-            echo ""
-            echo "| Field | Value |"
-            echo "| --- | --- |"
-            echo "| Status | ${{ job.status }} |"
-            echo "| Source | _site |"
-          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: task actions:summary -- pages-build
 
   deploy:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
@@ -76,9 +70,16 @@ jobs:
           {
             echo "## Pages Deploy"
             echo ""
+            echo "Deploys the uploaded _site/ artifact to the github-pages environment."
+            echo ""
             echo "| Field | Value |"
             echo "| --- | --- |"
             echo "| Status | ${{ job.status }} |"
             echo "| Environment | github-pages |"
             echo "| URL | ${{ steps.deployment.outputs.page_url }} |"
+            echo ""
+            echo "### What This Proves"
+            echo ""
+            echo "- GitHub Pages accepted the artifact produced by the Pages build job."
+            echo "- The public documentation URL was updated for this run."
           } >> "$GITHUB_STEP_SUMMARY"

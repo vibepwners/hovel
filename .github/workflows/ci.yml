@@ -89,6 +89,10 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: task sdk:ci
+      - if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: task actions:summary -- sdk-ci
 
   modules:
     name: Modules build and test
@@ -113,6 +117,10 @@ jobs:
           name: module-packages
           path: dist/modules/
           if-no-files-found: error
+      - if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: task actions:summary -- modules-ci
 
   docs:
     name: Docs build and demos
@@ -136,6 +144,10 @@ jobs:
           name: docs-site
           path: _site/
           if-no-files-found: error
+      - if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: task actions:summary -- docs-ci
 
   squatter-wine:
     name: Squatter Wine tests and demo
@@ -160,3 +172,7 @@ jobs:
           sudo apt-get install -y --install-recommends wine32 wine64
       - run: task modules:wine-test
       - run: task docs:demos:wine
+      - if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: task actions:summary -- squatter-wine

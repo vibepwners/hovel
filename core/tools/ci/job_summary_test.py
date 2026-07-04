@@ -16,7 +16,10 @@ import job_summary
 
 @contextmanager
 def patched_root(root: pathlib.Path):
-    with mock.patch.object(job_summary, "ROOT", root):
+    with (
+        mock.patch.object(job_summary, "ROOT", root),
+        mock.patch.object(job_summary, "REPO_ROOT", root.parent),
+    ):
         yield
 
 
@@ -53,7 +56,9 @@ class JobSummaryTest(unittest.TestCase):
 
     def test_publish_summary_lists_release_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = pathlib.Path(tmp)
+            repo = pathlib.Path(tmp)
+            root = repo / "core"
+            root.mkdir()
             wheel = root / "dist/hovel-0.1.0-py3-none-any.whl"
             wheel.parent.mkdir()
             wheel.write_bytes(b"wheel")
@@ -62,15 +67,15 @@ class JobSummaryTest(unittest.TestCase):
 
         self.assertIn("## Publish Hovel Wheels", rendered)
         self.assertIn("`task release:hovel-wheels`", rendered)
-        self.assertIn("`dist/hovel-0.1.0-py3-none-any.whl`", rendered)
+        self.assertIn("`core/dist/hovel-0.1.0-py3-none-any.whl`", rendered)
 
     def test_pages_summary_reports_site_stats(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp)
             root = repo / "core"
             root.mkdir()
-            site = repo / "docs/site"
-            site.mkdir(parents=True)
+            site = repo / "_site"
+            site.mkdir()
             (site / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
             with patched_root(root), patched_env(JOB_STATUS="success"):
                 rendered = job_summary.render_summary(job_summary.JOBS["pages-build"])
