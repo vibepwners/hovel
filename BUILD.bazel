@@ -37,6 +37,21 @@ filegroup(
     ],
 )
 
+filegroup(
+    name = "module_examples_build",
+    srcs = [
+        "//modules/examples/go/mock_exploit",
+        "//modules/examples/go/mock_exploit_session",
+        "//modules/examples/go/mock_survey",
+        "//modules/examples/python:mock_exploit_module",
+        "//modules/examples/python:mock_exploit_session_module",
+        "//modules/examples/python:mock_survey_module",
+        "//modules/examples/rust/mock_exploit:mock-exploit-rust",
+        "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
+        "//modules/examples/rust/mock_survey:mock-survey-rust",
+    ],
+)
+
 test_suite(
     name = "modules_test",
     tests = [
@@ -46,6 +61,21 @@ test_suite(
         "//modules/tools:check_in_repo_modules_test",
         "//modules/tools:package_examples_test",
         "//modules/tools:workspace_module_install_test",
+    ],
+)
+
+test_suite(
+    name = "module_examples_test",
+    tests = [
+        "//modules/examples/go/mock_exploit:mock_exploit_test",
+        "//modules/examples/go/mock_exploit_session:mock_exploit_session_test",
+        "//modules/examples/go/mock_survey:mock_survey_test",
+        "//modules/examples/python:mock_exploit_session_test",
+        "//modules/examples/python:mock_exploit_test",
+        "//modules/examples/python:mock_survey_test",
+        "//modules/examples/rust/mock_exploit:mock_exploit_rust_test",
+        "//modules/examples/rust/mock_exploit_session:mock_exploit_session_rust_test",
+        "//modules/examples/rust/mock_survey:mock_survey_rust_test",
     ],
 )
 

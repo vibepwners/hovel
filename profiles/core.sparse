@@ -1,0 +1,26 @@
+[metadata]
+title: Hovel core development checkout
+description: Core framework development plus the Go, Rust, and Python example
+  modules used to validate module authoring paths.
+
+[include]
+.bazelrc
+.bazelversion
+.gitignore
+BUILD.bazel
+MODULE.bazel
+MODULE.bazel.lock
+README.md
+Taskfile.yml
+core
+modules/examples
+modules/squatter/bazel
+modules/tools
+platforms
+profiles
+repo-tools
+sdk
+
+[exclude]
+modules/examples/bin
+
