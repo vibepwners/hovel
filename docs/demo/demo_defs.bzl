@@ -45,6 +45,8 @@ def _vhs_demo_impl(ctx):
     args.add("--vhs-bin", ctx.file._vhs)
     args.add("--vhs-version-file", ctx.file.vhs_version)
     args.add("--chrome-bin", ctx.file._chrome)
+    args.add("--ffmpeg-bin", ctx.file._ffmpeg)
+    args.add("--ttyd-bin", ctx.file._ttyd)
 
     inputs = [
         ctx.file.tape,
@@ -61,6 +63,8 @@ def _vhs_demo_impl(ctx):
         tools.extend(files)
         transitive_tools.extend(transitive)
     tools.append(ctx.file._vhs)
+    tools.append(ctx.file._ffmpeg)
+    tools.append(ctx.file._ttyd)
     tools.extend(ctx.files._chrome_files)
 
     if ctx.attr.wine:
@@ -122,6 +126,16 @@ _vhs_demo_rule = rule(
         ),
         "_chrome_files": attr.label(
             default = "@chrome_for_testing_linux_x86_64//:chrome_files",
+            cfg = "exec",
+        ),
+        "_ffmpeg": attr.label(
+            default = "@ffmpeg_linux_x86_64//:ffmpeg_bin",
+            allow_single_file = True,
+            cfg = "exec",
+        ),
+        "_ttyd": attr.label(
+            default = "@ttyd_linux_x86_64//file",
+            allow_single_file = True,
             cfg = "exec",
         ),
         "vhs_version": attr.label(allow_single_file = True, mandatory = True),

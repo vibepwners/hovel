@@ -60,6 +60,7 @@ lint_pip.parse(
 use_repo(lint_pip, "lint_pypi")
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 
 http_archive(
     name = "golangci_lint_linux_amd64",
@@ -89,6 +90,29 @@ filegroup(
     sha256 = "99cb634587eaae0473c1ea377db80c3a048c27f99fe0a7febb1a1e8cb7ee5009",
     strip_prefix = "vhs_0.11.0_Linux_x86_64",
     urls = ["https://github.com/charmbracelet/vhs/releases/download/v0.11.0/vhs_0.11.0_Linux_x86_64.tar.gz"],
+)
+
+http_file(
+    name = "ttyd_linux_x86_64",
+    downloaded_file_path = "ttyd",
+    executable = True,
+    sha256 = "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
+    urls = ["https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64"],
+)
+
+http_archive(
+    name = "ffmpeg_linux_x86_64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "ffmpeg_bin",
+    srcs = ["bin/ffmpeg"],
+)
+""",
+    sha256 = "7aadf7d95d94e9dc71d4283d64be209ef1ba4cab5eb09893c29037223704d0b1",
+    strip_prefix = "ffmpeg-n8.1.2-21-gce3c09c101-linux64-gpl-8.1",
+    urls = ["https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-03-13-21/ffmpeg-n8.1.2-21-gce3c09c101-linux64-gpl-8.1.tar.xz"],
 )
 
 http_archive(

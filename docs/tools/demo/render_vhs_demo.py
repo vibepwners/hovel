@@ -27,6 +27,8 @@ def main() -> int:
     parser.add_argument("--vhs-bin", required=True, type=Path)
     parser.add_argument("--vhs-version-file", type=Path)
     parser.add_argument("--chrome-bin", required=True, type=Path)
+    parser.add_argument("--ffmpeg-bin", required=True, type=Path)
+    parser.add_argument("--ttyd-bin", required=True, type=Path)
     parser.add_argument("--squatter-provider", type=Path)
     parser.add_argument("--squatter-exe", type=Path)
     parser.add_argument("--dockerfile", type=Path)
@@ -36,6 +38,8 @@ def main() -> int:
     args = parser.parse_args()
 
     vhs = executable_path(args.vhs_bin)
+    ffmpeg = executable_path(args.ffmpeg_bin)
+    ttyd = executable_path(args.ttyd_bin)
     verify_vhs_version(vhs, args.vhs_version_file)
     require_command("tmux")
     if args.wine:
@@ -54,7 +58,7 @@ def main() -> int:
             "HOVEL_REPO_ROOT": str(repo),
             "HOVEL_DEMO_HOVEL_BIN": str(repo / "demo/tmp/hovel"),
             "HOVEL_DEMO_AGENT_BIN": str(repo / "demo/tmp/hovel-mock-agent"),
-            "PATH": tool_path(chrome_wrapper.parent, Path(vhs).parent),
+            "PATH": tool_path(chrome_wrapper.parent, Path(vhs).parent, Path(ffmpeg).parent, Path(ttyd).parent),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         run_vhs(vhs, args.tape_rel, repo, env)
