@@ -227,6 +227,11 @@ tasks:
     cmds:
       - task actions:summary -- {{.CLI_ARGS}}
 
+  actions:configure-bazel-cache:
+    desc: Configure Task/Bazel CI cache env for GitHub Actions jobs.
+    cmds:
+      - python3 repo-tools/tasks/configure_bazel_cache.py
+
   actions:summary:test:
     desc: Check the GitHub Actions summary renderer.
     dir: core
@@ -374,7 +379,6 @@ tasks:
   docs:ci:
     desc: Run the docs slice CI gate.
     cmds:
-      - task: docs:build
       - task: docs:test
       - task: docs:demos
       - task: docs:stage

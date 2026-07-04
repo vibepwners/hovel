@@ -31,34 +31,13 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Configure Bazel cache
-        shell: bash
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: |
-          set +x
-          ci_bazelrc="${RUNNER_TEMP}/bazel-ci.bazelrc"
-          echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository" > "${ci_bazelrc}"
-          bazel_configs="--config=github-actions"
-          if [[ -n "${BUILDBUDDY_API_KEY}" ]]; then
-            echo "::add-mask::${BUILDBUDDY_API_KEY}"
-            {
-              echo "common --noannounce_rc"
-              echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
-            } >> "${ci_bazelrc}"
-            bazel_configs="${bazel_configs} --config=ci"
-          fi
-          chmod 600 "${ci_bazelrc}"
-          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${ci_bazelrc}" >> "$GITHUB_ENV"
-          echo "HOVEL_BAZEL_ARGS=${bazel_configs}" >> "$GITHUB_ENV"
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: core/go.mod
-          cache: false
+        run: task actions:configure-bazel-cache
       - run: task checkout:status
       - run: task lint
       - run: task build -- //:build
-      - run: task test -- //:ci_test
-      - run: task test -- //:race_test //:fuzz_smoke_test
+      - run: task test -- //:ci_test //:race_test //:fuzz_smoke_test
       - run: task coverage
       - run: task release:hovel-wheels
       - if: failure()
@@ -89,25 +68,9 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Configure Bazel cache
-        shell: bash
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: |
-          set +x
-          ci_bazelrc="${RUNNER_TEMP}/bazel-ci.bazelrc"
-          echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository" > "${ci_bazelrc}"
-          bazel_configs="--config=github-actions"
-          if [[ -n "${BUILDBUDDY_API_KEY}" ]]; then
-            echo "::add-mask::${BUILDBUDDY_API_KEY}"
-            {
-              echo "common --noannounce_rc"
-              echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
-            } >> "${ci_bazelrc}"
-            bazel_configs="${bazel_configs} --config=ci"
-          fi
-          chmod 600 "${ci_bazelrc}"
-          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${ci_bazelrc}" >> "$GITHUB_ENV"
-          echo "HOVEL_BAZEL_ARGS=${bazel_configs}" >> "$GITHUB_ENV"
+        run: task actions:configure-bazel-cache
       - run: task sdk:ci
       - if: always()
         env:
@@ -131,25 +94,9 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Configure Bazel cache
-        shell: bash
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: |
-          set +x
-          ci_bazelrc="${RUNNER_TEMP}/bazel-ci.bazelrc"
-          echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository" > "${ci_bazelrc}"
-          bazel_configs="--config=github-actions"
-          if [[ -n "${BUILDBUDDY_API_KEY}" ]]; then
-            echo "::add-mask::${BUILDBUDDY_API_KEY}"
-            {
-              echo "common --noannounce_rc"
-              echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
-            } >> "${ci_bazelrc}"
-            bazel_configs="${bazel_configs} --config=ci"
-          fi
-          chmod 600 "${ci_bazelrc}"
-          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${ci_bazelrc}" >> "$GITHUB_ENV"
-          echo "HOVEL_BAZEL_ARGS=${bazel_configs}" >> "$GITHUB_ENV"
+        run: task actions:configure-bazel-cache
       - run: task modules:ci
       - run: task release:modules-package
       - uses: actions/upload-artifact@v4
@@ -179,25 +126,9 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Configure Bazel cache
-        shell: bash
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: |
-          set +x
-          ci_bazelrc="${RUNNER_TEMP}/bazel-ci.bazelrc"
-          echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository" > "${ci_bazelrc}"
-          bazel_configs="--config=github-actions"
-          if [[ -n "${BUILDBUDDY_API_KEY}" ]]; then
-            echo "::add-mask::${BUILDBUDDY_API_KEY}"
-            {
-              echo "common --noannounce_rc"
-              echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
-            } >> "${ci_bazelrc}"
-            bazel_configs="${bazel_configs} --config=ci"
-          fi
-          chmod 600 "${ci_bazelrc}"
-          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${ci_bazelrc}" >> "$GITHUB_ENV"
-          echo "HOVEL_BAZEL_ARGS=${bazel_configs}" >> "$GITHUB_ENV"
+        run: task actions:configure-bazel-cache
       - run: task docs:ci
       - uses: actions/upload-artifact@v4
         with:
@@ -226,25 +157,9 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Configure Bazel cache
-        shell: bash
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        run: |
-          set +x
-          ci_bazelrc="${RUNNER_TEMP}/bazel-ci.bazelrc"
-          echo "build:github-actions --repository_cache=${HOME}/.cache/bazel-repository" > "${ci_bazelrc}"
-          bazel_configs="--config=github-actions"
-          if [[ -n "${BUILDBUDDY_API_KEY}" ]]; then
-            echo "::add-mask::${BUILDBUDDY_API_KEY}"
-            {
-              echo "common --noannounce_rc"
-              echo "build:ci --remote_header=x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}"
-            } >> "${ci_bazelrc}"
-            bazel_configs="${bazel_configs} --config=ci"
-          fi
-          chmod 600 "${ci_bazelrc}"
-          echo "HOVEL_BAZEL_STARTUP_ARGS=--bazelrc=${ci_bazelrc}" >> "$GITHUB_ENV"
-          echo "HOVEL_BAZEL_ARGS=${bazel_configs}" >> "$GITHUB_ENV"
+        run: task actions:configure-bazel-cache
       - name: Install demo host tools
         run: |
           sudo dpkg --add-architecture i386
