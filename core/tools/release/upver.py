@@ -10,6 +10,10 @@ from pathlib import Path
 
 
 VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
+VERSION_PATHS = (
+    Path("VERSION"),
+    Path("core/VERSION"),
+)
 
 
 def main() -> int:
@@ -24,22 +28,26 @@ def main() -> int:
 
     if args.version:
         version = normalize(args.version)
-        write_version(args.root, version)
         print(f"updated version: {version}")
     elif args.sync:
         version = current
     else:
         return 0
 
+    write_version(args.root, version)
     sync(args.root, version)
     return 0
 
 
 def read_current(root: Path) -> str:
-    version_file = root / "VERSION"
-    if version_file.exists():
-        return normalize(version_file.read_text(encoding="utf-8").strip())
-    return "0.0.0"
+    versions = []
+    for relative in VERSION_PATHS:
+        version_file = root / relative
+        if version_file.exists():
+            versions.append(normalize(version_file.read_text(encoding="utf-8").strip()))
+    if not versions:
+        return "0.0.0"
+    return newest(versions)
 
 
 def normalize(version: str) -> str:
@@ -50,8 +58,16 @@ def normalize(version: str) -> str:
 
 
 def write_version(root: Path, version: str) -> None:
-    (root / "VERSION").write_text(version + "\n", encoding="utf-8")
-    (root / "core" / "VERSION").write_text(version + "\n", encoding="utf-8")
+    for relative in VERSION_PATHS:
+        (root / relative).write_text(version + "\n", encoding="utf-8")
+
+
+def newest(versions: list[str]) -> str:
+    return max(versions, key=version_key)
+
+
+def version_key(version: str) -> tuple[int, int, int]:
+    return tuple(int(part) for part in normalize(version).split("."))
 
 
 def sync(root: Path, version: str) -> None:

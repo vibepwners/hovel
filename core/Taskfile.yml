@@ -212,7 +212,7 @@ tasks:
   upver:
     desc: 'Update the lockstep Hovel core and SDK version: task upver -- 0.2.0.'
     cmds:
-      - python3 tools/release/upver.py {{.CLI_ARGS}}
+      - python3 tools/release/upver.py {{.CLI_ARGS | default "--sync"}}
 
   upver:test:
     desc: Check the lockstep Hovel version updater.
