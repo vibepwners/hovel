@@ -214,6 +214,26 @@ tasks:
         vars:
           CLI_ARGS: //:modules_build
 
+  modules:examples:build:
+    desc: Build Go, Python, and Rust example module targets.
+    cmds:
+      - task: bazel:build
+        vars:
+          CLI_ARGS: //:module_examples_build
+
+  modules:examples:test:
+    desc: Test Go, Python, and Rust example module targets.
+    cmds:
+      - task: bazel:test
+        vars:
+          CLI_ARGS: //:module_examples_test
+
+  modules:examples:ci:
+    desc: Run the example module slice CI gate.
+    cmds:
+      - task: modules:examples:build
+      - task: modules:examples:test
+
   modules:test:
     desc: Test example/module packaging and Squatter provider targets.
     cmds:

@@ -1,0 +1,21 @@
+[metadata]
+title: Hovel module author checkout
+description: Shared build, SDK, and core support files for authoring one module.
+  After enabling this profile, add a module with `sl sparse include modules/<name>`.
+
+[include]
+.bazelrc
+.bazelversion
+.gitignore
+BUILD.bazel
+MODULE.bazel
+MODULE.bazel.lock
+README.md
+Taskfile.yml
+core
+modules/squatter/bazel
+platforms
+profiles
+repo-tools
+sdk
+

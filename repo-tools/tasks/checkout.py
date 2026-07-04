@@ -30,9 +30,22 @@ SLICES: tuple[Slice, ...] = (
         check_task="sdk:ci",
     ),
     Slice(
+        name="module-examples",
+        description="Go, Python, and Rust example modules",
+        paths=("modules/examples/go", "modules/examples/python", "modules/examples/rust"),
+        check_task="modules:examples:ci",
+    ),
+    Slice(
         name="modules",
-        description="example modules, Squatter, module packaging, and labs",
-        paths=("modules",),
+        description="full in-repo modules slice including Squatter, module packaging, and labs",
+        paths=(
+            "modules/examples/go",
+            "modules/examples/python",
+            "modules/examples/rust",
+            "modules/squatter/provider",
+            "modules/squatter/windows",
+            "modules/tools",
+        ),
         check_task="modules:ci",
     ),
     Slice(
