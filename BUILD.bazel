@@ -104,6 +104,7 @@ test_suite(
     tests = [
         "//docs/demo:standard_verification_test",
         "//docs/tools/demo/mcpagent:mcpagent_test",
+        "//tools/testreport:testreport_test",
     ],
 )
 

@@ -1,0 +1,31 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "render_report",
+    srcs = [
+        "render_report.py",
+        "testreport.py",
+    ],
+    data = [
+        "//docs/site/assets:site_assets",
+        "//tools/testreport/static:assets",
+    ],
+    imports = ["."],
+    main = "render_report.py",
+    python_version = "PY3",
+)
+
+py_test(
+    name = "testreport_test",
+    srcs = [
+        "testreport.py",
+        "testreport_test.py",
+    ],
+    data = [
+        "//tools/testreport/static:assets",
+    ],
+    imports = ["."],
+    python_version = "PY3",
+)
