@@ -138,6 +138,10 @@ jobs:
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install demo host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       - run: task docs:ci
       - uses: actions/upload-artifact@v4
         with:
@@ -165,11 +169,11 @@ jobs:
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install Wine
+      - name: Install demo host tools
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y --install-recommends wine32 wine64
+          sudo apt-get install -y --install-recommends ffmpeg wine32 wine64
       - run: task modules:wine-test
       - run: task docs:demos:wine
       - if: always()
