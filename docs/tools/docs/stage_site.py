@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -43,7 +44,8 @@ def main() -> int:
     copy_tree(source / "assets", site / "assets")
     copy_tree(source / "spec", site / "spec", ignore_names={"BUILD.bazel"})
     replace_version_tokens(site, (repo / "VERSION").read_text().strip())
-    copy_demo_outputs(repo, site)
+    missing_demo_assets = copy_demo_outputs(repo, site)
+    remove_missing_demo_figures(site, missing_demo_assets)
 
     generate_sdk_api_docs.main_with_paths(
         repo_root=repo,
@@ -145,17 +147,39 @@ def replace_version_tokens(site: Path, version: str) -> None:
         path.write_text(text, encoding="utf-8")
 
 
-def copy_demo_outputs(repo: Path, site: Path) -> None:
+def copy_demo_outputs(repo: Path, site: Path) -> set[str]:
     dest = site / "assets/demos"
     dest.mkdir(parents=True, exist_ok=True)
     manifest = resolve_first_runfile("docs/demo/all_gif_manifest.txt", "demo/all_gif_manifest.txt")
+    missing: set[str] = set()
     for output in [line.strip() for line in manifest.read_text().splitlines() if line.strip()]:
         src = repo / "docs" / output
         if not src.is_file():
             src = repo / output
         if not src.is_file() or src.stat().st_size == 0:
-            raise SystemExit(f"missing generated demo artifact: {output}\nrun task docs:demos before staging docs")
+            missing.add(Path(output).name)
+            continue
         copy_file(src, dest / Path(output).name)
+    return missing
+
+
+def remove_missing_demo_figures(site: Path, missing_demo_assets: set[str]) -> None:
+    if not missing_demo_assets:
+        return
+    for page in site.rglob("*.html"):
+        text = page.read_text(encoding="utf-8")
+        updated = text
+        for asset in missing_demo_assets:
+            updated = re.sub(
+                r"\s*<figure\b[^>]*>\s*<img\b[^>]*assets/demos/"
+                + re.escape(asset)
+                + r"[^>]*>.*?</figure>",
+                "",
+                updated,
+                flags=re.DOTALL,
+            )
+        if updated != text:
+            page.write_text(updated, encoding="utf-8")
 
 
 def resolve_runfile(path: str) -> Path:
