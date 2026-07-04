@@ -13,6 +13,14 @@ build:buildbuddy --remote_cache=grpcs://remote.buildbuddy.io
 build:buildbuddy --remote_cache_compression=true
 build:buildbuddy --remote_upload_local_results=false
 
+build:local-cache --disk_cache=/var/tmp/bazel-cache/hovel
+build:local-cache --remote_upload_local_results=true
+
+build:nativelink --remote_cache=grpc://nativelink:50051
+build:nativelink --remote_upload_local_results=true
+
+build:local --config=nativelink
+
 build:ci --config=buildbuddy
 build:ci --build_metadata=ROLE=CI
 build:ci --noslim_profile

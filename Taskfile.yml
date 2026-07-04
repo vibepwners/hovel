@@ -12,7 +12,28 @@ vars:
   BAZEL_STARTUP_ARGS:
     sh: echo "${HOVEL_BAZEL_STARTUP_ARGS:-}"
   BAZEL_ARGS:
-    sh: echo "${HOVEL_BAZEL_ARGS:-}"
+    sh: |
+      if [ -n "${HOVEL_BAZEL_ARGS:-}" ]; then
+        echo "${HOVEL_BAZEL_ARGS}"
+        exit 0
+      fi
+      if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
+        echo "--config=ci"
+        exit 0
+      fi
+      config_file="{{.REPO_ROOT}}/.hovel-bazel-config"
+      if [ ! -f "$config_file" ]; then
+        echo ""
+        exit 0
+      fi
+      mode="$(tr -d '[:space:]' < "$config_file")"
+      case "$mode" in
+        local) echo "--config=local-cache" ;;
+        nativelink) echo "--config=nativelink" ;;
+        buildbuddy) echo "--config=buildbuddy" ;;
+        "") echo "" ;;
+        *) echo "unknown Bazel config mode in $config_file: $mode" >&2; exit 2 ;;
+      esac
 
 tasks:
   default:
@@ -30,6 +51,58 @@ tasks:
     desc: Fail unless this is a full checkout.
     cmds:
       - python3 repo-tools/tasks/checkout.py require
+
+  config-local:
+    desc: Use the shared local on-disk Bazel cache for local task builds.
+    silent: true
+    cmds:
+      - printf 'local\n' > "{{.REPO_ROOT}}/.hovel-bazel-config"
+      - task: config-show
+
+  config-nativelink:
+    desc: Use the shared local on-disk Bazel cache plus NativeLink for local task builds.
+    silent: true
+    cmds:
+      - printf 'nativelink\n' > "{{.REPO_ROOT}}/.hovel-bazel-config"
+      - task: config-show
+
+  config-buildbuddy:
+    desc: Use BuildBuddy cache for local task builds.
+    silent: true
+    cmds:
+      - printf 'buildbuddy\n' > "{{.REPO_ROOT}}/.hovel-bazel-config"
+      - task: config-show
+
+  config-show:
+    desc: Show the effective Bazel config used by task wrappers.
+    silent: true
+    cmds:
+      - |
+        config_file="{{.REPO_ROOT}}/.hovel-bazel-config"
+        if [ -n "${HOVEL_BAZEL_ARGS:-}" ]; then
+          echo "source: HOVEL_BAZEL_ARGS"
+          echo "args: ${HOVEL_BAZEL_ARGS}"
+        elif [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
+          echo "source: CI environment"
+          echo "mode: ci"
+          echo "args: --config=ci"
+        elif [ -f "$config_file" ]; then
+          mode="$(tr -d '[:space:]' < "$config_file")"
+          case "$mode" in
+            local) args="--config=local-cache" ;;
+            nativelink) args="--config=nativelink" ;;
+            buildbuddy) args="--config=buildbuddy" ;;
+            "") args="" ;;
+            *) echo "unknown Bazel config mode in $config_file: $mode" >&2; exit 2 ;;
+          esac
+          echo "source: $config_file"
+          echo "mode: ${mode:-none}"
+          echo "args: ${args:-<none>}"
+        else
+          echo "source: default"
+          echo "mode: none"
+          echo "args: <none>"
+        fi
 
   check:
     desc: Run checks for the repository slices present in this checkout.

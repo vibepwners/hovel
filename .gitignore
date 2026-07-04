@@ -9,6 +9,7 @@ bazel-*
 .mypy_cache/
 .ruff_cache/
 .bazelrc.user
+.hovel-bazel-config
 *.egg-info/
 sdk/python/.venv/
 __pycache__/
