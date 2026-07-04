@@ -526,8 +526,24 @@ func TestServePayloadProviderMethods(t *testing.T) {
 func TestFrameReaderRejectsOversizedFrameBeforeBodyRead(t *testing.T) {
 	reader := newFrameReader(strings.NewReader(fmt.Sprintf("Content-Length: %d\r\n\r\n", maxFrameBytes+1)))
 	_, err := reader.read()
-	if err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+	if err == nil || !strings.Contains(err.Error(), "frame too large") {
 		t.Fatalf("error = %v, want frame size error", err)
+	}
+}
+
+func TestFrameReaderIgnoresOptionalHeaders(t *testing.T) {
+	body := `{"jsonrpc":"2.0","id":1}`
+	reader := newFrameReader(strings.NewReader(fmt.Sprintf(
+		"Content-Length: %d\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n%s",
+		len(body),
+		body,
+	)))
+	message, err := reader.read()
+	if err != nil {
+		t.Fatalf("read() error = %v", err)
+	}
+	if string(message["id"]) != "1" {
+		t.Fatalf("id = %s, want 1", message["id"])
 	}
 }
 

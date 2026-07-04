@@ -1,0 +1,34 @@
+load("@rules_python//python:defs.bzl", "py_test")
+load(":select_file.bzl", "select_file")
+
+package(default_visibility = ["//visibility:public"])
+
+select_file(
+    name = "squatter_x86_exe",
+    srcs = ["//modules/squatter/windows/src:squatter_all"],
+    output_name = "squatter.exe",
+    suffix = "-i686.exe",
+)
+
+py_test(
+    name = "squatter_x86_exe_pe_test",
+    size = "small",
+    srcs = ["pe_inspect_test.py"],
+    args = ["$(locations //modules/squatter/windows/src:squatter_all)"],
+    data = ["//modules/squatter/windows/src:squatter_all"],
+    main = "pe_inspect_test.py",
+    python_version = "PY3",
+)
+
+py_test(
+    name = "source_contract_test",
+    size = "small",
+    srcs = ["source_contract_test.py"],
+    args = ["$(location //modules/squatter/windows/src:squatter.c)"],
+    data = [
+        "//modules/squatter/windows/src:source_files",
+        "//modules/squatter/windows/src:squatter.c",
+    ],
+    main = "source_contract_test.py",
+    python_version = "PY3",
+)

@@ -27,6 +27,16 @@ jobs:
         shell: bash
         run: |
           version="$(tr -d '[:space:]' < VERSION)"
+          core_version="$(tr -d '[:space:]' < core/VERSION)"
+          sdk_version="$(python -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("sdk/python/pyproject.toml").read_text())["project"]["version"])')"
+          if [[ "${version}" != "${core_version}" ]]; then
+            echo "::error::root VERSION ${version} does not match core/VERSION ${core_version}"
+            exit 1
+          fi
+          if [[ "${version}" != "${sdk_version}" ]]; then
+            echo "::error::root VERSION ${version} does not match sdk/python/pyproject.toml ${sdk_version}"
+            exit 1
+          fi
           if [[ "${{ github.event_name }}" == "release" && "${GITHUB_REF_NAME#v}" != "${version}" ]]; then
             echo "::error::release tag ${GITHUB_REF_NAME} does not match committed VERSION ${version}"
             exit 1
@@ -72,10 +82,18 @@ jobs:
           {
             echo "## Publish Hovel SDK to PyPI"
             echo ""
+            echo "Publishes the hovel-sdk Python distribution built by the previous job to the configured PyPI environment."
+            echo ""
             echo "| Field | Value |"
             echo "| --- | --- |"
             echo "| Status | ${{ job.status }} |"
             echo "| Environment | pypi |"
             echo "| Artifact | hovel-sdk-dist |"
             echo "| Publisher | pypa/gh-action-pypi-publish@release/v1 |"
+            echo ""
+            echo "### What This Proves"
+            echo ""
+            echo "- The hovel-sdk-dist artifact was downloaded successfully."
+            echo "- Trusted publishing to PyPI was attempted with GitHub OIDC."
+            echo "- The package being published is the Python SDK used by module authors."
           } >> "$GITHUB_STEP_SUMMARY"

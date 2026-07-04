@@ -1,172 +1,92 @@
-load("@gazelle//:def.bzl", "gazelle")
-load("@rules_rust//rust:defs.bzl", "rust_clippy", "rustfmt_test")
-
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
-    ".clang-format",
     "scripts/demo-mcp-agent-tmux.sh",
     "scripts/demo-step-setup.sh",
-    "tools/docker/squatter-wine/Dockerfile",
-    "tools/docker/squatter-wine/entrypoint.sh",
-    "tools/docker/squatter-wine/run.sh",
 ])
 
-gazelle(
-    name = "gazelle",
-    prefix = "github.com/Vibe-Pwners/hovel",
-)
-
 filegroup(
-    name = "license",
-    srcs = ["LICENSE"],
-)
-
-filegroup(
-    name = "docs_sources",
+    name = "sdk_build",
     srcs = [
-        "index.html",
-        "//assets:site_assets",
-        "//spec:site",
+        "//sdk/go/hovel",
+        "//sdk/go/hoveltest",
+        "//sdk/python:hovel_sdk",
+        "//sdk/rust/hovel",
+    ],
+)
+
+test_suite(
+    name = "sdk_test",
+    tests = [
+        "//sdk/go/hovel:hovel_test",
+        "//sdk/python:hovel_sdk_test",
+        "//sdk/rust/hovel:hovel_test",
     ],
 )
 
 filegroup(
-    name = "docs",
-    srcs = [":docs_sources"],
-)
-
-filegroup(
-    name = "build",
+    name = "modules_build",
     srcs = [
-        ":docs",
-        "//cmd/hovel",
-        "//payloads/squatter:build",
-        "//schemas:descriptor_schemas",
+        "//modules/examples/go/mock_exploit",
+        "//modules/examples/go/mock_exploit_session",
+        "//modules/examples/go/mock_survey",
+        "//modules/examples/rust/mock_exploit:mock-exploit-rust",
+        "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
+        "//modules/examples/rust/mock_survey:mock-survey-rust",
+        "//modules/squatter:build",
     ],
 )
 
-_COVERAGE_LAYER_TESTS = [
-    "//internal/app/chainruntime:chainruntime_test",
-    "//internal/app/commands:commands_test",
-    "//internal/app/hovelconfig:hovelconfig_test",
-    "//internal/app/launchkey:launchkey_test",
-    "//internal/app/modulecatalog:modulecatalog_test",
-    "//internal/app/modulepackage:modulepackage_test",
-    "//internal/app/operatorlog:operatorlog_test",
-    "//internal/app/operatorsession:operatorsession_test",
-    "//internal/app/services:services_test",
-    "//internal/domain/daemon:daemon_test",
-    "//internal/domain/event:event_test",
-    "//internal/domain/module:module_test",
-    "//internal/domain/operator:operator_test",
-    "//internal/domain/run:run_test",
-    "//internal/domain/service:service_test",
-    "//internal/domain/workspace:workspace_test",
-]
-
-_CI_TESTS = [
-    "//cmd/hovel:binary_e2e_test",
-    "//demo:standard_verification_test",
-    "//examples/go/mock_exploit:mock_exploit_test",
-    "//examples/go/mock_exploit_session:mock_exploit_session_test",
-    "//examples/go/mock_survey:mock_survey_test",
-    "//examples/python:ms17_010_exploit_test",
-    "//examples/python:ms17_010_survey_test",
-    "//examples/python:mock_exploit_session_test",
-    "//examples/python:mock_exploit_test",
-    "//examples/python:mock_survey_test",
-    "//examples/rust/mock_exploit:mock_exploit_rust_test",
-    "//examples/rust/mock_exploit_session:mock_exploit_session_rust_test",
-    "//examples/rust/mock_survey:mock_survey_rust_test",
-    "//internal/adapters/cli:cli_e2e_test",
-    "//internal/adapters/cli:cli_test",
-    "//internal/adapters/commandmode:commandmode_e2e_test",
-    "//internal/adapters/commandmode:commandmode_test",
-    "//internal/adapters/commandview:commandview_test",
-    "//internal/adapters/daemonrpc:daemonrpc_test",
-    "//internal/adapters/descriptor:descriptor_test",
-    "//internal/adapters/mcp:mcp_test",
-    "//internal/adapters/rootcli:rootcli_e2e_test",
-    "//internal/adapters/rootcli:rootcli_test",
-    "//internal/adapters/storage/filesystem:filesystem_test",
-    "//internal/adapters/terminallog:terminallog_test",
-    "//internal/infra/daemonmanager:daemonmanager_test",
-    "//internal/infra/daemonruntime:daemonruntime_test",
-    "//internal/modules/mockexploit:mockexploit_test",
-    "//internal/modules/pythonrpc:pythonrpc_test",
-    "//payloads/squatter/client/functest:functest_test",
-    "//payloads/squatter/provider:provider_test",
-    "//payloads/squatter/tests:cmd_integration_test.exe",
-    "//payloads/squatter/tests:echo_integration_test.exe",
-    "//payloads/squatter/tests:file_xfer_test.exe",
-    "//payloads/squatter/tests:frame_test.exe",
-    "//payloads/squatter/tests:framing_test.exe",
-    "//payloads/squatter/tests:gtest_smoke.exe",
-    "//payloads/squatter/windows:source_contract_test",
-    "//payloads/squatter/windows:squatter_x86_exe_pe_test",
-    "//schemas:schema_smoke_test",
-    "//sdk/go/hovel:hovel_test",
-    "//sdk/go/hoveltest:hoveltest_test",
-    "//sdk/python:hovel_sdk_test",
-    "//sdk/rust/hovel:hovel_test",
-    "//spec:site_smoke_test",
-    "//tools/demo/mcpagent:mcpagent_test",
-    "//tools/modules:check_in_repo_modules_test",
-    "//tools/modules:package_examples_test",
-    "//tools/modules:workspace_module_install_test",
-]
-
-_RUST_LINT_TARGETS = [
-    "//examples/rust/mock_exploit:mock-exploit-rust",
-    "//examples/rust/mock_exploit:mock_exploit_rust_test",
-    "//examples/rust/mock_exploit_session:mock-exploit-session-rust",
-    "//examples/rust/mock_exploit_session:mock_exploit_session_rust_test",
-    "//examples/rust/mock_survey:mock-survey-rust",
-    "//examples/rust/mock_survey:mock_survey_rust_test",
-    "//sdk/rust/hovel:hovel",
-    "//sdk/rust/hovel:hovel_test",
-]
-
-rust_clippy(
-    name = "rust_clippy",
-    testonly = True,
-    deps = _RUST_LINT_TARGETS,
-)
-
-rustfmt_test(
-    name = "rustfmt_check",
-    targets = _RUST_LINT_TARGETS,
+test_suite(
+    name = "modules_test",
+    tests = [
+        "//modules/squatter/provider:provider_test",
+        "//modules/squatter/windows:squatter_x86_exe_pe_test",
+        "//modules/squatter/windows:source_contract_test",
+        "//modules/tools:check_in_repo_modules_test",
+        "//modules/tools:package_examples_test",
+        "//modules/tools:workspace_module_install_test",
+    ],
 )
 
 test_suite(
-    name = "test",
-    tests = _CI_TESTS + _COVERAGE_LAYER_TESTS,
-)
-
-test_suite(
-    name = "ci_test",
-    tests = _CI_TESTS,
-)
-
-test_suite(
-    name = "race_test",
+    name = "modules_wine_test",
     tags = ["manual"],
     tests = [
-        "//internal/app/chainruntime:chainruntime_race_test",
-        "//internal/app/commands:commands_race_test",
-        "//internal/app/hovelconfig:hovelconfig_race_test",
-        "//internal/app/launchkey:launchkey_race_test",
-        "//internal/app/modulecatalog:modulecatalog_race_test",
-        "//internal/app/modulepackage:modulepackage_race_test",
-        "//internal/app/operatorlog:operatorlog_race_test",
-        "//internal/app/operatorsession:operatorsession_race_test",
-        "//internal/app/services:services_race_test",
+        "//modules/squatter/tests:cmd_integration_test.exe",
+        "//modules/squatter/tests:echo_integration_test.exe",
+        "//modules/squatter/tests:file_xfer_test.exe",
+        "//modules/squatter/tests:frame_test.exe",
+        "//modules/squatter/tests:framing_test.exe",
+        "//modules/squatter/tests:gtest_smoke.exe",
+    ],
+)
+
+filegroup(
+    name = "docs_build",
+    srcs = [
+        "//docs/tools/docs:stage_site",
     ],
 )
 
 test_suite(
-    name = "fuzz_smoke_test",
-    tags = ["manual"],
-    tests = ["//internal/domain/event:event_type_fuzz_smoke_test"],
+    name = "docs_test",
+    tests = [
+        "//docs/demo:standard_verification_test",
+        "//docs/tools/demo/mcpagent:mcpagent_test",
+    ],
+)
+
+filegroup(
+    name = "docs_demos",
+    srcs = [
+        "//docs/demo:standard_gifs",
+    ],
+)
+
+filegroup(
+    name = "docs_wine_demos",
+    srcs = [
+        "//docs/demo:squatter_wine_gif",
+    ],
 )

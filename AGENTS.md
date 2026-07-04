@@ -26,8 +26,9 @@ Docker entrypoints, or one-off lab operator scripts.
 When a check can be cached, model it as a Bazel target with explicit inputs and
 outputs instead of discovering files from shell at execution time. When a task
 must materialize generated artifacts back into the working tree (`_site/`,
-`demo/out/`, `examples/bin/`), prefer a `bazel run` Python materializer with
-declared data dependencies. Do not call `bazel` from helper scripts.
+`docs/demo/out/`, `modules/examples/bin/`), prefer a `bazel run` Python
+materializer with declared data dependencies. Do not call `bazel` from helper
+scripts.
 
 Build, test, lint, docs, and demo tools should be Bazel-managed execution
 inputs whenever practical: pinned archives, pip wheels, Go/Rust toolchains, or
@@ -42,35 +43,31 @@ or ffmpeg until they have a pinned execution toolchain.
 | Task | What it does |
 | --- | --- |
 | `task` / `task --list` | List all tasks. |
-| `task build` | Build everything (`//...`). |
+| `task build` | Build the core Hovel binary workspace. |
 | `task build -- //cmd/hovel` | Build a specific target (args after `--`). |
-| `task test` | Run all tests. |
+| `task test` | Run core Hovel binary workspace tests. |
 | `task test -- //internal/domain/...` | Run specific tests. |
 | `task run -- //cmd/hovel -- daemon status` | Run an arbitrary target. |
-| `task lint` | Go formatting + golangci-lint + Gazelle + Rust + Python + Squatter C checks (read-only). |
-| `task fmt` | Auto-format: rewrite Go source, regenerate BUILD files, and format Rust and Squatter C. |
-| `task coverage` | Run domain, application, and Python SDK coverage ratchets. |
-| `task check` (`task ci`) | Lint, docs, build, test, race, fuzz smoke, and coverage — the full gate. |
+| `task lint` | Core Go formatting + golangci-lint + Gazelle checks (read-only). |
+| `task fmt` | Auto-format wired slices: core Go/Gazelle plus Go SDK sources. |
+| `task coverage` | Run core domain and application coverage ratchets. |
+| `task checkout:status` | Show which repository slices are present. |
+| `task check` | Run checks for slices present in the current checkout. |
+| `task ci` | Require a full checkout, then run the wired full gate. |
 | `task start` (`cli`) / `task daemon` | Launch the interactive CLI / the daemon. |
 | `task status` / `task init` / `task reset` | Dev workspace: status, init, wipe-and-relaunch. |
-| `task modules:build` | Build the Go/Rust example modules and stage binaries to `examples/bin/`. |
-| `task docs` | Build the static spec site. |
-| `task hooks:install` | Install the Lefthook git hooks. |
 
 ## Definition of done
 
-Before considering a code change complete, run **`task ci`** and make sure it
-passes. This is the full local gate: lint, docs, build, test, race, fuzz smoke,
-and coverage. CI
-(`.github/workflows/ci.yml`) runs the same suite; the git hooks split the same
-Task-backed checks across pre-commit (`task precommit`) and pre-push
-(`task prepush`).
+Before considering a code change complete, run the strongest Task-backed gate
+available for the checked-out slices. For core changes, run **`task ci`** from a
+full checkout or **`task core:ci`** from a core-only checkout. The wired gate
+currently covers core lint, build, tests, race, fuzz smoke, and coverage.
 
 If you added, moved, or removed Go files or imports, run **`task fmt`** so
 `gofmt` and Gazelle-generated `BUILD.bazel` files are up to date; otherwise
-`task lint` will fail on the Gazelle diff check. `task fmt` also formats
-Rust and Squatter C sources. When you add a new test target, also add it to the
-`test_suite` in the root `BUILD.bazel`.
+`task lint` will fail on the Gazelle diff check. When you add a new core test
+target, also add it to the `test_suite` in `core/BUILD.bazel`.
 
 ## Architecture guardrails
 
@@ -81,7 +78,7 @@ adapters -> app -> domain
 infra    -> app -> domain
 ```
 
-- `internal/domain` must not import CLI, TUI, REST, MCP, storage, RPC, or
+- `core/internal/domain` must not import CLI, TUI, REST, MCP, storage, RPC, or
   concrete module/service code. Keep it pure; construct value objects through
   their `New...` constructors so validation runs.
 - Front ends call application services (`internal/app`); they do not reach into

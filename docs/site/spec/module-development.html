@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Module Development — Hovel book</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// book</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Book</a>
+      <a href="../api/sdk/index.html">API Docs</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Book</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="user-guide.html">User Guide</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing Strategy</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+        <li><a href="../api/sdk/index.html">SDK API Docs</a></li>
+      </ul>
+      <p class="sidebar-section">Module Development</p>
+      <ul>
+        <li><a href="module-development.html" aria-current="page">Overview</a></li>
+        <li><a href="module-protocol.html">Wire Protocol</a></li>
+        <li><a href="module-python.html">Python Modules</a></li>
+        <li><a href="module-go.html">Go Modules</a></li>
+        <li><a href="module-rust.html">Rust Modules</a></li>
+        <li><a href="module-ms17-010.html">Case Study: MS17-010</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Module Development</h1>
+        <p>
+          A <strong>module</strong> is a self-contained unit of offensive capability — a
+          survey that gathers facts, an exploit that acts on a target, or a payload
+          provider that builds something to deliver. Modules are not compiled into the
+          daemon. They run as <strong>separate processes</strong> that Hovel launches and
+          drives over a small, language-neutral JSON-RPC protocol on stdin/stdout.
+        </p>
+        <p>
+          That boundary is the whole point of this guide set: because the contract is a
+          wire protocol rather than a Go interface, a module can be written in
+          <strong>any language</strong>. Hovel ships SDKs and worked examples for
+          <a href="module-python.html">Python</a>, <a href="module-go.html">Go</a>, and
+          <a href="module-rust.html">Rust</a>, all implementing the exact same three example
+          modules so you can compare them side by side.
+        </p>
+
+        <h2>Module types</h2>
+        <p>Every module declares one type. The daemon uses it to group modules and to reason about post-exploitation sessions.</p>
+        <ul>
+          <li><code>survey</code> — reconnaissance. Gathers facts about a target without changing it.</li>
+          <li><code>exploit</code> — an offensive action that may open an interactive <em>session</em>.</li>
+          <li><code>payload_provider</code> — generates payloads for delivery by other modules.</li>
+        </ul>
+        <p>
+          Payload-provider modules use the same launch, handshake, schema, logging, and
+          session boundaries as survey and exploit modules. They may also expose
+          generic step JSON-RPC methods for describing contracts, preparing local values,
+          executing confirmed payload lifecycle steps, connecting sessions, and cleanup.
+          The
+          <a href="squatter-payload-provider.html">Squatter design</a> records the first
+          core provider contract.
+        </p>
+        <p>
+          Payload providers and installer modules do not write Hovel state directly. When
+          they install a target-side payload that should be tracked, they return an
+          explicit installed-payload descriptor. Hovel core validates it, assigns the
+          operator-facing handle, persists it in SQLite, and later passes the provider's
+          reconnect descriptor back for <code>payloads connect</code>.
+        </p>
+
+        <h2>How a module runs</h2>
+        <p>
+          The daemon owns the lifecycle. It spawns the module process, speaks JSON-RPC to
+          it, and tears it down — except when the module opens a session, in which case the
+          process is kept alive so the operator can interact with it.
+        </p>
+        <figure class="diagram topology-diagram" aria-label="hoveld spawns a module process over stdio, exchanges content-length framed JSON-RPC, and stores catalog, throw plan, transcript, and session broker state.">
+          <figcaption>Module Runtime Topology</figcaption>
+          <div class="topology-row">
+            <div class="diagram-node primary"><strong>hoveld</strong><span>daemon</span><span>owns lifecycle</span></div>
+            <div class="topology-link">
+              <span>spawn over stdio →</span>
+              <span>← Content-Length framed JSON-RPC</span>
+            </div>
+            <div class="diagram-node"><strong>Module Process</strong><span>Python / Go / Rust</span><span>speaks JSON-RPC</span></div>
+          </div>
+          <div class="diagram-bus">catalog, throw plan, transcript, session broker</div>
+          <ol class="flow-diagram">
+            <li class="flow-step">handshake</li>
+            <li class="flow-step">schema</li>
+            <li class="flow-step strong">execute</li>
+            <li class="flow-step">sessions</li>
+            <li class="flow-step">shutdown</li>
+          </ol>
+        </figure>
+        <p>The conversation is always the same sequence of methods:</p>
+        <ol>
+          <li><code>handshake</code> — the module reports its name, version, type, and tags.</li>
+          <li><code>schema</code> — the module reports the configuration it requires.</li>
+          <li><code>execute</code> — the daemon runs the module against one target and collects findings, artifacts, outputs, and any sessions.</li>
+          <li><code>session/*</code> — if the module opened a session, the operator reads and writes it through the daemon.</li>
+          <li><code>shutdown</code> — the daemon asks the module to exit cleanly.</li>
+        </ol>
+        <p>
+          The full message-by-message contract — framing, every method, and every data
+          shape — is documented in the <a href="module-protocol.html">Wire Protocol</a>
+          reference. You rarely write it by hand: the SDKs implement the protocol and let
+          you focus on the module's behavior.
+        </p>
+
+        <h2>Choosing a language</h2>
+        <div class="tiles">
+          <a class="tile" href="module-python.html">
+            <span class="tile-label">SDK</span>
+            <span class="tile-title">Python</span>
+            <span class="tile-desc">Fastest to write and debug. Can use Hovel-managed Python, an operator interpreter, or a bundled interpreter.</span>
+          </a>
+          <a class="tile" href="module-go.html">
+            <span class="tile-label">SDK</span>
+            <span class="tile-title">Go</span>
+            <span class="tile-desc">A single static binary, standard-library only. Compiled with Bazel and launched by path.</span>
+          </a>
+          <a class="tile" href="module-rust.html">
+            <span class="tile-label">SDK</span>
+            <span class="tile-title">Rust</span>
+            <span class="tile-desc">A dependency-free binary. Compiled with rules_rust and launched by path.</span>
+          </a>
+        </div>
+        <p>
+          All three SDKs expose the same concepts under language-appropriate names: a
+          module object/trait with <code>info</code>, <code>schema</code>, and <code>run</code>;
+          a context for inputs, logging, and sessions; and a result carrying findings and
+          artifacts. Pick the one your tooling and target environment favor.
+        </p>
+
+        <h2>Implementing one module in all three SDKs</h2>
+        <p>
+          To keep a Python, Go, and Rust implementation equivalent, define the module
+          contract first, then port the same contract across SDKs. The contract is the
+          tuple Hovel sees over RPC: <code>handshake</code> metadata, <code>schema</code>
+          requirements, <code>execute</code> inputs and result fields, optional sessions,
+          and optional installed-payload descriptors.
+        </p>
+        <ol>
+          <li>Choose a stable module name, version, type, summary, tags, chain config, target config, and result shape. Keep these values identical except for language suffixes when you intentionally publish side-by-side examples such as <code>mock-survey</code>, <code>mock-survey-go</code>, and <code>mock-survey-rust</code>.</li>
+          <li>Write the Python package with <code>HovelModule</code>, <code>module.py</code>, <code>__main__.py</code>, and a unit/contract test using <code>hovel_sdk.testing.ModuleRPC</code>. Package it with a launcher that uses Hovel-managed Python, an operator interpreter, or a bundled interpreter.</li>
+          <li>Write the Go binary with a type implementing <code>hovel.Module</code>, a <code>main</code> that calls <code>hovel.Serve</code>, and tests for both direct <code>Run</code> behavior and framed RPC when protocol behavior matters. Package the built binary as one or more host-platform launch entries.</li>
+          <li>Write the Rust binary with a type implementing <code>hovel::Module</code>, a <code>main</code> that calls <code>hovel::serve</code>, and tests using normal Rust unit tests or <code>serve_with</code> for framed RPC coverage. Package the built binary as one or more host-platform launch entries.</li>
+          <li>If the module lives in this repository as an example, add or update BUILD metadata, add new test targets to the root <code>test_suite</code>, and extend the module packaging task so release builds publish a <code>.tgz</code>.</li>
+          <li>If the module is private or out-of-tree, use <code>hovel module install --link /absolute/path</code> during development and package a <code>.tgz</code> for sharing.</li>
+        </ol>
+        <p>
+          The existing triads are the reference implementation pattern:
+          <code>modules/examples/python/mock_survey</code>, <code>modules/examples/go/mock_survey</code>,
+          and <code>modules/examples/rust/mock_survey</code> for surveys; the matching
+          <code>mock_exploit</code> and <code>mock_exploit_session</code> directories for
+          findings, artifacts, failures, and interactive sessions.
+        </p>
+
+        <h2>The developer contract</h2>
+        <p>
+          If you are bringing an exploit, survey, or post-exploitation tool into Hovel,
+          this is the practical contract you are signing:
+        </p>
+        <ul>
+          <li><strong>Stdout belongs to the protocol.</strong> Never print progress, banners, debug output, or child-process output to stdout. The daemon reads stdout as framed JSON-RPC. Use the SDK logger for operator-visible logs and stderr only for crash diagnostics.</li>
+          <li><strong>Metadata paths must be boring.</strong> Catalog loading calls <code>handshake</code>, <code>schema</code>, and <code>step.describe</code>. Those paths must be fast, deterministic, offline, and side-effect free: no target contact, listener startup, random prepared values, payload generation, credential creation, or filesystem mutation.</li>
+          <li><strong>Configuration is explicit.</strong> Declare every operator-controlled value as a <code>Requirement</code>. Do not read arbitrary environment variables or hidden config files for target behavior unless the value is also surfaced in the schema or returned evidence.</li>
+          <li><strong>Use Hovel's log rail.</strong> Logs should be structured fields, not prose blobs. Log target host, stage, protocol, handle, and provider ids as fields so transcripts are searchable.</li>
+          <li><strong>Return durable state deliberately.</strong> Facts belong in <code>outputs</code>, human/audit observations in <code>findings</code>, blobs in <code>artifacts</code>, live handles in <code>sessions</code>, and target-side payload inventory only in explicit <code>installedPayloads</code> descriptors.</li>
+          <li><strong>Dangerous modules self-identify.</strong> If your module can crash a host, write disk, create accounts, install payloads, bind listeners, execute commands, or maintain access, tag it <code>dangerous</code> and add the confirmation requirements the operator must satisfy.</li>
+          <li><strong>Agent context is optional.</strong> Modules may ignore agent-aware execution entirely. When no agent context exists, SDKs expose no agent object and module behavior must be identical to non-MCP execution. Modules that opt in can read the SDK agent context and return <code>agentHints</code>; hints are untrusted module-authored context and must never bypass Hovel guardrails.</li>
+        </ul>
+
+        <h2>Packaging a module</h2>
+        <p>
+          A published module is a <code>.tgz</code> archive with a required
+          <code>hovel-module.yaml</code> manifest. The manifest describes package identity,
+          trusted install scripts, and how Hovel launches the module on the operator's
+          host. Runtime schema still comes from <code>handshake</code>, <code>schema</code>,
+          and <code>step.describe</code>; the package manifest is install and launch
+          metadata, not the authoritative module behavior schema.
+        </p>
+<pre data-lang="tree"><code>my-module-0.1.0.tgz
+  hovel-module.yaml
+  bin/
+    linux-amd64/my-module
+    windows-amd64/my-module.exe
+  python/
+    hovel_my_module/
+    requirements.txt
+  vendor/
+    wheels/
+  scripts/
+    setup.py
+  README.md
+  LICENSE
+</code></pre>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: my-module
+  version: 0.1.0
+  moduleType: exploit
+  summary: Example module.
+  tags: [lab]
+  author: Example Labs
+  license: Apache-2.0
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/linux-amd64/my-module"]
+  - selector:
+      os: windows
+      arch: amd64
+    command: ["bin/windows-amd64/my-module.exe"]
+  - selector: {}
+    python:
+      managed:
+        versions: ["3.10-3.14"]
+      requirements: "python/requirements.txt"
+      wheelhouse: "vendor/wheels"
+      command: ["{python}", "-m", "hovel_my_module"]
+scripts:
+  postInstall:
+    command: ["{python}", "scripts/setup.py"]</code></pre>
+        <p>
+          One package can contain any number of platform variants. Selectors describe the
+          host running Hovel, not the target. Hovel chooses the most specific matching
+          launch entry and fails on ties. If no launch entry matches, install can still
+          succeed, but execution reports that the package has no launcher for the current
+          host.
+        </p>
+        <p>
+          Install scripts run by default. That is intentional: modules are trusted code
+          and already get arbitrary code execution when the operator runs them. Use
+          <code>--no-scripts</code> only for recovery or debugging. Script commands are
+          argv arrays, run from the package root, and receive
+          <code>HOVEL_MODULE_ROOT</code>, <code>HOVEL_INSTALL_ROOT</code>,
+          <code>HOVEL_WORKSPACE</code>, and <code>HOVEL_OFFLINE</code>.
+        </p>
+
+        <h2>Python packaging choices</h2>
+        <p>Python modules choose one of three interpreter strategies in the package manifest.</p>
+<pre data-lang="yaml"><code># Hovel-managed python-build-standalone.
+python:
+  managed:
+    versions: ["3.10-3.14"]
+  requirements: "python/requirements.txt"
+  wheelhouse: "vendor/wheels"
+  command: ["{python}", "-m", "hovel_my_module"]
+
+# Operator-supplied interpreter.
+python:
+  interpreter: "/opt/python/bin/python3"
+  command: ["{python}", "-m", "hovel_my_module"]
+
+# Bundled interpreter.
+interpreters:
+  python:
+    path: "runtime/python/bin/python3"</code></pre>
+        <p>
+          Managed Python uses a Hovel-pinned python-build-standalone release, downloads
+          the host-platform runtime only during explicit install when network use is
+          allowed, and creates one virtual environment per installed module version.
+          Dependencies are declared with <code>requirements.txt</code> and an optional
+          wheelhouse path; Hovel does not invent a second Python dependency language.
+        </p>
+
+        <h2>First integration loop</h2>
+        <p>
+          A hostile-but-productive integration loop should fit in one terminal. Start
+          from the smallest module that tells the daemon who it is, what config it
+          needs, and one target-safe thing it did.
+        </p>
+<pre data-lang="shell"><code># 1. Copy the nearest example in your language.
+#    Python: modules/examples/python/mock_exploit/
+#    Go:     modules/examples/go/mock_exploit/
+#    Rust:   modules/examples/rust/mock_exploit/
+
+# 2. Link or install the package for the active workspace.
+hovel module install --link "$PWD/path/to/my-module-package-root"
+
+# 3. Let Hovel validate package shape and runtime metadata without executing.
+task start
+hovel&gt; module installed
+hovel&gt; module check &lt;your-module-id&gt;
+hovel&gt; module inspect &lt;your-module-id&gt;
+
+# 4. Run the strongest wired slice check available before calling the integration done.
+task check</code></pre>
+        <p>For a private module, use <code>--link</code> while iterating and install a built <code>.tgz</code> before sharing the chain or workspace with another operator.</p>
+        <figure class="demo-figure">
+          <img src="../assets/demos/mock-survey-exploit-01-inspect.gif" alt="Direct terminal demo inspecting mock survey and exploit modules before running them through a configured chain.">
+          <figcaption>Demo: module metadata to runnable chain</figcaption>
+        </figure>
+
+        <h2>Validate with module check</h2>
+        <p>
+          <code>hovel module check</code> is the module author's fast CI check. It validates
+          module shape and implementation metadata without running <code>execute</code>,
+          starting a throw, touching a target, preparing payloads, or contacting the
+          internet. Success exits <code>0</code>. Any failure exits <code>1</code>. Warnings
+          exit <code>0</code> unless the caller passes <code>--warnings-as-errors</code>.
+        </p>
+<pre data-lang="shell"><code>hovel module check ms17-010-exploit@v1.0.0
+hovel module check --all
+hovel module check --warnings-as-errors ./dist/modules/my-module-0.1.0.tgz
+hovel run --workspace .hovel -- module check mock-survey</code></pre>
+        <p>
+          Installed module references run the non-executing JSON-RPC discovery path:
+          <code>handshake</code>, <code>schema</code>, <code>step.describe</code>, and
+          <code>shutdown</code>. The report then shows the validated runtime protocol,
+          parsed metadata, chain and target config schema counts, and provider step
+          contract count.
+        </p>
+<pre data-lang="text"><code>MODULE CHECK ms17-010-exploit@v1.0.0
+status  ✅ PASS
+module  ms17-010-exploit@v1.0.0
+
+CHECK   NAME                         MESSAGE
+-----   ----                         -------
+✅ PASS rpc discovery                handshake, schema, step.describe, and shutdown completed
+✅ PASS runtime                      jsonrpc-stdio
+✅ PASS metadata                     ms17-010-exploit@v1.0.0 exploit v1.0.0
+✅ PASS config schema                1 chain requirements, 3 target requirements
+✅ PASS step contracts               0 provider steps</code></pre>
+        <p>
+          Package roots also validate <code>hovel-module.yaml</code>, host launcher
+          selection, launcher command availability, and then run the same runtime
+          discovery when the selected launcher is already runnable. Package archives are
+          checked for manifest shape and host-launch selection only; archive checks do not
+          extract the package or run module code, so runtime discovery is reported as a
+          warning. Managed-Python packages whose interpreter has not been installed also
+          warn instead of downloading anything.
+        </p>
+
+        <h2>SDK support matrix</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Capability</th>
+              <th>Python SDK</th>
+              <th>Go SDK</th>
+              <th>Rust SDK</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>survey/exploit lifecycle</td>
+              <td><code>HovelModule.run</code></td>
+              <td><code>Module.Run</code></td>
+              <td><code>Module::run</code></td>
+            </tr>
+            <tr>
+              <td>structured logs</td>
+              <td>standard <code>logging</code></td>
+              <td><code>ctx.Log</code></td>
+              <td><code>ctx.info</code>/<code>ctx.error</code></td>
+            </tr>
+            <tr>
+              <td>interactive sessions</td>
+              <td><code>LineShellSession</code> or custom <code>Session</code></td>
+              <td><code>LineShellSession</code>, <code>PTYSession</code>, or custom <code>Session</code></td>
+              <td><code>LineShellSession</code> or custom <code>Session</code></td>
+            </tr>
+            <tr>
+              <td>generic <code>step.*</code> provider hooks</td>
+              <td>override <code>describe_steps</code>, <code>prepare_step</code>, <code>execute_step</code>, <code>cleanup_step</code></td>
+              <td>implement <code>StepProvider</code></td>
+              <td>not implemented yet; use Python or Go for provider/chain-step modules</td>
+            </tr>
+            <tr>
+              <td>payload-provider helper types</td>
+              <td>installed-payload result helpers</td>
+              <td><code>PayloadProvider</code>, step, capability, and installed-payload types</td>
+              <td>installed-payload result helpers; provider dispatch not implemented yet</td>
+            </tr>
+            <tr>
+              <td>framed RPC contract tests</td>
+              <td><code>hovel_sdk.testing.ModuleRPC</code></td>
+              <td><code>sdk/go/hoveltest.NewRPCConn</code></td>
+              <td><code>serve_with</code> with in-memory streams</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>Exploit and post-exploitation boundaries</h2>
+        <p>
+          Keep ownership boundaries sharp. An exploit should report access it actually
+          established, evidence that proves it, and any capabilities later steps may
+          consume. It should not smuggle provider-specific payload internals through
+          generic outputs.
+        </p>
+        <ul>
+          <li>A module that opens an operator shell returns a <code>SessionRef</code>; the daemon keeps the module process alive and brokers <code>session/read</code>, <code>session/write</code>, and <code>session/close</code>.</li>
+          <li>A module that installs or observes a durable target-side payload returns an <code>InstalledPayloadDescriptor</code>. Hovel core validates and persists that descriptor; the module does not write workspace state directly.</li>
+          <li>A payload provider owns its protocol, reconnect descriptor, cleanup descriptor, file-transfer semantics, task ids, and retry behavior. Hovel owns planning, confirmation, artifact recording, installed-payload inventory, and session brokering.</li>
+          <li><code>step.prepare</code> generates prepared values that are forwarded into <code>step.execute</code> by the current capability-step runtime. The target review flow is to show and optionally edit those values before confirmation, then fail noisily after confirmation if name collisions or target-side surprises would change the footprint.</li>
+        </ul>
+
+        <h2>Troubleshooting modules</h2>
+        <ul>
+          <li><strong>Catalog load fails before your code runs:</strong> check <code>hovel-module.yaml</code>, install records, selected launch entry, relative paths, executable bits, and Python package names. Managed Python failures are install-time problems; runtime should not be resolving interpreters or dependencies.</li>
+          <li><strong>Handshake or schema times out:</strong> remove target probes, imports with network side effects, expensive payload builds, and listener startup from metadata paths.</li>
+          <li><strong>Malformed frame or JSON error:</strong> something wrote to stdout outside the SDK. Redirect subprocess stdout to a file/artifact, stderr, or a session stream.</li>
+          <li><strong>Operator cannot see progress:</strong> use structured SDK logging. In Python, use <code>ctx.log</code> or the standard <code>logging</code> package after <code>serve</code> starts; in Go and Rust, use the context logger methods.</li>
+          <li><strong>Session opens and then dies:</strong> keep the session object alive through the SDK session registry, return a successful result with the session id, and let the daemon send <code>shutdown</code> later. Do not exit the process yourself after opening a session.</li>
+        </ul>
+
+        <h2>Installing a module</h2>
+        <p>Operators install modules from local packages, absolute package paths, HTTPS URLs, cached packages, configured package roots, index-backed package references, bulk manifests, or linked package roots.</p>
+<pre data-lang="shell"><code>hovel module install ./my-module-0.1.0.tgz
+hovel module install https://github.com/org/repo/releases/download/{{HOVEL_RELEASE_TAG}}/my-module-0.1.0.tgz --sha256 ...
+hovel module install my-module
+hovel module install my-module@0.1.0
+hovel module bulk-install https://github.com/org/repo/releases/download/{{HOVEL_RELEASE_TAG}}/module-install-set.yaml
+hovel module bulk-install ./lab-modules.yaml
+hovel module install --link /home/me/dev/my-module</code></pre>
+        <p>Bare install references choose the newest semver package from the first matching local source tier: download cache, configured package roots and archives, then the source-tree module index when present. Hovel consults configured indexes after local sources. Bulk-install manifests may be local YAML files or HTTPS URLs. The default install target is the active workspace. <code>--global</code> installs into user-level storage. Workspace modules take precedence over global modules and cached packages.</p>
+        <blockquote>
+          The <code>command</code> launcher is what makes Hovel polyglot: any executable that
+          speaks the stdio JSON-RPC protocol is a module, regardless of how it was built.
+        </blockquote>
+
+        <h2>Building and running</h2>
+        <p>
+          As with everything in this repo, go through <a href="https://taskfile.dev/">Task</a>.
+          The module slice is outside the core build workspace. Build or package
+          module artifacts with the module-slice tasks once they are restored;
+          link editable module package roots while iterating.
+        </p>
+<pre data-lang="shell"><code># Install or link module packages for the active workspace
+hovel module install --link "$PWD/path/to/module-package-root"
+
+# Launch the interactive CLI
+task start
+
+# In the CLI, list installed modules for the workspace
+hovel&gt; module installed</code></pre>
+        <p><code>task start</code>, <code>task daemon</code>, and <code>task throw</code> go through Task so local build, packaging, and runtime assumptions stay aligned with CI.</p>
+
+        <h2>Safety</h2>
+        <p>
+          Hovel is an authorized-security-testing tool, and modules inherit that posture.
+          Two rules matter while you develop:
+        </p>
+        <ul>
+          <li>A module that performs destructive or otherwise dangerous actions must advertise the <code>dangerous</code> tag. The daemon refuses to throw a dangerous module unless the operator passes <code>--allow-dangerous</code>.</li>
+          <li>A throw cannot start without a persisted plan and a recorded confirmation. The example modules never touch a real target — they exist to exercise orchestration safely.</li>
+        </ul>
+        <p>See <a href="safety.html">Safety and Scope</a> for the full trust model.</p>
+
+        <h2>Where to go next</h2>
+        <div class="tiles">
+          <a class="tile" href="module-protocol.html">
+            <span class="tile-label">Reference</span>
+            <span class="tile-title">Wire Protocol</span>
+            <span class="tile-desc">Framing, every method and notification, and the data shapes on the wire.</span>
+          </a>
+          <a class="tile" href="module-python.html">
+            <span class="tile-label">Guide</span>
+            <span class="tile-title">Python Modules</span>
+            <span class="tile-desc">Write survey, exploit, and session modules with hovel_sdk.</span>
+          </a>
+          <a class="tile" href="module-go.html">
+            <span class="tile-label">Guide</span>
+            <span class="tile-title">Go Modules</span>
+            <span class="tile-desc">Write the same modules with the Go SDK and ship a static binary.</span>
+          </a>
+          <a class="tile" href="module-rust.html">
+            <span class="tile-label">Guide</span>
+            <span class="tile-title">Rust Modules</span>
+            <span class="tile-desc">Write the same modules with the dependency-free Rust SDK.</span>
+          </a>
+          <a class="tile" href="../api/sdk/index.html">
+            <span class="tile-label">Generated</span>
+            <span class="tile-title">SDK API Reference</span>
+            <span class="tile-desc">Source-derived Python, Go, and Rust API docs generated by the docs slice.</span>
+          </a>
+        </div>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="modules-services.html">← Modules and Services</a>
+        <span class="spacer"></span>
+        <a class="next" href="module-protocol.html">Wire Protocol →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

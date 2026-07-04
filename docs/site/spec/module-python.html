@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Python Modules — Hovel book</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// book</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Book</a>
+      <a href="../api/sdk/index.html">API Docs</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Book</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+        <li><a href="user-guide.html">User Guide</a></li>
+        <li><a href="introduction.html">Introduction</a></li>
+        <li><a href="safety.html">Safety and Scope</a></li>
+        <li><a href="architecture.html">Architecture</a></li>
+        <li><a href="domain-model.html">Domain Model</a></li>
+        <li><a href="modules-services.html">Modules and Services</a></li>
+        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
+        <li><a href="operator-workflows.html">Operator Workflows</a></li>
+        <li><a href="front-ends.html">Front Ends</a></li>
+        <li><a href="mcp-agent.html">MCP and Agent Operation</a></li>
+        <li><a href="configuration-distribution.html">Configuration &amp; Distribution</a></li>
+        <li><a href="testing-roadmap.html">Testing Strategy</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
+        <li><a href="../api/sdk/python/index.html">Python SDK API</a></li>
+      </ul>
+      <p class="sidebar-section">Module Development</p>
+      <ul>
+        <li><a href="module-development.html">Overview</a></li>
+        <li><a href="module-protocol.html">Wire Protocol</a></li>
+        <li><a href="module-python.html" aria-current="page">Python Modules</a></li>
+        <li><a href="module-go.html">Go Modules</a></li>
+        <li><a href="module-rust.html">Rust Modules</a></li>
+        <li><a href="module-ms17-010.html">Case Study: MS17-010</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Python Modules</h1>
+        <p>
+          Python is the quickest way to write a Hovel module: there is no build step, and the
+          daemon launches it straight from source through the interpreter. The SDK lives at
+          <code>sdk/python/hovel_sdk</code>; the worked examples are under
+          <code>modules/examples/python/</code>.
+        </p>
+
+        <h2>The SDK in one import</h2>
+        <p>You subclass <code>HovelModule</code>, set a few class attributes, implement <code>run</code>, and hand an instance to <code>serve</code>.</p>
+        <p>
+          The generated API reference for the source package is published at
+          <a href="../api/sdk/python/index.html">Python SDK API</a>.
+        </p>
+<pre data-lang="python"><code>from hovel_sdk import (
+    Artifact, Context, Finding, HovelModule,
+    LineShellSession, Requirement, Result, serve,
+)</code></pre>
+        <ul>
+          <li><code>HovelModule</code> — base class; declares metadata and the <code>run</code> method.</li>
+          <li><code>Requirement</code> — one configuration field.</li>
+          <li><code>Context</code> — inputs, logging, and sessions for one execution.</li>
+          <li><code>Result</code>, <code>Finding</code>, <code>Artifact</code> — what <code>run</code> returns.</li>
+          <li><code>LineShellSession</code> — a base for interactive shell sessions.</li>
+          <li><code>serve</code> — runs the JSON-RPC loop on stdin/stdout.</li>
+        </ul>
+        <p>
+          Treat stdout as reserved for <code>serve</code>. A stray <code>print()</code>,
+          progress bar, subprocess inherited stdout, or banner will corrupt the frame
+          stream and fail the module. Use <code>ctx.log</code> or the standard
+          <code>logging</code> package for operator-visible progress, and capture tool
+          output into artifacts or sessions.
+        </p>
+
+        <h2>Metadata and schema rules</h2>
+        <p>
+          Class attributes are not just documentation: the daemon calls them during
+          catalog inspection. Keep <code>info</code>, <code>module_schema</code>, and
+          <code>describe_steps</code> deterministic and side-effect free. Put target
+          probes, listener startup, payload generation, random target-side names, and
+          expensive imports inside <code>run</code>, <code>prepare_step</code>, or
+          <code>execute_step</code>, not at import time.
+        </p>
+        <p>
+          Config values arrive as JSON-compatible Python values. Prefer explicit
+          <code>Requirement</code> entries over ad hoc environment reads so operators,
+          saved chains, and transcripts all agree on what controlled the run.
+        </p>
+
+        <h2>A survey module</h2>
+        <p>
+          A survey gathers facts and returns them in <code>outputs</code>. Class attributes
+          become the <code>handshake</code> and <code>schema</code> responses; <code>run</code>
+          becomes <code>execute</code>.
+        </p>
+<pre data-lang="modules/examples/python/mock_survey/.../module.py"><code>from hovel_sdk import Context, HovelModule, Requirement, Result
+
+
+class MockSurvey(HovelModule):
+    name = "mock-survey"
+    version = "v0.0.0-example"
+    module_type = "survey"
+    summary = "Collect example target facts."
+    tags = ("example", "survey", "python")
+    target_config = (
+        Requirement("target.host", "host", description="Target host name or IP address."),
+        Requirement("target.port", "port", description="Target TCP port."),
+    )
+
+    def run(self, ctx: Context) -> Result:
+        host = ctx.input("target.host", ctx.target)
+        port = ctx.input("target.port", "unknown")
+        ctx.log.info("connecting to target %s:%s", host, port)
+        return Result.ok(
+            {"facts": {"host": host, "port": port, "reachable": True}},
+            summary=f"example survey reached {host}:{port}",
+        )</code></pre>
+        <p>
+          <code>ctx.input(key, default)</code> resolves the value across run inputs, target
+          config, and chain config. <code>ctx.log</code> is a standard Python logger whose
+          records are forwarded to the daemon as <code>module/log</code> notifications.
+        </p>
+
+        <h2>Findings and artifacts</h2>
+        <p>An exploit reports <code>Finding</code>s and <code>Artifact</code>s, and can fail deliberately via an input.</p>
+<pre data-lang="python"><code>def run(self, ctx: Context) -> Result:
+    if ctx.input("failure_mode", "") == "execution":
+        return Result.failed("example exploit failed during execution")
+
+    return Result.ok(
+        {"target": ctx.target},
+        summary="example exploit completed without target interaction",
+        findings=[Finding(
+            title="example exploit path verified",
+            severity="info",
+            detail="exercised orchestration without touching a real target",
+        )],
+        artifacts=[Artifact.inline(
+            name="mock-exploit-transcript.txt",
+            kind="text/plain",
+            data="example module invoked through daemon RPC",
+        )],
+    )</code></pre>
+        <p><code>Artifact</code> also offers <code>text</code>, <code>json</code>, and <code>file</code> constructors for common cases.</p>
+        <p>
+          Use <code>Result.failed(...)</code> for expected operator-facing failures such
+          as "not vulnerable", "authentication failed", or "confirmation missing".
+          Let exceptions mean bugs or unexpected infrastructure failures; the SDK will
+          report them as JSON-RPC errors and include traceback details in module logs.
+        </p>
+
+        <h2>Installed payload records</h2>
+        <p>
+          If a Python exploit or provider installs a durable target-side payload, return
+          an explicit installed-payload descriptor. This is the only supported way for a
+          module to ask Hovel to create installed payload inventory.
+        </p>
+<pre data-lang="python"><code>from hovel_sdk import InstalledPayload, PayloadProviderRecord, Result
+
+
+payload = InstalledPayload(
+    provider="squatter",
+    payload_id="squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+    payload_version="0.1.0",
+    target=ctx.target,
+    state="installed",
+    transport="tcp-bind",
+    endpoint="10.0.0.42:9101",
+    supports_reconnect=True,
+    cleanup=PayloadProviderRecord(
+        schema="squatter.cleanup.tcp_bind",
+        descriptor={"remotePath": r"C:\Windows\Temp\n4x9q2.exe"},
+    ),
+)
+return Result.ok(
+    {"payload": payload.payload_id},
+    summary="payload installed and recorded",
+).with_installed_payloads(payload)</code></pre>
+        <p>
+          Do not write <code>workspace.db</code> or invent operator-facing payload
+          handles. Hovel validates descriptors, assigns handles, persists state, and
+          routes future reconnect or cleanup calls back to the provider.
+        </p>
+
+        <h2>Interactive sessions</h2>
+        <p>
+          An exploit can open a session that outlives <code>run</code>. Subclass
+          <code>LineShellSession</code> and answer commands; <code>ctx.open_session</code>
+          registers it. The daemon keeps the process alive and lets the operator drive the
+          shell.
+        </p>
+<pre data-lang="python"><code>class MockShell(LineShellSession):
+    def __init__(self, target: str) -> None:
+        super().__init__(prompt="mock$ ", echo=True)
+        self._target = target
+
+    async def handle_command(self, command: str) -> str:
+        if command == "whoami":
+            return "mock-operator"
+        if command == "hostname":
+            return self._target.removeprefix("mock://") or "mock-target"
+        return f"mock-shell: command not found: {command}"
+
+
+class MockExploitSession(HovelModule):
+    name = "mock-exploit-session"
+    module_type = "exploit"
+    tags = ("example", "exploit", "python", "session")
+
+    async def run(self, ctx: Context) -> Result:
+        session = await ctx.open_session(
+            MockShell(ctx.target),
+            name=f"mock shell on {ctx.target}",
+            capabilities=("read", "write", "exec", "close"),
+        )
+        return Result.ok(
+            {"sessionId": session.id},
+            summary="mock exploit opened an interactive shell session",
+        )</code></pre>
+        <p>
+          <code>run</code> may be synchronous or <code>async</code>; the SDK awaits it either
+          way. <code>LineShellSession</code> handles line buffering, echo, the prompt, and the
+          built-in <code>exit</code>/<code>logout</code> commands for you.
+        </p>
+
+        <h2>Step-provider hooks</h2>
+        <p>
+          Python is suitable for real exploit modules and for lightweight chain-step
+          providers. Override the step methods when the module participates in the
+          capability-native chain planner.
+        </p>
+<pre data-lang="python"><code>class WindowsCredentialStep(HovelModule):
+    name = "windows-credential"
+    module_type = "exploit"
+    tags = ("dangerous", "credential", "python")
+
+    def describe_steps(self) -&gt; dict[str, object]:
+        return {"steps": [{
+            "id": "windows.credential.create_local_admin",
+            "kind": "credential.create",
+            "requires": [{"type": "RemoteExecutionCapability", "states": ["active"]}],
+            "produces": [{"type": "CredentialCapability", "states": ["active"]}],
+            "prepare": {"materializes": ["username", "password"]},
+        }]}
+
+    def prepare_step(self, request: dict[str, object]) -&gt; dict[str, object]:
+        return {
+            "preparedValues": {
+                "username": {"value": "neutral-name", "editable": True},
+                "password": {"value": "plain-high-entropy-password", "editable": True},
+            },
+            "operatorSummary": {
+                "warnings": [],
+                "targetSideArtifacts": ["temporary local administrator credential"],
+            },
+        }
+
+    def execute_step(self, request: dict[str, object]) -&gt; dict[str, object]:
+        confirmed = dict(request.get("confirmedPreparedValues") or {})
+        return {
+            "status": "succeeded",
+            "capabilities": [{
+                "id": "cap_credential_example",
+                "type": "CredentialCapability",
+                "schemaVersion": "v1",
+                "state": "active",
+                "attributes": {
+                    "protocol": "smb",
+                    "username": confirmed["username"],
+                    "password": confirmed["password"],
+                    "sensitive": True,
+                },
+            }],
+        }
+
+    def cleanup_step(self, request: dict[str, object]) -&gt; dict[str, object]:
+        return {"status": "removed"}</code></pre>
+        <p>
+          The Python SDK leaves step payloads as dictionaries so providers can move fast
+          while the capability schema evolves. The <a href="module-protocol.html">Wire
+          Protocol</a> page is the source of truth for field names.
+        </p>
+
+        <h2>Entry point</h2>
+        <p>Each module package has a <code>__main__.py</code> so the daemon can run <code>python -m &lt;module&gt;</code>.</p>
+<pre data-lang="modules/examples/python/mock_survey/.../__main__.py"><code>from hovel_example_survey.module import MockSurvey
+from hovel_sdk import serve
+
+
+def main() -> None:
+    serve(MockSurvey())
+
+
+if __name__ == "__main__":
+    main()</code></pre>
+
+        <h2>Test without the daemon</h2>
+        <p>
+          Unit-test module logic directly first. Construct a <code>Context</code>, call
+          <code>run</code>, and assert the result shape. Session modules can use
+          <code>SessionManager</code> to exercise <code>ctx.open_session</code> without
+          starting <code>hoveld</code>.
+        </p>
+<pre data-lang="python"><code>from hovel_example_exploit.module import MockExploit
+from hovel_sdk import Context
+
+
+def test_failure_mode_returns_failed_result() -&gt; None:
+    result = MockExploit().run(Context(
+        run_id="run-1",
+        module_id="mock-exploit",
+        target="mock://target",
+        inputs={"failure_mode": "execution"},
+    ))
+    assert result.status == "failed"</code></pre>
+        <p>
+          Then use <code>hovel_sdk.testing.ModuleRPC</code> for contract tests that
+          exercise the real framed JSON-RPC server. This catches stdout corruption,
+          schema drift, step dispatch mistakes, session RPC errors, and shutdown
+          behavior earlier than a full CLI run.
+        </p>
+<pre data-lang="python"><code>import base64
+
+from hovel_example_exploit_session.module import MockExploitSession
+from hovel_sdk.testing import ModuleRPC
+
+
+def test_session_over_framed_rpc() -&gt; None:
+    with ModuleRPC(MockExploitSession()) as rpc:
+        result = rpc.call("execute", {
+            "runId": "run-1",
+            "moduleId": "mock-exploit-session",
+            "target": "mock://target",
+        })
+        session_id = result["sessions"][0]["id"]
+
+        prompt = rpc.call("session/read", {"sessionId": session_id, "timeoutMs": 100})
+        rpc.call("session/write", {
+            "sessionId": session_id,
+            "data": base64.b64encode(b"whoami\n").decode(),
+        })
+        output = rpc.call("session/read", {"sessionId": session_id, "timeoutMs": 100})
+
+        assert base64.b64decode(prompt["data"]).endswith(b"$ ")
+        assert base64.b64decode(output["data"])</code></pre>
+        <p>
+          <code>ModuleRPC.notifications</code> records <code>module/log</code> and
+          <code>module/session</code> notifications emitted before each response.
+          <code>drive_module(module, script)</code> is a shorter wrapper for tests that
+          only need the final notification list.
+        </p>
+<p>
+          The Python SDK and in-repo Python examples now live outside the core Bazel
+          workspace. Restore a slice-local SDK/modules check before documenting
+          focused <code>//modules/examples/python:...</code> labels again.
+        </p>
+        <p>
+          Move to daemon or CLI tests only after pure parsing, schema, failure paths,
+          artifact construction, and session behavior are covered. Real network-facing
+          exploit tests should keep packet builders and response parsers unit-testable
+          offline, then reserve live target checks for an authorized lab.
+        </p>
+
+        <h2>Package and run</h2>
+        <p>Package or link the module with a <code>hovel-module.yaml</code> manifest. Python launchers can use Hovel-managed python-build-standalone, an operator-supplied interpreter, or a bundled interpreter.</p>
+<pre data-lang="hovel-module.yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: mock-survey
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector: {}
+    python:
+      managed:
+        versions: ["3.10-3.14"]
+      command: ["{python}", "-m", "hovel_example_survey"]</code></pre>
+<pre data-lang="shell"><code>hovel module install --link "$PWD/modules/examples/python/mock_survey"
+hovel module check mock-survey
+task start
+hovel&gt; module installed  # mock-survey, mock-exploit, mock-exploit-session ...</code></pre>
+        <p>
+          Python modules need no native compile step. See
+          the <a href="module-go.html">Go</a> and <a href="module-rust.html">Rust</a> guides
+          for the same three modules as compiled binaries.
+        </p>
+      </article>
+
+      <nav class="page-nav">
+        <a class="prev" href="module-protocol.html">← Wire Protocol</a>
+        <span class="spacer"></span>
+        <a class="next" href="module-go.html">Go Modules →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

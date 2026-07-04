@@ -74,24 +74,15 @@ durable target-side payloads.
 Focused checks:
 
 ```sh
-task test -- //sdk/rust/hovel:hovel_test
-task test -- //examples/rust/...
+task check
 ```
 
-Build staged example binaries:
-
-```sh
-task modules:build
-```
-
-Full gate:
-
-```sh
-task ci
-```
+The Rust SDK and Rust examples are outside the core Bazel workspace after the
+partial-checkout split. Restore slice-local test/package tasks before
+documenting focused SDK labels or staged example binary builds again.
 
 Copy from these examples first:
 
-- [`../../examples/rust/mock_survey`](../../examples/rust/mock_survey)
-- [`../../examples/rust/mock_exploit`](../../examples/rust/mock_exploit)
-- [`../../examples/rust/mock_exploit_session`](../../examples/rust/mock_exploit_session)
+- [`../../modules/examples/rust/mock_survey`](../../modules/examples/rust/mock_survey)
+- [`../../modules/examples/rust/mock_exploit`](../../modules/examples/rust/mock_exploit)
+- [`../../modules/examples/rust/mock_exploit_session`](../../modules/examples/rust/mock_exploit_session)

@@ -1,0 +1,11 @@
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "build",
+    srcs = [
+        "//modules/squatter/client/cmd/squatterctl",
+        "//modules/squatter/provider:squatter-provider",
+        "//modules/squatter/windows:squatter_x86_exe",
+        "//modules/squatter/windows/src:squatter_all",
+    ],
+)

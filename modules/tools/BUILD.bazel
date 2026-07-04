@@ -1,0 +1,105 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load(
+    "//modules/tools:release_modules.bzl",
+    "declare_release_module_binaries",
+    "release_module_data",
+    "release_module_stage_args",
+)
+
+package(default_visibility = ["//visibility:public"])
+
+declare_release_module_binaries()
+
+py_binary(
+    name = "stage_examples",
+    srcs = ["stage_examples.py"],
+    args = [
+        "--module=mock-survey-go=$(rootpath //modules/examples/go/mock_survey:mock_survey)",
+        "--module=mock-exploit-go=$(rootpath //modules/examples/go/mock_exploit:mock_exploit)",
+        "--module=mock-exploit-session-go=$(rootpath //modules/examples/go/mock_exploit_session:mock_exploit_session)",
+        "--module=mock-survey-rust=$(rootpath //modules/examples/rust/mock_survey:mock-survey-rust)",
+        "--module=mock-exploit-rust=$(rootpath //modules/examples/rust/mock_exploit:mock-exploit-rust)",
+        "--module=mock-exploit-session-rust=$(rootpath //modules/examples/rust/mock_exploit_session:mock-exploit-session-rust)",
+        "--module=squatter-provider=$(rootpath //modules/squatter/provider:squatter-provider)",
+        "--module=squatter.exe=$(rootpath //modules/squatter/windows:squatter_x86_exe)",
+    ] + release_module_stage_args(),
+    data = [
+        "//modules/examples/go/mock_exploit",
+        "//modules/examples/go/mock_exploit_session",
+        "//modules/examples/go/mock_survey",
+        "//modules/examples/rust/mock_exploit:mock-exploit-rust",
+        "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
+        "//modules/examples/rust/mock_survey:mock-survey-rust",
+        "//modules/squatter/provider:squatter-provider",
+        "//modules/squatter/windows:squatter_x86_exe",
+    ] + release_module_data(),
+    python_version = "PY3",
+)
+
+py_test(
+    name = "check_in_repo_modules_test",
+    size = "medium",
+    srcs = ["check_in_repo_modules_test.py"],
+    args = [
+        "$(rootpath @hovel_core//cmd/hovel:hovel)",
+        "$(rootpath //modules/examples/go/mock_survey:mock_survey)",
+        "$(rootpath //modules/examples/go/mock_exploit:mock_exploit)",
+        "$(rootpath //modules/examples/go/mock_exploit_session:mock_exploit_session)",
+        "$(rootpath //modules/examples/rust/mock_survey:mock-survey-rust)",
+        "$(rootpath //modules/examples/rust/mock_exploit:mock-exploit-rust)",
+        "$(rootpath //modules/examples/rust/mock_exploit_session:mock-exploit-session-rust)",
+        "$(rootpath //modules/squatter/provider:squatter-provider)",
+    ],
+    data = [
+        "@hovel_core//cmd/hovel",
+        "//modules/examples/go/mock_exploit",
+        "//modules/examples/go/mock_exploit_session",
+        "//modules/examples/go/mock_survey",
+        "//modules/examples/python:sources",
+        "//modules/examples/rust/mock_exploit:mock-exploit-rust",
+        "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
+        "//modules/examples/rust/mock_survey:mock-survey-rust",
+        "//modules/squatter/provider:squatter-provider",
+        "//sdk/python:sources",
+    ],
+    python_version = "PY3",
+)
+
+py_test(
+    name = "package_examples_test",
+    size = "small",
+    srcs = [
+        "package_examples.py",
+        "package_examples_test.py",
+    ],
+    python_version = "PY3",
+)
+
+py_test(
+    name = "workspace_module_install_test",
+    size = "medium",
+    srcs = ["workspace_module_install_test.py"],
+    args = [
+        "$(rootpath @hovel_core//cmd/hovel:hovel)",
+        "$(rootpath //modules/examples/go/mock_survey:mock_survey)",
+        "$(rootpath //modules/examples/go/mock_exploit:mock_exploit)",
+        "$(rootpath //modules/examples/go/mock_exploit_session:mock_exploit_session)",
+        "$(rootpath //modules/examples/rust/mock_survey:mock-survey-rust)",
+        "$(rootpath //modules/examples/rust/mock_exploit:mock-exploit-rust)",
+        "$(rootpath //modules/examples/rust/mock_exploit_session:mock-exploit-session-rust)",
+        "$(rootpath //modules/squatter/provider:squatter-provider)",
+    ],
+    data = [
+        "@hovel_core//cmd/hovel",
+        "//modules/examples/go/mock_exploit",
+        "//modules/examples/go/mock_exploit_session",
+        "//modules/examples/go/mock_survey",
+        "//modules/examples/python:sources",
+        "//modules/examples/rust/mock_exploit:mock-exploit-rust",
+        "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
+        "//modules/examples/rust/mock_survey:mock-survey-rust",
+        "//modules/squatter/provider:squatter-provider",
+        "//sdk/python:sources",
+    ],
+    python_version = "PY3",
+)

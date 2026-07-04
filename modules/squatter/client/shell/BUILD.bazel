@@ -1,0 +1,82 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "shell",
+    srcs = [
+        "prompt_pty_posix.go",
+        "prompt_pty_windows.go",
+        "shell.go",
+        "terminal_attach_posix.go",
+        "terminal_attach_windows.go",
+        "write_retry_posix.go",
+        "write_retry_windows.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//modules/squatter/client/wire",
+        "//modules/squatter/client/xfer",
+        "@com_github_c_bata_go_prompt//:go-prompt",
+        "@com_github_charmbracelet_lipgloss//:lipgloss",
+    ] + select({
+        "@rules_go//go/platform:aix": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:android": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:darwin": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:dragonfly": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:freebsd": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:illumos": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:ios": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:js": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:linux": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:netbsd": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:openbsd": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:osx": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:plan9": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:qnx": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "@rules_go//go/platform:solaris": [
+            "@com_github_charmbracelet_x_term//:term",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+go_test(
+    name = "shell_test",
+    srcs = [
+        "prompt_pty_posix_test.go",
+        "shell_test.go",
+    ],
+    embed = [":shell"],
+    deps = [
+        "//modules/squatter/client/wire",
+        "@com_github_c_bata_go_prompt//:go-prompt",
+    ],
+)

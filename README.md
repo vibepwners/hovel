@@ -1,6 +1,6 @@
 # Hovel
 
-![Hovel](assets/hovel.png)
+![Hovel](docs/site/assets/hovel.png)
 
 Hovel is a Go-hosted framework for authorized red-team emulation, controlled
 lab exercises, defensive validation, and operator workflow automation. It is
@@ -23,11 +23,13 @@ The canonical documentation is the GitHub Pages book:
 
 ## [vibe-pwners.github.io/hovel](https://vibe-pwners.github.io/hovel/index.html)
 
-Start with the [User Guide](spec/user-guide.html) to run Hovel locally. Module
-authors should use [Module Development](spec/module-development.html), then the
-language guides for [Python](spec/module-python.html), [Go](spec/module-go.html),
-or [Rust](spec/module-rust.html). The source for the book lives under
-[`spec/`](spec/).
+Start with the [User Guide](docs/site/spec/user-guide.html) to run Hovel locally. Module
+authors should use [Module Development](docs/site/spec/module-development.html), then the
+language guides for [Python](docs/site/spec/module-python.html), [Go](docs/site/spec/module-go.html),
+or [Rust](docs/site/spec/module-rust.html). Contributors should read the
+[Development Guide](docs/site/spec/development-guide.html) for Task, CI, and
+partial-checkout behavior. The source for the book lives under
+[`docs/site/spec/`](docs/site/spec/).
 
 ## Install
 
@@ -60,13 +62,15 @@ hovel module installed   # modules whose install process completed
 ## Develop
 
 `Taskfile.yml` is the single entry point for building, testing, linting,
-formatting, docs, release artifacts, and local runs. Do not call Bazel, gofmt,
-uv, or Lefthook directly.
+formatting, release artifacts, and local runs. Do not call Bazel, gofmt, uv, or
+Lefthook directly.
 
 ```sh
 task --list
+task checkout:status
 task start
 task test
+task check
 task ci
 ```
 
@@ -76,18 +80,33 @@ Useful tasks:
 | --- | --- |
 | `task start` | Build and launch the interactive CLI with the dev workspace. |
 | `task mcp` | Launch the MCP agent front end for the dev workspace. |
-| `task build` | Build all targets. |
-| `task test` | Run all Bazel tests. |
-| `task lint` | Run Go formatting, golangci-lint, Gazelle, Rust, Python, and Squatter C checks. |
-| `task docs` | Build cached demos, stage the Pages site, generate SDK API docs, and check internal links. |
-| `task coverage` | Run domain, application, and Python SDK coverage ratchets. |
-| `task ci` | Run the local gate: lint, version-update tests, docs, build, tests, race, fuzz smoke, and coverage. |
+| `task checkout:status` | Show which repository slices are present in this checkout. |
+| `task check` | Run checks for the slices present in this checkout. |
+| `task build` | Build the core Hovel binary workspace. |
+| `task test` | Run the core Hovel binary workspace tests. |
+| `task lint` | Run core Go formatting, golangci-lint, and Gazelle checks. |
+| `task fmt` | Format wired slices: core Go/Gazelle plus Go SDK sources. |
+| `task coverage` | Run core domain and application coverage ratchets. |
+| `task ci` | Require a full checkout, then run the core, SDK, modules, and docs gates. |
+
+## Repository layout
+
+The repository is organized for Sapling sparse profiles:
+
+| Path | Purpose |
+| --- | --- |
+| `core/` | Self-contained Hovel framework workspace: `hoveld`, CLI/TUI/MCP front ends, schemas, core tests, and core build tooling. |
+| `sdk/` | Python, Go, and Rust module SDKs. These are intentionally outside core so SDK work can be checked out independently. |
+| `modules/` | In-repo example modules, Squatter payload/provider code, module packaging tools, and lab helpers. |
+| `docs/` | Pages source, book content, demos, and documentation tooling. |
+| `repo-tools/` | Repository-level helpers that must remain available in sparse checkouts. |
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Changes should pass `task ci`; CI uses
-the same Task-backed build, docs, lint, test, race, fuzz smoke, and coverage
-entry points.
+See [CONTRIBUTING.md](CONTRIBUTING.md). During sparse work, use `task check` to
+run the checks available in the checkout. Changes should pass the relevant
+slice checks before landing; `task ci` is the full-checkout gate for core, SDKs,
+modules, docs, demos, and release-package smoke checks.
 
 ## License
 

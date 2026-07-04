@@ -19,59 +19,27 @@ concurrency:
 jobs:
   build:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
-      - name: Cache Bazel
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: |
-            ~/.cache/bazel
             ~/.cache/bazelisk
-          key: bazel-pages-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.event.workflow_run.head_sha || github.sha }}
-          restore-keys: |
-            bazel-demos-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.event.workflow_run.head_sha || github.sha }}
-            bazel-pages-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-
-            bazel-demos-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-
-            bazel-pages-${{ runner.os }}-
-            bazel-demos-${{ runner.os }}-
+            ~/.cache/bazel-repository
+          key: bazel-slices-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock', 'MODULE.bazel', '.bazelversion') }}
+          restore-keys: bazel-slices-${{ runner.os }}-
 
-      - name: Install Task
-        uses: arduino/setup-task@v2
+      - uses: arduino/setup-task@v2
         with:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.84.0
-
-      - name: Install demo host tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg ttyd tmux fonts-dejavu-core
-
-      - name: Verify demo host tools
-        run: |
-          ffmpeg -version | head -n 1
-          ttyd --version
-          tmux -V
-          docker version --format 'Docker server {{.Server.Version}}'
-
-      - name: Stage site
-        run: task docs
+      - name: Build docs site
+        run: task docs:ci
 
       - uses: actions/configure-pages@v5
 
@@ -102,9 +70,16 @@ jobs:
           {
             echo "## Pages Deploy"
             echo ""
+            echo "Deploys the uploaded _site/ artifact to the github-pages environment."
+            echo ""
             echo "| Field | Value |"
             echo "| --- | --- |"
             echo "| Status | ${{ job.status }} |"
             echo "| Environment | github-pages |"
             echo "| URL | ${{ steps.deployment.outputs.page_url }} |"
+            echo ""
+            echo "### What This Proves"
+            echo ""
+            echo "- GitHub Pages accepted the artifact produced by the Pages build job."
+            echo "- The public documentation URL was updated for this run."
           } >> "$GITHUB_STEP_SUMMARY"

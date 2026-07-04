@@ -31,35 +31,27 @@ The practical contract is simple:
 | [Rust](rust/README.md) | You want a small dependency-light module binary. | Core modules, line shell sessions, installed-payload records, raw optional agent context and hints. No step/provider dispatch yet. |
 
 The canonical module-author guide is the static spec page at
-[`../spec/module-development.html`](../spec/module-development.html). The
+[`../docs/site/spec/module-development.html`](../docs/site/spec/module-development.html). The
 language-specific pages are
-[`../spec/module-python.html`](../spec/module-python.html),
-[`../spec/module-go.html`](../spec/module-go.html), and
-[`../spec/module-rust.html`](../spec/module-rust.html).
+[`../docs/site/spec/module-python.html`](../docs/site/spec/module-python.html),
+[`../docs/site/spec/module-go.html`](../docs/site/spec/module-go.html), and
+[`../docs/site/spec/module-rust.html`](../docs/site/spec/module-rust.html).
 
 ## Fast Feedback
 
-Run focused checks while developing a module, then run the full gate before
-calling the work done.
+The SDK slice has been split out of the core Bazel workspace. The root task
+dispatcher can format the Go SDK today, and it reports the SDK slice during
+partial-checkout checks. Language-specific SDK test/package tasks still need
+their own slice-local workspace before they can be restored.
 
 ```sh
-task test -- //sdk/python:hovel_sdk_test
-task test -- //sdk/go/hovel:hovel_test
-task test -- //sdk/go/hoveltest:hoveltest_test
-task test -- //sdk/rust/hovel:hovel_test
-
-task test -- //examples/python/...
-task test -- //examples/go/...
-task test -- //examples/rust/...
-
-task ci
+task sdk:fmt
+task check
 ```
 
-Build and stage the in-tree Go and Rust example binaries with:
-
-```sh
-task modules:build
-```
+Example modules now live under `modules/examples/`. Module packaging and
+example-binary staging are part of the modules slice and are not wired into the
+root dispatcher yet.
 
 Install or link a module package before running it:
 

@@ -8,8 +8,8 @@ test, and structure changes.
 Install:
 
 - [Task](https://taskfile.dev/) — the single entry point for every build command
-- [bazelisk](https://github.com/bazelbuild/bazelisk) (honors `.bazelversion`)
-- [uv](https://docs.astral.sh/uv/) (Python SDK checks)
+- [bazelisk](https://github.com/bazelbuild/bazelisk) (honors `core/.bazelversion`)
+- [uv](https://docs.astral.sh/uv/) (Python SDK checks, when working in `sdk/`)
 - [Lefthook](https://lefthook.dev/) (optional git hooks)
 
 **Drive the build only through Task** (`task <name>`); do not invoke `bazel`,
@@ -22,21 +22,44 @@ Then:
 
 ```sh
 task hooks:install   # optional: run checks on commit
-task ci              # full local gate: lint, docs, build, tests, race, fuzz, coverage
+task checkout:status # show which checkout slices are present
+task check           # run checks available in this checkout
+task ci              # full-checkout gate for wired slices
 ```
+
+## Repository layout
+
+Hovel is split into sparse-checkout friendly slices:
+
+| Path | Purpose |
+| --- | --- |
+| `core/` | Self-contained Go/Bazel workspace for the Hovel framework binary, daemon, CLI/TUI/MCP front ends, schemas, core tests, and core build tooling. |
+| `sdk/` | Python, Go, and Rust module SDKs. SDKs are outside `core/` so SDK work can be checked out independently from framework internals. |
+| `modules/` | In-repo example modules, Squatter payload/provider code, module packaging tools, and lab helpers. |
+| `docs/` | GitHub Pages source, book content, demos, and documentation tooling. |
+| `repo-tools/` | Small repository-level helpers used by the root Task dispatcher. |
 
 ## Before you open a PR
 
-Run the same suite CI runs:
+For partial checkouts, run the available-slice gate while iterating:
+
+```sh
+task check
+```
+
+Before opening a PR, run the same full-checkout suite CI runs:
 
 ```sh
 task ci
 ```
 
-That is `task lint` (gofmt, golangci-lint, Gazelle up-to-date, Rust
-rustfmt/Clippy, Python ruff/mypy/pydoclint, and Squatter C static checks), then `task docs`, `task build`, `task test`,
-`task test:race`, `task fuzz:smoke`, and `task coverage`. CI
-(`.github/workflows/ci.yml`) runs the same checks on every pull request.
+`task ci` first verifies that the full source tree is checked out. It then runs
+the wired full gate. At this stage of the layout split, the executable gate is
+centered on `core/`: Go formatting, golangci-lint, Gazelle up-to-date checks,
+core build, core CI tests, race tests, fuzz smoke, and core coverage ratchets.
+The SDK, module, and docs slices are deliberately outside the core workspace so
+their own slice-local checks can be added without making sparse `core/`
+checkouts pull unrelated code.
 
 If you add, move, or remove Go files or imports, regenerate formatting and
 `BUILD.bazel` metadata:
@@ -45,8 +68,8 @@ If you add, move, or remove Go files or imports, regenerate formatting and
 task fmt
 ```
 
-When you add a new test target, also add it to the `test_suite` in the root
-`BUILD.bazel` so it is part of `//:test`.
+When you add a new core test target, also add it to the `test_suite` in
+`core/BUILD.bazel` so it is part of the core CI suite.
 
 ## Architecture rules
 
@@ -66,7 +89,7 @@ infra    -> app -> domain
 ## Code style
 
 - Go code is formatted with `gofmt` and checked with golangci-lint; `task fmt`
-  formats Go, Rust, and Squatter C in place.
+  formats wired core and Go SDK sources in place.
 - Match the surrounding code's naming, error-wrapping, and defensive-copy
   conventions (maps/slices are cloned at boundaries).
 - Python SDK code must pass `ruff`, `mypy --strict`, and `pydoclint`.
@@ -75,7 +98,8 @@ infra    -> app -> domain
 ## Tests
 
 - New behavior needs tests. Coverage ratchets and long-term goals are documented
-  in `spec/testing-roadmap.html`; run `task coverage` for the current floors.
+  in `docs/site/spec/testing-roadmap.html`; run `task coverage` for the current
+  core floors.
 - Production commands should exercise the daemon boundary.
 - Mock modules exist for tests and examples only and are not part of the
   shipped catalog.

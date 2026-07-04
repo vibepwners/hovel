@@ -1,0 +1,52 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# gazelle:exclude generate_main.go
+# gazelle:exclude provider_main.go
+
+go_library(
+    name = "provider_lib",
+    srcs = [
+        "lp.go",
+        "main.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/provider",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//modules/squatter/client/shell",
+        "//modules/squatter/client/smbpipe",
+        "//modules/squatter/client/wire",
+        "//modules/squatter/client/xfer",
+        "//sdk/go/hovel",
+    ],
+)
+
+go_binary(
+    name = "squatter-provider",
+    srcs = ["provider_main.go"],
+    data = ["//modules/squatter/windows:squatter_x86_exe"],
+    embed = [":provider_lib"],
+    gotags = ["hovel_squatter_provider"],
+)
+
+go_binary(
+    name = "squatter-generate",
+    srcs = ["generate_main.go"],
+    data = ["//modules/squatter/windows:squatter_x86_exe"],
+    embed = [":provider_lib"],
+    gotags = ["hovel_squatter_generate"],
+)
+
+go_test(
+    name = "provider_test",
+    srcs = ["main_test.go"],
+    data = ["//modules/squatter/windows:squatter_x86_exe"],
+    embed = [":provider_lib"],
+    deps = [
+        "//modules/squatter/client/shell",
+        "//modules/squatter/client/wire",
+        "//sdk/go/hovel",
+        "//sdk/go/hoveltest",
+    ],
+)

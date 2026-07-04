@@ -1,9 +1,0 @@
-load("@rules_go//go:def.bzl", "go_library")
-
-go_library(
-    name = "xfer",
-    srcs = ["xfer.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/xfer",
-    visibility = ["//visibility:public"],
-    deps = ["//payloads/squatter/client/wire"],
-)

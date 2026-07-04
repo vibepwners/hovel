@@ -2,7 +2,7 @@
 .task/
 _site/
 dist/
-examples/bin/
+modules/examples/bin/
 lefthook-local.yml
 bazel-*
 .worktrees/
@@ -13,6 +13,6 @@ bazel-*
 sdk/python/.venv/
 __pycache__/
 tmp/
-demo/out/
-demo/tmp/
+docs/demo/out/
+docs/demo/tmp/
 coverage/

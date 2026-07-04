@@ -1,0 +1,192 @@
+module(
+    name = "hovel",
+    version = "0.2.4",
+)
+
+bazel_dep(name = "gazelle", version = "0.50.0")
+bazel_dep(name = "googletest", version = "1.17.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_go", version = "0.60.0")
+bazel_dep(name = "rules_pkg", version = "1.2.0")
+bazel_dep(name = "rules_python", version = "1.8.4")
+bazel_dep(name = "rules_rust", version = "0.70.0")
+
+single_version_override(
+    module_name = "googletest",
+    version = "1.17.0",
+    patches = ["//third_party/patches:googletest-bazel9-cc-rules.patch"],
+    patch_strip = 0,
+)
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(
+    name = "go_sdk",
+    version = "1.25.4",
+)
+use_repo(go_sdk, "go_sdk")
+
+register_toolchains("@go_sdk//:all")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "com_github_akamensky_argparse",
+    "com_github_c_bata_go_prompt",
+    "com_github_charmbracelet_bubbles",
+    "com_github_charmbracelet_glamour",
+    "com_github_charmbracelet_huh",
+    "com_github_charmbracelet_lipgloss",
+    "com_github_charmbracelet_x_term",
+    "com_github_jfjallid_go_smb",
+    "com_github_modelcontextprotocol_go_sdk",
+    "com_github_pkg_term",
+    "in_gopkg_yaml_v3",
+    "org_golang_x_sys",
+    "org_modernc_sqlite",
+)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.12")
+use_repo(python, "python_3_12")
+
+lint_pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+lint_pip.parse(
+    hub_name = "lint_pypi",
+    python_version = "3.12",
+    requirements_lock = "//tools/lint:requirements_lock.txt",
+)
+use_repo(lint_pip, "lint_pypi")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "golangci_lint_linux_amd64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "golangci_lint_bin",
+    srcs = ["golangci-lint"],
+)
+""",
+    sha256 = "8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553",
+    strip_prefix = "golangci-lint-2.12.2-linux-amd64",
+    urls = ["https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-linux-amd64.tar.gz"],
+)
+
+http_archive(
+    name = "vhs_linux_x86_64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "vhs_bin",
+    srcs = ["vhs"],
+)
+""",
+    sha256 = "99cb634587eaae0473c1ea377db80c3a048c27f99fe0a7febb1a1e8cb7ee5009",
+    strip_prefix = "vhs_0.11.0_Linux_x86_64",
+    urls = ["https://github.com/charmbracelet/vhs/releases/download/v0.11.0/vhs_0.11.0_Linux_x86_64.tar.gz"],
+)
+
+http_archive(
+    name = "uv_linux_x86_64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "uv_bin",
+    srcs = ["uv"],
+)
+""",
+    sha256 = "6426a73c3837e6e2483ee344cbc00f36394d179afcba6183cb77437e67db4af0",
+    strip_prefix = "uv-x86_64-unknown-linux-gnu",
+    urls = ["https://github.com/astral-sh/uv/releases/download/0.11.26/uv-x86_64-unknown-linux-gnu.tar.gz"],
+)
+
+http_archive(
+    name = "chrome_for_testing_linux_x86_64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "chrome_bin",
+    srcs = ["chrome-linux64/chrome"],
+)
+
+filegroup(
+    name = "chrome_files",
+    srcs = glob(["chrome-linux64/**"]),
+)
+""",
+    sha256 = "ad115a7498a17f53f6ed0914458326c6516addc756224db14c32184a9b1ab078",
+    strip_prefix = "",
+    urls = ["https://storage.googleapis.com/chrome-for-testing-public/150.0.7871.46/linux64/chrome-linux64.zip"],
+)
+
+http_archive(
+    name = "llvm_mingw_ucrt_linux_x86_64",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "aarch64_libs",
+    srcs = glob(["aarch64-w64-mingw32/lib/*"]),
+)
+
+filegroup(
+    name = "x86_64_libs",
+    srcs = glob(["x86_64-w64-mingw32/lib/*"]),
+)
+
+filegroup(
+    name = "compiler_rt_windows",
+    srcs = glob(["lib/clang/*/lib/windows/*"]),
+)
+
+filegroup(
+    name = "clang_tidy_bin",
+    srcs = ["bin/clang-tidy"],
+)
+""",
+    sha256 = "534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4deda",
+    strip_prefix = "llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64",
+    urls = ["https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64.tar.xz"],
+)
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.repository_set(
+    name = "rust_linux_x86_64_musl_targets",
+    allocator_library = "@rules_rust//rust/private/cc:empty",
+    edition = "2021",
+    exec_triple = "x86_64-unknown-linux-gnu",
+    target_compatible_with = [
+        "//platforms:musl",
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+    target_triple = "aarch64-unknown-linux-musl",
+    versions = ["1.84.0"],
+)
+rust.toolchain(
+    allocator_library = "@rules_rust//rust/private/cc:empty",
+    edition = "2021",
+    extra_rustc_flags_triples = {
+        "aarch64-apple-darwin": [
+            "-Clink-arg=-undefined",
+            "-Clink-arg=dynamic_lookup",
+        ],
+    },
+    extra_target_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-pc-windows-gnullvm",
+        "x86_64-pc-windows-gnullvm",
+        "x86_64-unknown-linux-gnu",
+    ],
+    versions = ["1.84.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")

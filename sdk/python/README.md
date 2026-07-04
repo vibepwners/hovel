@@ -1,7 +1,7 @@
 # Python SDK
 
 The Python SDK is the quickest path for exploit, survey, and post-exploitation
-module work. Copy one of the examples in [`../../examples/python`](../../examples/python)
+module work. Copy one of the examples in [`../../modules/examples/python`](../../modules/examples/python)
 and keep the public boundary small: subclass `HovelModule`, describe cheap
 metadata/configuration, then put target interaction in `run` or explicit step
 hooks.
@@ -79,20 +79,16 @@ def test_module_executes():
 Focused checks:
 
 ```sh
-task test -- //sdk/python:hovel_sdk_test
-task test -- //examples/python/...
-task python:check
+task check
 ```
 
-Full gate:
-
-```sh
-task ci
-```
+The Python SDK and Python examples are outside the core Bazel workspace after
+the partial-checkout split. Restore a slice-local Python SDK check before
+documenting focused SDK labels or Python lint/typecheck tasks again.
 
 For deeper examples, compare:
 
-- [`../../examples/python/mock_survey`](../../examples/python/mock_survey)
-- [`../../examples/python/mock_exploit`](../../examples/python/mock_exploit)
-- [`../../examples/python/mock_exploit_session`](../../examples/python/mock_exploit_session)
-- [`../../examples/python/ms17_010_exploit`](../../examples/python/ms17_010_exploit)
+- [`../../modules/examples/python/mock_survey`](../../modules/examples/python/mock_survey)
+- [`../../modules/examples/python/mock_exploit`](../../modules/examples/python/mock_exploit)
+- [`../../modules/examples/python/mock_exploit_session`](../../modules/examples/python/mock_exploit_session)
+- [`../../modules/examples/python/ms17_010_exploit`](../../modules/examples/python/ms17_010_exploit)

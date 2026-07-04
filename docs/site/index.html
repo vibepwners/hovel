@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hovel — authorized red-team emulation framework</title>
+  <meta name="description" content="A Go-hosted framework for authorized red-team emulation, controlled lab exercises, defensive validation, and operator workflow automation.">
+  <link rel="icon" type="image/png" href="assets/hovel.png">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html">
+      <img src="assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// v{{HOVEL_VERSION}}</span>
+    </a>
+    <nav class="top-nav">
+      <a href="index.html" aria-current="page">Home</a>
+      <a href="spec/index.html">Book</a>
+      <a href="api/sdk/index.html">API Docs</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="hero-text">
+      <p class="hero-tag">// authorized security research</p>
+      <h1>Hovel</h1>
+      <p class="hero-lede">
+        A Go-hosted framework for authorized red-team emulation, controlled lab
+        exercises, defensive validation, and operator workflow automation.
+      </p>
+      <p>
+        <a class="cta" href="spec/introduction.html">Read the book →</a>
+        <a class="cta ghost" href="spec/module-development.html">Write a module</a>
+      </p>
+    </div>
+    <img src="assets/hovel.png" alt="hovel logo" class="hero-img">
+  </section>
+
+  <main class="content" style="max-width: 1080px; margin: 0 auto; padding: 2rem 2.5rem 3rem;">
+    <div class="demo-series homepage-demo-series" id="homepage-demo">
+      <figure class="demo-figure homepage-demo">
+        <img src="assets/demos/mock-survey-exploit-cli-commands-01-create.gif" alt="Hovel CLI demo creating a mock survey and exploit chain.">
+        <figcaption><strong>Step 1</strong> create the operation chain</figcaption>
+      </figure>
+      <figure class="demo-figure homepage-demo">
+        <img src="assets/demos/mock-survey-exploit-cli-commands-02-config-before.gif" alt="Hovel CLI demo listing required chain and target config before changes.">
+        <figcaption><strong>Step 2</strong> inspect required config</figcaption>
+      </figure>
+      <figure class="demo-figure homepage-demo">
+        <img src="assets/demos/mock-survey-exploit-cli-commands-03-config-apply.gif" alt="Hovel CLI demo applying chain and target config values.">
+        <figcaption><strong>Step 3</strong> apply and verify config</figcaption>
+      </figure>
+      <figure class="demo-figure homepage-demo">
+        <img src="assets/demos/mock-survey-exploit-cli-commands-04-save.gif" alt="Hovel CLI demo validating and saving the configured chain.">
+        <figcaption><strong>Step 4</strong> validate and save</figcaption>
+      </figure>
+      <figure class="demo-figure homepage-demo">
+        <img src="assets/demos/mock-survey-exploit-02-throw.gif" alt="Hovel terminal demo throwing the saved mock survey and exploit chain with live logs.">
+        <figcaption><strong>Step 5</strong> throw with live logs</figcaption>
+      </figure>
+      <figure class="demo-figure homepage-demo">
+        <img src="assets/demos/mock-survey-exploit-cli-02-session-io.gif" alt="Hovel CLI demo listing, reading, sending to, and reading from a mock shell session.">
+        <figcaption><strong>Step 6</strong> read and send session data</figcaption>
+      </figure>
+      <figure class="demo-figure homepage-demo">
+        <img src="assets/demos/mock-survey-exploit-cli-03-session-connect.gif" alt="Hovel CLI demo attaching to a mock shell session, detaching, and reconnecting.">
+        <figcaption><strong>Step 7</strong> attach, detach, and reconnect</figcaption>
+      </figure>
+    </div>
+
+    <h2>The pitch</h2>
+    <blockquote>
+      <p>
+        As a red-team operator, I want one local engine to manage modules,
+        providers, throws, events, artifacts, installed payloads, and sessions.
+      </p>
+      <p>
+        As an exploit developer or module author, I want a clear descriptor
+        and testable runtime contract so third-party capabilities are easy to
+        build, inspect, and operate safely.
+      </p>
+    </blockquote>
+
+    <h2>What is here</h2>
+    <p>
+      Hovel is a platform for wrapping and operating third-party proofs of concept,
+      not a catalog of first-party exploits. The project provides the engine, SDKs,
+      descriptors, providers, guardrails, examples, installed-payload inventory,
+      and operator experience that make third-party modules acceptable to run and inspect.
+    </p>
+    <p>
+      The central runtime is a local engine, <code>hoveld</code>, which owns
+      operations, chains, throws, module processes, provider-backed payload
+      state, installed payload records, sessions, events, artifacts, and
+      workspace storage. Interactive <code>cli</code> mode, one-shot chain-file
+      execution, and the MCP agent front end are implemented clients over the
+      same application services. <code>hovel tui</code> is an explicit
+      not-implemented role; REST/OpenAPI, general managed-service processes, and
+      richer MCP resources and prompts remain future work.
+    </p>
+
+    <h2>Start here</h2>
+    <div class="tiles">
+      <a class="tile" href="spec/user-guide.html">
+        <span class="tile-label">00 // Use</span>
+        <span class="tile-title">User guide</span>
+        <span class="tile-desc">Run Hovel, throw a saved chain, build a chain interactively, inspect results, and operate sessions with generated demos.</span>
+      </a>
+      <a class="tile" href="spec/introduction.html">
+        <span class="tile-label">01 // Read</span>
+        <span class="tile-title">Introduction</span>
+        <span class="tile-desc">What Hovel is, what is implemented, and what remains future work.</span>
+      </a>
+      <a class="tile" href="spec/architecture.html">
+        <span class="tile-label">02 // Read</span>
+        <span class="tile-title">Architecture</span>
+        <span class="tile-desc">Daemon contract, application services, command registry.</span>
+      </a>
+      <a class="tile" href="spec/modules-services.html">
+        <span class="tile-label">03 // Read</span>
+        <span class="tile-title">Modules &amp; services</span>
+        <span class="tile-desc">Runtime, lifecycle, Python SDK, protocol position.</span>
+      </a>
+      <a class="tile" href="spec/testing-roadmap.html">
+        <span class="tile-label">04 // Read</span>
+        <span class="tile-title">Testing strategy</span>
+        <span class="tile-desc">Task-backed local gates, CI jobs, test layers, and coverage goals.</span>
+      </a>
+      <a class="tile" href="spec/development-guide.html">
+        <span class="tile-label">05 // Build</span>
+        <span class="tile-title">Development guide</span>
+        <span class="tile-desc">Task entry points, partial-checkout checks, slice boundaries, and development decisions.</span>
+      </a>
+      <a class="tile" href="spec/index.html">
+        <span class="tile-label">// Full</span>
+        <span class="tile-title">Book index</span>
+        <span class="tile-desc">Every chapter, in order.</span>
+      </a>
+      <a class="tile" href="spec/safety.html">
+        <span class="tile-label">// Safety</span>
+        <span class="tile-title">Scope &amp; trust</span>
+        <span class="tile-desc">What Hovel is for, and what it is not.</span>
+      </a>
+      <a class="tile" href="spec/module-development.html">
+        <span class="tile-label">// Build</span>
+        <span class="tile-title">Write a module</span>
+        <span class="tile-desc">Python, Go, and Rust SDKs over one stdio JSON-RPC protocol.</span>
+      </a>
+      <a class="tile" href="api/sdk/index.html">
+        <span class="tile-label">// API</span>
+        <span class="tile-title">SDK API Reference</span>
+        <span class="tile-desc">Generated Python, Go, and Rust SDK reference from source docs.</span>
+      </a>
+    </div>
+
+    <h2>Build it</h2>
+    <p>Everything goes through <a href="https://taskfile.dev/">Task</a> — the single entry point. Run <code>task --list</code> to see all commands.</p>
+    <pre data-lang="bash"><code>task checkout:status
+task check   # available-slice gate for partial checkouts
+task build
+task test
+task ci      # full-checkout guard plus wired core gate</code></pre>
+  </main>
+
+  <footer class="sitefoot">
+    <p>Hovel · authorized security research · <a href="LICENSE">LICENSE</a> · <a href="https://github.com/Vibe-Pwners/hovel">github.com/Vibe-Pwners/hovel</a></p>
+  </footer>
+</body>
+</html>

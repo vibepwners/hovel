@@ -1,37 +1,14 @@
 version: '3'
 
-# Taskfile is the single entry point for the Hovel build system.
-#
-# Do NOT invoke bazel, gofmt, uv, or lefthook directly. Every supported
-# operation is a task below; humans, CI, git hooks, and AI agents all go
-# through `task <name>`. This keeps one correct, discoverable way to build,
-# test, lint, run, and format the project.
-#
-# Conventions:
-#   task <name>                 run a task
-#   task <name> -- <args>       forward extra args to the underlying tool
-  #                               (supported by build, test, run, throw)
-#   task --list                 list tasks
-#
-# Quick start for developers:
-#   task start                  build and launch the interactive CLI
-#   task status                 is the dev daemon running?
-#   task reset                  wipe local state and relaunch fresh
-# The dev workspace defaults to ./.hovel; override with HOVEL_WORKSPACE.
+# Root dispatcher for the reorganized repository. Keep this file small and
+# partial-checkout tolerant; concrete build systems live in their slices.
 
 env:
   PYTHONDONTWRITEBYTECODE: '1'
 
 vars:
-  # Absolute so the daemon resolves the config (and its relative project_dir /
-  # command paths) against the source tree rather than the bazel runfiles tree,
-  # where the staged example binaries (examples/bin/) do not exist.
-  MODULE_CONFIG:
-    sh: echo "$PWD/examples/hovel-modules.json"
-  WORKSPACE:
-    sh: echo "${HOVEL_WORKSPACE:-$PWD/.hovel}"
-  # Optional Bazel startup and command options for CI wrappers. Leave unset for
-  # local development; repo-local auth overrides belong in ignored rc files.
+  REPO_ROOT:
+    sh: python3 -c 'from pathlib import Path; print((Path("{{.TASKFILE_DIR}}") / "Taskfile.yml").resolve().parent)'
   BAZEL_STARTUP_ARGS:
     sh: echo "${HOVEL_BAZEL_STARTUP_ARGS:-}"
   BAZEL_ARGS:
@@ -44,412 +21,293 @@ tasks:
       - task --list
     silent: true
 
-  # --- Developer quick start ----------------------------------------------
+  checkout:status:
+    desc: Show which checkout slices are present.
+    cmds:
+      - python3 repo-tools/tasks/checkout.py status
+
+  checkout:require-full:
+    desc: Fail unless this is a full checkout.
+    cmds:
+      - python3 repo-tools/tasks/checkout.py require
+
+  check:
+    desc: Run checks for the repository slices present in this checkout.
+    cmds:
+      - python3 repo-tools/tasks/checkout.py check
+
+  ci:
+    desc: Run the full-checkout gate.
+    cmds:
+      - task: checkout:require-full
+      - task: core:ci
+      - task: sdk:ci
+      - task: modules:ci
+      - task: docs:ci
+
+  build:
+    desc: Build the core Hovel binary workspace.
+    cmds:
+      - task core:build -- {{.CLI_ARGS}}
+
+  test:
+    desc: Test the core Hovel binary workspace.
+    cmds:
+      - task core:test -- {{.CLI_ARGS}}
+
+  run:
+    desc: Run an arbitrary core Bazel target.
+    dir: core
+    cmds:
+      - task run -- {{.CLI_ARGS}}
+
+  lint:
+    desc: Run core lint checks.
+    dir: core
+    cmds:
+      - task lint
+
+  fmt:
+    desc: Format slices with wired formatters.
+    cmds:
+      - task core:fmt
+      - task sdk:fmt
+
+  coverage:
+    desc: Run core coverage ratchets.
+    dir: core
+    cmds:
+      - task coverage
+
+  bazel:build:
+    desc: Build root integration Bazel targets for non-core slices.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} build {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  bazel:test:
+    desc: Test root integration Bazel targets for non-core slices.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} test {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  bazel:run:
+    desc: Run root integration Bazel targets for non-core slices.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  upver:
+    desc: Update the lockstep Hovel core and SDK version.
+    dir: core
+    cmds:
+      - task upver -- {{.CLI_ARGS}}
+
+  upver:test:
+    desc: Check the lockstep Hovel version updater.
+    dir: core
+    cmds:
+      - task upver:test
+
+  release:hovel-wheel:
+    desc: Build the PyPI wheel that packages the Hovel Go binary.
+    dir: core
+    cmds:
+      - task release:hovel-wheel
+
+  release:hovel-wheels:
+    desc: Cross-build all Hovel PyPI wheels from Linux through Bazel.
+    dir: core
+    cmds:
+      - task release:hovel-wheels
+
+  release:hovel-sdk-dist:
+    desc: Build the Python SDK source and wheel distributions.
+    cmds:
+      - uv build sdk/python --out-dir dist
+
+  release:modules-stage:
+    desc: Stage in-repo module binaries into modules/examples/bin.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/tools:stage_examples
+
+  release:modules-package:
+    desc: Build in-repo module release packages and indexes into dist/modules.
+    cmds:
+      - task: release:modules-stage
+      - python3 modules/tools/package_examples.py
+
+  actions:summary:
+    desc: Append a GitHub Actions job summary for wired core jobs.
+    dir: core
+    cmds:
+      - task actions:summary -- {{.CLI_ARGS}}
+
+  actions:summary:test:
+    desc: Check the GitHub Actions summary renderer.
+    dir: core
+    cmds:
+      - task actions:summary:test
+
+  core:build:
+    desc: Build the core Hovel binary workspace.
+    dir: core
+    cmds:
+      - task build -- {{.CLI_ARGS}}
+
+  core:test:
+    desc: Test the core Hovel binary workspace.
+    dir: core
+    cmds:
+      - task test -- {{.CLI_ARGS}}
+
+  core:check:
+    desc: Check the core Hovel binary workspace.
+    dir: core
+    cmds:
+      - task check
+
+  core:ci:
+    desc: Run the core Hovel binary workspace CI gate.
+    dir: core
+    cmds:
+      - task ci
+
+  core:fmt:
+    desc: Format the core Hovel binary workspace.
+    dir: core
+    cmds:
+      - task fmt
+
+  sdk:fmt:
+    desc: Format SDK sources with wired formatters.
+    dir: core
+    cmds:
+      - task run -- //tools/lint:gofmt_workspace -- --mode=write --path ../sdk/go/hovel
+
+  sdk:build:
+    desc: Build SDK targets in the root integration workspace.
+    cmds:
+      - task: bazel:build
+        vars:
+          CLI_ARGS: //:sdk_build
+
+  sdk:test:
+    desc: Test SDK targets in the root integration workspace.
+    cmds:
+      - task: bazel:test
+        vars:
+          CLI_ARGS: //:sdk_test
+
+  sdk:ci:
+    desc: Run the SDK slice CI gate.
+    cmds:
+      - task: sdk:build
+      - task: sdk:test
+
+  modules:build:
+    desc: Build example and Squatter module targets.
+    cmds:
+      - task: bazel:build
+        vars:
+          CLI_ARGS: //:modules_build
+
+  modules:test:
+    desc: Test example/module packaging and Squatter provider targets.
+    cmds:
+      - task: bazel:test
+        vars:
+          CLI_ARGS: //:modules_test
+
+  modules:wine-test:
+    desc: Run Squatter Windows tests under Wine.
+    cmds:
+      - task: bazel:test
+        vars:
+          CLI_ARGS: --platforms=//platforms:windows_x86 --extra_toolchains=@mingw_i686//:toolchain --run_under=wine //:modules_wine_test
+
+  modules:ci:
+    desc: Run the modules slice CI gate.
+    cmds:
+      - task: modules:build
+      - task: modules:test
+
+  docs:build:
+    desc: Build the docs site staging tool.
+    cmds:
+      - task: bazel:build
+        vars:
+          CLI_ARGS: //:docs_build
+
+  docs:test:
+    desc: Test docs helpers and standard demo flows.
+    cmds:
+      - task: bazel:test
+        vars:
+          CLI_ARGS: //:docs_test
+
+  docs:demos:
+    desc: Render and materialize standard docs demo GIFs.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //docs/tools/demo:materialize_standard_demo_outputs
+
+  docs:demos:wine:
+    desc: Render and materialize the Squatter Wine docs demo GIF.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //docs/tools/demo:materialize_squatter_wine_demo_outputs
+
+  docs:stage:
+    desc: Stage the GitHub Pages site into _site.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //docs/tools/docs:stage_site
+
+  docs:ci:
+    desc: Run the docs slice CI gate.
+    cmds:
+      - task: docs:build
+      - task: docs:test
+      - task: docs:demos
+      - task: docs:stage
 
   start:
     aliases: [dev, up, cli]
-    desc: Build and launch the interactive Hovel CLI (auto-starts a daemon).
+    desc: Build and launch the interactive Hovel CLI from core.
+    dir: core
     interactive: true
-    deps: [modules:package]
-    env:
-      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- cli --workspace "{{.WORKSPACE}}"
+      - task start
 
   daemon:
-    desc: Run hoveld in the foreground on the default Unix socket.
+    desc: Run hoveld from core.
+    dir: core
     interactive: true
-    deps: [modules:package]
-    env:
-      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- daemon serve --workspace "{{.WORKSPACE}}"
+      - task daemon
 
   mcp:
-    desc: Launch the MCP agent interface for the dev workspace.
+    desc: Launch the MCP agent interface from core.
+    dir: core
     interactive: true
-    deps: [modules:package]
-    env:
-      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
     cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- mcp --workspace "{{.WORKSPACE}}" --transport http --http-addr 127.0.0.1:27166 --entity-id agent1
+      - task mcp
 
   status:
     aliases: [st]
     desc: Show daemon status for the dev workspace.
+    dir: core
     cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- status --workspace "{{.WORKSPACE}}"
+      - task status
 
   init:
-    desc: Initialize the dev workspace (./.hovel).
+    desc: Initialize the dev workspace.
+    dir: core
     cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- init --workspace "{{.WORKSPACE}}"
-
-  throw:
-    desc: 'One-shot throw of a saved chain file: task throw -- path/to/chain.yaml.'
-    deps: [modules:package]
-    env:
-      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
-    cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel -- throw {{.CLI_ARGS}} --workspace "{{.WORKSPACE}}"
-
-  lab:ms17-010-squatter-bind:
-    desc: Throw the representative MS17-010 -> Squatter TCP bind lab chain against HOVEL_LAB_TARGET_HOST.
-    deps: [modules:build]
-    env:
-      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
-      HOVEL_WORKSPACE: '{{.WORKSPACE}}'
-    cmds:
-      - bash tools/lab/ms17_010_squatter_bind.sh
-
-  clean:
-    desc: Remove local dev state (./.hovel workspace and .task cache). Leaves the Bazel cache alone.
-    cmds:
-      - rm -rf "{{.WORKSPACE}}" .task
-
-  reset:
-    aliases: [fresh]
-    desc: Wipe local dev state, then launch a fresh interactive CLI.
-    cmds:
-      - task: clean
-      - task: start
-
-  # --- Build, test, run ---------------------------------------------------
-
-  build:
-    aliases: [b]
-    desc: Build Bazel targets (default //...; e.g. task build -- //cmd/hovel).
-    cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} build {{.BAZEL_ARGS}} {{.CLI_ARGS | default "//..."}}
-
-  test:
-    aliases: [t]
-    desc: Run Bazel tests (default //...; e.g. task test -- //internal/domain/...).
-    cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} test {{.BAZEL_ARGS}} {{.CLI_ARGS | default "//..."}}
-
-  run:
-    desc: 'Run any Bazel target: task run -- //cmd/hovel -- daemon status.'
-    env:
-      HOVEL_MODULE_CONFIG: '{{.MODULE_CONFIG}}'
-    cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
-
-  go:deps:
-    desc: 'Add or update Go module dependencies: task go:deps -- module@version.'
-    cmds:
-      - 'test -n "{{.CLI_ARGS}}" || { echo "usage: task go:deps -- module@version"; exit 2; }'
-      - go get {{.CLI_ARGS}}
-      - go mod tidy
-
-  modules:build:
-    aliases: [modules]
-    desc: Build the Go and Rust example modules and stage their binaries to examples/bin/.
-    cmds:
-      - task: run
-        vars:
-          CLI_ARGS: --compilation_mode=opt //tools/modules:stage_examples
-
-  modules:package:
-    desc: Build example module .tgz packages and a module index into dist/modules/.
-    deps: [modules:build]
-    sources:
-      - tools/modules/package_examples.py
-      - examples/bin/*
-      - examples/bin/**/*
-      - examples/python/**/*
-    generates:
-      - dist/modules/module-index.yaml
-      - dist/modules/module-install-set.yaml
-      - dist/modules/*.tgz
-      - dist/modules/SHA256SUMS
-    cmds:
-      - python3 tools/modules/package_examples.py
-
-  upver:
-    desc: 'Update Hovel and hovel-sdk versions: task upver -- 0.2.0.'
-    cmds:
-      - python3 tools/release/upver.py {{.CLI_ARGS}}
-
-  upver:test:
-    desc: Check the version updater.
-    cmds:
-      - python3 tools/release/upver_test.py
-
-  docs:
-    desc: Build cached demos, then build and stage the static docs site.
-    cmds:
-      - task: demos:all
-      - task: docs:stage
-
-  docs:stage:
-    desc: Build and stage the static docs site from existing demo outputs.
-    cmds:
-      - task: run
-        vars:
-          CLI_ARGS: //tools/docs:stage_site
-
-  demos:
-    desc: Materialize Bazel-cached VHS terminal demos into demo/out/.
-    cmds:
-      - task: run
-        vars:
-          CLI_ARGS: //tools/demo:materialize_standard_demo_outputs
-
-  demo:squatter-wine:
-    desc: Materialize the Bazel-cached Docker/Wine Squatter MCP demo GIF.
-    cmds:
-      - task: run
-        vars:
-          CLI_ARGS: //tools/demo:materialize_squatter_wine_demo_outputs
-
-  demos:all:
-    desc: Materialize all Bazel-cached VHS demos into demo/out/.
-    cmds:
-      - task: run
-        vars:
-          CLI_ARGS: //tools/demo:materialize_all_demo_outputs
-
-  docs:api:
-    desc: Generate language-native SDK API docs into _site/api/sdk.
-    cmds:
-      - mkdir -p _site
-      - python3 tools/docs/generate_sdk_api_docs.py --site-root "$PWD/_site" --output "$PWD/_site/api/sdk"
-
-  # --- Release artifacts -------------------------------------------------
-
-  release:hovel-wheel:
-    desc: Build the PyPI wheel that packages the Hovel Go binary.
-    cmds:
-      - task build -- --compilation_mode=opt //cmd/hovel
-      - python3 tools/release/build_hovel_wheel.py
-
-  release:hovel-wheels:
-    desc: Cross-build all Hovel PyPI wheels from Linux through Bazel.
-    cmds:
-      - task build -- --compilation_mode=opt //cmd/hovel:hovel_linux_amd64
-      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-linux-amd64 --platform-tag manylinux_2_28_x86_64 --binary-name hovel
-      - task build -- --compilation_mode=opt //cmd/hovel:hovel_linux_arm64
-      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-linux-arm64 --platform-tag manylinux_2_28_aarch64 --binary-name hovel
-      - task build -- --compilation_mode=opt //cmd/hovel:hovel_darwin_arm64
-      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-darwin-arm64 --platform-tag macosx_11_0_arm64 --binary-name hovel
-      - task build -- --compilation_mode=opt //cmd/hovel:hovel_windows_amd64
-      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-windows-amd64.exe --platform-tag win_amd64 --binary-name hovel.exe
-      - task build -- --compilation_mode=opt //cmd/hovel:hovel_windows_arm64
-      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-windows-arm64.exe --platform-tag win_arm64 --binary-name hovel.exe
-
-  release:hovel-sdk-dist:
-    desc: Build the hovel-sdk PyPI wheel and sdist.
-    cmds:
-      - uv build --project sdk/python --out-dir dist
-
-  # --- Checks (what CI runs) ----------------------------------------------
-
-  check:
-    aliases: [ci]
-    desc: Run lint, docs, build, test, race, fuzz smoke, and coverage.
-    cmds:
-      - task: lint
-      - task: upver:test
-      - task: actions:summary:test
-      - task: docs
-      - task: build
-        vars:
-          CLI_ARGS: //:build
-      - task: test:ci
-      - task: coverage
-
-  actions:summary:
-    desc: Append a GitHub Actions job summary for a named workflow job.
-    cmds:
-      - python3 tools/ci/job_summary.py {{.CLI_ARGS}}
-
-  actions:summary:test:
-    desc: Check the GitHub Actions job summary renderer.
-    cmds:
-      - python3 tools/ci/job_summary_test.py
-
-  coverage:
-    desc: Run coverage ratchets for domain, app, and Python SDK layers.
-    cmds:
-      - python3 tools/tests/check_coverage.py
-
-  coverage:go:
-    desc: Run Bazel merged LCOV coverage for Go targets.
-    cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} coverage {{.BAZEL_ARGS}} --combined_report=lcov {{.CLI_ARGS}}
-
-  test:race:
-    desc: Run Go race-detector tests for the application service layer.
-    cmds:
-      - task: test
-        vars:
-          CLI_ARGS: //:race_test
-
-  test:ci:
-    desc: Run CI tests, race tests, and fuzz smoke not already exercised by coverage ratchets.
-    cmds:
-      - task: test
-        vars:
-          CLI_ARGS: //:ci_test //:race_test //:fuzz_smoke_test
-
-  fuzz:smoke:
-    desc: Run short fuzz smoke coverage for pure domain parsers.
-    cmds:
-      - task: test
-        vars:
-          CLI_ARGS: //:fuzz_smoke_test
-
-  lint:
-    aliases: [l]
-    desc: Run all lint checks (Go formatting, golangci-lint, Gazelle, Rust, Python, Squatter C).
-    cmds:
-      - task: gofmt:check
-      - task: go:lint
-      - task: gazelle:check
-      - task: rust:lint
-      - task: python:check
-      - task: squatter:check
-
-  fmt:
-    aliases: [format]
-    desc: Auto-format the tree (Go source, Gazelle BUILD metadata, Rust source, Squatter C).
-    cmds:
-      - task: gofmt
-      - task: gazelle
-      - task: rustfmt
-      - task: squatter:format
-
-  # --- Individual quality steps (composed by lint/fmt above) --------------
-
-  gofmt:
-    desc: Format Go files in place.
-    cmds:
-      - task: run
-        vars:
-          CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=write
-
-  gofmt:check:
-    desc: Check Go formatting.
-    cmds:
-      - task: run
-        vars:
-          CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=check
-
-  go:lint:
-    desc: Run golangci-lint over Go packages.
-    cmds:
-      - task: run
-        vars:
-          CLI_ARGS: //tools/lint:golangci_lint_workspace
-
-  rust:lint:
-    desc: Run Rust formatting and Clippy checks.
-    cmds:
-      - task: rustfmt:check
-      - task: build
-        vars:
-          CLI_ARGS: --@rules_rust//rust/settings:clippy_flag=-Dwarnings --@rules_rust//rust/settings:clippy_flag=-Dclippy::all //:rust_clippy
-
-  rustfmt:
-    desc: Format Rust files in place.
-    cmds:
-      - task: run
-        vars:
-          CLI_ARGS: //tools/lint:format_rust_workspace -- --mode=write
-
-  rustfmt:check:
-    desc: Check Rust formatting.
-    cmds:
-      - task: test
-        vars:
-          CLI_ARGS: //:rustfmt_check
-
-  gazelle:
-    desc: Update Go BUILD metadata with Gazelle.
-    cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //:gazelle
-
-  gazelle:check:
-    desc: Check that Go BUILD metadata is up to date.
-    cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //:gazelle -- -mode=diff
-
-  python:check:
-    desc: Run Python lint, type, and doc checks.
-    cmds:
-      - task: test
-        vars:
-          CLI_ARGS: //tools/lint:python_check_test
-
-  squatter:check:
-    desc: Run Squatter C static analysis.
-    cmds:
-      - task: build
-        vars:
-          CLI_ARGS: //payloads/squatter/windows/src:static_analysis
-
-  squatter:test:wine:
-    desc: Run Squatter Windows C++ and functional tests under Wine.
-    cmds:
-      - task: test
-        vars:
-          CLI_ARGS: --config=win64 //payloads/squatter/tests/...
-      - task: test
-        vars:
-          CLI_ARGS: --test_env=HOVEL_SQUATTER_REQUIRE_WINE=1 //payloads/squatter/client/functest:functest_test
-
-  squatter:format:
-    desc: Format Squatter C sources with clang-format.
-    cmds:
-      - task: run
-        vars:
-          CLI_ARGS: //tools/lint:format_squatter_c
-
-  squatter:format:check:
-    desc: Check Squatter C formatting with clang-format.
-    cmds:
-      - task: build
-        vars:
-          CLI_ARGS: //payloads/squatter/windows/src:format_check
-
-  squatter:complexity:
-    desc: Check Squatter C cyclomatic complexity with lizard (CCN <= 10).
-    cmds:
-      - task: build
-        vars:
-          CLI_ARGS: //payloads/squatter/windows/src:complexity
-
-  squatter:cppcheck:
-    desc: Run cppcheck over Squatter C sources.
-    cmds:
-      - task: build
-        vars:
-          CLI_ARGS: //payloads/squatter/windows/src:cppcheck
-
-  squatter:clang-tidy:
-    desc: Run clang-tidy over Squatter C sources.
-    cmds:
-      - task: build
-        vars:
-          CLI_ARGS: //payloads/squatter/windows/src:clang_tidy
-
-  # --- Git hooks ----------------------------------------------------------
-
-  hooks:install:
-    desc: Install Git hooks through Lefthook.
-    cmds:
-      - lefthook install
-
-  precommit:
-    aliases: [pre-commit]
-    desc: Fast checks run by the Lefthook pre-commit hook (lint + build).
-    cmds:
-      - task: lint
-      - task: build
-
-  prepush:
-    aliases: [pre-push]
-    desc: Thorough checks run by the Lefthook pre-push hook (tests).
-    cmds:
-      - task: test
+      - task init
