@@ -38,6 +38,9 @@ jobs:
           version: 3.x
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate latest test report
+        run: task test:report
+
       - name: Build docs site
         run: task docs:ci
 

@@ -17,6 +17,7 @@
     <nav class="top-nav">
       <a href="../index.html">Home</a>
       <a href="index.html" aria-current="page">Book</a>
+      <a href="../reports/tests/latest/index.html">Reports</a>
       <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
     </nav>
   </header>
@@ -80,6 +81,7 @@ task check
           <li><code>squatter-wine</code>: installs Wine in CI, then runs <code>task modules:wine-test</code> and <code>task docs:demos:wine</code>.</li>
         </ol>
         <p>CI, Pages, and publish jobs append GitHub Actions job summaries with the commands they ran, coverage ratchets, generated artifacts, staged site statistics, or publish targets where those details apply.</p>
+        <p>The staged docs site also includes the latest generated <a href="../reports/tests/latest/index.html">HTML test report</a> when <code>task test:report</code> artifacts are available. The report preserves Bazel target-level evidence, per-case XML where present, full console logs, raw XML, and undeclared outputs for drilldown across the monorepo.</p>
         <p>Docs and demo checks stay in the docs slice instead of becoming dependencies of every core checkout. The full aggregate <code>task ci</code> requires a complete checkout and runs the wired slice gates together.</p>
 
         <h2>Test Inventory</h2>

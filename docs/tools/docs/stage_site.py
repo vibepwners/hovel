@@ -46,6 +46,7 @@ def main() -> int:
     replace_version_tokens(site, (repo / "VERSION").read_text().strip())
     missing_demo_assets = copy_demo_outputs(repo, site)
     remove_missing_demo_figures(site, missing_demo_assets)
+    stage_test_report(repo, site)
 
     generate_sdk_api_docs.main_with_paths(
         repo_root=repo,
@@ -102,6 +103,7 @@ def docs_fingerprint(repo: Path) -> str:
         "sdk/rust/hovel/src/**/*.rs",
         "docs/site/spec/**/*.html",
         "docs/tools/docs/python_api/**/*",
+        ".test-report/site/**/*",
     ):
         paths.update(repo.glob(pattern))
 
@@ -180,6 +182,54 @@ def remove_missing_demo_figures(site: Path, missing_demo_assets: set[str]) -> No
             )
         if updated != text:
             page.write_text(updated, encoding="utf-8")
+
+
+def stage_test_report(repo: Path, site: Path) -> None:
+    dest = site / "reports/tests/latest"
+    generated = repo / ".test-report/site"
+    if generated.is_dir() and (generated / "index.html").is_file():
+        copy_tree(generated, dest)
+        return
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "index.html").write_text(
+        """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Test Report - Hovel</title>
+  <link rel="icon" type="image/png" href="../../../assets/hovel.png">
+  <link rel="stylesheet" href="../../../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../../../index.html">
+      <img src="../../../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// test report</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../../../index.html">Home</a>
+      <a href="../../../spec/index.html">Book</a>
+      <a href="../../../api/sdk/index.html">API Docs</a>
+      <a href="index.html" aria-current="page">Reports</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <main class="content" style="max-width: 920px; margin: 0 auto;">
+    <h1>Test Report</h1>
+    <p>No generated test report artifact was present when this docs site was staged.</p>
+    <pre data-lang="bash"><code>task test:report
+task docs:stage</code></pre>
+  </main>
+  <footer class="sitefoot">
+    <p>Hovel test report · <a href="../../../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
 
 
 def resolve_runfile(path: str) -> Path:

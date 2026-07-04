@@ -127,6 +127,16 @@ tasks:
       - task: modules:ci
       - task: docs:ci
 
+  ci:report:
+    desc: Run the full-checkout gate with a generated static HTML test report.
+    cmds:
+      - task: checkout:require-full
+      - task: test:report
+      - task: core:ci
+      - task: sdk:ci
+      - task: modules:ci
+      - task: docs:ci
+
   build:
     desc: Build the core Hovel binary workspace.
     cmds:
@@ -178,6 +188,30 @@ tasks:
     dir: '{{.REPO_ROOT}}'
     cmds:
       - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  report:generate:
+    desc: Generate the static HTML test report from existing BEP/testlog artifacts.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: >-
+            //tools/testreport:render_report --
+            --output=.test-report/site
+            --bep=.test-report/bep/core.json
+            --bep=.test-report/bep/root.json
+            --scan-testlogs=core/bazel-testlogs
+            --scan-testlogs=bazel-testlogs
+
+  test:report:
+    desc: Run wired monorepo test suites and generate the static HTML test report.
+    cmds:
+      - |
+        mkdir -p .test-report/bep
+        status=0
+        task core:test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=../.test-report/bep/core.json //:test //:race_test //:fuzz_smoke_test || status=$?
+        task bazel:test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=.test-report/bep/root.json //:sdk_test //:modules_test //:module_examples_test //:docs_test || status=$?
+        task report:generate || status=$?
+        exit "$status"
 
   upver:
     desc: Update the lockstep Hovel core and SDK version.
