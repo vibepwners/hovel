@@ -12,10 +12,10 @@ MODULE.bazel
 MODULE.bazel.lock
 README.md
 Taskfile.yml
+VERSION
 core
 modules/squatter/bazel
 platforms
 profiles
 repo-tools
 sdk
-

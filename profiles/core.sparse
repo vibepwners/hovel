@@ -12,6 +12,7 @@ MODULE.bazel
 MODULE.bazel.lock
 README.md
 Taskfile.yml
+VERSION
 core
 modules/examples
 modules/squatter/bazel
@@ -23,4 +24,3 @@ sdk
 
 [exclude]
 modules/examples/bin
-
