@@ -1,0 +1,92 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "scripts/demo-mcp-agent-tmux.sh",
+    "scripts/demo-step-setup.sh",
+])
+
+filegroup(
+    name = "sdk_build",
+    srcs = [
+        "//sdk/go/hovel",
+        "//sdk/go/hoveltest",
+        "//sdk/python:hovel_sdk",
+        "//sdk/rust/hovel",
+    ],
+)
+
+test_suite(
+    name = "sdk_test",
+    tests = [
+        "//sdk/go/hovel:hovel_test",
+        "//sdk/python:hovel_sdk_test",
+        "//sdk/rust/hovel:hovel_test",
+    ],
+)
+
+filegroup(
+    name = "modules_build",
+    srcs = [
+        "//modules/examples/go/mock_exploit",
+        "//modules/examples/go/mock_exploit_session",
+        "//modules/examples/go/mock_survey",
+        "//modules/examples/rust/mock_exploit:mock-exploit-rust",
+        "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
+        "//modules/examples/rust/mock_survey:mock-survey-rust",
+        "//modules/squatter:build",
+    ],
+)
+
+test_suite(
+    name = "modules_test",
+    tests = [
+        "//modules/squatter/provider:provider_test",
+        "//modules/squatter/windows:squatter_x86_exe_pe_test",
+        "//modules/squatter/windows:source_contract_test",
+        "//modules/tools:check_in_repo_modules_test",
+        "//modules/tools:package_examples_test",
+        "//modules/tools:workspace_module_install_test",
+    ],
+)
+
+test_suite(
+    name = "modules_wine_test",
+    tags = ["manual"],
+    tests = [
+        "//modules/squatter/tests:cmd_integration_test.exe",
+        "//modules/squatter/tests:echo_integration_test.exe",
+        "//modules/squatter/tests:file_xfer_test.exe",
+        "//modules/squatter/tests:frame_test.exe",
+        "//modules/squatter/tests:framing_test.exe",
+        "//modules/squatter/tests:gtest_smoke.exe",
+    ],
+)
+
+filegroup(
+    name = "docs_build",
+    srcs = [
+        "//docs/tools/docs:stage_site",
+    ],
+)
+
+test_suite(
+    name = "docs_test",
+    tests = [
+        "//docs/demo:standard_verification_test",
+        "//docs/tools/demo/mcpagent:mcpagent_test",
+    ],
+)
+
+filegroup(
+    name = "docs_demos",
+    srcs = [
+        "//docs/demo:standard_gifs",
+    ],
+)
+
+filegroup(
+    name = "docs_wine_demos",
+    srcs = [
+        "//docs/demo:squatter_wine_gif",
+    ],
+)
