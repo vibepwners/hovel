@@ -30,6 +30,7 @@ vars:
       case "$mode" in
         local) echo "--config=local-cache" ;;
         nativelink) echo "--config=nativelink" ;;
+        nativelink-minimal) echo "--config=nativelink-minimal" ;;
         buildbuddy) echo "--config=buildbuddy" ;;
         "") echo "" ;;
         *) echo "unknown Bazel config mode in $config_file: $mode" >&2; exit 2 ;;
@@ -66,6 +67,13 @@ tasks:
       - printf 'nativelink\n' > "{{.REPO_ROOT}}/.hovel-bazel-config"
       - task: config-show
 
+  config-nativelink-minimal:
+    desc: Use NativeLink and avoid downloading build outputs unless needed.
+    silent: true
+    cmds:
+      - printf 'nativelink-minimal\n' > "{{.REPO_ROOT}}/.hovel-bazel-config"
+      - task: config-show
+
   config-buildbuddy:
     desc: Use BuildBuddy cache for local task builds.
     silent: true
@@ -91,6 +99,7 @@ tasks:
           case "$mode" in
             local) args="--config=local-cache" ;;
             nativelink) args="--config=nativelink" ;;
+            nativelink-minimal) args="--config=nativelink-minimal" ;;
             buildbuddy) args="--config=buildbuddy" ;;
             "") args="" ;;
             *) echo "unknown Bazel config mode in $config_file: $mode" >&2; exit 2 ;;
