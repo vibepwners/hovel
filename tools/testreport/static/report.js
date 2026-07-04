@@ -68,7 +68,10 @@
   }
 
   function options(values) {
-    return values.sort().map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+    const uniqueValues = Array.from(new Set(values));
+    const sortedValues = uniqueValues.filter((value) => value !== "all").sort();
+    const orderedValues = uniqueValues.includes("all") ? ["all"].concat(sortedValues) : sortedValues;
+    return orderedValues.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
   }
 
   function applyFilters() {

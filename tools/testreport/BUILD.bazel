@@ -23,6 +23,9 @@ py_test(
         "testreport.py",
         "testreport_test.py",
     ],
+    data = [
+        "//tools/testreport/static:assets",
+    ],
     imports = ["."],
     python_version = "PY3",
 )
