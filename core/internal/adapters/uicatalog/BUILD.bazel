@@ -1,0 +1,31 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "uicatalog",
+    srcs = [
+        "catalog.go",
+        "command_views.go",
+        "logging.go",
+        "logging_helpers.go",
+        "progress.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/uicatalog",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/adapters/clistyle",
+        "//internal/adapters/commandview",
+        "//internal/adapters/progressview",
+        "//internal/adapters/terminallog",
+        "//internal/app/commands",
+        "//internal/app/modulecatalog",
+        "//internal/app/modulepackage",
+        "//internal/app/operatorlog",
+    ],
+)
+
+go_test(
+    name = "uicatalog_test",
+    size = "small",
+    srcs = ["catalog_test.go"],
+    embed = [":uicatalog"],
+)

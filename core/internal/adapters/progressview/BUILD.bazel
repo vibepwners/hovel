@@ -1,0 +1,29 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "progressview",
+    srcs = [
+        "install.go",
+        "transfer.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/progressview",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/adapters/clistyle",
+        "//internal/app/modulecatalog",
+        "//internal/app/modulepackage",
+        "@com_github_charmbracelet_bubbles//progress",
+        "@com_github_charmbracelet_lipgloss//:lipgloss",
+    ],
+)
+
+go_test(
+    name = "progressview_test",
+    size = "small",
+    srcs = [
+        "install_test.go",
+        "transfer_test.go",
+    ],
+    embed = [":progressview"],
+    deps = ["//internal/app/modulepackage"],
+)
