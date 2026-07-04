@@ -16,6 +16,7 @@ filegroup(
     name = "build",
     srcs = [
         "//cmd/hovel",
+        "//cmd/hovel-ui-catalog",
         "//schemas:descriptor_schemas",
     ],
 )
@@ -43,8 +44,10 @@ _CI_TESTS = [
     "//internal/adapters/commandview:commandview_test",
     "//internal/adapters/daemonrpc:daemonrpc_test",
     "//internal/adapters/descriptor:descriptor_test",
+    "//internal/adapters/progressview:progressview_test",
     "//internal/adapters/storage/filesystem:filesystem_test",
     "//internal/adapters/terminallog:terminallog_test",
+    "//internal/adapters/uicatalog:uicatalog_test",
     "//internal/testmodules/mockexploit:mockexploit_test",
     "//schemas:schema_smoke_test",
 ]

@@ -14,10 +14,10 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/commandmode",
     visibility = ["//:__subpackages__"],
     deps = [
-        "//internal/adapters/clistyle",
         "//internal/adapters/commandview",
         "//internal/adapters/daemonrpc",
         "//internal/adapters/descriptor",
+        "//internal/adapters/progressview",
         "//internal/adapters/storage/filesystem",
         "//internal/adapters/terminallog",
         "//internal/app/chainruntime",
@@ -31,7 +31,6 @@ go_library(
         "//internal/domain/run",
         "//internal/moduleruntime/pythonrpc",
         "@com_github_akamensky_argparse//:argparse",
-        "@com_github_charmbracelet_bubbles//progress",
         "@com_github_charmbracelet_lipgloss//:lipgloss",
         "@com_github_charmbracelet_x_term//:term",
     ] + select({
@@ -91,6 +90,7 @@ go_test(
         "chain_file_store_test.go",
         "commandmode_test.go",
         "commandmode_test_helpers_test.go",
+        "module_install_progress_test.go",
     ],
     data = [
     ],
