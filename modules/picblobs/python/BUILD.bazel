@@ -34,6 +34,7 @@ py_test(
         ":package_dir",
         "//modules/picblobs:root_metadata",
         "//modules/picblobs/python_cli:package_files",
+        "//modules/picblobs/src/payload:hello",
         "//modules/picblobs/tools:python_tools",
     ],
     imports = [

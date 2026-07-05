@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 from pathlib import Path
 
 from picblobs._builder import (
@@ -88,7 +89,7 @@ __all__ = [
 
 _PKG_DIR = Path(__file__).parent
 _MANIFEST_PATH = _PKG_DIR / "manifest.json"
-_BLOBS_DIR = _PKG_DIR / "blobs"
+_BLOBS_DIR = Path(os.environ.get("PICBLOBS_BLOBS_DIR", _PKG_DIR / "blobs"))
 
 
 def _load_manifest() -> dict | None:
