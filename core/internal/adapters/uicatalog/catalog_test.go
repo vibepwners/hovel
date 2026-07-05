@@ -45,7 +45,7 @@ func TestStaticDemosRenderExpectedMarkers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			code := Run(context.Background(), []string{"show", tt.name, "--width", "96", "--no-color"}, &stdout, &stderr)
+			code := Run(context.Background(), []string{"show", tt.name, "--width", "96", "--static", "--no-color"}, &stdout, &stderr)
 			if code != 0 {
 				t.Fatalf("Run code = %d, stderr = %s", code, stderr.String())
 			}
@@ -56,6 +56,31 @@ func TestStaticDemosRenderExpectedMarkers(t *testing.T) {
 				t.Fatalf("demo output contains ANSI escapes:\n%q", stdout.String())
 			}
 		})
+	}
+}
+
+func TestLogsDemoRendersStructuredEntriesWithConfigurableDelay(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{"show", "logs", "--width", "120", "--delay", "0s", "--no-color"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run code = %d, stderr = %s", code, stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		"HOVEL//RUN",
+		"Captured structured module event payload",
+		"event=",
+		`"service": {`,
+		"schema=hovel.module.event/v1",
+		"matched_users=",
+		"content_type=application/json",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("logs demo missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "\x1b[") {
+		t.Fatalf("logs output contains ANSI escapes:\n%q", text)
 	}
 }
 

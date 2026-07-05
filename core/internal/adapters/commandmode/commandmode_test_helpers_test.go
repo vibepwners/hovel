@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,10 +13,22 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if err := os.Setenv("HOVEL_MODULE_CONFIG", testsupport.ExampleModuleConfigPath()); err != nil {
+	moduleConfigDir, err := os.MkdirTemp("", "hovel-commandmode-test-*")
+	if err != nil {
 		panic(err)
 	}
-	os.Exit(m.Run())
+	moduleConfigPath := filepath.Join(moduleConfigDir, "hovel-modules.json")
+	if err := os.WriteFile(moduleConfigPath, []byte(`{"modules":[]}`+"\n"), 0o600); err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("HOVEL_MODULE_CONFIG", moduleConfigPath); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	if err := os.RemoveAll(moduleConfigDir); err != nil {
+		panic(err)
+	}
+	os.Exit(code)
 }
 
 type sequenceIDs struct {

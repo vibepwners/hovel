@@ -53,6 +53,44 @@ py_binary(
 )
 
 py_binary(
+    name = "materialize_ui_component_demo_outputs",
+    srcs = [
+        "check_gif_duration.py",
+        "materialize_demo_outputs.py",
+    ],
+    args = [
+        "--mode=ui-components",
+        "--manifest=docs/demo/ui_component_gif_manifest.txt",
+    ],
+    data = [
+        "//docs/demo:ui_component_gif_manifest",
+        "//docs/demo:ui_component_gifs",
+    ],
+    main = "materialize_demo_outputs.py",
+    python_version = "PY3",
+    tags = ["manual"],
+)
+
+py_binary(
+    name = "materialize_docs_demo_outputs",
+    srcs = [
+        "check_gif_duration.py",
+        "materialize_demo_outputs.py",
+    ],
+    args = [
+        "--mode=docs",
+        "--manifest=docs/demo/docs_gif_manifest.txt",
+    ],
+    data = [
+        "//docs/demo:docs_gif_manifest",
+        "//docs/demo:docs_gifs",
+    ],
+    main = "materialize_demo_outputs.py",
+    python_version = "PY3",
+    tags = ["manual"],
+)
+
+py_binary(
     name = "materialize_all_demo_outputs",
     srcs = [
         "check_gif_duration.py",

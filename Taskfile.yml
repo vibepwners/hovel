@@ -153,6 +153,13 @@ tasks:
     cmds:
       - task run -- {{.CLI_ARGS}}
 
+  ui:demo:
+    desc: Run all terminal UI catalog demos from core.
+    dir: core
+    interactive: true
+    cmds:
+      - task ui:demo -- {{.CLI_ARGS}}
+
   lint:
     desc: Run core lint checks.
     dir: core
@@ -390,11 +397,11 @@ tasks:
           CLI_ARGS: //:docs_test
 
   docs:demos:
-    desc: Render and materialize standard docs demo GIFs.
+    desc: Render and materialize docs demo GIFs.
     cmds:
       - task: bazel:run
         vars:
-          CLI_ARGS: //docs/tools/demo:materialize_standard_demo_outputs
+          CLI_ARGS: //docs/tools/demo:materialize_docs_demo_outputs
 
   docs:demos:wine:
     desc: Render and materialize the Squatter Wine docs demo GIF.

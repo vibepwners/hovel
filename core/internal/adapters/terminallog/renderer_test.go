@@ -15,6 +15,7 @@ func TestRendererFormatsOperatorLog(t *testing.T) {
 		operatorlog.Info("run", "module staged", operatorlog.Field{Name: "run", Value: "run-1"}),
 		operatorlog.Finding("finding", "mock exploit path verified", operatorlog.Field{Name: "severity", Value: "info"}),
 		operatorlog.Artifact("artifact", "mock-exploit-transcript.txt", operatorlog.Field{Name: "kind", Value: "text/plain"}),
+		operatorlog.Error("policy", "blocked unauthenticated probe"),
 		operatorlog.Success("run", "completed", operatorlog.Field{Name: "state", Value: "succeeded"}),
 	}))
 
@@ -23,6 +24,10 @@ func TestRendererFormatsOperatorLog(t *testing.T) {
 		"HOVEL//RUN",
 		"mock-exploit -> mock://target",
 		"┃",
+		"INFO",
+		"WARN",
+		"VERBOSE",
+		"TRACE",
 		":: run",
 		">> stage",
 		"## finding",
@@ -48,10 +53,10 @@ func TestRendererWrapsContinuationLinesAtMessageIndent(t *testing.T) {
 	if len(lines) < 3 {
 		t.Fatalf("rendered log did not wrap:\n%s", rendered)
 	}
-	if !strings.HasPrefix(lines[2], "┃ :: log                this is a really") {
+	if !strings.HasPrefix(lines[2], "┃ :: log      INFO          this is a really") {
 		t.Fatalf("first log line has wrong prefix:\n%s", rendered)
 	}
-	if !strings.HasPrefix(lines[3], "┃                       long message that") {
+	if !strings.HasPrefix(lines[3], "┃                           long message") {
 		t.Fatalf("wrapped line did not align with message column:\n%s", rendered)
 	}
 }
@@ -62,8 +67,56 @@ func TestRendererDisplaysThrowElapsedInLabel(t *testing.T) {
 	}))
 
 	plain := stripANSI(rendered)
-	if !strings.Contains(plain, ":: module        0.02") {
+	if !strings.Contains(plain, ":: module   INFO     0.02") {
 		t.Fatalf("rendered log missing elapsed label:\n%s", rendered)
+	}
+}
+
+func TestRendererDisplaysLevelBlocks(t *testing.T) {
+	rendered := NewPlainRenderer().Render(operatorlog.New("HOVEL//RUN", "", []operatorlog.Entry{
+		operatorlog.Info("module", "info"),
+		operatorlog.Warn("module", "warn"),
+		operatorlog.Error("module", "error"),
+		operatorlog.Verbose("module", "verbose"),
+		operatorlog.Trace("module", "trace"),
+	}))
+
+	for _, want := range []string{"INFO", "WARN", "ERROR", "VERBOSE", "TRACE"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered log missing level %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestRendererDisplaysStructuredMetadataAndPrettyJSON(t *testing.T) {
+	rendered := NewPlainRendererWithWidth(120).Render(operatorlog.New("HOVEL//RUN", "", []operatorlog.Entry{
+		operatorlog.Info("event", "captured structured payload",
+			operatorlog.Field{Name: "topic", Value: "operation/default/chain/mock/logs"},
+			operatorlog.Field{Name: "chain", Value: "mock"},
+			operatorlog.Field{Name: "run", Value: "run-1"},
+			operatorlog.Field{Name: "target", Value: "mock://alpha"},
+			operatorlog.Field{Name: "module", Value: "mock-survey"},
+			operatorlog.Field{Name: "payload", Value: `{"host":"mock-alpha","service":{"name":"smb","port":445},"tags":["lab","authorized"]}`},
+			operatorlog.Field{Name: "severity", Value: "info"},
+		).WithAttributes(map[string]string{"schema": "hovel.module.event/v1"}),
+	}))
+
+	for _, want := range []string{
+		"topic=operation/default/chain/mock/logs",
+		"chain=mock",
+		"run=run-1",
+		"target=mock://alpha",
+		"module=mock-survey",
+		"schema=hovel.module.event/v1",
+		"payload=",
+		`"service": {`,
+		`"port": 445`,
+		`"tags": [`,
+		"severity=info",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered log missing %q:\n%s", want, rendered)
+		}
 	}
 }
 

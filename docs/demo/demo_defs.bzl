@@ -19,6 +19,15 @@ STANDARD_DEMOS = [
     ("mock-survey-exploit-commands-04-save", "tapes/mock-survey-exploit-commands-04-save.tape"),
 ]
 
+UI_COMPONENT_DEMOS = [
+    ("ui-command-table", "tapes/ui-command-table.tape"),
+    ("ui-download-progress", "tapes/ui-download-progress.tape"),
+    ("ui-logs", "tapes/ui-logs.tape"),
+    ("ui-module-card", "tapes/ui-module-card.tape"),
+    ("ui-status-panel", "tapes/ui-status-panel.tape"),
+    ("ui-upload-progress", "tapes/ui-upload-progress.tape"),
+]
+
 def _runfiles_for(ctx, attr_name):
     target = getattr(ctx.attr, attr_name)
     executable = getattr(ctx.executable, attr_name)
@@ -36,6 +45,7 @@ def _vhs_demo_impl(ctx):
     args.add("--output", out)
     args.add("--hovel-bin", ctx.executable.hovel)
     args.add("--agent-bin", ctx.executable.agent)
+    args.add("--ui-catalog-bin", ctx.executable.ui_catalog)
     args.add("--mock-survey-go", ctx.executable.mock_survey_go)
     args.add("--mock-exploit-session-go", ctx.executable.mock_exploit_session_go)
     args.add("--chain-file", ctx.file.chain)
@@ -58,7 +68,7 @@ def _vhs_demo_impl(ctx):
     ]
     tools = []
     transitive_tools = []
-    for attr_name in ("runner", "hovel", "agent", "mock_survey_go", "mock_exploit_session_go"):
+    for attr_name in ("runner", "hovel", "agent", "ui_catalog", "mock_survey_go", "mock_exploit_session_go"):
         files, transitive = _runfiles_for(ctx, attr_name)
         tools.extend(files)
         transitive_tools.extend(transitive)
@@ -114,6 +124,7 @@ _vhs_demo_rule = rule(
         "tape": attr.label(allow_single_file = True, mandatory = True),
         "tape_rel": attr.string(mandatory = True),
         "tmux_script": attr.label(allow_single_file = True, mandatory = True),
+        "ui_catalog": attr.label(executable = True, cfg = "exec", mandatory = True),
         "_vhs": attr.label(
             default = "@vhs_linux_x86_64//:vhs_bin",
             allow_single_file = True,
@@ -177,6 +188,7 @@ def _vhs_demo(name, tape, wine = False):
         vhs_version = "//docs/tools/demo:vhs_version.txt",
         hovel = "@hovel_core//cmd/hovel:hovel",
         agent = "//docs/tools/demo/mcpagent:mcpagent",
+        ui_catalog = "@hovel_core//cmd/hovel-ui-catalog:hovel-ui-catalog",
         mock_survey_go = "//modules/examples/go/mock_survey:mock_survey",
         mock_exploit_session_go = "//modules/examples/go/mock_exploit_session:mock_exploit_session",
         tags = ["manual"],
@@ -186,6 +198,9 @@ def _vhs_demo(name, tape, wine = False):
 
 def vhs_demo_targets():
     for name, tape in STANDARD_DEMOS:
+        _vhs_demo(name, tape)
+
+    for name, tape in UI_COMPONENT_DEMOS:
         _vhs_demo(name, tape)
 
     _vhs_demo(

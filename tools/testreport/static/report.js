@@ -22,6 +22,10 @@
       app.innerHTML = `<p class="empty-state">Could not load report data: ${escapeHtml(String(error))}</p>`;
     });
 
+  document.querySelectorAll("[data-commit]").forEach((button) => {
+    button.addEventListener("click", () => copyCommit(button));
+  });
+
   function render() {
     const report = state.report;
     app.innerHTML = `
@@ -216,6 +220,39 @@
 
   function statusBadge(status) {
     return `<span class="status status-${String(status).toLowerCase()}">${escapeHtml(status || "UNKNOWN")}</span>`;
+  }
+
+  function copyCommit(button) {
+    const commit = button.getAttribute("data-commit") || "";
+    const stateLabel = button.querySelector(".commit-copy-state");
+    const markCopied = () => {
+      if (!stateLabel) return;
+      stateLabel.textContent = "copied";
+      window.setTimeout(() => {
+        stateLabel.textContent = "copy";
+      }, 1400);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(commit).then(markCopied).catch(() => fallbackCopy(commit, markCopied));
+      return;
+    }
+    fallbackCopy(commit, markCopied);
+  }
+
+  function fallbackCopy(value, onCopied) {
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    try {
+      document.execCommand("copy");
+      onCopied();
+    } finally {
+      document.body.removeChild(input);
+    }
   }
 
   function escapeHtml(value) {

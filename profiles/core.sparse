@@ -8,6 +8,7 @@ description: Core framework development plus the Go, Rust, and Python example
 .bazelversion
 .gitignore
 BUILD.bazel
+LICENSE
 MODULE.bazel
 MODULE.bazel.lock
 README.md
@@ -15,7 +16,7 @@ Taskfile.yml
 VERSION
 core
 modules/examples
-modules/squatter/bazel
+modules/squatter
 modules/tools
 platforms
 profiles

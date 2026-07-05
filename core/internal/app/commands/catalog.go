@@ -6302,6 +6302,7 @@ func throwModuleLogEntries(result RunMockExploitResponse, started time.Time, cha
 			at = time.Now()
 		}
 		entries = append(entries, elapsedAt(operatorlog.Info("module", log.Message, logFields(log)...).
+			WithLevel(operatorlog.Level(log.Level)).
 			WithTarget(result.Target).
 			WithRun(result.RunID).
 			WithModule(result.ModuleID), at, started, chain))
@@ -6367,6 +6368,7 @@ func throwLog(payload ThrowPayload, started time.Time) operatorlog.Log {
 		).WithTarget(result.Target).WithRun(result.RunID).WithModule(result.ModuleID), resultStarted, started, payload.Chain))
 		for _, log := range result.Logs {
 			entries = append(entries, elapsedAtLogTime(operatorlog.Info("module", log.Message, logFields(log)...).
+				WithLevel(operatorlog.Level(log.Level)).
 				WithTarget(result.Target).
 				WithRun(result.RunID).
 				WithModule(result.ModuleID), log))

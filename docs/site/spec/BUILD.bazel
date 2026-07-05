@@ -10,7 +10,7 @@ filegroup(
 py_test(
     name = "site_smoke_test",
     size = "small",
-    srcs = ["//tools/tests:site_smoke_test.py"],
+    srcs = ["//core/tools/tests:site_smoke_test.py"],
     args = [
         "$(rootpath :index.html)",
         "$(rootpath :user-guide.html)",
@@ -20,6 +20,7 @@ py_test(
         "$(rootpath :module-python.html)",
         "$(rootpath :module-go.html)",
         "$(rootpath :module-rust.html)",
+        "$(rootpath :ui-components.html)",
         "$(rootpath :mcp-agent.html)",
         "$(rootpath :squatter-payload-provider.html)",
         "$(rootpath :reference/descriptors.html)",
@@ -33,6 +34,7 @@ py_test(
         "module-protocol.html",
         "module-python.html",
         "module-rust.html",
+        "ui-components.html",
         "reference/descriptors.html",
         "squatter-payload-provider.html",
         "user-guide.html",

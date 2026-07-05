@@ -307,7 +307,7 @@ func (s *publishingEventSink) moduleLogEntry(operation, chain string, evt event.
 		}
 		fields = append(fields, operatorlog.Field{Name: key, Value: value})
 	}
-	entry := operatorlog.Info("module", evt.Fields["message"], fields...)
+	entry := operatorlog.Info("module", evt.Fields["message"], fields...).WithLevel(operatorlog.Level(evt.Level))
 	return s.runEventEntry(operation, chain, evt, entry)
 }
 

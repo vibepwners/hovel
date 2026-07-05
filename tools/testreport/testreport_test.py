@@ -45,7 +45,10 @@ class TestReportTest(unittest.TestCase):
             self.assertEqual(data["targets"][0]["status"], "PASSED")
             self.assertEqual(data["targets"][0]["cases"][0]["name"], "tests::round_trip")
             self.assertTrue((out / data["targets"][0]["log_path"]).is_file())
-            self.assertIn("report.js", (out / "index.html").read_text(encoding="utf-8"))
+            index_html = (out / "index.html").read_text(encoding="utf-8")
+            self.assertIn("report.js", index_html)
+            self.assertIn('data-commit="abc"', index_html)
+            self.assertIn("<code>abc</code>", index_html)
 
     def test_ingests_bep_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
