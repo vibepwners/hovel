@@ -11,10 +11,13 @@ BUILD.bazel
 MODULE.bazel
 MODULE.bazel.lock
 README.md
+LICENSE
 Taskfile.yml
 VERSION
 core
+docs
 modules/examples
+modules/picblobs
 modules/squatter/bazel
 modules/tools
 platforms

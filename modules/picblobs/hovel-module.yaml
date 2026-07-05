@@ -1,0 +1,23 @@
+apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: picblobs
+  version: 0.1.6
+  moduleType: payload_provider
+  summary: Position-independent payload blob provider.
+  tags:
+    - payload_provider
+    - pic
+    - cross-platform
+  author: Hovel contributors
+  license: Apache-2.0
+  homepage: docs/modules/picblobs/
+  repository: modules/picblobs
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command:
+      - ./bin/picblobs-provider

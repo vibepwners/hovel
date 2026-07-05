@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting started — picblobs</title>
+  <link rel="icon" type="image/png" href="../assets/pic.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/pic.png" alt="" class="brand-mark">
+      <span class="brand-name">PICBLOBS</span>
+      <span class="brand-tag">// guide</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Guide</a>
+      <a href="https://github.com/williamkborn/pic">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Guide</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+      </ul>
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="introduction.html">Introduction</a></li>
+      </ul>
+      <p class="sidebar-section">How this concept works</p>
+      <ul>
+        <li><a href="how-it-works.html">How PIC extraction works</a></li>
+      </ul>
+      <p class="sidebar-section">User Guide</p>
+      <ul>
+        <li><a href="getting-started.html" aria-current="page">Getting started</a></li>
+        <li><a href="building.html">Building</a></li>
+        <li><a href="running.html">Running blobs</a></li>
+        <li><a href="picblobs-cli.html">picblobs-cli</a></li>
+        <li><a href="testing.html">Testing</a></li>
+      </ul>
+      <p class="sidebar-section">Development</p>
+      <ul>
+        <li><a href="writing-blobs.html">Writing a blob</a></li>
+        <li><a href="code-generation.html">Code generation</a></li>
+        <li><a href="adding-architecture.html">Adding an architecture</a></li>
+        <li><a href="adding-syscall.html">Adding a syscall</a></li>
+        <li><a href="formatting.html">Formatting and linting</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="platform-support.html">Platform support</a></li>
+        <li><a href="test-runners.html">Test runners</a></li>
+        <li><a href="project-structure.html">Project structure</a></li>
+        <li><a href="kernel-toolkit.html">Kernel toolkit</a></li>
+        <li><a href="specification.html">Specification</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+<h1 id="getting-started">Getting Started</h1>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li><a href="https://bazel.build/">Bazel 9.0.1</a> (see <code>.bazelversion</code>)</li>
+<li><a href="https://www.qemu.org/">QEMU user-mode</a> for cross-architecture testing — either binfmt_misc handlers (<code>qemu-user-binfmt</code>, preferred) or standalone <code>qemu-*-static</code> interpreters</li>
+<li>Python 3.10+</li>
+<li><a href="https://github.com/astral-sh/uv">uv</a> (recommended) or pip/venv</li>
+<li><code>clang-tidy</code> for full C lint (<code>pre-push</code> / <code>tools/c_lint_check.sh</code>)</li>
+</ul>
+<p>Toolchains are fetched automatically via <a href="https://toolchains.bootlin.com/">Bootlin</a>
+for Linux cross-compilation, including x86, ARM, AArch64, MIPS, s390x,
+SPARC, PowerPC, ppc64le, and RISC-V targets.</p>
+<h2 id="quick-start">Quick start</h2>
+<pre data-lang="bash"><code># Set up Python environment
+source sourceme
+
+# Build and stage all blobs + runners
+task stage
+
+# Verify everything works
+picblobs-cli verify
+
+# Run the full test suite
+task test
+</code></pre>
+<p><code>source sourceme</code> also installs the repo's Git hooks with <code>lefthook</code>, so local
+formatting and lint checks start running automatically on <code>git commit</code> and
+<code>git push</code>.</p>
+<h2 id="docker-podman-no-local-setup">Docker / Podman (no local setup)</h2>
+<p>A Fedora 43 dev container with all dependencies pre-installed is provided
+in <code>ci/</code>:</p>
+<pre data-lang="bash"><code>ci/dev.sh                                      # interactive shell
+ci/dev.sh 'source sourceme &amp;&amp; picblobs-cli verify'  # run a command and exit
+</code></pre>
+      </article>
+      <nav class="page-nav">
+        <a class="prev" href="how-it-works.html">← How PIC extraction works</a>
+        <span class="spacer"></span>
+        <a class="next" href="building.html">Building →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>picblobs guide · <a href="../index.html">home</a> · <a href="https://github.com/williamkborn/pic">source</a></p>
+  </footer>
+</body>
+</html>

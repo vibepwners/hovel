@@ -1,0 +1,25 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "provider_lib",
+    srcs = ["provider.go"],
+    importpath = "github.com/Vibe-Pwners/hovel/modules/picblobs/provider",
+    visibility = ["//visibility:private"],
+    deps = ["//sdk/go/hovel"],
+)
+
+go_binary(
+    name = "picblobs-provider",
+    embed = [":provider_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "provider_test",
+    srcs = ["provider_test.go"],
+    embed = [":provider_lib"],
+    deps = [
+        "//sdk/go/hovel",
+        "//sdk/go/hoveltest",
+    ],
+)

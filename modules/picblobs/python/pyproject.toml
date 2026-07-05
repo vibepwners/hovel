@@ -1,0 +1,61 @@
+[project]
+name = "picblobs"
+version = "0.1.6"
+description = "Position-independent code blob library"
+authors = [
+    { name = "William Born", email = "william.born.git@gmail.com" },
+    { name = "Ricardo Rivera", email = "ricardo.rivera@zetier.com" },
+]
+requires-python = ">=3.10"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["pic", "shellcode", "security", "cross-platform"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/williamkborn/pic"
+Documentation = "https://github.com/williamkborn/pic/tree/main/docs"
+Repository = "https://github.com/williamkborn/pic"
+Issues = "https://github.com/williamkborn/pic/issues"
+
+[project.optional-dependencies]
+dev = [
+    "clang-format==22.1.1",
+    "libclang>=18",
+    "lefthook>=2,<3",
+    "lizard>=1.17",
+    "pyelftools>=0.31",
+    "pytest>=8.0",
+    "pycparser>=2.22",
+    "ruff>=0.9",
+    "tomli>=2; python_version < '3.11'",
+    "twine>=5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+artifacts = ["picblobs/blobs/*.bin"]
+exclude = ["picblobs/_blobs/**"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["picblobs"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

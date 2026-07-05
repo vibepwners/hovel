@@ -1,0 +1,12 @@
+"""Custom linker scripts for blob binary layout (REQ-012, ADR-003).
+
+Each linker script controls section ordering and symbol placement
+to produce ELFs that extract cleanly to flat PIC binaries.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "blob.ld",
+    "blob_test_freebsd.ld",
+])

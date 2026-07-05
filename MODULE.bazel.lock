@@ -203,6 +203,229 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
+    "//modules/picblobs/toolchains:arm_none_eabi.bzl%arm_none_eabi": {
+      "general": {
+        "bzlTransitiveDigest": "DCsIb/xH7QUZa6nqH5Uv+TXj78ScDej6JhOnVYSCB2g=",
+        "usagesDigest": "uvd7Zx2NKwbQaWdGGjLQ5PyRQniEejMetCYqz0UVJUY=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "arm_none_eabi": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:arm_none_eabi.bzl%arm_none_eabi_repo",
+            "attributes": {
+              "url": "https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz",
+              "strip_prefix": "arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi",
+              "sha256": "95c011cee430e64dd6087c75c800f04b9c49832cc1000127a92a97f9c8d83af4",
+              "extra_cflags": [
+                "-mcpu=cortex-m4",
+                "-mthumb",
+                "-mfloat-abi=soft"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "//modules/picblobs/toolchains:bootlin.bzl%bootlin": {
+      "general": {
+        "bzlTransitiveDigest": "8kLzXYGhZ0sv74Lwk8RgkGIHSiEQwYDHh7B+TZU/veg=",
+        "usagesDigest": "VoxYUkaNH4Ky/JvQWQpv+/XDW2zHT7l7p/JdlWIRYV8=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "bootlin_x86_64": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "x86-64",
+              "version": "2024.05-1",
+              "triple": "x86_64-buildroot-linux-gnu",
+              "libc": "glibc",
+              "sha256": "932823ca9a3e067e7e2a29810a666d20c9cc5bb550de947f6879e38ace1aa955",
+              "extra_cflags": [
+                "-march=x86-64"
+              ],
+              "target_cpu": "x86_64",
+              "toolchain_id": "bootlin_x86_64"
+            }
+          },
+          "bootlin_i686": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "x86-i686",
+              "version": "2024.05-1",
+              "triple": "i686-buildroot-linux-gnu",
+              "libc": "glibc",
+              "sha256": "023e4f03cd212b5545c4c184238693b61b40fa36d257b84546100a92ea2c1d8b",
+              "extra_cflags": [
+                "-march=i686"
+              ],
+              "target_cpu": "i686",
+              "toolchain_id": "bootlin_i686"
+            }
+          },
+          "bootlin_aarch64": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "aarch64",
+              "version": "2024.05-1",
+              "triple": "aarch64-buildroot-linux-gnu",
+              "libc": "glibc",
+              "sha256": "b0fad860eb94b503a56d66ca8b9ba06d2d4826943e37ebd1d7217423f6ea5bb2",
+              "extra_cflags": [],
+              "target_cpu": "aarch64",
+              "toolchain_id": "bootlin_aarch64"
+            }
+          },
+          "bootlin_armv5": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "armv5-eabi",
+              "version": "2024.05-1",
+              "triple": "arm-buildroot-linux-gnueabi",
+              "libc": "glibc",
+              "sha256": "13f2bea0b06fe560fe60d199cd9d3fb1f20e2335bcc79b90c5130c3916a3ed92",
+              "extra_cflags": [
+                "-march=armv5te"
+              ],
+              "target_cpu": "armv5",
+              "toolchain_id": "bootlin_armv5"
+            }
+          },
+          "bootlin_armv7": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "armv7-eabihf",
+              "version": "2024.05-1",
+              "triple": "arm-buildroot-linux-gnueabihf",
+              "libc": "glibc",
+              "sha256": "608263bc9dc3eadf0962ddb1165f1c2291001190f9927dee47d464e26374462c",
+              "extra_cflags": [
+                "-march=armv7-a",
+                "-mthumb"
+              ],
+              "target_cpu": "armv7",
+              "toolchain_id": "bootlin_armv7"
+            }
+          },
+          "bootlin_s390x": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "s390x-z13",
+              "version": "2024.05-1",
+              "triple": "s390x-buildroot-linux-gnu",
+              "libc": "glibc",
+              "sha256": "b37ed02693a370f28434c34655c64bcb96dc0d428a92ddbc99feb5608bcf64a1",
+              "extra_cflags": [
+                "-march=z13"
+              ],
+              "target_cpu": "s390x",
+              "toolchain_id": "bootlin_s390x"
+            }
+          },
+          "bootlin_mipsel32": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "mips32el",
+              "version": "2024.05-1",
+              "triple": "mipsel-buildroot-linux-gnu",
+              "libc": "glibc",
+              "sha256": "d0139b6ade7f3b72a5f9c33814696af817661e826c9c501f6cefcab4ac684c8f",
+              "extra_cflags": [
+                "-mips32",
+                "-EL"
+              ],
+              "target_cpu": "mipsel32",
+              "toolchain_id": "bootlin_mipsel32"
+            }
+          },
+          "bootlin_mipsbe32": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "mips32",
+              "version": "2024.05-1",
+              "triple": "mips-buildroot-linux-gnu",
+              "libc": "glibc",
+              "sha256": "677402719c545e49eb71c3d27a5f495af38f60463b40ed705e24e43a9834c137",
+              "extra_cflags": [
+                "-mips32",
+                "-EB"
+              ],
+              "target_cpu": "mipsbe32",
+              "toolchain_id": "bootlin_mipsbe32"
+            }
+          },
+          "bootlin_sparcv8": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "sparcv8",
+              "version": "2024.05-1",
+              "triple": "sparc-buildroot-linux-uclibc",
+              "libc": "uclibc",
+              "sha256": "8ec2c84b84a13b854a13802537f0b04848056ebc65f6212202f6d8c8a78d4bc3",
+              "extra_cflags": [
+                "-mcpu=v8"
+              ],
+              "target_cpu": "sparcv8",
+              "toolchain_id": "bootlin_sparcv8"
+            }
+          },
+          "bootlin_powerpc": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "powerpc-e300c3",
+              "version": "2024.05-1",
+              "triple": "powerpc-buildroot-linux-gnu",
+              "libc": "glibc",
+              "sha256": "6c975a7293fde77a52f348124049645ee2ceee19e75ab6e0b2364043090a2dff",
+              "extra_cflags": [
+                "-mcpu=e300c3"
+              ],
+              "target_cpu": "powerpc",
+              "toolchain_id": "bootlin_powerpc"
+            }
+          },
+          "bootlin_ppc64le": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "powerpc64le-power8",
+              "version": "2024.05-1",
+              "triple": "powerpc64le-buildroot-linux-gnu",
+              "libc": "glibc",
+              "sha256": "8133b74614f880eb8b76730efee77b8fd281c982bfa2791b72c5f836a529530d",
+              "extra_cflags": [
+                "-mcpu=power8"
+              ],
+              "target_cpu": "ppc64le",
+              "toolchain_id": "bootlin_ppc64le"
+            }
+          },
+          "bootlin_riscv64": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:bootlin.bzl%bootlin_toolchain_repo",
+            "attributes": {
+              "arch": "riscv64-lp64d",
+              "version": "2024.05-1",
+              "triple": "riscv64-buildroot-linux-gnu",
+              "libc": "glibc",
+              "sha256": "78e16f3def8b2ff3da09c16155f993ac7e4dc1791d0904ada03fcb2e04910aab",
+              "extra_cflags": [],
+              "target_cpu": "riscv64",
+              "toolchain_id": "bootlin_riscv64"
+            }
+          }
+        }
+      }
+    },
+    "//modules/picblobs/toolchains:qemu.bzl%qemu": {
+      "general": {
+        "bzlTransitiveDigest": "3+O8g2uba5kvrArapBd/ToJvzuVQBYTKFuqKStNU1H8=",
+        "usagesDigest": "vuShkfpFg3tvZbs5t31i8mQRYeoTsurOEY7TUKXcQr4=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "qemu_arm_static": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:qemu.bzl%qemu_arm_repo",
+            "attributes": {}
+          }
+        }
+      }
+    },
     "@@rules_kotlin+//src/main/starlark/core/repositories:bzlmod_setup.bzl%rules_kotlin_extensions": {
       "general": {
         "bzlTransitiveDigest": "ABI1D/sbS1ovwaW/kHDoj8nnXjQ0oKU9fzmzEG4iT8o=",

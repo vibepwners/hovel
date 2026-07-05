@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Testing picblobs</title>
+  <link rel="icon" type="image/png" href="../../assets/hovel.png">
+  <link rel="stylesheet" href="../../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../../index.html">
+      <img src="../../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// picblobs</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../../index.html">Home</a>
+      <a href="../../spec/index.html">Book</a>
+      <a href="../index.html" aria-current="page">Modules</a>
+      <a href="../../api/sdk/index.html">API Docs</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">picblobs</p>
+      <ul>
+        <li><a href="index.html">Overview</a></li>
+        <li><a href="user-guide.html">User Guide</a></li>
+        <li><a href="building.html">Building</a></li>
+        <li><a href="testing.html" aria-current="page">Testing</a></li>
+        <li><a href="reference.html">Reference</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Testing picblobs</h1>
+        <p>
+          The original Bazel, Python, CLI, payload, and generated-file tests are
+          available through root Task targets so they run inside the Hovel build.
+        </p>
+
+        <h2>Primary Checks</h2>
+        <pre><code>task picblobs:generate-check
+task picblobs:bazel-test
+task picblobs:test -- -q</code></pre>
+
+        <h2>Payload Checks</h2>
+        <p>
+          Payload tests require staged blobs and runners. Run
+          <code>task picblobs:stage</code> first for the full matrix, or pass
+          <code>--targets</code> and <code>--configs</code> to stage a focused
+          subset during local iteration.
+        </p>
+      </article>
+      <nav class="page-nav">
+        <a class="prev" href="building.html">← Building</a>
+        <span class="spacer"></span>
+        <a class="next" href="reference.html">Reference →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>picblobs module · <a href="../../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

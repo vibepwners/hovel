@@ -1,0 +1,43 @@
+---
+# picblobs clang-tidy configuration
+#
+# Tuned for freestanding C code: no libc, no standard headers,
+# raw syscalls and PIC blob patterns.
+
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-reserved-identifier,
+  -bugprone-casting-through-void,
+  cert-*,
+  cppcoreguidelines-init-variables,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.*,
+  misc-*,
+  -misc-unused-parameters,
+  -misc-include-cleaner,
+  -misc-use-internal-linkage,
+  performance-*,
+  -performance-no-int-to-ptr,
+  portability-*,
+  readability-braces-around-statements,
+  readability-isolate-declaration,
+
+WarningsAsErrors: '*'
+
+CheckOptions:
+  - key: readability-identifier-naming.FunctionCase
+    value: lower_case
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.StructCase
+    value: lower_case
+  - key: readability-identifier-naming.TypedefCase
+    value: lower_case
+  - key: readability-identifier-naming.EnumConstantCase
+    value: UPPER_CASE
+
+HeaderFilterRegex: 'src/include/.*'

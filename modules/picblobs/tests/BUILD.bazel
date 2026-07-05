@@ -1,0 +1,418 @@
+"""Top-level test targets for picblobs.
+
+NaCl encrypted handshake tests — validates the NaCl client/server blobs
+across raw-syscall and hosted (vtable) execution modes.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//modules/picblobs/bazel:cc_binary.bzl", "pic_cc_binary")
+load(":defs.bzl", "arm_filegroup")
+
+package(default_visibility = ["//visibility:public"])
+
+# ---- Platform shorthand ----
+
+_ARM_THUMB = "//modules/picblobs/platforms:linux_armv5_thumb"
+
+_ARM_MODE = "//modules/picblobs/platforms:linux_armv5_arm"
+
+_CM4 = "//modules/picblobs/platforms:cortexm4_baremetal"
+
+# ---- NaCl blob artifacts (raw syscall mode, ARM Thumb) ----
+
+arm_filegroup(
+    name = "nacl_server_bin_thumb",
+    platform = _ARM_THUMB,
+    deps = ["//modules/picblobs/src/payload:nacl_server_bin"],
+)
+
+arm_filegroup(
+    name = "nacl_client_bin_thumb",
+    platform = _ARM_THUMB,
+    deps = ["//modules/picblobs/src/payload:nacl_client_bin"],
+)
+
+arm_filegroup(
+    name = "nacl_blobs_so_thumb",
+    platform = _ARM_THUMB,
+    deps = [
+        "//modules/picblobs/src/payload:nacl_client",
+        "//modules/picblobs/src/payload:nacl_server",
+    ],
+)
+
+arm_filegroup(
+    name = "runner_thumb",
+    platform = _ARM_THUMB,
+    deps = ["//modules/picblobs/tests/runners/linux:runner"],
+)
+
+# ---- NaCl blob artifacts (raw syscall mode, ARM mode) ----
+
+arm_filegroup(
+    name = "nacl_server_bin_arm",
+    platform = _ARM_MODE,
+    deps = ["//modules/picblobs/src/payload:nacl_server_bin"],
+)
+
+arm_filegroup(
+    name = "nacl_client_bin_arm",
+    platform = _ARM_MODE,
+    deps = ["//modules/picblobs/src/payload:nacl_client_bin"],
+)
+
+arm_filegroup(
+    name = "nacl_blobs_so_arm",
+    platform = _ARM_MODE,
+    deps = [
+        "//modules/picblobs/src/payload:nacl_client",
+        "//modules/picblobs/src/payload:nacl_server",
+    ],
+)
+
+arm_filegroup(
+    name = "runner_arm",
+    platform = _ARM_MODE,
+    deps = ["//modules/picblobs/tests/runners/linux:runner"],
+)
+
+# ---- Hosted-mode NaCl blob artifacts (ARM Thumb) ----
+
+arm_filegroup(
+    name = "nacl_server_hosted_bin_thumb",
+    platform = _ARM_THUMB,
+    deps = ["//modules/picblobs/src/payload:nacl_server_hosted_bin"],
+)
+
+arm_filegroup(
+    name = "nacl_client_hosted_bin_thumb",
+    platform = _ARM_THUMB,
+    deps = ["//modules/picblobs/src/payload:nacl_client_hosted_bin"],
+)
+
+arm_filegroup(
+    name = "nacl_blobs_hosted_so_thumb",
+    platform = _ARM_THUMB,
+    deps = [
+        "//modules/picblobs/src/payload:nacl_client_hosted",
+        "//modules/picblobs/src/payload:nacl_server_hosted",
+    ],
+)
+
+arm_filegroup(
+    name = "runner_hosted_thumb",
+    platform = _ARM_THUMB,
+    deps = ["//modules/picblobs/tests/runners/linux:runner_hosted"],
+)
+
+# ---- E2E NaCl handshake tests (QEMU, no-sandbox, exclusive port) ----
+
+sh_test(
+    name = "nacl_e2e_thumb",
+    timeout = "short",
+    srcs = ["nacl_e2e.sh"],
+    args = [
+        "$(location @qemu_arm_static//:qemu)",
+        "$(location :runner_thumb)",
+        "$(location :nacl_server_bin_thumb)",
+        "$(location :nacl_client_bin_thumb)",
+    ],
+    data = [
+        ":nacl_client_bin_thumb",
+        ":nacl_server_bin_thumb",
+        ":runner_thumb",
+        "@qemu_arm_static//:qemu",
+    ],
+    tags = [
+        "exclusive",
+        "no-sandbox",
+    ],
+)
+
+sh_test(
+    name = "nacl_e2e_arm",
+    timeout = "short",
+    srcs = ["nacl_e2e.sh"],
+    args = [
+        "$(location @qemu_arm_static//:qemu)",
+        "$(location :runner_arm)",
+        "$(location :nacl_server_bin_arm)",
+        "$(location :nacl_client_bin_arm)",
+    ],
+    data = [
+        ":nacl_client_bin_arm",
+        ":nacl_server_bin_arm",
+        ":runner_arm",
+        "@qemu_arm_static//:qemu",
+    ],
+    tags = [
+        "exclusive",
+        "no-sandbox",
+    ],
+)
+
+# E2E NaCl handshake via vtable (proves hosted abstraction works).
+sh_test(
+    name = "nacl_e2e_hosted_thumb",
+    timeout = "short",
+    srcs = ["nacl_e2e.sh"],
+    args = [
+        "$(location @qemu_arm_static//:qemu)",
+        "$(location :runner_hosted_thumb)",
+        "$(location :nacl_server_hosted_bin_thumb)",
+        "$(location :nacl_client_hosted_bin_thumb)",
+    ],
+    data = [
+        ":nacl_client_hosted_bin_thumb",
+        ":nacl_server_hosted_bin_thumb",
+        ":runner_hosted_thumb",
+        "@qemu_arm_static//:qemu",
+    ],
+    tags = [
+        "exclusive",
+        "no-sandbox",
+    ],
+)
+
+# ---- PIC property tests (hermetic: toolchain readelf + bash builtins) ----
+
+arm_filegroup(
+    name = "readelf_thumb",
+    platform = _ARM_THUMB,
+    deps = ["@bootlin_armv5//:readelf_files"],
+)
+
+sh_test(
+    name = "verify_pic_thumb",
+    timeout = "short",
+    srcs = ["verify_pic.sh"],
+    args = [
+        "$(location :readelf_thumb)",
+        "$(locations :nacl_blobs_so_thumb)",
+    ],
+    data = [
+        ":nacl_blobs_so_thumb",
+        ":readelf_thumb",
+    ],
+)
+
+sh_test(
+    name = "verify_pic_arm",
+    timeout = "short",
+    srcs = ["verify_pic.sh"],
+    args = [
+        "$(location :readelf_thumb)",
+        "$(locations :nacl_blobs_so_arm)",
+    ],
+    data = [
+        ":nacl_blobs_so_arm",
+        ":readelf_thumb",
+    ],
+)
+
+sh_test(
+    name = "verify_pic_hosted_thumb",
+    timeout = "short",
+    srcs = ["verify_pic.sh"],
+    args = [
+        "$(location :readelf_thumb)",
+        "$(locations :nacl_blobs_hosted_so_thumb)",
+    ],
+    data = [
+        ":nacl_blobs_hosted_so_thumb",
+        ":readelf_thumb",
+    ],
+)
+
+# ---- Cortex-M4 bare-metal artifacts (Mbed OS target) ----
+
+arm_filegroup(
+    name = "nacl_server_hosted_bin_cortexm4",
+    platform = _CM4,
+    deps = ["//modules/picblobs/src/payload:nacl_server_hosted_bin"],
+)
+
+arm_filegroup(
+    name = "nacl_client_hosted_bin_cortexm4",
+    platform = _CM4,
+    deps = ["//modules/picblobs/src/payload:nacl_client_hosted_bin"],
+)
+
+arm_filegroup(
+    name = "nacl_blobs_cortexm4",
+    platform = _CM4,
+    deps = [
+        "//modules/picblobs/src/payload:nacl_client_hosted",
+        "//modules/picblobs/src/payload:nacl_server_hosted",
+    ],
+)
+
+arm_filegroup(
+    name = "readelf_cortexm4",
+    platform = _CM4,
+    deps = ["@arm_none_eabi//:readelf_files"],
+)
+
+sh_test(
+    name = "verify_pic_cortexm4",
+    timeout = "short",
+    srcs = ["verify_pic.sh"],
+    args = [
+        "$(location :readelf_cortexm4)",
+        "$(locations :nacl_blobs_cortexm4)",
+    ],
+    data = [
+        ":nacl_blobs_cortexm4",
+        ":readelf_cortexm4",
+    ],
+)
+
+# Thumb-mode hosted runner for Cortex-M4 E2E test.
+#
+# The standard runner_hosted is compiled with -march=armv5te (ARM mode),
+# so __thumb__ is not defined and the Thumb bit isn't set on the blob
+# entry pointer. Cortex-M4 blobs are genuine Thumb-2 code and require
+# the Thumb bit. The -mthumb copt forces Thumb so the runner correctly
+# enters Thumb mode when jumping to the blob; the freestanding flags and
+# -march=armv5te come from the toolchain.
+pic_cc_binary(
+    name = "runner_hosted_cortexm4_bin",
+    srcs = ["//modules/picblobs/tests/runners/linux:runner_hosted.c"],
+    hdrs = ["//modules/picblobs/tests/runners/linux:start_headers"],
+    copts = ["-mthumb"],
+    linkopts = ["-static"],
+    quote_includes = ["tests/runners/linux"],
+    target_compatible_with = ["@platforms//cpu:arm"],
+    deps = ["//modules/picblobs/src/include/picblobs:headers"],
+)
+
+arm_filegroup(
+    name = "runner_hosted_cortexm4",
+    platform = _ARM_THUMB,
+    deps = [":runner_hosted_cortexm4_bin"],
+)
+
+# E2E NaCl handshake using actual Cortex-M4 binaries.
+#
+# Cortex-M4 Thumb-2 is forward-compatible with ARMv7-A Thumb-2, and
+# hosted-mode blobs make no privileged instructions — only vtable calls.
+# So a Thumb-mode hosted runner + QEMU user-mode can execute the real
+# Cortex-M4 .bin files, proving the actual compiled code is correct.
+sh_test(
+    name = "nacl_e2e_cortexm4",
+    timeout = "short",
+    srcs = ["nacl_e2e.sh"],
+    args = [
+        "$(location @qemu_arm_static//:qemu)",
+        "$(location :runner_hosted_cortexm4)",
+        "$(location :nacl_server_hosted_bin_cortexm4)",
+        "$(location :nacl_client_hosted_bin_cortexm4)",
+    ],
+    data = [
+        ":nacl_client_hosted_bin_cortexm4",
+        ":nacl_server_hosted_bin_cortexm4",
+        ":runner_hosted_cortexm4",
+        "@qemu_arm_static//:qemu",
+    ],
+    tags = [
+        "exclusive",
+        "no-sandbox",
+    ],
+)
+
+# ---- Mbed OS platform test (platform_mbed.cpp with POSIX mock) ----
+
+cc_library(
+    name = "mbed_mock_hdrs",
+    hdrs = [
+        "mbed_mock/EthernetInterface.h",
+        "mbed_mock/mbed.h",
+    ],
+    strip_include_prefix = "mbed_mock",
+)
+
+# platform_mbed.cpp + test runner.
+#
+# This is a HOSTED C++ binary (it uses the standard C++ runtime), so the
+# toolchain's always-on freestanding feature is disabled. -march=armv5te
+# comes from the toolchain; -mthumb forces Thumb to match the Cortex-M4
+# blobs. The standard runtime (-lstdc++ -lm) and sysroot are supplied by
+# the toolchain rather than hand-derived from the GCC triple.
+pic_cc_binary(
+    name = "test_mbed_runner_bin",
+    srcs = [
+        "test_mbed_runner.cpp",
+        "//modules/picblobs/mbed:platform_mbed.cpp",
+    ],
+    hdrs = ["//modules/picblobs/mbed:platform_mbed.h"],
+    copts = [
+        "-mthumb",
+        "-Os",
+        "-Wall",
+    ],
+    freestanding = False,
+    linkopts = [
+        "-static",
+        "-lstdc++",
+        "-lm",
+    ],
+    local_defines = ["PIC_PLATFORM_HOSTED"],
+    quote_includes = [
+        "modules/picblobs/mbed",
+        "mbed",
+    ],
+    target_compatible_with = ["@platforms//cpu:arm"],
+    deps = [
+        ":mbed_mock_hdrs",
+        "//modules/picblobs/src/include/picblobs:headers",
+    ],
+)
+
+arm_filegroup(
+    name = "test_mbed_runner_thumb",
+    platform = _ARM_THUMB,
+    deps = [":test_mbed_runner_bin"],
+)
+
+# E2E: runs actual Cortex-M4 blobs through the real platform_mbed.cpp
+# vtable (fd table, sockaddr parsing, socket lifecycle, RNG wrapper),
+# all backed by POSIX sockets under QEMU user-mode.
+sh_test(
+    name = "nacl_e2e_mbed",
+    timeout = "short",
+    srcs = ["nacl_e2e.sh"],
+    args = [
+        "$(location @qemu_arm_static//:qemu)",
+        "$(location :test_mbed_runner_thumb)",
+        "$(location :nacl_server_hosted_bin_cortexm4)",
+        "$(location :nacl_client_hosted_bin_cortexm4)",
+    ],
+    data = [
+        ":nacl_client_hosted_bin_cortexm4",
+        ":nacl_server_hosted_bin_cortexm4",
+        ":test_mbed_runner_thumb",
+        "@qemu_arm_static//:qemu",
+    ],
+    tags = [
+        "exclusive",
+        "no-sandbox",
+    ],
+)
+
+# ---- Aggregate test suite ----
+
+test_suite(
+    name = "nacl_suite",
+    tests = [
+        ":nacl_e2e_arm",
+        ":nacl_e2e_cortexm4",
+        ":nacl_e2e_hosted_thumb",
+        ":nacl_e2e_mbed",
+        ":nacl_e2e_thumb",
+        ":verify_pic_arm",
+        ":verify_pic_cortexm4",
+        ":verify_pic_hosted_thumb",
+        ":verify_pic_thumb",
+    ],
+)

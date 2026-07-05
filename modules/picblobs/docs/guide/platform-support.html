@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Platform support — picblobs</title>
+  <link rel="icon" type="image/png" href="../assets/pic.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/pic.png" alt="" class="brand-mark">
+      <span class="brand-name">PICBLOBS</span>
+      <span class="brand-tag">// guide</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Guide</a>
+      <a href="https://github.com/williamkborn/pic">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Guide</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+      </ul>
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="introduction.html">Introduction</a></li>
+      </ul>
+      <p class="sidebar-section">How this concept works</p>
+      <ul>
+        <li><a href="how-it-works.html">How PIC extraction works</a></li>
+      </ul>
+      <p class="sidebar-section">User Guide</p>
+      <ul>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="building.html">Building</a></li>
+        <li><a href="running.html">Running blobs</a></li>
+        <li><a href="picblobs-cli.html">picblobs-cli</a></li>
+        <li><a href="testing.html">Testing</a></li>
+      </ul>
+      <p class="sidebar-section">Development</p>
+      <ul>
+        <li><a href="writing-blobs.html">Writing a blob</a></li>
+        <li><a href="code-generation.html">Code generation</a></li>
+        <li><a href="adding-architecture.html">Adding an architecture</a></li>
+        <li><a href="adding-syscall.html">Adding a syscall</a></li>
+        <li><a href="formatting.html">Formatting and linting</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="platform-support.html" aria-current="page">Platform support</a></li>
+        <li><a href="test-runners.html">Test runners</a></li>
+        <li><a href="project-structure.html">Project structure</a></li>
+        <li><a href="kernel-toolkit.html">Kernel toolkit</a></li>
+        <li><a href="specification.html">Specification</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+<h1 id="platform-support">Platform Support</h1>
+<h2 id="architectures">Architectures</h2>
+<table>
+<thead>
+<tr>
+<th>Architecture</th>
+<th>Endianness</th>
+<th>Bits</th>
+<th>Traits</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>x86_64</td>
+<td>little</td>
+<td>64</td>
+<td></td>
+</tr>
+<tr>
+<td>i686</td>
+<td>little</td>
+<td>32</td>
+<td>uses_mmap2, is_32bit</td>
+</tr>
+<tr>
+<td>aarch64</td>
+<td>little</td>
+<td>64</td>
+<td>openat_only</td>
+</tr>
+<tr>
+<td>armv5_arm</td>
+<td>little</td>
+<td>32</td>
+<td>uses_mmap2, is_32bit</td>
+</tr>
+<tr>
+<td>armv5_thumb</td>
+<td>little</td>
+<td>32</td>
+<td>uses_mmap2, is_32bit</td>
+</tr>
+<tr>
+<td>armv7_thumb</td>
+<td>little</td>
+<td>32</td>
+<td>uses_mmap2, is_32bit</td>
+</tr>
+<tr>
+<td>s390x</td>
+<td>big</td>
+<td>64</td>
+<td>uses_old_mmap</td>
+</tr>
+<tr>
+<td>mipsel32</td>
+<td>little</td>
+<td>32</td>
+<td>uses_mmap2, needs_got_reloc, needs_trampoline, is_32bit</td>
+</tr>
+<tr>
+<td>mipsbe32</td>
+<td>big</td>
+<td>32</td>
+<td>uses_mmap2, needs_got_reloc, needs_trampoline, is_32bit</td>
+</tr>
+<tr>
+<td>sparcv8</td>
+<td>big</td>
+<td>32</td>
+<td>uses_mmap2, is_32bit</td>
+</tr>
+<tr>
+<td>powerpc</td>
+<td>big</td>
+<td>32</td>
+<td>uses_mmap2, needs_got_reloc, is_32bit</td>
+</tr>
+<tr>
+<td>ppc64le</td>
+<td>little</td>
+<td>64</td>
+<td></td>
+</tr>
+<tr>
+<td>riscv64</td>
+<td>little</td>
+<td>64</td>
+<td>openat_only</td>
+</tr>
+</tbody>
+</table>
+<h3 id="architecture-traits">Architecture traits</h3>
+<p>Boolean flags controlling per-architecture decisions:</p>
+<ul>
+<li><strong>uses_mmap2</strong>: Uses mmap2 syscall with page-unit offset</li>
+<li><strong>uses_old_mmap</strong>: Uses old_mmap (args via struct pointer, not registers)</li>
+<li><strong>openat_only</strong>: No legacy open syscall (use openat)</li>
+<li><strong>needs_got_reloc</strong>: Needs GOT self-relocation (<code>PIC_SELF_RELOCATE</code>)</li>
+<li><strong>needs_trampoline</strong>: Needs entry trampoline for PIC setup</li>
+<li><strong>is_32bit</strong>: 32-bit architecture (affects lseek, etc.)</li>
+</ul>
+<h2 id="operating-systems">Operating systems</h2>
+<table>
+<thead>
+<tr>
+<th>OS</th>
+<th>Architectures</th>
+<th>Blob types</th>
+<th>Runner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linux</td>
+<td>x86_64, i686, aarch64, armv5_arm, armv5_thumb, armv7_thumb, s390x, mipsel32, mipsbe32, sparcv8, powerpc, ppc64le, riscv64</td>
+<td>hello, nacl, stagers, alloc_jump, ul_exec, verifier payloads</td>
+<td>Direct exec on host arch (or via a binfmt_misc QEMU handler), QEMU user-mode interpreter otherwise</td>
+</tr>
+<tr>
+<td>FreeBSD</td>
+<td>x86_64, i686, aarch64, armv5_arm, armv5_thumb, armv7_thumb, mipsel32, mipsbe32</td>
+<td>hello, nacl, stagers, alloc_jump, ul_exec on x86_64, verifier payloads</td>
+<td>Linux-hosted syscall shim</td>
+</tr>
+<tr>
+<td>Windows</td>
+<td>x86_64, i686, aarch64</td>
+<td>hello_windows, stagers, alloc_jump, reflective_pe</td>
+<td>Mock TEB/PEB on Linux</td>
+</tr>
+</tbody>
+</table>
+<h2 id="current-blob-inventory">Current blob inventory</h2>
+<table>
+<thead>
+<tr>
+<th>Blob</th>
+<th>OS</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>hello</code></td>
+<td>Linux, FreeBSD</td>
+<td>Write "Hello, world!" via raw syscalls and exit</td>
+</tr>
+<tr>
+<td><code>hello_windows</code></td>
+<td>Windows</td>
+<td>Write "Hello, world!" via PEB walk + DJB2 hash resolution of kernel32.dll exports (GetStdHandle, WriteFile, ExitProcess)</td>
+</tr>
+<tr>
+<td><code>nacl_hello</code></td>
+<td>Linux, FreeBSD</td>
+<td>TweetNaCl self-test: encrypt/decrypt round-trip with crypto_secretbox (XSalsa20-Poly1305) and exit</td>
+</tr>
+<tr>
+<td><code>nacl_server</code></td>
+<td>Linux, FreeBSD</td>
+<td>NaCl encrypted TCP server: bind, accept, perform an authenticated ephemeral X25519 key exchange (32-byte auth key injected via config, never embedded), then decrypt the message and send an encrypted ACK under the per-session key (crypto_secretbox / XSalsa20-Poly1305)</td>
+</tr>
+<tr>
+<td><code>nacl_client</code></td>
+<td>Linux, FreeBSD</td>
+<td>NaCl encrypted TCP client: connect, perform an authenticated ephemeral X25519 key exchange (forward secrecy; auth key injected via config), then send the encrypted message and decrypt the ACK under the per-session key</td>
+</tr>
+<tr>
+<td><code>nacl_server_hosted</code></td>
+<td>Linux, FreeBSD</td>
+<td>Hosted-platform variant of <code>nacl_server</code> used by runner-backed tests</td>
+</tr>
+<tr>
+<td><code>nacl_client_hosted</code></td>
+<td>Linux, FreeBSD</td>
+<td>Hosted-platform variant of <code>nacl_client</code> used by runner-backed tests</td>
+</tr>
+<tr>
+<td><code>alloc_jump</code></td>
+<td>Linux, FreeBSD, Windows</td>
+<td>Allocate executable memory, copy an inner payload, and jump to it</td>
+</tr>
+<tr>
+<td><code>stager_tcp</code></td>
+<td>Linux, FreeBSD, Windows</td>
+<td>Connect-back stager that reads a length-prefixed payload and jumps to it</td>
+</tr>
+<tr>
+<td><code>stager_fd</code></td>
+<td>Linux, FreeBSD, Windows</td>
+<td>File-descriptor or stdin-handle stager</td>
+</tr>
+<tr>
+<td><code>stager_pipe</code></td>
+<td>Linux, FreeBSD, Windows</td>
+<td>FIFO or named-pipe stager</td>
+</tr>
+<tr>
+<td><code>stager_mmap</code></td>
+<td>Linux, FreeBSD</td>
+<td>File-backed mmap stager</td>
+</tr>
+<tr>
+<td><code>reflective_pe</code></td>
+<td>Windows</td>
+<td>Reflective PE loader</td>
+</tr>
+<tr>
+<td><code>ul_exec</code></td>
+<td>Linux, FreeBSD x86_64</td>
+<td>Userland exec: load and execute ELF binaries without execve(), supporting static and dynamically linked PIE/non-PIE binaries</td>
+</tr>
+<tr>
+<td><code>test_pass</code>, <code>test_tcp_ok</code>, <code>test_fd_ok</code>, <code>test_pipe_ok</code>, <code>test_mmap_ok</code></td>
+<td>Linux, FreeBSD</td>
+<td>Verifier-only inner payloads consumed by higher-level blob tests</td>
+</tr>
+</tbody>
+</table>
+      </article>
+      <nav class="page-nav">
+        <a class="prev" href="formatting.html">← Formatting and linting</a>
+        <span class="spacer"></span>
+        <a class="next" href="test-runners.html">Test runners →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>picblobs guide · <a href="../index.html">home</a> · <a href="https://github.com/williamkborn/pic">source</a></p>
+  </footer>
+</body>
+</html>

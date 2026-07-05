@@ -33,6 +33,8 @@ filegroup(
         "//modules/examples/rust/mock_exploit:mock-exploit-rust",
         "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
         "//modules/examples/rust/mock_survey:mock-survey-rust",
+        "//modules/picblobs/provider:picblobs-provider",
+        "//modules/picblobs/python:picblobs",
         "//modules/squatter:build",
     ],
 )
@@ -58,6 +60,7 @@ test_suite(
         "//modules/squatter/provider:provider_test",
         "//modules/squatter/windows:squatter_x86_exe_pe_test",
         "//modules/squatter/windows:source_contract_test",
+        "//modules/picblobs:bazel_test_suite",
         "//modules/tools:check_in_repo_modules_test",
         "//modules/tools:package_examples_test",
         "//modules/tools:workspace_module_install_test",

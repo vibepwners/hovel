@@ -1,0 +1,29 @@
+"""Top-level aggregate targets for the full product.
+
+Usage:
+    bazel build //modules/picblobs/release:full --config=linux_x86_64
+    bazel build //modules/picblobs/release:full --config=linux_x86_64 --config=debug
+    bazel build //modules/picblobs/release:full --config=linux_x86_64 --config=release
+
+Target = what the product is.
+Config = how it is built.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "full",
+    srcs = select({
+        "//modules/picblobs/platforms:linux": [
+            "//modules/picblobs/src/payload:hello",
+            "//modules/picblobs/tests/runners/freebsd:runner",
+            "//modules/picblobs/tests/runners/windows:runner",
+        ],
+        "//modules/picblobs/platforms:freebsd": [
+            "//modules/picblobs/src/payload:hello",
+        ],
+        "//modules/picblobs/platforms:windows": [
+            "//modules/picblobs/src/payload:hello_windows",
+        ],
+    }),
+)

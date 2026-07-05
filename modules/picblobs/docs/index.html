@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>picblobs — position-independent code blobs</title>
+  <meta name="description" content="Pre-compiled position-independent code (PIC) blobs for multiple OS/arch targets. Tested cross-platform shellcode stubs with a Python API and CLI.">
+  <link rel="icon" type="image/png" href="assets/pic.png">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html">
+      <img src="assets/pic.png" alt="" class="brand-mark">
+      <span class="brand-name">PICBLOBS</span>
+      <span class="brand-tag">// v0.1.3</span>
+    </a>
+    <nav class="top-nav">
+      <a href="index.html" aria-current="page">Home</a>
+      <a href="guide/index.html">Guide</a>
+      <a href="https://github.com/williamkborn/pic">Source</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="hero-text">
+      <p class="hero-tag">// position-independent code blobs</p>
+      <h1>picblobs</h1>
+      <p class="hero-lede">
+        Pre-compiled, position-independent code blobs for loading and executing
+        arbitrary payloads on multiple operating systems and architectures.
+        Tested cross-platform PIC stubs with a Python API and CLI — no hand-written
+        shellcode required.
+      </p>
+      <p>
+        <a class="cta" href="guide/introduction.html">Read the guide →</a>
+        <a class="cta ghost" href="guide/getting-started.html">Getting started</a>
+      </p>
+    </div>
+    <img src="assets/pic.png" alt="picblobs logo" class="hero-img">
+  </section>
+
+  <main class="content" style="max-width: 1080px; margin: 0 auto; padding: 2rem 2.5rem 3rem;">
+    <h2>The pitch</h2>
+    <blockquote>
+      <p>
+        As a cybersecurity developer, I am sick and tired of writing assembly
+        and shellcode. I would like prestaged payloads for all targets I touch
+        on a regular basis to enable ethical security research.
+      </p>
+    </blockquote>
+
+    <h2>What's in the box</h2>
+    <ul>
+      <li><strong>13 architectures</strong> — x86_64, i686, aarch64, armv5 (ARM/Thumb), armv7, s390x, mipsel32, mipsbe32, sparcv8, powerpc, ppc64le, riscv64</li>
+      <li><strong>3 operating systems</strong> — Linux, FreeBSD, Windows</li>
+      <li><strong>Freestanding C blobs</strong> compiled with <code>-ffreestanding -nostdlib -fPIC -Os</code></li>
+      <li><strong>Python API</strong> for loading, extracting, introspecting, and assembling blobs</li>
+      <li><strong>CLI</strong> (<code>picblobs-cli</code>) for inspecting, building, running, and verifying blobs</li>
+      <li><strong>Cross-architecture testing</strong> via QEMU user-mode (binfmt_misc or <code>qemu-*-static</code>)</li>
+      <li><strong>Bazel 9</strong> build system with automatic Bootlin toolchain provisioning</li>
+      <li><strong>Kernel toolkit</strong> for red team lab exercises</li>
+    </ul>
+
+    <h2>Start here</h2>
+    <div class="tiles">
+      <a class="tile" href="guide/introduction.html">
+        <span class="tile-label">01 // Read</span>
+        <span class="tile-title">Introduction</span>
+        <span class="tile-desc">What picblobs is, what it ships, and the verified status.</span>
+      </a>
+      <a class="tile" href="guide/how-it-works.html">
+        <span class="tile-label">02 // Concept</span>
+        <span class="tile-title">How it works</span>
+        <span class="tile-desc">Layperson tour of PIC extraction, with diagrams.</span>
+      </a>
+      <a class="tile" href="guide/getting-started.html">
+        <span class="tile-label">03 // Run</span>
+        <span class="tile-title">Getting started</span>
+        <span class="tile-desc">Prerequisites, the quick-start loop, and the dev container.</span>
+      </a>
+      <a class="tile" href="guide/building.html">
+        <span class="tile-label">04 // Build</span>
+        <span class="tile-title">Building</span>
+        <span class="tile-desc">Bazel 9, platform configs, debug vs. release, staging.</span>
+      </a>
+      <a class="tile" href="guide/picblobs-cli.html">
+        <span class="tile-label">// CLI</span>
+        <span class="tile-title">picblobs-cli</span>
+        <span class="tile-desc">List, info, extract, run, verify, listing, test.</span>
+      </a>
+      <a class="tile" href="guide/index.html">
+        <span class="tile-label">// Full</span>
+        <span class="tile-title">Guide index</span>
+        <span class="tile-desc">Every chapter, in order.</span>
+      </a>
+    </div>
+
+    <h2>Build it</h2>
+<pre data-lang="bash"><code>source sourceme
+task stage
+task verify</code></pre>
+  </main>
+
+  <footer class="sitefoot">
+    <p>picblobs · Apache-2.0 · <a href="https://github.com/williamkborn/pic">github.com/williamkborn/pic</a></p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Running blobs — picblobs</title>
+  <link rel="icon" type="image/png" href="../assets/pic.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/pic.png" alt="" class="brand-mark">
+      <span class="brand-name">PICBLOBS</span>
+      <span class="brand-tag">// guide</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="index.html" aria-current="page">Guide</a>
+      <a href="https://github.com/williamkborn/pic">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Guide</p>
+      <ul>
+        <li><a href="index.html">Contents</a></li>
+      </ul>
+      <p class="sidebar-section">Specification</p>
+      <ul>
+        <li><a href="introduction.html">Introduction</a></li>
+      </ul>
+      <p class="sidebar-section">How this concept works</p>
+      <ul>
+        <li><a href="how-it-works.html">How PIC extraction works</a></li>
+      </ul>
+      <p class="sidebar-section">User Guide</p>
+      <ul>
+        <li><a href="getting-started.html">Getting started</a></li>
+        <li><a href="building.html">Building</a></li>
+        <li><a href="running.html" aria-current="page">Running blobs</a></li>
+        <li><a href="picblobs-cli.html">picblobs-cli</a></li>
+        <li><a href="testing.html">Testing</a></li>
+      </ul>
+      <p class="sidebar-section">Development</p>
+      <ul>
+        <li><a href="writing-blobs.html">Writing a blob</a></li>
+        <li><a href="code-generation.html">Code generation</a></li>
+        <li><a href="adding-architecture.html">Adding an architecture</a></li>
+        <li><a href="adding-syscall.html">Adding a syscall</a></li>
+        <li><a href="formatting.html">Formatting and linting</a></li>
+      </ul>
+      <p class="sidebar-section">Reference</p>
+      <ul>
+        <li><a href="platform-support.html">Platform support</a></li>
+        <li><a href="test-runners.html">Test runners</a></li>
+        <li><a href="project-structure.html">Project structure</a></li>
+        <li><a href="kernel-toolkit.html">Kernel toolkit</a></li>
+        <li><a href="specification.html">Specification</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+<h1 id="running-blobs">Running Blobs</h1>
+<p>The <code>picblobs-cli</code> CLI operates on blobs staged in the package. It has
+no knowledge of the build system.</p>
+<pre data-lang="bash"><code># Run hello on x86_64 (native -- no QEMU)
+picblobs-cli run hello linux:x86_64
+
+# Run hello on a cross architecture (via QEMU)
+picblobs-cli run hello linux:aarch64
+
+# Run hello_windows through the mock TEB/PEB runner
+picblobs-cli run hello_windows windows:x86_64
+
+# Verify all staged blobs on all architectures
+picblobs-cli verify
+
+# Verify a specific OS
+picblobs-cli verify --os windows
+
+# List all blobs in the package
+picblobs-cli list
+
+# Show blob metadata
+picblobs-cli info hello linux:x86_64
+picblobs-cli info hello_windows windows:i686
+</code></pre>
+<h2 id="targeted-verification">Targeted verification</h2>
+<p>Run <code>verify</code> against a single architecture while iterating:</p>
+<pre data-lang="bash"><code>picblobs-cli verify --os linux --arch ppc64le
+picblobs-cli verify --os linux --arch riscv64
+</code></pre>
+<h2 id="freebsd-note">FreeBSD coverage</h2>
+<p><code>verify</code> only runs <code>freebsd:x86_64</code>. Other FreeBSD blob architectures are
+still built and shipped, but they are excluded from the Linux-hosted
+verification matrix. <code>ul_exec</code> is only built for <code>freebsd:x86_64</code>.</p>
+      </article>
+      <nav class="page-nav">
+        <a class="prev" href="building.html">← Building</a>
+        <span class="spacer"></span>
+        <a class="next" href="picblobs-cli.html">picblobs-cli →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>picblobs guide · <a href="../index.html">home</a> · <a href="https://github.com/williamkborn/pic">source</a></p>
+  </footer>
+</body>
+</html>

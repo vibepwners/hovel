@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hovel Modules</title>
+  <link rel="icon" type="image/png" href="../assets/hovel.png">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">
+      <img src="../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// modules</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../index.html">Home</a>
+      <a href="../spec/index.html">Book</a>
+      <a href="index.html" aria-current="page">Modules</a>
+      <a href="../api/sdk/index.html">API Docs</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Modules</p>
+      <ul>
+        <li><a href="index.html" aria-current="page">Overview</a></li>
+        <li><a href="catalogue.html">Catalogue</a></li>
+      </ul>
+      <p class="sidebar-section">Payload Providers</p>
+      <ul>
+        <li><a href="picblobs/index.html">picblobs</a></li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+        <h1>Hovel Modules</h1>
+        <p>
+          Modules have their own documentation space separate from the core
+          book. Each module space should document what it provides, how to build
+          and test it, how to operate it from Hovel, and where its source-level
+          reference material lives.
+        </p>
+
+        <h2>Module Spaces</h2>
+        <div class="tiles">
+          <a class="tile" href="catalogue.html">
+            <span class="tile-label">Index</span>
+            <span class="tile-title">Catalogue</span>
+            <span class="tile-desc">All integrated modules with type, status, and guide links.</span>
+          </a>
+          <a class="tile" href="picblobs/index.html">
+            <span class="tile-label">Payload Provider</span>
+            <span class="tile-title">picblobs</span>
+            <span class="tile-desc">Position-independent payload blob provider integrated from the original pic repo.</span>
+          </a>
+        </div>
+
+        <h2>Documentation Contract</h2>
+        <p>
+          A module space should contain a landing page, user guide, build notes,
+          test notes, and reference page. Source-specific historical material
+          can remain inside the module tree, but operator-facing docs should use
+          this site structure.
+        </p>
+      </article>
+      <nav class="page-nav">
+        <a class="prev" href="../spec/index.html">← Book</a>
+        <span class="spacer"></span>
+        <a class="next" href="catalogue.html">Catalogue →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>Hovel modules · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

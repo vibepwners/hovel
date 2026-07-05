@@ -1,0 +1,60 @@
+[project]
+name = "picblobs-cli"
+version = "0.1.6"
+description = "Click CLI + non-Linux cross-compiled runners and verifier fixtures for picblobs"
+authors = [
+    { name = "William Born", email = "william.born.git@gmail.com" },
+    { name = "Ricardo Rivera", email = "ricardo.rivera@zetier.com" },
+]
+requires-python = ">=3.10"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["pic", "shellcode", "security", "qemu"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+# picblobs brings the blob data + builder API; click is our CLI framework.
+# Non-Linux runners and verifier fixtures ship as package data. Linux
+# payloads are wrapped into ELF executables by picblobs itself. QEMU is
+# expected to be on the user's PATH for cross-architecture execution.
+dependencies = [
+    "picblobs>=0.1.6",
+    "click>=8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/williamkborn/pic"
+Documentation = "https://github.com/williamkborn/pic/tree/main/docs"
+Repository = "https://github.com/williamkborn/pic"
+Issues = "https://github.com/williamkborn/pic/issues"
+
+[project.scripts]
+picblobs = "picblobs_cli.cli:main"
+picblobs-cli = "picblobs_cli.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["picblobs_cli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

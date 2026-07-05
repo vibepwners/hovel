@@ -1,0 +1,6 @@
+# Deprecated.
+#
+# picblobs is integrated into Hovel as modules/picblobs. Active Bazel
+# configuration for this module lives in the repository root .bazelrc so that
+# platform configs, lint aspects, and CI settings compose with the rest of the
+# Hovel workspace.

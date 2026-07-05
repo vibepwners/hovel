@@ -10,7 +10,7 @@ filegroup(
 py_test(
     name = "site_smoke_test",
     size = "small",
-    srcs = ["//tools/tests:site_smoke_test.py"],
+    srcs = ["//core/tools/tests:site_smoke_test.py"],
     args = [
         "$(rootpath :index.html)",
         "$(rootpath :user-guide.html)",
@@ -23,6 +23,10 @@ py_test(
         "$(rootpath :mcp-agent.html)",
         "$(rootpath :squatter-payload-provider.html)",
         "$(rootpath :reference/descriptors.html)",
+        "$(rootpath //docs/site/modules:index.html)",
+        "$(rootpath //docs/site/modules:catalogue.html)",
+        "$(rootpath //docs/site/modules/picblobs:index.html)",
+        "$(rootpath //docs/site/modules/picblobs:user-guide.html)",
     ],
     data = [
         "index.html",
@@ -36,6 +40,10 @@ py_test(
         "reference/descriptors.html",
         "squatter-payload-provider.html",
         "user-guide.html",
+        "//docs/site/modules:catalogue.html",
+        "//docs/site/modules:index.html",
+        "//docs/site/modules/picblobs:index.html",
+        "//docs/site/modules/picblobs:user-guide.html",
     ],
     python_version = "PY3",
 )
