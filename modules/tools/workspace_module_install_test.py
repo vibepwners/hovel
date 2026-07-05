@@ -29,12 +29,13 @@ MODULES = (
     ("mock-exploit-rust", "v0.0.0-example", "exploit", "command", "4", ""),
     ("mock-exploit-session-rust", "v0.0.0-example", "exploit", "command", "5", ""),
     ("squatter", "v0.1.0", "payload_provider", "command", "6", ""),
+    ("picblobs", "0.1.6", "payload_provider", "command", "7", ""),
 )
 
 
 def main() -> int:
-    if len(os.sys.argv) != 9:
-        raise SystemExit("usage: workspace_module_install_test.py <hovel> <seven module binaries>")
+    if len(os.sys.argv) != 10:
+        raise SystemExit("usage: workspace_module_install_test.py <hovel> <eight module binaries>")
     hovel_bin = resolve_path(os.sys.argv[1])
     binaries = [resolve_path(arg) for arg in os.sys.argv[2:]]
     python_root = find_first_runfile("modules/examples/python", "examples/python")
@@ -66,8 +67,8 @@ def main() -> int:
         if not lock.exists():
             raise AssertionError("module lock was not written")
         lock_count = sum(1 for line in lock.read_text().splitlines() if line.strip().startswith("- name:"))
-        if lock_count != 12:
-            raise AssertionError(f"module lock contains {lock_count} modules, want 12\n{lock.read_text()}")
+        if lock_count != 13:
+            raise AssertionError(f"module lock contains {lock_count} modules, want 13\n{lock.read_text()}")
 
         list_out = run([str(hovel_bin), "module", "list", "--workspace", str(workspace)], env=env)
         for name, version, *_ in MODULES:
@@ -75,7 +76,7 @@ def main() -> int:
 
         check_out = run([str(hovel_bin), "module", "check", "--all", "--workspace", str(workspace)], env=env)
         require_contains(check_out, "MODULE CHECKS")
-        require_contains(check_out, "12 passed")
+        require_contains(check_out, "13 passed")
     return 0
 
 

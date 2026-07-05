@@ -188,9 +188,12 @@ func TestPayloadProviderServiceListsProviderAdvertisedPayloads(t *testing.T) {
 					ID:           "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
 					Name:         "squatter",
 					Version:      "v0.1.0",
+					Kind:         "pe",
 					Platform:     "windows",
+					OS:           "windows",
 					Arch:         "x86",
 					Formats:      []string{"pe-exe"},
+					Tags:         []string{"pe", "windows"},
 					Capabilities: []string{"file.get", "process.exec"},
 					Transport:    run.PayloadTransport{Kind: "tcp-bind"},
 				},
@@ -215,10 +218,13 @@ func TestPayloadProviderServiceListsProviderAdvertisedPayloads(t *testing.T) {
 		t.Fatalf("payload count = %d, want 2: %#v", len(payloads), payloads)
 	}
 	if payloads[0].PayloadID != "squatter/windows/x86/windows-7/tcp-bind/pe-exe" ||
+		payloads[0].Kind != "pe" ||
 		payloads[0].Platform != "windows" ||
+		payloads[0].OS != "windows" ||
 		payloads[0].Arch != "x86" ||
 		payloads[0].Transport != "tcp-bind" ||
 		strings.Join(payloads[0].Formats, ",") != "pe-exe" ||
+		strings.Join(payloads[0].Tags, ",") != "pe,windows" ||
 		!strings.Contains(strings.Join(payloads[0].Capabilities, ","), "process.exec") {
 		t.Fatalf("first payload = %#v", payloads[0])
 	}

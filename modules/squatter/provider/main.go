@@ -38,7 +38,7 @@ const (
 	platform     = "windows"
 	arch         = "x86"
 	minOS        = "windows-7"
-	formatPEEXE  = "pe-exe"
+	formatPEEXE  = hovel.PayloadFormatPEEXE
 	reverseTCP   = "reverse-tcp"
 	smbNamedPipe = "smb-named-pipe"
 	tcpBind      = "tcp-bind"
@@ -155,7 +155,7 @@ func (Provider) Schema() hovel.Schema {
 	return hovel.Schema{
 		ChainConfig: []hovel.Requirement{
 			enumReq("payload.transport", "Payload transport.", tcpBind, tcpCallback, smbNamedPipe, reverseTCP),
-			enumReq("payload.format", "Payload artifact format.", formatPEEXE),
+			enumReq("payload.format", "Payload artifact format.", formatPEEXE, hovel.PayloadFormatPE),
 			hovel.Req("payload.lhost", "host", "TCP callback listener host."),
 			hovel.Req("payload.lport", "port", "TCP callback listener port."),
 			hovel.Req("payload.bind_port", "port", "TCP bind port opened by the payload on the target."),
@@ -1221,7 +1221,11 @@ func (Provider) GeneratePayload(req hovel.GeneratePayloadRequest) (hovel.Payload
 	artifact := hovel.PayloadArtifact{
 		Name:     "squatter.exe",
 		Role:     "primary",
+		Kind:     string(hovel.PayloadKindPE),
 		Format:   formatPEEXE,
+		OS:       platform,
+		Arch:     arch,
+		Tags:     []string{"pe", "windows", "squatter"},
 		Encoding: "base64",
 		Bytes:    base64.StdEncoding.EncodeToString(body),
 		Size:     int64(len(body)),
@@ -1986,11 +1990,14 @@ func payloadInfo(transport string) hovel.PayloadInfo {
 		ID:           fmt.Sprintf("squatter/%s/%s/%s/%s/%s", platform, arch, minOS, transport, formatPEEXE),
 		Name:         payloadName,
 		Version:      version,
+		Kind:         string(hovel.PayloadKindPE),
 		Platform:     platform,
+		OS:           platform,
 		Arch:         arch,
 		MinOS:        minOS,
 		TestedOS:     []string{minOS},
-		Formats:      []string{formatPEEXE},
+		Formats:      []string{formatPEEXE, hovel.PayloadFormatPE},
+		Tags:         []string{"pe", "windows", "agent", "squatter"},
 		Capabilities: capabilities(),
 		Transport: hovel.PayloadTransport{
 			Kind:      transport,

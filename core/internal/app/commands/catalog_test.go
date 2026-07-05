@@ -845,9 +845,12 @@ func TestPayloadsAvailableUsesProviderService(t *testing.T) {
 		PayloadID:    "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
 		Name:         "squatter",
 		Version:      "v0.1.0",
+		Kind:         "pe",
 		Platform:     "windows",
+		OS:           "windows",
 		Arch:         "x86",
 		Formats:      []string{"pe-exe"},
+		Tags:         []string{"pe", "windows"},
 		Capabilities: []string{"file.get", "exec"},
 		Transport:    "tcp-bind",
 	}}}
@@ -861,7 +864,9 @@ func TestPayloadsAvailableUsesProviderService(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(result.Human, "squatter") || !strings.Contains(result.Human, "tcp-bind") {
+	if !strings.Contains(result.Human, "squatter") || !strings.Contains(result.Human, "tcp-bind") ||
+		!strings.Contains(result.Human, "pe") || !strings.Contains(result.Human, "windows/x86") ||
+		!strings.Contains(result.Human, "pe,windows") {
 		t.Fatalf("available output = %q", result.Human)
 	}
 	if !reflect.DeepEqual(result.JSON, providers.available) {

@@ -82,6 +82,12 @@
               "items": {
                 "$ref": "#/$defs/artifactOutput"
               }
+            },
+            "payloads": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/payloadOutput"
+              }
             }
           }
         },
@@ -116,6 +122,53 @@
           "type": "string"
         }
       }
+    },
+    "payloadOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "formats"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "$ref": "#/$defs/payloadKind"
+        },
+        "formats": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/payloadFormat"
+          }
+        },
+        "os": {
+          "type": "string",
+          "minLength": 1
+        },
+        "arch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "payloadKind": {
+      "type": "string",
+      "enum": ["pic", "poc", "elf", "pe", "so", "dll", "dylib", "raw"]
+    },
+    "payloadFormat": {
+      "type": "string",
+      "enum": ["pic", "poc", "flat-pic", "raw-bin", "elf", "elf-exec", "so", "pe", "pe-exe", "pe-dll", "dll", "dylib", "macho-dylib"]
     }
   }
 }

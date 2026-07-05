@@ -935,9 +935,12 @@ func availablePayloadFromInfo(module modulecatalog.Module, info run.PayloadInfo)
 		PayloadID:    firstNonEmpty(info.ID, module.ID),
 		Name:         firstNonEmpty(info.Name, module.Name),
 		Version:      firstNonEmpty(info.Version, module.Version),
+		Kind:         info.Kind,
 		Platform:     info.Platform,
+		OS:           firstNonEmpty(info.OS, info.Platform),
 		Arch:         info.Arch,
 		Formats:      append([]string(nil), info.Formats...),
+		Tags:         append([]string(nil), info.Tags...),
 		Capabilities: append([]string(nil), info.Capabilities...),
 		Transport:    info.Transport.Kind,
 	}

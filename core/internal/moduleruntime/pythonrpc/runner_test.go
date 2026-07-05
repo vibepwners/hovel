@@ -1244,9 +1244,12 @@ while True:
             "id": "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
             "name": "squatter",
             "version": "v0.1.0",
+            "kind": "pe",
             "platform": "windows",
+            "os": "windows",
             "arch": "x86",
-            "formats": ["pe-exe"],
+            "formats": ["pe-exe", "pe"],
+            "tags": ["pe", "windows"],
             "capabilities": ["file.get", "process.exec"],
             "transport": {"kind": "tcp-bind", "encrypted": False},
             "session": {"kind": "agent", "acquisition": "post_throw_connect", "owner": "payload_provider"}
@@ -1264,11 +1267,17 @@ while True:
 	}
 	payload := payloads[0]
 	if payload.ID != "squatter/windows/x86/windows-7/tcp-bind/pe-exe" ||
+		payload.Kind != "pe" ||
 		payload.Platform != "windows" ||
+		payload.OS != "windows" ||
 		payload.Arch != "x86" ||
 		payload.Transport.Kind != "tcp-bind" ||
-		len(payload.Formats) != 1 ||
-		payload.Formats[0] != "pe-exe" {
+		len(payload.Formats) != 2 ||
+		payload.Formats[0] != "pe-exe" ||
+		payload.Formats[1] != "pe" ||
+		len(payload.Tags) != 2 ||
+		payload.Tags[0] != "pe" ||
+		payload.Tags[1] != "windows" {
 		t.Fatalf("payload = %#v", payload)
 	}
 }
@@ -1287,7 +1296,11 @@ while True:
             "primary": {
                 "name": "squatter.exe",
                 "role": "primary",
+                "kind": "pe",
                 "format": "pe-exe",
+                "os": "windows",
+                "arch": "x86",
+                "tags": ["pe", "windows"],
                 "encoding": "base64",
                 "bytes": "TVo=",
                 "size": 2,
@@ -1309,6 +1322,10 @@ while True:
 	}
 	if payload.Primary.Name != "squatter.exe" || payload.Primary.Encoding != "base64" || payload.Primary.Bytes != "TVo=" {
 		t.Fatalf("payload = %#v", payload)
+	}
+	if payload.Primary.Kind != "pe" || payload.Primary.OS != "windows" || payload.Primary.Arch != "x86" ||
+		len(payload.Primary.Tags) != 2 || payload.Primary.Tags[0] != "pe" || payload.Primary.Tags[1] != "windows" {
+		t.Fatalf("payload metadata = %#v", payload.Primary)
 	}
 }
 

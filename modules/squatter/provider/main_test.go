@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -39,8 +40,14 @@ func TestProviderReportsSquatterPayloads(t *testing.T) {
 		if payload.Platform != "windows" || payload.Arch != "x86" || payload.MinOS != "windows-7" {
 			t.Fatalf("unexpected payload platform metadata: %#v", payload)
 		}
-		if len(payload.Formats) != 1 || payload.Formats[0] != "pe-exe" {
+		if payload.Kind != string(hovel.PayloadKindPE) || payload.OS != "windows" {
+			t.Fatalf("unexpected payload kind metadata: %#v", payload)
+		}
+		if !slices.Contains(payload.Formats, formatPEEXE) || !slices.Contains(payload.Formats, hovel.PayloadFormatPE) {
 			t.Fatalf("unexpected payload formats: %#v", payload.Formats)
+		}
+		if !slices.Contains(payload.Tags, "pe") || !slices.Contains(payload.Tags, "windows") {
+			t.Fatalf("unexpected payload tags: %#v", payload.Tags)
 		}
 		if payload.Session.Owner != "payload_provider" {
 			t.Fatalf("unexpected session owner: %#v", payload.Session)
@@ -373,8 +380,10 @@ func TestProviderSatisfiesPayloadProviderRPCContract(t *testing.T) {
 		Target:        "target-1",
 		RunID:         "run-1",
 		Config:        map[string]string{"payload.transport": reverseTCP, "payload.lhost": "127.0.0.1", "payload.lport": "0"},
+		WantKind:      string(hovel.PayloadKindPE),
 		WantFormat:    formatPEEXE,
 		WantTransport: tcpCallback,
+		WantTags:      []string{"pe", "windows"},
 		WantCapabilities: []string{
 			"host.info",
 			"file.get",

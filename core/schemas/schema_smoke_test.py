@@ -49,6 +49,14 @@ class SchemaSmokeTest(unittest.TestCase):
                     artifact = schema["$defs"]["artifactOutput"]
                     self.assertEqual(artifact["properties"]["mode"]["enum"], ["inline", "file"])
                     self.assertEqual(spec["outputs"]["properties"]["artifacts"]["items"]["$ref"], "#/$defs/artifactOutput")
+                    self.assertEqual(spec["outputs"]["properties"]["payloads"]["items"]["$ref"], "#/$defs/payloadOutput")
+                    self.assertIn("pic", schema["$defs"]["payloadKind"]["enum"])
+                    self.assertIn("poc", schema["$defs"]["payloadKind"]["enum"])
+                    self.assertIn("elf", schema["$defs"]["payloadFormat"]["enum"])
+                    self.assertIn("so", schema["$defs"]["payloadFormat"]["enum"])
+                    self.assertIn("dylib", schema["$defs"]["payloadFormat"]["enum"])
+                    self.assertIn("pe", schema["$defs"]["payloadFormat"]["enum"])
+                    self.assertIn("dll", schema["$defs"]["payloadFormat"]["enum"])
                 if schema["properties"]["kind"]["const"] == "Service":
                     self.assertIn("payload_provider", spec["serviceType"]["enum"])
                 if schema["properties"]["kind"]["const"] == "Chain":

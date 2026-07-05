@@ -121,9 +121,12 @@ type AvailablePayload struct {
 	PayloadID    string   `json:"payloadId"`
 	Name         string   `json:"name,omitempty"`
 	Version      string   `json:"version,omitempty"`
+	Kind         string   `json:"kind,omitempty"`
 	Platform     string   `json:"platform,omitempty"`
+	OS           string   `json:"os,omitempty"`
 	Arch         string   `json:"arch,omitempty"`
 	Formats      []string `json:"formats,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
 	Capabilities []string `json:"capabilities,omitempty"`
 	Transport    string   `json:"transport,omitempty"`
 }
@@ -574,17 +577,32 @@ func payloadWorkspace(invocation Invocation) string {
 }
 
 func availablePayloadLines(payloads []AvailablePayload) string {
-	lines := []string{"PROVIDER                 PAYLOAD                                            TRANSPORT    FORMAT      CAPABILITIES"}
+	lines := []string{"PROVIDER                 KIND     OS/ARCH            PAYLOAD                                            TRANSPORT    FORMAT      TAGS                 CAPABILITIES"}
 	for _, payload := range payloads {
-		lines = append(lines, fmt.Sprintf("%-24s %-50s %-12s %-11s %s",
+		lines = append(lines, fmt.Sprintf("%-24s %-8s %-18s %-50s %-12s %-11s %-20s %s",
 			displayValue(payload.Provider, "-"),
+			displayValue(payload.Kind, "-"),
+			displayValue(payloadTarget(payload), "-"),
 			payload.PayloadID,
 			displayValue(payload.Transport, "-"),
 			displayValue(strings.Join(payload.Formats, ","), "-"),
+			displayValue(strings.Join(payload.Tags, ","), "-"),
 			displayValue(strings.Join(payload.Capabilities, ","), "-"),
 		))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func payloadTarget(payload AvailablePayload) string {
+	osName := firstConfiguredString(payload.OS, payload.Platform)
+	switch {
+	case osName != "" && payload.Arch != "":
+		return osName + "/" + payload.Arch
+	case osName != "":
+		return osName
+	default:
+		return payload.Arch
+	}
 }
 
 func installedPayloadLines(records []InstalledPayloadRecord) string {
