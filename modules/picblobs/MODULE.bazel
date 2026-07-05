@@ -17,11 +17,11 @@ bazel_dep(name = "rules_python", version = "1.7.0")
 
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
-    hub_name = "pip",
+    hub_name = "picblobs_pip",
     python_version = "3.11",
     requirements_lock = "//python:requirements.txt",
 )
-use_repo(pip, "pip")
+use_repo(pip, "picblobs_pip")
 
 # --- Bootlin cross-compilation toolchains ---
 bootlin = use_extension("//modules/picblobs/toolchains:bootlin.bzl", "bootlin")
@@ -166,9 +166,5 @@ use_repo(arm_none_eabi, "arm_none_eabi")
 # --- QEMU user-mode static (hermetic distro package for Bazel tests) ---
 qemu = use_extension("//modules/picblobs/toolchains:qemu.bzl", "qemu")
 use_repo(qemu, "qemu_arm_static", "qemu_user_static")
-
-# --- cppcheck static-analysis tool for Bazel tests ---
-cppcheck = use_extension("//modules/picblobs/toolchains:cppcheck.bzl", "cppcheck")
-use_repo(cppcheck, "cppcheck_linux_x86_64")
 
 register_toolchains("//modules/picblobs/toolchains:all")

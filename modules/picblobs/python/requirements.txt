@@ -1,4 +1,6 @@
 click==8.3.1
+cppcheck==1.5.1
+importlib-metadata==7.1.0
 iniconfig==2.3.0
 packaging==26.0
 pluggy==1.6.0
@@ -6,3 +8,5 @@ pycparser==3.0
 pyelftools==0.32
 pygments==2.19.2
 pytest==9.0.2
+typing-extensions==4.15.0
+zipp==3.18.2

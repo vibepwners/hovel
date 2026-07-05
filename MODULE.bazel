@@ -15,9 +15,9 @@ bazel_dep(name = "rules_shell", version = "0.6.1")
 
 single_version_override(
     module_name = "googletest",
-    version = "1.17.0",
-    patches = ["//core/third_party/patches:googletest-bazel9-cc-rules.patch"],
     patch_strip = 0,
+    patches = ["//core/third_party/patches:googletest-bazel9-cc-rules.patch"],
+    version = "1.17.0",
 )
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
@@ -69,6 +69,7 @@ picblobs_pip.parse(
 use_repo(picblobs_pip, "picblobs_pip")
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 
 http_archive(
@@ -363,17 +364,15 @@ use_repo(picblobs_arm_none_eabi, "arm_none_eabi")
 picblobs_qemu = use_extension("//modules/picblobs/toolchains:qemu.bzl", "qemu")
 use_repo(picblobs_qemu, "qemu_arm_static", "qemu_user_static")
 
-picblobs_cppcheck = use_extension("//modules/picblobs/toolchains:cppcheck.bzl", "cppcheck")
-use_repo(picblobs_cppcheck, "cppcheck_linux_x86_64")
-
-
 local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
+
 local_repository(
     name = "hovel_core",
     path = "core",
 )
 
 mingw_toolchain_repo = use_repo_rule("//modules/squatter/bazel:mingw.bzl", "mingw_toolchain_repo")
+
 mingw_toolchain_repo(
     name = "mingw_i686",
     cpu = "x86_32",
@@ -382,6 +381,7 @@ mingw_toolchain_repo(
     target = "i686-w64-mingw32",
     urls = ["https://github.com/Vibe-Pwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64.tar.xz"],
 )
+
 mingw_toolchain_repo(
     name = "mingw_x86_64",
     cpu = "x86_64",

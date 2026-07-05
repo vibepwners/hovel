@@ -212,13 +212,13 @@ def _cppcheck_test_impl(ctx):
         srcs.extend(src.files.to_list())
 
     include_dirs = ctx.attr.include_dirs
-    cppcheck = ctx.executable._cppcheck
+    runner = ctx.executable._runner
 
     script = ctx.actions.declare_file(ctx.attr.name + "_cppcheck.sh")
 
     include_paths = " ".join(['"{}"'.format(d) for d in include_dirs])
     src_paths = " ".join(['"{}"'.format(f.short_path) for f in srcs])
-    cppcheck_path = cppcheck.short_path
+    runner_path = runner.short_path
 
     ctx.actions.write(
         output = script,
@@ -226,7 +226,7 @@ def _cppcheck_test_impl(ctx):
 #!/bin/bash
 set -euo pipefail
 
-cppcheck="{cppcheck}"
+runner="{runner}"
 runfiles_root="$PWD"
 args=(
     --error-exitcode=1
@@ -245,12 +245,12 @@ for src in {srcs}; do
     args+=("$runfiles_root/$src")
 done
 
-exec "$cppcheck" "${{args[@]}}"
-""".format(cppcheck = cppcheck_path, include_paths = include_paths, srcs = src_paths),
+exec "$runner" "${{args[@]}}"
+""".format(runner = runner_path, include_paths = include_paths, srcs = src_paths),
         is_executable = True,
     )
 
-    runfiles = ctx.runfiles(files = srcs + [cppcheck]).merge(ctx.attr._cppcheck[DefaultInfo].default_runfiles)
+    runfiles = ctx.runfiles(files = srcs + [runner]).merge(ctx.attr._runner[DefaultInfo].default_runfiles)
 
     return [DefaultInfo(
         executable = script,
@@ -270,11 +270,11 @@ cppcheck_test = rule(
             default = ["src/include"],
             doc = "Include directories for cppcheck.",
         ),
-        "_cppcheck": attr.label(
-            default = Label("@cppcheck_linux_x86_64//:cppcheck"),
+        "_runner": attr.label(
+            default = Label("//modules/picblobs/tools:run_cppcheck"),
             executable = True,
             cfg = "exec",
-            doc = "Hermetic cppcheck executable.",
+            doc = "Hermetic cppcheck runner.",
         ),
     },
     doc = "Runs cppcheck as a Bazel test.",
