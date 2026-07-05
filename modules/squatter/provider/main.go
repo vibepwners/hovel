@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1187,13 +1188,19 @@ func (Provider) CleanupStep(req hovel.StepCleanupRequest) (hovel.StepCleanupResu
 func (Provider) ListPayloads(query hovel.PayloadQuery) ([]hovel.PayloadInfo, error) {
 	transport := query.Transport
 	if transport == "" {
-		return []hovel.PayloadInfo{
-			payloadInfo(tcpBind),
-			payloadInfo(tcpCallback),
-			payloadInfo(smbNamedPipe),
-		}, nil
+		payloads := []hovel.PayloadInfo{}
+		for _, candidate := range []string{tcpBind, tcpCallback, smbNamedPipe} {
+			if info, ok := matchingPayloadInfo(query, candidate); ok {
+				payloads = append(payloads, info)
+			}
+		}
+		return payloads, nil
 	}
-	return []hovel.PayloadInfo{payloadInfo(canonicalTransport(transport))}, nil
+	info, ok := matchingPayloadInfo(query, transport)
+	if !ok {
+		return nil, nil
+	}
+	return []hovel.PayloadInfo{info}, nil
 }
 
 func (Provider) ResolvePayload(query hovel.PayloadQuery) (hovel.PayloadInfo, error) {
@@ -1201,7 +1208,11 @@ func (Provider) ResolvePayload(query hovel.PayloadQuery) (hovel.PayloadInfo, err
 	if transport == "" {
 		return hovel.PayloadInfo{}, fmt.Errorf("payload transport is required")
 	}
-	return payloadInfo(canonicalTransport(transport)), nil
+	info, ok := matchingPayloadInfo(query, transport)
+	if !ok {
+		return hovel.PayloadInfo{}, fmt.Errorf("payload query does not match squatter payload metadata")
+	}
+	return info, nil
 }
 
 func (p Provider) PrepareListener(req hovel.PrepareListenerRequest) (hovel.ListenerRef, error) {
@@ -2020,6 +2031,31 @@ func payloadInfo(transport string) hovel.PayloadInfo {
 		info.Session.RequiresPostThrowConnect = true
 	}
 	return info
+}
+
+func matchingPayloadInfo(query hovel.PayloadQuery, transport string) (hovel.PayloadInfo, bool) {
+	info := payloadInfo(canonicalTransport(transport))
+	if query.Kind != "" && query.Kind != info.Kind {
+		return hovel.PayloadInfo{}, false
+	}
+	if query.OS != "" && query.OS != info.OS {
+		return hovel.PayloadInfo{}, false
+	}
+	if query.Platform != "" && query.Platform != info.Platform {
+		return hovel.PayloadInfo{}, false
+	}
+	if query.Arch != "" && query.Arch != info.Arch {
+		return hovel.PayloadInfo{}, false
+	}
+	if query.Format != "" && !slices.Contains(info.Formats, query.Format) {
+		return hovel.PayloadInfo{}, false
+	}
+	for _, tag := range query.Tags {
+		if !slices.Contains(info.Tags, tag) {
+			return hovel.PayloadInfo{}, false
+		}
+	}
+	return info, true
 }
 
 func canonicalTransport(transport string) string {

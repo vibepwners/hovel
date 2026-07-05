@@ -55,6 +55,41 @@ func TestProviderReportsSquatterPayloads(t *testing.T) {
 	}
 }
 
+func TestProviderFiltersTypedPayloadQueries(t *testing.T) {
+	provider := newProvider()
+	mismatch := hovel.PayloadQuery{
+		Kind:      string(hovel.PayloadKindPIC),
+		OS:        "linux",
+		Transport: tcpBind,
+	}
+
+	payloads, err := provider.ListPayloads(mismatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payloads) != 0 {
+		t.Fatalf("mismatched typed query returned payloads: %#v", payloads)
+	}
+
+	if _, err := provider.ResolvePayload(mismatch); err == nil {
+		t.Fatal("ResolvePayload accepted mismatched typed query")
+	}
+
+	matched, err := provider.ListPayloads(hovel.PayloadQuery{
+		Kind:      string(hovel.PayloadKindPE),
+		OS:        "windows",
+		Transport: tcpBind,
+		Format:    hovel.PayloadFormatPE,
+		Tags:      []string{"windows", "squatter"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matched) != 1 || matched[0].Transport.Kind != tcpBind {
+		t.Fatalf("matched typed query returned %#v", matched)
+	}
+}
+
 func TestProviderReportsStepContracts(t *testing.T) {
 	contracts, err := newProvider().DescribeSteps()
 	if err != nil {
