@@ -7,6 +7,7 @@ py_binary(
     srcs = [
         "check_site_links.py",
         "generate_sdk_api_docs.py",
+        "site_chrome.py",
         "stage_site.py",
     ],
     args = [

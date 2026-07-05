@@ -24,6 +24,7 @@ platforms
 profiles
 repo-tools
 sdk
+tools/testreport
 
 [exclude]
 modules/examples/bin

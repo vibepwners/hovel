@@ -18,6 +18,7 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--hovel-bin", required=True, type=Path)
     parser.add_argument("--agent-bin", required=True, type=Path)
+    parser.add_argument("--ui-catalog-bin", required=True, type=Path)
     parser.add_argument("--mock-survey-go", required=True, type=Path)
     parser.add_argument("--mock-exploit-session-go", required=True, type=Path)
     parser.add_argument("--chain-file", required=True, type=Path)
@@ -58,6 +59,7 @@ def main() -> int:
             "HOVEL_REPO_ROOT": str(repo),
             "HOVEL_DEMO_HOVEL_BIN": str(repo / "demo/tmp/hovel"),
             "HOVEL_DEMO_AGENT_BIN": str(repo / "demo/tmp/hovel-mock-agent"),
+            "HOVEL_DEMO_UI_BIN": str(repo / "demo/tmp/hovel-ui-catalog"),
             "PATH": tool_path(chrome_wrapper.parent, Path(vhs).parent, Path(ffmpeg).parent, Path(ttyd).parent),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
@@ -126,6 +128,7 @@ def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:
     install(args.duration_checker, repo / "tools/demo/check_gif_duration.py")
     install(args.hovel_bin, repo / "demo/tmp/hovel")
     install(args.agent_bin, repo / "demo/tmp/hovel-mock-agent")
+    install(args.ui_catalog_bin, repo / "demo/tmp/hovel-ui-catalog")
     install(args.mock_survey_go, repo / "modules/examples/bin/mock-survey-go")
     install(args.mock_exploit_session_go, repo / "modules/examples/bin/mock-exploit-session-go")
     write_module_config(

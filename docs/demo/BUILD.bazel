@@ -1,5 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_test")
-load(":demo_defs.bzl", "STANDARD_DEMOS", "demo_manifest", "vhs_demo_targets")
+load(":demo_defs.bzl", "STANDARD_DEMOS", "UI_COMPONENT_DEMOS", "demo_manifest", "vhs_demo_targets")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -18,10 +18,26 @@ filegroup(
 )
 
 filegroup(
+    name = "ui_component_gifs",
+    srcs = [":" + name + "_gif" for name, _ in UI_COMPONENT_DEMOS],
+    tags = ["manual"],
+)
+
+filegroup(
     name = "all_gifs",
     srcs = [
         ":squatter_wine_gif",
         ":standard_gifs",
+        ":ui_component_gifs",
+    ],
+    tags = ["manual"],
+)
+
+filegroup(
+    name = "docs_gifs",
+    srcs = [
+        ":standard_gifs",
+        ":ui_component_gifs",
     ],
     tags = ["manual"],
 )
@@ -37,8 +53,25 @@ demo_manifest(
 )
 
 demo_manifest(
+    name = "ui_component_gif_manifest",
+    outputs = ["demo/out/" + name + ".gif" for name, _ in UI_COMPONENT_DEMOS],
+)
+
+demo_manifest(
+    name = "docs_gif_manifest",
+    outputs = (
+        ["demo/out/" + name + ".gif" for name, _ in STANDARD_DEMOS] +
+        ["demo/out/" + name + ".gif" for name, _ in UI_COMPONENT_DEMOS]
+    ),
+)
+
+demo_manifest(
     name = "all_gif_manifest",
-    outputs = ["demo/out/" + name + ".gif" for name, _ in STANDARD_DEMOS] + ["demo/out/mcp-agent-02-squatter-wine.gif"],
+    outputs = (
+        ["demo/out/" + name + ".gif" for name, _ in STANDARD_DEMOS] +
+        ["demo/out/" + name + ".gif" for name, _ in UI_COMPONENT_DEMOS] +
+        ["demo/out/mcp-agent-02-squatter-wine.gif"]
+    ),
 )
 
 py_test(

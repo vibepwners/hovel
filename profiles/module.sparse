@@ -16,9 +16,12 @@ Taskfile.yml
 VERSION
 core
 docs
+modules/examples
 modules/picblobs
-modules/squatter/bazel
+modules/squatter
+modules/tools
 platforms
 profiles
 repo-tools
 sdk
+tools/testreport
