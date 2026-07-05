@@ -1,0 +1,329 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install Task + Python dev environment
+        run: |
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -b "$HOME/.local/bin" v3.51.1
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          source sourceme
+          echo "${GITHUB_WORKSPACE}/python/.venv/bin" >> "${GITHUB_PATH}"
+
+      - name: Install buildifier
+        run: |
+          BUILDIFIER_VERSION="7.3.1"
+          curl -fsSL \
+            "https://github.com/bazelbuild/buildtools/releases/download/v${BUILDIFIER_VERSION}/buildifier-linux-amd64" \
+            -o /tmp/buildifier
+          sudo install -m 0755 /tmp/buildifier /usr/local/bin/buildifier
+
+      - name: Validate lefthook config
+        run: lefthook validate
+
+      - name: Check formatting
+        run: task fmt:check
+
+      - name: Check lint
+        run: task lint:check
+
+  bazel-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      PICBLOBS_ALLOW_UNPINNED_TOOLCHAINS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Bazel
+        run: |
+          BAZEL_VERSION="$(cat .bazelversion)"
+          curl -fsSL \
+            "https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-linux-x86_64" \
+            -o /tmp/bazel
+          sudo install -m 0755 /tmp/bazel /usr/local/bin/bazel
+
+      - name: Install lint tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy clang-format cppcheck qemu-user-static
+          # buildifier formats the generated Bazel files; generate.py requires
+          # it so the freshness check matches the committed (formatted) tree.
+          BUILDIFIER_VERSION="7.3.1"
+          curl -fsSL \
+            "https://github.com/bazelbuild/buildtools/releases/download/v${BUILDIFIER_VERSION}/buildifier-linux-amd64" \
+            -o /tmp/buildifier
+          sudo install -m 0755 /tmp/buildifier /usr/local/bin/buildifier
+
+      - name: Install Task
+        run: |
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -b "$HOME/.local/bin" v3.51.1
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Check generated files are fresh
+        run: task bazel:generate-check
+
+      - name: Build all platforms with lint aspect
+        run: task bazel:build
+
+      - name: Run Bazel test suite
+        run: task bazel:test
+
+  stage-test-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      PICBLOBS_ALLOW_UNPINNED_TOOLCHAINS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install Bazel
+        run: |
+          BAZEL_VERSION="$(cat .bazelversion)"
+          curl -fsSL \
+            "https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-linux-x86_64" \
+            -o /tmp/bazel
+          sudo install -m 0755 /tmp/bazel /usr/local/bin/bazel
+
+      - name: Install Task + Python dev environment
+        run: |
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -b "$HOME/.local/bin" v3.51.1
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          source sourceme
+          echo "${GITHUB_WORKSPACE}/python/.venv/bin" >> "${GITHUB_PATH}"
+
+      - name: Stage test assets
+        run: task stage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staged-test-assets
+          compression-level: 0
+          if-no-files-found: error
+          path: |
+            python/picblobs/_blobs
+            python/picblobs/blobs
+            python/picblobs/manifest.json
+            python_cli/picblobs_cli/_runners
+            python_cli/picblobs_cli/_test_binaries
+
+  tests:
+    needs: stage-test-assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.12"
+          - "3.13"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: staged-test-assets
+          path: ${{ github.workspace }}
+
+      - name: Restore runner execute bits
+        run: find python_cli/picblobs_cli/_runners -type f -name runner -exec chmod +x {} +
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install runtime tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
+
+      - name: Install Task + Python dev environment
+        run: |
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -b "$HOME/.local/bin" v3.51.1
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          source sourceme
+          echo "${GITHUB_WORKSPACE}/python/.venv/bin" >> "${GITHUB_PATH}"
+
+      - name: Run full test suite
+        run: task test -- -q
+
+  verify-e2e:
+    needs: stage-test-assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      PICBLOBS_LOAD_MODE: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: staged-test-assets
+          path: ${{ github.workspace }}
+
+      - name: Restore runner execute bits
+        run: find python_cli/picblobs_cli/_runners -type f -name runner -exec chmod +x {} +
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install runtime tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
+
+      - name: Install Task + Python dev environment
+        run: |
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -b "$HOME/.local/bin" v3.51.1
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          source sourceme
+          echo "${GITHUB_WORKSPACE}/python/.venv/bin" >> "${GITHUB_PATH}"
+
+      - name: Run picblobs-cli verify
+        run: task verify
+
+  build-smoke:
+    needs: stage-test-assets
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      PICBLOBS_LOAD_MODE: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: staged-test-assets
+          path: ${{ github.workspace }}
+
+      - name: Restore runner execute bits
+        run: find python_cli/picblobs_cli/_runners -type f -name runner -exec chmod +x {} +
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install runtime tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
+
+      - name: Install Task + Python dev environment
+        run: |
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -b "$HOME/.local/bin" v3.51.1
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          source sourceme
+          echo "${GITHUB_WORKSPACE}/python/.venv/bin" >> "${GITHUB_PATH}"
+
+      - name: Run targeted execution smoke
+        run: |
+          PICBLOBS_TEST_OS=linux \
+          PICBLOBS_TEST_ARCH=x86_64 \
+          PICBLOBS_TEST_TYPE=hello \
+            python -m pytest python/tests/test_payload_hello.py -q
+          python -m picblobs_cli run hello linux:x86_64 | tee /tmp/picblobs-run.txt
+          grep -F "Hello, world!" /tmp/picblobs-run.txt
+
+      - name: Build distributions
+        run: task dist
+
+      - name: Smoke-install built wheels
+        run: |
+          python -m venv /tmp/picblobs-wheel-smoke
+          /tmp/picblobs-wheel-smoke/bin/python -m pip install --upgrade pip
+          /tmp/picblobs-wheel-smoke/bin/python -m pip install \
+            dist/picblobs/*.whl \
+            dist/picblobs-cli/*.whl
+          /tmp/picblobs-wheel-smoke/bin/picblobs-cli --help > /dev/null
+          /tmp/picblobs-wheel-smoke/bin/python - <<'PY'
+          from pathlib import Path
+          from picblobs import get_blob, list_blobs, wrap_elf
+          from picblobs.runner import find_runner
+          import picblobs_cli
+
+          assert list_blobs()
+          blob = get_blob("hello", "linux", "x86_64")
+          assert blob.code
+          assert wrap_elf(blob.code, "linux", "x86_64").startswith(b"\x7fELF")
+          try:
+              find_runner("linux", "x86_64")
+          except FileNotFoundError:
+              pass
+          else:
+              raise AssertionError("Linux runner should not be bundled")
+          runner = find_runner("windows", "x86_64")
+          assert runner.exists(), runner
+          assert picblobs_cli.ul_exec_test_binary("linux", "x86_64")
+          import picblobs
+          assert not (Path(picblobs.__file__).parent / "_test_binaries").exists()
+          print(picblobs_cli.__version__)
+          PY

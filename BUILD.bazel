@@ -33,6 +33,8 @@ filegroup(
         "//modules/examples/rust/mock_exploit:mock-exploit-rust",
         "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
         "//modules/examples/rust/mock_survey:mock-survey-rust",
+        "//modules/picblobs/provider:picblobs-provider",
+        "//modules/picblobs/python:picblobs",
         "//modules/squatter:build",
     ],
 )
@@ -61,6 +63,13 @@ test_suite(
         "//modules/tools:check_in_repo_modules_test",
         "//modules/tools:package_examples_test",
         "//modules/tools:workspace_module_install_test",
+    ],
+)
+
+test_suite(
+    name = "picblobs_test",
+    tests = [
+        "//modules/picblobs:bazel_test_suite",
     ],
 )
 

@@ -1,0 +1,52 @@
+"""Python package build targets."""
+
+load("@picblobs_pip//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "pyproject.toml",
+    "requirements.txt",
+])
+
+filegroup(
+    name = "package_dir",
+    srcs = glob(["**"]),
+)
+
+# --- Library ---
+
+py_library(
+    name = "picblobs",
+    srcs = glob(["picblobs/**/*.py"]),
+    imports = ["."],
+    deps = [],
+)
+
+# --- Tests ---
+
+py_test(
+    name = "pytest_suite",
+    size = "small",
+    srcs = glob(["tests/**/*.py"]),
+    data = [
+        ":package_dir",
+        "//modules/picblobs:root_metadata",
+        "//modules/picblobs/python_cli:package_files",
+        "//modules/picblobs/src/payload:hello",
+        "//modules/picblobs/tools:python_tools",
+    ],
+    imports = [
+        ".",
+        "..",
+        "../python_cli",
+    ],
+    main = "tests/bazel_pytest.py",
+    deps = [
+        ":picblobs",
+        requirement("click"),
+        requirement("pyelftools"),
+        requirement("pytest"),
+    ],
+)

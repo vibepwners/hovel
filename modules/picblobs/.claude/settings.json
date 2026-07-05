@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(task:*)",
+      "Bash(bazel build:*)",
+      "Bash(bazel test:*)",
+      "Bash(bazel query:*)",
+      "Bash(bazel cquery:*)",
+      "Bash(bazel run:*)",
+      "Bash(python tools/:*)",
+      "Bash(tools/run_tests.sh:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m picblobs:*)",
+      "Bash(python -m picblobs_cli:*)",
+      "Bash(pytest:*)",
+      "Bash(picblobs:*)",
+      "Bash(picblobs-cli:*)",
+      "Bash(tools/c_lint_check.sh:*)",
+      "Bash(tools/with_dev_python.sh:*)",
+      "Bash(tools/fmt_check.sh:*)",
+      "Bash(tools/lint_check.sh:*)",
+      "Bash(tools/generate_check.sh:*)",
+      "Bash(uv venv:*)",
+      "Bash(uv pip install:*)",
+      "Bash(lefthook:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git blame:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git rev-list:*)",
+      "Bash(git stash list:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git check-ignore:*)"
+    ],
+    "ask": [],
+    "deny": []
+  }
+}

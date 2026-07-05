@@ -1,0 +1,19 @@
+{
+    "config": {
+        "blob_role": {
+            "help": "Which blob to run: \"server\" or \"client\"",
+            "value": "\"server\""
+        }
+    },
+    "target_overrides": {
+        "*": {
+            "rtos.main-thread-stack-size": 32768,
+            "platform.stdio-baud-rate": 115200,
+            "platform.default-serial-baud-rate": 115200,
+            "nsapi.default-stack": "LWIP",
+            "lwip.ipv4-enabled": true,
+            "lwip.tcp-enabled": true,
+            "lwip.ethernet-enabled": true
+        }
+    }
+}

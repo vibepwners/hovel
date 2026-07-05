@@ -1,0 +1,53 @@
+"""FreeBSD test runner — syscall-translating loader.
+
+Patches FreeBSD syscall numbers to Linux equivalents at load time,
+then executes the blob under QEMU with real Linux syscalls.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//modules/picblobs/bazel:lint.bzl", "cppcheck_test")
+
+package(default_visibility = [
+    "//modules/picblobs/python:__subpackages__",
+    "//modules/picblobs/release:__pkg__",
+    "//modules/picblobs/tests:__subpackages__",
+])
+
+cc_library(
+    name = "runner_obj",
+    srcs = ["runner.c"] + glob(["start/*.h"]),
+    copts = [
+        "-iquote",
+        "tests/runners/freebsd",
+    ],
+    deps = [
+        "//modules/picblobs/src/include/picblobs:headers",
+    ],
+)
+
+genrule(
+    name = "runner",
+    srcs = [":runner_obj"],
+    outs = ["runner.bin"],
+    cmd = " ".join([
+        "$(CC)",
+        "-nostdlib",
+        "-nostartfiles",
+        "-static",
+        "-Wl,--gc-sections",
+        "-Wl,-e,_start",
+        "-Wl,--whole-archive",
+        "$(location :runner_obj)",
+        "-Wl,--no-whole-archive",
+        "-o $@",
+    ]),
+    executable = True,
+    toolchains = ["@rules_cc//cc:current_cc_toolchain"],
+)
+
+cppcheck_test(
+    name = "runner_cppcheck",
+    size = "small",
+    srcs = ["runner.c"],
+    include_dirs = ["src/include"],
+)

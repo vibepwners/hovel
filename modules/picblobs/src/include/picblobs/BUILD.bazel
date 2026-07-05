@@ -1,0 +1,14 @@
+"""Public headers for picblobs — shared by blobs and test runners."""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = [
+    "//modules/picblobs/src:__subpackages__",
+    "//modules/picblobs/tests:__subpackages__",
+])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["**/*.h"]),
+    strip_include_prefix = "//modules/picblobs/src/include",
+)

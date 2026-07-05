@@ -44,6 +44,7 @@ def main() -> int:
     copy_file(repo / "LICENSE", site / "LICENSE")
     copy_tree(source / "assets", site / "assets")
     copy_tree(source / "spec", site / "spec", ignore_names={"BUILD.bazel"})
+    copy_tree(source / "modules", site / "modules", ignore_names={"BUILD.bazel"})
     replace_version_tokens(site, (repo / "VERSION").read_text().strip())
     missing_demo_assets = copy_demo_outputs(repo, site)
     remove_missing_demo_figures(site, missing_demo_assets)
@@ -58,6 +59,7 @@ def main() -> int:
         rustdoc_bin=rustdoc_bin,
     )
     site_chrome.normalize_book_sidebars(site)
+    site_chrome.normalize_module_sidebars(site)
     site_chrome.normalize_top_navs(site)
     check_site_links.check_site(site)
     (site / ".nojekyll").touch()
@@ -106,6 +108,7 @@ def docs_fingerprint(repo: Path) -> str:
         "sdk/python/hovel_sdk/**/*.py",
         "sdk/rust/hovel/src/**/*.rs",
         "docs/site/spec/**/*.html",
+        "docs/site/modules/**/*",
         "docs/tools/docs/python_api/**/*",
         ".test-report/site/**/*",
     ):

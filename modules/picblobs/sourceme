@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Source this file to set up and enter the dev environment:
+#   source sourceme
+#
+# All setup logic lives in one place — `task setup` (see Taskfile.yml). This
+# script runs it, then activates the venv in your current shell (the one thing
+# a subprocess cannot do for you). Requires `task` and `uv` on PATH.
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "error: this script must be sourced, not executed" >&2
+  echo "  source sourceme" >&2
+  exit 1
+fi
+
+_picblobs_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if ! command -v task >/dev/null 2>&1; then
+  echo "error: 'task' not found. Install it: https://taskfile.dev/installation/" >&2
+  return 1
+fi
+
+# Create venv, install both packages editable, install git hooks.
+( cd "${_picblobs_root}" && task setup ) || return 1
+
+# Activate the venv in the current shell.
+# shellcheck disable=SC1091
+source "${_picblobs_root}/python/.venv/bin/activate" || return 1
+
+echo "==> Ready. Try: task --list"
+
+unset _picblobs_root

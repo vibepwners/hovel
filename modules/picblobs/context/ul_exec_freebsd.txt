@@ -1,0 +1,425 @@
+FreeBSD x86_64 Userland Exec
+============================
+
+This note is an addendum to `context/ul_exec.txt`.
+
+The original paper lays out the general userland-exec model clearly:
+
+1. clear the old image
+2. load the main ELF
+3. load the interpreter if PT_INTERP is present
+4. build a process-start stack
+5. jump to the interpreter or program entry
+
+What follows is a FreeBSD-specific technical note on making that model work
+reliably for amd64 binaries, especially dynamically linked ones. The emphasis
+here is on the details that determine whether the handoff into `ld-elf` works
+or fails.
+
+
+1. Scope
+--------
+
+These notes describe a working FreeBSD `ul_exec` path for `x86_64`.
+
+The underlying method is general, but the conclusions in this document should
+be treated as validated only for FreeBSD amd64 unless proven otherwise on real
+systems. In particular, the startup contract described below was derived and
+confirmed against the native FreeBSD amd64 runtime linker.
+
+This discussion assumes a true userland-exec implementation. Kernel-assisted
+fallbacks that amount to "execute the file some other way" are out of scope.
+
+
+2. High-Level Loader Model
+--------------------------
+
+The working design has six phases:
+
+0. move the loader and its configuration out of the way
+1. parse the embedded ELF image
+2. map the ELF PT_LOAD segments
+3. if PT_INTERP is present, load the runtime linker from disk
+4. build a synthetic initial stack
+5. transfer control to the interpreter entry or program entry
+
+The extra phase 0 is not in the original paper, but it is essential in a flat
+blob setting. If the loader is executing inside the same address space that it
+is about to repopulate, it must first relocate itself to a safe mapping.
+Otherwise, ET_EXEC targets and low fixed virtual addresses will overwrite the
+loader while it is still running.
+
+
+3. Loader Structure
+-------------------
+
+The implementation described here uses three logical pieces:
+
+- an entry stub that discovers the blob/config extent
+- a self-relocation phase that copies blob + config to a high anonymous
+  mapping
+- a second-phase loader that performs all ELF and stack work from the new
+  location
+
+The sequence is:
+
+1. compute total blob size, including variable-length configuration data
+2. allocate a high RWX mapping
+3. copy the loader and config there
+4. repair any in-blob relocation state that depends on the new base
+5. jump into the relocated loader logic
+
+Once running from the high mapping, the target program's preferred address
+range may be mapped without destroying the loader itself.
+
+
+4. ELF Loading Rules
+--------------------
+
+The actual ELF loading rules are conventional:
+
+- validate the ELF header and program-header table bounds
+- scan program headers for PT_LOAD and PT_INTERP
+- reserve and populate memory for each PT_LOAD segment
+- apply segment permissions from `p_flags`
+- derive the final entry point from `base + e_entry`
+
+Two ELF types matter:
+
+- `ET_EXEC`: the image expects fixed virtual addresses
+- `ET_DYN`: the image may be loaded at a kernel-chosen base
+
+For ET_EXEC images, it is often necessary to unmap the target virtual-address
+range before replacing it. This range should be derived from the PT_LOAD span,
+page-aligned, and unmapped explicitly before the replacement mappings are
+installed.
+
+For ET_DYN images, the loader can request an anonymous range and let the
+kernel choose the base.
+
+
+5. Interpreter Handling
+-----------------------
+
+For dynamically linked binaries, PT_INTERP is authoritative.
+
+The interpreter path should be obtained exactly as follows:
+
+1. locate the PT_INTERP program header
+2. verify that its `p_offset .. p_offset + p_filesz` range is within the
+   embedded ELF buffer
+3. treat that slice as a NUL-terminated path string
+4. open and read that file from the target filesystem
+5. load it as another ELF image using the same loader machinery
+
+The important rule is simple:
+
+- honor PT_INTERP exactly
+- do not hardcode `/libexec/ld-elf.so.1`
+
+In practice, a standard FreeBSD amd64 user binary such as `ls` uses the system
+runtime linker, so successful PT_INTERP handling leads to an entry point in
+`ld-elf`.
+
+
+6. Why Native FreeBSD Matters
+-----------------------------
+
+For simple syscall-driven payloads, emulation or syscall-shim runners can be
+useful. `ul_exec` is different.
+
+The point of `ul_exec` is not merely to issue the right syscalls. It is to
+recreate enough of the kernel's process-start contract that the real FreeBSD
+runtime linker accepts control and continues normal process startup.
+
+That means the meaningful correctness oracle is:
+
+- native execution on a real FreeBSD system
+- with a real dynamically linked FreeBSD binary
+- entering the real `ld-elf` path
+
+Any test environment that replaces that handoff with a fake loader or a
+behavioral shim is insufficient to prove the FreeBSD `ul_exec` path.
+
+
+7. Startup Stack Requirements on FreeBSD amd64
+----------------------------------------------
+
+The initial stack must be constructed explicitly. The working layout is:
+
+- argument strings
+- environment strings
+- `argc`
+- `argv[]`
+- terminating NULL
+- `envp[]`
+- terminating NULL
+- auxv entries
+- `AT_NULL`
+
+The pointer arrays reference the copied string storage in the same synthetic
+stack mapping.
+
+A fresh anonymous RW stack mapping is sufficient. The exact size is not
+special; a 2 MiB mapping was used successfully.
+
+
+8. FreeBSD amd64 Auxv Contract
+------------------------------
+
+The FreeBSD amd64 path that worked reliably used a minimal auxiliary vector.
+
+Required entries:
+
+- `AT_PHDR`
+- `AT_PHENT`
+- `AT_PHNUM`
+- `AT_PAGESZ`
+- `AT_BASE`
+- `AT_FLAGS`
+- `AT_ENTRY`
+- `AT_NULL`
+
+Semantics:
+
+- `AT_PHDR`: address of the main executable's program-header table in memory
+- `AT_PHENT`: size of a program-header entry
+- `AT_PHNUM`: number of program headers
+- `AT_PAGESZ`: system page size
+- `AT_BASE`: base address where the interpreter was loaded
+- `AT_FLAGS`: zero is sufficient here
+- `AT_ENTRY`: entry address of the main executable
+
+What did not prove necessary here were the Linux-oriented extras often seen in
+other startup environments, such as:
+
+- `AT_RANDOM`
+- `AT_UID`
+- `AT_EUID`
+- `AT_GID`
+- `AT_EGID`
+- `AT_SECURE`
+- `AT_HWCAP`
+- `AT_CLKTCK`
+
+The practical lesson is not that FreeBSD can never use more auxv entries. The
+lesson is that a Linux-style auxv should not be copied into the FreeBSD path
+blindly. A minimal, correct FreeBSD-specific auxv is easier to reason about
+and was sufficient for successful handoff.
+
+
+9. Stack Alignment on FreeBSD amd64
+-----------------------------------
+
+One detail that matters is the final stack-pointer alignment at entry.
+
+The working FreeBSD amd64 contract used:
+
+- `%rsp % 16 == 8` at entry
+
+In practical terms:
+
+1. align the allocation point to pointer size
+2. reserve space for `argc`, pointer arrays, and auxv
+3. then adjust so that the final `%rsp` satisfies the amd64 startup
+   convention above
+
+This is not the same as simply aligning `%rsp` to 16 bytes and jumping.
+
+
+10. Register State at Handoff
+-----------------------------
+
+On FreeBSD amd64, the stack alone is not sufficient. The runtime linker also
+expects the initial stack pointer to be reflected in register state.
+
+The working handoff contract is:
+
+- `%rsp = sp`
+- `%rdi = sp`
+- `%rdx = 0`
+- `%rax = 0`
+- jump to the selected entry point
+
+The selected entry point is:
+
+- interpreter entry if PT_INTERP is present
+- otherwise the main executable entry
+
+For dynamically linked binaries, this means control transfers to the runtime
+linker, not directly to the program's `e_entry`.
+
+
+11. The Critical Failure Mode
+-----------------------------
+
+The most important failure encountered during development looked like this:
+
+- the main ELF mapped successfully
+- the interpreter mapped successfully
+- the synthetic stack was built
+- control transfer occurred
+- the process crashed immediately
+
+The decisive clue was that the crash often looked like:
+
+- instruction pointer equal to, or extremely close to, the synthetic stack
+  pointer
+
+That symptom strongly suggests that the final jump target is being corrupted
+and execution is branching into the stack instead of the interpreter.
+
+
+12. Root Cause: x86_64 Trampoline Register Hazard
+-------------------------------------------------
+
+The final obstacle was not ELF loading and not the auxv format. It was the
+x86_64 handoff trampoline.
+
+The buggy form used ordinary `"r"` constraints for both:
+
+- `entry`
+- `sp`
+
+That allows the compiler to choose registers freely. In that setup it is
+possible for the generated code to create an ordering hazard where updating
+`%rsp` destroys the effective jump target before the branch occurs.
+
+That is exactly what happened.
+
+The correct fix is to move both values into fixed scratch registers before
+touching `%rsp`.
+
+The working sequence is:
+
+    mov entry, %r11
+    mov sp,    %r10
+    mov %r10,  %rdi
+    mov %r10,  %rsp
+    xor %rdx,  %rdx
+    xor %rax,  %rax
+    jmp *%r11
+
+The critical property is:
+
+- the branch target is preserved in `%r11`
+- the new stack pointer is preserved in `%r10`
+- `%rsp` is not updated until both have been secured
+
+This exact class of bug is easy to miss because the source-level asm appears
+reasonable while the compiler still retains freedom to choose operand
+registers.
+
+
+13. Why the Stack Work Still Mattered
+-------------------------------------
+
+Although the final hard failure was the trampoline bug, the stack and auxv
+investigation was still necessary.
+
+Without the correct FreeBSD-specific startup contract:
+
+- the handoff into `ld-elf` is harder to reason about
+- the loader may fail in less obvious ways
+- Linux-specific startup assumptions contaminate the FreeBSD path
+
+The practical result of that work was:
+
+- use a minimal FreeBSD auxv
+- align the stack the way FreeBSD amd64 expects
+- pass the stack pointer in `%rdi` as well as `%rsp`
+
+
+14. Validation Strategy
+-----------------------
+
+The correct validation target is a native FreeBSD amd64 system.
+
+A useful validation recipe is:
+
+1. choose a real dynamically linked FreeBSD binary, for example `ls`
+2. embed that ELF image into the userland-exec blob
+3. provide a simple argv such as `["ls"]`
+4. execute the flat blob through a minimal runner that maps the blob and
+   transfers control to it
+5. verify both observable program output and exit status
+
+The important point is that success should be defined by normal user-visible
+behavior of the embedded program, not merely by the absence of a crash.
+
+A successful `ls` run should:
+
+- produce a normal directory listing
+- return exit status `0`
+
+That is a materially stronger signal than a synthetic smoke test.
+
+
+15. Practical Sanity Checks
+---------------------------
+
+Before debugging `ul_exec`, verify a simpler FreeBSD payload first.
+
+For example, a raw-syscall `hello` payload should run correctly on real
+FreeBSD. If a purported FreeBSD payload instead behaves like a Linux payload,
+the build path is selecting the wrong OS and any subsequent `ul_exec`
+debugging is invalid.
+
+For `ul_exec` itself, useful logging points are:
+
+- loaded main-ELF base
+- main-ELF entry
+- interpreter base
+- interpreter entry
+- each auxv pair written
+- final synthetic stack pointer
+- final jump target
+
+Those values are enough to distinguish:
+
+- ELF-loading failures
+- PT_INTERP parsing failures
+- stack-construction failures
+- final control-transfer failures
+
+
+16. Reimplementation Checklist
+------------------------------
+
+To reproduce the working FreeBSD amd64 design:
+
+1. relocate the loader and its config to a safe high mapping before loading
+   the target
+2. validate the embedded ELF and program-header table
+3. honor PT_INTERP and load the interpreter named there
+4. map PT_LOAD segments correctly for ET_EXEC and ET_DYN
+5. build a fresh synthetic stack containing:
+   - `argc`
+   - `argv[]`
+   - NULL
+   - `envp[]`
+   - NULL
+   - minimal FreeBSD auxv
+6. set the final stack so that `%rsp % 16 == 8`
+7. transfer control with:
+   - `%rsp = sp`
+   - `%rdi = sp`
+   - `%rdx = 0`
+   - `%rax = 0`
+8. on x86_64, preserve `entry` and `sp` in fixed scratch registers before
+   updating `%rsp`
+9. validate on a real FreeBSD system using a real dynamically linked binary
+
+
+17. Final Observation
+---------------------
+
+The main challenge was not segment mapping. It was reproducing the process
+startup contract closely enough that the real FreeBSD amd64 runtime linker
+accepted control, and then ensuring that the final x86_64 handoff trampoline
+did not destroy its own jump target.
+
+Once the stack contract was correct and the trampoline preserved the entry
+address properly, a dynamically linked FreeBSD binary such as `ls` executed
+normally under a true userland-exec path, without `execve()` and without any
+fallback that undermined the point of the exercise.

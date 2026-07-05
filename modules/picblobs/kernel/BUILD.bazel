@@ -1,0 +1,161 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+# Kernel module VM tests — hermetic QEMU-based testing
+#
+# Usage:
+#   bazel test //modules/picblobs/kernel:ubuntu_suite
+#   bazel test //modules/picblobs/kernel:kshell_ubuntu
+
+_DATA = glob([
+    "**/*.py",
+    "**/*.c",
+    "**/*.h",
+    "**/*.S",
+    "**/Makefile",
+])
+
+_TAGS = [
+    "manual",
+    "exclusive",
+    "no-sandbox",
+]
+
+# --- Ubuntu 24.04 ---
+
+sh_test(
+    name = "kmod_build_ubuntu",
+    size = "enormous",
+    timeout = "eternal",
+    srcs = ["run_vm_test.sh"],
+    args = [
+        "kmod-build",
+        "ubuntu",
+        "600",
+    ],
+    data = _DATA,
+    tags = _TAGS,
+)
+
+sh_test(
+    name = "kmod_nopanic_ubuntu",
+    size = "enormous",
+    timeout = "eternal",
+    srcs = ["run_vm_test.sh"],
+    args = [
+        "kmod-nopanic",
+        "ubuntu",
+        "600",
+    ],
+    data = _DATA,
+    tags = _TAGS,
+)
+
+sh_test(
+    name = "kshell_ubuntu",
+    size = "enormous",
+    timeout = "eternal",
+    srcs = ["run_vm_test.sh"],
+    args = [
+        "kshell",
+        "ubuntu",
+        "600",
+    ],
+    data = _DATA,
+    tags = _TAGS,
+)
+
+sh_test(
+    name = "kshell_nacl_ubuntu",
+    size = "enormous",
+    timeout = "eternal",
+    srcs = ["run_vm_test.sh"],
+    args = [
+        "kshell-nacl",
+        "ubuntu",
+        "900",
+    ],
+    data = _DATA,
+    tags = _TAGS,
+)
+
+sh_test(
+    name = "kshell_ff_ubuntu",
+    size = "enormous",
+    timeout = "eternal",
+    srcs = ["run_vm_test.sh"],
+    args = [
+        "kshell-ff",
+        "ubuntu",
+        "600",
+    ],
+    data = _DATA,
+    tags = _TAGS,
+)
+
+sh_test(
+    name = "kshell_upload_ubuntu",
+    size = "enormous",
+    timeout = "eternal",
+    srcs = ["run_vm_test.sh"],
+    args = [
+        "kshell-upload",
+        "ubuntu",
+        "600",
+    ],
+    data = _DATA,
+    tags = _TAGS,
+)
+
+sh_test(
+    name = "examples_build_ubuntu",
+    size = "enormous",
+    timeout = "eternal",
+    srcs = ["run_vm_test.sh"],
+    args = [
+        "examples-build",
+        "ubuntu",
+        "600",
+    ],
+    data = _DATA,
+    tags = _TAGS,
+)
+
+# --- Alpine 3.21 ---
+
+sh_test(
+    name = "kmod_build_alpine",
+    size = "enormous",
+    timeout = "eternal",
+    srcs = ["run_vm_test.sh"],
+    args = [
+        "kmod-build",
+        "alpine",
+        "300",
+    ],
+    data = _DATA,
+    tags = _TAGS,
+)
+
+# --- Suites ---
+
+test_suite(
+    name = "ubuntu_suite",
+    tags = ["manual"],
+    tests = [
+        ":examples_build_ubuntu",
+        ":kmod_build_ubuntu",
+        ":kmod_nopanic_ubuntu",
+        ":kshell_ff_ubuntu",
+        ":kshell_nacl_ubuntu",
+        ":kshell_ubuntu",
+        ":kshell_upload_ubuntu",
+    ],
+)
+
+test_suite(
+    name = "alpine_suite",
+    tags = ["manual"],
+    tests = [
+        ":kmod_build_alpine",
+    ],
+)

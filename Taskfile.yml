@@ -35,6 +35,7 @@ vars:
         "") echo "" ;;
         *) echo "unknown Bazel config mode in $config_file: $mode" >&2; exit 2 ;;
       esac
+  PICBLOBS_BUILDIFIER_VERSION: '7.3.1'
 
 tasks:
   default:
@@ -206,6 +207,7 @@ tasks:
             --output=.test-report/site
             --bep=.test-report/bep/core.json
             --bep=.test-report/bep/root.json
+            --bep=.test-report/bep/picblobs.json
             --scan-testlogs=core/bazel-testlogs
             --scan-testlogs=bazel-testlogs
 
@@ -217,6 +219,7 @@ tasks:
         status=0
         task core:test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=../.test-report/bep/core.json //:test //:race_test //:fuzz_smoke_test || status=$?
         task bazel:test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=.test-report/bep/root.json //:sdk_test //:modules_test //:module_examples_test //:docs_test || status=$?
+        task picblobs:bazel-test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=.test-report/bep/picblobs.json || status=$?
         task report:generate || status=$?
         exit "$status"
 
@@ -336,11 +339,153 @@ tasks:
       - task: sdk:test
 
   modules:build:
-    desc: Build example and Squatter module targets.
+    desc: Build module targets that do not require dedicated platform configs.
     cmds:
       - task: bazel:build
         vars:
           CLI_ARGS: //:modules_build
+
+  picblobs:setup:
+    desc: Create the picblobs dev venv and install its Python packages.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - |
+        if command -v uv >/dev/null 2>&1; then
+          uv venv python/.venv
+          uv pip install --python python/.venv/bin/python -e 'python[dev]'
+          uv pip install --python python/.venv/bin/python -e python_cli
+        else
+          python3 -m venv python/.venv
+          python/.venv/bin/python -m pip install --upgrade pip
+          python/.venv/bin/python -m pip install -e 'python[dev]'
+          python/.venv/bin/python -m pip install -e python_cli
+        fi
+      - |
+        if ! command -v buildifier >/dev/null 2>&1 && [ ! -x "python/.venv/bin/buildifier" ]; then
+          os=$(uname -s | tr '[:upper:]' '[:lower:]')
+          arch=$(uname -m)
+          case "$arch" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
+          curl -fsSL "https://github.com/bazelbuild/buildtools/releases/download/v{{.PICBLOBS_BUILDIFIER_VERSION}}/buildifier-${os}-${arch}" -o "python/.venv/bin/buildifier"
+          chmod +x "python/.venv/bin/buildifier"
+        fi
+
+  picblobs:fmt:
+    desc: Format picblobs C, Python, and Bazel files.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - tools/with_dev_python.sh python tools/fmt.py {{.CLI_ARGS}}
+
+  picblobs:fmt-check:
+    desc: Check picblobs formatting without modifying files.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - tools/with_dev_python.sh python tools/fmt.py --check
+
+  picblobs:lint:
+    desc: Run picblobs Python and Bazel lint checks.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - tools/with_dev_python.sh python tools/lint.py {{.CLI_ARGS}}
+
+  picblobs:lint-check:
+    desc: Run picblobs lint checks in CI/check mode.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    env:
+      PICBLOBS_REQUIRE_LINT_TOOLS: '1'
+    cmds:
+      - tools/with_dev_python.sh python tools/lint.py --check
+
+  picblobs:generate:
+    desc: Regenerate picblobs derived files from the registry.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - tools/with_dev_python.sh python tools/generate.py
+
+  picblobs:generate-check:
+    desc: Verify picblobs generated files are fresh.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - tools/with_dev_python.sh python tools/generate.py --check
+
+  picblobs:bazel-build:
+    desc: Build representative picblobs Bazel targets across platform configs.
+    cmds:
+      - task: bazel:build
+        vars:
+          CLI_ARGS: //modules/picblobs/provider:picblobs-provider
+      - task: bazel:build
+        vars:
+          CLI_ARGS: >-
+            --config=picblobs_ci --config=linux_x86_64 --
+            //modules/picblobs/src/...
+            //modules/picblobs/tests/runners/linux/...
+            -//modules/picblobs/tests/runners/linux:runner_cppcheck
+      - task: bazel:build
+        vars:
+          CLI_ARGS: --config=picblobs_ci --config=linux_aarch64 //modules/picblobs/src/...
+      - task: bazel:build
+        vars:
+          CLI_ARGS: --config=picblobs_ci --config=windows_x86_64 //modules/picblobs/src/payload:hello_windows
+      - task: bazel:build
+        vars:
+          CLI_ARGS: --config=picblobs_ci --config=freebsd_x86_64 //modules/picblobs/src/payload:hello
+
+  picblobs:bazel-test:
+    desc: Run picblobs Bazel tests.
+    cmds:
+      - task: bazel:test
+        vars:
+          CLI_ARGS: --config=picblobs_ci {{.CLI_ARGS}} //modules/picblobs:bazel_test_suite
+
+  picblobs:stage:
+    desc: Build and stage picblobs blobs, runners, and verifier fixtures.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - modules/picblobs/tools/with_dev_python.sh python tools/stage_blobs.py {{.CLI_ARGS}}
+
+  picblobs:provider-stage:
+    desc: Build and stage the Hovel picblobs payload-provider binary.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - modules/picblobs/tools/stage_hovel_provider.sh
+
+  picblobs:test:
+    desc: Run the picblobs Python and CLI test suites.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - tools/run_tests.sh {{.CLI_ARGS}}
+
+  picblobs:dist:
+    desc: Build and validate picblobs and picblobs-cli distributions.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - rm -rf dist/picblobs dist/picblobs-cli
+      - |
+        if command -v uv >/dev/null 2>&1; then
+          uv build python --wheel --sdist --out-dir dist/picblobs
+        else
+          python/.venv/bin/python -m build python --wheel --sdist --outdir dist/picblobs
+        fi
+      - tools/with_dev_python.sh python tools/check_dist.py picblobs --dist-dir dist/picblobs
+      - tools/with_dev_python.sh python -m twine check dist/picblobs/*
+      - |
+        if command -v uv >/dev/null 2>&1; then
+          uv build python_cli --wheel --sdist --out-dir dist/picblobs-cli
+        else
+          python/.venv/bin/python -m build python_cli --wheel --sdist --outdir dist/picblobs-cli
+        fi
+      - tools/with_dev_python.sh python tools/check_dist.py picblobs-cli --dist-dir dist/picblobs-cli
+      - tools/with_dev_python.sh python -m twine check dist/picblobs-cli/*
+
+  picblobs:ci:
+    desc: Run the picblobs module CI gate.
+    cmds:
+      - task: picblobs:setup
+      - task: picblobs:generate-check
+      - task: picblobs:fmt-check
+      - task: picblobs:lint-check
+      - task: picblobs:bazel-build
+      - task: picblobs:bazel-test
 
   modules:examples:build:
     desc: Build Go, Python, and Rust example module targets.
@@ -381,6 +526,7 @@ tasks:
     cmds:
       - task: modules:build
       - task: modules:test
+      - task: picblobs:ci
 
   docs:build:
     desc: Build the docs site staging tool.

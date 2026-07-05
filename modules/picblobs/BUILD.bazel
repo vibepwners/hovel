@@ -1,0 +1,63 @@
+# picblobs — position-independent code blob library
+#
+# Build all blobs:     bazel build //modules/picblobs/src/payload:all
+# Lint C code:         bazel build --config=picblobs_lint //modules/picblobs/src/... //modules/picblobs/tests/...
+# Check formatting:    bazel test //modules/picblobs/tools:format_check
+# Check codegen:       bazel test //modules/picblobs/tools:generate_check
+# Run all checks:      bazel test //modules/picblobs/tools:all --config=picblobs_lint
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    ".clang-tidy",
+    ".clang-format",
+])
+
+filegroup(
+    name = "root_metadata",
+    srcs = [
+        ".bazelrc",
+        ".clang-format",
+        ".clang-tidy",
+        "BUILD.bazel",
+        "MODULE.bazel",
+        "README.md",
+        "Taskfile.yml",
+        "lefthook.yml",
+        "sourceme",
+    ],
+)
+
+test_suite(
+    name = "bazel_test_suite",
+    tests = [
+        "//modules/picblobs/provider:provider_test",
+        "//modules/picblobs/python:pytest_suite",
+        "//modules/picblobs/python_cli:pytest_suite",
+        "//modules/picblobs/tests:nacl_suite",
+        "//modules/picblobs/tests/runners/freebsd:runner_cppcheck",
+        "//modules/picblobs/tests/runners/linux:runner_cppcheck",
+        "//modules/picblobs/tests/runners/windows:runner_cppcheck",
+        "//modules/picblobs/tools:format_check",
+        "//modules/picblobs/tools:generate_check",
+        "//modules/picblobs/tools:lint_check",
+    ],
+)
+
+test_suite(
+    name = "kernel_vm_test_suite",
+    tags = ["manual"],
+    tests = [
+        "//modules/picblobs/kernel:alpine_suite",
+        "//modules/picblobs/kernel:ubuntu_suite",
+    ],
+)
+
+test_suite(
+    name = "all_bazel_tests",
+    tags = ["manual"],
+    tests = [
+        ":bazel_test_suite",
+        ":kernel_vm_test_suite",
+    ],
+)

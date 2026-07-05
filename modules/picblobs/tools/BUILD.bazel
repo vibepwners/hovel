@@ -1,0 +1,32 @@
+"""Build tools — formatting, linting."""
+
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "python_tools",
+    srcs = glob(["*.py"]) + ["lizard_baseline.txt"],
+)
+
+sh_test(
+    name = "format_check",
+    srcs = ["fmt_check.sh"],
+    local = True,
+    tags = ["lint"],
+)
+
+sh_test(
+    name = "generate_check",
+    srcs = ["generate_check.sh"],
+    local = True,
+    tags = ["lint"],
+)
+
+sh_test(
+    name = "lint_check",
+    srcs = ["lint_check.sh"],
+    data = [":python_tools"],
+    local = True,
+    tags = ["lint"],
+)

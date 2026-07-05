@@ -1,0 +1,466 @@
+# picblobs Specification Graph
+# Generated: 2026-03-21
+# SGM Conformance Level: 1 (Minimal SGM)
+#
+# Note: implemented_by edges are intentionally absent — they will be
+# populated as implementation artifacts are created.
+
+# ============================================================
+# Vision Artifacts
+# ============================================================
+
+VIS-001:
+  type: vision
+  title: Product Vision
+  file: vision/VIS-001-product-vision.md
+
+VIS-002:
+  type: vision
+  title: Scope and Non-Goals
+  file: vision/VIS-002-scope-and-non-goals.md
+  refines: [VIS-001]
+
+# ============================================================
+# Requirement Artifacts
+# ============================================================
+
+REQ-001:
+  type: requirement
+  title: Single Syscall Assembly Primitive Per Architecture
+  file: requirements/REQ-001-syscall-assembly-primitive.md
+  derives_from: [VIS-001]
+  decided_by: [ADR-006]
+  verified_by: [TEST-002]
+
+REQ-002:
+  type: requirement
+  title: Complete Linux Syscall Header and Source Coverage
+  file: requirements/REQ-002-linux-syscall-coverage.md
+  derives_from: [VIS-001, REQ-001]
+  decided_by: [ADR-006]
+  modeled_by: [MOD-004]
+  verified_by: [TEST-002]
+
+REQ-003:
+  type: requirement
+  title: Complete FreeBSD Syscall Header and Source Coverage
+  file: requirements/REQ-003-freebsd-syscall-coverage.md
+  derives_from: [VIS-001, REQ-001]
+  decided_by: [ADR-006]
+  modeled_by: [MOD-004]
+  verified_by: [TEST-002]
+
+REQ-004:
+  type: requirement
+  title: Per-Architecture Syscall Number Tables
+  file: requirements/REQ-004-syscall-number-tables.md
+  derives_from: [REQ-002, REQ-003]
+  decided_by: [ADR-022]
+  verified_by: [TEST-002]
+
+REQ-005:
+  type: requirement
+  title: Windows PEB/TEB Walk for API Resolution
+  file: requirements/REQ-005-peb-teb-walk.md
+  derives_from: [VIS-001]
+  decided_by: [ADR-005]
+  modeled_by: [MOD-005]
+  verified_by: [TEST-003]
+
+REQ-006:
+  type: requirement
+  title: DJB2 Hash-Based Function Name Resolution
+  file: requirements/REQ-006-djb2-function-resolution.md
+  derives_from: [REQ-005]
+  decided_by: [ADR-005]
+  verified_by: [TEST-003]
+
+REQ-007:
+  type: requirement
+  title: Alloc-and-Jump Blob
+  file: requirements/REQ-007-alloc-jump-blob.md
+  derives_from: [VIS-001]
+  decided_by: [ADR-006, ADR-013, ADR-014, ADR-015]
+  modeled_by: [SEQ-001]
+  verified_by: [TEST-004]
+
+REQ-008:
+  type: requirement
+  title: Reflective ELF Loader Blob
+  file: requirements/REQ-008-reflective-elf-loader.md
+  derives_from: [VIS-001]
+  decided_by: [ADR-006, ADR-012, ADR-013, ADR-014, ADR-015]
+  modeled_by: [SEQ-002]
+  verified_by: [TEST-005]
+
+REQ-009:
+  type: requirement
+  title: Reflective PE Loader Blob
+  file: requirements/REQ-009-reflective-pe-loader.md
+  derives_from: [VIS-001, REQ-005, REQ-006]
+  decided_by: [ADR-005, ADR-006, ADR-012, ADR-013, ADR-014]
+  modeled_by: [SEQ-002]
+  verified_by: [TEST-005]
+
+REQ-010:
+  type: requirement
+  title: Bootstrap Stager Blob
+  file: requirements/REQ-010-bootstrap-stager.md
+  derives_from: [VIS-001]
+  decided_by: [ADR-013, ADR-014, ADR-015]
+  modeled_by: [SEQ-003]
+  verified_by: [TEST-006]
+
+REQ-011:
+  type: requirement
+  title: Bazel Cross-Compilation with Bootlin Toolchains
+  file: requirements/REQ-011-bazel-cross-compilation.md
+  derives_from: [VIS-001]
+  decided_by: [ADR-001, ADR-002, ADR-011]
+  verified_by: [TEST-001]
+
+REQ-012:
+  type: requirement
+  title: Custom Linker Script for Blob Binary Layout
+  file: requirements/REQ-012-linker-scripts.md
+  derives_from: [VIS-001]
+  decided_by: [ADR-003]
+  modeled_by: [MOD-003]
+  verified_by: [TEST-001, TEST-009]
+
+REQ-013:
+  type: requirement
+  title: ELF-to-Blob Extraction via pyelftools
+  file: requirements/REQ-013-elf-extraction.md
+  derives_from: [REQ-012]
+  decided_by: [ADR-018]
+  verified_by: [TEST-001]
+
+REQ-014:
+  type: requirement
+  title: Config Struct Definition and Python Codegen
+  file: requirements/REQ-014-config-struct-codegen.md
+  derives_from: [VIS-001]
+  decided_by: [ADR-004, ADR-009]
+  modeled_by: [MOD-003]
+  verified_by: [TEST-007]
+
+REQ-015:
+  type: requirement
+  title: Python Builder-Pattern API
+  file: requirements/REQ-015-python-builder-api.md
+  derives_from: [VIS-001]
+  verified_by: [TEST-008]
+
+REQ-016:
+  type: requirement
+  title: Blob Metadata and Introspection API
+  file: requirements/REQ-016-blob-metadata.md
+  derives_from: [VIS-001]
+  verified_by: [TEST-008]
+
+REQ-017:
+  type: requirement
+  title: Python Wheel Packaging with uv
+  file: requirements/REQ-017-wheel-packaging.md
+  derives_from: [VIS-001]
+  decided_by: [ADR-008]
+  verified_by: [TEST-008]
+
+REQ-018:
+  type: requirement
+  title: Target Architecture and OS Support Matrix
+  file: requirements/REQ-018-architecture-matrix.md
+  derives_from: [VIS-001, VIS-002]
+  verified_by: [TEST-001, TEST-008]
+
+REQ-019:
+  type: requirement
+  title: Debug Build Variant and Developer Tooling
+  file: requirements/REQ-019-debug-build-and-tooling.md
+  derives_from: [VIS-001, REQ-011]
+  decided_by: [ADR-024]
+  verified_by: [TEST-010]
+
+# ============================================================
+# Decision Artifacts
+# ============================================================
+
+ADR-001:
+  type: decision
+  title: Use GCC Linux Cross-Compilers for All Target Platforms
+  file: decisions/ADR-001-gcc-linux-toolchains-for-all-targets.md
+  related_to: [REQ-011]
+
+ADR-002:
+  type: decision
+  title: Bazel with Bootlin Toolchains for Build System
+  file: decisions/ADR-002-bazel-bootlin-toolchains.md
+  related_to: [REQ-011]
+
+ADR-003:
+  type: decision
+  title: Custom Linker Scripts for Blob Binary Layout
+  file: decisions/ADR-003-custom-linker-scripts.md
+  related_to: [REQ-012]
+
+ADR-004:
+  type: decision
+  title: C Headers as Single Source of Truth for Config Structs
+  file: decisions/ADR-004-c-header-config-source-of-truth.md
+  related_to: [REQ-014]
+
+ADR-005:
+  type: decision
+  title: DJB2 Hash for Windows API Function Resolution
+  file: decisions/ADR-005-djb2-hash-for-windows-resolution.md
+  related_to: [REQ-005, REQ-006]
+
+ADR-006:
+  type: decision
+  title: Single Syscall Assembly Primitive Per Architecture
+  file: decisions/ADR-006-single-syscall-assembly-primitive.md
+  related_to: [REQ-001, REQ-002, REQ-003]
+
+ADR-007:
+  type: decision
+  title: pyelftools for ELF-to-Blob Extraction
+  file: decisions/ADR-007-pyelftools-extraction.md
+  related_to: [REQ-013]
+  superseded_by: [ADR-018]
+
+ADR-008:
+  type: decision
+  title: uv for Python Project Management and Packaging
+  file: decisions/ADR-008-uv-python-packaging.md
+  related_to: [REQ-017]
+
+ADR-009:
+  type: decision
+  title: Native-Endian Config Structs with Per-Target Serialization
+  file: decisions/ADR-009-config-struct-endianness.md
+  related_to: [REQ-014, REQ-015]
+
+ADR-010:
+  type: decision
+  title: QEMU User-Static Testing with FreeBSD Shim and Windows Mock
+  file: decisions/ADR-010-testing-infrastructure-strategy.md
+  related_to: [REQ-001, REQ-002, REQ-003, REQ-005, REQ-006, REQ-007, REQ-008, REQ-009, REQ-010, REQ-018]
+
+ADR-011:
+  type: decision
+  title: Build Pipeline Security and Toolchain Provenance
+  file: decisions/ADR-011-build-pipeline-security.md
+  related_to: [REQ-011, REQ-013, REQ-017, ADR-002]
+
+ADR-012:
+  type: decision
+  title: Reflective Loader Feature Scope — All Major ELF and PE Features in v1
+  file: decisions/ADR-012-reflective-loader-feature-scope.md
+  related_to: [REQ-008, REQ-009]
+
+ADR-013:
+  type: decision
+  title: Runtime Error Handling — Exit Process with Error Code
+  file: decisions/ADR-013-runtime-error-handling.md
+  related_to: [REQ-007, REQ-008, REQ-009, REQ-010]
+
+ADR-014:
+  type: decision
+  title: Blob Execution Model — One-Shot, No Reuse Guarantees
+  file: decisions/ADR-014-blob-execution-model.md
+  related_to: [REQ-007, REQ-008, REQ-009, REQ-010]
+
+ADR-015:
+  type: decision
+  title: Instruction Cache Flush via Syscall
+  file: decisions/ADR-015-icache-flush-via-syscall.md
+  related_to: [REQ-007, REQ-008, REQ-010]
+
+ADR-016:
+  type: decision
+  title: Bazel 9 with bzlmod and Module Extensions for Project Structure
+  file: decisions/ADR-016-bazel-9-bzlmod-project-structure.md
+  related_to: [REQ-011, ADR-002]
+
+ADR-017:
+  type: decision
+  title: clang-tidy and cppcheck for C Linting and Static Analysis
+  file: decisions/ADR-017-c-linting-and-static-analysis.md
+  related_to: [REQ-011]
+
+ADR-018:
+  type: decision
+  title: Ship .so Files in Wheel with Runtime pyelftools Extraction
+  file: decisions/ADR-018-so-shipping-runtime-extraction.md
+  supersedes: [ADR-007]
+  related_to: [REQ-013]
+
+ADR-019:
+  type: decision
+  title: CLI Runner and Debug Facility
+  file: decisions/ADR-019-runner-debug-facility.md
+  related_to: [REQ-011, ADR-010, ADR-018]
+
+ADR-020:
+  type: decision
+  title: MIPS GOT Self-Relocation via Trampoline
+  file: decisions/ADR-020-mips-self-relocation.md
+  related_to: [REQ-001, REQ-004]
+
+ADR-021:
+  type: decision
+  title: Embedded Cross-Compiled Test Runners
+  file: decisions/ADR-021-embedded-cross-compiled-runners.md
+  related_to: [ADR-010, ADR-019]
+
+ADR-022:
+  type: decision
+  title: Registry-Driven Code Generation
+  file: decisions/ADR-022-registry-driven-code-generation.md
+  related_to: [REQ-001, REQ-002, REQ-004, REQ-011, ADR-004]
+
+ADR-023:
+  type: decision
+  title: s390x Architecture Addition
+  file: decisions/ADR-023-s390x-architecture.md
+  related_to: [REQ-001, REQ-018, ADR-002]
+
+ADR-024:
+  type: decision
+  title: Debug Build Variant and Developer Tooling Strategy
+  file: decisions/ADR-024-debug-build-variant.md
+  related_to: [REQ-019, REQ-011, ADR-019]
+
+# ============================================================
+# Design Model Artifacts
+# ============================================================
+
+MOD-001:
+  type: model
+  title: System Context
+  file: models/MOD-001-system-context.md
+
+MOD-002:
+  type: model
+  title: Build Pipeline
+  file: models/MOD-002-build-pipeline.md
+  related_to: [REQ-011, REQ-012, REQ-013, REQ-014, REQ-017]
+
+MOD-003:
+  type: model
+  title: Blob Binary Layout
+  file: models/MOD-003-blob-binary-layout.md
+  related_to: [REQ-012, REQ-013, REQ-014]
+
+MOD-004:
+  type: model
+  title: Syscall Abstraction Layer Architecture
+  file: models/MOD-004-syscall-layer-architecture.md
+  related_to: [REQ-001, REQ-002, REQ-003, REQ-004]
+
+MOD-005:
+  type: model
+  title: Windows API Resolution Architecture
+  file: models/MOD-005-windows-api-resolution.md
+  related_to: [REQ-005, REQ-006]
+
+SEQ-001:
+  type: sequence
+  title: Alloc-and-Jump Execution Sequence
+  file: models/SEQ-001-alloc-jump-execution.md
+  related_to: [REQ-007]
+
+SEQ-002:
+  type: sequence
+  title: Reflective Loader Execution Sequence
+  file: models/SEQ-002-reflective-loader-execution.md
+  related_to: [REQ-008, REQ-009]
+
+SEQ-003:
+  type: sequence
+  title: Bootstrap Stager Execution Sequences
+  file: models/SEQ-003-bootstrap-stager-execution.md
+  related_to: [REQ-010]
+
+MOD-006:
+  type: model
+  title: Test Architecture
+  file: models/MOD-006-test-architecture.md
+  related_to: [ADR-010, TEST-001, TEST-002, TEST-003, TEST-004, TEST-005, TEST-006, TEST-007, TEST-008, TEST-009]
+
+# ============================================================
+# Verification Artifacts
+# ============================================================
+
+TEST-001:
+  type: verification
+  title: Build Pipeline Integrity
+  file: verification/TEST-001-build-pipeline-integrity.md
+  verifies: [REQ-011, REQ-012, REQ-013, REQ-018]
+
+TEST-002:
+  type: verification
+  title: Syscall Primitive and Wrapper Verification
+  file: verification/TEST-002-syscall-primitive-verification.md
+  verifies: [REQ-001, REQ-002, REQ-003, REQ-004]
+  decided_by: [ADR-010]
+  modeled_by: [MOD-006]
+
+TEST-003:
+  type: verification
+  title: Windows PEB Walk and DJB2 Resolution Verification
+  file: verification/TEST-003-windows-peb-walk-verification.md
+  verifies: [REQ-005, REQ-006]
+  decided_by: [ADR-010]
+  modeled_by: [MOD-006]
+
+TEST-004:
+  type: verification
+  title: Alloc-and-Jump Blob Verification
+  file: verification/TEST-004-alloc-jump-verification.md
+  verifies: [REQ-007]
+  decided_by: [ADR-010]
+  modeled_by: [MOD-006]
+
+TEST-005:
+  type: verification
+  title: Reflective Loader Verification
+  file: verification/TEST-005-reflective-loader-verification.md
+  verifies: [REQ-008, REQ-009]
+  decided_by: [ADR-010]
+  modeled_by: [MOD-006]
+
+TEST-006:
+  type: verification
+  title: Bootstrap Stager Verification
+  file: verification/TEST-006-bootstrap-stager-verification.md
+  verifies: [REQ-010]
+  decided_by: [ADR-010]
+  modeled_by: [MOD-006]
+
+TEST-007:
+  type: verification
+  title: Config Struct C/Python Parity
+  file: verification/TEST-007-config-struct-parity.md
+  verifies: [REQ-014]
+
+TEST-008:
+  type: verification
+  title: Python API and Wheel Verification
+  file: verification/TEST-008-python-api-verification.md
+  verifies: [REQ-015, REQ-016, REQ-017, REQ-018]
+
+TEST-009:
+  type: verification
+  title: Linker Script Verification
+  file: verification/TEST-009-linker-script-verification.md
+  verifies: [REQ-012]
+  decided_by: [ADR-003]
+  modeled_by: [MOD-003]
+
+TEST-010:
+  type: verification
+  title: Debug Build and Developer Tooling Verification
+  file: verification/TEST-010-debug-build-verification.md
+  verifies: [REQ-019]

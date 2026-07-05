@@ -1,0 +1,122 @@
+# picblobs Specification Graph Schema
+# Defines allowed artifact types, edge types, and validation rules.
+# Referenced by graph.yaml for structural validation.
+
+artifact_types:
+  vision:
+    prefix: "VIS"
+    description: "Product mission, user value, strategic constraints, success criteria, non-goals."
+    required_fields: [type, title, file]
+    optional_fields: [derives_from, related_to]
+
+  requirement:
+    prefix: "REQ"
+    description: "Normative statement about what the system SHALL or SHALL NOT do."
+    required_fields: [type, title, file, derives_from]
+    optional_fields: [decided_by, modeled_by, verified_by, implemented_by, related_to, supersedes]
+
+  decision:
+    prefix: "ADR"
+    description: "Major architectural or product tradeoff with alternatives and rationale."
+    required_fields: [type, title, file]
+    optional_fields: [related_to, supersedes]
+
+  model:
+    prefix: "MOD"
+    description: "Design model describing system behavior or structure."
+    required_fields: [type, title, file]
+    optional_fields: [related_to, derives_from]
+
+  sequence:
+    prefix: "SEQ"
+    description: "Sequence model describing runtime execution flow."
+    required_fields: [type, title, file]
+    optional_fields: [related_to, derives_from]
+
+  state-model:
+    prefix: "STATE"
+    description: "State machine or lifecycle model."
+    required_fields: [type, title, file]
+    optional_fields: [related_to, derives_from]
+
+  verification:
+    prefix: "TEST"
+    description: "Verification artifact defining how requirements are checked."
+    required_fields: [type, title, file, verifies]
+    optional_fields: [decided_by, modeled_by, related_to]
+
+  mapping:
+    prefix: "MAP"
+    description: "Implementation mapping connecting spec nodes to code locations."
+    required_fields: [type, title, file]
+    optional_fields: [maps, related_to]
+
+edge_types:
+  derives_from:
+    description: "Artifact originates from broader intent or a higher-level artifact."
+    valid_sources: [vision, requirement]
+    valid_targets: [vision, requirement]
+
+  refines:
+    description: "Artifact provides a more specific or decomposed form of another."
+    valid_sources: [vision, requirement]
+    valid_targets: [vision, requirement]
+
+  constrains:
+    description: "Artifact imposes rules or limits on another."
+    valid_sources: [requirement]
+    valid_targets: [requirement, decision]
+
+  decided_by:
+    description: "Artifact is governed by a decision artifact."
+    valid_sources: [requirement, verification]
+    valid_targets: [decision]
+
+  modeled_by:
+    description: "Artifact behavior or structure is represented by a design model."
+    valid_sources: [requirement, verification]
+    valid_targets: [model, sequence, state-model]
+
+  verified_by:
+    description: "Artifact is checked by a verification artifact."
+    valid_sources: [requirement]
+    valid_targets: [verification]
+
+  verifies:
+    description: "Verification artifact checks a requirement."
+    valid_sources: [verification]
+    valid_targets: [requirement]
+
+  implemented_by:
+    description: "Artifact is realized in designated code locations."
+    valid_sources: [requirement]
+    valid_targets: []  # targets are file paths, not artifacts
+
+  supersedes:
+    description: "Artifact replaces an older one."
+    valid_sources: [vision, requirement, decision, model, sequence, state-model, verification]
+    valid_targets: [vision, requirement, decision, model, sequence, state-model, verification]
+
+  related_to:
+    description: "Non-normative relationship with explanatory value."
+    valid_sources: [vision, requirement, decision, model, sequence, state-model, verification, mapping]
+    valid_targets: [vision, requirement, decision, model, sequence, state-model, verification, mapping]
+
+validation_rules:
+  - rule: "Every requirement MUST have at least one derives_from edge."
+    severity: error
+
+  - rule: "Every requirement SHOULD have at least one verified_by edge."
+    severity: warning
+
+  - rule: "Every verification artifact MUST have at least one verifies edge."
+    severity: error
+
+  - rule: "Artifact IDs MUST be unique."
+    severity: error
+
+  - rule: "All edge targets MUST reference existing artifact IDs (except implemented_by, which references file paths)."
+    severity: error
+
+  - rule: "Artifact IDs MUST use the correct prefix for their type."
+    severity: error

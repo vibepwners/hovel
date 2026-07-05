@@ -188,6 +188,34 @@ a:hover {
   border-left-color: var(--magenta);
   text-shadow: var(--glow-magenta);
 }
+.sidebar details {
+  margin: 0;
+}
+.sidebar summary {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--muted);
+  cursor: pointer;
+  list-style-position: inside;
+}
+.sidebar summary::marker {
+  color: var(--cyan);
+  font-size: 0.72rem;
+}
+.sidebar summary a {
+  display: inline-block;
+  flex: 1;
+}
+.sidebar-nested {
+  margin: 0.15rem 0 0.35rem 0.75rem !important;
+  padding-left: 0.45rem !important;
+  border-left: 1px dashed var(--border);
+}
+.sidebar-nested a {
+  padding-left: 0.45rem;
+  font-size: 0.78rem;
+}
 
 .content {
   padding: 2rem 2.5rem 4rem;
@@ -287,6 +315,24 @@ blockquote {
   color: var(--text);
   font-style: italic;
   box-shadow: -1px 0 0 rgba(255, 62, 224, 0.45);
+}
+
+.module-kicker {
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.module-logo {
+  float: right;
+  width: min(10rem, 34vw);
+  height: auto;
+  margin: 0 0 1rem 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-deep);
+  box-shadow: 0 0 24px rgba(82, 240, 255, 0.14);
 }
 
 .demo-figure {

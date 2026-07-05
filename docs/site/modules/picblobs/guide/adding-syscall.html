@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Adding a syscall - picblobs</title>
+  <link rel="icon" type="image/png" href="../../../assets/hovel.png">
+  <link rel="stylesheet" href="../../../assets/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../../../index.html">
+      <img src="../../../assets/hovel.png" alt="" class="brand-mark">
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">// picblobs guide</span>
+    </a>
+    <nav class="top-nav">
+      <a href="../../../index.html">Home</a>
+      <a href="../../../spec/index.html">Book</a>
+      <a href="../../../modules/index.html" aria-current="page">Modules</a>
+      <a href="../../../api/sdk/index.html">API Docs</a>
+      <a href="../../../reports/tests/latest/index.html">Reports</a>
+      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <p class="sidebar-section">Modules</p>
+      <ul>
+        <li><a href="../../index.html">Overview</a></li>
+        <li><a href="../../catalogue.html">Catalogue</a></li>
+      </ul>
+      <p class="sidebar-section">Payload Providers</p>
+      <ul>
+        <li>
+          <details class="module-nav" open>
+            <summary><a href="../../picblobs/index.html">picblobs</a></summary>
+            <ul class="sidebar-nested">
+              <li><a href="../../picblobs/index.html">Overview</a></li>
+              <li><a href="../../picblobs/user-guide.html">User Guide</a></li>
+              <li><a href="../../picblobs/building.html">Building</a></li>
+              <li><a href="../../picblobs/testing.html">Testing</a></li>
+              <li><a href="../../picblobs/reference.html">Reference</a></li>
+              <li><a href="../../picblobs/guide/index.html">Full Guide</a></li>
+              <li><a href="../../picblobs/guide/introduction.html">Introduction</a></li>
+              <li><a href="../../picblobs/guide/how-it-works.html">How It Works</a></li>
+              <li><a href="../../picblobs/guide/getting-started.html">Getting Started</a></li>
+              <li><a href="../../picblobs/guide/building.html">Building Blobs</a></li>
+              <li><a href="../../picblobs/guide/running.html">Running Blobs</a></li>
+              <li><a href="../../picblobs/guide/picblobs-cli.html">picblobs CLI</a></li>
+              <li><a href="../../picblobs/guide/writing-blobs.html">Writing a Blob</a></li>
+              <li><a href="../../picblobs/guide/code-generation.html">Code Generation</a></li>
+              <li><a href="../../picblobs/guide/adding-architecture.html">Adding an Architecture</a></li>
+              <li><a href="../../picblobs/guide/adding-syscall.html" aria-current="page">Adding a Syscall</a></li>
+              <li><a href="../../picblobs/guide/formatting.html">Formatting</a></li>
+              <li><a href="../../picblobs/guide/platform-support.html">Platform Support</a></li>
+              <li><a href="../../picblobs/guide/test-runners.html">Test Runners</a></li>
+              <li><a href="../../picblobs/guide/project-structure.html">Project Structure</a></li>
+              <li><a href="../../picblobs/guide/kernel-toolkit.html">Kernel Toolkit</a></li>
+              <li><a href="../../picblobs/guide/specification.html">Specification</a></li>
+            </ul>
+          </details>
+        </li>
+      </ul>
+    </aside>
+    <main class="content">
+      <article>
+<h1 id="adding-a-new-syscall">Adding a New Syscall</h1>
+<ol>
+<li>Add the number to every architecture's table in <code>SYSCALL_NUMBERS</code> in <code>tools/registry.py</code></li>
+<li>Add a <code>SyscallDef</code> entry to <code>SYSCALL_DEFS</code> in <code>tools/registry.py</code></li>
+<li>Run <code>python tools/generate.py</code></li>
+<li>Run <code>python -m pytest python/tests/test_sync.py -v</code></li>
+</ol>
+<p>The generated <code>sys/{name}.h</code> will contain the numbers, OS guards, and wrapper.</p>
+      </article>
+      <nav class="page-nav">
+<a class="prev" href="adding-architecture.html">← Adding an architecture</a>
+        <span class="spacer"></span>
+        <a class="next" href="formatting.html">Formatting and linting →</a>
+      </nav>
+    </main>
+  </div>
+  <footer class="sitefoot">
+    <p>picblobs guide · <a href="../../../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,159 @@
+name: Release picblobs-cli
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish (must match both pyproject files)
+        required: true
+        default: "0.1.6"
+        type: string
+
+concurrency:
+  group: release-picblobs-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      PICBLOBS_ALLOW_UNPINNED_TOOLCHAINS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Resolve expected version
+        id: version
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            EXPECTED_VERSION="${{ inputs.version }}"
+          else
+            EXPECTED_VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "expected=${EXPECTED_VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install Bazel and runtime tools
+        run: |
+          BAZEL_VERSION="$(cat .bazelversion)"
+          curl -fsSL \
+            "https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-linux-x86_64" \
+            -o /tmp/bazel
+          sudo install -m 0755 /tmp/bazel /usr/local/bin/bazel
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
+
+      - name: Install Task + Python dev environment
+        run: |
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -b "$HOME/.local/bin" v3.51.1
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          source sourceme
+          echo "${GITHUB_WORKSPACE}/python/.venv/bin" >> "${GITHUB_PATH}"
+
+      - name: Verify release version wiring
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.expected }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          root = Path.cwd()
+          lib = tomllib.loads((root / "python" / "pyproject.toml").read_text())["project"]["version"]
+          cli = tomllib.loads((root / "python_cli" / "pyproject.toml").read_text())["project"]["version"]
+          init = None
+          for line in (root / "python" / "picblobs" / "__init__.py").read_text().splitlines():
+              if line.startswith("__version__ = "):
+                  init = line.split("=", 1)[1].strip().strip('"').strip("'")
+                  break
+
+          expected = os.environ["EXPECTED_VERSION"]
+          assert init is not None
+          assert lib == cli == init == expected, (lib, cli, init, expected)
+          PY
+
+      - name: Stage full release tree
+        run: task stage
+
+      - name: Build distributions
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.expected }}
+        run: task dist EXPECTED_VERSION="${EXPECTED_VERSION}"
+
+      - name: Smoke-install the built wheels
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.expected }}
+        run: |
+          python -m venv /tmp/picblobs-cli-publish-smoke
+          /tmp/picblobs-cli-publish-smoke/bin/python -m pip install --upgrade pip
+          /tmp/picblobs-cli-publish-smoke/bin/python -m pip install \
+            dist/picblobs/*.whl \
+            dist/picblobs-cli/*.whl
+          /tmp/picblobs-cli-publish-smoke/bin/picblobs-cli --help > /dev/null
+          /tmp/picblobs-cli-publish-smoke/bin/picblobs-cli run hello linux:x86_64 | tee /tmp/picblobs-cli-run.txt
+          grep -F "Hello, world!" /tmp/picblobs-cli-run.txt
+          /tmp/picblobs-cli-publish-smoke/bin/python - <<'PY'
+          import os
+          import picblobs
+          import picblobs_cli
+          from picblobs.runner import find_runner
+
+          expected = os.environ["EXPECTED_VERSION"]
+          assert picblobs.__version__ == expected
+          assert picblobs_cli.__version__ == expected
+          blob = picblobs.get_blob("hello", "linux", "x86_64")
+          assert picblobs.wrap_elf(blob.code, "linux", "x86_64").startswith(b"\x7fELF")
+          try:
+              find_runner("linux", "x86_64")
+          except FileNotFoundError:
+              pass
+          else:
+              raise AssertionError("Linux runner should not be bundled")
+          runner = find_runner("windows", "x86_64")
+          assert runner.exists(), runner
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: picblobs-cli-dist
+          path: dist/picblobs-cli/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: pypi-picblobs-cli
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: picblobs-cli-dist
+          path: dist/picblobs-cli
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/picblobs-cli

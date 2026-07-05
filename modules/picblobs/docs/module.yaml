@@ -1,0 +1,22 @@
+name: picblobs
+title: picblobs
+moduleType: payload_provider
+status: integrated
+summary: Position-independent payload blob provider for Hovel.
+manifest: ../hovel-module.yaml
+docs:
+  overview: ../../../docs/site/modules/picblobs/index.md
+  userGuide: ../../../docs/site/modules/picblobs/user-guide.md
+  building: ../../../docs/site/modules/picblobs/building.md
+  testing: ../../../docs/site/modules/picblobs/testing.md
+  reference: ../../../docs/site/modules/picblobs/reference.md
+targets:
+  provider: //modules/picblobs/provider:picblobs-provider
+  bazelTests:
+    - //modules/picblobs/provider:provider_test
+    - //modules/picblobs/tests:nacl_suite
+  taskEntrypoints:
+    - picblobs:setup
+    - picblobs:stage
+    - picblobs:test
+    - picblobs:ci

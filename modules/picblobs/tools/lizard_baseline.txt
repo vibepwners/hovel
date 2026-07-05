@@ -1,0 +1,25 @@
+# Lizard complexity baseline — grandfathered functions that exceed the
+# CCN <= 10 threshold (see tools/lint.py). Entries are "path:function" keys.
+#
+# These are pre-existing high-complexity functions in kernel/ operational
+# tooling (eBPF labs, kmod loaders, VM harness, shell examples). They are
+# allowed as-is; NEW complexity above the threshold still fails the lint.
+# Remove an entry once its function is refactored to <= 10 CCN (a stale
+# entry that no longer matches any warning will fail the full lint run).
+kernel/ebpf/kernel_mem.py:mode_creds.handle_event
+kernel/ebpf/kernel_mem.py:mode_kallsyms
+kernel/ebpf/kernel_mem.py:mode_modules
+kernel/ebpf/kernel_mem.py:mode_tasks
+kernel/ebpf/kernel_mem.py:mode_vmas
+kernel/ebpf/loader.py:mode_uprobe
+kernel/kmod/build_examples.py:main
+kernel/kmod/examples/b64_kernel.h:b64_decode
+kernel/kmod/examples/kshell.c:shell_loop
+kernel/kmod/examples/kshell_nacl.c:hex_to_bytes
+kernel/kmod/examples/kshell_nacl.c:krecv_encrypted
+kernel/kmod/examples/kshell_nacl.c:shell_loop
+kernel/kmod/examples/tweetnacl_kernel.h:_tn_crypto_onetimeauth
+kernel/kmod/load_kmod.py:cmd_load
+kernel/lp/listener.py:handle_session
+kernel/vm/vm_harness.py:cmd_test
+kernel/vm/vm_harness.py:verify_checksum

@@ -1,0 +1,57 @@
+"""Windows test runners — mock TEB/PEB environment on Linux.
+
+The runner is a freestanding static Linux binary that constructs
+a synthetic Windows environment (TEB, PEB, module list, PE export
+tables) and executes a Windows-targeting blob within it.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//modules/picblobs/bazel:lint.bzl", "cppcheck_test")
+
+package(default_visibility = [
+    "//modules/picblobs/python:__subpackages__",
+    "//modules/picblobs/release:__pkg__",
+    "//modules/picblobs/tests:__subpackages__",
+])
+
+cc_library(
+    name = "runner_obj",
+    srcs = ["runner.c"] + glob(["start/*.h"]),
+    copts = [
+        "-iquote",
+        "tests/runners/windows",
+    ] + select({
+        "//modules/picblobs/platforms:is_cpu_aarch64": ["-ffixed-x18"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//modules/picblobs/src/include/picblobs:headers",
+    ],
+)
+
+# Link via genrule — same pattern as the Linux runner.
+genrule(
+    name = "runner",
+    srcs = [":runner_obj"],
+    outs = ["runner.bin"],
+    cmd = " ".join([
+        "$(CC)",
+        "-nostdlib",
+        "-nostartfiles",
+        "-static",
+        "-Wl,--gc-sections",
+        "-Wl,--whole-archive",
+        "$(location :runner_obj)",
+        "-Wl,--no-whole-archive",
+        "-o $@",
+    ]),
+    executable = True,
+    toolchains = ["@rules_cc//cc:current_cc_toolchain"],
+)
+
+cppcheck_test(
+    name = "runner_cppcheck",
+    size = "small",
+    srcs = ["runner.c"],
+    include_dirs = ["src/include"],
+)

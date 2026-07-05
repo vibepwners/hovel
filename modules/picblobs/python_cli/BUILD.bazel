@@ -1,0 +1,43 @@
+"""Python CLI package targets."""
+
+load("@picblobs_pip//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["pyproject.toml"])
+
+filegroup(
+    name = "package_files",
+    srcs = glob(["**"]),
+)
+
+py_library(
+    name = "picblobs_cli",
+    srcs = glob(["picblobs_cli/**/*.py"]),
+    imports = ["."],
+    deps = ["//modules/picblobs/python:picblobs"],
+)
+
+py_test(
+    name = "pytest_suite",
+    size = "small",
+    srcs = glob(["tests/**/*.py"]),
+    data = [
+        ":package_files",
+        "//modules/picblobs:root_metadata",
+        "//modules/picblobs/python:package_dir",
+    ],
+    imports = [
+        ".",
+        "..",
+        "../python",
+    ],
+    main = "tests/test_picblobs_cli.py",
+    deps = [
+        ":picblobs_cli",
+        "//modules/picblobs/python:picblobs",
+        requirement("click"),
+        requirement("pytest"),
+    ],
+)

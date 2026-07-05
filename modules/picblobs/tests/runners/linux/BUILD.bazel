@@ -1,0 +1,102 @@
+"""Linux test runners — one per target architecture.
+
+Each runner is a freestanding static binary that loads and executes
+a blob using real Linux syscalls (emulated by QEMU for non-native arches).
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//modules/picblobs/bazel:lint.bzl", "cppcheck_test")
+
+package(default_visibility = [
+    "//modules/picblobs/python:__subpackages__",
+    "//modules/picblobs/release:__pkg__",
+    "//modules/picblobs/tests:__subpackages__",
+])
+
+exports_files([
+    "runner_hosted.c",
+])
+
+filegroup(
+    name = "start_headers",
+    srcs = glob(["start/*.h"]),
+    visibility = ["//modules/picblobs/tests:__subpackages__"],
+)
+
+cc_library(
+    name = "runner_obj",
+    srcs = ["runner.c"] + glob(["start/*.h"]),
+    copts = [
+        "-iquote",
+        "tests/runners/linux",
+    ],
+    deps = [
+        "//modules/picblobs/src/include/picblobs:headers",
+    ],
+)
+
+# Link via genrule to avoid cc_binary injecting -Wl,-S which
+# strips sections on some architectures (MIPS, ARM). The genrule
+# bypasses cc_common.link, so the toolchain's freestanding-feature
+# link flags are added explicitly.
+genrule(
+    name = "runner",
+    srcs = [":runner_obj"],
+    outs = ["runner.bin"],
+    cmd = " ".join([
+        "$(CC)",
+        "-nostdlib",
+        "-nostartfiles",
+        "-static",
+        "-Wl,--gc-sections",
+        "-Wl,-e,_start",
+        "-Wl,--whole-archive",
+        "$(location :runner_obj)",
+        "-Wl,--no-whole-archive",
+        "-o $@",
+    ]),
+    executable = True,
+    toolchains = ["@rules_cc//cc:current_cc_toolchain"],
+)
+
+cppcheck_test(
+    name = "runner_cppcheck",
+    size = "small",
+    srcs = ["runner.c"],
+    include_dirs = ["src/include"],
+)
+
+# Hosted-mode runner — passes pic_platform vtable to blobs instead of
+# relying on raw syscalls. Used to test the PIC_PLATFORM_HOSTED code path
+# without needing real Mbed OS hardware.
+cc_library(
+    name = "runner_hosted_obj",
+    srcs = ["runner_hosted.c"] + glob(["start/*.h"]),
+    copts = [
+        "-iquote",
+        "tests/runners/linux",
+    ],
+    deps = [
+        "//modules/picblobs/src/include/picblobs:headers",
+    ],
+)
+
+genrule(
+    name = "runner_hosted",
+    srcs = [":runner_hosted_obj"],
+    outs = ["runner_hosted.bin"],
+    cmd = " ".join([
+        "$(CC)",
+        "-nostdlib",
+        "-nostartfiles",
+        "-static",
+        "-Wl,--gc-sections",
+        "-Wl,-e,_start",
+        "-Wl,--whole-archive",
+        "$(location :runner_hosted_obj)",
+        "-Wl,--no-whole-archive",
+        "-o $@",
+    ]),
+    executable = True,
+    toolchains = ["@rules_cc//cc:current_cc_toolchain"],
+)

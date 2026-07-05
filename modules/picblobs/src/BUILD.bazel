@@ -1,0 +1,7 @@
+"""Source tree root — see subdirectories for build targets."""
+
+package(default_visibility = [
+    "//modules/picblobs/python:__subpackages__",
+    "//modules/picblobs/src:__subpackages__",
+    "//modules/picblobs/tests:__subpackages__",
+])
