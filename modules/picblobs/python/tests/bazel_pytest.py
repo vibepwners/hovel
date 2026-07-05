@@ -10,13 +10,34 @@ from pathlib import Path
 import pytest
 
 
+def _runfile_path(logical_path: str) -> Path | None:
+    runfiles_dir = os.environ.get("RUNFILES_DIR")
+    if runfiles_dir:
+        candidate = Path(runfiles_dir) / "_main" / logical_path
+        if candidate.exists():
+            return candidate
+
+    manifest = os.environ.get("RUNFILES_MANIFEST_FILE")
+    if manifest:
+        key = f"_main/{logical_path}"
+        for line in Path(manifest).read_text().splitlines():
+            if not line.startswith(f"{key} "):
+                continue
+            candidate = Path(line.split(" ", 1)[1])
+            if candidate.exists():
+                return candidate
+    return None
+
+
 def _prepare_bazel_sidecars(project_root: Path) -> None:
     """Extract the minimal release sidecars needed by Bazel-only pytest runs."""
     package_blobs = project_root / "python" / "picblobs" / "blobs"
     if (package_blobs / "hello.linux.x86_64.bin").exists():
         return
 
-    hello_so = project_root / "src" / "payload" / "hello.so"
+    hello_so = _runfile_path("modules/picblobs/src/payload/hello.so")
+    if hello_so is None:
+        hello_so = project_root / "src" / "payload" / "hello.so"
     if not hello_so.exists():
         return
 
