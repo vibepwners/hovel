@@ -49,6 +49,7 @@ py_test(
         "$(rootpath //modules/examples/rust/mock_exploit:mock-exploit-rust)",
         "$(rootpath //modules/examples/rust/mock_exploit_session:mock-exploit-session-rust)",
         "$(rootpath //modules/squatter/provider:squatter-provider)",
+        "$(rootpath //modules/picblobs/provider:picblobs-provider)",
     ],
     data = [
         "@hovel_core//cmd/hovel",
@@ -60,6 +61,7 @@ py_test(
         "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
         "//modules/examples/rust/mock_survey:mock-survey-rust",
         "//modules/squatter/provider:squatter-provider",
+        "//modules/picblobs/provider:picblobs-provider",
         "//sdk/python:sources",
     ],
     python_version = "PY3",
@@ -88,6 +90,7 @@ py_test(
         "$(rootpath //modules/examples/rust/mock_exploit:mock-exploit-rust)",
         "$(rootpath //modules/examples/rust/mock_exploit_session:mock-exploit-session-rust)",
         "$(rootpath //modules/squatter/provider:squatter-provider)",
+        "$(rootpath //modules/picblobs/provider:picblobs-provider)",
     ],
     data = [
         "@hovel_core//cmd/hovel",
@@ -99,6 +102,7 @@ py_test(
         "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
         "//modules/examples/rust/mock_survey:mock-survey-rust",
         "//modules/squatter/provider:squatter-provider",
+        "//modules/picblobs/provider:picblobs-provider",
         "//sdk/python:sources",
     ],
     python_version = "PY3",

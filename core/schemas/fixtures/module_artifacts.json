@@ -25,6 +25,17 @@
           "mode": "file",
           "description": "File-reference artifact produced in the workspace."
         }
+      ],
+      "payloads": [
+        {
+          "name": "example-pic",
+          "kind": "pic",
+          "formats": ["pic", "elf"],
+          "os": "linux",
+          "arch": "x86_64",
+          "tags": ["pic", "example"],
+          "description": "Example position-independent payload output."
+        }
       ]
     }
   }

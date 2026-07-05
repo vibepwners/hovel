@@ -206,9 +206,12 @@ type InstalledPayloadDescriptor struct {
 
 type PayloadQuery struct {
 	Target       string            `json:"target,omitempty"`
+	Kind         string            `json:"kind,omitempty"`
 	Platform     string            `json:"platform,omitempty"`
+	OS           string            `json:"os,omitempty"`
 	Arch         string            `json:"arch,omitempty"`
 	Format       string            `json:"format,omitempty"`
+	Tags         []string          `json:"tags,omitempty"`
 	Transport    string            `json:"transport,omitempty"`
 	Config       map[string]string `json:"config,omitempty"`
 	Capabilities []string          `json:"capabilities,omitempty"`
@@ -218,11 +221,14 @@ type PayloadInfo struct {
 	ID           string           `json:"id"`
 	Name         string           `json:"name"`
 	Version      string           `json:"version"`
+	Kind         string           `json:"kind,omitempty"`
 	Platform     string           `json:"platform"`
+	OS           string           `json:"os,omitempty"`
 	Arch         string           `json:"arch"`
 	MinOS        string           `json:"minOS,omitempty"`
 	TestedOS     []string         `json:"testedOS,omitempty"`
 	Formats      []string         `json:"formats"`
+	Tags         []string         `json:"tags,omitempty"`
 	Capabilities []string         `json:"capabilities"`
 	Transport    PayloadTransport `json:"transport"`
 	Session      PayloadSession   `json:"session"`
@@ -255,14 +261,18 @@ type PayloadArtifactSet struct {
 }
 
 type PayloadArtifact struct {
-	Name     string `json:"name"`
-	Role     string `json:"role"`
-	Format   string `json:"format"`
-	Encoding string `json:"encoding"`
-	Bytes    string `json:"bytes,omitempty"`
-	Handle   string `json:"handle,omitempty"`
-	Size     int64  `json:"size,omitempty"`
-	SHA256   string `json:"sha256,omitempty"`
+	Name     string   `json:"name"`
+	Role     string   `json:"role"`
+	Kind     string   `json:"kind,omitempty"`
+	Format   string   `json:"format"`
+	OS       string   `json:"os,omitempty"`
+	Arch     string   `json:"arch,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
+	Encoding string   `json:"encoding"`
+	Bytes    string   `json:"bytes,omitempty"`
+	Handle   string   `json:"handle,omitempty"`
+	Size     int64    `json:"size,omitempty"`
+	SHA256   string   `json:"sha256,omitempty"`
 }
 
 type PayloadCommandListRequest struct {

@@ -22,13 +22,51 @@ type PayloadCommandProvider interface {
 	RunPayloadCommand(PayloadCommandRequest) (PayloadCommandResult, error)
 }
 
+// PayloadKind describes the semantic payload representation independent of its
+// delivery container. Formats are still strings on the wire for compatibility,
+// but providers should use these constants for stable Hovel vocabulary.
+type PayloadKind string
+
+const (
+	PayloadKindPIC   PayloadKind = "pic"
+	PayloadKindPOC   PayloadKind = "poc"
+	PayloadKindELF   PayloadKind = "elf"
+	PayloadKindPE    PayloadKind = "pe"
+	PayloadKindSO    PayloadKind = "so"
+	PayloadKindDLL   PayloadKind = "dll"
+	PayloadKindDylib PayloadKind = "dylib"
+	PayloadKindRaw   PayloadKind = "raw"
+)
+
+// Payload format strings identify the artifact container Hovel records and
+// passes between modules. They deliberately distinguish semantic PIC payloads
+// from common loader containers such as ELF, PE, SO, DLL, and Mach-O dylibs.
+const (
+	PayloadFormatPIC        = "pic"
+	PayloadFormatPOC        = "poc"
+	PayloadFormatFlatPIC    = "flat-pic"
+	PayloadFormatRawBin     = "raw-bin"
+	PayloadFormatELF        = "elf"
+	PayloadFormatELFExec    = "elf-exec"
+	PayloadFormatSO         = "so"
+	PayloadFormatPE         = "pe"
+	PayloadFormatPEEXE      = "pe-exe"
+	PayloadFormatPEDLL      = "pe-dll"
+	PayloadFormatDLL        = "dll"
+	PayloadFormatDylib      = "dylib"
+	PayloadFormatMachODylib = "macho-dylib"
+)
+
 // PayloadQuery describes the payload variant requested by Hovel during
 // planning or execution.
 type PayloadQuery struct {
 	Target       string            `json:"target,omitempty"`
+	Kind         string            `json:"kind,omitempty"`
 	Platform     string            `json:"platform,omitempty"`
+	OS           string            `json:"os,omitempty"`
 	Arch         string            `json:"arch,omitempty"`
 	Format       string            `json:"format,omitempty"`
+	Tags         []string          `json:"tags,omitempty"`
 	Transport    string            `json:"transport,omitempty"`
 	Config       map[string]string `json:"config,omitempty"`
 	Capabilities []string          `json:"capabilities,omitempty"`
@@ -38,11 +76,14 @@ type PayloadInfo struct {
 	ID           string           `json:"id"`
 	Name         string           `json:"name"`
 	Version      string           `json:"version"`
+	Kind         string           `json:"kind,omitempty"`
 	Platform     string           `json:"platform"`
+	OS           string           `json:"os,omitempty"`
 	Arch         string           `json:"arch"`
 	MinOS        string           `json:"minOS,omitempty"`
 	TestedOS     []string         `json:"testedOS,omitempty"`
 	Formats      []string         `json:"formats"`
+	Tags         []string         `json:"tags,omitempty"`
 	Capabilities []string         `json:"capabilities"`
 	Transport    PayloadTransport `json:"transport"`
 	Session      PayloadSession   `json:"session"`
@@ -85,14 +126,18 @@ type PayloadArtifactSet struct {
 }
 
 type PayloadArtifact struct {
-	Name     string `json:"name"`
-	Role     string `json:"role"`
-	Format   string `json:"format"`
-	Encoding string `json:"encoding"`
-	Bytes    string `json:"bytes,omitempty"`
-	Handle   string `json:"handle,omitempty"`
-	Size     int64  `json:"size,omitempty"`
-	SHA256   string `json:"sha256,omitempty"`
+	Name     string   `json:"name"`
+	Role     string   `json:"role"`
+	Kind     string   `json:"kind,omitempty"`
+	Format   string   `json:"format"`
+	OS       string   `json:"os,omitempty"`
+	Arch     string   `json:"arch,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
+	Encoding string   `json:"encoding"`
+	Bytes    string   `json:"bytes,omitempty"`
+	Handle   string   `json:"handle,omitempty"`
+	Size     int64    `json:"size,omitempty"`
+	SHA256   string   `json:"sha256,omitempty"`
 }
 
 // InstalledPayloadDescriptor is the explicit provider-owned record Hovel stores

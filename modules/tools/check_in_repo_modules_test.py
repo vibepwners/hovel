@@ -10,9 +10,9 @@ from pathlib import Path
 
 def main() -> int:
     hovel_bin = resolve_path(required_arg(1, "missing hovel binary"))
-    binaries = [resolve_path(arg) for arg in os.sys.argv[2:9]]
-    if len(binaries) != 7:
-        raise SystemExit("expected seven module binary arguments")
+    binaries = [resolve_path(arg) for arg in os.sys.argv[2:10]]
+    if len(binaries) != 8:
+        raise SystemExit("expected eight module binary arguments")
 
     python_root = find_first_runfile("modules/examples/python", "examples/python")
     sdk_root = find_runfile("sdk/python")
@@ -69,6 +69,7 @@ def main() -> int:
                             "command": [str(binaries[5])],
                         },
                         {"id": "squatter", "runtime": "jsonrpc-stdio", "command": [str(binaries[6])]},
+                        {"id": "picblobs", "runtime": "jsonrpc-stdio", "command": [str(binaries[7])]},
                     ]
                 },
                 indent=2,
@@ -82,8 +83,9 @@ def main() -> int:
         }
         out = run([str(hovel_bin), "module", "check", "--all"], env=env)
         require_contains(out, "MODULE CHECKS")
-        require_contains(out, "12 passed")
+        require_contains(out, "13 passed")
         require_contains(out, "squatter@v0.1.0")
+        require_contains(out, "picblobs@0.1.6")
         require_contains(out, "PASS")
 
         workspace = tmp / "workspace"

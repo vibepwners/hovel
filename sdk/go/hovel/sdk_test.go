@@ -142,7 +142,7 @@ func (fakePayloadProvider) PrepareListener(req PrepareListenerRequest) (Listener
 }
 
 func (fakePayloadProvider) GeneratePayload(GeneratePayloadRequest) (PayloadArtifactSet, error) {
-	artifact := PayloadArtifact{Name: "fake.exe", Role: "primary", Format: "pe-exe", Encoding: "base64", Bytes: base64.StdEncoding.EncodeToString([]byte("fake"))}
+	artifact := PayloadArtifact{Name: "fake.exe", Role: "primary", Kind: string(PayloadKindPE), Format: PayloadFormatPEEXE, OS: "windows", Arch: "x86", Tags: []string{"native", "test"}, Encoding: "base64", Bytes: base64.StdEncoding.EncodeToString([]byte("fake"))}
 	return PayloadArtifactSet{Primary: artifact, Artifacts: []PayloadArtifact{artifact}}, nil
 }
 
@@ -296,11 +296,14 @@ func fakePayloadInfo() PayloadInfo {
 		ID:           "fake/windows/x86/reverse-tcp/pe-exe",
 		Name:         "fake",
 		Version:      "v0.0.0-test",
+		Kind:         string(PayloadKindPE),
 		Platform:     "windows",
+		OS:           "windows",
 		Arch:         "x86",
 		MinOS:        "windows-xp-sp3",
 		TestedOS:     []string{"windows-xp-sp3"},
-		Formats:      []string{"pe-exe"},
+		Formats:      []string{PayloadFormatPEEXE, PayloadFormatPE},
+		Tags:         []string{"native", "test"},
 		Capabilities: []string{"file.get"},
 		Transport:    PayloadTransport{Kind: "reverse-tcp"},
 		Session:      PayloadSession{Kind: "agent", Acquisition: "callback", RequiresPreThrowListener: true, Owner: "payload_provider"},
@@ -494,10 +497,20 @@ func TestServePayloadProviderMethods(t *testing.T) {
 	if listener["state"] != "listening" {
 		t.Fatalf("prepare_listener = %#v", listener)
 	}
+	if resolved["kind"] != "pe" || resolved["os"] != "windows" {
+		t.Fatalf("resolve_payload typed payload fields = %#v", resolved)
+	}
+	tags, _ := resolved["tags"].([]any)
+	if len(tags) != 2 || tags[0] != "native" {
+		t.Fatalf("resolve_payload tags = %#v", resolved["tags"])
+	}
 	generated := conn.call("generate_payload", map[string]any{"target": "target-1", "payloadId": resolved["id"], "format": "pe-exe"})
 	primary, _ := generated["primary"].(map[string]any)
 	if primary["format"] != "pe-exe" || primary["encoding"] != "base64" {
 		t.Fatalf("generate_payload primary = %#v", primary)
+	}
+	if primary["kind"] != "pe" || primary["os"] != "windows" || primary["arch"] != "x86" {
+		t.Fatalf("generate_payload primary typed fields = %#v", primary)
 	}
 	session := conn.call("connect_session", map[string]any{
 		"runId":              "run-1",

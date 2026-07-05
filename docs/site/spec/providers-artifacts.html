@@ -127,9 +127,14 @@ CleanupHandle</code></pre>
         <h2>Payload Provider</h2>
         <p>Payload query:</p>
 <pre data-lang="yaml"><code>target: 10.0.0.42
+kind: pe
 platform: windows
+os: windows
 arch: x86
 format: pe-exe
+tags:
+  - pe
+  - windows
 transport: tcp-bind
 config:
   lhost: 10.0.0.5
@@ -141,13 +146,19 @@ capabilities:
 <pre data-lang="yaml"><code>id: squatter/windows/x86/windows-7/tcp-bind/pe-exe
 name: Squatter TCP bind PE
 version: 0.1.0
+kind: pe
 platform: windows
+os: windows
 arch: x86
 minOS: Windows 7
 testedOS:
   - Windows 7
 formats:
   - pe-exe
+  - pe
+tags:
+  - pe
+  - windows
 capabilities:
   - session.shell
 transport:
@@ -164,7 +175,13 @@ session:
 <pre data-lang="yaml"><code>primary:
   name: squatter.exe
   role: primary
+  kind: pe
   format: pe-exe
+  os: windows
+  arch: x86
+  tags:
+    - pe
+    - windows
   encoding: base64
   bytes: TVqQAAMAAAAEAAAA...
   size: 123456

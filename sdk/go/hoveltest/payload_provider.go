@@ -119,8 +119,10 @@ type PayloadProviderContract struct {
 	Target                 string
 	RunID                  string
 	Config                 map[string]string
+	WantKind               string
 	WantFormat             string
 	WantTransport          string
+	WantTags               []string
 	WantCapabilities       []string
 	WantInstalledPayloadID string
 }
@@ -151,11 +153,19 @@ func AssertPayloadProviderContract(t testing.TB, module hovel.PayloadProvider, c
 	if resolved.ID == "" {
 		t.Fatalf("resolve_payload returned missing id: %#v", resolved)
 	}
+	if contract.WantKind != "" && resolved.Kind != contract.WantKind {
+		t.Fatalf("resolved kind = %q, want %q", resolved.Kind, contract.WantKind)
+	}
 	if contract.WantFormat != "" && !contains(resolved.Formats, contract.WantFormat) {
 		t.Fatalf("resolved formats = %#v, want %q", resolved.Formats, contract.WantFormat)
 	}
 	if contract.WantTransport != "" && resolved.Transport.Kind != contract.WantTransport {
 		t.Fatalf("resolved transport = %q, want %q", resolved.Transport.Kind, contract.WantTransport)
+	}
+	for _, tag := range contract.WantTags {
+		if !contains(resolved.Tags, tag) {
+			t.Fatalf("resolved tags = %#v, missing %q", resolved.Tags, tag)
+		}
 	}
 	for _, capability := range contract.WantCapabilities {
 		if !contains(resolved.Capabilities, capability) {
@@ -185,6 +195,9 @@ func AssertPayloadProviderContract(t testing.TB, module hovel.PayloadProvider, c
 	}
 	if generated.Primary.Format == "" {
 		t.Fatalf("primary artifact missing format: %#v", generated.Primary)
+	}
+	if contract.WantKind != "" && generated.Primary.Kind != contract.WantKind {
+		t.Fatalf("primary artifact kind = %q, want %q", generated.Primary.Kind, contract.WantKind)
 	}
 	if generated.Primary.Encoding != "base64" && generated.Primary.Encoding != "chunked" {
 		t.Fatalf("primary artifact encoding = %q", generated.Primary.Encoding)

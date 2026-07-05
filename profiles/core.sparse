@@ -23,6 +23,7 @@ modules/tools
 platforms
 profiles
 repo-tools
+scripts
 sdk
 tools/testreport
 
