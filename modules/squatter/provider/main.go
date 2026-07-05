@@ -1198,7 +1198,7 @@ func (Provider) ListPayloads(query hovel.PayloadQuery) ([]hovel.PayloadInfo, err
 	}
 	info, ok := matchingPayloadInfo(query, transport)
 	if !ok {
-		return nil, nil
+		return []hovel.PayloadInfo{}, nil
 	}
 	return []hovel.PayloadInfo{info}, nil
 }

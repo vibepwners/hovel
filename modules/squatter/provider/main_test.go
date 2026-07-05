@@ -67,6 +67,9 @@ func TestProviderFiltersTypedPayloadQueries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if payloads == nil {
+		t.Fatal("mismatched typed query returned nil payload slice")
+	}
 	if len(payloads) != 0 {
 		t.Fatalf("mismatched typed query returned payloads: %#v", payloads)
 	}
