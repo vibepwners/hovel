@@ -89,7 +89,8 @@ __all__ = [
 
 _PKG_DIR = Path(__file__).parent
 _MANIFEST_PATH = _PKG_DIR / "manifest.json"
-_BLOBS_DIR = _PKG_DIR / "blobs"
+_DEFAULT_BLOBS_DIR = _PKG_DIR / "blobs"
+_BLOBS_DIR = _DEFAULT_BLOBS_DIR
 _EXTRA_BLOBS_DIR = (
     Path(value) if (value := os.environ.get("PICBLOBS_BLOBS_DIR")) else None
 )
@@ -152,9 +153,17 @@ def get_blob(blob_type: str, target_os: str, target_arch: str) -> BlobData:
     basename = f"{blob_type}.{target_os}.{target_arch}"
     checked_paths = []
 
-    for blobs_dir in (_EXTRA_BLOBS_DIR, _BLOBS_DIR):
-        if blobs_dir is None:
-            continue
+    blob_dirs = (
+        (_BLOBS_DIR,)
+        if _BLOBS_DIR != _DEFAULT_BLOBS_DIR
+        else tuple(
+            blobs_dir
+            for blobs_dir in (_EXTRA_BLOBS_DIR, _BLOBS_DIR)
+            if blobs_dir is not None
+        )
+    )
+
+    for blobs_dir in blob_dirs:
         bin_path = blobs_dir / f"{basename}.bin"
         json_path = blobs_dir / f"{basename}.json"
         checked_paths.append(f"{bin_path} and {json_path}")
