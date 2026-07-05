@@ -92,8 +92,7 @@ go_test(
         "commandmode_test_helpers_test.go",
         "module_install_progress_test.go",
     ],
-    data = [
-    ],
+    data = [],
     embed = [":commandmode"],
     tags = [
         "manual",
@@ -118,8 +117,7 @@ go_test(
         "commandmode_e2e_test.go",
         "commandmode_test_helpers_test.go",
     ],
-    data = [
-    ],
+    data = [],
     embed = [":commandmode"],
     tags = [
         "e2e",

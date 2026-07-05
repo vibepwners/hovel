@@ -178,7 +178,7 @@ func sortedAttributeNames(attributes map[string]string) []string {
 
 func prettyJSON(value string) (string, bool) {
 	trimmed := strings.TrimSpace(value)
-	if !(strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) || !json.Valid([]byte(trimmed)) {
+	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") || !json.Valid([]byte(trimmed)) {
 		return "", false
 	}
 	var out bytes.Buffer
