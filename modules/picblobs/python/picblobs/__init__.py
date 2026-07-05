@@ -89,7 +89,10 @@ __all__ = [
 
 _PKG_DIR = Path(__file__).parent
 _MANIFEST_PATH = _PKG_DIR / "manifest.json"
-_BLOBS_DIR = Path(os.environ.get("PICBLOBS_BLOBS_DIR", _PKG_DIR / "blobs"))
+_BLOBS_DIR = _PKG_DIR / "blobs"
+_EXTRA_BLOBS_DIR = (
+    Path(value) if (value := os.environ.get("PICBLOBS_BLOBS_DIR")) else None
+)
 
 
 def _load_manifest() -> dict | None:
@@ -147,15 +150,20 @@ def get_blob(blob_type: str, target_os: str, target_arch: str) -> BlobData:
         FileNotFoundError: If no blob exists for the given combination.
     """
     basename = f"{blob_type}.{target_os}.{target_arch}"
-    bin_path = _BLOBS_DIR / f"{basename}.bin"
-    json_path = _BLOBS_DIR / f"{basename}.json"
+    checked_paths = []
 
-    if bin_path.exists() and json_path.exists():
-        return load_from_sidecar(bin_path, json_path)
+    for blobs_dir in (_EXTRA_BLOBS_DIR, _BLOBS_DIR):
+        if blobs_dir is None:
+            continue
+        bin_path = blobs_dir / f"{basename}.bin"
+        json_path = blobs_dir / f"{basename}.json"
+        checked_paths.append(f"{bin_path} and {json_path}")
+        if bin_path.exists() and json_path.exists():
+            return load_from_sidecar(bin_path, json_path)
 
     raise FileNotFoundError(
         f"No blob for {blob_type}/{target_os}/{target_arch}: "
-        f"checked {bin_path} and {json_path}. "
+        f"checked {'; '.join(checked_paths)}. "
         "Run tools/stage_blobs.py or tools/extract_release.py to generate "
         "runtime sidecar artifacts."
     )
