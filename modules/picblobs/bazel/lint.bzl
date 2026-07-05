@@ -212,11 +212,13 @@ def _cppcheck_test_impl(ctx):
         srcs.extend(src.files.to_list())
 
     include_dirs = ctx.attr.include_dirs
+    runner = ctx.executable._runner
 
     script = ctx.actions.declare_file(ctx.attr.name + "_cppcheck.sh")
 
-    include_flags = " ".join(["-I {}".format(d) for d in include_dirs])
-    src_paths = " ".join([f.short_path for f in srcs])
+    include_paths = " ".join(['"{}"'.format(d) for d in include_dirs])
+    src_paths = " ".join(['"{}"'.format(f.short_path) for f in srcs])
+    runner_path = runner.short_path
 
     ctx.actions.write(
         output = script,
@@ -224,30 +226,31 @@ def _cppcheck_test_impl(ctx):
 #!/bin/bash
 set -euo pipefail
 
-if ! command -v cppcheck >/dev/null 2>&1; then
-    if [ -n "${{PICBLOBS_REQUIRE_LINT_TOOLS:-}}" ]; then
-        echo "ERROR: cppcheck not found but PICBLOBS_REQUIRE_LINT_TOOLS is set" >&2
-        exit 1
-    fi
-    echo "SKIP: cppcheck not found"
-    exit 0
-fi
+runner="{runner}"
+runfiles_root="$PWD"
+args=(
+    --error-exitcode=1
+    --enable=warning,performance,portability
+    --suppress=missingIncludeSystem
+    --suppress=normalCheckLevelMaxBranches
+    --inline-suppr
+    --language=c
+    --std=c11
+)
 
-exec cppcheck \\
-    --error-exitcode=1 \\
-    --enable=warning,performance,portability \\
-    --suppress=missingIncludeSystem \\
-    --suppress=normalCheckLevelMaxBranches \\
-    --inline-suppr \\
-    --language=c \\
-    --std=c11 \\
-    {include_flags} \\
-    {srcs}
-""".format(include_flags = include_flags, srcs = src_paths),
+for include_dir in {include_paths}; do
+    args+=("-I" "$runfiles_root/$include_dir")
+done
+for src in {srcs}; do
+    args+=("$runfiles_root/$src")
+done
+
+exec "$runner" "${{args[@]}}"
+""".format(runner = runner_path, include_paths = include_paths, srcs = src_paths),
         is_executable = True,
     )
 
-    runfiles = ctx.runfiles(files = srcs)
+    runfiles = ctx.runfiles(files = srcs + [runner]).merge(ctx.attr._runner[DefaultInfo].default_runfiles)
 
     return [DefaultInfo(
         executable = script,
@@ -266,6 +269,12 @@ cppcheck_test = rule(
         "include_dirs": attr.string_list(
             default = ["src/include"],
             doc = "Include directories for cppcheck.",
+        ),
+        "_runner": attr.label(
+            default = Label("//modules/picblobs/tools:run_cppcheck"),
+            executable = True,
+            cfg = "exec",
+            doc = "Hermetic cppcheck runner.",
         ),
     },
     doc = "Runs cppcheck as a Bazel test.",

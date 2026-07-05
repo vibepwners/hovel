@@ -1,5 +1,7 @@
 """Build tools — formatting, linting."""
 
+load("@picblobs_pip//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -7,6 +9,13 @@ package(default_visibility = ["//visibility:public"])
 filegroup(
     name = "python_tools",
     srcs = glob(["*.py"]) + ["lizard_baseline.txt"],
+)
+
+py_binary(
+    name = "run_cppcheck",
+    srcs = ["run_cppcheck.py"],
+    python_version = "PY3",
+    deps = [requirement("cppcheck")],
 )
 
 sh_test(
