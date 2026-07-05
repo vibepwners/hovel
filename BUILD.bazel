@@ -106,6 +106,7 @@ test_suite(
     name = "docs_test",
     tests = [
         "//docs/demo:standard_verification_test",
+        "//docs/site/spec:site_smoke_test",
         "//docs/tools/demo/mcpagent:mcpagent_test",
         "//tools/testreport:testreport_test",
     ],
@@ -114,7 +115,7 @@ test_suite(
 filegroup(
     name = "docs_demos",
     srcs = [
-        "//docs/demo:standard_gifs",
+        "//docs/demo:docs_gifs",
     ],
 )
 

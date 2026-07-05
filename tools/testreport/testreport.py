@@ -288,6 +288,7 @@ def write_assets(repo: Path, output: Path) -> None:
 
 def render_index(report: TestReport) -> str:
     title = html.escape(report.title)
+    commit_control = render_commit_control(report.commit)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -321,6 +322,7 @@ def render_index(report: TestReport) -> str:
         Generated <code>{html.escape(report.generated_at)}</code>
         · workflow <code>{html.escape(report.workflow)}</code>
         · job <code>{html.escape(report.job)}</code>
+        {commit_control}
       </p>
     </section>
     <section id="report-app" class="report-app" aria-live="polite">
@@ -334,6 +336,21 @@ def render_index(report: TestReport) -> str:
 </body>
 </html>
 """
+
+
+def render_commit_control(commit: str) -> str:
+    value = commit.strip()
+    if not value:
+        return ""
+    short = value[:12]
+    return (
+        ' · commit '
+        f'<button class="commit-copy" type="button" title="{html.escape(value)}" '
+        f'data-commit="{html.escape(value)}" aria-label="Copy full commit hash {html.escape(value)}">'
+        f"<code>{html.escape(short)}</code>"
+        '<span class="commit-copy-state" aria-hidden="true">copy</span>'
+        "</button>"
+    )
 
 
 def report_to_json(report: TestReport) -> dict[str, Any]:

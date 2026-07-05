@@ -8,6 +8,7 @@ description: Shared build, SDK, and core support files for authoring one module.
 .bazelversion
 .gitignore
 BUILD.bazel
+LICENSE
 MODULE.bazel
 MODULE.bazel.lock
 README.md

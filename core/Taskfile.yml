@@ -202,6 +202,12 @@ tasks:
     cmds:
       - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
 
+  ui:demo:
+    desc: Run all terminal UI catalog demos.
+    interactive: true
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} //cmd/hovel-ui-catalog -- show all {{.CLI_ARGS}}
+
   go:deps:
     desc: 'Add or update Go module dependencies: task go:deps -- module@version.'
     cmds:

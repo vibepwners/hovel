@@ -14,11 +14,12 @@ import (
 )
 
 type Options struct {
-	Width   int
-	Color   bool
-	Frames  int
-	Delay   time.Duration
-	Animate bool
+	Width    int
+	Color    bool
+	Frames   int
+	Delay    time.Duration
+	DelaySet bool
+	Animate  bool
 }
 
 type Demo struct {
@@ -120,6 +121,7 @@ func parseOptions(args []string, stderr io.Writer) (Options, bool) {
 				return Options{}, false
 			}
 			opts.Delay = delay
+			opts.DelaySet = true
 		case "--static":
 			opts.Animate = false
 		case "--animate":
@@ -153,6 +155,8 @@ func usage(registry map[string]Demo) string {
 	return strings.TrimSpace(`Usage:
   hovel-ui-catalog list [--no-color]
   hovel-ui-catalog show <demo|all> [--width 96] [--frames 24] [--delay 40ms] [--no-color]
+
+Animated transfer demos default to --delay 40ms. The logs demo defaults to --delay 500ms so entries are readable.
 
 Demos:
 `+"\n"+renderList(registry, Options{Width: clistyle.DefaultWidth, Color: false})) + "\n"

@@ -378,6 +378,9 @@ blockquote {
   color: var(--cyan);
   font-weight: 700;
 }
+.component-gallery {
+  grid-template-columns: minmax(0, 1fr);
+}
 .homepage-demo {
   width: 100%;
   margin-top: 0;
@@ -896,6 +899,32 @@ pre[data-lang]::before {
   color: var(--muted);
   line-height: 1.5;
 }
+.chapter-list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.65rem;
+}
+.chapter-list .tile {
+  display: grid;
+  grid-template-columns: minmax(4.5rem, 6rem) minmax(10rem, 16rem) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.9rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+}
+.chapter-list .tile-label,
+.chapter-list .tile-title,
+.chapter-list .tile-desc {
+  margin: 0;
+}
+.chapter-list .tile-label {
+  white-space: nowrap;
+}
+.chapter-list .tile-title {
+  font-size: 0.95rem;
+}
+.chapter-list .tile-desc {
+  font-size: 0.82rem;
+}
 
 .api-item,
 .api-member {
@@ -985,6 +1014,10 @@ pre[data-lang]::before {
   .flow-step,
   .state-pill {
     white-space: normal;
+  }
+  .chapter-list .tile {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
   }
   .sequence-event {
     grid-template-columns: 5rem 2rem 5rem minmax(12rem, 1fr);

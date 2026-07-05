@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 from pathlib import Path
 
 import testreport
@@ -42,6 +43,7 @@ def main() -> int:
     if not cache_roots:
         cache_roots = [Path("/var/tmp/bazel-cache/hovel")]
 
+    commit = args.commit or current_commit(repo)
     report = testreport.build_report(
         repo=repo,
         title=args.title,
@@ -50,7 +52,7 @@ def main() -> int:
         cache_roots=cache_roots,
         workflow=args.workflow,
         job=args.job,
-        commit=args.commit,
+        commit=commit,
         ref=args.ref,
     )
     testreport.render_report(report, repo=repo, output=resolve(repo, args.output))
@@ -62,6 +64,21 @@ def resolve(repo: Path, value: str | Path) -> Path:
     if path.is_absolute():
         return path
     return repo / path
+
+
+def current_commit(repo: Path) -> str:
+    for command in (
+        ["sl", "log", "-r", ".", "-T", "{node}"],
+        ["git", "rev-parse", "HEAD"],
+    ):
+        try:
+            result = subprocess.run(command, cwd=repo, check=True, capture_output=True, text=True, timeout=5)
+        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            continue
+        commit = result.stdout.strip()
+        if commit:
+            return commit
+    return ""
 
 
 if __name__ == "__main__":
