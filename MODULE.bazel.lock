@@ -413,6 +413,19 @@
         }
       }
     },
+    "//modules/picblobs/toolchains:cppcheck.bzl%cppcheck": {
+      "general": {
+        "bzlTransitiveDigest": "QwgDZOWNpE8th50/CbofvslxHAMCguUAObrqgRl1/Tk=",
+        "usagesDigest": "q9wAJmoLHNYswlto36amZzWIMfz3OdFOFDGoYFFqcmc=",
+        "recordedInputs": [],
+        "generatedRepoSpecs": {
+          "cppcheck_linux_x86_64": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:cppcheck.bzl%cppcheck_repo",
+            "attributes": {}
+          }
+        }
+      }
+    },
     "//modules/picblobs/toolchains:qemu.bzl%qemu": {
       "general": {
         "bzlTransitiveDigest": "D0YsxiVELsUP0AGfKA3EU4YVe8ABkEsAMbvfDuFFB6s=",
