@@ -22,6 +22,7 @@ def load_helper(name: str):
 
 
 check_site_links = load_helper("check_site_links")
+site_chrome = load_helper("site_chrome")
 generate_sdk_api_docs = load_helper("generate_sdk_api_docs")
 
 
@@ -56,6 +57,8 @@ def main() -> int:
         go_bin=go_bin,
         rustdoc_bin=rustdoc_bin,
     )
+    site_chrome.normalize_book_sidebars(site)
+    site_chrome.normalize_top_navs(site)
     check_site_links.check_site(site)
     (site / ".nojekyll").touch()
     stamp.write_text(fingerprint + "\n")
@@ -92,6 +95,7 @@ def docs_fingerprint(repo: Path) -> str:
         repo / "sdk/python/uv.lock",
         repo / "docs/tools/docs/check_site_links.py",
         repo / "docs/tools/docs/generate_sdk_api_docs.py",
+        repo / "docs/tools/docs/site_chrome.py",
         repo / "docs/tools/docs/stage_site.py",
         resolve_first_runfile("docs/demo/all_gif_manifest.txt", "demo/all_gif_manifest.txt"),
     }
@@ -191,8 +195,9 @@ def stage_test_report(repo: Path, site: Path) -> None:
         copy_tree(generated, dest)
         return
     dest.mkdir(parents=True, exist_ok=True)
+    root = "../../../"
     (dest / "index.html").write_text(
-        """<!doctype html>
+        f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -202,20 +207,7 @@ def stage_test_report(repo: Path, site: Path) -> None:
   <link rel="stylesheet" href="../../../assets/site.css">
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="../../../index.html">
-      <img src="../../../assets/hovel.png" alt="" class="brand-mark">
-      <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// test report</span>
-    </a>
-    <nav class="top-nav">
-      <a href="../../../index.html">Home</a>
-      <a href="../../../spec/index.html">Book</a>
-      <a href="../../../api/sdk/index.html">API Docs</a>
-      <a href="index.html" aria-current="page">Reports</a>
-      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
-    </nav>
-  </header>
+{site_chrome.topbar_html(root, "Reports", "// test report")}
   <main class="content" style="max-width: 920px; margin: 0 auto;">
     <h1>Test Report</h1>
     <p>No generated test report artifact was present when this docs site was staged.</p>

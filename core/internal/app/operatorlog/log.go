@@ -6,6 +6,10 @@ type Level string
 
 const (
 	LevelInfo     Level = "info"
+	LevelWarn     Level = "warn"
+	LevelError    Level = "error"
+	LevelVerbose  Level = "verbose"
+	LevelTrace    Level = "trace"
 	LevelStage    Level = "stage"
 	LevelSuccess  Level = "success"
 	LevelFinding  Level = "finding"
@@ -47,6 +51,22 @@ type Entry struct {
 
 func Info(source, message string, fields ...Field) Entry {
 	return entry(LevelInfo, source, message, fields...)
+}
+
+func Warn(source, message string, fields ...Field) Entry {
+	return entry(LevelWarn, source, message, fields...)
+}
+
+func Error(source, message string, fields ...Field) Entry {
+	return entry(LevelError, source, message, fields...)
+}
+
+func Verbose(source, message string, fields ...Field) Entry {
+	return entry(LevelVerbose, source, message, fields...)
+}
+
+func Trace(source, message string, fields ...Field) Entry {
+	return entry(LevelTrace, source, message, fields...)
 }
 
 func Stage(message string, fields ...Field) Entry {
@@ -112,6 +132,14 @@ func (e Entry) WithModule(id string) Entry {
 
 func (e Entry) WithAttributes(attributes map[string]string) Entry {
 	e.Attributes = cloneStringMap(attributes)
+	return e
+}
+
+func (e Entry) WithLevel(level Level) Entry {
+	if level != "" {
+		e.Level = level
+		e.Kind = kindForLevel(level)
+	}
 	return e
 }
 

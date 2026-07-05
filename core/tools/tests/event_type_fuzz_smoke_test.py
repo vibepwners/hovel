@@ -7,6 +7,12 @@ import sys
 from pathlib import Path
 
 
+FUZZ_COVERAGE_WARNING = (
+    "warning: the test binary was not built with coverage instrumentation, "
+    "so fuzzing will run without coverage guidance and may be inefficient"
+)
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"usage: {sys.argv[0]} <event_test_binary>", file=sys.stderr)
@@ -14,7 +20,7 @@ def main() -> int:
     event_test = resolve_path(sys.argv[1])
     fuzz_cache = Path(os.environ.get("TEST_TMPDIR", "/tmp")) / "event-type-fuzz-cache"
     fuzz_cache.mkdir(parents=True, exist_ok=True)
-    return subprocess.run(
+    completed = subprocess.run(
         [
             str(event_test),
             "-test.fuzz=FuzzNewTypeNeverAcceptsUntrimmedOrSingleSegmentValues",
@@ -22,7 +28,20 @@ def main() -> int:
             f"-test.fuzzcachedir={fuzz_cache}",
         ],
         check=False,
-    ).returncode
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    write_filtered(sys.stdout, completed.stdout)
+    write_filtered(sys.stderr, completed.stderr)
+    return completed.returncode
+
+
+def write_filtered(stream, text: str) -> None:
+    for line in text.splitlines():
+        if line.strip() == FUZZ_COVERAGE_WARNING:
+            continue
+        print(line, file=stream)
 
 
 def resolve_path(path: str) -> Path:

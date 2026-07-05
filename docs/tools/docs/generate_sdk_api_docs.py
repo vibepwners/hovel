@@ -18,6 +18,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, unquote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+import site_chrome
+
 
 @dataclass(frozen=True)
 class ApiPage:
@@ -386,17 +388,7 @@ def write_go_index(path: Path, site_root: Path) -> None:
 
 def write_hovel_page(path: Path, site_root: Path, title: str, body: str, *, current: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    root = relative_prefix(path, site_root)
-    nav = [
-        ("Home", f"{root}index.html"),
-        ("Spec", f"{root}spec/index.html"),
-        ("API Docs", f"{root}api/sdk/index.html"),
-        ("Source", "https://github.com/Vibe-Pwners/hovel"),
-    ]
-    nav_html = "\n".join(
-        f'<a href="{href}"{" aria-current=\"page\"" if label == current else ""}>{html.escape(label)}</a>'
-        for label, href in nav
-    )
+    root = site_chrome.relative_prefix(path, site_root)
     html_text = f"""<!doctype html>
 <html lang="en">
 <head>
@@ -407,16 +399,7 @@ def write_hovel_page(path: Path, site_root: Path, title: str, body: str, *, curr
   <link rel="stylesheet" href="{root}assets/site.css">
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="{root}index.html">
-      <img src="{root}assets/hovel.png" alt="" class="brand-mark">
-      <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// api</span>
-    </a>
-    <nav class="top-nav">
-      {nav_html}
-    </nav>
-  </header>
+{site_chrome.topbar_html(root, current, "// api")}
   <main class="content" style="max-width: 1040px; margin: 0 auto;">
     {body}
   </main>

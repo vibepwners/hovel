@@ -20,6 +20,31 @@
   font-size: 0.82rem;
 }
 
+.commit-copy {
+  align-items: center;
+  background: rgba(82, 240, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 0.4rem;
+  margin-left: 0.15rem;
+  padding: 0.12rem 0.35rem;
+}
+
+.commit-copy:hover,
+.commit-copy:focus {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.commit-copy-state {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
 .report-app {
   display: grid;
   gap: 1rem;
