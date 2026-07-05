@@ -19,6 +19,8 @@ _ARM_MODE = "//modules/picblobs/platforms:linux_armv5_arm"
 
 _CM4 = "//modules/picblobs/platforms:cortexm4_baremetal"
 
+_QEMU_ARM_STATIC = "@qemu_user_static//:qemu-arm-static"
+
 # ---- NaCl blob artifacts (raw syscall mode, ARM Thumb) ----
 
 arm_filegroup(
@@ -113,7 +115,7 @@ sh_test(
     timeout = "short",
     srcs = ["nacl_e2e.sh"],
     args = [
-        "$(location @qemu_arm_static//:qemu)",
+        "$(location {})".format(_QEMU_ARM_STATIC),
         "$(location :runner_thumb)",
         "$(location :nacl_server_bin_thumb)",
         "$(location :nacl_client_bin_thumb)",
@@ -122,7 +124,7 @@ sh_test(
         ":nacl_client_bin_thumb",
         ":nacl_server_bin_thumb",
         ":runner_thumb",
-        "@qemu_arm_static//:qemu",
+        _QEMU_ARM_STATIC,
     ],
     tags = [
         "exclusive",
@@ -135,7 +137,7 @@ sh_test(
     timeout = "short",
     srcs = ["nacl_e2e.sh"],
     args = [
-        "$(location @qemu_arm_static//:qemu)",
+        "$(location {})".format(_QEMU_ARM_STATIC),
         "$(location :runner_arm)",
         "$(location :nacl_server_bin_arm)",
         "$(location :nacl_client_bin_arm)",
@@ -144,7 +146,7 @@ sh_test(
         ":nacl_client_bin_arm",
         ":nacl_server_bin_arm",
         ":runner_arm",
-        "@qemu_arm_static//:qemu",
+        _QEMU_ARM_STATIC,
     ],
     tags = [
         "exclusive",
@@ -158,7 +160,7 @@ sh_test(
     timeout = "short",
     srcs = ["nacl_e2e.sh"],
     args = [
-        "$(location @qemu_arm_static//:qemu)",
+        "$(location {})".format(_QEMU_ARM_STATIC),
         "$(location :runner_hosted_thumb)",
         "$(location :nacl_server_hosted_bin_thumb)",
         "$(location :nacl_client_hosted_bin_thumb)",
@@ -167,7 +169,7 @@ sh_test(
         ":nacl_client_hosted_bin_thumb",
         ":nacl_server_hosted_bin_thumb",
         ":runner_hosted_thumb",
-        "@qemu_arm_static//:qemu",
+        _QEMU_ARM_STATIC,
     ],
     tags = [
         "exclusive",
@@ -304,7 +306,7 @@ sh_test(
     timeout = "short",
     srcs = ["nacl_e2e.sh"],
     args = [
-        "$(location @qemu_arm_static//:qemu)",
+        "$(location {})".format(_QEMU_ARM_STATIC),
         "$(location :runner_hosted_cortexm4)",
         "$(location :nacl_server_hosted_bin_cortexm4)",
         "$(location :nacl_client_hosted_bin_cortexm4)",
@@ -313,7 +315,7 @@ sh_test(
         ":nacl_client_hosted_bin_cortexm4",
         ":nacl_server_hosted_bin_cortexm4",
         ":runner_hosted_cortexm4",
-        "@qemu_arm_static//:qemu",
+        _QEMU_ARM_STATIC,
     ],
     tags = [
         "exclusive",
@@ -383,7 +385,7 @@ sh_test(
     timeout = "short",
     srcs = ["nacl_e2e.sh"],
     args = [
-        "$(location @qemu_arm_static//:qemu)",
+        "$(location {})".format(_QEMU_ARM_STATIC),
         "$(location :test_mbed_runner_thumb)",
         "$(location :nacl_server_hosted_bin_cortexm4)",
         "$(location :nacl_client_hosted_bin_cortexm4)",
@@ -392,7 +394,7 @@ sh_test(
         ":nacl_client_hosted_bin_cortexm4",
         ":nacl_server_hosted_bin_cortexm4",
         ":test_mbed_runner_thumb",
-        "@qemu_arm_static//:qemu",
+        _QEMU_ARM_STATIC,
     ],
     tags = [
         "exclusive",

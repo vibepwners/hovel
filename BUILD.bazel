@@ -60,10 +60,16 @@ test_suite(
         "//modules/squatter/provider:provider_test",
         "//modules/squatter/windows:squatter_x86_exe_pe_test",
         "//modules/squatter/windows:source_contract_test",
-        "//modules/picblobs:bazel_test_suite",
         "//modules/tools:check_in_repo_modules_test",
         "//modules/tools:package_examples_test",
         "//modules/tools:workspace_module_install_test",
+    ],
+)
+
+test_suite(
+    name = "picblobs_test",
+    tests = [
+        "//modules/picblobs:bazel_test_suite",
     ],
 )
 

@@ -163,8 +163,8 @@ arm_none_eabi.toolchain(
 )
 use_repo(arm_none_eabi, "arm_none_eabi")
 
-# --- QEMU user-mode static (system prerequisite, wrapped for Bazel) ---
+# --- QEMU user-mode static (hermetic distro package for Bazel tests) ---
 qemu = use_extension("//modules/picblobs/toolchains:qemu.bzl", "qemu")
-use_repo(qemu, "qemu_arm_static")
+use_repo(qemu, "qemu_arm_static", "qemu_user_static")
 
 register_toolchains("//modules/picblobs/toolchains:all")

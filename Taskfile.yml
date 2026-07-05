@@ -207,6 +207,7 @@ tasks:
             --output=.test-report/site
             --bep=.test-report/bep/core.json
             --bep=.test-report/bep/root.json
+            --bep=.test-report/bep/picblobs.json
             --scan-testlogs=core/bazel-testlogs
             --scan-testlogs=bazel-testlogs
 
@@ -218,6 +219,7 @@ tasks:
         status=0
         task core:test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=../.test-report/bep/core.json //:test //:race_test //:fuzz_smoke_test || status=$?
         task bazel:test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=.test-report/bep/root.json //:sdk_test //:modules_test //:module_examples_test //:docs_test || status=$?
+        task picblobs:bazel-test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=.test-report/bep/picblobs.json || status=$?
         task report:generate || status=$?
         exit "$status"
 
@@ -433,7 +435,7 @@ tasks:
     cmds:
       - task: bazel:test
         vars:
-          CLI_ARGS: --config=picblobs_ci //modules/picblobs:bazel_test_suite
+          CLI_ARGS: --config=picblobs_ci {{.CLI_ARGS}} //modules/picblobs:bazel_test_suite
 
   picblobs:stage:
     desc: Build and stage picblobs blobs, runners, and verifier fixtures.

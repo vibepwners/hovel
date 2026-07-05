@@ -415,10 +415,14 @@
     },
     "//modules/picblobs/toolchains:qemu.bzl%qemu": {
       "general": {
-        "bzlTransitiveDigest": "3+O8g2uba5kvrArapBd/ToJvzuVQBYTKFuqKStNU1H8=",
+        "bzlTransitiveDigest": "D0YsxiVELsUP0AGfKA3EU4YVe8ABkEsAMbvfDuFFB6s=",
         "usagesDigest": "vuShkfpFg3tvZbs5t31i8mQRYeoTsurOEY7TUKXcQr4=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
+          "qemu_user_static": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:qemu.bzl%qemu_user_static_repo",
+            "attributes": {}
+          },
           "qemu_arm_static": {
             "repoRuleId": "@@//modules/picblobs/toolchains:qemu.bzl%qemu_arm_repo",
             "attributes": {}

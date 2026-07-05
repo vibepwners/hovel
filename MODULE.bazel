@@ -361,7 +361,7 @@ picblobs_arm_none_eabi.toolchain(
 use_repo(picblobs_arm_none_eabi, "arm_none_eabi")
 
 picblobs_qemu = use_extension("//modules/picblobs/toolchains:qemu.bzl", "qemu")
-use_repo(picblobs_qemu, "qemu_arm_static")
+use_repo(picblobs_qemu, "qemu_arm_static", "qemu_user_static")
 
 
 local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")

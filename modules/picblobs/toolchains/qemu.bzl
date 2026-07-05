@@ -1,50 +1,107 @@
-"""Module extension for locating a host qemu-arm interpreter.
+"""Module extension for hermetic QEMU user-mode interpreters.
 
-QEMU user-mode is a system prerequisite (like a kernel). This extension
-wraps the host binary into a Bazel-visible label so tests can declare it as
-a dependency.
-
-It accepts either the static build (``qemu-arm-static``) or the
-dynamically-linked ``qemu-arm`` shipped by the ``qemu-user`` package, which
-is what newer distros (e.g. Ubuntu 26.04, paired with ``qemu-user-binfmt``)
-provide. This mirrors ``find_qemu`` on the Python side.
+The picblobs Bazel tests need concrete ``qemu-*-static`` binaries during
+analysis so they can declare the interpreter in ``data``. Fetching a pinned
+distro ``qemu-user-static`` package keeps CI independent from host packages
+while still exposing the same multi-architecture interpreter set that
+picblobs supports at runtime.
 """
 
-# Searched in order; the static name wins when both are present.
-_QEMU_ARM_CANDIDATES = ["qemu-arm-static", "qemu-arm"]
+_QEMU_USER_STATIC_URLS = [
+    "https://deb.debian.org/debian/pool/main/q/qemu/qemu-user-static_7.2+dfsg-7+deb12u18+b2_amd64.deb",
+]
 
-def _qemu_repo_impl(ctx):
-    qemu = None
-    for name in _QEMU_ARM_CANDIDATES:
-        found = ctx.which(name)
-        if found:
-            qemu = found
-            break
+_QEMU_USER_STATIC_SHA256 = "325eaa448a481f7b4e581eb9541fd50014b3d2a65c3e7aff33b99b47361bb6dc"
 
-    if not qemu:
-        fail(
-            "No qemu-arm interpreter found on PATH (looked for {}). ".format(
-                ", ".join(_QEMU_ARM_CANDIDATES),
-            ) +
-            "Install qemu-user-static, or qemu-user + qemu-user-binfmt.",
-        )
+_QEMU_USER_STATIC_BINARIES = [
+    "qemu-aarch64-static",
+    "qemu-arm-static",
+    "qemu-i386-static",
+    "qemu-mips-static",
+    "qemu-mipsel-static",
+    "qemu-ppc-static",
+    "qemu-ppc64le-static",
+    "qemu-riscv64-static",
+    "qemu-s390x-static",
+    "qemu-sparc-static",
+    "qemu-x86_64-static",
+]
 
-    ctx.symlink(qemu, "qemu-bin")
+def _build_file():
+    lines = [
+        'package(default_visibility = ["//visibility:public"])',
+        "",
+        "filegroup(",
+        '    name = "all",',
+        "    srcs = [",
+    ]
+    lines.extend(['        "bin/{}",'.format(binary) for binary in _QEMU_USER_STATIC_BINARIES])
+    lines.extend([
+        "    ],",
+        ")",
+        "",
+        "alias(",
+        '    name = "qemu",',
+        '    actual = ":qemu-arm-static",',
+        ")",
+        "",
+    ])
+
+    for binary in _QEMU_USER_STATIC_BINARIES:
+        lines.extend([
+            "filegroup(",
+            '    name = "{}",'.format(binary),
+            '    srcs = ["bin/{}"],'.format(binary),
+            ")",
+            "",
+        ])
+
+    return "\n".join(lines)
+
+def _qemu_user_static_repo_impl(ctx):
+    ctx.download_and_extract(
+        url = ctx.attr.urls,
+        output = "deb",
+        sha256 = ctx.attr.sha256,
+        type = "deb",
+    )
+    ctx.extract(
+        archive = "deb/data.tar.xz",
+        output = "pkg",
+    )
+
+    for binary in _QEMU_USER_STATIC_BINARIES:
+        source = ctx.path("pkg/usr/bin/{}".format(binary))
+        if not source.exists:
+            fail("qemu-user-static package did not contain usr/bin/{}".format(binary))
+        ctx.symlink(source, "bin/{}".format(binary))
+
+    ctx.file("BUILD.bazel", _build_file())
+
+qemu_user_static_repo = repository_rule(
+    implementation = _qemu_user_static_repo_impl,
+    attrs = {
+        "sha256": attr.string(default = _QEMU_USER_STATIC_SHA256),
+        "urls": attr.string_list(default = _QEMU_USER_STATIC_URLS),
+    },
+)
+
+def _qemu_arm_alias_repo_impl(ctx):
     ctx.file("BUILD.bazel", """\
 package(default_visibility = ["//visibility:public"])
 
-filegroup(
+alias(
     name = "qemu",
-    srcs = ["qemu-bin"],
+    actual = "@qemu_user_static//:qemu-arm-static",
 )
 """)
 
 qemu_arm_repo = repository_rule(
-    implementation = _qemu_repo_impl,
-    local = True,
+    implementation = _qemu_arm_alias_repo_impl,
 )
 
 def _qemu_impl(_module_ctx):
+    qemu_user_static_repo(name = "qemu_user_static")
     qemu_arm_repo(name = "qemu_arm_static")
 
 qemu = module_extension(
