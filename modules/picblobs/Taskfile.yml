@@ -198,11 +198,23 @@ tasks:
     cmds:
       - '{{.DEV}} python tools/update_version.py {{.CLI_ARGS}}'
 
+  upver:
+    desc: "Set the independent picblobs package version everywhere (task upver -- 0.2.0)"
+    deps: [_venv]
+    cmds:
+      - '{{.DEV}} python tools/update_version.py {{.CLI_ARGS}}'
+
   version:check:
     desc: "Verify all version strings agree (task version:check -- 0.1.4)"
     deps: [_venv]
     cmds:
       - '{{.DEV}} python tools/update_version.py --check {{.CLI_ARGS}}'
+
+  upver:test:
+    desc: "Check the independent picblobs version updater."
+    deps: [_venv]
+    cmds:
+      - '{{.DEV}} python -m pytest python/tests/test_update_version.py'
 
   release:extract:
     desc: "Extract staged .so blobs into the canonical release structure"

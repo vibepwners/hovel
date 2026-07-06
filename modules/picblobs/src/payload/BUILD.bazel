@@ -5,6 +5,18 @@ load("//modules/picblobs/src/payload:extract.bzl", "extract_bin")
 
 package(default_visibility = ["//visibility:public"])
 
+filegroup(
+    name = "quality_sources",
+    srcs = glob(
+        [
+            "*.bzl",
+            "*.c",
+            "*.h",
+        ],
+        allow_empty = True,
+    ) + ["BUILD.bazel"],
+)
+
 pic_blob(
     name = "alloc_jump",
     srcs = ["alloc_jump.c"],

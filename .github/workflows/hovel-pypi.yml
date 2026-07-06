@@ -12,6 +12,7 @@ jobs:
   build:
     name: Build Hovel wheels
     runs-on: ubuntu-latest
+    if: github.event_name != 'release' || startsWith(github.ref_name, 'v')
     steps:
       - uses: actions/checkout@v4
 

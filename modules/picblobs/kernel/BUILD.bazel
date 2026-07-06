@@ -14,6 +14,21 @@ _DATA = glob([
     "**/Makefile",
 ])
 
+filegroup(
+    name = "quality_sources",
+    srcs = glob(
+        [
+            "**/*.S",
+            "**/*.c",
+            "**/*.h",
+            "**/*.py",
+            "**/Makefile",
+        ],
+        allow_empty = True,
+    ) + ["BUILD.bazel"],
+    visibility = ["//visibility:public"],
+)
+
 _TAGS = [
     "manual",
     "exclusive",

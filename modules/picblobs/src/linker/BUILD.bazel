@@ -10,3 +10,8 @@ exports_files([
     "blob.ld",
     "blob_test_freebsd.ld",
 ])
+
+filegroup(
+    name = "quality_sources",
+    srcs = glob(["*.ld"]) + ["BUILD.bazel"],
+)

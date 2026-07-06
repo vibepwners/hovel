@@ -5,3 +5,8 @@ exports_files([
     "lint.bzl",
     "platforms.bzl",
 ])
+
+filegroup(
+    name = "quality_sources",
+    srcs = glob(["*.bzl"]) + ["BUILD.bazel"],
+)

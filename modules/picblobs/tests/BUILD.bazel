@@ -11,6 +11,25 @@ load(":defs.bzl", "arm_filegroup")
 
 package(default_visibility = ["//visibility:public"])
 
+filegroup(
+    name = "quality_sources",
+    srcs = glob(
+        [
+            "*.bzl",
+            "*.c",
+            "*.h",
+            "*.sh",
+        ],
+        allow_empty = True,
+    ) + [
+        "BUILD.bazel",
+        "//modules/picblobs/tests/runners:quality_sources",
+        "//modules/picblobs/tests/runners/freebsd:quality_sources",
+        "//modules/picblobs/tests/runners/linux:quality_sources",
+        "//modules/picblobs/tests/runners/windows:quality_sources",
+    ],
+)
+
 # ---- Platform shorthand ----
 
 _ARM_THUMB = "//modules/picblobs/platforms:linux_armv5_thumb"

@@ -1,6 +1,6 @@
 [project]
 name = "picblobs"
-version = "0.1.6"
+version = "0.1.7"
 description = "Position-independent code blob library"
 authors = [
     { name = "William Born", email = "william.born.git@gmail.com" },

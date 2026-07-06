@@ -2,6 +2,11 @@
 
 package(default_visibility = ["//visibility:public"])
 
+filegroup(
+    name = "quality_sources",
+    srcs = glob(["*.bzl"]) + ["BUILD.bazel"],
+)
+
 toolchain(
     name = "arm_none_eabi",
     target_compatible_with = [

@@ -66,6 +66,23 @@ class TargetState:
 
 VERSION_TARGETS: tuple[VersionTarget, ...] = (
     VersionTarget(
+        Path("MODULE.bazel"),
+        "picblobs Bzlmod module version",
+        re.compile(
+            r'(?m)^(module\(\n\s+name = "picblobs",\n\s+version = ")([^"]+)(",\n\))$'
+        ),
+    ),
+    VersionTarget(
+        Path("hovel-module.yaml"),
+        "Hovel module package metadata version",
+        re.compile(r"(?m)^(\s+version: )([^ \n]+)()$"),
+    ),
+    VersionTarget(
+        Path("provider/provider.go"),
+        "Hovel payload provider version",
+        re.compile(r'(?m)^(const providerVersion = ")([^"]+)(")$'),
+    ),
+    VersionTarget(
         Path("python/pyproject.toml"),
         "picblobs package metadata",
         re.compile(r'(?m)^(version = ")([^"]+)(")$'),

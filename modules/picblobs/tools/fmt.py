@@ -77,12 +77,12 @@ def _run_formatter(
     if not files:
         return True
 
-    binary = shutil.which(cmd[0])
+    binary = _resolve_tool(cmd[0])
     if binary is None:
         log.error("%s not found. Install it to format %d files.", cmd[0], len(files))
         return False
 
-    full_cmd = cmd + [str(f) for f in files]
+    full_cmd = [binary, *cmd[1:], *[str(f) for f in files]]
     log.info("%s: %d files", name, len(files))
     log.debug("  %s", " ".join([*cmd[:3], "..."]))
 
@@ -173,7 +173,7 @@ def _format_python_files(files: list[Path], *, check: bool) -> bool:
 def _format_bazel_files(files: list[Path], *, check: bool) -> bool:
     if not files:
         return True
-    if shutil.which("buildifier") is None:
+    if _resolve_tool("buildifier") is None:
         if os.environ.get("PICBLOBS_REQUIRE_LINT_TOOLS"):
             log.error("buildifier not found but PICBLOBS_REQUIRE_LINT_TOOLS is set")
             return False
@@ -181,6 +181,19 @@ def _format_bazel_files(files: list[Path], *, check: bool) -> bool:
         return True
     cmd = ["buildifier", "--mode=check"] if check else ["buildifier"]
     return _run_formatter("buildifier", cmd, files, check)
+
+
+def _resolve_tool(name: str) -> str | None:
+    env_name = {
+        "buildifier": "PICBLOBS_BUILDIFIER",
+        "clang-format": "PICBLOBS_CLANG_FORMAT",
+        "ruff": "PICBLOBS_RUFF",
+    }.get(name)
+    if env_name:
+        value = os.environ.get(env_name)
+        if value:
+            return value
+    return shutil.which(name)
 
 
 def main() -> int:

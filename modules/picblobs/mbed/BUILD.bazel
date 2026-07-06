@@ -5,3 +5,17 @@ exports_files([
     "platform_mbed.h",
     ".mbed",
 ])
+
+filegroup(
+    name = "quality_sources",
+    srcs = glob(
+        [
+            "**/*.cpp",
+            "**/*.h",
+        ],
+        allow_empty = True,
+    ) + [
+        ".mbed",
+        "BUILD.bazel",
+    ],
+)
