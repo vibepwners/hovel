@@ -29,15 +29,18 @@ MODULES = (
     ("mock-exploit-rust", "v0.0.0-example", "exploit", "command", "4", ""),
     ("mock-exploit-session-rust", "v0.0.0-example", "exploit", "command", "5", ""),
     ("squatter", "v0.1.0", "payload_provider", "command", "6", ""),
-    ("picblobs", "0.1.6", "payload_provider", "command", "7", ""),
 )
 
 
 def main() -> int:
-    if len(os.sys.argv) != 10:
-        raise SystemExit("usage: workspace_module_install_test.py <hovel> <eight module binaries>")
+    if len(os.sys.argv) != 11:
+        raise SystemExit("usage: workspace_module_install_test.py <hovel> <eight module binaries> <picblobs manifest>")
     hovel_bin = resolve_path(os.sys.argv[1])
-    binaries = [resolve_path(arg) for arg in os.sys.argv[2:]]
+    binaries = [resolve_path(arg) for arg in os.sys.argv[2:10]]
+    if len(binaries) != 8:
+        raise SystemExit("expected eight module binary arguments")
+    picblobs_manifest = resolve_path(os.sys.argv[10])
+    modules = MODULES + (("picblobs", manifest_version(picblobs_manifest), "payload_provider", "command", "7", ""),)
     python_root = find_first_runfile("modules/examples/python", "examples/python")
     sdk_root = find_runfile("sdk/python")
 
@@ -54,7 +57,7 @@ def main() -> int:
         }
 
         run([str(hovel_bin), "init", "--workspace", str(workspace), "--json"], env=env)
-        for name, _version, module_type, kind, value, module in MODULES:
+        for name, _version, module_type, kind, value, module in modules:
             if kind == "python":
                 write_python_package(packages, name, module_type, python_root / value, module, sdk_root)
             else:
@@ -71,7 +74,7 @@ def main() -> int:
             raise AssertionError(f"module lock contains {lock_count} modules, want 13\n{lock.read_text()}")
 
         list_out = run([str(hovel_bin), "module", "list", "--workspace", str(workspace)], env=env)
-        for name, version, *_ in MODULES:
+        for name, version, *_ in modules:
             require_contains(list_out, f"{name}@{version}")
 
         check_out = run([str(hovel_bin), "module", "check", "--all", "--workspace", str(workspace)], env=env)
@@ -140,6 +143,20 @@ def require_contains(text: str, expected: str) -> None:
         raise AssertionError(f"expected output to include {expected!r}:\n{text}")
 
 
+def manifest_version(manifest: Path) -> str:
+    in_metadata = False
+    for line in manifest.read_text().splitlines():
+        stripped = line.strip()
+        if line == "metadata:":
+            in_metadata = True
+            continue
+        if in_metadata and line.startswith("  version:"):
+            return stripped.split(":", 1)[1].strip()
+        if in_metadata and stripped and not line.startswith(" "):
+            break
+    raise AssertionError(f"metadata.version not found in {manifest}")
+
+
 def resolve_path(path: str) -> Path:
     candidate = Path(path)
     if candidate.exists():
@@ -171,7 +188,7 @@ def runfile_roots() -> list[Path]:
 
 
 def test_tmpdir() -> str | None:
-    return "/tmp"
+    return os.environ.get("TEST_TMPDIR") or tempfile.gettempdir()
 
 
 if __name__ == "__main__":

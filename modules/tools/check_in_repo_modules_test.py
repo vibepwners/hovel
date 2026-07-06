@@ -13,11 +13,13 @@ def main() -> int:
     binaries = [resolve_path(arg) for arg in os.sys.argv[2:10]]
     if len(binaries) != 8:
         raise SystemExit("expected eight module binary arguments")
+    picblobs_manifest = resolve_path(required_arg(10, "missing picblobs manifest"))
+    picblobs_version = manifest_version(picblobs_manifest)
 
     python_root = find_first_runfile("modules/examples/python", "examples/python")
     sdk_root = find_runfile("sdk/python")
 
-    with tempfile.TemporaryDirectory(prefix="hovel-module-check-", dir=test_tmpdir()) as tmp_raw:
+    with tempfile.TemporaryDirectory(prefix="hovel-module-check-", dir=short_socket_tmpdir()) as tmp_raw:
         tmp = Path(tmp_raw)
         config = tmp / "hovel-modules.json"
         config.write_text(
@@ -85,7 +87,7 @@ def main() -> int:
         require_contains(out, "MODULE CHECKS")
         require_contains(out, "13 passed")
         require_contains(out, "squatter@v0.1.0")
-        require_contains(out, "picblobs@0.1.6")
+        require_contains(out, f"picblobs@{picblobs_version}")
         require_contains(out, "PASS")
 
         workspace = tmp / "workspace"
@@ -106,14 +108,30 @@ def required_arg(index: int, message: str) -> str:
 
 
 def run(argv: list[str], env: dict[str, str]) -> str:
-    result = subprocess.run(argv, check=True, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    result = subprocess.run(argv, check=False, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     print(result.stdout, end="")
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, argv, output=result.stdout)
     return result.stdout
 
 
 def require_contains(text: str, expected: str) -> None:
     if expected not in text:
         raise AssertionError(f"expected output to include {expected!r}:\n{text}")
+
+
+def manifest_version(manifest: Path) -> str:
+    in_metadata = False
+    for line in manifest.read_text().splitlines():
+        stripped = line.strip()
+        if line == "metadata:":
+            in_metadata = True
+            continue
+        if in_metadata and line.startswith("  version:"):
+            return stripped.split(":", 1)[1].strip()
+        if in_metadata and stripped and not line.startswith(" "):
+            break
+    raise AssertionError(f"metadata.version not found in {manifest}")
 
 
 def resolve_path(path: str) -> Path:
@@ -147,7 +165,13 @@ def runfile_roots() -> list[Path]:
 
 
 def test_tmpdir() -> str | None:
-    return "/tmp"
+    return os.environ.get("TEST_TMPDIR") or tempfile.gettempdir()
+
+
+def short_socket_tmpdir() -> str | None:
+    # Hovel's daemon socket is workspace/hoveld.sock. Bazel sandbox paths can
+    # exceed Unix sockaddr_un limits, so daemon workspaces need a short root.
+    return tempfile.gettempdir()
 
 
 if __name__ == "__main__":

@@ -12,6 +12,11 @@ Config = how it is built.
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
+    name = "quality_sources",
+    srcs = ["BUILD.bazel"],
+)
+
+filegroup(
     name = "full",
     srcs = select({
         "//modules/picblobs/platforms:linux": [

@@ -15,6 +15,23 @@ filegroup(
     srcs = glob(["**"]),
 )
 
+filegroup(
+    name = "quality_sources",
+    srcs = glob(
+        [
+            "**/*.py",
+            "**/*.toml",
+            "**/*.txt",
+        ],
+        allow_empty = True,
+        exclude = [
+            ".venv/**",
+            "build/**",
+            "dist/**",
+        ],
+    ) + ["BUILD.bazel"],
+)
+
 # --- Library ---
 
 py_library(

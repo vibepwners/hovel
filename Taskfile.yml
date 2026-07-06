@@ -544,9 +544,6 @@ tasks:
     desc: Run the picblobs module CI gate.
     cmds:
       - task: picblobs:setup
-      - task: picblobs:generate-check
-      - task: picblobs:fmt-check
-      - task: picblobs:lint-check
       - task: picblobs:bazel-build
       - task: picblobs:bazel-test
 

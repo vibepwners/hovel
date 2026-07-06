@@ -30,7 +30,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -74,14 +76,14 @@ def _sorted_gcc_defines() -> list[str]:
 
 def _clang_format(content: str) -> str:
     """Run clang-format on content if available. Returns formatted content."""
-    import shutil
 
-    if not shutil.which("clang-format"):
+    clang_format = _resolve_tool("clang-format")
+    if not clang_format:
         return content
     try:
         result = subprocess.run(
             [
-                "clang-format",
+                clang_format,
                 f"--assume-filename={PROJECT_ROOT}/x.c",
                 f"--style=file:{PROJECT_ROOT}/.clang-format",
             ],
@@ -103,14 +105,13 @@ def _buildifier(content: str, path: Path) -> str:
     Keeps generated BUILD/.bzl files consistent with `tools/fmt.py`, which
     enforces buildifier formatting repo-wide.
     """
-    import shutil
-
-    if not shutil.which("buildifier"):
+    buildifier = _resolve_tool("buildifier")
+    if not buildifier:
         return content
     file_type = "bzl" if path.suffix == ".bzl" else "build"
     try:
         result = subprocess.run(
-            ["buildifier", "-type", file_type],
+            [buildifier, "-type", file_type],
             input=content,
             capture_output=True,
             check=False,
@@ -121,6 +122,18 @@ def _buildifier(content: str, path: Path) -> str:
     except (OSError, subprocess.SubprocessError):
         return content
     return content
+
+
+def _resolve_tool(name: str) -> str | None:
+    env_name = {
+        "buildifier": "PICBLOBS_BUILDIFIER",
+        "clang-format": "PICBLOBS_CLANG_FORMAT",
+    }.get(name)
+    if env_name:
+        value = os.environ.get(env_name)
+        if value:
+            return value
+    return shutil.which(name)
 
 
 def _write(path: Path, content: str, check: bool) -> bool:
@@ -637,7 +650,19 @@ def _gen_runner_c(os_name: str) -> str:
 
 
 def _gen_platforms_build() -> str:
-    lines = [_BZL, '\npackage(default_visibility = ["//visibility:public"])\n\n']
+    lines = [
+        _BZL,
+        textwrap.dedent("""\
+
+        package(default_visibility = ["//visibility:public"])
+
+        filegroup(
+            name = "quality_sources",
+            srcs = ["BUILD.bazel"],
+        )
+
+        """),
+    ]
     lines.extend(_platform_target_os_lines())
     lines.extend(_platform_custom_cpu_lines())
     lines.extend(_platform_instruction_mode_lines())
@@ -779,7 +804,19 @@ def _platform_baremetal_lines() -> list[str]:
 
 
 def _gen_toolchains_build() -> str:
-    lines = [_BZL, '\npackage(default_visibility = ["//visibility:public"])\n\n']
+    lines = [
+        _BZL,
+        textwrap.dedent("""\
+
+        package(default_visibility = ["//visibility:public"])
+
+        filegroup(
+            name = "quality_sources",
+            srcs = glob(["*.bzl"]) + ["BUILD.bazel"],
+        )
+
+        """),
+    ]
 
     # ARM GNU bare-metal toolchain (must be registered before Bootlin ARM
     # so that cortexm4_baremetal resolves to arm_none_eabi, not bootlin_armv5).
@@ -970,6 +1007,15 @@ def _gen_payload_build() -> str:
 
         package(default_visibility = ["//visibility:public"])
 
+        filegroup(
+            name = "quality_sources",
+            srcs = glob([
+                "*.bzl",
+                "*.c",
+                "*.h",
+            ], allow_empty = True) + ["BUILD.bazel"],
+        )
+
         """)
     )
 
@@ -993,9 +1039,7 @@ def _require_formatters() -> bool:
     --check would report false "out of date" results. Print an actionable error
     and return False instead of silently producing a mismatch.
     """
-    import shutil
-
-    missing = [t for t in ("buildifier", "clang-format") if shutil.which(t) is None]
+    missing = [t for t in ("buildifier", "clang-format") if _resolve_tool(t) is None]
     if not missing:
         return True
     print(

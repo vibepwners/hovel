@@ -7,6 +7,12 @@ package(default_visibility = [
     "//modules/picblobs/tests:__subpackages__",
 ])
 
+filegroup(
+    name = "quality_sources",
+    srcs = glob(["**/*.h"]) + ["BUILD.bazel"],
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "headers",
     hdrs = glob(["**/*.h"]),

@@ -110,6 +110,22 @@ http_file(
     urls = ["https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64"],
 )
 
+http_file(
+    name = "buildifier_linux_amd64",
+    downloaded_file_path = "buildifier",
+    executable = True,
+    sha256 = "5474cc5128a74e806783d54081f581662c4be8ae65022f557e9281ed5dc88009",
+    urls = ["https://github.com/bazelbuild/buildtools/releases/download/v7.3.1/buildifier-linux-amd64"],
+)
+
+http_file(
+    name = "buildifier_linux_arm64",
+    downloaded_file_path = "buildifier",
+    executable = True,
+    sha256 = "0bf86c4bfffaf4f08eed77bde5b2082e4ae5039a11e2e8b03984c173c34a561c",
+    urls = ["https://github.com/bazelbuild/buildtools/releases/download/v7.3.1/buildifier-linux-arm64"],
+)
+
 http_archive(
     name = "ffmpeg_linux_x86_64",
     build_file_content = """\

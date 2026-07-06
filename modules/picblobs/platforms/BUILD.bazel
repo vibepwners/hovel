@@ -2,6 +2,11 @@
 
 package(default_visibility = ["//visibility:public"])
 
+filegroup(
+    name = "quality_sources",
+    srcs = ["BUILD.bazel"],
+)
+
 # Custom target_os instead of @platforms//os:os — the blob OS is a
 # cross-compilation target property, not the execution OS. A Linux host
 # builds FreeBSD and Windows blobs; using @platforms//os would confuse

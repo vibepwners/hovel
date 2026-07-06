@@ -5,3 +5,14 @@ package(default_visibility = [
     "//modules/picblobs/src:__subpackages__",
     "//modules/picblobs/tests:__subpackages__",
 ])
+
+filegroup(
+    name = "quality_sources",
+    srcs = [
+        "BUILD.bazel",
+        "//modules/picblobs/src/include/picblobs:quality_sources",
+        "//modules/picblobs/src/linker:quality_sources",
+        "//modules/picblobs/src/payload:quality_sources",
+    ],
+    visibility = ["//visibility:public"],
+)

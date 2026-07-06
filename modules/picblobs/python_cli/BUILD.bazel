@@ -12,6 +12,23 @@ filegroup(
     srcs = glob(["**"]),
 )
 
+filegroup(
+    name = "quality_sources",
+    srcs = glob(
+        [
+            "**/*.py",
+            "**/*.toml",
+            "**/*.txt",
+        ],
+        allow_empty = True,
+        exclude = [
+            ".venv/**",
+            "build/**",
+            "dist/**",
+        ],
+    ) + ["BUILD.bazel"],
+)
+
 py_library(
     name = "picblobs_cli",
     srcs = glob(["picblobs_cli/**/*.py"]),

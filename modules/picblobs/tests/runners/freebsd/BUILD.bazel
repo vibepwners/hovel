@@ -13,6 +13,18 @@ package(default_visibility = [
     "//modules/picblobs/tests:__subpackages__",
 ])
 
+filegroup(
+    name = "quality_sources",
+    srcs = glob(
+        [
+            "*.c",
+            "start/*.h",
+        ],
+        allow_empty = True,
+    ) + ["BUILD.bazel"],
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "runner_obj",
     srcs = ["runner.c"] + glob(["start/*.h"]),

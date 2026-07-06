@@ -104,7 +104,7 @@ def _run_buildifier_check(paths: list[Path] | None = None) -> int:
         log.info("buildifier: no matching Bazel files")
         return 0
 
-    binary = shutil.which("buildifier")
+    binary = _resolve_tool("buildifier")
     if binary is None:
         if os.environ.get("PICBLOBS_REQUIRE_LINT_TOOLS"):
             log.error("buildifier not found but PICBLOBS_REQUIRE_LINT_TOOLS is set")
@@ -117,7 +117,7 @@ def _run_buildifier_check(paths: list[Path] | None = None) -> int:
         if paths is not None
         else _relativize(_default_buildifier_paths())
     )
-    cmd = ["buildifier", "--lint=warn", "--mode=check", *targets]
+    cmd = [binary, "--lint=warn", "--mode=check", *targets]
     log.info("buildifier: %d Starlark files", len(targets))
     result = subprocess.run(
         cmd, cwd=PROJECT_ROOT, text=True, capture_output=True, check=False
@@ -150,12 +150,12 @@ def _run_ruff_check(paths: list[Path] | None = None) -> int:
         log.info("ruff: no matching Python files")
         return 0
 
-    binary = shutil.which("ruff")
+    binary = _resolve_tool("ruff")
     if binary is None:
         log.error("ruff not found. Install it to run Python lint checks.")
         return 1
 
-    cmd = _build_ruff_command(paths)
+    cmd = [binary, *_build_ruff_command(paths)[1:]]
     log.info("ruff: Python lint checks")
     result = subprocess.run(
         cmd, cwd=PROJECT_ROOT, text=True, capture_output=True, check=False
@@ -168,12 +168,12 @@ def _run_ruff_check(paths: list[Path] | None = None) -> int:
 
 
 def _run_lizard_check(paths: list[Path] | None, *, check_stale: bool) -> int:
-    binary = shutil.which("lizard")
+    binary = _resolve_tool("lizard")
     if binary is None:
         log.error("lizard not found. Install it to run complexity checks.")
         return 1
 
-    cmd = _build_lizard_command(paths)
+    cmd = [binary, *_build_lizard_command(paths)[1:]]
     if _supports_appimage_extract(binary):
         cmd.insert(1, "--appimage-extract-and-run")
     log.info("lizard: cyclomatic complexity threshold <= %d", LIZARD_THRESHOLD)
@@ -204,6 +204,19 @@ def _run_lizard_check(paths: list[Path] | None, *, check_stale: bool) -> int:
 
     log.info("ok")
     return 0
+
+
+def _resolve_tool(name: str) -> str | None:
+    env_name = {
+        "buildifier": "PICBLOBS_BUILDIFIER",
+        "lizard": "PICBLOBS_LIZARD",
+        "ruff": "PICBLOBS_RUFF",
+    }.get(name)
+    if env_name:
+        value = os.environ.get(env_name)
+        if value:
+            return value
+    return shutil.which(name)
 
 
 def _load_baseline() -> set[str]:

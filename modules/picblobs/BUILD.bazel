@@ -11,6 +11,7 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     ".clang-tidy",
     ".clang-format",
+    "hovel-module.yaml",
 ])
 
 filegroup(
@@ -25,6 +26,27 @@ filegroup(
         "Taskfile.yml",
         "lefthook.yml",
         "sourceme",
+    ],
+)
+
+filegroup(
+    name = "quality_sources",
+    srcs = [
+        ".clang-format",
+        ".clang-tidy",
+        "BUILD.bazel",
+        "MODULE.bazel",
+        "//modules/picblobs/bazel:quality_sources",
+        "//modules/picblobs/kernel:quality_sources",
+        "//modules/picblobs/mbed:quality_sources",
+        "//modules/picblobs/platforms:quality_sources",
+        "//modules/picblobs/python:quality_sources",
+        "//modules/picblobs/python_cli:quality_sources",
+        "//modules/picblobs/release:quality_sources",
+        "//modules/picblobs/src:quality_sources",
+        "//modules/picblobs/tests:quality_sources",
+        "//modules/picblobs/toolchains:quality_sources",
+        "//modules/picblobs/tools:quality_sources",
     ],
 )
 
