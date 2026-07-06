@@ -73,9 +73,10 @@ def build_report(
     for bep in bep_files:
         if bep.is_file():
             ingest_bep(repo, bep, targets)
+    has_bep_source = any(bep.is_file() and bep.stat().st_size > 0 for bep in bep_files)
     for root in testlog_roots:
         if root.is_dir():
-            ingest_testlogs(repo, root, targets)
+            ingest_testlogs(repo, root, targets, allow_new=not has_bep_source)
 
     recover_bytestream_outputs(targets.values(), cache_roots or [])
     ordered = sorted(targets.values(), key=lambda target: (STATUS_ORDER.get(target.status, 99), target.suite, target.label))
@@ -123,9 +124,11 @@ def ingest_bep(repo: Path, bep: Path, targets: dict[str, TestTarget]) -> None:
             target.attempts = max(target.attempts, int(summary.get("attemptCount", target.attempts) or target.attempts))
 
 
-def ingest_testlogs(repo: Path, root: Path, targets: dict[str, TestTarget]) -> None:
+def ingest_testlogs(repo: Path, root: Path, targets: dict[str, TestTarget], *, allow_new: bool = True) -> None:
     for log in sorted(root.rglob("test.log")):
         label = label_from_log(root, log)
+        if not allow_new and label not in targets:
+            continue
         target = targets.setdefault(label, new_target(label))
         target.raw_log_path = display_path(repo, log)
         xml = log.with_name("test.xml")
@@ -360,6 +363,7 @@ def report_to_json(report: TestReport) -> dict[str, Any]:
 def summarize(targets: list[TestTarget]) -> dict[str, Any]:
     statuses: dict[str, int] = {}
     suites: dict[str, int] = {}
+    suite_breakdown: dict[str, dict[str, Any]] = {}
     languages: dict[str, int] = {}
     cases = 0
     for target in targets:
@@ -367,12 +371,26 @@ def summarize(targets: list[TestTarget]) -> dict[str, Any]:
         suites[target.suite] = suites.get(target.suite, 0) + 1
         languages[target.language] = languages.get(target.language, 0) + 1
         cases += len(target.cases)
+        suite = suite_breakdown.setdefault(
+            target.suite,
+            {
+                "targets": 0,
+                "cases": 0,
+                "duration": 0.0,
+                "statuses": {},
+            },
+        )
+        suite["targets"] += 1
+        suite["cases"] += len(target.cases)
+        suite["duration"] = round(suite["duration"] + target.duration, 3)
+        suite["statuses"][target.status] = suite["statuses"].get(target.status, 0) + 1
     return {
         "targets": len(targets),
         "cases": cases,
         "duration": round(sum(target.duration for target in targets), 3),
         "statuses": statuses,
         "suites": suites,
+        "suite_breakdown": suite_breakdown,
         "languages": languages,
     }
 

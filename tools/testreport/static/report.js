@@ -37,6 +37,7 @@
         ${metric("Suites", Object.keys(report.totals.suites).length)}
         ${metric("Duration", `${Number(report.totals.duration || 0).toFixed(2)}s`)}
       </section>
+      ${renderSuiteBreakdown(report)}
       <section class="report-controls">
         <div class="control">
           <label for="query">Search</label>
@@ -69,6 +70,38 @@
 
   function metric(label, value) {
     return `<div class="metric"><span class="metric-label">${escapeHtml(label)}</span><span class="metric-value">${escapeHtml(String(value))}</span></div>`;
+  }
+
+  function renderSuiteBreakdown(report) {
+    const breakdown = report.totals.suite_breakdown || {};
+    const rows = Object.keys(breakdown).sort().map((suite) => {
+      const item = breakdown[suite];
+      const statuses = item.statuses || {};
+      return `
+        <tr>
+          <td>${escapeHtml(suite)}</td>
+          <td>${Number(item.targets || 0)}</td>
+          <td>${Number(item.cases || 0)}</td>
+          <td>${Number(statuses.FAILED || 0) + Number(statuses.ERROR || 0) + Number(statuses.TIMEOUT || 0)}</td>
+          <td>${Number(statuses.PASSED || 0)}</td>
+          <td>${Number(item.duration || 0).toFixed(2)}s</td>
+        </tr>
+      `;
+    }).join("");
+    if (!rows) {
+      return "";
+    }
+    return `
+      <section class="suite-breakdown">
+        <div class="section-heading">
+          <h2>Suites</h2>
+        </div>
+        <table>
+          <thead><tr><th>Suite</th><th>Targets</th><th>Cases</th><th>Failing</th><th>Passed</th><th>Duration</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </section>
+    `;
   }
 
   function options(values) {
@@ -185,8 +218,11 @@
     if (!target.cases.length) {
       return `<p class="empty-state">This target did not expose per-case XML. Use the Log tab for full output.</p>`;
     }
-    return `<table class="case-table"><thead><tr><th>Status</th><th>Case</th><th>Class</th><th>Duration</th></tr></thead><tbody>
-      ${target.cases.map((testCase) => `<tr><td>${statusBadge(testCase.status)}</td><td>${escapeHtml(testCase.name)}</td><td>${escapeHtml(testCase.classname || "")}</td><td>${Number(testCase.duration || 0).toFixed(3)}s</td></tr>`).join("")}
+    return `<table class="case-table"><thead><tr><th>Status</th><th>Case</th><th>Class</th><th>Duration</th><th>Evidence</th></tr></thead><tbody>
+      ${target.cases.map((testCase) => {
+        const evidence = [testCase.message, testCase.output].filter(Boolean).join("\n\n");
+        return `<tr><td>${statusBadge(testCase.status)}</td><td>${escapeHtml(testCase.name)}</td><td>${escapeHtml(testCase.classname || "")}</td><td>${Number(testCase.duration || 0).toFixed(3)}s</td><td class="case-evidence">${evidence ? `<pre>${escapeHtml(evidence)}</pre>` : ""}</td></tr>`;
+      }).join("")}
     </tbody></table>`;
   }
 

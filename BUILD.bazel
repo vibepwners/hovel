@@ -27,6 +27,7 @@ test_suite(
     name = "sdk_test",
     tests = [
         "//sdk/go/hovel:hovel_test",
+        "//sdk/go/hoveltest:hoveltest_test",
         "//sdk/python:hovel_sdk_test",
         "//sdk/rust/hovel:hovel_test",
     ],
@@ -53,6 +54,8 @@ filegroup(
         "//modules/examples/go/mock_exploit",
         "//modules/examples/go/mock_exploit_session",
         "//modules/examples/go/mock_survey",
+        "//modules/examples/python:ms17_010_exploit_module",
+        "//modules/examples/python:ms17_010_survey_module",
         "//modules/examples/python:mock_exploit_module",
         "//modules/examples/python:mock_exploit_session_module",
         "//modules/examples/python:mock_survey_module",
@@ -65,6 +68,9 @@ filegroup(
 test_suite(
     name = "modules_test",
     tests = [
+        "//modules/squatter/client/shell:shell_test",
+        "//modules/squatter/client/smbpipe:smbpipe_test",
+        "//modules/squatter/client/wire:wire_test",
         "//modules/squatter/provider:provider_test",
         "//modules/squatter/windows:source_contract_test",
         "//modules/squatter/windows:squatter_x86_exe_pe_test",
@@ -87,12 +93,22 @@ test_suite(
         "//modules/examples/go/mock_exploit:mock_exploit_test",
         "//modules/examples/go/mock_exploit_session:mock_exploit_session_test",
         "//modules/examples/go/mock_survey:mock_survey_test",
+        "//modules/examples/python:ms17_010_exploit_test",
+        "//modules/examples/python:ms17_010_survey_test",
         "//modules/examples/python:mock_exploit_session_test",
         "//modules/examples/python:mock_exploit_test",
         "//modules/examples/python:mock_survey_test",
         "//modules/examples/rust/mock_exploit:mock_exploit_rust_test",
         "//modules/examples/rust/mock_exploit_session:mock_exploit_session_rust_test",
         "//modules/examples/rust/mock_survey:mock_survey_rust_test",
+    ],
+)
+
+test_suite(
+    name = "modules_functest",
+    tags = ["manual"],
+    tests = [
+        "//modules/squatter/client/functest:functest_test",
     ],
 )
 

@@ -69,6 +69,7 @@ test_suite(
     tests = [
         "//modules/picblobs/provider:provider_test",
         "//modules/picblobs/python:pytest_suite",
+        "//modules/picblobs/python:sync_test",
         "//modules/picblobs/python_cli:pytest_suite",
         "//modules/picblobs/tests:nacl_suite",
         "//modules/picblobs/tests/runners/freebsd:runner_cppcheck",
