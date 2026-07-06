@@ -14,7 +14,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
 )
 
-const providerVersion = "0.1.6"
+const providerVersion = "0.1.7"
 const legacyFormatBin = "bin"
 
 type Provider struct {

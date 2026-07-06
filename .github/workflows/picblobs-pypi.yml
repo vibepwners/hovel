@@ -79,6 +79,14 @@ jobs:
               r'(?m)^module\(\n\s+name = "picblobs",\n\s+version = "([^"]+)",\n\)$',
               module_text,
           )
+          hovel_module_version = re.search(
+              r'(?m)^\s+version: ([^ \n]+)$',
+              (root / "hovel-module.yaml").read_text(),
+          )
+          provider_version = re.search(
+              r'(?m)^const providerVersion = "([^"]+)"$',
+              (root / "provider" / "provider.go").read_text(),
+          )
           lib_version = tomllib.loads((root / "python" / "pyproject.toml").read_text())["project"]["version"]
           cli_project = tomllib.loads((root / "python_cli" / "pyproject.toml").read_text())["project"]
           cli_version = cli_project["version"]
@@ -90,6 +98,8 @@ jobs:
 
           values = {
               "MODULE.bazel": module_version.group(1) if module_version else None,
+              "hovel-module.yaml": hovel_module_version.group(1) if hovel_module_version else None,
+              "provider/provider.go": provider_version.group(1) if provider_version else None,
               "python/pyproject.toml": lib_version,
               "python_cli/pyproject.toml": cli_version,
               "python/picblobs/__init__.py": init_version,

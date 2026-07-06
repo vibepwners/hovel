@@ -2,7 +2,7 @@ apiVersion: hovel.dev/v1alpha1
 kind: ModulePackage
 metadata:
   name: picblobs
-  version: 0.1.6
+  version: 0.1.7
   moduleType: payload_provider
   summary: Position-independent payload blob provider.
   tags:
