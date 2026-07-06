@@ -1,6 +1,6 @@
 [project]
 name = "picblobs-cli"
-version = "0.1.6"
+version = "0.1.7"
 description = "Click CLI + non-Linux cross-compiled runners and verifier fixtures for picblobs"
 authors = [
     { name = "William Born", email = "william.born.git@gmail.com" },
@@ -30,7 +30,7 @@ classifiers = [
 # payloads are wrapped into ELF executables by picblobs itself. QEMU is
 # expected to be on the user's PATH for cross-architecture execution.
 dependencies = [
-    "picblobs>=0.1.6",
+    "picblobs>=0.1.7",
     "click>=8.0",
 ]
 

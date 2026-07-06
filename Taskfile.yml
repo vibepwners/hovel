@@ -235,6 +235,41 @@ tasks:
     cmds:
       - task upver:test
 
+  picblobs:upver:
+    desc: Update the independent picblobs package version.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - task upver -- {{.CLI_ARGS}}
+
+  picblobs:upver:test:
+    desc: Check the independent picblobs version updater.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - task upver:test
+
+  release:picblobs-dist:
+    desc: Stage release blobs and build the picblobs PyPI source/wheel distributions.
+    cmds:
+      - task: picblobs:setup
+      - task: picblobs:stage
+        vars:
+          CLI_ARGS: --no-runners
+      - task: picblobs:dist-picblobs
+        vars:
+          EXPECTED_VERSION: '{{.EXPECTED_VERSION}}'
+
+  release:picblobs-cli-dist:
+    desc: Stage release blobs/runners and build the picblobs-cli PyPI source/wheel distributions.
+    cmds:
+      - task: picblobs:setup
+      - task: picblobs:stage
+      - task: picblobs:dist-picblobs
+        vars:
+          EXPECTED_VERSION: '{{.EXPECTED_VERSION}}'
+      - task: picblobs:dist-cli
+        vars:
+          EXPECTED_VERSION: '{{.EXPECTED_VERSION}}'
+
   release:hovel-wheel:
     desc: Build the PyPI wheel that packages the Hovel Go binary.
     dir: core
@@ -475,6 +510,34 @@ tasks:
           python/.venv/bin/python -m build python_cli --wheel --sdist --outdir dist/picblobs-cli
         fi
       - tools/with_dev_python.sh python tools/check_dist.py picblobs-cli --dist-dir dist/picblobs-cli
+      - tools/with_dev_python.sh python -m twine check dist/picblobs-cli/*
+
+  picblobs:dist-picblobs:
+    desc: Build and validate only the picblobs distribution.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - rm -rf dist/picblobs
+      - |
+        if command -v uv >/dev/null 2>&1; then
+          uv build python --wheel --sdist --out-dir dist/picblobs
+        else
+          python/.venv/bin/python -m build python --wheel --sdist --outdir dist/picblobs
+        fi
+      - tools/with_dev_python.sh python tools/check_dist.py picblobs --dist-dir dist/picblobs{{if .EXPECTED_VERSION}} --expected-version {{.EXPECTED_VERSION}}{{end}}
+      - tools/with_dev_python.sh python -m twine check dist/picblobs/*
+
+  picblobs:dist-cli:
+    desc: Build and validate only the picblobs-cli distribution.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - rm -rf dist/picblobs-cli
+      - |
+        if command -v uv >/dev/null 2>&1; then
+          uv build python_cli --wheel --sdist --out-dir dist/picblobs-cli
+        else
+          python/.venv/bin/python -m build python_cli --wheel --sdist --outdir dist/picblobs-cli
+        fi
+      - tools/with_dev_python.sh python tools/check_dist.py picblobs-cli --dist-dir dist/picblobs-cli{{if .EXPECTED_VERSION}} --expected-version {{.EXPECTED_VERSION}}{{end}}
       - tools/with_dev_python.sh python -m twine check dist/picblobs-cli/*
 
   picblobs:ci:

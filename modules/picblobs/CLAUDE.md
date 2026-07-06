@@ -3,7 +3,7 @@
 Position-independent code blobs for multiple OS/arch targets. Bazel 9 + bzlmod
 build system with Bootlin cross-compilation toolchains.
 
-**Version**: 0.1.6 | **License**: Apache-2.0 | **Python**: 3.10+
+**Version**: 0.1.7 | **License**: Apache-2.0 | **Python**: 3.10+
 
 This file is operating guidance for working in this repo: the non-obvious
 conventions, the real (hook/CI-enforced) commands, and where things live.

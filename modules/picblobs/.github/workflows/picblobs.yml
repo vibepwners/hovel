@@ -9,7 +9,7 @@ on:
       version:
         description: Version to publish (must match both pyproject files)
         required: true
-        default: "0.1.6"
+        default: "0.1.7"
         type: string
 
 concurrency:

@@ -318,7 +318,7 @@ def _get_version() -> str:
     pyproject = _PROJECT_ROOT / "python" / "pyproject.toml"
     for line in pyproject.read_text().splitlines():
         if line.strip().startswith("version"):
-            # version = "0.1.6"
+            # version = "0.1.7"
             return line.split("=", 1)[1].strip().strip('"').strip("'")
     return "0.0.0"
 
