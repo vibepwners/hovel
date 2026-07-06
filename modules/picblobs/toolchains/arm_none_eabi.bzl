@@ -47,8 +47,10 @@ def _config_impl(ctx):
         tool_path(name = "strip", path = "bin/{triple}-strip"),
         tool_path(name = "as", path = "bin/{triple}-as"),
         tool_path(name = "cpp", path = "bin/{triple}-cpp"),
-        tool_path(name = "gcov", path = "/usr/bin/false"),
-        tool_path(name = "dwp", path = "/usr/bin/false"),
+        tool_path(name = "gcov", path = "bin/{triple}-gcov"),
+        # DWP is unused by this workspace. Point at a declared toolchain
+        # binary rather than an undeclared host /usr/bin path.
+        tool_path(name = "dwp", path = "bin/{triple}-gcc"),
     ]
 
     freestanding_feature = feature(
@@ -136,6 +138,7 @@ filegroup(
         "bin/{triple}-*",
         "lib/gcc/{triple}/**",
         "libexec/gcc/{triple}/**",
+        "{triple}/bin/**",
         "{triple}/include/**",
         "{triple}/lib/**",
     ]),
@@ -147,6 +150,7 @@ filegroup(
         "bin/{triple}-*",
         "lib/gcc/{triple}/**",
         "libexec/gcc/{triple}/**",
+        "{triple}/bin/**",
         "{triple}/include/**",
     ]),
 )
@@ -157,6 +161,7 @@ filegroup(
         "bin/{triple}-*",
         "lib/gcc/{triple}/**",
         "libexec/gcc/{triple}/**",
+        "{triple}/bin/**",
         "{triple}/lib/**",
     ]),
 )
@@ -178,7 +183,7 @@ filegroup(
 
 filegroup(
     name = "dwp_files",
-    srcs = [],
+    srcs = glob(["bin/{triple}-gcc"]),
 )
 
 filegroup(

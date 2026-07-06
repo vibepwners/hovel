@@ -2,20 +2,21 @@
 
 The blob pipeline is:
   1. cc_library      -> object files (.a archive)
-  2. genrule (gcc)   -> .so (shared object with custom linker script)
+  2. pic_blob_link   -> .so (shared object with custom linker script)
   3. blob_stage      -> copies .so into python/picblobs/_blobs/{os}/{arch}/
 
-We use a genrule instead of cc_binary for linking because cc_binary
-injects -Wl,-S (strip) which removes the .text and .rodata sections
-we need pyelftools to read at runtime.
+We use a custom link rule instead of cc_binary because cc_binary injects
+-Wl,-S (strip), which removes the .text and .rodata sections pyelftools reads
+at runtime.
 
-Because the genrule bypasses cc_common.link, it does NOT inherit the
+Because the link action bypasses cc_common.link, it does NOT inherit the
 toolchain `freestanding` feature's link flags. The freestanding link
 flags (-nostdlib -nostartfiles -Wl,--gc-sections) are added explicitly
 below.
 """
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("//modules/picblobs/bazel:platforms.bzl", "BLOB_TARGETS")  # @unused (re-exported)
 
 # Re-export BLOB_TARGETS from the generated platforms.bzl so existing
@@ -46,21 +47,6 @@ def _split_kwargs(kwargs):
             library_only[key] = value
     return shared, library_only
 
-def _link_mode_flags_command():
-    """Returns a shell fragment that selects the final blob link mode."""
-    return "\n".join([
-        'triple="$$($(CC) -dumpmachine)"',
-        "link_mode='-shared'",
-        "runtime_libs=''",
-        'case "$$triple" in',
-        "  powerpc-*)",
-        "    # PPC32 blobs work reliably as static relocatable ELFs.",
-        "    link_mode='-static -mrelocatable -Wl,-e,_start'",
-        "    runtime_libs='-lgcc'",
-        "    ;;",
-        "esac",
-    ])
-
 def _target_os_defines():
     """Return per-target-OS compile defines selected from platform constraints."""
     return select({
@@ -85,6 +71,84 @@ _FREESTANDING_LINK_FLAGS = [
     "-nostartfiles",
     "-Wl,--gc-sections",
 ]
+
+def _pic_blob_link_impl(ctx):
+    cc_toolchain = ctx.attr._cc_toolchain[cc_common.CcToolchainInfo]
+    cc = ctx.var.get("CC")
+    if not cc:
+        fail("CC make variable unavailable for {}".format(ctx.label))
+
+    src = ctx.file.src
+    linker_script = ctx.file.linker_script
+    out = ctx.actions.declare_file(ctx.label.name + ".so")
+
+    args = ctx.actions.args()
+    args.add(cc)
+    args.add(src)
+    args.add(linker_script.path if linker_script else "")
+    args.add(out)
+    args.add_all(_FREESTANDING_LINK_FLAGS + ctx.attr.linkopts)
+
+    inputs = [src]
+    if linker_script:
+        inputs.append(linker_script)
+
+    ctx.actions.run_shell(
+        command = """
+set -eu
+cc="$1"
+archive="$2"
+linker_script="$3"
+out="$4"
+shift 4
+
+triple="$("$cc" -dumpmachine)"
+link_mode="-shared"
+runtime_libs=""
+case "$triple" in
+  powerpc-*)
+    # PPC32 blobs work reliably as static relocatable ELFs.
+    link_mode="-static -mrelocatable -Wl,-e,_start"
+    runtime_libs="-lgcc"
+    ;;
+esac
+
+linker_script_flag=""
+if [ -n "$linker_script" ]; then
+  linker_script_flag="-T$linker_script"
+fi
+
+"$cc" $link_mode $linker_script_flag \\
+  -Wl,--whole-archive "$archive" -Wl,--no-whole-archive \\
+  "$@" $runtime_libs -o "$out"
+""",
+        arguments = [args],
+        inputs = depset(
+            inputs,
+            transitive = [
+                cc_toolchain.all_files,
+                ctx.attr._cc_toolchain[DefaultInfo].files,
+            ],
+        ),
+        outputs = [out],
+        mnemonic = "PicBlobLink",
+        progress_message = "Linking pic blob %{label}",
+    )
+
+    return [DefaultInfo(files = depset([out]))]
+
+pic_blob_link = rule(
+    implementation = _pic_blob_link_impl,
+    attrs = {
+        "linker_script": attr.label(allow_single_file = True),
+        "linkopts": attr.string_list(),
+        "src": attr.label(allow_single_file = True, mandatory = True),
+        "_cc_toolchain": attr.label(
+            default = "@rules_cc//cc:current_cc_toolchain",
+        ),
+    },
+    toolchains = ["@rules_cc//cc:toolchain_type"],
+)
 
 def pic_blob(
         name,
@@ -134,34 +198,11 @@ def pic_blob(
         **dict(shared_kwargs, **library_kwargs)
     )
 
-    linker_script_flag = ""
-    srcs_list = [":" + lib_name]
-    if linker_script:
-        linker_script_flag = "-T$(location {})".format(linker_script)
-        srcs_list.append(linker_script)
-
-    extra_linkopts = " ".join(_FREESTANDING_LINK_FLAGS + linkopts)
-
-    native.genrule(
+    pic_blob_link(
         name = name,
-        srcs = srcs_list,
-        outs = [name + ".so"],
-        cmd = "\n".join([
-            "set -eu",
-            _link_mode_flags_command(),
-            " ".join([
-                "$(CC)",
-                "$$link_mode",
-                linker_script_flag,
-                "-Wl,--whole-archive",
-                "$(location :{})".format(lib_name),
-                "-Wl,--no-whole-archive",
-                extra_linkopts,
-                "$$runtime_libs",
-                "-o $@",
-            ]),
-        ]),
-        toolchains = ["@rules_cc//cc:current_cc_toolchain"],
+        src = ":" + lib_name,
+        linker_script = linker_script,
+        linkopts = linkopts,
         **shared_kwargs
     )
 

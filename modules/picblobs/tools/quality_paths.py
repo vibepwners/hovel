@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+GENERATED_PYTHON_SUFFIXES = ("_stage2_bootstrap.py",)
 
 
 def is_excluded(path: Path, exclude: set[str]) -> bool:
@@ -18,7 +19,7 @@ def is_excluded(path: Path, exclude: set[str]) -> bool:
         rel_path = path.relative_to(PROJECT_ROOT)
     except ValueError:
         return True
-    return any(part in exclude for part in rel_path.parts)
+    return any(part in exclude or part.endswith(".venv") for part in rel_path.parts)
 
 
 def _matches(path: Path, extensions: set[str], names: set[str]) -> bool:
@@ -42,6 +43,8 @@ def _iter_matching_files(
 
     for child in path.rglob("*"):
         if not child.is_file():
+            continue
+        if child.name.endswith(GENERATED_PYTHON_SUFFIXES):
             continue
         if not _matches(child, extensions, names):
             continue

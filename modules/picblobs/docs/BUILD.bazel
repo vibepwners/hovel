@@ -1,0 +1,8 @@
+"""Picblobs static documentation files."""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "site_files",
+    srcs = glob(["**"]),
+)

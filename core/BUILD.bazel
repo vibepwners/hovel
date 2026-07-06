@@ -13,6 +13,11 @@ filegroup(
 )
 
 filegroup(
+    name = "version_file",
+    srcs = ["VERSION"],
+)
+
+filegroup(
     name = "build",
     srcs = [
         "//cmd/hovel",
@@ -41,15 +46,32 @@ _COVERAGE_LAYER_TESTS = [
 ]
 
 _CI_TESTS = [
+    "//internal/adapters/cli:cli_test",
+    "//internal/adapters/commandmode:commandmode_e2e_test",
+    "//internal/adapters/commandmode:commandmode_test",
     "//internal/adapters/commandview:commandview_test",
     "//internal/adapters/daemonrpc:daemonrpc_test",
     "//internal/adapters/descriptor:descriptor_test",
     "//internal/adapters/progressview:progressview_test",
     "//internal/adapters/storage/filesystem:filesystem_test",
+    "//internal/adapters/storage/sqlite:sqlite_test",
     "//internal/adapters/terminallog:terminallog_test",
     "//internal/adapters/uicatalog:uicatalog_test",
+    "//internal/infra/daemonmanager:daemonmanager_test",
     "//internal/testmodules/mockexploit:mockexploit_test",
     "//schemas:schema_smoke_test",
+    "//tools/release:upver_test",
+]
+
+_FULL_CHECKOUT_TESTS = [
+    "//cmd/hovel:binary_e2e_test",
+    "//internal/adapters/cli:cli_e2e_test",
+    "//internal/adapters/mcp:mcp_test",
+    "//internal/adapters/rootcli:rootcli_e2e_test",
+    "//internal/adapters/rootcli:rootcli_test",
+    "//internal/infra/daemonruntime:daemonruntime_test",
+    "//internal/moduleruntime/pythonrpc:pythonrpc_test",
+    "//tools/lint:python_check_test",
 ]
 
 test_suite(
@@ -60,6 +82,12 @@ test_suite(
 test_suite(
     name = "ci_test",
     tests = _CI_TESTS,
+)
+
+test_suite(
+    name = "full_checkout_test",
+    tags = ["manual"],
+    tests = _FULL_CHECKOUT_TESTS,
 )
 
 test_suite(

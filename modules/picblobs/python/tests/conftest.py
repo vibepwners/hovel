@@ -15,23 +15,19 @@ from ._test_env import PROJECT_ROOT, prepend_source_paths
 
 prepend_source_paths()
 
-from payload_defs import all_payload_combos
-
-from tools.registry import ARCHITECTURES, OPERATING_SYSTEMS, all_platforms
+from payload_defs import all_payload_combos  # noqa: E402, I001, RUF100
+from tools.registry import (  # noqa: E402, RUF100
+    ARCHITECTURES,
+    OPERATING_SYSTEMS,
+    all_platforms,
+)
 
 REPO_ROOT = PROJECT_ROOT.parents[1]
-BAZEL_BIN = REPO_ROOT / "bazel-bin" / "modules" / "picblobs"
 _PACKAGE_RUNNERS = PROJECT_ROOT / "python_cli" / "picblobs_cli" / "_runners"
-_BAZEL_RUNNER_PATHS = (
-    BAZEL_BIN / "tests" / "runners" / "linux" / "runner.bin",
-    BAZEL_BIN / "tests" / "runners" / "linux" / "runner",
-)
 
 
 def _runners_exist() -> bool:
-    if any(_PACKAGE_RUNNERS.rglob("runner")):
-        return True
-    return any(p.exists() for p in _BAZEL_RUNNER_PATHS)
+    return any(_PACKAGE_RUNNERS.rglob("runner"))
 
 
 def _blobs_exist() -> bool:
@@ -201,7 +197,7 @@ def blob_dir() -> Path:
 @pytest.fixture(scope="session")
 def runner_dir() -> Path:
     """Path to built test runner binaries."""
-    return BAZEL_BIN / "tests" / "runners"
+    return _PACKAGE_RUNNERS
 
 
 @pytest.fixture(scope="session")
@@ -281,9 +277,7 @@ def _collection_filters() -> dict[str, str]:
 def _skip_marker_reason(keyword: str) -> str:
     """Return the human-facing skip reason for one capability marker."""
     reasons = {
-        "requires_blobs": (
-            "Blob assets are not staged. Run: python tools/stage_blobs.py"
-        ),
+        "requires_blobs": "Blob assets are not staged. Run: task picblobs:stage",
         "requires_runners": (
             "Test runners not built. Run: bazel build "
             "//modules/picblobs/tests/runners/..."

@@ -84,7 +84,7 @@ pic_cc_binary = rule(
           "without stripping symbols.",
     attrs = {
         "srcs": attr.label_list(
-            allow_files = [".c", ".cc", ".cpp", ".cxx", ".h", ".hpp"],
+            allow_files = [".c", ".cc", ".cpp", ".cxx", ".S", ".s", ".h", ".hpp"],
             doc = "C/C++ source files compiled into the binary.",
         ),
         "hdrs": attr.label_list(

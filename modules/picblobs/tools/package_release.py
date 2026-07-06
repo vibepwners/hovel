@@ -3,10 +3,9 @@
 This is Stage 3 of the release build pipeline (MOD-007).
 Produces:
   - picblobs-{version}.tar.gz
-  - picblobs-{version}.tar.zst (if zstd available)
   - SHA-256 checksum files
 
-The wheel is built separately via `python -m build`.
+Python wheels are built by the Bazel-backed dist materializer.
 
 Usage:
     python tools/package_release.py                   # from default paths
@@ -17,16 +16,24 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
+import os
 import shutil
-import subprocess
 import sys
 import tarfile
 import tempfile
 from pathlib import Path
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+def _project_root() -> Path:
+    if workspace := os.environ.get("BUILD_WORKSPACE_DIRECTORY"):
+        return Path(workspace).resolve() / "modules" / "picblobs"
+    return Path(__file__).resolve().parent.parent
+
+
+_PROJECT_ROOT = _project_root()
 
 
 def _get_version(release_dir: Path) -> str:
@@ -54,6 +61,28 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _normalize_tarinfo(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    info.uid = 0
+    info.gid = 0
+    info.uname = ""
+    info.gname = ""
+    info.mtime = 0
+    if info.isdir():
+        info.mode = 0o755
+    elif info.isfile():
+        info.mode = 0o644
+    return info
+
+
+def _write_tar_gz(path: Path, source: Path, arcname: str) -> None:
+    with (
+        path.open("wb") as raw,
+        gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tar,
+    ):
+        tar.add(str(source), arcname=arcname, filter=_normalize_tarinfo)
+
+
 def package_release(
     release_dir: Path,
     output_dir: Path,
@@ -74,7 +103,7 @@ def package_release(
 
     if not manifest_path.exists():
         print(f"manifest.json not found in {release_dir}", file=sys.stderr)
-        print("Run: python tools/extract_release.py", file=sys.stderr)
+        print("Run: task picblobs:stage-release", file=sys.stderr)
         return []
 
     if not blobs_dir.exists():
@@ -97,30 +126,11 @@ def package_release(
         # Copy blobs/.
         shutil.copytree(blobs_dir, stage / "blobs")
 
-        # Create .tar.gz.
         targz = output_dir / f"{prefix}.tar.gz"
-        with tarfile.open(targz, "w:gz") as tar:
-            tar.add(str(stage), arcname=prefix)
+        _write_tar_gz(targz, stage, prefix)
         created.append(targz)
         if verbose:
             print(f"  {targz} ({targz.stat().st_size} bytes)")
-
-        # Create .tar.zst (if zstd is available).
-        if shutil.which("zstd"):
-            tarzst = output_dir / f"{prefix}.tar.zst"
-            # Create uncompressed tar first, then pipe through zstd.
-            tar_uncompressed = Path(tmpdir) / f"{prefix}.tar"
-            with tarfile.open(str(tar_uncompressed), "w") as tar:
-                tar.add(str(stage), arcname=prefix)
-            subprocess.run(
-                ["zstd", "-q", "--rm", str(tar_uncompressed), "-o", str(tarzst)],
-                check=True,
-            )
-            created.append(tarzst)
-            if verbose:
-                print(f"  {tarzst} ({tarzst.stat().st_size} bytes)")
-        else:
-            print("  zstd not found — skipping .tar.zst", file=sys.stderr)
 
     # Create SHA-256 checksum files.
     archives = list(created)  # snapshot before appending

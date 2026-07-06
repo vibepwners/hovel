@@ -4,14 +4,19 @@ stages:
 pages:
   image: ubuntu:24.04
   stage: docs
+  variables:
+    HOVEL_CI_BIN: "$CI_PROJECT_DIR/.ci/bin"
   before_script:
     - apt-get update
     - apt-get install -y --no-install-recommends ca-certificates curl python3 unzip
-    - curl -fsSL -o /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/download/v1.25.0/bazelisk-linux-amd64
-    - chmod +x /usr/local/bin/bazel
-    - sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+    - mkdir -p "$HOVEL_CI_BIN"
+    - curl -fsSL -o "$HOVEL_CI_BIN/bazel" https://github.com/bazelbuild/bazelisk/releases/download/v1.25.0/bazelisk-linux-amd64
+    - chmod +x "$HOVEL_CI_BIN/bazel"
+    - sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b "$HOVEL_CI_BIN"
+    - export PATH="$HOVEL_CI_BIN:$PATH"
   script:
-    - task docs
+    - export PATH="$HOVEL_CI_BIN:$PATH"
+    - task docs:stage
     - rm -rf public
     - cp -r _site public
   artifacts:

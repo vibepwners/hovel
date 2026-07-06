@@ -9,15 +9,15 @@ To add a new architecture:
   2. Add syscall numbers to SYSCALL_NUMBERS[os][gcc_define].
   3. Add the syscall asm primitive to src/include/picblobs/syscall.h.
   4. Add the _start stub to tests/runners/{os}/runner.c.
-  5. Run: python tools/generate.py        (regenerates derived files)
-  6. Run: python -m pytest python/tests/  (catches anything you missed)
+  5. Run: task generate      (regenerates derived files)
+  6. Run: task test:unit     (catches anything you missed)
 
 To add a new OS:
   1. Add an entry to OPERATING_SYSTEMS below.
   2. Add syscall numbers to SYSCALL_NUMBERS[os].
   3. Create tests/runners/{os}/runner.c with a test runner.
-  4. Run: python tools/generate.py
-  5. Run: python -m pytest python/tests/
+  4. Run: task generate
+  5. Run: task test:unit
 
 To add a new syscall:
   1. Add the number to every arch in SYSCALL_NUMBERS[os].
@@ -90,9 +90,18 @@ class OperatingSystem:
     # Runner type for test execution.
     runner_type: str = ""
 
+    # Standard Bazel OS constraint used by non-picblobs language toolchains.
+    bazel_os_constraint: str = ""
+
     def __post_init__(self) -> None:
         if not self.runner_type:
             object.__setattr__(self, "runner_type", self.name)
+        if not self.bazel_os_constraint:
+            object.__setattr__(
+                self,
+                "bazel_os_constraint",
+                f"@platforms//os:{self.name}",
+            )
 
 
 # ============================================================
@@ -115,6 +124,7 @@ _register_arch(
         gcc_triple="x86_64-buildroot-linux-gnu",
         extra_cflags=["-march=x86-64"],
         cpu_constraint="@platforms//cpu:x86_64",
+        bootlin_sha256="932823ca9a3e067e7e2a29810a666d20c9cc5bb550de947f6879e38ace1aa955",
     )
 )
 
@@ -129,6 +139,7 @@ _register_arch(
         cpu_constraint="@platforms//cpu:x86_32",
         uses_mmap2=True,
         is_32bit=True,
+        bootlin_sha256="023e4f03cd212b5545c4c184238693b61b40fa36d257b84546100a92ea2c1d8b",
     )
 )
 
@@ -141,6 +152,7 @@ _register_arch(
         gcc_triple="aarch64-buildroot-linux-gnu",
         cpu_constraint="@platforms//cpu:aarch64",
         openat_only=True,
+        bootlin_sha256="b0fad860eb94b503a56d66ca8b9ba06d2d4826943e37ebd1d7217423f6ea5bb2",
     )
 )
 
@@ -155,6 +167,7 @@ _register_arch(
         cpu_constraint="@platforms//cpu:arm",
         uses_mmap2=True,
         is_32bit=True,
+        bootlin_sha256="13f2bea0b06fe560fe60d199cd9d3fb1f20e2335bcc79b90c5130c3916a3ed92",
     )
 )
 
@@ -169,6 +182,7 @@ _register_arch(
         cpu_constraint="@platforms//cpu:arm",
         uses_mmap2=True,
         is_32bit=True,
+        bootlin_sha256="13f2bea0b06fe560fe60d199cd9d3fb1f20e2335bcc79b90c5130c3916a3ed92",
     )
 )
 
@@ -183,6 +197,7 @@ _register_arch(
         cpu_constraint="@platforms//cpu:armv7",
         uses_mmap2=True,
         is_32bit=True,
+        bootlin_sha256="608263bc9dc3eadf0962ddb1165f1c2291001190f9927dee47d464e26374462c",
     )
 )
 
@@ -199,6 +214,7 @@ _register_arch(
         needs_got_reloc=True,
         needs_trampoline=True,
         is_32bit=True,
+        bootlin_sha256="d0139b6ade7f3b72a5f9c33814696af817661e826c9c501f6cefcab4ac684c8f",
     )
 )
 
@@ -213,6 +229,7 @@ _register_arch(
         cpu_constraint="@platforms//cpu:s390x",
         uses_old_mmap=True,
         is_big_endian=True,
+        bootlin_sha256="b37ed02693a370f28434c34655c64bcb96dc0d428a92ddbc99feb5608bcf64a1",
     )
 )
 
@@ -230,6 +247,7 @@ _register_arch(
         needs_trampoline=True,
         is_32bit=True,
         is_big_endian=True,
+        bootlin_sha256="677402719c545e49eb71c3d27a5f495af38f60463b40ed705e24e43a9834c137",
     )
 )
 

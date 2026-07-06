@@ -10,12 +10,20 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+def _project_root() -> Path:
+    if workspace := os.environ.get("BUILD_WORKSPACE_DIRECTORY"):
+        return Path(workspace).resolve() / "modules" / "picblobs"
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT_ROOT = _project_root()
 
 _VERSION_RE = re.compile(
     r"""

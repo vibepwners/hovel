@@ -298,7 +298,7 @@ def _collect_targets(paths: list[str]) -> tuple[list[Path], list[Path], list[Pat
 
 
 def _arg_or_default(paths: list[Path], have_explicit: bool) -> list[Path] | None:
-    """Pass explicit paths through; otherwise let the runner use its defaults."""
+    """Pass explicit paths through; otherwise let runners use internal defaults."""
     return paths if have_explicit else None
 
 
@@ -313,21 +313,25 @@ def main() -> int:
         log.info("No matching files.")
         return 0
 
-    checks = (
-        ("Ruff", _run_ruff_check, ruff_paths),
-        ("Buildifier", _run_buildifier_check, buildifier_paths),
-    )
-    for label, runner, paths in checks:
-        if runner(paths=_arg_or_default(paths, have_explicit)) != 0:
-            log.error("%s issues found.", label)
-            return 1
+    if _run_ruff_check(paths=ruff_paths) != 0:
+        log.error("Ruff issues found.")
+        return 1
+
+    if (
+        _run_buildifier_check(
+            paths=_arg_or_default(buildifier_paths, have_explicit),
+        )
+        != 0
+    ):
+        log.error("Buildifier issues found.")
+        return 1
 
     if have_explicit and not lizard_paths:
         log.info("ok")
         return 0
 
     return _run_lizard_check(
-        _arg_or_default(lizard_paths, have_explicit),
+        lizard_paths,
         check_stale=not have_explicit,
     )
 

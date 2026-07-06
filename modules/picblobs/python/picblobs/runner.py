@@ -32,24 +32,13 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# Fallback: Bazel build tree.
-_BAZEL_RUNNER_SEARCH = [
-    Path("bazel-bin/tests/runners"),
-    Path("../bazel-bin/tests/runners"),
-    Path("bazel-bin/modules/picblobs/tests/runners"),
-    Path("../bazel-bin/modules/picblobs/tests/runners"),
-    Path("../../bazel-bin/modules/picblobs/tests/runners"),
-    Path("../../../bazel-bin/modules/picblobs/tests/runners"),
-]
-
 
 def _picblobs_cli_runner_dir() -> Path | None:
     """Return the on-disk path to the picblobs_cli bundled runners, or None.
 
     Companion package ``picblobs-cli`` ships the cross-compiled test
     runners under ``picblobs_cli/_runners``. When installed alongside
-    picblobs it provides the primary source of runner binaries; if the
-    package isn't importable we fall back to the Bazel build tree.
+    picblobs it provides the primary source of runner binaries.
     """
     try:
         import importlib
@@ -261,8 +250,7 @@ def find_runner(
 
     Search order:
       1. ``picblobs-cli`` package: ``picblobs_cli/_runners/{runner_type}/{arch}/runner``
-      2. Bazel build tree: ``bazel-bin/tests/runners/{runner_type}/{arch}/runner[.bin]``
-      3. Caller-supplied ``search_paths``
+      2. Caller-supplied ``search_paths``
 
     Args:
         runner_type: One of "linux", "freebsd", "windows".
@@ -284,16 +272,14 @@ def find_runner(
     if embedded is not None:
         return embedded
 
-    runner = _find_runner_in_paths(
-        runner_type, arch, search_paths or _BAZEL_RUNNER_SEARCH
-    )
+    runner = _find_runner_in_paths(runner_type, arch, search_paths or [])
     if runner is not None:
         return runner
 
     raise FileNotFoundError(
         f"Test runner not found for {runner_type}/{arch}. "
         f"Install picblobs-cli (pip install picblobs-cli) or run "
-        f"tools/stage_blobs.py from a source checkout."
+        f"task picblobs:stage from a source checkout."
     )
 
 
@@ -997,6 +983,6 @@ def run_so(*_args, **_kwargs) -> RunResult:
     """Fail explicitly: runtime .so extraction is not supported."""
     raise RuntimeError(
         "Runtime .so extraction is not supported. Generate sidecar artifacts "
-        "with tools/stage_blobs.py or tools/extract_release.py, then load blobs "
+        "with task picblobs:stage or tools/extract_release.py, then load blobs "
         "through picblobs.get_blob()."
     )

@@ -78,14 +78,14 @@ tasks:
       - task: config-show
 
   config-nativelink:
-    desc: Use the shared local on-disk Bazel cache plus NativeLink for local task builds.
+    desc: Use the shared local on-disk Bazel cache plus NativeLink remote execution.
     silent: true
     cmds:
       - printf 'nativelink\n' > "$PWD/../.hovel-bazel-config"
       - task: config-show
 
   config-nativelink-minimal:
-    desc: Use NativeLink and avoid downloading build outputs unless needed.
+    desc: Use NativeLink remote execution and avoid downloading build outputs unless needed.
     silent: true
     cmds:
       - printf 'nativelink-minimal\n' > "$PWD/../.hovel-bazel-config"
@@ -218,34 +218,28 @@ tasks:
   upver:
     desc: 'Update the lockstep Hovel core and SDK version: task upver -- 0.2.0.'
     cmds:
-      - python3 tools/release/upver.py {{.CLI_ARGS | default "--sync"}}
+      - task run -- //tools/release:upver -- {{.CLI_ARGS | default "--sync"}}
 
   upver:test:
     desc: Check the lockstep Hovel version updater.
     cmds:
-      - python3 tools/release/upver_test.py
+      - task test -- //tools/release:upver_test
 
   # --- Release artifacts -------------------------------------------------
 
   release:hovel-wheel:
     desc: Build the PyPI wheel that packages the Hovel Go binary.
     cmds:
-      - task build -- --compilation_mode=opt //cmd/hovel
-      - python3 tools/release/build_hovel_wheel.py
+      - task run -- --compilation_mode=opt //tools/release:build_hovel_wheel
 
   release:hovel-wheels:
     desc: Cross-build all Hovel PyPI wheels from Linux through Bazel.
     cmds:
-      - task build -- --compilation_mode=opt //cmd/hovel:hovel_linux_amd64
-      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-linux-amd64 --platform-tag manylinux_2_28_x86_64 --binary-name hovel
-      - task build -- --compilation_mode=opt //cmd/hovel:hovel_linux_arm64
-      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-linux-arm64 --platform-tag manylinux_2_28_aarch64 --binary-name hovel
-      - task build -- --compilation_mode=opt //cmd/hovel:hovel_darwin_arm64
-      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-darwin-arm64 --platform-tag macosx_11_0_arm64 --binary-name hovel
-      - task build -- --compilation_mode=opt //cmd/hovel:hovel_windows_amd64
-      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-windows-amd64.exe --platform-tag win_amd64 --binary-name hovel.exe
-      - task build -- --compilation_mode=opt //cmd/hovel:hovel_windows_arm64
-      - python3 tools/release/build_hovel_wheel.py --binary bazel-bin/cmd/hovel/hovel-windows-arm64.exe --platform-tag win_arm64 --binary-name hovel.exe
+      - task run -- --compilation_mode=opt //tools/release:build_hovel_wheel_linux_amd64
+      - task run -- --compilation_mode=opt //tools/release:build_hovel_wheel_linux_arm64
+      - task run -- --compilation_mode=opt //tools/release:build_hovel_wheel_darwin_arm64
+      - task run -- --compilation_mode=opt //tools/release:build_hovel_wheel_windows_amd64
+      - task run -- --compilation_mode=opt //tools/release:build_hovel_wheel_windows_arm64
 
   # --- Checks (what CI runs) ----------------------------------------------
 

@@ -166,11 +166,11 @@ def _resolve_disasm_so_path(
         if prefer_debug:
             _fail(
                 f"no debug .so found for {blob_type} {os_name}:{arch}; "
-                "build with: python tools/stage_blobs.py --debug"
+                "stage with: task picblobs:stage -- --debug"
             )
         _fail(
             f"no .so found for {blob_type} {os_name}:{arch}; "
-            "build with: python tools/stage_blobs.py [--debug]"
+            "stage with: task picblobs:stage"
         )
     return resolved
 
@@ -653,7 +653,7 @@ def list_runners(os_filter: str | None, arch_filter: str | None) -> None:
     """List every bundled (runner_type, arch) runner binary."""
     root = runners_dir()
     if not root.exists():
-        _fail(f"runner bundle not found at {root}. Run tools/stage_blobs.py first.")
+        _fail(f"runner bundle not found at {root}. Run task picblobs:stage first.")
 
     fmt = "{:<10s} {:<15s} {}"
     click.echo(fmt.format("RUNNER", "ARCH", "PATH"))
@@ -1606,7 +1606,7 @@ def disasm(
     if not has_debug_info(str(resolved), objdump):
         _fail(
             f"no DWARF debug info in {resolved}; "
-            "build with: python tools/stage_blobs.py --debug"
+            "stage with: task picblobs:stage -- --debug"
         )
     try:
         output = disassemble_function(

@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - supports direct module import
 
 prepend_source_paths()
 
-from tools.registry import (
+from tools.registry import (  # noqa: E402, RUF100
     ARCHITECTURES,
     BLOB_TYPES,
     LINKER_SYMBOLS,
@@ -105,9 +105,10 @@ class TestPlatformConfigSync:
             manifest = json.loads(manifest_path.read_text())
             assert manifest["catalog"]["ul_exec"]["platforms"]["freebsd"] == ["x86_64"]
 
-    def test_stage_blobs_uses_registry(self) -> None:
+    def test_stage_blobs_delegates_to_task(self) -> None:
         content = _read_file("tools/stage_blobs.py")
-        assert "from registry import" in content
+        assert '"task", "picblobs:stage"' in content
+        assert '"bazel"' not in content
 
     def test_bazelrc_has_all_platforms(self) -> None:
         content = _workspace_file(".bazelrc")
@@ -123,6 +124,13 @@ class TestPlatformConfigSync:
             platform_name = f"{os_name}_{arch_name}"
             assert f'name = "{platform_name}"' in content, (
                 f"Missing platform '{platform_name}' in platforms/BUILD.bazel"
+            )
+
+    def test_platforms_build_has_standard_os_constraints(self) -> None:
+        content = _read_file("platforms/BUILD.bazel")
+        for os_def in OPERATING_SYSTEMS.values():
+            assert os_def.bazel_os_constraint in content, (
+                f"Missing standard OS constraint '{os_def.bazel_os_constraint}'"
             )
 
     def test_blob_targets_has_all_platforms(self) -> None:
@@ -361,16 +369,26 @@ class TestModuleBazelSync:
     """Verify MODULE.bazel toolchain definitions match the registry."""
 
     def test_all_bootlin_toolchains_registered(self) -> None:
-        content = _read_file("MODULE.bazel")
-        # Every unique bootlin_arch should have a bootlin.toolchain() block.
+        module_content = _read_file("MODULE.bazel")
+        assert "picblobs_toolchains" in module_content
+
+        content = _read_file("toolchains/repositories.bzl")
+        # Every unique bootlin_arch should have a generated repository entry.
         seen = set()
         for arch in ARCHITECTURES.values():
             if arch.bootlin_arch not in seen:
                 seen.add(arch.bootlin_arch)
+                assert arch.bootlin_sha256, (
+                    f"Registry missing bootlin_sha256 for '{arch.name}'"
+                )
                 assert f'arch = "{arch.bootlin_arch}"' in content, (
-                    "MODULE.bazel missing toolchain for "
+                    "toolchains/repositories.bzl missing toolchain for "
                     f"bootlin_arch='{arch.bootlin_arch}'"
                 )
                 assert f'triple = "{arch.gcc_triple}"' in content, (
-                    f"MODULE.bazel missing triple='{arch.gcc_triple}'"
+                    f"toolchains/repositories.bzl missing triple='{arch.gcc_triple}'"
+                )
+                assert f'sha256 = "{arch.bootlin_sha256}"' in content, (
+                    "toolchains/repositories.bzl missing "
+                    f"sha256='{arch.bootlin_sha256}'"
                 )

@@ -66,10 +66,10 @@
 lefthook run pre-commit --all-files
 lefthook run pre-push
 
-python tools/fmt.py            # format all C and Python files
-python tools/fmt.py --check    # verify formatting (CI)
-python tools/lint.py           # ruff + lizard
-tools/c_lint_check.sh          # clang-tidy via Bazel
+task fmt                        # format all C, Python, and Bazel files
+task fmt:check                  # verify formatting (CI)
+task lint                       # ruff + lizard + buildifier
+task lint:c                     # clang-tidy via Bazel
 </code></pre>
 <p><code>source sourceme</code> now installs <code>lefthook</code> into <code>python/.venv</code>, activates that
 environment, and installs the repo hooks. The hooks are split by cost:</p>
@@ -77,9 +77,8 @@ environment, and installs the repo hooks. The hooks are split by cost:</p>
 <li><code>pre-commit</code>: format staged C/Python files and lint the staged diff</li>
 <li><code>pre-push</code>: run full-repo formatting, Python lint/complexity, and C <code>clang-tidy</code></li>
 </ul>
-<p>The fast local tooling (<code>lefthook</code>, <code>ruff</code>, <code>lizard</code>, <code>clang-format</code>) comes
-from the repo venv. Only <code>clang-tidy</code> still needs to be on your system <code>PATH</code>
-for the Bazel-backed C lint pass.</p>
+<p>The non-mutating quality gates are Bazel-backed and use declared formatter and
+linter tools instead of discovering tool binaries from the host <code>PATH</code>.</p>
 <h2 id="formatters-and-linters">Formatters and Linters</h2>
 <table>
 <thead>

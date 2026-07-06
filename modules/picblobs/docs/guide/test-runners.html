@@ -95,10 +95,10 @@ interpreter on <code>PATH</code>. Three runner types handle the three target OSe
 </table>
 <h2 id="windows-runner">Windows runner</h2>
 <p>The Windows runner is <strong>hand-written</strong> (not generated) because it has complex mock logic. It supports x86_64 (gs-based TEB), i686 (fs-based TEB via set_thread_area), and aarch64 (tpidr_el0-based TEB). Build it with a Linux config since it's a Linux binary:</p>
-<pre data-lang="bash"><code>bazel build --config=linux_x86_64 //modules/picblobs/tests/runners/windows:runner
-bazel build --config=linux_i686 //modules/picblobs/tests/runners/windows:runner
-bazel build --config=linux_aarch64 //modules/picblobs/tests/runners/windows:runner
-</code></pre>
+<pre data-lang="bash"><code>task -t ../../Taskfile.yml bazel:build -- --config=linux_x86_64 //modules/picblobs/tests/runners/windows:runner
+	task -t ../../Taskfile.yml bazel:build -- --config=linux_i686 //modules/picblobs/tests/runners/windows:runner
+	task -t ../../Taskfile.yml bazel:build -- --config=linux_aarch64 //modules/picblobs/tests/runners/windows:runner
+	</code></pre>
       </article>
       <nav class="page-nav">
         <a class="prev" href="platform-support.html">← Platform support</a>

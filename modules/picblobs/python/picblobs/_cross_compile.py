@@ -7,6 +7,7 @@ toolchains as the blobs.
 
 from __future__ import annotations
 
+import os
 import struct
 import subprocess
 import tempfile
@@ -197,55 +198,13 @@ HELLO_ET_EXEC_ASM: dict[str, str] = {
 }
 
 
-def _bazel_workspace_root() -> Path:
-    """Return the Bazel workspace root for standalone or Hovel-integrated trees."""
-    p = Path(__file__).resolve()
-    project_root = next(
-        (
-            parent
-            for parent in [p, *list(p.parents)]
-            if (parent / "MODULE.bazel").exists()
-        ),
-        Path.cwd(),
-    )
-    if project_root.name == "picblobs" and project_root.parent.name == "modules":
-        return project_root.parents[1]
-    return project_root
-
-
-def _output_base_from_bazel_bin(bazel_root: Path) -> Path | None:
-    bazel_bin = bazel_root / "bazel-bin"
-    try:
-        resolved = bazel_bin.resolve(strict=True)
-    except OSError:
-        return None
-    parts = resolved.parts
-    if "execroot" not in parts:
-        return None
-    return Path(*parts[: parts.index("execroot")])
-
-
 def _find_bazel_output_base() -> Path | None:
-    """Find Bazel's output_base directory."""
-    bazel_root = _bazel_workspace_root()
-    try:
-        res = subprocess.run(
-            ["bazel", "info", "output_base"],
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=10,
-            cwd=str(bazel_root),
-        )
-        if res.returncode == 0:
-            return Path(res.stdout.strip())
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-
-    # Fallback: derive the output_base from the workspace's bazel-bin symlink.
-    # This works in environments where `bazel info` cannot run but the Bazel
-    # output tree has already been created locally.
-    return _output_base_from_bazel_bin(bazel_root)
+    """Find Bazel's output_base from an explicit environment contract."""
+    output_base = os.environ.get("PICBLOBS_BAZEL_OUTPUT_BASE")
+    if not output_base:
+        return None
+    path = Path(output_base)
+    return path if path.exists() else None
 
 
 def find_gcc(arch: str) -> str | None:

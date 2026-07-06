@@ -32,7 +32,9 @@ filegroup(
 _TAGS = [
     "manual",
     "exclusive",
+    "local",
     "no-sandbox",
+    "requires-network",
 ]
 
 # --- Ubuntu 24.04 ---

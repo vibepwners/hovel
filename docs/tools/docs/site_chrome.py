@@ -33,6 +33,7 @@ BOOK_NAV = [
     (
         "Reference",
         [
+            ("Daemon RPC", "daemon-rpc.html"),
             ("Descriptors & Schemas", "reference/descriptors.html"),
         ],
     ),

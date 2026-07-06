@@ -23,118 +23,11 @@ pip.parse(
 )
 use_repo(pip, "picblobs_pip")
 
-# --- Bootlin cross-compilation toolchains ---
-bootlin = use_extension("//modules/picblobs/toolchains:bootlin.bzl", "bootlin")
-bootlin.toolchain(
-    name = "x86_64",
-    arch = "x86-64",
-    extra_cflags = ["-march=x86-64"],
-    sha256 = "932823ca9a3e067e7e2a29810a666d20c9cc5bb550de947f6879e38ace1aa955",
-    triple = "x86_64-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "i686",
-    arch = "x86-i686",
-    extra_cflags = ["-march=i686"],
-    sha256 = "023e4f03cd212b5545c4c184238693b61b40fa36d257b84546100a92ea2c1d8b",
-    triple = "i686-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "aarch64",
-    arch = "aarch64",
-    extra_cflags = [],
-    sha256 = "b0fad860eb94b503a56d66ca8b9ba06d2d4826943e37ebd1d7217423f6ea5bb2",
-    triple = "aarch64-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "armv5",
-    arch = "armv5-eabi",
-    extra_cflags = ["-march=armv5te"],
-    sha256 = "13f2bea0b06fe560fe60d199cd9d3fb1f20e2335bcc79b90c5130c3916a3ed92",
-    triple = "arm-buildroot-linux-gnueabi",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "armv7",
-    arch = "armv7-eabihf",
-    extra_cflags = [
-        "-march=armv7-a",
-        "-mthumb",
-    ],
-    sha256 = "608263bc9dc3eadf0962ddb1165f1c2291001190f9927dee47d464e26374462c",
-    triple = "arm-buildroot-linux-gnueabihf",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "s390x",
-    arch = "s390x-z13",
-    extra_cflags = ["-march=z13"],
-    sha256 = "b37ed02693a370f28434c34655c64bcb96dc0d428a92ddbc99feb5608bcf64a1",
-    triple = "s390x-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "mipsel32",
-    arch = "mips32el",
-    extra_cflags = [
-        "-mips32",
-        "-EL",
-    ],
-    sha256 = "d0139b6ade7f3b72a5f9c33814696af817661e826c9c501f6cefcab4ac684c8f",
-    triple = "mipsel-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "mipsbe32",
-    arch = "mips32",
-    extra_cflags = [
-        "-mips32",
-        "-EB",
-    ],
-    sha256 = "677402719c545e49eb71c3d27a5f495af38f60463b40ed705e24e43a9834c137",
-    triple = "mips-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "sparcv8",
-    arch = "sparcv8",
-    extra_cflags = ["-mcpu=v8"],
-    libc = "uclibc",
-    sha256 = "8ec2c84b84a13b854a13802537f0b04848056ebc65f6212202f6d8c8a78d4bc3",
-    triple = "sparc-buildroot-linux-uclibc",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "powerpc",
-    arch = "powerpc-e300c3",
-    extra_cflags = ["-mcpu=e300c3"],
-    sha256 = "6c975a7293fde77a52f348124049645ee2ceee19e75ab6e0b2364043090a2dff",
-    triple = "powerpc-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "ppc64le",
-    arch = "powerpc64le-power8",
-    extra_cflags = ["-mcpu=power8"],
-    sha256 = "8133b74614f880eb8b76730efee77b8fd281c982bfa2791b72c5f836a529530d",
-    triple = "powerpc64le-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-bootlin.toolchain(
-    name = "riscv64",
-    arch = "riscv64-lp64d",
-    extra_cflags = [],
-    sha256 = "78e16f3def8b2ff3da09c16155f993ac7e4dc1791d0904ada03fcb2e04910aab",
-    triple = "riscv64-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-
-# Register all Bootlin toolchains.
+# --- Hermetic cross-compilation and emulator toolchains ---
+picblobs_toolchains = use_extension("//modules/picblobs/toolchains:repositories.bzl", "picblobs_toolchains")
 use_repo(
-    bootlin,
+    picblobs_toolchains,
+    "arm_none_eabi",
     "bootlin_aarch64",
     "bootlin_armv5",
     "bootlin_armv7",
@@ -147,24 +40,8 @@ use_repo(
     "bootlin_s390x",
     "bootlin_sparcv8",
     "bootlin_x86_64",
+    "qemu_arm_static",
+    "qemu_user_static",
 )
-
-# --- ARM GNU bare-metal toolchain for Cortex-M (hosted-mode PIC blobs) ---
-arm_none_eabi = use_extension("//modules/picblobs/toolchains:arm_none_eabi.bzl", "arm_none_eabi")
-arm_none_eabi.toolchain(
-    extra_cflags = [
-        "-mcpu=cortex-m4",
-        "-mthumb",
-        "-mfloat-abi=soft",
-    ],
-    sha256 = "95c011cee430e64dd6087c75c800f04b9c49832cc1000127a92a97f9c8d83af4",
-    strip_prefix = "arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi",
-    url = "https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz",
-)
-use_repo(arm_none_eabi, "arm_none_eabi")
-
-# --- QEMU user-mode static (hermetic distro package for Bazel tests) ---
-qemu = use_extension("//modules/picblobs/toolchains:qemu.bzl", "qemu")
-use_repo(qemu, "qemu_arm_static", "qemu_user_static")
 
 register_toolchains("//modules/picblobs/toolchains:all")

@@ -86,17 +86,17 @@ task check
           <li><code>squatter-wine</code>: installs Wine in CI, then runs <code>task modules:wine-test</code> and <code>task docs:demos:wine</code>.</li>
         </ol>
         <p>CI, Pages, and publish jobs append GitHub Actions job summaries with the commands they ran, coverage ratchets, generated artifacts, staged site statistics, or publish targets where those details apply.</p>
-        <p>The staged docs site also includes the latest generated <a href="../reports/tests/latest/index.html">HTML test report</a> when <code>task test:report</code> artifacts are available. The report preserves Bazel target-level evidence, per-case XML where present, full console logs, raw XML, and undeclared outputs for drilldown across the monorepo.</p>
+        <p>The staged docs site also includes the latest generated <a href="../reports/tests/latest/index.html">HTML test report</a> when <code>task test:report</code> artifacts are available. The report preserves Bazel target-level evidence, suite-level rollups, per-case XML where present, assertion failure messages, captured case output, full console logs, raw XML, and undeclared outputs for drilldown across the monorepo.</p>
         <p>Docs and demo checks stay in the docs slice instead of becoming dependencies of every core checkout. The full aggregate <code>task ci</code> requires a complete checkout and runs the wired slice gates together.</p>
 
         <h2>Test Inventory</h2>
         <p>The root Bazel test suite covers the main product surfaces:</p>
         <ol>
-          <li>Go host tests for domain packages, application services, command registry, daemon runtime, daemon manager, storage, descriptors, CLI, command mode, root CLI, daemon RPC, and MCP.</li>
-          <li>Module-runtime tests for Python RPC, Go SDK, Python SDK, Rust SDK, and Go/Python/Rust example modules.</li>
+          <li>Go host tests for domain packages, application services, command registry, daemon runtime, daemon manager, SQLite/filesystem storage, descriptors, CLI, command mode, root CLI, daemon RPC, MCP, and the Hovel binary entrypoint.</li>
+          <li>Module-runtime tests for Python RPC, Go SDK, Go SDK test helpers, Python SDK, Rust SDK, Go/Python/Rust example modules, and the MS17-010 Python example modules.</li>
           <li>Chain, throw, confirmation, launch-key, artifact, event, installed-payload, session, and operator-session behavior through application and adapter tests.</li>
           <li>Schema smoke tests and documentation smoke tests.</li>
-          <li>Squatter provider tests, PE/source-contract tests, mux/protocol integration tests, client shell tests, SMB pipe tests, file transfer tests, and Wine-backed functional tests in CI.</li>
+          <li>Squatter provider tests, PE/source-contract tests, client wire/shell/SMB pipe unit tests, mux/protocol integration tests, file transfer tests, and Wine-backed functional tests in the Wine gate.</li>
           <li>Module packaging tests for in-repo example modules and workspace installation.</li>
           <li>Demo harness tests, including standard throw/session/MCP verification and the MCP agent demo harness.</li>
           <li>Shared throw-audit contract assertions reused by command mode, CLI, and MCP tests.</li>

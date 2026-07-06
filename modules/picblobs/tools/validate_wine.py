@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import struct
 import subprocess
@@ -22,12 +23,19 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+def _project_root() -> Path:
+    if workspace := os.environ.get("BUILD_WORKSPACE_DIRECTORY"):
+        return Path(workspace).resolve() / "modules" / "picblobs"
+    return Path(__file__).resolve().parent.parent
+
+
 # Bootstrap: add project root so picblobs is importable.
-_root = Path(__file__).resolve().parent.parent
+_root = _project_root()
 sys.path.insert(0, str(_root / "python"))
 
-from picblobs import get_blob, list_blobs
-from picblobs.runner import run_blob
+from picblobs import get_blob, list_blobs  # noqa: E402, RUF100
+from picblobs.runner import run_blob  # noqa: E402, RUF100
 
 # ---------------------------------------------------------------------------
 # Minimal PE builder

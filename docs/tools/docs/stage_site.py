@@ -107,7 +107,7 @@ def docs_fingerprint(repo: Path) -> str:
         "sdk/go/**/*.go",
         "sdk/python/hovel_sdk/**/*.py",
         "sdk/rust/hovel/src/**/*.rs",
-        "docs/site/spec/**/*.html",
+        "docs/site/spec/**/*",
         "docs/site/modules/**/*",
         "docs/tools/docs/python_api/**/*",
         ".test-report/site/**/*",

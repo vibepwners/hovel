@@ -1,26 +1,16 @@
 # Taskfile — the single, canonical way to run every repo workflow.
 # https://taskfile.dev   (install: https://taskfile.dev/installation/)
 #
-# Run `task` (or `task --list`) to see everything. Each task is a thin,
-# documented wrapper around the real implementation (tools/*.py, bazel, uv,
-# tools/run_tests.sh) so there is exactly ONE correct invocation per workflow.
+# Run `task` (or `task --list`) to see everything. Bazel-backed workflows
+# delegate through the repository root Taskfile so root config selection
+# (`task config-nativelink`, CI config, and HOVEL_BAZEL_ARGS) is honored.
 #
-# Prerequisites: `task` and `uv` on PATH. Everything else is installed by
-# `task setup`. Pass extra args after `--`, e.g. `task test -- -k extract`.
+# Pass extra args after `--`, e.g. `task test -- --test_arg=-k --test_arg=extract`.
 
 version: '3'
 
 vars:
-  VENV: '{{.ROOT_DIR}}/python/.venv'
-  PY: '{{.ROOT_DIR}}/python/.venv/bin/python'
-  # Run a command with the dev venv's bin/ first on PATH (and cwd at repo root).
-  # Needed because tools resolve helpers via PATH (fmt.py/lint.py → ruff,
-  # clang-format, buildifier) — go-task refuses to override PATH via `env:`, so
-  # we delegate to the repo's existing wrapper (also used by lefthook).
-  DEV: 'tools/with_dev_python.sh'
-  # buildifier is not pip-installable; `task setup` fetches this version into the
-  # venv. Keep in sync with the CI workflows that install it.
-  BUILDIFIER_VERSION: '7.3.1'
+  REPO_ROOT: '{{.TASKFILE_DIR}}/../..'
 
 tasks:
   default:
@@ -31,86 +21,55 @@ tasks:
 
   # ---------------------------------------------------------------- setup ---
   setup:
-    desc: "Create the dev venv, install both packages (editable) + tools + git hooks"
+    desc: "No-op; tools are provided by Bazel-managed targets."
     cmds:
-      - uv venv {{.VENV}}
-      - uv pip install --python {{.PY}} -e '{{.ROOT_DIR}}/python[dev]'
-      - uv pip install --python {{.PY}} -e '{{.ROOT_DIR}}/python_cli'
-      # buildifier (formats generated Bazel files; required by generate.py and
-      # fmt/lint). Not on PyPI, so fetch the binary into the venv if absent.
-      - |
-        if ! command -v buildifier >/dev/null 2>&1 && [ ! -x "{{.VENV}}/bin/buildifier" ]; then
-          os=$(uname -s | tr '[:upper:]' '[:lower:]')
-          arch=$(uname -m)
-          case "$arch" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
-          echo "==> Installing buildifier v{{.BUILDIFIER_VERSION}} ($os-$arch) into the venv"
-          curl -fsSL "https://github.com/bazelbuild/buildtools/releases/download/v{{.BUILDIFIER_VERSION}}/buildifier-${os}-${arch}" -o "{{.VENV}}/bin/buildifier"
-          chmod +x "{{.VENV}}/bin/buildifier"
-        fi
-      - 'if [ -z "${CI:-}" ] && git rev-parse --git-dir >/dev/null 2>&1; then {{.VENV}}/bin/lefthook install; fi'
-
-  _venv:
-    internal: true
-    preconditions:
-      - sh: 'test -x {{.PY}}'
-        msg: "Dev venv missing — run: task setup"
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:generate-check
 
   # ------------------------------------------------------ format & lint ---
   fmt:
     desc: "Format C, Python, and Bazel files in place"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/fmt.py {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:fmt -- {{.CLI_ARGS}}
 
   fmt:check:
     desc: "Check formatting without modifying (fails if anything is unformatted)"
-    deps: [_venv]
-    env:
-      PICBLOBS_REQUIRE_LINT_TOOLS: '1'
     cmds:
-      - '{{.DEV}} python tools/fmt.py --check'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:fmt-check
 
   lint:
     desc: "Lint Python (ruff) + complexity (lizard) + Bazel (buildifier)"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/lint.py {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:lint -- {{.CLI_ARGS}}
 
   lint:check:
     desc: "Lint in check mode (CI parity; non-mutating)"
-    deps: [_venv]
-    env:
-      PICBLOBS_REQUIRE_LINT_TOOLS: '1'
     cmds:
-      - '{{.DEV}} python tools/lint.py --check'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:lint-check
 
   lint:c:
     desc: "C static analysis (clang-tidy) via the Bazel lint aspect"
     env:
       PICBLOBS_REQUIRE_LINT_TOOLS: '1'
     cmds:
-      - bazel build --config=picblobs_lint //modules/picblobs/src/... //modules/picblobs/tests/...
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:build -- --config=picblobs_lint //modules/picblobs/src/... //modules/picblobs/tests/...
 
   lint:init:
     desc: "Detect uninitialized local declarations (aggregates; --all for scalars)"
-    deps: [_venv]
     env:
       PICBLOBS_REQUIRE_LINT_TOOLS: '1'
     cmds:
-      - '{{.DEV}} python tools/init_check.py {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:run -- //modules/picblobs/tools:init_check -- {{.CLI_ARGS}}
 
   # ----------------------------------------------------------- codegen ---
   generate:
     desc: "Regenerate all derived files from tools/registry.py"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/generate.py'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:generate
 
   generate:check:
     desc: "Verify generated files are fresh (fails if stale)"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/generate.py --check'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:generate-check
 
   # -------------------------------------------------------------- check ---
   check:
@@ -127,145 +86,110 @@ tasks:
     vars:
       PLATFORM: '{{.PLATFORM | default "linux_x86_64"}}'
     cmds:
-      - bazel build //modules/picblobs/release:full --config={{.PLATFORM}}{{if .MODE}} --config={{.MODE}}{{end}}
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:build -- --config={{.PLATFORM}}{{if .MODE}} --config={{.MODE}}{{end}} //modules/picblobs/release:full
 
   stage:
     desc: "Build every platform and stage blobs+runners into the package tree (= old ./buildall)"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/stage_blobs.py {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:stage -- {{.CLI_ARGS}}
 
   stage:release:
     desc: "Stage release blobs only, no runners (used by the release pipeline)"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/stage_blobs.py --no-runners'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:stage-release -- {{.CLI_ARGS}}
 
   bazel:build:
     desc: "CI Bazel build matrix (src + runners across representative platforms)"
     cmds:
-      # Exclude the cppcheck *test* target from this platform build: building a
-      # test under a target --platforms breaks test-toolchain resolution on
-      # Bazel 9. It is exercised by `task bazel:test` instead (host platform).
-      - bazel build --config=picblobs_ci --config=linux_x86_64 -- //modules/picblobs/src/... //modules/picblobs/tests/runners/linux/... -//modules/picblobs/tests/runners/linux:runner_cppcheck
-      - bazel build --config=picblobs_ci --config=linux_aarch64 //modules/picblobs/src/...
-      - bazel build --config=picblobs_ci --config=windows_x86_64 //modules/picblobs/src/payload:hello_windows
-      - bazel build --config=picblobs_ci --config=freebsd_x86_64 //modules/picblobs/src/payload:hello
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:bazel-build
 
   bazel:test:
     desc: "Run the Bazel test suite (host tests)"
     cmds:
-      # Do NOT pass a --config platform here: these tests build their cross
-      # artifacts via internal platform transitions, so setting a target
-      # platform breaks test toolchain resolution.
-      - bazel test --config=picblobs_ci //modules/picblobs/tests:nacl_suite
-      - bazel test --config=picblobs_ci //modules/picblobs/tests/runners/...:all
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:bazel-test -- {{.CLI_ARGS}}
 
   bazel:generate-check:
     desc: "Codegen freshness via Bazel (sandboxed; no venv needed)"
     cmds:
-      - bazel test --config=picblobs_ci //modules/picblobs/tools:generate_check
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:generate-check
 
   # --------------------------------------------------------------- tests ---
   test:
-    desc: "Full test suite — unit + payload, both packages (args: task test -- -k foo --os linux)"
-    deps: [_venv]
+    desc: "Bazel-integrated test suite (args: task test -- --test_arg=-k --test_arg=foo)"
     cmds:
-      - '{{.ROOT_DIR}}/tools/run_tests.sh {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:test -- {{.CLI_ARGS}}
 
   test:unit:
-    desc: "Unit tests only (skip payload execution tests)"
-    deps: [_venv]
+    desc: "Bazel-integrated Python and CLI tests."
     cmds:
-      - '{{.ROOT_DIR}}/tools/run_tests.sh --unit-only {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:test -- --config=picblobs_ci {{.CLI_ARGS}} //modules/picblobs/python:pytest_suite //modules/picblobs/python_cli:pytest_suite
 
   test:payload:
-    desc: "Payload execution tests only"
-    deps: [_venv]
+    desc: "Bazel-integrated payload and runner tests."
     cmds:
-      - '{{.ROOT_DIR}}/tools/run_tests.sh --payload-only {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:test -- --config=picblobs_ci {{.CLI_ARGS}} //modules/picblobs/tests:nacl_suite //modules/picblobs/tests/runners/...:all
 
   verify:
     desc: "End-to-end: run every staged blob via picblobs-cli"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} picblobs-cli verify {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:run -- //modules/picblobs/python_cli:picblobs-cli -- verify {{.CLI_ARGS}}
 
   # ----------------------------------------------------- version/release ---
   version:
     desc: "Set the project version everywhere (task version -- 0.2.0)"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/update_version.py {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:upver -- {{.CLI_ARGS}}
 
   upver:
     desc: "Set the independent picblobs package version everywhere (task upver -- 0.2.0)"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/update_version.py {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:upver -- {{.CLI_ARGS}}
 
   version:check:
     desc: "Verify all version strings agree (task version:check -- 0.1.4)"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/update_version.py --check {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:run -- //modules/picblobs/tools:update_version -- --check {{.CLI_ARGS}}
 
   upver:test:
     desc: "Check the independent picblobs version updater."
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python -m pytest python/tests/test_update_version.py'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:upver:test
 
   release:extract:
     desc: "Extract staged .so blobs into the canonical release structure"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/extract_release.py {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:run -- //modules/picblobs/tools:extract_release -- {{.CLI_ARGS}}
 
   release:extract:check:
     desc: "Verify the canonical release structure is up to date"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/extract_release.py --check'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:run -- //modules/picblobs/tools:extract_release -- --check
 
   release:package:
     desc: "Package the canonical release structure into archives"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/package_release.py {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:run -- //modules/picblobs/tools:package_release -- {{.CLI_ARGS}}
 
   dist:picblobs:
     desc: "Build + validate the picblobs wheel/sdist (EXPECTED_VERSION= optional)"
-    deps: [_venv]
     cmds:
-      - rm -rf dist/picblobs
-      - uv build python --wheel --sdist --out-dir dist/picblobs
-      - '{{.DEV}} python tools/check_dist.py picblobs --dist-dir dist/picblobs{{if .EXPECTED_VERSION}} --expected-version {{.EXPECTED_VERSION}}{{end}}'
-      - '{{.DEV}} python -m twine check dist/picblobs/*'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:dist-picblobs {{if .EXPECTED_VERSION}}EXPECTED_VERSION={{.EXPECTED_VERSION}}{{end}}
 
   dist:cli:
     desc: "Build + validate the picblobs-cli wheel/sdist (needs runners staged via `task stage`)"
-    deps: [_venv]
     cmds:
-      - rm -rf dist/picblobs-cli
-      - uv build python_cli --wheel --sdist --out-dir dist/picblobs-cli
-      - '{{.DEV}} python tools/check_dist.py picblobs-cli --dist-dir dist/picblobs-cli{{if .EXPECTED_VERSION}} --expected-version {{.EXPECTED_VERSION}}{{end}}'
-      - '{{.DEV}} python -m twine check dist/picblobs-cli/*'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:dist-cli {{if .EXPECTED_VERSION}}EXPECTED_VERSION={{.EXPECTED_VERSION}}{{end}}
 
   dist:
     desc: "Build + validate BOTH package distributions (needs a full `task stage` first)"
     cmds:
-      - task: dist:picblobs
-        vars: { EXPECTED_VERSION: '{{.EXPECTED_VERSION}}' }
-      - task: dist:cli
-        vars: { EXPECTED_VERSION: '{{.EXPECTED_VERSION}}' }
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:dist {{if .EXPECTED_VERSION}}EXPECTED_VERSION={{.EXPECTED_VERSION}}{{end}}
 
   # ---------------------------------------------------------------- misc ---
   wine:
     desc: "Validate Windows blobs under Wine"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/validate_wine.py {{.CLI_ARGS}}'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:run -- //modules/picblobs/tools:validate_wine -- {{.CLI_ARGS}}
 
   dev:
     desc: "Drop into the Linux dev container (ci/dev.sh)"
@@ -276,28 +200,24 @@ tasks:
     desc: "Serve the static docs/ site locally at http://localhost:8000"
     dir: '{{.ROOT_DIR}}/docs'
     cmds:
-      - '{{.PY}} -m http.server 8000'
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:run -- //modules/picblobs/tools:docs_server
 
   # ------------------------------------------------------------ ci/clean ---
   ci:
     desc: "Run the core CI gates locally (check + Bazel build/test). Excludes stage/test/verify (need QEMU)."
     cmds:
-      - task: generate:check
-      - task: fmt:check
-      - task: lint:check
-      - task: bazel:build
-      - task: bazel:test
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:ci
 
   clean:
-    desc: "Remove build/dist artifacts and run `bazel clean` (keeps the cache + venv)"
+    desc: "Remove build/dist artifacts and run the root Bazel clean task."
     cmds:
       - rm -rf dist build-artifacts debug
-      - bazel clean
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:clean
 
   clean:all:
-    desc: "Deep clean: bazel expunge, remove the venv, and wipe staged package data"
+    desc: "Deep clean: expunge Bazel and wipe staged package data"
     cmds:
-      - bazel clean --expunge
-      - rm -rf {{.VENV}} dist build-artifacts debug
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" bazel:clean-expunge
+      - rm -rf dist build-artifacts debug
       - rm -rf python/picblobs/_blobs python/picblobs/blobs python/picblobs/manifest.json
       - rm -rf python_cli/picblobs_cli/_runners python_cli/picblobs_cli/_test_binaries

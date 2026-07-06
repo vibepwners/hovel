@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
 """Build example Hovel module packages into dist/modules.
 
-Invoked through Task. The script assumes `task release:modules-stage` has
-staged native example binaries into modules/examples/bin/. Set
-HOVEL_MODULE_RELEASE_BASE_URL to produce an HTTPS bulk-install manifest for a
-release, for example https://github.com/Vibe-Pwners/hovel/releases/download/v1.2.3.
+Invoked through Task. Native binaries are normally supplied as Bazel runfiles;
+direct script use can still consume binaries staged under modules/examples/bin/.
+Set HOVEL_MODULE_RELEASE_BASE_URL to produce an HTTPS bulk-install manifest for
+a release, for example https://github.com/Vibe-Pwners/hovel/releases/download/v1.2.3.
 """
 
 from __future__ import annotations
 
+import argparse
+import gzip
 import hashlib
 import os
 import shutil
+import stat
 import tarfile
 import tempfile
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(
+    os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path(__file__).resolve().parents[2])
+).resolve()
 OUT = ROOT / "dist" / "modules"
 
 
@@ -96,6 +101,8 @@ PYTHON_MODULES = [
     ),
 ]
 
+NATIVE_BINARY_SOURCES: dict[str, Path] = {}
+
 
 def write(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,17 +115,30 @@ def copytree(src: Path, dst: Path) -> None:
 
 
 def archive_dir(src: Path, dest: Path) -> None:
-    with tarfile.open(dest, "w:gz") as tf:
+    with (
+        dest.open("wb") as raw,
+        gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tf,
+    ):
         for path in sorted(src.rglob("*")):
             arcname = path.relative_to(src)
             info = tf.gettarinfo(path, arcname.as_posix())
             info.uid = info.gid = 0
             info.uname = info.gname = ""
+            info.mtime = 0
+            info.mode = archive_mode(path)
             if path.is_file():
                 with path.open("rb") as f:
                     tf.addfile(info, f)
             else:
                 tf.addfile(info)
+
+
+def archive_mode(path: Path) -> int:
+    if path.is_dir():
+        return 0o755
+    mode = path.stat().st_mode
+    return 0o755 if mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH) else 0o644
 
 
 def sha256(path: Path) -> str:
@@ -143,6 +163,13 @@ def module_source(archive: Path, base_url: str) -> str:
     if base_url:
         return f"{base_url}/{archive.name}"
     return archive.name
+
+
+def resolve_binary_source(name: str) -> Path:
+    source = NATIVE_BINARY_SOURCES.get(name)
+    if source is not None:
+        return source
+    return ROOT / "modules" / "examples" / "bin" / name
 
 
 def native_manifest(name: str, version: str, command: str, hosts: list[tuple[str, str, str, str]]) -> str:
@@ -196,11 +223,11 @@ def package_native(
             filename = f"{command}{exe}"
             dst = root / "bin" / host_dir / filename
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / "modules" / "examples" / "bin" / host_dir / filename, dst)
+            shutil.copy2(resolve_binary_source(f"{host_dir}/{filename}"), dst)
             dst.chmod(0o755)
         if name == "squatter":
             payload = root / "bin" / "squatter.exe"
-            shutil.copy2(ROOT / "modules/examples/bin/squatter.exe", payload)
+            shutil.copy2(resolve_binary_source("squatter.exe"), payload)
             payload.chmod(0o755)
         archive = OUT / f"{name}-{version}.tgz"
         archive_dir(root, archive)
@@ -225,7 +252,75 @@ def package_python(
         return name, version, archive
 
 
-def main() -> None:
+def parse_module_sources(items: list[str]) -> dict[str, Path]:
+    sources = {}
+    for item in items:
+        name, sep, runfile = item.partition("=")
+        if not sep or not name or not runfile:
+            raise SystemExit(f"invalid --module value: {item!r}")
+        sources[name] = resolve_runfile(runfile)
+    return sources
+
+
+def resolve_runfile(path: str) -> Path:
+    raw = Path(path)
+    candidates = []
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.extend(
+            Path(root) / prefix / path
+            for root in runfile_roots()
+            for prefix in ("", "_main", "hovel")
+        )
+        candidates.append(Path.cwd() / path)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    searched = "\n  ".join(str(candidate) for candidate in candidates)
+    raise SystemExit(f"missing runfile: {path}\nsearched:\n  {searched}")
+
+
+def runfile_roots() -> list[Path]:
+    roots: list[Path] = []
+    for name in ("RUNFILES_DIR", "TEST_SRCDIR"):
+        value = os.environ.get(name)
+        if value:
+            roots.append(Path(value))
+    argv0 = (
+        Path(os.environ.get("PYTHON_BINARY", ""))
+        if os.environ.get("PYTHON_BINARY")
+        else None
+    )
+    if argv0:
+        roots.append(argv0.parent)
+    roots.append(Path.cwd())
+    return roots
+
+
+def main(argv: list[str] | None = None) -> int:
+    global NATIVE_BINARY_SOURCES, OUT  # noqa: PLW0603
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--module",
+        action="append",
+        default=[],
+        metavar="NAME=RUNFILE",
+        help="Native module binary name and Bazel runfile path.",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=OUT,
+        help="Distribution output directory.",
+    )
+    args = parser.parse_args(argv)
+
+    NATIVE_BINARY_SOURCES = parse_module_sources(args.module)
+    OUT = args.out_dir if args.out_dir.is_absolute() else ROOT / args.out_dir
+
     OUT.mkdir(parents=True, exist_ok=True)
     for old in OUT.glob("*.tgz"):
         old.unlink()
@@ -260,8 +355,13 @@ def main() -> None:
     write(OUT / "module-index.yaml", "\n".join(index_lines) + "\n")
     write(OUT / "module-install-set.yaml", "\n".join(install_lines) + "\n")
     write(OUT / "SHA256SUMS", "\n".join(sum_lines) + "\n")
-    print(f"packaged {len(archives)} modules into {OUT.relative_to(ROOT)}")
+    try:
+        output_label = OUT.relative_to(ROOT)
+    except ValueError:
+        output_label = OUT
+    print(f"packaged {len(archives)} modules into {output_label}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

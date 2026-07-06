@@ -5,7 +5,7 @@ across raw-syscall and hosted (vtable) execution modes.
 """
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("@rules_python//python:defs.bzl", "py_test")
 load("//modules/picblobs/bazel:cc_binary.bzl", "pic_cc_binary")
 load(":defs.bzl", "arm_filegroup")
 
@@ -18,7 +18,7 @@ filegroup(
             "*.bzl",
             "*.c",
             "*.h",
-            "*.sh",
+            "*.py",
         ],
         allow_empty = True,
     ) + [
@@ -27,6 +27,7 @@ filegroup(
         "//modules/picblobs/tests/runners/freebsd:quality_sources",
         "//modules/picblobs/tests/runners/linux:quality_sources",
         "//modules/picblobs/tests/runners/windows:quality_sources",
+        "//modules/picblobs/tests/ul_exec:quality_sources",
     ],
 )
 
@@ -39,6 +40,11 @@ _ARM_MODE = "//modules/picblobs/platforms:linux_armv5_arm"
 _CM4 = "//modules/picblobs/platforms:cortexm4_baremetal"
 
 _QEMU_ARM_STATIC = "@qemu_user_static//:qemu-arm-static"
+
+_NACL_E2E_TAGS = [
+    "exclusive",
+    "requires-network",
+]
 
 # ---- NaCl blob artifacts (raw syscall mode, ARM Thumb) ----
 
@@ -127,12 +133,12 @@ arm_filegroup(
     deps = ["//modules/picblobs/tests/runners/linux:runner_hosted"],
 )
 
-# ---- E2E NaCl handshake tests (QEMU, no-sandbox, exclusive port) ----
+# ---- E2E NaCl handshake tests (QEMU, exclusive fixed port) ----
 
-sh_test(
+py_test(
     name = "nacl_e2e_thumb",
     timeout = "short",
-    srcs = ["nacl_e2e.sh"],
+    srcs = ["nacl_e2e_test.py"],
     args = [
         "$(location {})".format(_QEMU_ARM_STATIC),
         "$(location :runner_thumb)",
@@ -145,16 +151,15 @@ sh_test(
         ":runner_thumb",
         _QEMU_ARM_STATIC,
     ],
-    tags = [
-        "exclusive",
-        "no-sandbox",
-    ],
+    main = "nacl_e2e_test.py",
+    python_version = "PY3",
+    tags = _NACL_E2E_TAGS,
 )
 
-sh_test(
+py_test(
     name = "nacl_e2e_arm",
     timeout = "short",
-    srcs = ["nacl_e2e.sh"],
+    srcs = ["nacl_e2e_test.py"],
     args = [
         "$(location {})".format(_QEMU_ARM_STATIC),
         "$(location :runner_arm)",
@@ -167,17 +172,16 @@ sh_test(
         ":runner_arm",
         _QEMU_ARM_STATIC,
     ],
-    tags = [
-        "exclusive",
-        "no-sandbox",
-    ],
+    main = "nacl_e2e_test.py",
+    python_version = "PY3",
+    tags = _NACL_E2E_TAGS,
 )
 
 # E2E NaCl handshake via vtable (proves hosted abstraction works).
-sh_test(
+py_test(
     name = "nacl_e2e_hosted_thumb",
     timeout = "short",
-    srcs = ["nacl_e2e.sh"],
+    srcs = ["nacl_e2e_test.py"],
     args = [
         "$(location {})".format(_QEMU_ARM_STATIC),
         "$(location :runner_hosted_thumb)",
@@ -190,13 +194,12 @@ sh_test(
         ":runner_hosted_thumb",
         _QEMU_ARM_STATIC,
     ],
-    tags = [
-        "exclusive",
-        "no-sandbox",
-    ],
+    main = "nacl_e2e_test.py",
+    python_version = "PY3",
+    tags = _NACL_E2E_TAGS,
 )
 
-# ---- PIC property tests (hermetic: toolchain readelf + bash builtins) ----
+# ---- PIC property tests (hermetic: toolchain readelf + Python parser) ----
 
 arm_filegroup(
     name = "readelf_thumb",
@@ -204,10 +207,10 @@ arm_filegroup(
     deps = ["@bootlin_armv5//:readelf_files"],
 )
 
-sh_test(
+py_test(
     name = "verify_pic_thumb",
     timeout = "short",
-    srcs = ["verify_pic.sh"],
+    srcs = ["verify_pic_test.py"],
     args = [
         "$(location :readelf_thumb)",
         "$(locations :nacl_blobs_so_thumb)",
@@ -216,12 +219,14 @@ sh_test(
         ":nacl_blobs_so_thumb",
         ":readelf_thumb",
     ],
+    main = "verify_pic_test.py",
+    python_version = "PY3",
 )
 
-sh_test(
+py_test(
     name = "verify_pic_arm",
     timeout = "short",
-    srcs = ["verify_pic.sh"],
+    srcs = ["verify_pic_test.py"],
     args = [
         "$(location :readelf_thumb)",
         "$(locations :nacl_blobs_so_arm)",
@@ -230,12 +235,14 @@ sh_test(
         ":nacl_blobs_so_arm",
         ":readelf_thumb",
     ],
+    main = "verify_pic_test.py",
+    python_version = "PY3",
 )
 
-sh_test(
+py_test(
     name = "verify_pic_hosted_thumb",
     timeout = "short",
-    srcs = ["verify_pic.sh"],
+    srcs = ["verify_pic_test.py"],
     args = [
         "$(location :readelf_thumb)",
         "$(locations :nacl_blobs_hosted_so_thumb)",
@@ -244,6 +251,8 @@ sh_test(
         ":nacl_blobs_hosted_so_thumb",
         ":readelf_thumb",
     ],
+    main = "verify_pic_test.py",
+    python_version = "PY3",
 )
 
 # ---- Cortex-M4 bare-metal artifacts (Mbed OS target) ----
@@ -275,10 +284,10 @@ arm_filegroup(
     deps = ["@arm_none_eabi//:readelf_files"],
 )
 
-sh_test(
+py_test(
     name = "verify_pic_cortexm4",
     timeout = "short",
-    srcs = ["verify_pic.sh"],
+    srcs = ["verify_pic_test.py"],
     args = [
         "$(location :readelf_cortexm4)",
         "$(locations :nacl_blobs_cortexm4)",
@@ -287,6 +296,8 @@ sh_test(
         ":nacl_blobs_cortexm4",
         ":readelf_cortexm4",
     ],
+    main = "verify_pic_test.py",
+    python_version = "PY3",
 )
 
 # Thumb-mode hosted runner for Cortex-M4 E2E test.
@@ -320,10 +331,10 @@ arm_filegroup(
 # hosted-mode blobs make no privileged instructions — only vtable calls.
 # So a Thumb-mode hosted runner + QEMU user-mode can execute the real
 # Cortex-M4 .bin files, proving the actual compiled code is correct.
-sh_test(
+py_test(
     name = "nacl_e2e_cortexm4",
     timeout = "short",
-    srcs = ["nacl_e2e.sh"],
+    srcs = ["nacl_e2e_test.py"],
     args = [
         "$(location {})".format(_QEMU_ARM_STATIC),
         "$(location :runner_hosted_cortexm4)",
@@ -336,10 +347,9 @@ sh_test(
         ":runner_hosted_cortexm4",
         _QEMU_ARM_STATIC,
     ],
-    tags = [
-        "exclusive",
-        "no-sandbox",
-    ],
+    main = "nacl_e2e_test.py",
+    python_version = "PY3",
+    tags = _NACL_E2E_TAGS,
 )
 
 # ---- Mbed OS platform test (platform_mbed.cpp with POSIX mock) ----
@@ -399,10 +409,10 @@ arm_filegroup(
 # E2E: runs actual Cortex-M4 blobs through the real platform_mbed.cpp
 # vtable (fd table, sockaddr parsing, socket lifecycle, RNG wrapper),
 # all backed by POSIX sockets under QEMU user-mode.
-sh_test(
+py_test(
     name = "nacl_e2e_mbed",
     timeout = "short",
-    srcs = ["nacl_e2e.sh"],
+    srcs = ["nacl_e2e_test.py"],
     args = [
         "$(location {})".format(_QEMU_ARM_STATIC),
         "$(location :test_mbed_runner_thumb)",
@@ -415,10 +425,9 @@ sh_test(
         ":test_mbed_runner_thumb",
         _QEMU_ARM_STATIC,
     ],
-    tags = [
-        "exclusive",
-        "no-sandbox",
-    ],
+    main = "nacl_e2e_test.py",
+    python_version = "PY3",
+    tags = _NACL_E2E_TAGS,
 )
 
 # ---- Aggregate test suite ----

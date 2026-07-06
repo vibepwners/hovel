@@ -94,6 +94,13 @@ py_test(
     ],
     main = "run_python_check.py",
     python_version = "PY3",
+    # Excluded from `//...` (and thus `task test`): this lints the sibling `sdk`
+    # slice's Python sources (sdk/python, examples/python), which are not part of
+    # core's graph and cannot be resolved as declared inputs from here — so it
+    # fails under both local and remote execution when swept up by the wildcard.
+    # Same convention core uses for its race/fuzz tests. Run it from an assembled
+    # full checkout where the sdk sources are present.
+    tags = ["manual"],
 )
 
 py_console_script_binary(

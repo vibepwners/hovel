@@ -47,6 +47,7 @@
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
+        <li><a href="daemon-rpc.html">Daemon RPC</a></li>
         <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
       </ul>
       <p class="sidebar-section">Module Development</p>
@@ -74,6 +75,7 @@ hovel tui ...              # not implemented yet
 </code></pre>
         <p>The root implementation also exposes compatibility and developer entrypoints such as <code>shell</code>, <code>command</code>, <code>run</code>, direct registry roots, <code>init</code>, and <code>status</code>. They should remain documented as compatibility/developer affordances rather than the durable product contract. The shell-facing product surface should be deliberately narrow: daemon management, help, and one-shot execution of a saved chain file.</p>
         <p>The <code>hovel mcp</code> role is specified in <a href="mcp-agent.html">MCP and Agent Operation</a>. It is an agent-facing front end over the same daemon state and safety model, not a privileged execution shortcut.</p>
+        <p>All implemented front ends attach to the stable daemon RPC where they need shared workspace state. The daemon RPC is specified in <a href="daemon-rpc.html">Daemon RPC Contract</a> and described by <a href="reference/daemon-rpc.openapi.json"><code>reference/daemon-rpc.openapi.json</code></a>.</p>
 
         <h2>Terminology</h2>
         <p>These terms are normative:</p>
@@ -344,7 +346,7 @@ Settings / Theme Selector
         <p>Golden tests should verify CLI help and completion. Contract tests should verify that one-shot chain-file execution and interactive <code>throw</code> produce equivalent plans, review surfaces, confirmation records, events, artifacts, throw records, and final state for the same chain file.</p>
 
         <h2>REST/OpenAPI</h2>
-        <p>No REST adapter is currently implemented. When added, the REST API should be generated from Go types where possible.</p>
+        <p>No public REST adapter is currently implemented. The source tree does have an OpenAPI artifact for the local daemon RPC because that contract is HTTP/JSON and stable; see <a href="daemon-rpc.html">Daemon RPC Contract</a>. A future public REST API should be a separate adapter over application services and should be generated from source-backed types where possible.</p>
         <p>REST should not block the first useful command/CLI and event-stream loop. It may ship in the first alpha if needed for MCP or external automation, but it must remain an adapter over application services.</p>
         <p>Primary uses:</p>
         <ol>

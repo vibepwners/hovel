@@ -47,6 +47,7 @@
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
+        <li><a href="../daemon-rpc.html">Daemon RPC</a></li>
         <li><a href="../reference/descriptors.html" aria-current="page">Descriptors &amp; Schemas</a></li>
       </ul>
       <p class="sidebar-section">Module Development</p>
@@ -76,6 +77,9 @@
           module indexes, bulk install manifests, module locks, and chain files.
           Runtime module schema is still reported by module RPC at catalog/inspect time.
         </p>
+
+        <h2>Machine-Readable Contracts</h2>
+        <p>The stable daemon RPC between <code>hoveld</code> and front ends is described by <a href="daemon-rpc.openapi.json"><code>daemon-rpc.openapi.json</code></a> and explained in <a href="../daemon-rpc.html">Daemon RPC Contract</a>. It is an OpenAPI 3.1 document for the local HTTP/JSON service used by CLI, one-shot execution, MCP, and future front ends.</p>
 
         <h2>Hovel Config</h2>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1

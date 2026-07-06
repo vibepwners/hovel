@@ -16,14 +16,19 @@ build:buildbuddy --remote_upload_local_results=false
 build:local-cache --disk_cache=/var/tmp/bazel-cache/hovel
 build:local-cache --remote_upload_local_results=true
 
-build:nativelink --config=local-cache
+# NativeLink remote execution uses the remote CAS as the cache. Do NOT add
+# --disk_cache (i.e. --config=local-cache) here: combined with --remote_executor,
+# Bazel satisfies input blobs from the local disk cache without uploading them to
+# the remote CAS, so the worker fails with "Object not found in either fast or
+# slow store" (e.g. the hermetic Python interpreter). Remote cache only.
 build:nativelink --remote_cache=grpc://nativelink:50051
+build:nativelink --remote_executor=grpc://nativelink:50051
 build:nativelink --remote_upload_local_results=true
 
 build:nativelink-minimal --config=nativelink
 build:nativelink-minimal --remote_download_minimal
 
-build:local --config=nativelink
+build:local --config=local-cache
 
 build:ci --config=buildbuddy
 build:ci --build_metadata=ROLE=CI
@@ -79,6 +84,5 @@ build:picblobs_ci --action_env=PICBLOBS_REQUIRE_LINT_TOOLS=1
 test:picblobs_ci --test_env=PICBLOBS_REQUIRE_LINT_TOOLS=1
 test:picblobs_ci --test_output=all
 test:picblobs_ci --test_verbose_timeout_warnings
-test:picblobs_ci --test_env=PATH
 
 try-import %workspace%/.bazelrc.user

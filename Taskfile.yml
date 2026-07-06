@@ -62,14 +62,14 @@ tasks:
       - task: config-show
 
   config-nativelink:
-    desc: Use the shared local on-disk Bazel cache plus NativeLink for local task builds.
+    desc: Use the shared local on-disk Bazel cache plus NativeLink remote execution.
     silent: true
     cmds:
       - printf 'nativelink\n' > "{{.REPO_ROOT}}/.hovel-bazel-config"
       - task: config-show
 
   config-nativelink-minimal:
-    desc: Use NativeLink and avoid downloading build outputs unless needed.
+    desc: Use NativeLink remote execution and avoid downloading build outputs unless needed.
     silent: true
     cmds:
       - printf 'nativelink-minimal\n' > "{{.REPO_ROOT}}/.hovel-bazel-config"
@@ -197,6 +197,18 @@ tasks:
     cmds:
       - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
 
+  bazel:clean:
+    desc: Clean root integration Bazel outputs.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} clean
+
+  bazel:clean-expunge:
+    desc: Expunge root integration Bazel outputs.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} clean --expunge
+
   report:generate:
     desc: Generate the static HTML test report from existing BEP/testlog artifacts.
     cmds:
@@ -237,23 +249,22 @@ tasks:
 
   picblobs:upver:
     desc: Update the independent picblobs package version.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - task upver -- {{.CLI_ARGS}}
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/picblobs/tools:update_version -- {{.CLI_ARGS}}
 
   picblobs:upver:test:
     desc: Check the independent picblobs version updater.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - task upver:test
+      - task: bazel:test
+        vars:
+          CLI_ARGS: --config=picblobs_ci --test_arg=--pytest-target=test_update_version.py //modules/picblobs/python:pytest_suite
 
   release:picblobs-dist:
     desc: Stage release blobs and build the picblobs PyPI source/wheel distributions.
     cmds:
-      - task: picblobs:setup
-      - task: picblobs:stage
-        vars:
-          CLI_ARGS: --no-runners
+      - task: picblobs:stage-release
       - task: picblobs:dist-picblobs
         vars:
           EXPECTED_VERSION: '{{.EXPECTED_VERSION}}'
@@ -261,7 +272,6 @@ tasks:
   release:picblobs-cli-dist:
     desc: Stage release blobs/runners and build the picblobs-cli PyPI source/wheel distributions.
     cmds:
-      - task: picblobs:setup
       - task: picblobs:stage
       - task: picblobs:dist-picblobs
         vars:
@@ -285,7 +295,9 @@ tasks:
   release:hovel-sdk-dist:
     desc: Build the Python SDK source and wheel distributions.
     cmds:
-      - uv build sdk/python --out-dir dist
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //sdk/python:build_dist -- --out-dir=dist --clean
 
   release:modules-stage:
     desc: Stage in-repo module binaries into modules/examples/bin.
@@ -297,8 +309,9 @@ tasks:
   release:modules-package:
     desc: Build in-repo module release packages and indexes into dist/modules.
     cmds:
-      - task: release:modules-stage
-      - python3 modules/tools/package_examples.py
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/tools:package_examples
 
   actions:summary:
     desc: Append a GitHub Actions job summary for wired core jobs.
@@ -381,66 +394,51 @@ tasks:
           CLI_ARGS: //:modules_build
 
   picblobs:setup:
-    desc: Create the picblobs dev venv and install its Python packages.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    desc: No-op; Picblobs tools are Bazel-managed.
     cmds:
-      - |
-        if command -v uv >/dev/null 2>&1; then
-          uv venv python/.venv
-          uv pip install --python python/.venv/bin/python -e 'python[dev]'
-          uv pip install --python python/.venv/bin/python -e python_cli
-        else
-          python3 -m venv python/.venv
-          python/.venv/bin/python -m pip install --upgrade pip
-          python/.venv/bin/python -m pip install -e 'python[dev]'
-          python/.venv/bin/python -m pip install -e python_cli
-        fi
-      - |
-        if ! command -v buildifier >/dev/null 2>&1 && [ ! -x "python/.venv/bin/buildifier" ]; then
-          os=$(uname -s | tr '[:upper:]' '[:lower:]')
-          arch=$(uname -m)
-          case "$arch" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
-          curl -fsSL "https://github.com/bazelbuild/buildtools/releases/download/v{{.PICBLOBS_BUILDIFIER_VERSION}}/buildifier-${os}-${arch}" -o "python/.venv/bin/buildifier"
-          chmod +x "python/.venv/bin/buildifier"
-        fi
+      - task: picblobs:generate-check
 
   picblobs:fmt:
     desc: Format picblobs C, Python, and Bazel files.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - tools/with_dev_python.sh python tools/fmt.py {{.CLI_ARGS}}
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/picblobs/tools:format_write -- {{.CLI_ARGS}}
 
   picblobs:fmt-check:
     desc: Check picblobs formatting without modifying files.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - tools/with_dev_python.sh python tools/fmt.py --check
+      - task: bazel:test
+        vars:
+          CLI_ARGS: --config=picblobs_ci //modules/picblobs/tools:format_check
 
   picblobs:lint:
     desc: Run picblobs Python and Bazel lint checks.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - tools/with_dev_python.sh python tools/lint.py {{.CLI_ARGS}}
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/picblobs/tools:lint_run -- {{.CLI_ARGS}}
 
   picblobs:lint-check:
     desc: Run picblobs lint checks in CI/check mode.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
-    env:
-      PICBLOBS_REQUIRE_LINT_TOOLS: '1'
     cmds:
-      - tools/with_dev_python.sh python tools/lint.py --check
+      - task: bazel:test
+        vars:
+          CLI_ARGS: --config=picblobs_ci //modules/picblobs/tools:lint_check
 
   picblobs:generate:
     desc: Regenerate picblobs derived files from the registry.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - tools/with_dev_python.sh python tools/generate.py
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/picblobs/tools:generate_write
 
   picblobs:generate-check:
     desc: Verify picblobs generated files are fresh.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - tools/with_dev_python.sh python tools/generate.py --check
+      - task: bazel:test
+        vars:
+          CLI_ARGS: --config=picblobs_ci //modules/picblobs/tools:generate_check
 
   picblobs:bazel-build:
     desc: Build representative picblobs Bazel targets across platform configs.
@@ -474,76 +472,67 @@ tasks:
 
   picblobs:stage:
     desc: Build and stage picblobs blobs, runners, and verifier fixtures.
-    dir: '{{.REPO_ROOT}}'
     cmds:
-      - modules/picblobs/tools/with_dev_python.sh python tools/stage_blobs.py {{.CLI_ARGS}}
+      - task: bazel:run
+        vars:
+          CLI_ARGS: --config=picblobs_base //modules/picblobs/tools:stage_blobs -- {{.CLI_ARGS}}
+
+  picblobs:stage-release:
+    desc: Build and stage release picblobs blobs without CLI runners.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: --config=picblobs_base //modules/picblobs/tools:stage_blobs_release -- {{.CLI_ARGS}}
 
   picblobs:provider-stage:
     desc: Build and stage the Hovel picblobs payload-provider binary.
-    dir: '{{.REPO_ROOT}}'
     cmds:
-      - modules/picblobs/tools/stage_hovel_provider.sh
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/picblobs/tools:stage_hovel_provider
 
   picblobs:test:
-    desc: Run the picblobs Python and CLI test suites.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    desc: Run the Bazel-integrated picblobs test suite.
     cmds:
-      - tools/run_tests.sh {{.CLI_ARGS}}
+      - task: picblobs:bazel-test
+        vars:
+          CLI_ARGS: '{{.CLI_ARGS}}'
 
   picblobs:dist:
     desc: Build and validate picblobs and picblobs-cli distributions.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - rm -rf dist/picblobs dist/picblobs-cli
-      - |
-        if command -v uv >/dev/null 2>&1; then
-          uv build python --wheel --sdist --out-dir dist/picblobs
-        else
-          python/.venv/bin/python -m build python --wheel --sdist --outdir dist/picblobs
-        fi
-      - tools/with_dev_python.sh python tools/check_dist.py picblobs --dist-dir dist/picblobs
-      - tools/with_dev_python.sh python -m twine check dist/picblobs/*
-      - |
-        if command -v uv >/dev/null 2>&1; then
-          uv build python_cli --wheel --sdist --out-dir dist/picblobs-cli
-        else
-          python/.venv/bin/python -m build python_cli --wheel --sdist --outdir dist/picblobs-cli
-        fi
-      - tools/with_dev_python.sh python tools/check_dist.py picblobs-cli --dist-dir dist/picblobs-cli
-      - tools/with_dev_python.sh python -m twine check dist/picblobs-cli/*
+      - task: picblobs:dist-picblobs
+      - task: picblobs:dist-cli
 
   picblobs:dist-picblobs:
     desc: Build and validate only the picblobs distribution.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - rm -rf dist/picblobs
-      - |
-        if command -v uv >/dev/null 2>&1; then
-          uv build python --wheel --sdist --out-dir dist/picblobs
-        else
-          python/.venv/bin/python -m build python --wheel --sdist --outdir dist/picblobs
-        fi
-      - tools/with_dev_python.sh python tools/check_dist.py picblobs --dist-dir dist/picblobs{{if .EXPECTED_VERSION}} --expected-version {{.EXPECTED_VERSION}}{{end}}
-      - tools/with_dev_python.sh python -m twine check dist/picblobs/*
+      - task: bazel:run
+        vars:
+          CLI_ARGS: >-
+            //modules/picblobs/tools:build_dist --
+            --package=picblobs
+            --out-dir=modules/picblobs/dist/picblobs
+            --clean
+            --validate{{if .EXPECTED_VERSION}}
+            --expected-version={{.EXPECTED_VERSION}}{{end}}
 
   picblobs:dist-cli:
     desc: Build and validate only the picblobs-cli distribution.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - rm -rf dist/picblobs-cli
-      - |
-        if command -v uv >/dev/null 2>&1; then
-          uv build python_cli --wheel --sdist --out-dir dist/picblobs-cli
-        else
-          python/.venv/bin/python -m build python_cli --wheel --sdist --outdir dist/picblobs-cli
-        fi
-      - tools/with_dev_python.sh python tools/check_dist.py picblobs-cli --dist-dir dist/picblobs-cli{{if .EXPECTED_VERSION}} --expected-version {{.EXPECTED_VERSION}}{{end}}
-      - tools/with_dev_python.sh python -m twine check dist/picblobs-cli/*
+      - task: bazel:run
+        vars:
+          CLI_ARGS: >-
+            //modules/picblobs/tools:build_dist --
+            --package=picblobs-cli
+            --out-dir=modules/picblobs/dist/picblobs-cli
+            --clean
+            --validate{{if .EXPECTED_VERSION}}
+            --expected-version={{.EXPECTED_VERSION}}{{end}}
 
   picblobs:ci:
     desc: Run the picblobs module CI gate.
     cmds:
-      - task: picblobs:setup
       - task: picblobs:bazel-build
       - task: picblobs:bazel-test
 

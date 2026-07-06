@@ -173,7 +173,7 @@ def get_blob(blob_type: str, target_os: str, target_arch: str) -> BlobData:
     raise FileNotFoundError(
         f"No blob for {blob_type}/{target_os}/{target_arch}: "
         f"checked {'; '.join(checked_paths)}. "
-        "Run tools/stage_blobs.py or tools/extract_release.py to generate "
+        "Run task picblobs:stage or tools/extract_release.py to generate "
         "runtime sidecar artifacts."
     )
 

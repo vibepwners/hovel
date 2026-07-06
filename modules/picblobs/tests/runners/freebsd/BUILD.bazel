@@ -11,6 +11,7 @@ package(default_visibility = [
     "//modules/picblobs/python:__subpackages__",
     "//modules/picblobs/release:__pkg__",
     "//modules/picblobs/tests:__subpackages__",
+    "//modules/picblobs/tools:__pkg__",
 ])
 
 filegroup(

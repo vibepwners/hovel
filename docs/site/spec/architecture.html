@@ -47,6 +47,7 @@
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
+        <li><a href="daemon-rpc.html">Daemon RPC</a></li>
         <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
       </ul>
       <p class="sidebar-section">Module Development</p>
@@ -122,14 +123,14 @@ server mode: hovel daemon serve is explicitly launched and clients attach
         <ol>
           <li>One active <code>hoveld</code> per workspace.</li>
           <li>A workspace lock prevents duplicate daemons from owning the same database.</li>
-          <li>The daemon RPC contract uses plain HTTP JSON over the local transport during alpha. It should move to a generated service contract only if the daemon API needs stronger cross-language compatibility.</li>
+          <li>The daemon RPC contract is the stable v1 front-end contract. It uses HTTP POST with JSON request and response bodies over the local transport, is documented in <a href="daemon-rpc.html">Daemon RPC Contract</a>, and has a machine-readable OpenAPI artifact at <a href="reference/daemon-rpc.openapi.json"><code>reference/daemon-rpc.openapi.json</code></a>.</li>
           <li>The local client transport must support <code>cli</code>, one-shot chain-file execution, <code>tui</code>, REST, and MCP attaching to the same daemon.</li>
           <li>Unix-like systems should prefer a Unix domain socket under a workspace or runtime directory with filesystem permissions.</li>
           <li>Explicit daemon serving may also bind TCP with an address such as <code>tcp://127.0.0.1:9090</code> for integration and remote-adapter development.</li>
           <li>Windows should use a named pipe when Windows support is implemented.</li>
           <li>Daemon identity, socket path or listen endpoint, PID, start time, and health status should be inspectable with <code>hovel daemon status</code> and from the shared registry as <code>control daemon status</code>.</li>
           <li>Tests may use an in-process engine harness, but production commands should exercise the daemon boundary.</li>
-          <li>The first RPC contract should prove a fully mocked throw flow through the daemon boundary.</li>
+          <li>Contract tests should keep the OpenAPI paths and human docs aligned with the registered daemon methods, while behavior tests prove throw, launch-key, session, log, and payload flows through the daemon boundary.</li>
           <li>Mock exploit modules must not perform network exploitation. They exist in-tree for tests and examples, should exercise the same module-loading path as ordinary modules where practical, and are not part of the final shipped module catalog.</li>
         </ol>
         <p>Managed daemon ownership rules:</p>
