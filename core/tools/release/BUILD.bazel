@@ -15,7 +15,7 @@ py_binary(
     args = ["--binary=$(rootpath //cmd/hovel:hovel)"],
     data = [
         "//:version_file",
-        "//cmd/hovel:hovel",
+        "//cmd/hovel",
     ],
     main = "build_hovel_wheel.py",
     python_version = "PY3",
