@@ -30,3 +30,9 @@ go_test(
         "//internal/testmodules/mockexploit",
     ],
 )
+
+filegroup(
+    name = "daemonrpc_source",
+    srcs = ["daemonrpc.go"],
+    visibility = ["//docs/site/spec:__pkg__"],
+)

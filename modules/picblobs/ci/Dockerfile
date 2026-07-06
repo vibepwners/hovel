@@ -37,7 +37,7 @@ RUN $DNFP install \
     && dnf clean all
 
 # ── Bazel 9 ──────────────────────────────────────────────────────
-ARG BAZEL_VERSION=9.0.1
+ARG BAZEL_VERSION=9.1.1
 RUN curl -fSL -o /usr/local/bin/bazel \
         "https://github.com/bazelbuild/bazel/releases/download/${BAZEL_VERSION}/bazel-${BAZEL_VERSION}-linux-x86_64" \
     && chmod +x /usr/local/bin/bazel \

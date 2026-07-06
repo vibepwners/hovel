@@ -12,6 +12,7 @@ _SMOKE_PAGES = [
     ":architecture.html",
     ":chains-runs.html",
     ":configuration-distribution.html",
+    ":daemon-rpc.html",
     ":development-guide.html",
     ":domain-model.html",
     ":front-ends.html",
@@ -66,5 +67,22 @@ py_test(
     srcs = ["//core/tools/tests:site_smoke_test.py"],
     args = ["$(rootpath %s)" % page for page in _SMOKE_PAGES],
     data = _SMOKE_PAGES,
+    python_version = "PY3",
+)
+
+py_test(
+    name = "daemon_rpc_openapi_test",
+    size = "small",
+    srcs = ["//docs/tools/docs:daemon_rpc_openapi_test.py"],
+    args = [
+        "$(rootpath :reference/daemon-rpc.openapi.json)",
+        "$(rootpath //core/internal/adapters/daemonrpc:daemonrpc_source)",
+        "$(rootpath :daemon-rpc.html)",
+    ],
+    data = [
+        "daemon-rpc.html",
+        "reference/daemon-rpc.openapi.json",
+        "//core/internal/adapters/daemonrpc:daemonrpc_source",
+    ],
     python_version = "PY3",
 )

@@ -47,6 +47,7 @@
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
+        <li><a href="daemon-rpc.html">Daemon RPC</a></li>
         <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
       </ul>
       <p class="sidebar-section">Module Development</p>
@@ -74,7 +75,7 @@ hovel mcp --transport http --workspace .hovel
 task mcp
 </code></pre>
         <p>The default transport is MCP stdio. Stdio keeps the local trust boundary tight: the MCP client launches <code>hovel mcp</code> as a subprocess, Hovel writes MCP JSON-RPC only to stdout, and diagnostic logs go to stderr. <code>--transport http</code> serves streamable HTTP on localhost by default; use <code>--http-addr</code> to pin the listen address. <code>task mcp</code> builds and installs or links the example modules for the dev workspace; direct launches can pass <code>--config</code> to select the same module search paths and indexes as other front ends.</p>
-        <p><code>hovel mcp</code> attaches to <code>hoveld</code> over the local daemon channel, registers as an MCP operator entity, heartbeats while connected, and detaches on shutdown. The current local-first model keeps MCP in the adapter process instead of exposing MCP directly from <code>hoveld</code>. Direct daemon-hosted MCP is a future team or remote-deployment shape once authorization, session binding, and remote operator identity are source-backed.</p>
+        <p><code>hovel mcp</code> attaches to <code>hoveld</code> over the stable local daemon RPC, registers as an MCP operator entity, heartbeats while connected, and detaches on shutdown. The current local-first model keeps MCP in the adapter process instead of exposing MCP directly from <code>hoveld</code>. Direct daemon-hosted MCP is a future team or remote-deployment shape once authorization, session binding, and remote operator identity are source-backed. The daemon RPC methods used by MCP are documented in <a href="daemon-rpc.html">Daemon RPC Contract</a>.</p>
 
         <h2>Demo Harness</h2>
         <p>The source tree includes a mock Codex-style agent harness at <code>//tools/demo/mcpagent:mcpagent</code>. It uses the official MCP Go SDK, lists the available tools, calls the identity/entity/operation/snapshot tools, then calls <code>hovel_throw_start</code> and renders a terminal agent panel from real structured MCP responses. The harness intentionally avoids an OS shell-command shortcut so the demo exercises the Hovel MCP surface a model client would use.</p>

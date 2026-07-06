@@ -47,6 +47,7 @@
       </ul>
       <p class="sidebar-section">Reference</p>
       <ul>
+        <li><a href="daemon-rpc.html">Daemon RPC</a></li>
         <li><a href="reference/descriptors.html">Descriptors &amp; Schemas</a></li>
       </ul>
       <p class="sidebar-section">Module Development</p>
@@ -69,7 +70,7 @@
         <blockquote>
           <p>Make modules easy to write, keep long-lived capabilities managed by the engine, and give operators a clear view of every throw, installed payload, and session.</p>
         </blockquote>
-        <p>The central runtime is a local engine, <code>hoveld</code>, which owns operations, chains, throws, module processes, provider-backed payload state, installed payload inventory, sessions, structured events, artifacts, and workspace storage. Interactive <code>cli</code> mode, one-shot chain-file execution, and the MCP agent front end are implemented clients over the same application services. <code>hovel tui</code> is an explicit not-implemented role; REST/OpenAPI, a general managed-service process runtime, and richer MCP resources and prompts remain future work over the same boundary.</p>
+        <p>The central runtime is a local engine, <code>hoveld</code>, which owns operations, chains, throws, module processes, provider-backed payload state, installed payload inventory, sessions, structured events, artifacts, and workspace storage. Interactive <code>cli</code> mode, one-shot chain-file execution, and the MCP agent front end are implemented clients over the same application services through the stable <a href="daemon-rpc.html">daemon RPC contract</a>. <code>hovel tui</code> is an explicit not-implemented role; a public REST/OpenAPI adapter, a general managed-service process runtime, and richer MCP resources and prompts remain future work over the same boundary.</p>
 
         <h2>How Hovel Is Shaped</h2>
         <ol>

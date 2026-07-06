@@ -136,6 +136,7 @@ test_suite(
     name = "docs_test",
     tests = [
         "//docs/demo:standard_verification_test",
+        "//docs/site/spec:daemon_rpc_openapi_test",
         "//docs/site/spec:site_smoke_test",
         "//docs/tools/demo/mcpagent:mcpagent_test",
         "//tools/testreport:testreport_test",
