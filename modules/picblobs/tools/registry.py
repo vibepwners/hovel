@@ -9,15 +9,15 @@ To add a new architecture:
   2. Add syscall numbers to SYSCALL_NUMBERS[os][gcc_define].
   3. Add the syscall asm primitive to src/include/picblobs/syscall.h.
   4. Add the _start stub to tests/runners/{os}/runner.c.
-  5. Run: python tools/generate.py        (regenerates derived files)
-  6. Run: python -m pytest python/tests/  (catches anything you missed)
+  5. Run: task generate      (regenerates derived files)
+  6. Run: task test:unit     (catches anything you missed)
 
 To add a new OS:
   1. Add an entry to OPERATING_SYSTEMS below.
   2. Add syscall numbers to SYSCALL_NUMBERS[os].
   3. Create tests/runners/{os}/runner.c with a test runner.
-  4. Run: python tools/generate.py
-  5. Run: python -m pytest python/tests/
+  4. Run: task generate
+  5. Run: task test:unit
 
 To add a new syscall:
   1. Add the number to every arch in SYSCALL_NUMBERS[os].

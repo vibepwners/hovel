@@ -47,19 +47,18 @@ calling the underlying scripts directly. Prerequisites: `task` and `uv` on PATH.
 task            # or `task --list` — show every task with a description
 ```
 
-The tasks wrap the real implementations (`tools/*.py`, `bazel`, `uv`,
-`tools/run_tests.sh`) — they do not reimplement logic. Pass extra args after
-`--`, e.g. `task test -- -k extract`.
+The tasks wrap the real implementations (`tools/*.py` and Bazel targets). Pass
+extra args after `--`, e.g.
+`task test -- --test_arg=-k --test_arg=extract`.
 
 ## Dev setup
 
 ```bash
-source sourceme     # runs `task setup`, then activates the venv in your shell
+source sourceme     # runs `task setup`
 ```
 
-`task setup` creates a uv venv under `python/.venv`, installs both packages
-editable (`picblobs[dev]` + `picblobs-cli`), and installs the lefthook git
-hooks. `sourceme` additionally activates the venv (a subprocess can't do that).
+`task setup` verifies the generated Bazel metadata needed by the source tree.
+Tooling is provided by Task/Bazel targets rather than a checked-out venv.
 
 ## Building
 
@@ -70,20 +69,19 @@ task build                       # //modules/picblobs/release:full for linux_x86
 task build PLATFORM=linux_aarch64
 task build PLATFORM=linux_x86_64 MODE=debug
 task stage                       # build every platform + stage into the package tree
-task stage -- --debug            # pass-through flags to tools/stage_blobs.py
+task stage -- --targets hello    # pass-through flags to the staging materializer
 ```
 
 ## Testing
 
 ```bash
-task test                                # unit + payload, both packages
-task test -- --os linux --arch x86_64    # filter by target
-task test -- -k test_extract             # pytest -k filter
+task test                                # Bazel-integrated suite
+task test -- --test_arg=-k --test_arg=test_extract
 task test:unit / task test:payload       # subsets
 task verify                              # end-to-end: run every staged blob
 ```
 
-`pytest.ini` sets `testpaths` to both `python/tests` and `python_cli/tests`.
+The Python and CLI pytest suites run as Bazel `py_test` targets.
 
 ## Code generation
 
@@ -110,11 +108,10 @@ task lint:c        # clang-tidy via the Bazel lint aspect
 task check         # all non-mutating gates: generate:check + fmt:check + lint:check + lint:c
 ```
 
-The same underlying tools (`tools/fmt.py`, `tools/lint.py`,
-`tools/c_lint_check.sh`) are run automatically by the lefthook git hooks
-(pre-commit / pre-push) and by CI — `task` is the manual entry point to the
-identical checks. The `:check` tasks set `PICBLOBS_REQUIRE_LINT_TOOLS=1`, making
-a missing formatter/linter a hard error instead of a skip.
+The same Task-backed checks are run automatically by the lefthook git hooks
+(pre-commit / pre-push) and by CI. The `:check` tasks set
+`PICBLOBS_REQUIRE_LINT_TOOLS=1`, making a missing declared formatter/linter a
+hard error instead of a skip.
 
 ## Releasing
 
@@ -137,7 +134,7 @@ task clean                 # remove build/dist artifacts + `bazel clean`
   arch-gated).
 - The Windows test runner (`tests/runners/windows/runner.c`) is hand-written
   (not generated) — it's a **Linux** binary that mocks TEB/PEB. Build it with a
-  Linux config: `bazel build --config=linux_x86_64 //modules/picblobs/tests/runners/windows:runner`.
+  Linux config: `task -t ../../Taskfile.yml bazel:build -- --config=linux_x86_64 //modules/picblobs/tests/runners/windows:runner`.
 - The FreeBSD test runner is a hand-written translating loader (like the Windows
   runner) — it patches FreeBSD syscall numbers to Linux equivalents at load time
   so FreeBSD-targeted blobs run under QEMU-on-Linux. Included in `//modules/picblobs/release:full`.

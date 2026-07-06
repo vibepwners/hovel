@@ -1,0 +1,22 @@
+"""Verifier fixtures for ul_exec tests."""
+
+load("//modules/picblobs/bazel:cc_binary.bzl", "pic_cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "quality_sources",
+    srcs = [
+        "BUILD.bazel",
+        "hello_et_exec.S",
+    ],
+)
+
+pic_cc_binary(
+    name = "hello_et_exec",
+    srcs = ["hello_et_exec.S"],
+    linkopts = [
+        "-static",
+        "-Wl,-e,_start",
+    ],
+)

@@ -27,6 +27,7 @@ filegroup(
         "//modules/picblobs/tests/runners/freebsd:quality_sources",
         "//modules/picblobs/tests/runners/linux:quality_sources",
         "//modules/picblobs/tests/runners/windows:quality_sources",
+        "//modules/picblobs/tests/ul_exec:quality_sources",
     ],
 )
 

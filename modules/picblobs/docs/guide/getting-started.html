@@ -68,7 +68,7 @@
 <li><a href="https://www.qemu.org/">QEMU user-mode</a> for cross-architecture testing — either binfmt_misc handlers (<code>qemu-user-binfmt</code>, preferred) or standalone <code>qemu-*-static</code> interpreters</li>
 <li>Python 3.10+</li>
 <li><a href="https://github.com/astral-sh/uv">uv</a> (recommended) or pip/venv</li>
-<li><code>clang-tidy</code> for full C lint (<code>pre-push</code> / <code>tools/c_lint_check.sh</code>)</li>
+<li><code>task</code> for Task-backed build, test, format, and lint entrypoints</li>
 </ul>
 <p>Toolchains are fetched automatically via <a href="https://toolchains.bootlin.com/">Bootlin</a>
 for Linux cross-compilation, including x86, ARM, AArch64, MIPS, s390x,

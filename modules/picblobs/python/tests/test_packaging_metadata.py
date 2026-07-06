@@ -94,22 +94,22 @@ class TestPicblobsCliPackaging:
 
 
 class TestRepoTooling:
-    def test_setup_installs_lefthook(self) -> None:
-        # sourceme delegates all setup to `task setup`, which installs hooks.
+    def test_setup_delegates_to_task(self) -> None:
         sourceme = (REPO_ROOT / "sourceme").read_text()
         assert "task setup" in sourceme
+        assert "python/.venv" not in sourceme
 
         taskfile = (REPO_ROOT / "Taskfile.yml").read_text()
-        assert "lefthook install" in taskfile
+        assert "picblobs:generate-check" in taskfile
 
     def test_lefthook_covers_repo_quality_entrypoints(self) -> None:
         content = (REPO_ROOT / "lefthook.yml").read_text()
 
         assert "pre-commit:" in content
         assert "pre-push:" in content
-        assert "tools/fmt.py" in content
-        assert "tools/lint.py" in content
-        assert "tools/c_lint_check.sh" in content
+        assert "task fmt" in content
+        assert "task lint" in content
+        assert "task lint:c" in content
 
     def test_fmt_uses_repo_clang_format_config(self) -> None:
         content = (REPO_ROOT / "tools" / "fmt.py").read_text()

@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 from pathlib import Path
 
-import upver
+
+def load_upver():
+    path = Path(__file__).with_name("upver.py")
+    spec = importlib.util.spec_from_file_location("upver", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+upver = load_upver()
 
 
 def write(path: Path, body: str) -> None:

@@ -17,6 +17,7 @@ from pathlib import Path
 
 NAME = "hovel"
 NORMALIZED = "hovel"
+ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
 LAUNCHER = '''"""Python entry point for the packaged Hovel binary."""
 
@@ -40,7 +41,7 @@ def main() -> None:
 
 def main() -> int:
     args = parse_args()
-    root = Path(__file__).resolve().parents[2]
+    root = Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path(__file__).resolve().parents[2])).resolve()
     version = release_version(root)
     platform_tag = args.platform_tag or os.environ.get("HOVEL_WHEEL_PLATFORM_TAG") or default_platform_tag()
     binary_name = args.binary_name or ("hovel.exe" if os.name == "nt" else "hovel")
@@ -49,7 +50,7 @@ def main() -> int:
         print(f"missing built binary: {binary}", file=sys.stderr)
         return 2
 
-    dist = root / "dist"
+    dist = args.out_dir if args.out_dir.is_absolute() else root / args.out_dir
     dist.mkdir(exist_ok=True)
     wheel = dist / f"{NORMALIZED}-{version}-py3-none-{platform_tag}.whl"
     dist_info = f"{NORMALIZED}-{version}.dist-info"
@@ -86,7 +87,7 @@ Tag: py3-none-{platform_tag}
     with zipfile.ZipFile(wheel, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         record_rows: list[list[str]] = []
         for path, data, mode in records:
-            info = zipfile.ZipInfo(path)
+            info = zipfile.ZipInfo(path, ZIP_TIMESTAMP)
             info.external_attr = (stat.S_IFREG | mode) << 16
             zf.writestr(info, data)
             digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
@@ -95,7 +96,9 @@ Tag: py3-none-{platform_tag}
         record_path = f"{dist_info}/RECORD"
         record_rows.append([record_path, "", ""])
         record_body = csv_body(record_rows).encode()
-        zf.writestr(record_path, record_body)
+        info = zipfile.ZipInfo(record_path, ZIP_TIMESTAMP)
+        info.external_attr = (stat.S_IFREG | 0o644) << 16
+        zf.writestr(info, record_body)
 
     print(wheel)
     return 0
@@ -108,6 +111,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Path to the already-built Hovel binary. Relative paths resolve from the repository root.",
     )
+    parser.add_argument("--out-dir", type=Path, default=Path("dist"), help="Distribution output directory.")
     parser.add_argument("--platform-tag", help="Wheel platform tag, such as macosx_11_0_arm64.")
     parser.add_argument("--binary-name", help="Name to store under hovel/bin/ inside the wheel.")
     return parser.parse_args()
@@ -115,7 +119,7 @@ def parse_args() -> argparse.Namespace:
 
 def release_binary(root: Path, binary: Path | None) -> Path:
     if binary is not None:
-        return binary if binary.is_absolute() else root / binary
+        return resolve_path(root, binary)
 
     binary_name = "hovel.exe" if os.name == "nt" else "hovel"
     candidates = [
@@ -123,6 +127,33 @@ def release_binary(root: Path, binary: Path | None) -> Path:
         root / "bazel-bin" / "cmd" / "hovel" / binary_name,
     ]
     return next((candidate for candidate in candidates if candidate.exists()), candidates[0])
+
+
+def resolve_path(root: Path, path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    candidates = [root / path]
+    candidates.extend(
+        runfile_root / prefix / path
+        for runfile_root in runfile_roots()
+        for prefix in ("", "_main", "hovel")
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return candidates[0]
+
+
+def runfile_roots() -> list[Path]:
+    roots = []
+    for name in ("RUNFILES_DIR", "TEST_SRCDIR"):
+        value = os.environ.get(name)
+        if value:
+            roots.append(Path(value))
+    if executable := os.environ.get("PYTHON_BINARY"):
+        roots.append(Path(executable).parent)
+    roots.append(Path.cwd())
+    return roots
 
 
 def release_version(root: Path) -> str:

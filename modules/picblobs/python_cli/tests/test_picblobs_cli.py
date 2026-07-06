@@ -1,8 +1,7 @@
 """TEST-012: picblobs-cli verification.
 
 Exercises every sub-command in ``picblobs_cli.cli`` plus the
-``find_runner`` discovery contract (picblobs-cli bundle preferred over
-the Bazel build tree).
+``find_runner`` discovery contract for the staged picblobs-cli runner bundle.
 """
 
 from __future__ import annotations

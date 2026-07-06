@@ -36,6 +36,19 @@ py_binary(
     python_version = "PY3",
 )
 
+py_binary(
+    name = "package_examples",
+    srcs = ["package_examples.py"],
+    args = [
+        "--module=squatter.exe=$(rootpath //modules/squatter/windows:squatter_x86_exe)",
+    ] + release_module_stage_args(),
+    data = [
+        "//modules/examples/python:sources",
+        "//modules/squatter/windows:squatter_x86_exe",
+    ] + release_module_data(),
+    python_version = "PY3",
+)
+
 py_test(
     name = "check_in_repo_modules_test",
     size = "medium",

@@ -41,11 +41,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from registry import (
     ARCHITECTURES,
+    BLOB_TYPES,
     MMAP_FLAGS,
     OPERATING_SYSTEMS,
     SYSCALL_DEFS,
     SYSCALL_NUMBERS,
     SyscallDef,
+    blob_public_name,
     syscall_os_support,
 )
 
@@ -875,29 +877,90 @@ def _gen_bazelrc_block() -> str:
 
 
 # ============================================================
-# Bazel: bazel/platforms.bzl — BLOB_TARGETS dict
+# Bazel: bazel/platforms.bzl — platform and staging artifact maps
 # ============================================================
 
 
 def _gen_platforms_bzl() -> str:
-    lines = [
-        _BZL,
-        textwrap.dedent("""\
+    return "".join(
+        [
+            _BZL,
+            _platforms_bzl_header(),
+            _gen_blob_targets(),
+            _gen_blob_stage_artifacts(),
+            _gen_runner_stage_artifacts(),
+            _gen_ul_exec_stage_artifacts(),
+        ]
+    )
 
-        \"\"\"Platform target map — single source of truth for OS/arch combinations.
 
-        Loaded by blob.bzl and other rules that need the full platform matrix.
-        \"\"\"
+def _platforms_bzl_header() -> str:
+    return textwrap.dedent("""\
 
-        BLOB_TARGETS = {
-        """),
-    ]
+    \"\"\"Platform and staging maps generated from the registry.
+
+    Loaded by blob.bzl and release/staging rules that need the full
+    platform and blob matrix.
+    \"\"\"
+
+    """)
+
+
+def _gen_blob_targets() -> str:
+    lines = ["BLOB_TARGETS = {\n"]
     for os_name, os_def in OPERATING_SYSTEMS.items():
         for arch_name in os_def.architectures:
             key = f"{os_name}:{arch_name}"
             val = f"//modules/picblobs/platforms:{os_name}_{arch_name}"
             lines.append(f'    "{key}": "{val}",\n')
-    lines.append("}\n")
+    lines.append("}\n\n")
+    return "".join(lines)
+
+
+def _gen_blob_stage_artifacts() -> str:
+    lines = []
+    lines.append("BLOB_STAGE_ARTIFACTS = [\n")
+    for blob in BLOB_TYPES.values():
+        public_name = blob_public_name(blob)
+        for os_name, arch_names in blob.platforms.items():
+            for arch_name in arch_names:
+                platform = f"//modules/picblobs/platforms:{os_name}_{arch_name}"
+                lines.append(
+                    "    "
+                    f'("{blob.name}", "{public_name}", "{os_name}", "{arch_name}", "{platform}"),\n'
+                )
+    lines.append("]\n\n")
+    return "".join(lines)
+
+
+def _gen_runner_stage_artifacts() -> str:
+    lines = []
+    lines.append("RUNNER_STAGE_ARTIFACTS = [\n")
+    linux_platforms = {
+        arch_name: f"//modules/picblobs/platforms:linux_{arch_name}"
+        for arch_name in OPERATING_SYSTEMS["linux"].architectures
+    }
+    for os_name, os_def in OPERATING_SYSTEMS.items():
+        if os_name == "linux":
+            continue
+        for arch_name in os_def.architectures:
+            platform = linux_platforms[arch_name]
+            lines.append(
+                "    "
+                f'("{os_def.runner_type}", "{os_name}", "{arch_name}", "{platform}"),\n'
+            )
+    lines.append("]\n\n")
+    return "".join(lines)
+
+
+def _gen_ul_exec_stage_artifacts() -> str:
+    lines = []
+    lines.append("UL_EXEC_STAGE_ARTIFACTS = [\n")
+    ul_exec = BLOB_TYPES["ul_exec"]
+    for arch_name in ul_exec.platforms.get("linux", []):
+        platform = f"//modules/picblobs/platforms:linux_{arch_name}"
+        lines.append(f'    ("ul_exec", "linux", "{arch_name}", "{platform}"),\n')
+    lines.append("]\n")
     return "".join(lines)
 
 

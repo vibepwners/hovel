@@ -3,17 +3,17 @@ min_version: "2.0.0"
 pre-commit:
   jobs:
     - name: format-staged
-      run: tools/with_dev_python.sh python tools/fmt.py {staged_files}
+      run: task fmt -- {staged_files}
       stage_fixed: true
     - name: lint-staged
-      run: tools/with_dev_python.sh python tools/lint.py --check {staged_files}
+      run: task lint -- {staged_files}
 
 pre-push:
   parallel: true
   jobs:
     - name: format-check
-      run: tools/with_dev_python.sh python tools/fmt.py --check
+      run: task fmt:check
     - name: lint-check
-      run: tools/with_dev_python.sh python tools/lint.py --check
+      run: task lint:check
     - name: c-lint-check
-      run: tools/c_lint_check.sh
+      run: task lint:c

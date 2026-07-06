@@ -3,8 +3,26 @@
 load("@picblobs_pip//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 load("@rules_python//python/entry_points:py_console_script_binary.bzl", "py_console_script_binary")
+load("//modules/picblobs/bazel:transition.bzl", "platform_filegroup")
+load("//modules/picblobs/tools:stage_artifacts.bzl", "declare_stage_artifacts")
 
 package(default_visibility = ["//visibility:public"])
+
+STAGE_RELEASE_ARTIFACTS = declare_stage_artifacts(
+    include_runners = False,
+    name_prefix = "stage_release",
+)
+
+STAGE_ALL_ARTIFACTS = declare_stage_artifacts(
+    include_runners = True,
+    name_prefix = "stage_all",
+)
+
+platform_filegroup(
+    name = "stage_smoke_blob__linux__x86_64__hello",
+    platform = "//modules/picblobs/platforms:linux_x86_64",
+    deps = ["//modules/picblobs/src/payload:hello"],
+)
 
 QUALITY_TOOL_ARGS = [
     "--clang-format=$(rootpath //core/tools/lint:clang_format)",
@@ -30,11 +48,14 @@ filegroup(
 
 filegroup(
     name = "quality_sources",
-    srcs = glob([
-        "*.py",
-        "*.sh",
-        "*.txt",
-    ]) + ["BUILD.bazel"],
+    srcs = glob(
+        [
+            "*.py",
+            "*.sh",
+            "*.txt",
+        ],
+        allow_empty = True,
+    ) + ["BUILD.bazel"],
 )
 
 py_binary(
@@ -51,6 +72,41 @@ py_binary(
     ],
     main = "run_buildifier.py",
     python_version = "PY3",
+)
+
+py_binary(
+    name = "docs_server",
+    srcs = ["docs_server.py"],
+    data = ["//modules/picblobs/docs:site_files"],
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "build_dist",
+    srcs = [
+        "build_dist.py",
+        "check_dist.py",
+    ],
+    data = [
+        "//modules/picblobs/python:package_dir",
+        "//modules/picblobs/python_cli:package_files",
+    ],
+    main = "build_dist.py",
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "extract_release",
+    srcs = [
+        "extract_release.py",
+        "registry.py",
+    ],
+    data = [
+        "//modules/picblobs/python:package_dir",
+    ],
+    main = "extract_release.py",
+    python_version = "PY3",
+    deps = [requirement("pyelftools")],
 )
 
 py_binary(
@@ -78,6 +134,17 @@ py_binary(
 )
 
 py_binary(
+    name = "init_check",
+    srcs = [
+        "init_check.py",
+        "quality_paths.py",
+    ],
+    data = ["//modules/picblobs:quality_sources"],
+    main = "init_check.py",
+    python_version = "PY3",
+)
+
+py_binary(
     name = "lint_run",
     srcs = ["quality_check.py"],
     args = [
@@ -99,6 +166,93 @@ py_binary(
     srcs = ["run_cppcheck.py"],
     python_version = "PY3",
     deps = [requirement("cppcheck")],
+)
+
+py_binary(
+    name = "package_release",
+    srcs = ["package_release.py"],
+    data = [
+        "//modules/picblobs/python:package_dir",
+    ],
+    main = "package_release.py",
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "stage_hovel_provider",
+    srcs = ["stage_hovel_provider.py"],
+    args = ["--provider=$(rootpath //modules/picblobs/provider:picblobs-provider)"],
+    data = ["//modules/picblobs/provider:picblobs-provider"],
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "stage_blobs_release",
+    srcs = [
+        "extract_release.py",
+        "registry.py",
+        "stage_blobs_from_runfiles.py",
+    ],
+    args = STAGE_RELEASE_ARTIFACTS.args + ["--no-runners"],
+    data = STAGE_RELEASE_ARTIFACTS.data + [
+        "//modules/picblobs/python:package_dir",
+    ],
+    main = "stage_blobs_from_runfiles.py",
+    python_version = "PY3",
+    deps = [requirement("pyelftools")],
+)
+
+py_binary(
+    name = "stage_blobs_smoke",
+    srcs = [
+        "extract_release.py",
+        "registry.py",
+        "stage_blobs_from_runfiles.py",
+    ],
+    args = [
+        "--blob=linux:x86_64:hello:hello=$(rootpath :stage_smoke_blob__linux__x86_64__hello)",
+        "--no-runners",
+        "--no-extract",
+    ],
+    data = [":stage_smoke_blob__linux__x86_64__hello"],
+    main = "stage_blobs_from_runfiles.py",
+    python_version = "PY3",
+    deps = [requirement("pyelftools")],
+)
+
+py_binary(
+    name = "stage_blobs",
+    srcs = [
+        "extract_release.py",
+        "registry.py",
+        "stage_blobs_from_runfiles.py",
+    ],
+    args = STAGE_ALL_ARTIFACTS.args,
+    data = STAGE_ALL_ARTIFACTS.data + [
+        "//modules/picblobs/python:package_dir",
+    ],
+    main = "stage_blobs_from_runfiles.py",
+    python_version = "PY3",
+    deps = [requirement("pyelftools")],
+)
+
+py_binary(
+    name = "update_version",
+    srcs = ["update_version.py"],
+    main = "update_version.py",
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "validate_wine",
+    srcs = ["validate_wine.py"],
+    data = [
+        "//modules/picblobs/python:package_dir",
+        "//modules/picblobs/python_cli:package_files",
+    ],
+    main = "validate_wine.py",
+    python_version = "PY3",
+    deps = ["//modules/picblobs/python:picblobs"],
 )
 
 py_console_script_binary(

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -20,7 +21,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", nargs="?", help="new version, with or without leading v")
     parser.add_argument("--sync", action="store_true", help="rewrite derived version fields from VERSION")
-    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[3])
+    parser.add_argument("--root", type=Path, default=default_root())
     args = parser.parse_args()
 
     current = read_current(args.root)
@@ -37,6 +38,10 @@ def main() -> int:
     write_version(args.root, version)
     sync(args.root, version)
     return 0
+
+
+def default_root() -> Path:
+    return Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path(__file__).resolve().parents[3])).resolve()
 
 
 def read_current(root: Path) -> str:

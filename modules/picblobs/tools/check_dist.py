@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import tarfile
 import zipfile
 from email.parser import Parser
@@ -161,12 +162,12 @@ def _check_sdist(path: Path, package: str, version: str | None) -> None:
         )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate built Python distributions")
     parser.add_argument("package", choices=("picblobs", "picblobs-cli"))
     parser.add_argument("--dist-dir", type=Path, required=True)
     parser.add_argument("--expected-version")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     wheel = _find_one(args.dist_dir, "*.whl")
     sdist = _find_one(args.dist_dir, "*.tar.gz")
@@ -193,4 +194,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

@@ -13,6 +13,11 @@ filegroup(
 )
 
 filegroup(
+    name = "version_file",
+    srcs = ["VERSION"],
+)
+
+filegroup(
     name = "build",
     srcs = [
         "//cmd/hovel",

@@ -12,6 +12,17 @@ filegroup(
     srcs = glob(["hovel_sdk/*.py"]),
 )
 
+py_binary(
+    name = "build_dist",
+    srcs = ["build_dist.py"],
+    data = [
+        ":pyproject.toml",
+        ":sources",
+        "README.md",
+    ],
+    python_version = "PY3",
+)
+
 py_library(
     name = "hovel_sdk",
     srcs = glob(["hovel_sdk/*.py"]),

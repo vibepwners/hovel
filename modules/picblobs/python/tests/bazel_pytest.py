@@ -16,6 +16,7 @@ def _parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--clang-format")
     parser.add_argument("--buildifier-linux-amd64")
     parser.add_argument("--buildifier-linux-arm64")
+    parser.add_argument("--pytest-target", action="append", default=[])
     return parser.parse_known_args()
 
 
@@ -76,6 +77,18 @@ def _buildifier_arg(args: argparse.Namespace) -> str | None:
     return args.buildifier_linux_amd64
 
 
+def _pytest_targets(tests_dir: Path, targets: list[str]) -> list[str]:
+    if not targets:
+        return [str(tests_dir)]
+    resolved = []
+    for target in targets:
+        path = Path(target)
+        if not path.is_absolute():
+            path = tests_dir / path
+        resolved.append(str(path))
+    return resolved
+
+
 def _prepare_bazel_sidecars(project_root: Path) -> None:
     """Extract the minimal release sidecars needed by Bazel-only pytest runs."""
     package_blobs = project_root / "python" / "picblobs" / "blobs"
@@ -112,7 +125,7 @@ def main() -> int:
     project_root = tests_dir.parents[1]
     _configure_declared_tools(args)
     _prepare_bazel_sidecars(project_root)
-    return pytest.main([str(tests_dir), *pytest_args])
+    return pytest.main([*_pytest_targets(tests_dir, args.pytest_target), *pytest_args])
 
 
 if __name__ == "__main__":

@@ -17,11 +17,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
+
 # Ensure tools/ and python/ are importable.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+def _project_root() -> Path:
+    if workspace := os.environ.get("BUILD_WORKSPACE_DIRECTORY"):
+        return Path(workspace).resolve() / "modules" / "picblobs"
+    return Path(__file__).resolve().parent.parent
+
+
+_PROJECT_ROOT = _project_root()
 sys.path.insert(0, str(_PROJECT_ROOT / "python"))
 sys.path.insert(0, str(_PROJECT_ROOT))
 

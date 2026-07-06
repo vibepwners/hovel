@@ -105,9 +105,10 @@ class TestPlatformConfigSync:
             manifest = json.loads(manifest_path.read_text())
             assert manifest["catalog"]["ul_exec"]["platforms"]["freebsd"] == ["x86_64"]
 
-    def test_stage_blobs_uses_registry(self) -> None:
+    def test_stage_blobs_delegates_to_task(self) -> None:
         content = _read_file("tools/stage_blobs.py")
-        assert "from registry import" in content
+        assert '"task", "picblobs:stage"' in content
+        assert '"bazel"' not in content
 
     def test_bazelrc_has_all_platforms(self) -> None:
         content = _workspace_file(".bazelrc")
