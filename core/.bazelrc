@@ -18,12 +18,13 @@ build:local-cache --remote_upload_local_results=true
 
 build:nativelink --config=local-cache
 build:nativelink --remote_cache=grpc://nativelink:50051
+build:nativelink --remote_executor=grpc://nativelink:50051
 build:nativelink --remote_upload_local_results=true
 
 build:nativelink-minimal --config=nativelink
 build:nativelink-minimal --remote_download_minimal
 
-build:local --config=nativelink
+build:local --config=local-cache
 
 build:ci --config=buildbuddy
 build:ci --build_metadata=ROLE=CI

@@ -78,14 +78,14 @@ tasks:
       - task: config-show
 
   config-nativelink:
-    desc: Use the shared local on-disk Bazel cache plus NativeLink for local task builds.
+    desc: Use the shared local on-disk Bazel cache plus NativeLink remote execution.
     silent: true
     cmds:
       - printf 'nativelink\n' > "$PWD/../.hovel-bazel-config"
       - task: config-show
 
   config-nativelink-minimal:
-    desc: Use NativeLink and avoid downloading build outputs unless needed.
+    desc: Use NativeLink remote execution and avoid downloading build outputs unless needed.
     silent: true
     cmds:
       - printf 'nativelink-minimal\n' > "$PWD/../.hovel-bazel-config"

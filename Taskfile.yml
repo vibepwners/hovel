@@ -62,14 +62,14 @@ tasks:
       - task: config-show
 
   config-nativelink:
-    desc: Use the shared local on-disk Bazel cache plus NativeLink for local task builds.
+    desc: Use the shared local on-disk Bazel cache plus NativeLink remote execution.
     silent: true
     cmds:
       - printf 'nativelink\n' > "{{.REPO_ROOT}}/.hovel-bazel-config"
       - task: config-show
 
   config-nativelink-minimal:
-    desc: Use NativeLink and avoid downloading build outputs unless needed.
+    desc: Use NativeLink remote execution and avoid downloading build outputs unless needed.
     silent: true
     cmds:
       - printf 'nativelink-minimal\n' > "{{.REPO_ROOT}}/.hovel-bazel-config"
@@ -406,41 +406,45 @@ tasks:
 
   picblobs:fmt:
     desc: Format picblobs C, Python, and Bazel files.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - tools/with_dev_python.sh python tools/fmt.py {{.CLI_ARGS}}
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/picblobs/tools:format_write -- {{.CLI_ARGS}}
 
   picblobs:fmt-check:
     desc: Check picblobs formatting without modifying files.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - tools/with_dev_python.sh python tools/fmt.py --check
+      - task: bazel:test
+        vars:
+          CLI_ARGS: --config=picblobs_ci //modules/picblobs/tools:format_check
 
   picblobs:lint:
     desc: Run picblobs Python and Bazel lint checks.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - tools/with_dev_python.sh python tools/lint.py {{.CLI_ARGS}}
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/picblobs/tools:lint_run -- {{.CLI_ARGS}}
 
   picblobs:lint-check:
     desc: Run picblobs lint checks in CI/check mode.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
-    env:
-      PICBLOBS_REQUIRE_LINT_TOOLS: '1'
     cmds:
-      - tools/with_dev_python.sh python tools/lint.py --check
+      - task: bazel:test
+        vars:
+          CLI_ARGS: --config=picblobs_ci //modules/picblobs/tools:lint_check
 
   picblobs:generate:
     desc: Regenerate picblobs derived files from the registry.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - tools/with_dev_python.sh python tools/generate.py
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/picblobs/tools:generate_write
 
   picblobs:generate-check:
     desc: Verify picblobs generated files are fresh.
-    dir: '{{.REPO_ROOT}}/modules/picblobs'
     cmds:
-      - tools/with_dev_python.sh python tools/generate.py --check
+      - task: bazel:test
+        vars:
+          CLI_ARGS: --config=picblobs_ci //modules/picblobs/tools:generate_check
 
   picblobs:bazel-build:
     desc: Build representative picblobs Bazel targets across platform configs.
@@ -543,7 +547,6 @@ tasks:
   picblobs:ci:
     desc: Run the picblobs module CI gate.
     cmds:
-      - task: picblobs:setup
       - task: picblobs:bazel-build
       - task: picblobs:bazel-test
 

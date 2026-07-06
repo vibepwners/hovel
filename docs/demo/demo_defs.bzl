@@ -95,6 +95,13 @@ def _vhs_demo_impl(ctx):
         inputs = inputs,
         outputs = [out],
         tools = depset(tools, transitive = transitive_tools),
+        execution_requirements = {
+            # VHS rendering shells out to host tmux and the Wine variant uses
+            # Docker. Keep those host-service demos off remote workers until
+            # they have declared execution-platform services.
+            "no-remote": "1",
+            "no-sandbox": "1",
+        },
         mnemonic = "VhsDemo",
         progress_message = "Rendering VHS demo %{label}",
     )

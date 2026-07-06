@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import sys
 from pathlib import Path
 
 import pytest
+
+
+def _parse_args() -> tuple[argparse.Namespace, list[str]]:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--clang-format")
+    parser.add_argument("--buildifier-linux-amd64")
+    parser.add_argument("--buildifier-linux-arm64")
+    return parser.parse_known_args()
 
 
 def _runfile_path(logical_path: str) -> Path | None:
@@ -27,6 +36,44 @@ def _runfile_path(logical_path: str) -> Path | None:
             if candidate.exists():
                 return candidate
     return None
+
+
+def _resolve_runfile(path: str | None) -> Path | None:
+    if not path:
+        return None
+    direct = Path(path)
+    if direct.exists():
+        return direct.resolve()
+    for root_name in ("RUNFILES_DIR", "TEST_SRCDIR"):
+        root_raw = os.environ.get(root_name)
+        if not root_raw:
+            continue
+        root = Path(root_raw)
+        for candidate in (
+            root / path,
+            root / "_main" / path,
+            root / "hovel_slices" / path,
+        ):
+            if candidate.exists():
+                return candidate.resolve()
+    return None
+
+
+def _configure_declared_tools(args: argparse.Namespace) -> None:
+    clang_format = _resolve_runfile(args.clang_format)
+    buildifier = _resolve_runfile(_buildifier_arg(args))
+    if clang_format:
+        os.environ["PICBLOBS_CLANG_FORMAT"] = str(clang_format)
+    if buildifier:
+        os.environ["PICBLOBS_BUILDIFIER"] = str(buildifier)
+    if clang_format and buildifier:
+        os.environ["PICBLOBS_REQUIRE_LINT_TOOLS"] = "1"
+
+
+def _buildifier_arg(args: argparse.Namespace) -> str | None:
+    if os.uname().machine in {"aarch64", "arm64"}:
+        return args.buildifier_linux_arm64
+    return args.buildifier_linux_amd64
 
 
 def _prepare_bazel_sidecars(project_root: Path) -> None:
@@ -60,12 +107,12 @@ def _prepare_bazel_sidecars(project_root: Path) -> None:
 
 
 def main() -> int:
+    args, pytest_args = _parse_args()
     tests_dir = Path(__file__).resolve().parent
     project_root = tests_dir.parents[1]
-    venv_bin = project_root / "python" / ".venv" / "bin"
-    os.environ["PATH"] = f"{venv_bin}:/usr/local/bin:{os.environ.get('PATH', '')}"
+    _configure_declared_tools(args)
     _prepare_bazel_sidecars(project_root)
-    return pytest.main([str(tests_dir), *sys.argv[1:]])
+    return pytest.main([str(tests_dir), *pytest_args])
 
 
 if __name__ == "__main__":

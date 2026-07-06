@@ -2,8 +2,8 @@
 # https://taskfile.dev   (install: https://taskfile.dev/installation/)
 #
 # Run `task` (or `task --list`) to see everything. Each task is a thin,
-# documented wrapper around the real implementation (tools/*.py, bazel, uv,
-# tools/run_tests.sh) so there is exactly ONE correct invocation per workflow.
+# documented wrapper around the real implementation so there is exactly ONE
+# correct invocation per workflow.
 #
 # Prerequisites: `task` and `uv` on PATH. Everything else is installed by
 # `task setup`. Pass extra args after `--`, e.g. `task test -- -k extract`.
@@ -13,10 +13,7 @@ version: '3'
 vars:
   VENV: '{{.ROOT_DIR}}/python/.venv'
   PY: '{{.ROOT_DIR}}/python/.venv/bin/python'
-  # Run a command with the dev venv's bin/ first on PATH (and cwd at repo root).
-  # Needed because tools resolve helpers via PATH (fmt.py/lint.py → ruff,
-  # clang-format, buildifier) — go-task refuses to override PATH via `env:`, so
-  # we delegate to the repo's existing wrapper (also used by lefthook).
+  # Run package-only workflows with the dev venv's bin/ first on PATH.
   DEV: 'tools/with_dev_python.sh'
   # buildifier is not pip-installable; `task setup` fetches this version into the
   # venv. Keep in sync with the CI workflows that install it.
@@ -58,31 +55,23 @@ tasks:
   # ------------------------------------------------------ format & lint ---
   fmt:
     desc: "Format C, Python, and Bazel files in place"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/fmt.py {{.CLI_ARGS}}'
+      - bazel run //modules/picblobs/tools:format_write -- {{.CLI_ARGS}}
 
   fmt:check:
     desc: "Check formatting without modifying (fails if anything is unformatted)"
-    deps: [_venv]
-    env:
-      PICBLOBS_REQUIRE_LINT_TOOLS: '1'
     cmds:
-      - '{{.DEV}} python tools/fmt.py --check'
+      - bazel test --config=picblobs_ci //modules/picblobs/tools:format_check
 
   lint:
     desc: "Lint Python (ruff) + complexity (lizard) + Bazel (buildifier)"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/lint.py {{.CLI_ARGS}}'
+      - bazel run //modules/picblobs/tools:lint_run -- {{.CLI_ARGS}}
 
   lint:check:
     desc: "Lint in check mode (CI parity; non-mutating)"
-    deps: [_venv]
-    env:
-      PICBLOBS_REQUIRE_LINT_TOOLS: '1'
     cmds:
-      - '{{.DEV}} python tools/lint.py --check'
+      - bazel test --config=picblobs_ci //modules/picblobs/tools:lint_check
 
   lint:c:
     desc: "C static analysis (clang-tidy) via the Bazel lint aspect"
@@ -102,15 +91,13 @@ tasks:
   # ----------------------------------------------------------- codegen ---
   generate:
     desc: "Regenerate all derived files from tools/registry.py"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/generate.py'
+      - bazel run //modules/picblobs/tools:generate_write
 
   generate:check:
     desc: "Verify generated files are fresh (fails if stale)"
-    deps: [_venv]
     cmds:
-      - '{{.DEV}} python tools/generate.py --check'
+      - bazel test --config=picblobs_ci //modules/picblobs/tools:generate_check
 
   # -------------------------------------------------------------- check ---
   check:

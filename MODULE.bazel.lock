@@ -205,7 +205,7 @@
   "moduleExtensions": {
     "//modules/picblobs/toolchains:arm_none_eabi.bzl%arm_none_eabi": {
       "general": {
-        "bzlTransitiveDigest": "DCsIb/xH7QUZa6nqH5Uv+TXj78ScDej6JhOnVYSCB2g=",
+        "bzlTransitiveDigest": "BGw97H6pMLx+LX9nFOC5oC3ueW9kvsKHNPKop9FrYr4=",
         "usagesDigest": "uvd7Zx2NKwbQaWdGGjLQ5PyRQniEejMetCYqz0UVJUY=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
@@ -227,7 +227,7 @@
     },
     "//modules/picblobs/toolchains:bootlin.bzl%bootlin": {
       "general": {
-        "bzlTransitiveDigest": "8kLzXYGhZ0sv74Lwk8RgkGIHSiEQwYDHh7B+TZU/veg=",
+        "bzlTransitiveDigest": "GRIQHatkgNjpr/rWT+6H/cSraq/p6LtoaSdtv7+a8BY=",
         "usagesDigest": "VoxYUkaNH4Ky/JvQWQpv+/XDW2zHT7l7p/JdlWIRYV8=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
