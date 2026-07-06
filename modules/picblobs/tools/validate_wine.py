@@ -34,8 +34,8 @@ def _project_root() -> Path:
 _root = _project_root()
 sys.path.insert(0, str(_root / "python"))
 
-from picblobs import get_blob, list_blobs  # noqa: E402
-from picblobs.runner import run_blob  # noqa: E402
+from picblobs import get_blob, list_blobs  # noqa: E402, RUF100
+from picblobs.runner import run_blob  # noqa: E402, RUF100
 
 # ---------------------------------------------------------------------------
 # Minimal PE builder

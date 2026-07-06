@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - supports direct module import
 
 prepend_source_paths()
 
-from tools.registry import (  # noqa: E402
+from tools.registry import (  # noqa: E402, RUF100
     ARCHITECTURES,
     BLOB_TYPES,
     LINKER_SYMBOLS,

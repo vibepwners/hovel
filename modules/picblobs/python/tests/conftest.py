@@ -15,9 +15,12 @@ from ._test_env import PROJECT_ROOT, prepend_source_paths
 
 prepend_source_paths()
 
-from payload_defs import all_payload_combos  # noqa: E402
-
-from tools.registry import ARCHITECTURES, OPERATING_SYSTEMS, all_platforms  # noqa: E402
+from payload_defs import all_payload_combos  # noqa: E402, I001, RUF100
+from tools.registry import (  # noqa: E402, RUF100
+    ARCHITECTURES,
+    OPERATING_SYSTEMS,
+    all_platforms,
+)
 
 REPO_ROOT = PROJECT_ROOT.parents[1]
 _PACKAGE_RUNNERS = PROJECT_ROOT / "python_cli" / "picblobs_cli" / "_runners"

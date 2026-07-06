@@ -33,10 +33,10 @@ _PROJECT_ROOT = _project_root()
 sys.path.insert(0, str(_PROJECT_ROOT / "python"))
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from elftools.elf.elffile import ELFFile  # noqa: E402
-from elftools.elf.sections import Section  # noqa: E402
+from elftools.elf.elffile import ELFFile  # noqa: E402, RUF100
+from elftools.elf.sections import Section  # noqa: E402, RUF100
 
-from tools.registry import (  # noqa: E402
+from tools.registry import (  # noqa: E402, RUF100
     BLOB_TYPES,
     arch_endian,
     manifest_architectures,
