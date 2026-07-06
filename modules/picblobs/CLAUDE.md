@@ -129,7 +129,8 @@ task clean                 # remove build/dist artifacts + `bazel clean`
   under `platforms/` and `toolchains/`. Edit `tools/registry.py` and regenerate.
 - Debug/release are orthogonal `--config=debug` / `--config=release` flags, not
   separate targets.
-- Toolchain SHA256 hashes in `MODULE.bazel` must be pinned. Never leave empty.
+- Toolchain SHA256 hashes in `tools/registry.py` must be pinned. Never leave
+  empty; `task generate` materializes them into `toolchains/repositories.bzl`.
 - `hello_windows` only builds for `windows:*` platform configs (TEB support is
   arch-gated).
 - The Windows test runner (`tests/runners/windows/runner.c`) is hand-written

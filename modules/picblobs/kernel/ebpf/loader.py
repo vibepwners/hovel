@@ -59,8 +59,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "python"))
 
-from picblobs import BlobData, get_blob
-from picblobs._extractor import extract
+from picblobs import BlobData, get_blob  # noqa: E402
+from picblobs._extractor import extract  # noqa: E402
 
 # ===========================================================================
 # eBPF C programs (loaded by BCC at runtime)

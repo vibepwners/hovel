@@ -2,6 +2,7 @@
 
 load("@picblobs_pip//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("//modules/picblobs/bazel:transition.bzl", "platform_filegroup")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -43,6 +44,47 @@ py_library(
 
 # --- Tests ---
 
+platform_filegroup(
+    name = "hello_linux_x86_64_fixture",
+    platform = "//modules/picblobs/platforms:linux_x86_64",
+    deps = ["//modules/picblobs/src/payload:hello"],
+)
+
+py_test(
+    name = "sync_test",
+    size = "small",
+    srcs = [
+        "tests/_test_env.py",
+        "tests/bazel_pytest.py",
+        "tests/test_sync.py",
+    ],
+    args = [
+        "--pytest-target=test_sync.py",
+        "--clang-format=$(rootpath //core/tools/lint:clang_format)",
+        "--buildifier-linux-amd64=$(rootpath @buildifier_linux_amd64//file)",
+        "--buildifier-linux-arm64=$(rootpath @buildifier_linux_arm64//file)",
+    ],
+    data = [
+        ":quality_sources",
+        "//:root_metadata",
+        "//core/tools/lint:clang_format",
+        "//modules/picblobs:quality_sources",
+        "//modules/picblobs:root_metadata",
+        "@buildifier_linux_amd64//file",
+        "@buildifier_linux_arm64//file",
+    ],
+    imports = [
+        ".",
+        "..",
+        "../python_cli",
+    ],
+    main = "tests/bazel_pytest.py",
+    deps = [
+        ":picblobs",
+        requirement("pytest"),
+    ],
+)
+
 py_test(
     name = "pytest_suite",
     size = "small",
@@ -53,11 +95,16 @@ py_test(
         "--buildifier-linux-arm64=$(rootpath @buildifier_linux_arm64//file)",
     ],
     data = [
+        ":hello_linux_x86_64_fixture",
         ":package_dir",
+        "//:root_metadata",
         "//core/tools/lint:clang_format",
+        "//modules/picblobs:quality_sources",
         "//modules/picblobs:root_metadata",
+        "//modules/picblobs:version_targets",
+        "//modules/picblobs/docs:site_files",
+        "//modules/picblobs/provider:version_targets",
         "//modules/picblobs/python_cli:package_files",
-        "//modules/picblobs/src/payload:hello",
         "//modules/picblobs/tools:python_tools",
         "@buildifier_linux_amd64//file",
         "@buildifier_linux_arm64//file",

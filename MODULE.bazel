@@ -68,142 +68,21 @@ picblobs_pip.parse(
 )
 use_repo(picblobs_pip, "picblobs_pip")
 
-http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
-
-http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
-
-http_archive(
-    name = "golangci_lint_linux_amd64",
-    build_file_content = """\
-package(default_visibility = ["//visibility:public"])
-
-filegroup(
-    name = "golangci_lint_bin",
-    srcs = ["golangci-lint"],
-)
-""",
-    sha256 = "8df580d2670fed8fa984aac0507099af8df275e665215f5c7a2ae3943893a553",
-    strip_prefix = "golangci-lint-2.12.2-linux-amd64",
-    urls = ["https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-linux-amd64.tar.gz"],
-)
-
-http_archive(
-    name = "vhs_linux_x86_64",
-    build_file_content = """\
-package(default_visibility = ["//visibility:public"])
-
-filegroup(
-    name = "vhs_bin",
-    srcs = ["vhs"],
-)
-""",
-    sha256 = "99cb634587eaae0473c1ea377db80c3a048c27f99fe0a7febb1a1e8cb7ee5009",
-    strip_prefix = "vhs_0.11.0_Linux_x86_64",
-    urls = ["https://github.com/charmbracelet/vhs/releases/download/v0.11.0/vhs_0.11.0_Linux_x86_64.tar.gz"],
-)
-
-http_file(
-    name = "ttyd_linux_x86_64",
-    downloaded_file_path = "ttyd",
-    executable = True,
-    sha256 = "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55",
-    urls = ["https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64"],
-)
-
-http_file(
-    name = "buildifier_linux_amd64",
-    downloaded_file_path = "buildifier",
-    executable = True,
-    sha256 = "5474cc5128a74e806783d54081f581662c4be8ae65022f557e9281ed5dc88009",
-    urls = ["https://github.com/bazelbuild/buildtools/releases/download/v7.3.1/buildifier-linux-amd64"],
-)
-
-http_file(
-    name = "buildifier_linux_arm64",
-    downloaded_file_path = "buildifier",
-    executable = True,
-    sha256 = "0bf86c4bfffaf4f08eed77bde5b2082e4ae5039a11e2e8b03984c173c34a561c",
-    urls = ["https://github.com/bazelbuild/buildtools/releases/download/v7.3.1/buildifier-linux-arm64"],
-)
-
-http_archive(
-    name = "ffmpeg_linux_x86_64",
-    build_file_content = """\
-package(default_visibility = ["//visibility:public"])
-
-filegroup(
-    name = "ffmpeg_bin",
-    srcs = ["bin/ffmpeg"],
-)
-""",
-    sha256 = "7aadf7d95d94e9dc71d4283d64be209ef1ba4cab5eb09893c29037223704d0b1",
-    strip_prefix = "ffmpeg-n8.1.2-21-gce3c09c101-linux64-gpl-8.1",
-    urls = ["https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-03-13-21/ffmpeg-n8.1.2-21-gce3c09c101-linux64-gpl-8.1.tar.xz"],
-)
-
-http_archive(
-    name = "uv_linux_x86_64",
-    build_file_content = """\
-package(default_visibility = ["//visibility:public"])
-
-filegroup(
-    name = "uv_bin",
-    srcs = ["uv"],
-)
-""",
-    sha256 = "6426a73c3837e6e2483ee344cbc00f36394d179afcba6183cb77437e67db4af0",
-    strip_prefix = "uv-x86_64-unknown-linux-gnu",
-    urls = ["https://github.com/astral-sh/uv/releases/download/0.11.26/uv-x86_64-unknown-linux-gnu.tar.gz"],
-)
-
-http_archive(
-    name = "chrome_for_testing_linux_x86_64",
-    build_file_content = """\
-package(default_visibility = ["//visibility:public"])
-
-filegroup(
-    name = "chrome_bin",
-    srcs = ["chrome-linux64/chrome"],
-)
-
-filegroup(
-    name = "chrome_files",
-    srcs = glob(["chrome-linux64/**"]),
-)
-""",
-    sha256 = "ad115a7498a17f53f6ed0914458326c6516addc756224db14c32184a9b1ab078",
-    strip_prefix = "",
-    urls = ["https://storage.googleapis.com/chrome-for-testing-public/150.0.7871.46/linux64/chrome-linux64.zip"],
-)
-
-http_archive(
-    name = "llvm_mingw_ucrt_linux_x86_64",
-    build_file_content = """\
-package(default_visibility = ["//visibility:public"])
-
-filegroup(
-    name = "aarch64_libs",
-    srcs = glob(["aarch64-w64-mingw32/lib/*"]),
-)
-
-filegroup(
-    name = "x86_64_libs",
-    srcs = glob(["x86_64-w64-mingw32/lib/*"]),
-)
-
-filegroup(
-    name = "compiler_rt_windows",
-    srcs = glob(["lib/clang/*/lib/windows/*"]),
-)
-
-filegroup(
-    name = "clang_tidy_bin",
-    srcs = ["bin/clang-tidy"],
-)
-""",
-    sha256 = "534b92e067b22a6b4441f48ae9240a3341b17825d04d577eab0cf85c44b4deda",
-    strip_prefix = "llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64",
-    urls = ["https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/llvm-mingw-20260616-ucrt-ubuntu-22.04-x86_64.tar.xz"],
+external_tools = use_extension("//core/tools/bzlmod:external_tools.bzl", "external_tools")
+external_tools.group(name = "core")
+external_tools.group(name = "docs")
+external_tools.group(name = "picblobs")
+use_repo(
+    external_tools,
+    "buildifier_linux_amd64",
+    "buildifier_linux_arm64",
+    "chrome_for_testing_linux_x86_64",
+    "ffmpeg_linux_x86_64",
+    "golangci_lint_linux_amd64",
+    "llvm_mingw_ucrt_linux_x86_64",
+    "ttyd_linux_x86_64",
+    "uv_linux_x86_64",
+    "vhs_linux_x86_64",
 )
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
@@ -241,115 +120,10 @@ use_repo(rust, "rust_toolchains")
 
 register_toolchains("@rust_toolchains//:all")
 
-picblobs_bootlin = use_extension("//modules/picblobs/toolchains:bootlin.bzl", "bootlin")
-picblobs_bootlin.toolchain(
-    name = "x86_64",
-    arch = "x86-64",
-    extra_cflags = ["-march=x86-64"],
-    sha256 = "932823ca9a3e067e7e2a29810a666d20c9cc5bb550de947f6879e38ace1aa955",
-    triple = "x86_64-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "i686",
-    arch = "x86-i686",
-    extra_cflags = ["-march=i686"],
-    sha256 = "023e4f03cd212b5545c4c184238693b61b40fa36d257b84546100a92ea2c1d8b",
-    triple = "i686-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "aarch64",
-    arch = "aarch64",
-    extra_cflags = [],
-    sha256 = "b0fad860eb94b503a56d66ca8b9ba06d2d4826943e37ebd1d7217423f6ea5bb2",
-    triple = "aarch64-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "armv5",
-    arch = "armv5-eabi",
-    extra_cflags = ["-march=armv5te"],
-    sha256 = "13f2bea0b06fe560fe60d199cd9d3fb1f20e2335bcc79b90c5130c3916a3ed92",
-    triple = "arm-buildroot-linux-gnueabi",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "armv7",
-    arch = "armv7-eabihf",
-    extra_cflags = [
-        "-march=armv7-a",
-        "-mthumb",
-    ],
-    sha256 = "608263bc9dc3eadf0962ddb1165f1c2291001190f9927dee47d464e26374462c",
-    triple = "arm-buildroot-linux-gnueabihf",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "s390x",
-    arch = "s390x-z13",
-    extra_cflags = ["-march=z13"],
-    sha256 = "b37ed02693a370f28434c34655c64bcb96dc0d428a92ddbc99feb5608bcf64a1",
-    triple = "s390x-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "mipsel32",
-    arch = "mips32el",
-    extra_cflags = [
-        "-mips32",
-        "-EL",
-    ],
-    sha256 = "d0139b6ade7f3b72a5f9c33814696af817661e826c9c501f6cefcab4ac684c8f",
-    triple = "mipsel-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "mipsbe32",
-    arch = "mips32",
-    extra_cflags = [
-        "-mips32",
-        "-EB",
-    ],
-    sha256 = "677402719c545e49eb71c3d27a5f495af38f60463b40ed705e24e43a9834c137",
-    triple = "mips-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "sparcv8",
-    arch = "sparcv8",
-    extra_cflags = ["-mcpu=v8"],
-    libc = "uclibc",
-    sha256 = "8ec2c84b84a13b854a13802537f0b04848056ebc65f6212202f6d8c8a78d4bc3",
-    triple = "sparc-buildroot-linux-uclibc",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "powerpc",
-    arch = "powerpc-e300c3",
-    extra_cflags = ["-mcpu=e300c3"],
-    sha256 = "6c975a7293fde77a52f348124049645ee2ceee19e75ab6e0b2364043090a2dff",
-    triple = "powerpc-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "ppc64le",
-    arch = "powerpc64le-power8",
-    extra_cflags = ["-mcpu=power8"],
-    sha256 = "8133b74614f880eb8b76730efee77b8fd281c982bfa2791b72c5f836a529530d",
-    triple = "powerpc64le-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
-picblobs_bootlin.toolchain(
-    name = "riscv64",
-    arch = "riscv64-lp64d",
-    extra_cflags = [],
-    sha256 = "78e16f3def8b2ff3da09c16155f993ac7e4dc1791d0904ada03fcb2e04910aab",
-    triple = "riscv64-buildroot-linux-gnu",
-    version = "2024.05-1",
-)
+picblobs_toolchains = use_extension("//modules/picblobs/toolchains:repositories.bzl", "picblobs_toolchains")
 use_repo(
-    picblobs_bootlin,
+    picblobs_toolchains,
+    "arm_none_eabi",
     "bootlin_aarch64",
     "bootlin_armv5",
     "bootlin_armv7",
@@ -362,23 +136,9 @@ use_repo(
     "bootlin_s390x",
     "bootlin_sparcv8",
     "bootlin_x86_64",
+    "qemu_arm_static",
+    "qemu_user_static",
 )
-
-picblobs_arm_none_eabi = use_extension("//modules/picblobs/toolchains:arm_none_eabi.bzl", "arm_none_eabi")
-picblobs_arm_none_eabi.toolchain(
-    extra_cflags = [
-        "-mcpu=cortex-m4",
-        "-mthumb",
-        "-mfloat-abi=soft",
-    ],
-    sha256 = "95c011cee430e64dd6087c75c800f04b9c49832cc1000127a92a97f9c8d83af4",
-    strip_prefix = "arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi",
-    url = "https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz",
-)
-use_repo(picblobs_arm_none_eabi, "arm_none_eabi")
-
-picblobs_qemu = use_extension("//modules/picblobs/toolchains:qemu.bzl", "qemu")
-use_repo(picblobs_qemu, "qemu_arm_static", "qemu_user_static")
 
 local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
 

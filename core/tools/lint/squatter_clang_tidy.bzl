@@ -12,6 +12,7 @@ def _tool_files(ctx):
     return depset(
         [ctx.executable._runner, ctx.file._clang_tidy],
         transitive = [
+            ctx.attr._clang_tidy_files[DefaultInfo].files,
             ctx.attr._runner[DefaultInfo].files,
             ctx.attr._runner[DefaultInfo].default_runfiles.files,
             ctx.attr._runner[DefaultInfo].data_runfiles.files,
@@ -53,6 +54,11 @@ _clang_tidy_check = rule(
         "_clang_tidy": attr.label(
             default = _CLANG_TIDY,
             allow_single_file = True,
+            cfg = "exec",
+        ),
+        "_clang_tidy_files": attr.label(
+            default = Label("@llvm_mingw_ucrt_linux_x86_64//:clang_tidy_files"),
+            cfg = "exec",
         ),
         "_runner": attr.label(
             default = _RUNNER,

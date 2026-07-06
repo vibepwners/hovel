@@ -1,5 +1,11 @@
 load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
+filegroup(
+    name = "version_targets",
+    srcs = ["provider.go"],
+    visibility = ["//visibility:public"],
+)
+
 go_library(
     name = "provider_lib",
     srcs = ["provider.go"],

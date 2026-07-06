@@ -7,10 +7,9 @@ filegroup(
     srcs = ["BUILD.bazel"],
 )
 
-# Custom target_os instead of @platforms//os:os — the blob OS is a
-# cross-compilation target property, not the execution OS. A Linux host
-# builds FreeBSD and Windows blobs; using @platforms//os would confuse
-# Bazel's toolchain resolution. This constraint is for blob target selection.
+# Custom target_os records the blob target OS for picblobs selects.
+# Generated platforms also include the standard @platforms//os constraint
+# so language toolchains such as rules_python can resolve on them.
 constraint_setting(name = "target_os")
 
 constraint_value(
@@ -96,6 +95,7 @@ platform(
     name = "linux_x86_64",
     constraint_values = [
         "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
         ":linux",
         ":mode_default",
     ],
@@ -105,6 +105,7 @@ platform(
     name = "linux_i686",
     constraint_values = [
         "@platforms//cpu:x86_32",
+        "@platforms//os:linux",
         ":linux",
         ":mode_default",
     ],
@@ -114,6 +115,7 @@ platform(
     name = "linux_aarch64",
     constraint_values = [
         "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
         ":linux",
         ":mode_default",
     ],
@@ -123,6 +125,7 @@ platform(
     name = "linux_armv5_arm",
     constraint_values = [
         "@platforms//cpu:arm",
+        "@platforms//os:linux",
         ":linux",
         ":mode_arm",
     ],
@@ -132,6 +135,7 @@ platform(
     name = "linux_armv5_thumb",
     constraint_values = [
         "@platforms//cpu:arm",
+        "@platforms//os:linux",
         ":linux",
         ":mode_thumb",
     ],
@@ -141,6 +145,7 @@ platform(
     name = "linux_armv7_thumb",
     constraint_values = [
         "@platforms//cpu:armv7",
+        "@platforms//os:linux",
         ":linux",
         ":mode_thumb",
     ],
@@ -150,6 +155,7 @@ platform(
     name = "linux_s390x",
     constraint_values = [
         "@platforms//cpu:s390x",
+        "@platforms//os:linux",
         ":linux",
         ":mode_default",
     ],
@@ -159,6 +165,7 @@ platform(
     name = "linux_mipsel32",
     constraint_values = [
         "//modules/picblobs/platforms:mipsel32",
+        "@platforms//os:linux",
         ":linux",
         ":mode_default",
     ],
@@ -168,6 +175,7 @@ platform(
     name = "linux_mipsbe32",
     constraint_values = [
         "//modules/picblobs/platforms:mipsbe32",
+        "@platforms//os:linux",
         ":linux",
         ":mode_default",
     ],
@@ -177,6 +185,7 @@ platform(
     name = "linux_sparcv8",
     constraint_values = [
         "//modules/picblobs/platforms:sparcv8",
+        "@platforms//os:linux",
         ":linux",
         ":mode_default",
     ],
@@ -186,6 +195,7 @@ platform(
     name = "linux_powerpc",
     constraint_values = [
         "@platforms//cpu:ppc32",
+        "@platforms//os:linux",
         ":linux",
         ":mode_default",
     ],
@@ -195,6 +205,7 @@ platform(
     name = "linux_ppc64le",
     constraint_values = [
         "@platforms//cpu:ppc64le",
+        "@platforms//os:linux",
         ":linux",
         ":mode_default",
     ],
@@ -204,6 +215,7 @@ platform(
     name = "linux_riscv64",
     constraint_values = [
         "@platforms//cpu:riscv64",
+        "@platforms//os:linux",
         ":linux",
         ":mode_default",
     ],
@@ -214,6 +226,7 @@ platform(
     name = "freebsd_x86_64",
     constraint_values = [
         "@platforms//cpu:x86_64",
+        "@platforms//os:freebsd",
         ":freebsd",
         ":mode_default",
     ],
@@ -223,6 +236,7 @@ platform(
     name = "freebsd_i686",
     constraint_values = [
         "@platforms//cpu:x86_32",
+        "@platforms//os:freebsd",
         ":freebsd",
         ":mode_default",
     ],
@@ -232,6 +246,7 @@ platform(
     name = "freebsd_aarch64",
     constraint_values = [
         "@platforms//cpu:aarch64",
+        "@platforms//os:freebsd",
         ":freebsd",
         ":mode_default",
     ],
@@ -241,6 +256,7 @@ platform(
     name = "freebsd_armv5_arm",
     constraint_values = [
         "@platforms//cpu:arm",
+        "@platforms//os:freebsd",
         ":freebsd",
         ":mode_arm",
     ],
@@ -250,6 +266,7 @@ platform(
     name = "freebsd_armv5_thumb",
     constraint_values = [
         "@platforms//cpu:arm",
+        "@platforms//os:freebsd",
         ":freebsd",
         ":mode_thumb",
     ],
@@ -259,6 +276,7 @@ platform(
     name = "freebsd_armv7_thumb",
     constraint_values = [
         "@platforms//cpu:armv7",
+        "@platforms//os:freebsd",
         ":freebsd",
         ":mode_thumb",
     ],
@@ -268,6 +286,7 @@ platform(
     name = "freebsd_mipsel32",
     constraint_values = [
         "//modules/picblobs/platforms:mipsel32",
+        "@platforms//os:freebsd",
         ":freebsd",
         ":mode_default",
     ],
@@ -277,6 +296,7 @@ platform(
     name = "freebsd_mipsbe32",
     constraint_values = [
         "//modules/picblobs/platforms:mipsbe32",
+        "@platforms//os:freebsd",
         ":freebsd",
         ":mode_default",
     ],
@@ -287,6 +307,7 @@ platform(
     name = "windows_x86_64",
     constraint_values = [
         "@platforms//cpu:x86_64",
+        "@platforms//os:windows",
         ":windows",
         ":mode_default",
     ],
@@ -296,6 +317,7 @@ platform(
     name = "windows_i686",
     constraint_values = [
         "@platforms//cpu:x86_32",
+        "@platforms//os:windows",
         ":windows",
         ":mode_default",
     ],
@@ -305,6 +327,7 @@ platform(
     name = "windows_aarch64",
     constraint_values = [
         "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
         ":windows",
         ":mode_default",
     ],

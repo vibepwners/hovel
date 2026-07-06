@@ -91,6 +91,7 @@ def _clang_tidy_aspect_impl(target, ctx):
             tools = depset(
                 [ctx.executable._clang_tidy_runner, ctx.file._clang_tidy],
                 transitive = [
+                    ctx.attr._clang_tidy_files[DefaultInfo].files,
                     ctx.attr._clang_tidy_runner[DefaultInfo].files,
                     ctx.attr._clang_tidy_runner[DefaultInfo].default_runfiles.files,
                     ctx.attr._clang_tidy_runner[DefaultInfo].data_runfiles.files,
@@ -113,6 +114,10 @@ clang_tidy_aspect = aspect(
         "_clang_tidy": attr.label(
             default = Label("@llvm_mingw_ucrt_linux_x86_64//:clang_tidy_bin"),
             allow_single_file = True,
+            cfg = "exec",
+        ),
+        "_clang_tidy_files": attr.label(
+            default = Label("@llvm_mingw_ucrt_linux_x86_64//:clang_tidy_files"),
             cfg = "exec",
         ),
         "_clang_tidy_runner": attr.label(

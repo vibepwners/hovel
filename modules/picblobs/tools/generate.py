@@ -15,6 +15,7 @@ Generated files:
   Bazel:
     - platforms/BUILD.bazel
     - toolchains/BUILD.bazel
+    - toolchains/repositories.bzl
 
   Config:
     - .bazelrc  (platform config block between markers)
@@ -676,10 +677,9 @@ def _gen_platforms_build() -> str:
 def _platform_target_os_lines() -> list[str]:
     """Return target OS constraint definitions for platforms/BUILD.bazel."""
     lines = [
-        "# Custom target_os instead of @platforms//os:os — the blob OS is a\n"
-        "# cross-compilation target property, not the execution OS. A Linux host\n"
-        "# builds FreeBSD and Windows blobs; using @platforms//os would confuse\n"
-        "# Bazel's toolchain resolution. This constraint is for blob target selection.\n",
+        "# Custom target_os records the blob target OS for picblobs selects.\n"
+        "# Generated platforms also include the standard @platforms//os constraint\n"
+        "# so language toolchains such as rules_python can resolve on them.\n",
         'constraint_setting(name = "target_os")\n\n',
     ]
     lines.extend(
@@ -772,9 +772,15 @@ def _platform_definition_lines() -> list[str]:
         for arch_name in os_def.architectures:
             arch = ARCHITECTURES[arch_name]
             name = f"{os_name}_{arch_name}"
+            constraints = [
+                arch.cpu_constraint,
+                os_def.bazel_os_constraint,
+                f":{os_name}",
+                _platform_mode(arch_name),
+            ]
             lines.append(
                 f'platform(name = "{name}", constraint_values = '
-                f'["{arch.cpu_constraint}", ":{os_name}", "{_platform_mode(arch_name)}"])\n'
+                f"{_starlark_string_list(constraints)})\n"
             )
         lines.append("\n")
     return lines
@@ -803,6 +809,36 @@ def _platform_baremetal_lines() -> list[str]:
 # ============================================================
 # Bazel: toolchains/BUILD.bazel
 # ============================================================
+
+
+_ARM_NONE_EABI_TOOLCHAIN = {
+    "extra_cflags": [
+        "-mcpu=cortex-m4",
+        "-mthumb",
+        "-mfloat-abi=soft",
+    ],
+    "sha256": "95c011cee430e64dd6087c75c800f04b9c49832cc1000127a92a97f9c8d83af4",
+    "strip_prefix": "arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi",
+    "url": "https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz",
+}
+
+
+def _bootlin_toolchain_name(arch_name: str) -> str:
+    if arch_name.startswith("armv5_"):
+        return "armv5"
+    if arch_name.startswith("armv7_"):
+        return "armv7"
+    return arch_name
+
+
+def _starlark_string(value: str) -> str:
+    return repr(value)
+
+
+def _starlark_string_list(values: list[str]) -> str:
+    if not values:
+        return "[]"
+    return "[{}]".format(", ".join(_starlark_string(value) for value in values))
 
 
 def _gen_toolchains_build() -> str:
@@ -839,11 +875,7 @@ def _gen_toolchains_build() -> str:
         if arch.bootlin_arch in seen:
             continue
         seen.add(arch.bootlin_arch)
-        tc_name = arch.name
-        if tc_name.startswith("armv5_"):
-            tc_name = "armv5"
-        elif tc_name.startswith("armv7_"):
-            tc_name = "armv7"
+        tc_name = _bootlin_toolchain_name(arch.name)
         lines.append(
             f"toolchain(\n"
             f'    name = "bootlin_{tc_name}",\n'
@@ -852,6 +884,91 @@ def _gen_toolchains_build() -> str:
             f'    target_compatible_with = ["{arch.cpu_constraint}"],\n'
             f")\n\n"
         )
+    return "".join(lines)
+
+
+# ============================================================
+# Bazel: toolchains/repositories.bzl
+# ============================================================
+
+
+def _gen_toolchain_repositories_bzl() -> str:
+    lines = [
+        _BZL,
+        textwrap.dedent("""\
+        \"\"\"Repository definitions for picblobs external toolchains.\"\"\"
+
+        load(":arm_none_eabi.bzl", "arm_none_eabi_repo")
+        load(":bootlin.bzl", "bootlin_toolchain_repo")
+        load(":qemu.bzl", "qemu_arm_repo", "qemu_user_static_repo")
+
+        _ARM_NONE_EABI_TOOLCHAIN = struct(
+        """),
+        f"    extra_cflags = {_starlark_string_list(_ARM_NONE_EABI_TOOLCHAIN['extra_cflags'])},\n",
+        f"    sha256 = {_starlark_string(_ARM_NONE_EABI_TOOLCHAIN['sha256'])},\n",
+        f"    strip_prefix = {_starlark_string(_ARM_NONE_EABI_TOOLCHAIN['strip_prefix'])},\n",
+        f"    url = {_starlark_string(_ARM_NONE_EABI_TOOLCHAIN['url'])},\n",
+        ")\n\n",
+        "_BOOTLIN_TOOLCHAINS = [\n",
+    ]
+
+    seen: set[str] = set()
+    for arch in ARCHITECTURES.values():
+        if arch.bootlin_arch in seen:
+            continue
+        seen.add(arch.bootlin_arch)
+        if not arch.bootlin_sha256:
+            raise ValueError(
+                f"Bootlin toolchain for {arch.name} is missing bootlin_sha256"
+            )
+        tc_name = _bootlin_toolchain_name(arch.name)
+        lines.extend(
+            [
+                "    struct(\n",
+                f"        name = {_starlark_string(tc_name)},\n",
+                f"        arch = {_starlark_string(arch.bootlin_arch)},\n",
+                f"        extra_cflags = {_starlark_string_list(arch.extra_cflags)},\n",
+                f"        libc = {_starlark_string(arch.bootlin_libc)},\n",
+                f"        sha256 = {_starlark_string(arch.bootlin_sha256)},\n",
+                f"        triple = {_starlark_string(arch.gcc_triple)},\n",
+                f"        version = {_starlark_string(arch.bootlin_version)},\n",
+                "    ),\n",
+            ]
+        )
+    lines.extend(
+        [
+            "]\n\n",
+            textwrap.dedent("""\
+            def _picblobs_toolchains_impl(_module_ctx):
+                arm_none_eabi_repo(
+                    name = "arm_none_eabi",
+                    extra_cflags = _ARM_NONE_EABI_TOOLCHAIN.extra_cflags,
+                    sha256 = _ARM_NONE_EABI_TOOLCHAIN.sha256,
+                    strip_prefix = _ARM_NONE_EABI_TOOLCHAIN.strip_prefix,
+                    url = _ARM_NONE_EABI_TOOLCHAIN.url,
+                )
+                for toolchain in _BOOTLIN_TOOLCHAINS:
+                    repo_name = "bootlin_{}".format(toolchain.name)
+                    bootlin_toolchain_repo(
+                        name = repo_name,
+                        arch = toolchain.arch,
+                        extra_cflags = toolchain.extra_cflags,
+                        libc = toolchain.libc,
+                        sha256 = toolchain.sha256,
+                        target_cpu = toolchain.name,
+                        toolchain_id = repo_name,
+                        triple = toolchain.triple,
+                        version = toolchain.version,
+                    )
+                qemu_user_static_repo(name = "qemu_user_static")
+                qemu_arm_repo(name = "qemu_arm_static")
+
+            picblobs_toolchains = module_extension(
+                implementation = _picblobs_toolchains_impl,
+            )
+            """),
+        ]
+    )
     return "".join(lines)
 
 
@@ -1151,6 +1268,10 @@ def _generated_targets() -> list[tuple[Path, str]]:
         (PROJECT_ROOT / "src/include/picblobs/picblobs.h", _gen_picblobs_h()),
         (PROJECT_ROOT / "platforms/BUILD.bazel", _gen_platforms_build()),
         (PROJECT_ROOT / "toolchains/BUILD.bazel", _gen_toolchains_build()),
+        (
+            PROJECT_ROOT / "toolchains/repositories.bzl",
+            _gen_toolchain_repositories_bzl(),
+        ),
         (PROJECT_ROOT / "bazel/platforms.bzl", _gen_platforms_bzl()),
         (PROJECT_ROOT / "src/payload/BUILD.bazel", _gen_payload_build()),
     ]

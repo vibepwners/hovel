@@ -69,7 +69,7 @@
 <li>Create <code>src/include/picblobs/syscall/{arch}.h</code> with the inline asm primitive</li>
 <li>Create the matching runner <code>_start</code> stubs under <code>tests/runners/*/start/</code>
    for every runner type that will execute the architecture</li>
-<li>Add a <code>bootlin.toolchain()</code> block to <code>MODULE.bazel</code></li>
+<li>Pin the Bootlin SHA256 on the <code>Architecture</code> entry in <code>tools/registry.py</code></li>
 <li>Run <code>task generate</code></li>
 <li>Run <code>task test:unit -- --test_arg=--pytest-target=test_sync.py</code> (catches anything missed)</li>
 <li>Build, stage, verify:

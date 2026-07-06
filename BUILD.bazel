@@ -6,6 +6,14 @@ exports_files([
 ])
 
 filegroup(
+    name = "root_metadata",
+    srcs = [
+        ".bazelrc",
+        "MODULE.bazel",
+    ],
+)
+
+filegroup(
     name = "sdk_build",
     srcs = [
         "//sdk/go/hovel",
@@ -58,8 +66,8 @@ test_suite(
     name = "modules_test",
     tests = [
         "//modules/squatter/provider:provider_test",
-        "//modules/squatter/windows:squatter_x86_exe_pe_test",
         "//modules/squatter/windows:source_contract_test",
+        "//modules/squatter/windows:squatter_x86_exe_pe_test",
         "//modules/tools:check_in_repo_modules_test",
         "//modules/tools:package_examples_test",
         "//modules/tools:workspace_module_install_test",

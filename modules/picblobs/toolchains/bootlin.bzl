@@ -41,8 +41,11 @@ _ALL_LINK_ACTIONS = [
 
 def _config_impl(ctx):
     tool_paths = [
-        tool_path(name = "gcc", path = "bin/{triple}-gcc"),
-        tool_path(name = "g++", path = "bin/{triple}-g++"),
+        # Bootlin's public compiler symlinks go through toolchain-wrapper,
+        # which realpaths itself and injects an absolute --sysroot. Point at
+        # the real drivers so depfiles stay exec-root-relative under Bazel.
+        tool_path(name = "gcc", path = "bin/{triple}-gcc.br_real"),
+        tool_path(name = "g++", path = "bin/{triple}-g++.br_real"),
         tool_path(name = "ld", path = "bin/{triple}-ld"),
         tool_path(name = "ar", path = "bin/{triple}-ar"),
         tool_path(name = "nm", path = "bin/{triple}-nm"),
@@ -50,12 +53,36 @@ def _config_impl(ctx):
         tool_path(name = "objdump", path = "bin/{triple}-objdump"),
         tool_path(name = "strip", path = "bin/{triple}-strip"),
         tool_path(name = "as", path = "bin/{triple}-as"),
-        tool_path(name = "cpp", path = "bin/{triple}-cpp"),
+        tool_path(name = "cpp", path = "bin/{triple}-cpp.br_real"),
         tool_path(name = "gcov", path = "bin/{triple}-gcov"),
         # DWP is unused by this workspace. Point at a declared toolchain
         # binary rather than an undeclared host /usr/bin path.
-        tool_path(name = "dwp", path = "bin/{triple}-gcc"),
+        tool_path(name = "dwp", path = "bin/{triple}-gcc.br_real"),
     ]
+
+    path_normalization_feature = feature(
+        name = "path_normalization",
+        enabled = True,
+        flag_sets = [
+            flag_set(
+                actions = _ALL_COMPILE_ACTIONS,
+                flag_groups = [
+                    flag_group(
+                        flags = [
+                            "-no-canonical-prefixes",
+                            "-fno-canonical-system-headers",
+                        ],
+                    ),
+                ],
+            ),
+            flag_set(
+                actions = _ALL_LINK_ACTIONS,
+                flag_groups = [
+                    flag_group(flags = ["-no-canonical-prefixes"]),
+                ],
+            ),
+        ],
+    )
 
     freestanding_feature = feature(
         name = "freestanding",
@@ -108,7 +135,7 @@ def _config_impl(ctx):
         ],
     ) if extra_cflags else None
 
-    features = [freestanding_feature]
+    features = [path_normalization_feature, freestanding_feature]
     if arch_flags_feature:
         features.append(arch_flags_feature)
 
@@ -124,9 +151,9 @@ def _config_impl(ctx):
         abi_libc_version = "{target_libc}",
         tool_paths = tool_paths,
         features = features,
-        # Absolute on-disk paths to the toolchain's own headers, baked in at
-        # fetch time. Without these, hosted compiles that pull in libc/libstdc++
-        # headers fail Bazel's "absolute path inclusion" hermeticity check.
+        # Paths to the toolchain's own headers. Bazel resolves %package(...)%
+        # under the exec root, so the include whitelist works for local and
+        # remote execution without baking in output-base paths.
         # Freestanding blobs never include system headers, so this is inert
         # for them.
         cxx_builtin_include_directories = {builtin_include_dirs},
@@ -152,6 +179,7 @@ filegroup(
         "bin/toolchain-wrapper",
         "lib/gcc/{triple}/**",
         "libexec/gcc/{triple}/**",
+        "{triple}/bin/**",
         "{triple}/include/**",
         "{triple}/lib/**",
         "{triple}/sysroot/**",
@@ -165,6 +193,7 @@ filegroup(
         "bin/toolchain-wrapper",
         "lib/gcc/{triple}/**",
         "libexec/gcc/{triple}/**",
+        "{triple}/bin/**",
         "{triple}/include/**",
         # Hosted compiles (C++ test runners) need the libc sysroot headers;
         # freestanding blobs don't, but globbing them is harmless.
@@ -179,6 +208,7 @@ filegroup(
         "bin/toolchain-wrapper",
         "lib/gcc/{triple}/**",
         "libexec/gcc/{triple}/**",
+        "{triple}/bin/**",
         "{triple}/lib/**",
         # Hosted links need crt objects and libc/libstdc++ from the sysroot.
         "{triple}/sysroot/**",
@@ -202,7 +232,7 @@ filegroup(
 
 filegroup(
     name = "dwp_files",
-    srcs = glob(["bin/{triple}-gcc"]),
+    srcs = glob(["bin/{triple}-gcc.br_real"]),
 )
 
 filegroup(
@@ -267,15 +297,30 @@ def _bootlin_toolchain_repo_impl(ctx):
         # buildifier: disable=print
         print("  Pin with: sha256 = \"{}\"".format(result.sha256))
 
-    # Absolute on-disk locations of the toolchain's own header trees. These
-    # cover the GCC internal headers (lib/gcc/{triple}/<ver>/include[-fixed]),
-    # the libstdc++ headers ({triple}/include/c++), and the libc sysroot
-    # ({triple}/sysroot/usr/include). They are listed as builtin include dirs
-    # so hosted compiles pass Bazel's absolute-path hermeticity check.
-    repo_path = str(ctx.path("."))
+    gcc_versions = [
+        entry.basename
+        for entry in ctx.path("lib/gcc/{}".format(triple)).readdir(watch = "no")
+        if entry.is_dir
+    ]
+    if len(gcc_versions) != 1:
+        fail("Bootlin toolchain '{}' has unexpected GCC versions: {}".format(
+            toolchain_id,
+            gcc_versions,
+        ))
+    gcc_version = gcc_versions[0]
+
+    # Exec-root-stable versions of the compiler's builtin search roots, in the
+    # order reported by `g++ -E -xc++ - -v`. They are listed as builtin include
+    # dirs so hosted compiles pass Bazel's absolute-path hermeticity check.
+    builtin_include_prefix = "%package(@@{}//)%".format(ctx.name)
     builtin_include_dirs = [
-        "{}/lib/gcc/{}".format(repo_path, triple),
-        "{}/{}".format(repo_path, triple),
+        "{}/{}/include/c++/{}".format(builtin_include_prefix, triple, gcc_version),
+        "{}/{}/include/c++/{}/{}".format(builtin_include_prefix, triple, gcc_version, triple),
+        "{}/{}/include/c++/{}/backward".format(builtin_include_prefix, triple, gcc_version),
+        "{}/lib/gcc/{}/{}/include".format(builtin_include_prefix, triple, gcc_version),
+        "{}/lib/gcc/{}/{}/include-fixed".format(builtin_include_prefix, triple, gcc_version),
+        "{}/{}/include".format(builtin_include_prefix, triple),
+        "{}/{}/sysroot/usr/include".format(builtin_include_prefix, triple),
     ]
 
     # Generate the config.bzl with baked-in triple and flags.

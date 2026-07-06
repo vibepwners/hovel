@@ -24,8 +24,22 @@ filegroup(
         "MODULE.bazel",
         "README.md",
         "Taskfile.yml",
+        "hovel-module.yaml",
         "lefthook.yml",
         "sourceme",
+    ],
+)
+
+filegroup(
+    name = "version_targets",
+    srcs = [
+        ".github/workflows/picblobs.yml",
+        ".github/workflows/picblobs-cli.yml",
+        "CLAUDE.md",
+        "MODULE.bazel",
+        "hovel-module.yaml",
+        "spec/models/MOD-007-release-tarball-format.md",
+        "spec/requirements/REQ-020-picblobs-cli.md",
     ],
 )
 

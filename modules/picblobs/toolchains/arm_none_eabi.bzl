@@ -138,6 +138,7 @@ filegroup(
         "bin/{triple}-*",
         "lib/gcc/{triple}/**",
         "libexec/gcc/{triple}/**",
+        "{triple}/bin/**",
         "{triple}/include/**",
         "{triple}/lib/**",
     ]),
@@ -149,6 +150,7 @@ filegroup(
         "bin/{triple}-*",
         "lib/gcc/{triple}/**",
         "libexec/gcc/{triple}/**",
+        "{triple}/bin/**",
         "{triple}/include/**",
     ]),
 )
@@ -159,6 +161,7 @@ filegroup(
         "bin/{triple}-*",
         "lib/gcc/{triple}/**",
         "libexec/gcc/{triple}/**",
+        "{triple}/bin/**",
         "{triple}/lib/**",
     ]),
 )
