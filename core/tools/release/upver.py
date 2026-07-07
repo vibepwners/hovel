@@ -21,10 +21,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", nargs="?", help="new version, with or without leading v")
     parser.add_argument("--sync", action="store_true", help="rewrite derived version fields from VERSION")
-    parser.add_argument("--root", type=Path, default=default_root())
+    parser.add_argument("--root", type=Path)
     args = parser.parse_args()
 
-    current = read_current(args.root)
+    root = resolve_root(args.root) if args.root is not None else default_root()
+    current = read_current(root)
     print(f"current version: {current}")
 
     if args.version:
@@ -35,13 +36,45 @@ def main() -> int:
     else:
         return 0
 
-    write_version(args.root, version)
-    sync(args.root, version)
+    write_version(root, version)
+    sync(root, version)
     return 0
 
 
 def default_root() -> Path:
-    return Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path(__file__).resolve().parents[3])).resolve()
+    workspace = os.environ.get("BUILD_WORKSPACE_DIRECTORY")
+    if workspace:
+        return release_root(Path(workspace))
+    return release_root(Path(__file__).resolve().parents[3])
+
+
+def resolve_root(root: Path) -> Path:
+    if root.is_absolute():
+        return release_root(root)
+    base = Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", os.getcwd()))
+    return release_root(base / root)
+
+
+def release_root(start: Path) -> Path:
+    start = start.resolve()
+    for candidate in (start, *start.parents):
+        if is_release_root(candidate):
+            return candidate
+    return start
+
+
+def is_release_root(root: Path) -> bool:
+    return all(
+        (root / relative).is_file()
+        for relative in (
+            Path("VERSION"),
+            Path("core/VERSION"),
+            Path("core/MODULE.bazel"),
+            Path("core/internal/version/version.go"),
+            Path("sdk/python/pyproject.toml"),
+            Path("sdk/python/uv.lock"),
+        )
+    )
 
 
 def read_current(root: Path) -> str:
