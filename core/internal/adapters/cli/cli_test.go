@@ -218,7 +218,7 @@ func TestOptionSuggestionsComeFromCommandRegistry(t *testing.T) {
 	for _, suggestion := range suggestions {
 		names = append(names, suggestion.Text)
 	}
-	for _, want := range []string{"--workspace", "--chain", "--target", "--target-set", "--json"} {
+	for _, want := range []string{"--workspace", "--chain", "--target", "--target-set", "--target-group", "--json"} {
 		if !contains(names, want) {
 			t.Fatalf("suggestions = %#v, missing %s", names, want)
 		}

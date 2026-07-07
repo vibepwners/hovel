@@ -213,7 +213,7 @@ h0v3l [demo/mock-survey-exploit] &gt; chain config set operator.confirmed_lab tr
 h0v3l [demo/mock-survey-exploit] &gt; chain config list
 h0v3l [demo/mock-survey-exploit] &gt; target config list mock://router-01
 h0v3l [demo/mock-survey-exploit] &gt; chain validate</code></pre>
-        <p>Targets are operation assets, not chain assets. The same target inventory can be reused by another chain in the same operation.</p>
+        <p>Targets are operation assets. Adding a target while a chain is active also binds it to that chain; adding a target in operation context leaves it available for later binding to any chain in the operation.</p>
 
         <div class="demo-series">
           <figure class="demo-figure">

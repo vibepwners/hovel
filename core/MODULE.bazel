@@ -1,6 +1,6 @@
 module(
     name = "hovel",
-    version = "0.2.6",
+    version = "0.2.7",
 )
 
 bazel_dep(name = "gazelle", version = "0.50.0")

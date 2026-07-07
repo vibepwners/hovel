@@ -109,13 +109,13 @@ CleanupHandle
         </ol>
 
         <h2>Operation</h2>
-        <p>An operation is the top-level operator context. It is the thing a red teamer picks up, puts down, and comes back to later. Operations own chains, chain log topics, target inventory, target sets, throws, artifacts, and the operator-facing transcript rendered from structured events.</p>
+        <p>An operation is the top-level operator context. It is the thing a red teamer picks up, puts down, and comes back to later. Operations own chains, chain log topics, target inventory, target sets/groups, throws, artifacts, and the operator-facing transcript rendered from structured events.</p>
         <p><code>op</code> is the primary command spelling. <code>operation</code> may remain as a readable alias, but product copy and examples should prefer <code>op</code>.</p>
         <p>Operation responsibilities:</p>
         <ol>
           <li>Name and describe the active work context.</li>
           <li>Own one or more chains.</li>
-          <li>Own target inventory, per-target configuration, and target sets shared by those chains.</li>
+          <li>Own target inventory, per-target configuration, and target sets/groups shared by those chains.</li>
           <li>Keep each client attachment's active chain separate from the shared chain state.</li>
           <li>Preserve chain logs and throw records by operation.</li>
           <li>Keep findings, artifacts, and structured events tied to the operation that produced them.</li>
@@ -354,7 +354,7 @@ cleanupHandles:
         <h2>Chain</h2>
         <p>A chain is an operation-owned workflow record with ordered steps. Product docs may group those steps into conceptual phases, but the current stored chain model is step-based. Chains are CRUD resources: operators can create, select, rename, inspect, list, and delete them through shared application services.</p>
         <p>Chain definitions should be modular and loadable. They are collections of module references and chain-scoped configuration, not modules themselves.</p>
-        <p>Chains do not own targets. Targets are operation-owned assets, and a throw binds a chain to targets at plan time from <code>--target</code>, <code>--target-set</code>, or the operation inventory. Chain records own ordered steps, chain-scoped configuration, and logs; target config follows the target across chains in the same operation.</p>
+        <p>Chains do not own target records. Targets are operation-owned assets, while chain records keep target bindings by target ID for default planning. A throw selects targets from <code>--target</code>, <code>--target-set</code>/<code>--target-group</code>, or the active chain's bindings. Chain records own ordered steps, chain-scoped configuration, target bindings, and logs; target config follows the target across chains in the same operation.</p>
         <p>Chains also own their logging topic. The canonical topic shape is <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>. A front end only renders logs for the chain selected by its attachment, while daemon-side storage and the structured logging rail keep those logs available for other clients attached to the same operation and chain.</p>
         <p>Conceptual workflow phases:</p>
         <figure class="diagram" aria-label="Conceptual workflow phases from service preparation through service cleanup.">

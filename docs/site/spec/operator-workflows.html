@@ -240,11 +240,19 @@ target config set &lt;target&gt; &lt;key&gt; &lt;value&gt;
 target config unset &lt;target&gt; &lt;key&gt;
 target config list &lt;target&gt;
 
+target bind &lt;target&gt;
+target unbind &lt;target&gt;
+
 target set create &lt;name&gt;
 target set add &lt;name&gt; &lt;target&gt;
 target set remove &lt;name&gt; &lt;target&gt;
 target set list
 target set inspect &lt;name&gt;
+target group create &lt;name&gt;
+target group add &lt;name&gt; &lt;target&gt;
+target group remove &lt;name&gt; &lt;target&gt;
+target group list
+target group inspect &lt;name&gt;
 </code></pre>
         <p><code>config interactive</code> is the active-chain alias for the CLI-only <code>chain config interactive</code> wizard. It is implemented inside the existing go-prompt loop and uses the same session mutation path as <code>chain config set</code> and <code>target config set</code>. It first renders the current chain and target configuration as a numbered menu, then changes the prompt into config-selection mode with completions for editable items, continue, and cancel. When the operator continues, Hovel changes the prompt into config-value mode, offers type-aware completions where possible, walks the remaining required chain and per-target keys, validates each typed value as it is entered, and repeats until all required configuration is set or an unfixable validation issue remains.</p>
 
@@ -265,7 +273,7 @@ target set inspect &lt;name&gt;
           <li>Every chain step has a stable ID.</li>
         </ol>
         <p>Validation output must be human-first and scriptable with <code>--json</code>.</p>
-        <p>Targets are operation assets, not chain assets. Existing commands such as <code>target add</code> and <code>target config set</code> continue to work in the active operation, but the resulting inventory is reusable by every chain in that operation. A throw binds a chain to targets at plan time from one of three sources: an explicit <code>--target</code>, an explicit <code>--target-set</code>, or the operation's full target inventory. Target sets are convenience views over the same target records; they do not duplicate target config.</p>
+        <p>Targets are operation assets, not chain-local records. Existing commands such as <code>target add</code> and <code>target config set</code> continue to work in the active operation, but <code>target add</code> only binds to a chain when the caller is in chain context. <code>target bind</code> and <code>target unbind</code> adjust active-chain bindings explicitly. A throw selects targets from one of three sources: an explicit <code>--target</code>, an explicit <code>--target-set</code>/<code>--target-group</code>, or the active chain's bound targets. Target sets/groups are convenience views over the same target records; they do not duplicate target config.</p>
         <p>When a target set contains mixed readiness, Hovel plans and throws against the compatible targets and reports skipped targets with the validation issues that made them incompatible. If no compatible targets remain, planning fails. Explicit <code>--target</code> remains strict: an incompatible explicit target blocks the throw so a typo or missing config is not silently ignored.</p>
         <div class="demo-series">
           <figure class="demo-figure">

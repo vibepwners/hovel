@@ -646,7 +646,7 @@ func (a App) contextualChildren(path []string, children []commands.Definition) [
 	}
 	if !a.inOperationContext() {
 		switch strings.Join(path, " ") {
-		case "chain", "chains", "chain config", "chains config", "target", "target config", "target set", "targets", "targets config", "targets set":
+		case "chain", "chains", "chain config", "chains config", "target", "target config", "target set", "target group", "targets", "targets config", "targets set", "targets group":
 			return nil
 		default:
 			return children
@@ -863,7 +863,7 @@ func (a App) positionalSuggestions(definition commands.Definition, commandWordCo
 			return a.targetConfigKeySuggestions(prefix), true
 		}
 		return nil, true
-	case "target set inspect", "targets set inspect", "target set add", "targets set add", "target set remove", "targets set remove":
+	case "target set inspect", "targets set inspect", "target group inspect", "targets group inspect", "target set add", "targets set add", "target group add", "targets group add", "target set remove", "targets set remove", "target group remove", "targets group remove":
 		if provided == 0 || provided == 1 && !endsWithSpace {
 			return a.targetSetSuggestions(prefix), true
 		}
@@ -946,8 +946,12 @@ func (a App) targetSuggestions(prefix string) []prompt.Suggest {
 		return nil
 	}
 	state := a.session.Snapshot()
-	suggestions := make([]prompt.Suggest, 0, len(state.Targets))
-	for _, target := range state.Targets {
+	targets := state.OperationTargets
+	if len(targets) == 0 {
+		targets = state.Targets
+	}
+	suggestions := make([]prompt.Suggest, 0, len(targets))
+	for _, target := range targets {
 		description := "target"
 		if config := state.TargetConfigs[target]; len(config) > 0 {
 			description = fmt.Sprintf("%d config value(s)", len(config))

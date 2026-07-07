@@ -38,7 +38,7 @@ func TestSessionCreatesUsesListsAndDeletesChains(t *testing.T) {
 	}
 }
 
-func TestSessionTargetsAreOwnedByOperation(t *testing.T) {
+func TestSessionTargetsAreOperationOwnedAndChainAssociated(t *testing.T) {
 	session := New()
 	if err := session.UseOperation("redteam-lab"); err != nil {
 		t.Fatal(err)
@@ -64,7 +64,10 @@ func TestSessionTargetsAreOwnedByOperation(t *testing.T) {
 	if beta.Chain != "beta" {
 		t.Fatalf("chain = %q, want beta", beta.Chain)
 	}
-	if got, want := beta.Targets, []string{"mock://ops", "mock://alpha", "mock://beta"}; !equalStrings(got, want) {
+	if got, want := beta.OperationTargets, []string{"mock://ops", "mock://alpha", "mock://beta"}; !equalStrings(got, want) {
+		t.Fatalf("operation targets = %#v", got)
+	}
+	if got, want := beta.Targets, []string{"mock://beta"}; !equalStrings(got, want) {
 		t.Fatalf("beta targets = %#v", beta.Targets)
 	}
 
@@ -72,15 +75,25 @@ func TestSessionTargetsAreOwnedByOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	alpha := session.Snapshot()
-	if got, want := alpha.Targets, []string{"mock://ops", "mock://alpha", "mock://beta"}; !equalStrings(got, want) {
+	if got, want := alpha.OperationTargets, []string{"mock://ops", "mock://alpha", "mock://beta"}; !equalStrings(got, want) {
+		t.Fatalf("operation targets = %#v", got)
+	}
+	if got, want := alpha.Targets, []string{"mock://alpha"}; !equalStrings(got, want) {
 		t.Fatalf("alpha targets = %#v", alpha.Targets)
 	}
 	if len(alpha.Chains) != 2 {
 		t.Fatalf("chains = %#v, want alpha and beta", alpha.Chains)
 	}
 	for _, chain := range alpha.Chains {
-		if len(chain.Targets) != 0 {
-			t.Fatalf("chain %s owns targets %#v, want none", chain.Name, chain.Targets)
+		switch chain.Name {
+		case "alpha":
+			if got, want := chain.Targets, []string{"mock://alpha"}; !equalStrings(got, want) {
+				t.Fatalf("alpha chain targets = %#v", got)
+			}
+		case "beta":
+			if got, want := chain.Targets, []string{"mock://beta"}; !equalStrings(got, want) {
+				t.Fatalf("beta chain targets = %#v", got)
+			}
 		}
 	}
 }
@@ -141,7 +154,7 @@ func TestSessionRequiresActiveOperationForTargets(t *testing.T) {
 	}
 }
 
-func TestSessionClearsOperationTargets(t *testing.T) {
+func TestSessionClearsChainTargetsWhenChainIsActive(t *testing.T) {
 	session := New()
 	if err := session.UseOperation("redteam-lab"); err != nil {
 		t.Fatal(err)
@@ -163,16 +176,51 @@ func TestSessionClearsOperationTargets(t *testing.T) {
 
 	state := session.Snapshot()
 	if targets := state.Targets; len(targets) != 0 {
+		t.Fatalf("beta chain targets = %#v, want none", targets)
+	}
+	if targets := state.OperationTargets; !equalStrings(targets, []string{"mock://alpha", "mock://beta"}) {
+		t.Fatalf("operation targets = %#v", targets)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if targets := session.Snapshot().Targets; !equalStrings(targets, []string{"mock://alpha"}) {
+		t.Fatalf("alpha snapshot targets = %#v", targets)
+	}
+}
+
+func TestSessionClearsOperationTargetsWhenNoChainIsActive(t *testing.T) {
+	session := New()
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://ops"); err != nil {
+		t.Fatal(err)
+	}
+	chainSession := session.Attachment("redteam-lab", "alpha")
+	if err := chainSession.AddTarget("mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := chainSession.UseChain("beta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := chainSession.AddTarget("mock://beta"); err != nil {
+		t.Fatal(err)
+	}
+
+	session.ClearTargets()
+
+	state := session.Snapshot()
+	if targets := state.OperationTargets; len(targets) != 0 {
 		t.Fatalf("operation targets = %#v, want none", targets)
 	}
 	if configs := state.TargetConfigs; len(configs) != 0 {
 		t.Fatalf("operation target configs = %#v, want none", configs)
 	}
-	if err := session.UseChain("alpha"); err != nil {
-		t.Fatal(err)
-	}
-	if targets := session.Snapshot().Targets; len(targets) != 0 {
-		t.Fatalf("alpha snapshot targets = %#v, want none", targets)
+	for _, chain := range state.Chains {
+		if len(chain.Targets) != 0 {
+			t.Fatalf("chain %s targets = %#v, want none", chain.Name, chain.Targets)
+		}
 	}
 }
 
@@ -367,8 +415,13 @@ func TestSessionExportsAndImportsState(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	exported := session.Export()
+	if exported.SchemaVersion != PersistedStateSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", exported.SchemaVersion, PersistedStateSchemaVersion)
+	}
+
 	imported := New()
-	imported.Import(session.Export())
+	imported.Import(exported)
 
 	state := imported.Snapshot()
 	if state.ActiveChain != "alpha" {
@@ -386,6 +439,70 @@ func TestSessionExportsAndImportsState(t *testing.T) {
 	}
 	if step.ID != "step-2" {
 		t.Fatalf("next step ID = %q, want step-2", step.ID)
+	}
+}
+
+func TestSessionImportsLegacyOperationTargetsAsChainBindings(t *testing.T) {
+	imported := New()
+	imported.Import(PersistedState{
+		ActiveOperation: "redteam-lab",
+		ActiveChain:     "alpha",
+		Operations: []PersistedOperation{
+			{
+				Name:    "redteam-lab",
+				Targets: []string{"mock://legacy"},
+				TargetConfigs: map[string]map[string]string{
+					"mock://legacy": {"target.host": "legacy.local"},
+				},
+				Chains: []PersistedChain{
+					{Name: "alpha", Steps: []Step{{ID: "step-1", ModuleID: "mock-exploit"}}},
+					{Name: "beta", Steps: []Step{{ID: "step-1", ModuleID: "mock-survey"}}},
+				},
+			},
+		},
+	})
+
+	state := imported.Snapshot()
+	if got, want := state.OperationTargets, []string{"mock://legacy"}; !equalStrings(got, want) {
+		t.Fatalf("operation targets = %#v, want %#v", got, want)
+	}
+	if got, want := state.Targets, []string{"mock://legacy"}; !equalStrings(got, want) {
+		t.Fatalf("alpha targets = %#v, want %#v", got, want)
+	}
+	if config := state.TargetConfigs["mock://legacy"]; config["target.host"] != "legacy.local" {
+		t.Fatalf("target config = %#v", config)
+	}
+	if err := imported.UseChain("beta"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := imported.Snapshot().Targets, []string{"mock://legacy"}; !equalStrings(got, want) {
+		t.Fatalf("beta targets = %#v, want %#v", got, want)
+	}
+}
+
+func TestSessionDoesNotBackfillVersionedOperationTargets(t *testing.T) {
+	imported := New()
+	imported.Import(PersistedState{
+		SchemaVersion:   PersistedStateSchemaVersion,
+		ActiveOperation: "redteam-lab",
+		ActiveChain:     "alpha",
+		Operations: []PersistedOperation{
+			{
+				Name:    "redteam-lab",
+				Targets: []string{"mock://ops"},
+				Chains: []PersistedChain{
+					{Name: "alpha", Steps: []Step{{ID: "step-1", ModuleID: "mock-exploit"}}},
+				},
+			},
+		},
+	})
+
+	state := imported.Snapshot()
+	if got, want := state.OperationTargets, []string{"mock://ops"}; !equalStrings(got, want) {
+		t.Fatalf("operation targets = %#v, want %#v", got, want)
+	}
+	if len(state.Targets) != 0 {
+		t.Fatalf("chain targets = %#v, want none", state.Targets)
 	}
 }
 

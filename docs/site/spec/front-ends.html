@@ -194,6 +194,8 @@ module inspect
 module search
 target add
 target clear
+target bind
+target unbind
 target config set
 target config unset
 target config list
@@ -202,6 +204,11 @@ target set add
 target set remove
 target set list
 target set inspect
+target group create
+target group add
+target group remove
+target group list
+target group inspect
 throw
 confirm
 review
@@ -260,7 +267,7 @@ quit
             <figcaption><strong>Step 4</strong> validate and save</figcaption>
           </figure>
         </div>
-        <p>Targets belong to operations. <code>target add</code>, <code>target clear</code>, and <code>target config</code> operate on the active operation inventory and persist across chains. <code>target set</code> groups operation targets for convenience. Interactive <code>throw</code> binds the active chain to targets from <code>--target</code>, <code>--target-set</code>, or the operation inventory before planning and review.</p>
+        <p>Targets belong to operations. <code>target add</code> in operation context only creates or updates the operation inventory; <code>target add</code> in chain context also binds that target to the active chain. <code>target bind</code> and <code>target unbind</code> manage chain bindings without deleting operation targets. <code>target clear</code> clears only the active chain binding when a chain is selected; operation-context clear requires explicit confirmation and deletes operation targets, target config, groups, and chain bindings. <code>target set</code> and <code>target group</code> name operation-owned target groups for convenience. Interactive <code>throw</code> uses targets from <code>--target</code>, <code>--target-set</code>/<code>--target-group</code>, or the active chain bindings before planning and review.</p>
         <p><code>review</code> and <code>throw</code> share the same review rendering. <code>confirm</code> records a pre-confirmation and stops. <code>review</code> always displays the current plan, requires the operator to type <code>yes</code>, records or refreshes the confirmation, and stops. <code>throw</code> starts execution if the current plan hash already has a matching confirmation; otherwise it shows the review, asks the operator to type <code>yes</code>, records the confirmation, and starts execution. Confirmations do not expire by time. They become invalid when the reviewed plan hash changes. <code>throw --now</code> skips the prompt but records the bypass in the confirmation record.</p>
         <p>Chains own their operation-scoped log topic. A chain topic is addressable as <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>, and <code>chain logs</code> shows only the logs for the active chain. In multi-client sessions, an implemented <code>cli</code> client and future TUI or MCP clients attached to an operation and chain subscribe to that chain topic; clients attached to the same operation and chain see the same logs, while clients attached to other chains do not see them by default.</p>
         <p>Operational setup commands such as workspace initialization and daemon inspection must be grouped under <code>control</code> in the registry exposed to <code>cli</code>. The old top-level <code>run</code> command should not be the durable operator contract; <code>throw</code> is the execution verb for the selected chain and target set.</p>

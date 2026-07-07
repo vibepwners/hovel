@@ -230,6 +230,8 @@ module inspect &lt;module&gt;
 module search &lt;query&gt;
 target add &lt;target&gt;
 target clear
+target bind &lt;target&gt;
+target unbind &lt;target&gt;
 target config set &lt;target&gt; &lt;key&gt; &lt;value&gt;
 target config unset &lt;target&gt; &lt;key&gt;
 target config list &lt;target&gt;
@@ -238,6 +240,11 @@ target set add &lt;name&gt; &lt;target&gt;
 target set remove &lt;name&gt; &lt;target&gt;
 target set list
 target set inspect &lt;name&gt;
+target group create &lt;name&gt;
+target group add &lt;name&gt; &lt;target&gt;
+target group remove &lt;name&gt; &lt;target&gt;
+target group list
+target group inspect &lt;name&gt;
 confirm
 review
 throw
@@ -259,7 +266,7 @@ session read &lt;session&gt;
 session send &lt;session&gt; &lt;data&gt;
 session close &lt;session&gt;
 </code></pre>
-        <p>Operations and chains are durable operator resources, not just transient prompt variables. The selected operation owns chains, target inventory, target configuration, and target sets; each client attachment owns its active chain selection. Target commands mutate the caller's active operation. Saved chain files are the portable representation for shell one-shot execution.</p>
+        <p>Operations and chains are durable operator resources, not just transient prompt variables. The selected operation owns chains, target inventory, target configuration, and target sets/groups; each chain owns its default target bindings by operation target ID; each client attachment owns its active chain selection. Target commands mutate the caller's active operation and, in chain context, the active chain binding. Saved chain files are the portable representation for shell one-shot execution.</p>
         <p>The one-shot shell form is:</p>
 <pre data-lang="shell"><code>hovel throw &lt;chain-file&gt;
 hovel throw &lt;chain-file&gt; --now

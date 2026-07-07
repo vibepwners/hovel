@@ -159,6 +159,22 @@
         "responses": { "200": { "$ref": "#/components/responses/EmptyResponse" }, "400": { "$ref": "#/components/responses/TextError" }, "405": { "$ref": "#/components/responses/TextError" }, "500": { "$ref": "#/components/responses/TextError" } }
       }
     },
+    "/hovel.daemon.v1.DaemonService/BindTarget": {
+      "post": {
+        "tags": ["operator-session"],
+        "operationId": "BindTarget",
+        "requestBody": { "$ref": "#/components/requestBodies/TargetRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/EmptyResponse" }, "400": { "$ref": "#/components/responses/TextError" }, "405": { "$ref": "#/components/responses/TextError" }, "500": { "$ref": "#/components/responses/TextError" } }
+      }
+    },
+    "/hovel.daemon.v1.DaemonService/UnbindTarget": {
+      "post": {
+        "tags": ["operator-session"],
+        "operationId": "UnbindTarget",
+        "requestBody": { "$ref": "#/components/requestBodies/TargetRequest" },
+        "responses": { "200": { "$ref": "#/components/responses/EmptyResponse" }, "400": { "$ref": "#/components/responses/TextError" }, "405": { "$ref": "#/components/responses/TextError" }, "500": { "$ref": "#/components/responses/TextError" } }
+      }
+    },
     "/hovel.daemon.v1.DaemonService/ClearTargets": {
       "post": {
         "tags": ["operator-session"],

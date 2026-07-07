@@ -138,8 +138,10 @@ Content-Type: application/json
             <tr><td>Operator session</td><td><code>UseChain</code></td><td>Select a chain under an operation.</td></tr>
             <tr><td>Operator session</td><td><code>RenameChain</code></td><td>Rename a chain and publish the corresponding operator log event.</td></tr>
             <tr><td>Operator session</td><td><code>DeleteChain</code></td><td>Delete a chain from an operation.</td></tr>
-            <tr><td>Operator session</td><td><code>AddTarget</code></td><td>Add an operation target, scoped to the active or requested chain context for logging.</td></tr>
-            <tr><td>Operator session</td><td><code>ClearTargets</code></td><td>Clear active operation targets.</td></tr>
+            <tr><td>Operator session</td><td><code>AddTarget</code></td><td>Add an operation target and bind it to the active or requested chain when one is present.</td></tr>
+            <tr><td>Operator session</td><td><code>BindTarget</code></td><td>Associate an operation target with the active or requested chain.</td></tr>
+            <tr><td>Operator session</td><td><code>UnbindTarget</code></td><td>Remove a target association from the active or requested chain.</td></tr>
+            <tr><td>Operator session</td><td><code>ClearTargets</code></td><td>Clear active-chain target bindings, or operation targets when no chain is selected.</td></tr>
             <tr><td>Operator session</td><td><code>CreateTargetSet</code></td><td>Create a named target set.</td></tr>
             <tr><td>Operator session</td><td><code>AddTargetToSet</code></td><td>Add a target to a named target set.</td></tr>
             <tr><td>Operator session</td><td><code>RemoveTargetFromSet</code></td><td>Remove a target from a named target set.</td></tr>
