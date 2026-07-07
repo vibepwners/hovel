@@ -327,6 +327,8 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[RenameChainRequest, EmptyResponse](mux, "RenameChain", rpcServer.renameChainRPC)
 	registerUnary[ChainRequest, EmptyResponse](mux, "DeleteChain", rpcServer.deleteChainRPC)
 	registerUnary[TargetRequest, EmptyResponse](mux, "AddTarget", rpcServer.addTargetRPC)
+	registerUnary[TargetRequest, EmptyResponse](mux, "BindTarget", rpcServer.bindTargetRPC)
+	registerUnary[TargetRequest, EmptyResponse](mux, "UnbindTarget", rpcServer.unbindTargetRPC)
 	registerUnary[ChainRequest, EmptyResponse](mux, "ClearTargets", rpcServer.clearTargetsRPC)
 	registerUnary[TargetSetRequest, EmptyResponse](mux, "CreateTargetSet", rpcServer.createTargetSetRPC)
 	registerUnary[TargetSetRequest, EmptyResponse](mux, "AddTargetToSet", rpcServer.addTargetToSetRPC)
@@ -1050,6 +1052,34 @@ func (s *Server) AddTarget(req TargetRequest, resp *EmptyResponse) error {
 	return s.persistLocked()
 }
 
+func (s *Server) BindTarget(req TargetRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session := s.attachment(req.Operation, req.Chain)
+	if err := session.BindTarget(req.Target); err != nil {
+		return err
+	}
+	state := session.Snapshot()
+	if state.ActiveChain != "" {
+		s.publish(state.ActiveOperation, state.ActiveChain, operatorlog.Info("target", "target bound", operatorlog.Field{Name: "target", Value: req.Target}))
+	}
+	return s.persistLocked()
+}
+
+func (s *Server) UnbindTarget(req TargetRequest, resp *EmptyResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session := s.attachment(req.Operation, req.Chain)
+	if err := session.UnbindTarget(req.Target); err != nil {
+		return err
+	}
+	state := session.Snapshot()
+	if state.ActiveChain != "" {
+		s.publish(state.ActiveOperation, state.ActiveChain, operatorlog.Info("target", "target unbound", operatorlog.Field{Name: "target", Value: req.Target}))
+	}
+	return s.persistLocked()
+}
+
 func (s *Server) ClearTargets(req ChainRequest, resp *EmptyResponse) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1269,6 +1299,18 @@ func (s *Server) deleteChainRPC(_ context.Context, req ChainRequest) (EmptyRespo
 func (s *Server) addTargetRPC(_ context.Context, req TargetRequest) (EmptyResponse, error) {
 	var resp EmptyResponse
 	err := s.AddTarget(req, &resp)
+	return resp, err
+}
+
+func (s *Server) bindTargetRPC(_ context.Context, req TargetRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.BindTarget(req, &resp)
+	return resp, err
+}
+
+func (s *Server) unbindTargetRPC(_ context.Context, req TargetRequest) (EmptyResponse, error) {
+	var resp EmptyResponse
+	err := s.UnbindTarget(req, &resp)
 	return resp, err
 }
 
@@ -1830,6 +1872,16 @@ func (s *SessionClient) DeleteChain(chain string) error {
 
 func (s *SessionClient) AddTarget(target string) error {
 	_, err := invoke[TargetRequest, EmptyResponse](s.client, s.ctx, "AddTarget", TargetRequest{Operation: s.operation(), Target: target, Chain: s.active()})
+	return err
+}
+
+func (s *SessionClient) BindTarget(target string) error {
+	_, err := invoke[TargetRequest, EmptyResponse](s.client, s.ctx, "BindTarget", TargetRequest{Operation: s.operation(), Target: target, Chain: s.active()})
+	return err
+}
+
+func (s *SessionClient) UnbindTarget(target string) error {
+	_, err := invoke[TargetRequest, EmptyResponse](s.client, s.ctx, "UnbindTarget", TargetRequest{Operation: s.operation(), Target: target, Chain: s.active()})
 	return err
 }
 

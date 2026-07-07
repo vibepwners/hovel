@@ -44,18 +44,20 @@ type TargetSet struct {
 }
 
 type State struct {
-	ActiveOperation string
-	Operation       string
-	ActiveChain     string
-	Chain           string
-	Targets         []string
-	Steps           []Step
-	Config          map[string]string
-	TargetConfigs   map[string]map[string]string
-	TargetSets      []TargetSet
-	LogTopic        string
-	Chains          []Chain
-	Operations      []Operation
+	ActiveOperation  string
+	Operation        string
+	ActiveChain      string
+	Chain            string
+	OperationTargets []string
+	ChainTargets     []string
+	Targets          []string
+	Steps            []Step
+	Config           map[string]string
+	TargetConfigs    map[string]map[string]string
+	TargetSets       []TargetSet
+	LogTopic         string
+	Chains           []Chain
+	Operations       []Operation
 }
 
 type PersistedState struct {
@@ -227,6 +229,30 @@ func (s *Session) ClearTargets() {
 		return
 	}
 	s.chainStore().clearTargets(operation, activeChain)
+}
+
+func (s *Session) BindTarget(target string) error {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return errors.New("target is required")
+	}
+	operation, activeChain := s.activeRef()
+	if activeChain == "" {
+		return errors.New("active chain is required")
+	}
+	return s.chainStore().bindTarget(operation, activeChain, target)
+}
+
+func (s *Session) UnbindTarget(target string) error {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return errors.New("target is required")
+	}
+	operation, activeChain := s.activeRef()
+	if activeChain == "" {
+		return errors.New("active chain is required")
+	}
+	return s.chainStore().unbindTarget(operation, activeChain, target)
 }
 
 func (s *Session) CreateTargetSet(name string) error {
@@ -491,19 +517,9 @@ func (s *Store) deleteChain(operationName, chainName string) error {
 func (s *Store) addTarget(operationName, chainName, target string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	operation := s.ensureOperation(operationName)
-	if !hasString(operation.Targets, target) {
-		if operation.TargetConfigs == nil {
-			operation.TargetConfigs = map[string]map[string]string{}
-		}
-		operation.TargetConfigs[target] = map[string]string{}
-		operation.Targets = append(operation.Targets, target)
-	}
+	s.addOperationTarget(operationName, target)
 	if chainName != "" {
-		chain := s.ensureChain(operationName, chainName)
-		chain.Logs = append(chain.Logs, operatorlog.Info("target", "target added",
-			operatorlog.Field{Name: "target", Value: target},
-		))
+		s.bindTargetLocked(operationName, chainName, target, "target added")
 	}
 	return nil
 }
@@ -512,13 +528,44 @@ func (s *Store) clearTargets(operationName, chainName string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	operation := s.ensureOperation(operationName)
+	if chainName != "" {
+		chain := s.ensureChain(operationName, chainName)
+		chain.Targets = nil
+		chain.TargetConfigs = map[string]map[string]string{}
+		chain.Logs = append(chain.Logs, operatorlog.Info("target", "targets cleared"))
+		return
+	}
 	operation.Targets = nil
 	operation.TargetConfigs = map[string]map[string]string{}
 	operation.TargetSets = nil
-	if chainName != "" {
-		chain := s.ensureChain(operationName, chainName)
-		chain.Logs = append(chain.Logs, operatorlog.Info("target", "targets cleared"))
+	for _, chain := range operation.chains {
+		chain.Targets = nil
+		chain.TargetConfigs = map[string]map[string]string{}
 	}
+}
+
+func (s *Store) bindTarget(operationName, chainName, target string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.addOperationTarget(operationName, target)
+	s.bindTargetLocked(operationName, chainName, target, "target bound")
+	return nil
+}
+
+func (s *Store) unbindTarget(operationName, chainName, target string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	operation := s.ensureOperation(operationName)
+	if !hasString(operation.Targets, target) {
+		return errors.New("target does not exist")
+	}
+	chain := s.ensureChain(operationName, chainName)
+	chain.Targets = removeString(chain.Targets, target)
+	chain.TargetConfigs = targetConfigsForTargets(chain.Targets, chain.TargetConfigs)
+	chain.Logs = append(chain.Logs, operatorlog.Info("target", "target unbound",
+		operatorlog.Field{Name: "target", Value: target},
+	))
+	return nil
 }
 
 func (s *Store) createTargetSet(operationName, chainName, name string) error {
@@ -683,17 +730,21 @@ func (s *Store) snapshot(operationName, activeChain string) State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	operation := s.ensureOperation(operationName)
+	operationTargets := append([]string(nil), operation.Targets...)
 	state := State{
-		ActiveOperation: operation.Name,
-		Operation:       operation.Name,
-		ActiveChain:     activeChain,
-		Chain:           activeChain,
-		Targets:         append([]string(nil), operation.Targets...),
-		TargetConfigs:   cloneTargetConfigs(operation.TargetConfigs),
-		TargetSets:      cloneTargetSets(operation.TargetSets),
+		ActiveOperation:  operation.Name,
+		Operation:        operation.Name,
+		ActiveChain:      activeChain,
+		Chain:            activeChain,
+		OperationTargets: operationTargets,
+		Targets:          append([]string(nil), operationTargets...),
+		TargetConfigs:    cloneTargetConfigs(operation.TargetConfigs),
+		TargetSets:       cloneTargetSets(operation.TargetSets),
 	}
 	if activeChain != "" {
 		if chain, ok := operation.chains[activeChain]; ok {
+			state.ChainTargets = append([]string(nil), chain.Targets...)
+			state.Targets = append([]string(nil), chain.Targets...)
 			state.Steps = cloneSteps(chain.Steps)
 			state.Config = cloneStringMap(chain.Config)
 			state.LogTopic = chain.LogTopic
@@ -796,7 +847,6 @@ func (s *Store) importOperation(persistedOperation PersistedOperation) {
 		}
 		operation.chains[chainName] = chain
 		operation.importLegacyTargets(chain.Targets, chain.TargetConfigs)
-		chain.Targets = nil
 		chain.TargetConfigs = map[string]map[string]string{}
 	}
 }
@@ -852,6 +902,30 @@ func (s *Store) ensureChain(operationName, chainName string) *Chain {
 	}
 	operation.chains[chainName] = chain
 	return chain
+}
+
+func (s *Store) addOperationTarget(operationName, target string) *operationState {
+	operation := s.ensureOperation(operationName)
+	if operation.TargetConfigs == nil {
+		operation.TargetConfigs = map[string]map[string]string{}
+	}
+	if !hasString(operation.Targets, target) {
+		operation.Targets = append(operation.Targets, target)
+	}
+	if operation.TargetConfigs[target] == nil {
+		operation.TargetConfigs[target] = map[string]string{}
+	}
+	return operation
+}
+
+func (s *Store) bindTargetLocked(operationName, chainName, target, message string) {
+	chain := s.ensureChain(operationName, chainName)
+	if !hasString(chain.Targets, target) {
+		chain.Targets = append(chain.Targets, target)
+	}
+	chain.Logs = append(chain.Logs, operatorlog.Info("target", message,
+		operatorlog.Field{Name: "target", Value: target},
+	))
 }
 
 func (s *Store) snapshotOperations() []Operation {
@@ -943,6 +1017,16 @@ func cloneEntries(entries []operatorlog.Entry) []operatorlog.Entry {
 	for _, entry := range entries {
 		entry.Fields = append([]operatorlog.Field(nil), entry.Fields...)
 		out = append(out, entry)
+	}
+	return out
+}
+
+func targetConfigsForTargets(targets []string, configs map[string]map[string]string) map[string]map[string]string {
+	out := make(map[string]map[string]string, len(targets))
+	for _, target := range targets {
+		if config, ok := configs[target]; ok {
+			out[target] = cloneStringMap(config)
+		}
 	}
 	return out
 }

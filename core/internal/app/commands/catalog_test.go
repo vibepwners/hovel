@@ -81,15 +81,22 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"payloads", "register-squatter"},
 		{"chain", "use"},
 		{"target", "add"},
+		{"target", "bind"},
 		{"target", "clear"},
 		{"target", "config", "list"},
 		{"target", "config", "set"},
 		{"target", "config", "unset"},
+		{"target", "group", "add"},
+		{"target", "group", "create"},
+		{"target", "group", "inspect"},
+		{"target", "group", "list"},
+		{"target", "group", "remove"},
 		{"target", "set", "add"},
 		{"target", "set", "create"},
 		{"target", "set", "inspect"},
 		{"target", "set", "list"},
 		{"target", "set", "remove"},
+		{"target", "unbind"},
 		{"confirm"},
 		{"run"},
 		{"throw"},
@@ -114,7 +121,10 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"payload", "capabilities"},
 		{"run"},
 		{"targets", "add"},
+		{"targets", "bind"},
+		{"targets", "group", "create"},
 		{"targets", "set", "create"},
+		{"targets", "unbind"},
 		{"throws", "list"},
 	} {
 		if _, ok := registry.Find(alias...); !ok {
@@ -140,7 +150,7 @@ func TestThrowDefinitionRequiresDaemonAndCentralOptions(t *testing.T) {
 	if got, want := definition.Positionals, []Positional{{Name: "file", Help: "Configured chain YAML file", Required: false}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("positionals = %#v, want %#v", got, want)
 	}
-	for _, name := range []string{"workspace", "chain", "target", "target-set", "now", "json", "no-color", "verbose", "debug"} {
+	for _, name := range []string{"workspace", "chain", "target", "target-set", "target-group", "now", "json", "no-color", "verbose", "debug"} {
 		if !hasOption(definition, name) {
 			t.Fatalf("throw definition missing %q option", name)
 		}
@@ -1823,6 +1833,27 @@ func TestThrowTargetOverrideScopesTargetConfigs(t *testing.T) {
 	}
 }
 
+func TestThrowActiveChainDoesNotFallBackToOperationTargets(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://ops"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.AddModule("mock-exploit@v0.0.0-example"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{})
+	if err == nil || !strings.Contains(err.Error(), "target is required") {
+		t.Fatalf("throw error = %v, want target required without operation fallback", err)
+	}
+}
+
 func TestThrowInputsSquatterTypeDerivesMS17010InstallConfig(t *testing.T) {
 	session := operatorsession.New()
 	if err := session.UseOperation("op1"); err != nil {
@@ -2416,6 +2447,16 @@ func TestThrowTargetSetFiltersIncompatibleTargets(t *testing.T) {
 	if !strings.Contains(throw.SkippedTargets[0].Reason, "target.port") {
 		t.Fatalf("skip reason = %q, want missing target.port", throw.SkippedTargets[0].Reason)
 	}
+
+	groupThrow, err := throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{
+		Options: map[string]string{"target-group": "mixed"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := groupThrow.Targets, []string{"mock://ready"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("target-group targets = %#v, want %#v", got, want)
+	}
 }
 
 func TestThrowExplicitTargetFailsWhenIncompatible(t *testing.T) {
@@ -2504,6 +2545,7 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	targetSetCreateDefinition, _ := registry.Find("target", "set", "create")
 	targetSetAddDefinition, _ := registry.Find("target", "set", "add")
 	targetSetInspectDefinition, _ := registry.Find("target", "set", "inspect")
+	targetGroupListDefinition, _ := registry.Find("target", "group", "list")
 	listDefinition, _ := registry.Find("chain", "list")
 	inspectDefinition, _ := registry.Find("chain", "inspect")
 	renameDefinition, _ := registry.Find("chain", "rename")
@@ -2542,8 +2584,11 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	if state.ActiveChain != "beta" {
 		t.Fatalf("active chain = %q, want beta", state.ActiveChain)
 	}
-	if got, want := state.Targets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("targets = %#v, want %#v", got, want)
+	if got, want := state.OperationTargets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("operation targets = %#v, want %#v", got, want)
+	}
+	if got, want := state.Targets, []string{"mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("chain targets = %#v, want %#v", got, want)
 	}
 	if _, err := targetSetCreateDefinition.Execute(context.Background(), Invocation{
 		Positionals: map[string]string{"name": "xp-lab"},
@@ -2570,6 +2615,13 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 		if !strings.Contains(targetSetResult.Human, want) {
 			t.Fatalf("target set inspect missing %q:\n%s", want, targetSetResult.Human)
 		}
+	}
+	targetGroupResult, err := targetGroupListDefinition.Execute(context.Background(), Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(targetGroupResult.Human, "xp-lab targets=2") {
+		t.Fatalf("target group list = %q", targetGroupResult.Human)
 	}
 
 	listResult, err := listDefinition.Execute(context.Background(), Invocation{})
@@ -2602,8 +2654,11 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	if state.ActiveChain != "renamed" {
 		t.Fatalf("active chain = %q, want renamed", state.ActiveChain)
 	}
-	if got, want := state.Targets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("renamed target = %#v", state.Targets)
+	if got, want := state.OperationTargets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("renamed operation targets = %#v", state.OperationTargets)
+	}
+	if got, want := state.Targets, []string{"mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("renamed chain targets = %#v", state.Targets)
 	}
 	if state.LogTopic != "operation/default/chain/renamed/logs" {
 		t.Fatalf("renamed log topic = %q", state.LogTopic)
@@ -2616,6 +2671,147 @@ func TestChainCRUDAndTargetHandlersUpdateSession(t *testing.T) {
 	}
 	if session.Snapshot().ActiveChain != "" {
 		t.Fatal("deleting active chain should clear active chain")
+	}
+}
+
+func TestTargetClearRequiresConfirmationInOperationContext(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://ops"); err != nil {
+		t.Fatal(err)
+	}
+	chainSession := session.Attachment("redteam-lab", "alpha")
+	if err := chainSession.AddTarget("mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
+		Session:    session,
+	})
+	clearDefinition, _ := registry.Find("target", "clear")
+
+	_, err := clearDefinition.Execute(context.Background(), Invocation{NonInteractive: true})
+	if err == nil || !strings.Contains(err.Error(), "requires confirmation") {
+		t.Fatalf("non-interactive clear error = %v, want confirmation requirement", err)
+	}
+	denied := &fakeInput{answer: "no"}
+	_, err = clearDefinition.Execute(context.Background(), Invocation{Input: denied})
+	if err == nil || !strings.Contains(err.Error(), "canceled") {
+		t.Fatalf("denied clear error = %v, want canceled", err)
+	}
+	if denied.prompt.RequiredLiteral != "clear" || denied.prompt.Action != "clear operation targets" {
+		t.Fatalf("clear prompt = %#v", denied.prompt)
+	}
+	if got, want := session.Snapshot().OperationTargets, []string{"mock://ops", "mock://alpha"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("operation targets after canceled clear = %#v, want %#v", got, want)
+	}
+
+	accepted := &fakeInput{answer: "clear"}
+	if _, err := clearDefinition.Execute(context.Background(), Invocation{Input: accepted}); err != nil {
+		t.Fatal(err)
+	}
+	state := session.Snapshot()
+	if len(state.OperationTargets) != 0 || len(state.TargetConfigs) != 0 {
+		t.Fatalf("operation targets/config after clear = %#v / %#v", state.OperationTargets, state.TargetConfigs)
+	}
+	for _, chain := range state.Chains {
+		if len(chain.Targets) != 0 {
+			t.Fatalf("chain %s targets after operation clear = %#v", chain.Name, chain.Targets)
+		}
+	}
+}
+
+func TestTargetClearInChainContextClearsOnlyChainBindings(t *testing.T) {
+	session := operatorsession.New()
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("beta"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://beta"); err != nil {
+		t.Fatal(err)
+	}
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
+		Session:    session,
+	})
+	clearDefinition, _ := registry.Find("target", "clear")
+
+	if _, err := clearDefinition.Execute(context.Background(), Invocation{NonInteractive: true}); err != nil {
+		t.Fatal(err)
+	}
+	state := session.Snapshot()
+	if len(state.Targets) != 0 {
+		t.Fatalf("active beta targets = %#v, want none", state.Targets)
+	}
+	if got, want := state.OperationTargets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("operation targets = %#v, want %#v", got, want)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := session.Snapshot().Targets, []string{"mock://alpha"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("alpha targets = %#v, want %#v", got, want)
+	}
+}
+
+func TestTargetBindAndUnbindHandlersUpdateOnlyChainAssociation(t *testing.T) {
+	session := operatorsession.New()
+	registry := HovelRegistry(Runtime{
+		Workspaces: fakeWorkspaceService{},
+		Daemons:    fakeDaemonService{},
+		Runs:       fakeRunClientFactory{},
+		Modules:    exampleCatalog(),
+		Session:    session,
+	})
+	opUseDefinition, _ := registry.Find("op", "use")
+	chainUseDefinition, _ := registry.Find("chain", "use")
+	targetAddDefinition, _ := registry.Find("target", "add")
+	targetBindDefinition, _ := registry.Find("target", "bind")
+	targetUnbindDefinition, _ := registry.Find("target", "unbind")
+
+	if _, err := opUseDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"operation": "redteam-lab"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := targetAddDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"target": "mock://ops"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chainUseDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"chain": "alpha"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := session.Snapshot().Targets; len(got) != 0 {
+		t.Fatalf("chain targets before bind = %#v, want none", got)
+	}
+	if _, err := targetBindDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"target": "mock://ops"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := session.Snapshot().Targets, []string{"mock://ops"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("chain targets after bind = %#v, want %#v", got, want)
+	}
+	if _, err := targetUnbindDefinition.Execute(context.Background(), Invocation{Positionals: map[string]string{"target": "mock://ops"}}); err != nil {
+		t.Fatal(err)
+	}
+	state := session.Snapshot()
+	if len(state.Targets) != 0 {
+		t.Fatalf("chain targets after unbind = %#v, want none", state.Targets)
+	}
+	if got, want := state.OperationTargets, []string{"mock://ops"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("operation targets after unbind = %#v, want %#v", got, want)
 	}
 }
 
@@ -4310,6 +4506,15 @@ func TestChainValidateSquatterBindUsesBridgeConfig(t *testing.T) {
 
 func TestChainSaveWritesConfiguredAndTemplateFiles(t *testing.T) {
 	session := operatorsession.New()
+	if err := session.UseOperation("op1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://ops"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SetTargetConfig("mock://ops", "target.host", "ops.local"); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.UseChain("alpha"); err != nil {
 		t.Fatal(err)
 	}
@@ -4360,6 +4565,9 @@ func TestChainSaveWritesConfiguredAndTemplateFiles(t *testing.T) {
 	}
 	if got, want := configured.Spec.Targets, []ChainFileTarget{{ID: "mock://target", Config: map[string]string{"target.host": "router-01"}}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("targets = %#v, want %#v", got, want)
+	}
+	if got, want := configured.Spec.TargetConfigs, map[string]map[string]string{"mock://target": {"target.host": "router-01"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("target configs = %#v, want %#v", got, want)
 	}
 
 	if _, err := saveDefinition.Execute(context.Background(), Invocation{

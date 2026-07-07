@@ -431,15 +431,21 @@ func TestSessionClientsKeepIndependentOperationChainAttachments(t *testing.T) {
 	if alphaState.ActiveOperation != "redteam-lab" || alphaState.ActiveChain != "alpha" {
 		t.Fatalf("alpha attachment = %s/%s, want redteam-lab/alpha", alphaState.ActiveOperation, alphaState.ActiveChain)
 	}
-	if got, want := alphaState.Targets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("alpha targets = %#v, want %#v", got, want)
+	if got, want := alphaState.OperationTargets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("alpha operation targets = %#v, want %#v", got, want)
+	}
+	if got, want := alphaState.Targets, []string{"mock://alpha"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("alpha chain targets = %#v, want %#v", got, want)
 	}
 	betaState := beta.Snapshot()
 	if betaState.ActiveOperation != "redteam-lab" || betaState.ActiveChain != "beta" {
 		t.Fatalf("beta attachment = %s/%s, want redteam-lab/beta", betaState.ActiveOperation, betaState.ActiveChain)
 	}
-	if got, want := betaState.Targets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("beta targets = %#v, want %#v", got, want)
+	if got, want := betaState.OperationTargets, []string{"mock://alpha", "mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("beta operation targets = %#v, want %#v", got, want)
+	}
+	if got, want := betaState.Targets, []string{"mock://beta"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("beta chain targets = %#v, want %#v", got, want)
 	}
 
 	alphaLogs, err := clientA.PollOperationChainLogs(context.Background(), "redteam-lab", "alpha", 0)
@@ -450,6 +456,51 @@ func TestSessionClientsKeepIndependentOperationChainAttachments(t *testing.T) {
 		if log.Operation != "redteam-lab" || log.Chain != "alpha" {
 			t.Fatalf("alpha poll returned wrong topic: %#v", log)
 		}
+	}
+}
+
+func TestSessionClientBindsAndUnbindsOperationTarget(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		mockexploit.Runner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-1", "event-1", "event-2"}},
+		fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs, WithSession(operatorsession.New()), WithLogBroker(NewLogBroker()))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	session := NewSessionClient(context.Background(), client)
+	if err := session.UseOperation("redteam-lab"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.AddTarget("mock://ops"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.UseChain("alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.BindTarget("mock://ops"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := session.Snapshot().Targets, []string{"mock://ops"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("bound chain targets = %#v, want %#v", got, want)
+	}
+
+	if err := session.UnbindTarget("mock://ops"); err != nil {
+		t.Fatal(err)
+	}
+	state := session.Snapshot()
+	if len(state.Targets) != 0 {
+		t.Fatalf("chain targets after unbind = %#v, want none", state.Targets)
+	}
+	if got, want := state.OperationTargets, []string{"mock://ops"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("operation targets after unbind = %#v, want %#v", got, want)
 	}
 }
 
@@ -522,8 +573,8 @@ func TestSessionMutationsPersistSnapshots(t *testing.T) {
 	if !reflect.DeepEqual(gotOperation.TargetSets, []operatorsession.TargetSet{{Name: "lab", Targets: []string{"mock://alpha"}}}) {
 		t.Fatalf("persisted operation target sets = %#v", gotOperation.TargetSets)
 	}
-	if len(got.Targets) != 0 {
-		t.Fatalf("persisted chain targets = %#v, want none", got.Targets)
+	if !reflect.DeepEqual(got.Targets, []string{"mock://alpha"}) {
+		t.Fatalf("persisted chain targets = %#v, want alpha", got.Targets)
 	}
 	if !reflect.DeepEqual(got.Steps, []operatorsession.Step{{ID: "step-1", ModuleID: "mock-survey"}}) {
 		t.Fatalf("persisted steps = %#v", got.Steps)

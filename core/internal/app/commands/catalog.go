@@ -180,6 +180,8 @@ type OperatorSession interface {
 	AddModule(string) (operatorsession.Step, error)
 	AddStep(string, string) (operatorsession.Step, error)
 	AddTarget(string) error
+	BindTarget(string) error
+	UnbindTarget(string) error
 	ClearTargets()
 	CreateTargetSet(string) error
 	AddTargetToSet(string, string) error
@@ -817,7 +819,28 @@ func HovelRegistry(runtime Runtime) Registry {
 			Path:    []string{"target", "clear"},
 			Aliases: [][]string{{"targets", "clear"}},
 			Summary: "Clear targets from the operator session.",
+			Options: []Option{
+				boolOption("yes", "y", "Confirm operation-wide target deletion"),
+			},
 			Handler: targetsClearHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "bind"},
+			Aliases: [][]string{{"targets", "bind"}},
+			Summary: "Associate an operation target with the active chain.",
+			Positionals: []Positional{
+				{Name: "target", Help: "Target identifier", Required: true},
+			},
+			Handler: targetsBindHandler(runtime),
+		},
+		Definition{
+			Path:    []string{"target", "unbind"},
+			Aliases: [][]string{{"targets", "unbind"}},
+			Summary: "Remove a target association from the active chain.",
+			Positionals: []Positional{
+				{Name: "target", Help: "Target identifier", Required: true},
+			},
+			Handler: targetsUnbindHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"target", "config", "set"},
@@ -851,7 +874,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"target", "set", "create"},
-			Aliases: [][]string{{"targets", "set", "create"}},
+			Aliases: [][]string{{"targets", "set", "create"}, {"target", "group", "create"}, {"targets", "group", "create"}},
 			Summary: "Create an operation target set.",
 			Positionals: []Positional{
 				{Name: "name", Help: "Target set name", Required: true},
@@ -860,7 +883,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"target", "set", "add"},
-			Aliases: [][]string{{"targets", "set", "add"}},
+			Aliases: [][]string{{"targets", "set", "add"}, {"target", "group", "add"}, {"targets", "group", "add"}},
 			Summary: "Add an operation target to a target set.",
 			Positionals: []Positional{
 				{Name: "name", Help: "Target set name", Required: true},
@@ -870,7 +893,7 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"target", "set", "remove"},
-			Aliases: [][]string{{"targets", "set", "remove"}},
+			Aliases: [][]string{{"targets", "set", "remove"}, {"target", "group", "remove"}, {"targets", "group", "remove"}},
 			Summary: "Remove an operation target from a target set.",
 			Positionals: []Positional{
 				{Name: "name", Help: "Target set name", Required: true},
@@ -880,13 +903,13 @@ func HovelRegistry(runtime Runtime) Registry {
 		},
 		Definition{
 			Path:    []string{"target", "set", "list"},
-			Aliases: [][]string{{"targets", "set", "list"}},
+			Aliases: [][]string{{"targets", "set", "list"}, {"target", "group", "list"}, {"targets", "group", "list"}},
 			Summary: "List operation target sets.",
 			Handler: targetSetListHandler(runtime),
 		},
 		Definition{
 			Path:    []string{"target", "set", "inspect"},
-			Aliases: [][]string{{"targets", "set", "inspect"}},
+			Aliases: [][]string{{"targets", "set", "inspect"}, {"target", "group", "inspect"}, {"targets", "group", "inspect"}},
 			Summary: "Inspect an operation target set.",
 			Positionals: []Positional{
 				{Name: "name", Help: "Target set name", Required: true},
@@ -1241,6 +1264,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
 				stringOption("target-set", "", "Target set name"),
+				stringOption("target-group", "", "Target group name"),
 				boolOption("now", "", "Bypass typed confirmation prompt"),
 				boolOption("allow-dangerous", "", "Permit modules tagged dangerous"),
 				boolOption("json", "j", "Emit JSON output"),
@@ -1258,6 +1282,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
 				stringOption("target-set", "", "Target set name"),
+				stringOption("target-group", "", "Target group name"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: throwPlanHandler(runtime),
@@ -1273,6 +1298,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
 				stringOption("target-set", "", "Target set name"),
+				stringOption("target-group", "", "Target group name"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: confirmHandler(runtime),
@@ -1288,6 +1314,7 @@ func HovelRegistry(runtime Runtime) Registry {
 				stringOption("chain", "c", "Chain name or module reference"),
 				stringOption("target", "t", "Target identifier"),
 				stringOption("target-set", "", "Target set name"),
+				stringOption("target-group", "", "Target group name"),
 				boolOption("json", "j", "Emit JSON output"),
 			},
 			Handler: reviewHandler(runtime),
@@ -1638,7 +1665,7 @@ func operationInspectHandler(runtime Runtime) Handler {
 		}
 		state := runtime.Session.Snapshot()
 		lines := []string{
-			fmt.Sprintf("Operation %s chains=%d targets=%d target_sets=%d active_chain=%s", state.ActiveOperation, len(state.Chains), len(state.Targets), len(state.TargetSets), displayValue(state.ActiveChain, "none")),
+			fmt.Sprintf("Operation %s chains=%d targets=%d target_sets=%d active_chain=%s", state.ActiveOperation, len(state.Chains), len(state.OperationTargets), len(state.TargetSets), displayValue(state.ActiveChain, "none")),
 		}
 		for _, chain := range state.Chains {
 			prefix := " "
@@ -2164,11 +2191,82 @@ func targetsClearHandler(runtime Runtime) Handler {
 		if runtime.Session == nil {
 			return Result{}, operatorSessionRequiredError("target clear")
 		}
+		state := runtime.Session.Snapshot()
+		if state.ActiveChain == "" && !invocation.Flag("yes") {
+			if invocation.NonInteractive || invocation.Input == nil {
+				return Result{}, fmt.Errorf("operation target clear requires confirmation; rerun with --yes to delete operation targets, target config, target groups, and chain target bindings")
+			}
+			prompt := targetClearConfirmationPrompt(state)
+			answer, err := invocation.Input.Confirm(ctx, prompt)
+			if err != nil {
+				return Result{}, err
+			}
+			if !answer.Confirmed(prompt) {
+				return Result{}, fmt.Errorf("operation target clear canceled")
+			}
+		}
 		runtime.Session.ClearTargets()
 		if feedbackPublished(runtime.Session) {
 			return Result{}, nil
 		}
-		return Result{Human: "Targets cleared"}, nil
+		if state.ActiveChain != "" {
+			return Result{Human: fmt.Sprintf("Chain targets cleared: %s", state.ActiveChain)}, nil
+		}
+		return Result{Human: fmt.Sprintf("Operation targets cleared: %s", state.ActiveOperation)}, nil
+	}
+}
+
+func targetClearConfirmationPrompt(state operatorsession.State) ConfirmationPrompt {
+	return ConfirmationPrompt{
+		Title:           "TARGET CLEAR",
+		Action:          "clear operation targets",
+		RequiredLiteral: "clear",
+		Plan: ThrowPlanRecord{
+			ID: "operation/" + state.ActiveOperation + "/targets",
+		},
+		Fields: []ConfirmationField{
+			{Label: "operation", Value: displayValue(state.ActiveOperation, operatorsession.DefaultOperation)},
+			{Label: "scope", Value: "operation inventory, target config, target groups, and chain bindings"},
+			{Label: "targets", Value: strings.Join(state.OperationTargets, ", ")},
+		},
+	}
+}
+
+func targetsBindHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target bind")
+		}
+		target := invocation.Positional("target")
+		if err := runtime.Session.BindTarget(target); err != nil {
+			return Result{}, withActiveChainHelp(err)
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
+		return Result{Human: fmt.Sprintf("Target bound: %s", target)}, nil
+	}
+}
+
+func targetsUnbindHandler(runtime Runtime) Handler {
+	return func(ctx context.Context, invocation Invocation) (Result, error) {
+		if err := ctx.Err(); err != nil {
+			return Result{}, err
+		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("target unbind")
+		}
+		target := invocation.Positional("target")
+		if err := runtime.Session.UnbindTarget(target); err != nil {
+			return Result{}, withActiveChainHelp(err)
+		}
+		if feedbackPublished(runtime.Session) {
+			return Result{}, nil
+		}
+		return Result{Human: fmt.Sprintf("Target unbound: %s", target)}, nil
 	}
 }
 
@@ -4553,9 +4651,12 @@ func throwInputsWithDB(ctx context.Context, runtime Runtime, invocation Invocati
 	operation := operatorsession.DefaultOperation
 	chain := invocation.Option("chain")
 	explicitTarget := invocation.Option("target")
-	targetSet := invocation.Option("target-set")
+	targetSet, err := targetSetNameFromInvocation(invocation)
+	if err != nil {
+		return throwExecution{}, err
+	}
 	if explicitTarget != "" && targetSet != "" {
-		return throwExecution{}, fmt.Errorf("--target and --target-set cannot be used together")
+		return throwExecution{}, fmt.Errorf("--target and --target-set/--target-group cannot be used together")
 	}
 	var targets []string
 	if explicitTarget != "" {
@@ -4598,7 +4699,7 @@ func throwInputsWithDB(ctx context.Context, runtime Runtime, invocation Invocati
 			}
 		}
 		targetConfigs = cloneTargetConfigs(state.TargetConfigs)
-		if explicitTarget != "" && hasString(state.Targets, explicitTarget) {
+		if explicitTarget != "" && hasString(state.OperationTargets, explicitTarget) {
 			validateTargetCompatibility = true
 		}
 		if len(targets) == 0 {
@@ -4610,7 +4711,7 @@ func throwInputsWithDB(ctx context.Context, runtime Runtime, invocation Invocati
 				targets = append(targets, set.Targets...)
 				validateTargetCompatibility = true
 			} else {
-				targets = append(targets, state.Targets...)
+				targets = append(targets, selected.Targets...)
 			}
 		}
 		if hasSquatterBind {
@@ -4623,7 +4724,7 @@ func throwInputsWithDB(ctx context.Context, runtime Runtime, invocation Invocati
 		return throwExecution{}, fmt.Errorf("chain is required; set one with chain use <chain> or pass --chain")
 	}
 	if len(targets) == 0 {
-		return throwExecution{}, fmt.Errorf("target is required; add one with target add <target> or pass --target")
+		return throwExecution{}, fmt.Errorf("target is required; add one with target add <target> while a chain is active, target bind <target>, pass --target, or pass --target-group")
 	}
 	if len(modules) == 0 {
 		if runtime.Session != nil {
@@ -4882,6 +4983,18 @@ func targetSetByName(sets []operatorsession.TargetSet, name string) (operatorses
 	return operatorsession.TargetSet{}, false
 }
 
+func targetSetNameFromInvocation(invocation Invocation) (string, error) {
+	targetSet := strings.TrimSpace(invocation.Option("target-set"))
+	targetGroup := strings.TrimSpace(invocation.Option("target-group"))
+	if targetSet != "" && targetGroup != "" && targetSet != targetGroup {
+		return "", fmt.Errorf("--target-set and --target-group cannot specify different names")
+	}
+	if targetGroup != "" {
+		return targetGroup, nil
+	}
+	return targetSet, nil
+}
+
 func hasString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -4953,6 +5066,7 @@ func selectedChainState(state operatorsession.State, chain string) (operatorsess
 	if chain == "" || chain == state.ActiveChain {
 		return operatorsession.Chain{
 			Name:     state.Chain,
+			Targets:  append([]string(nil), state.ChainTargets...),
 			Steps:    append([]operatorsession.Step(nil), state.Steps...),
 			Config:   cloneStringMap(state.Config),
 			LogTopic: state.LogTopic,
@@ -4988,7 +5102,7 @@ func chainFileFromState(state operatorsession.State, template bool) ChainFile {
 				Config: cloneStringMap(state.TargetConfigs[target]),
 			})
 		}
-		file.Spec.TargetConfigs = cloneTargetConfigs(state.TargetConfigs)
+		file.Spec.TargetConfigs = targetConfigsForTargets(state.Targets, state.TargetConfigs)
 	}
 	return file
 }

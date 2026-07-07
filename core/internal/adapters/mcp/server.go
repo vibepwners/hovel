@@ -438,6 +438,7 @@ type listEntitiesInput struct {
 type throwStartInput struct {
 	Operation      string `json:"operation,omitempty" jsonschema:"Optional operation name. Defaults to this MCP operator's current operation, then the daemon default."`
 	Chain          string `json:"chain,omitempty" jsonschema:"Optional chain name. Defaults to this MCP operator's active chain."`
+	TargetGroup    string `json:"targetGroup,omitempty" jsonschema:"Optional operation target group to use instead of the chain's bound targets."`
 	NowBypass      bool   `json:"nowBypass" jsonschema:"Must be true to bypass the typed local confirmation prompt; Hovel still records an auditable confirmation for the bypass."`
 	AllowDangerous bool   `json:"allowDangerous,omitempty" jsonschema:"Set true only when the caller explicitly authorized modules tagged dangerous."`
 }
@@ -445,6 +446,7 @@ type throwStartInput struct {
 type throwPlanInput struct {
 	Operation      string `json:"operation,omitempty" jsonschema:"Optional operation name. Defaults to current operation."`
 	Chain          string `json:"chain,omitempty" jsonschema:"Chain name. Defaults to current chain."`
+	TargetGroup    string `json:"targetGroup,omitempty" jsonschema:"Optional operation target group to use instead of the chain's bound targets."`
 	AllowDangerous bool   `json:"allowDangerous,omitempty" jsonschema:"Whether dangerous modules are explicitly authorized for this plan."`
 	NowBypass      bool   `json:"nowBypass,omitempty" jsonschema:"Whether the later start is expected to use an auditable now bypass."`
 }
@@ -508,7 +510,7 @@ type chainApplyInput struct {
 	Operation             string                       `json:"operation,omitempty" jsonschema:"Operation to create/select. Defaults to current operation, then default."`
 	Chain                 string                       `json:"chain" jsonschema:"Chain to create/select."`
 	Modules               []string                     `json:"modules,omitempty" jsonschema:"Module IDs to ensure in the chain, in order."`
-	Targets               []string                     `json:"targets,omitempty" jsonschema:"Targets to ensure in the operation."`
+	Targets               []string                     `json:"targets,omitempty" jsonschema:"Targets to ensure in the operation and bind to this chain."`
 	ChainConfig           map[string]string            `json:"chainConfig,omitempty" jsonschema:"Chain config values to set."`
 	TargetConfigs         map[string]map[string]string `json:"targetConfigs,omitempty" jsonschema:"Per-target config values to set."`
 	AllowDuplicateModules bool                         `json:"allowDuplicateModules,omitempty" jsonschema:"If false, modules already present in the chain are not added again."`
@@ -1178,8 +1180,8 @@ func chainValidationFromCommand(out commandRunOutput) *chainValidationOutput {
 	}
 }
 
-func (s *Server) throwPreflight(ctx context.Context, operation, chain string, input throwPlanInput, pending daemonrpc.PendingThrowResponse) throwPreflightOutput {
-	details := s.chainPreflightDetails(ctx, operation, chain)
+func (s *Server) throwPreflight(ctx context.Context, operation, chain string, input throwPlanInput, pending daemonrpc.PendingThrowResponse, targets []string) throwPreflightOutput {
+	details := s.chainPreflightDetails(ctx, operation, chain, targets)
 	out := throwPreflightOutput{
 		AllowDangerous:      input.AllowDangerous,
 		NowBypass:           input.NowBypass,
@@ -1222,7 +1224,7 @@ type chainPreflightDetails struct {
 	Warnings         []string
 }
 
-func (s *Server) chainPreflightDetails(ctx context.Context, operation, chain string) chainPreflightDetails {
+func (s *Server) chainPreflightDetails(ctx context.Context, operation, chain string, targets []string) chainPreflightDetails {
 	var out chainPreflightDetails
 	catalog, err := s.mcpCommandCatalog(ctx, []string{"module", "list"})
 	if err != nil {
@@ -1236,7 +1238,10 @@ func (s *Server) chainPreflightDetails(ctx context.Context, operation, chain str
 	}
 	operationState := activeOperation(snapshot, operation)
 	chainState := activeChain(snapshot, operation, chain)
-	out.Targets = chainPreflightTargets(operationState, chainState)
+	out.Targets = append([]string(nil), targets...)
+	if len(out.Targets) == 0 {
+		out.Targets = chainPreflightTargets(operationState, chainState)
+	}
 	dangerous := map[string]bool{}
 
 	for _, step := range chainState.Steps {
@@ -1276,9 +1281,6 @@ func (s *Server) chainPreflightDetails(ctx context.Context, operation, chain str
 
 func chainPreflightTargets(operation operatorsession.PersistedOperation, chain operatorsession.PersistedChain) []string {
 	targets := append([]string(nil), chain.Targets...)
-	if len(targets) == 0 {
-		targets = append(targets, operation.Targets...)
-	}
 	sort.Strings(targets)
 	return targets
 }
@@ -1864,8 +1866,9 @@ func (s *Server) applyTargetHostDefaults(ctx context.Context, operation, chain s
 		return err
 	}
 	operationState := activeOperation(snapshot, operation)
+	chainState := activeChain(snapshot, operation, chain)
 	targetConfigs := cloneTargetConfigs(operationState.TargetConfigs)
-	for _, target := range operationState.Targets {
+	for _, target := range chainPreflightTargets(operationState, chainState) {
 		if targetConfigs[target] == nil {
 			targetConfigs[target] = map[string]string{}
 		}
@@ -1912,7 +1915,7 @@ func (s *Server) applySchemaDefaults(ctx context.Context, operation, chain strin
 				chainConfig[req.Key] = req.Default
 			}
 		}
-		for _, target := range operationState.Targets {
+		for _, target := range chainPreflightTargets(operationState, chainState) {
 			if targetConfigs[target] == nil {
 				targetConfigs[target] = map[string]string{}
 			}
@@ -1941,7 +1944,11 @@ func (s *Server) throwPlan(ctx context.Context, _ *mcpsdk.CallToolRequest, input
 	if chain == "" {
 		return nil, throwPlanOutput{}, errors.New("chain is required; provide chain or attach hovel mcp with --chain")
 	}
-	out, err := s.requireCommandOK(ctx, commandRunInput{Operation: operation, Chain: chain, Args: []string{"throw", "plan", "--chain", chain, "--json"}})
+	args := []string{"throw", "plan", "--chain", chain, "--json"}
+	if targetGroup := strings.TrimSpace(input.TargetGroup); targetGroup != "" {
+		args = append(args, "--target-group", targetGroup)
+	}
+	out, err := s.requireCommandOK(ctx, commandRunInput{Operation: operation, Chain: chain, Args: args})
 	if err != nil {
 		return nil, throwPlanOutput{}, err
 	}
@@ -1975,7 +1982,7 @@ func (s *Server) throwPlan(ctx context.Context, _ *mcpsdk.CallToolRequest, input
 	if err != nil {
 		return nil, throwPlanOutput{}, err
 	}
-	preflight := s.throwPreflight(ctx, operation, chain, input, pending)
+	preflight := s.throwPreflight(ctx, operation, chain, input, pending, plan.Targets)
 	return nil, throwPlanOutput{Operation: operation, Chain: chain, Plan: plan, Pending: pending, Policy: policy, Preflight: preflight}, nil
 }
 
@@ -2329,6 +2336,9 @@ func commandModeThrowStarter(workspacePath string, client *daemonrpc.Client, cat
 
 		args := []string{"throw", "--workspace", workspacePath, "--chain", chain, "--now", "--json"}
 		args = injectConfigForMCPCommand(args, hovelConfig)
+		if targetGroup := strings.TrimSpace(input.TargetGroup); targetGroup != "" {
+			args = append(args, "--target-group", targetGroup)
+		}
 		if input.AllowDangerous {
 			args = append(args, "--allow-dangerous")
 		}
