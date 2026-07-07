@@ -71,11 +71,14 @@ SLICES: tuple[Slice, ...] = (
 )
 
 FULL_CHECKOUT_PATHS: tuple[str, ...] = (
+    "BUILD.bazel",
+    "OWNERS",
     "core",
     "docs",
     "modules",
     "repo-tools",
     "sdk",
+    "tools/bazel",
 )
 
 

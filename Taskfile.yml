@@ -317,6 +317,9 @@ tasks:
     cmds:
       - task: buildifier:check
       - task: policy:check
+      - task: bazel:test
+        vars:
+          CLI_ARGS: //:repo_quality_test
 
   test:report:
     desc: Run wired monorepo test suites and generate the static HTML test report.

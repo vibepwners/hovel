@@ -24,6 +24,13 @@ filegroup(
 )
 
 test_suite(
+    name = "repo_quality_test",
+    tests = [
+        "//repo-tools/tasks:checkout_test",
+    ],
+)
+
+test_suite(
     name = "sdk_test",
     tests = [
         "//sdk/go/hovel:hovel_test",
