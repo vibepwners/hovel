@@ -18,6 +18,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
+	"github.com/Vibe-Pwners/hovel/internal/version"
 )
 
 func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
@@ -741,6 +742,7 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 	defer closeDaemonManagerSession(t, session)
 
 	welcome := app.Welcome(session)
+	versionLabel := "version " + version.Version
 	for _, want := range []string{
 		`.-"""-.`,
 		"╭",
@@ -748,6 +750,7 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 		"━",
 		"┃",
 		"███████",
+		versionLabel,
 		"modules: 3",
 		"hoveld:",
 		"hoveld.sock",
@@ -768,6 +771,7 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 	for _, want := range []string{
 		"|   |,---..    ,,---.|",
 		"`   '`---'  `'  `---'`---'",
+		versionLabel,
 		"modules:",
 	} {
 		if !strings.Contains(narrow, want) {

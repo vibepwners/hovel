@@ -18,6 +18,7 @@ import (
 	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc"
+	"github.com/Vibe-Pwners/hovel/internal/version"
 	"github.com/akamensky/argparse"
 )
 
@@ -43,6 +44,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runMCP(ctx, args[1:], stdout, stderr)
 	case "daemon":
 		return runDaemon(ctx, args[1:], stdout, stderr)
+	case "version":
+		return runVersion(args[1:], stdout, stderr)
 	case "tui":
 		if len(args) > 1 && helpRequested(args[1:]) {
 			writeRootText(stdout, newTUIParser().Usage(nil))
@@ -209,6 +212,7 @@ func newRootParser() *argparse.Parser {
 		{"run", "Run one command against a daemon-backed operator session."},
 		{"cli", "Launch the interactive prompt shell. Alias for shell."},
 		{"mcp", "Launch the MCP agent interface."},
+		{"version", "Print the Hovel version."},
 	} {
 		parser.NewCommand(role.name, role.summary)
 	}
@@ -217,6 +221,20 @@ func newRootParser() *argparse.Parser {
 	daemon.NewCommand("status", "Inspect daemon status.")
 	parser.NewCommand("tui", "Launch the terminal UI.")
 	return parser
+}
+
+func runVersion(args []string, stdout, stderr io.Writer) int {
+	switch {
+	case len(args) == 0:
+		writeRootLine(stdout, "version "+version.Version)
+		return 0
+	case len(args) == 1 && (args[0] == "-h" || args[0] == "--help"):
+		writeRootText(stdout, "Usage: hovel version\n\nPrint the Hovel version.\n")
+		return 0
+	default:
+		writeRootText(stderr, "Usage: hovel version\n\nversion does not take arguments\n")
+		return 2
+	}
 }
 
 type runCommandArgs struct {
