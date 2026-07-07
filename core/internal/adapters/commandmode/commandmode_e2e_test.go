@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
@@ -27,7 +28,7 @@ func TestThrowMockExploitJSONCrossesDaemonRPC(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
-		errs <- daemonruntime.Serve(ctx, daemonruntime.Args{
+		errs <- daemonlocal.Serve(ctx, daemonruntime.Args{
 			WorkspacePath: workspacePath,
 			SocketPath:    socketPath,
 			PID:           12345,

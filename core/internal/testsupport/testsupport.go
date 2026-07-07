@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
@@ -185,7 +186,7 @@ func StartDaemon(t testing.TB, args daemonruntime.Args) DaemonFixture {
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
-		errs <- daemonruntime.Serve(ctx, args)
+		errs <- daemonlocal.Serve(ctx, args)
 	}()
 	fixture := DaemonFixture{
 		WorkspacePath: args.WorkspacePath,

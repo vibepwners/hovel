@@ -8,7 +8,7 @@ load(
 
 package(default_visibility = ["//visibility:public"])
 
-declare_release_module_binaries()
+declare_release_module_binaries(name = "release_module_binaries")
 
 py_binary(
     name = "stage_examples",
@@ -66,7 +66,6 @@ py_test(
         "$(rootpath //modules/picblobs:hovel-module.yaml)",
     ],
     data = [
-        "@hovel_core//cmd/hovel",
         "//modules/examples/go/mock_exploit",
         "//modules/examples/go/mock_exploit_session",
         "//modules/examples/go/mock_survey",
@@ -74,10 +73,11 @@ py_test(
         "//modules/examples/rust/mock_exploit:mock-exploit-rust",
         "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
         "//modules/examples/rust/mock_survey:mock-survey-rust",
-        "//modules/squatter/provider:squatter-provider",
-        "//modules/picblobs/provider:picblobs-provider",
         "//modules/picblobs:hovel-module.yaml",
+        "//modules/picblobs/provider:picblobs-provider",
+        "//modules/squatter/provider:squatter-provider",
         "//sdk/python:sources",
+        "@hovel_core//cmd/hovel",
     ],
     python_version = "PY3",
 )
@@ -109,7 +109,6 @@ py_test(
         "$(rootpath //modules/picblobs:hovel-module.yaml)",
     ],
     data = [
-        "@hovel_core//cmd/hovel",
         "//modules/examples/go/mock_exploit",
         "//modules/examples/go/mock_exploit_session",
         "//modules/examples/go/mock_survey",
@@ -117,10 +116,11 @@ py_test(
         "//modules/examples/rust/mock_exploit:mock-exploit-rust",
         "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
         "//modules/examples/rust/mock_survey:mock-survey-rust",
-        "//modules/squatter/provider:squatter-provider",
-        "//modules/picblobs/provider:picblobs-provider",
         "//modules/picblobs:hovel-module.yaml",
+        "//modules/picblobs/provider:picblobs-provider",
+        "//modules/squatter/provider:squatter-provider",
         "//sdk/python:sources",
+        "@hovel_core//cmd/hovel",
     ],
     python_version = "PY3",
 )

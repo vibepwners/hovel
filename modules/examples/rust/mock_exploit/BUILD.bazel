@@ -1,5 +1,5 @@
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
 load("@hovel_core//tools/windows_rust:flags.bzl", "windows_rust_compile_data", "windows_rustc_flags")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 

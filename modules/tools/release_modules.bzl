@@ -51,7 +51,12 @@ COMPILED_MODULES = [
 def release_module_target_name(module, host):
     return "{}_{}".format(module.key, host.key)
 
-def declare_release_module_binaries():
+def declare_release_module_binaries(name):
+    """Declares platform-specific binary staging targets for compiled modules.
+
+    Args:
+      name: Conventional macro name for BUILD-file tooling.
+    """
     for module in COMPILED_MODULES:
         for host in module.hosts:
             platform_binary(
@@ -63,6 +68,11 @@ def declare_release_module_binaries():
             )
 
 def release_module_stage_args():
+    """Returns stage_examples/package_examples arguments for compiled modules.
+
+    Returns:
+      A list of `--module=...` arguments using rootpath expansions.
+    """
     args = []
     for module in COMPILED_MODULES:
         for host in module.hosts:
@@ -72,6 +82,11 @@ def release_module_stage_args():
     return args
 
 def release_module_data():
+    """Returns data dependencies for all compiled module staging targets.
+
+    Returns:
+      A list of Bazel labels for every compiled module staging target.
+    """
     data = []
     for module in COMPILED_MODULES:
         for host in module.hosts:

@@ -3,7 +3,7 @@ load(":demo_defs.bzl", "STANDARD_DEMOS", "UI_COMPONENT_DEMOS", "demo_manifest", 
 
 package(default_visibility = ["//visibility:public"])
 
-vhs_demo_targets()
+vhs_demo_targets(name = "vhs_demo_targets")
 
 filegroup(
     name = "standard_gifs",
@@ -69,8 +69,9 @@ demo_manifest(
     name = "all_gif_manifest",
     outputs = (
         ["demo/out/" + name + ".gif" for name, _ in STANDARD_DEMOS] +
-        ["demo/out/" + name + ".gif" for name, _ in UI_COMPONENT_DEMOS] +
-        ["demo/out/mcp-agent-02-squatter-wine.gif"]
+        ["demo/out/" + name + ".gif" for name, _ in UI_COMPONENT_DEMOS] + [
+            "demo/out/mcp-agent-02-squatter-wine.gif",
+        ]
     ),
 )
 
@@ -87,10 +88,10 @@ py_test(
     ],
     data = [
         ":chains/mock-survey-exploit.chain.yaml",
-        "@hovel_core//cmd/hovel",
+        "//docs/tools/demo/mcpagent",
         "//modules/examples/go/mock_exploit_session",
         "//modules/examples/go/mock_survey",
-        "//docs/tools/demo/mcpagent",
+        "@hovel_core//cmd/hovel",
     ],
     main = "verify_standard_demos.py",
     python_version = "PY3",

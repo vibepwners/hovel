@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
@@ -17,21 +15,33 @@ import (
 )
 
 type ServeFunc func(context.Context, daemonruntime.Args) error
+type HealthCheck func(context.Context, string) bool
+type EndpointNetwork func(string) (string, bool)
 
-type Manager struct {
-	Daemons      services.DaemonService
-	Serve        ServeFunc
-	PollInterval time.Duration
-	Timeout      time.Duration
+type StatusStore interface {
+	services.DaemonStore
+	ClearDaemonStatus(context.Context, string) error
 }
 
-func New() Manager {
-	store := filesystem.NewWorkspaceStore()
+type Manager struct {
+	Daemons         services.DaemonService
+	Store           StatusStore
+	Serve           ServeFunc
+	SocketReachable HealthCheck
+	EndpointNetwork EndpointNetwork
+	PollInterval    time.Duration
+	Timeout         time.Duration
+}
+
+func New(store StatusStore, healthCheck HealthCheck, endpointNetwork EndpointNetwork, serve ServeFunc) Manager {
 	return Manager{
-		Daemons:      services.NewDaemonService(store),
-		Serve:        daemonruntime.Serve,
-		PollInterval: 10 * time.Millisecond,
-		Timeout:      2 * time.Second,
+		Daemons:         services.NewDaemonService(store),
+		Store:           store,
+		Serve:           serve,
+		SocketReachable: healthCheck,
+		EndpointNetwork: endpointNetwork,
+		PollInterval:    10 * time.Millisecond,
+		Timeout:         2 * time.Second,
 	}
 }
 
@@ -45,20 +55,23 @@ func (m Manager) EnsureWithModuleConfig(ctx context.Context, workspacePath, modu
 
 func (m Manager) EnsureWithConfig(ctx context.Context, workspacePath, moduleConfig, hovelConfig string) (*Session, error) {
 	m = m.withDefaults()
+	if err := m.validate(); err != nil {
+		return nil, err
+	}
 	workspacePath = workspace.ResolvePath(workspacePath)
 	status, err := m.Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
 	if err != nil {
 		return nil, err
 	}
 	if status.State == daemon.StateRunning {
-		status = normalizeStatus(status, workspacePath)
-		if socketReachable(ctx, status.Identity.SocketPath) {
+		status = m.normalizeStatus(status, workspacePath)
+		if m.socketReachable(ctx, status.Identity.SocketPath) {
 			if err := ensureSameHovelConfig(status.Identity.HovelConfig, hovelConfig); err != nil {
 				return nil, err
 			}
 			return &Session{status: status}, nil
 		}
-		logDaemonManagerError("clear stale daemon status", filesystem.NewWorkspaceStore().ClearDaemonStatus(context.Background(), workspacePath))
+		logDaemonManagerError("clear stale daemon status", m.Store.ClearDaemonStatus(context.Background(), workspacePath))
 		if status, ok := m.statusFromReachableSocket(ctx, workspacePath); ok {
 			if err := ensureSameHovelConfig(status.Identity.HovelConfig, hovelConfig); err != nil {
 				return nil, err
@@ -119,8 +132,8 @@ func normalizeConfigPath(path string) string {
 	return filepath.Clean(path)
 }
 
-func normalizeStatus(status daemon.Status, workspacePath string) daemon.Status {
-	if status.State != daemon.StateRunning || filepath.IsAbs(status.Identity.SocketPath) || isEndpointAddress(status.Identity.SocketPath) {
+func (m Manager) normalizeStatus(status daemon.Status, workspacePath string) daemon.Status {
+	if status.State != daemon.StateRunning || filepath.IsAbs(status.Identity.SocketPath) || m.isEndpointAddress(status.Identity.SocketPath) {
 		return status
 	}
 	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
@@ -137,14 +150,17 @@ func normalizeStatus(status daemon.Status, workspacePath string) daemon.Status {
 	return daemon.Running(identity)
 }
 
-func isEndpointAddress(value string) bool {
-	endpoint, err := daemonrpc.ParseEndpoint(value)
-	return err == nil && endpoint.Network == "tcp"
+func (m Manager) isEndpointAddress(value string) bool {
+	if m.EndpointNetwork == nil {
+		return false
+	}
+	network, ok := m.EndpointNetwork(value)
+	return ok && network == "tcp"
 }
 
 func (m Manager) statusFromReachableSocket(ctx context.Context, workspacePath string) (daemon.Status, bool) {
 	socketPath := filepath.Join(workspacePath, "hoveld.sock")
-	if !socketReachable(ctx, socketPath) {
+	if !m.socketReachable(ctx, socketPath) {
 		return daemon.Status{}, false
 	}
 	identity, err := daemon.NewIdentity(daemon.IdentityArgs{
@@ -160,19 +176,16 @@ func (m Manager) statusFromReachableSocket(ctx context.Context, workspacePath st
 	return daemon.Running(identity), true
 }
 
-func socketReachable(ctx context.Context, socketPath string) bool {
+func (m Manager) socketReachable(ctx context.Context, socketPath string) bool {
 	if socketPath == "" {
+		return false
+	}
+	if m.SocketReachable == nil {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
-	client, err := daemonrpc.Dial(socketPath)
-	if err != nil {
-		return false
-	}
-	defer func() { logDaemonManagerError("close daemon health-check client", client.Close()) }()
-	_, err = client.PollLogs(ctx, 0)
-	return err == nil
+	return m.SocketReachable(ctx, socketPath)
 }
 
 func (m Manager) waitRunning(ctx context.Context, workspacePath string, done <-chan error) (daemon.Status, error) {
@@ -205,8 +218,8 @@ func (m Manager) waitRunning(ctx context.Context, workspacePath string, done <-c
 }
 
 func (m Manager) withDefaults() Manager {
-	if m.Serve == nil {
-		m.Serve = daemonruntime.Serve
+	if m.Store != nil {
+		m.Daemons = services.NewDaemonService(m.Store)
 	}
 	if m.PollInterval == 0 {
 		m.PollInterval = 10 * time.Millisecond
@@ -215,6 +228,22 @@ func (m Manager) withDefaults() Manager {
 		m.Timeout = 2 * time.Second
 	}
 	return m
+}
+
+func (m Manager) validate() error {
+	if m.Store == nil {
+		return errors.New("daemon manager store is not configured")
+	}
+	if m.Serve == nil {
+		return errors.New("daemon manager serve function is not configured")
+	}
+	if m.SocketReachable == nil {
+		return errors.New("daemon manager health check is not configured")
+	}
+	if m.EndpointNetwork == nil {
+		return errors.New("daemon manager endpoint parser is not configured")
+	}
+	return nil
 }
 
 type Session struct {

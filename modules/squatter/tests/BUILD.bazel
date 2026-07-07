@@ -12,8 +12,8 @@ _WINDOWS_TEST_LINKOPTS = [
 
 cc_test(
     name = "gtest_smoke.exe",
-    linkopts = _WINDOWS_TEST_LINKOPTS,
     srcs = ["gtest_smoke.cc"],
+    linkopts = _WINDOWS_TEST_LINKOPTS,
     target_compatible_with = ["@platforms//os:windows"],
     deps = [
         "@googletest//:gtest",
@@ -23,8 +23,8 @@ cc_test(
 
 cc_test(
     name = "frame_test.exe",
-    linkopts = _WINDOWS_TEST_LINKOPTS,
     srcs = ["frame_test.cc"],
+    linkopts = _WINDOWS_TEST_LINKOPTS,
     target_compatible_with = ["@platforms//os:windows"],
     deps = [
         "//modules/squatter/windows/src:frame",
@@ -35,8 +35,8 @@ cc_test(
 
 cc_test(
     name = "framing_test.exe",
-    linkopts = _WINDOWS_TEST_LINKOPTS,
     srcs = ["framing_test.cc"],
+    linkopts = _WINDOWS_TEST_LINKOPTS,
     target_compatible_with = ["@platforms//os:windows"],
     deps = [
         "//modules/squatter/windows/src:framing",
@@ -47,11 +47,11 @@ cc_test(
 
 cc_test(
     name = "cmd_integration_test.exe",
-    linkopts = _WINDOWS_TEST_LINKOPTS,
     srcs = [
         "cmd_integration_test.cc",
         "mux_peer.h",
     ],
+    linkopts = _WINDOWS_TEST_LINKOPTS,
     target_compatible_with = ["@platforms//os:windows"],
     deps = [
         "//modules/squatter/windows/src:control_codec",
@@ -65,11 +65,11 @@ cc_test(
 
 cc_test(
     name = "echo_integration_test.exe",
-    linkopts = _WINDOWS_TEST_LINKOPTS,
     srcs = [
         "echo_integration_test.cc",
         "mux_peer.h",
     ],
+    linkopts = _WINDOWS_TEST_LINKOPTS,
     target_compatible_with = ["@platforms//os:windows"],
     deps = [
         "//modules/squatter/windows/src:control_codec",
@@ -83,11 +83,11 @@ cc_test(
 
 cc_test(
     name = "file_xfer_test.exe",
-    linkopts = _WINDOWS_TEST_LINKOPTS,
     srcs = [
         "file_xfer_test.cc",
         "mux_peer.h",
     ],
+    linkopts = _WINDOWS_TEST_LINKOPTS,
     target_compatible_with = ["@platforms//os:windows"],
     deps = [
         "//modules/squatter/windows/src:control_codec",

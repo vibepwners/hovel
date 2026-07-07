@@ -4,7 +4,7 @@ go_library(
     name = "operator",
     srcs = ["operator.go"],
     importpath = "github.com/Vibe-Pwners/hovel/internal/domain/operator",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
 )
 
 go_test(

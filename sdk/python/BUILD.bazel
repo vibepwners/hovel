@@ -16,9 +16,9 @@ py_binary(
     name = "build_dist",
     srcs = ["build_dist.py"],
     data = [
+        "README.md",
         ":pyproject.toml",
         ":sources",
-        "README.md",
     ],
     python_version = "PY3",
 )

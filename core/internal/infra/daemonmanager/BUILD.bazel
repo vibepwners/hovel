@@ -9,8 +9,6 @@ go_library(
     importpath = "github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager",
     visibility = ["//:__subpackages__"],
     deps = [
-        "//internal/adapters/daemonrpc",
-        "//internal/adapters/storage/filesystem",
         "//internal/app/services",
         "//internal/domain/daemon",
         "//internal/domain/workspace",
@@ -22,17 +20,18 @@ go_test(
     name = "daemonmanager_test",
     size = "small",
     srcs = ["manager_test.go"],
-    data = [
-    ],
     embed = [":daemonmanager"],
     tags = [
         "e2e",
         "manual",
     ],
     deps = [
+        "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
+        "//internal/adapters/storage/sqlite",
+        "//internal/app/services",
         "//internal/domain/daemon",
         "//internal/infra/daemonruntime",
-        "//internal/testsupport",
+        "//internal/moduleruntime/pythonrpc",
     ],
 )

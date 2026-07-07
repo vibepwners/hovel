@@ -5,7 +5,7 @@ go_library(
     name = "event",
     srcs = ["event.go"],
     importpath = "github.com/Vibe-Pwners/hovel/internal/domain/event",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
 )
 
 go_test(

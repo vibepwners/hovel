@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
@@ -941,7 +942,7 @@ func startCLITestDaemon(t *testing.T, workspacePath, socketPath string) (context
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
-		errs <- daemonruntime.Serve(ctx, daemonruntime.Args{
+		errs <- daemonlocal.Serve(ctx, daemonruntime.Args{
 			WorkspacePath: workspacePath,
 			SocketPath:    socketPath,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),

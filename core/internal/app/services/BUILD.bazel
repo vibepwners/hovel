@@ -9,7 +9,7 @@ go_library(
         "workspace.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/app/services",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
     deps = [
         "//internal/domain/daemon",
         "//internal/domain/event",

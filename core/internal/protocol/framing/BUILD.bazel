@@ -4,5 +4,5 @@ go_library(
     name = "framing",
     srcs = ["framing.go"],
     importpath = "github.com/Vibe-Pwners/hovel/internal/protocol/framing",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
 )

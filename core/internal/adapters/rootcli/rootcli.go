@@ -9,13 +9,13 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/cli"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	mcpadapter "github.com/Vibe-Pwners/hovel/internal/adapters/mcp"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
-	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc"
 	"github.com/akamensky/argparse"
@@ -116,7 +116,7 @@ func runDirectSessionConnect(ctx context.Context, args []string, stdout, stderr 
 		return 2
 	}
 	workspacePath := workspacepath.ResolvePath(parsed.Workspace)
-	status, err := daemonmanager.New().Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
+	status, err := daemonlocal.NewManager().Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
 	if err != nil {
 		writeRootLine(stderr, err)
 		return 1
@@ -135,7 +135,7 @@ func runDirectSessionConnect(ctx context.Context, args []string, stdout, stderr 
 }
 
 func runOneShotThrow(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	session, err := daemonmanager.New().Ensure(ctx, throwWorkspaceArg(args[1:]))
+	session, err := daemonlocal.NewManager().Ensure(ctx, throwWorkspaceArg(args[1:]))
 	if err != nil {
 		writeRootLine(stderr, err)
 		return 1
@@ -177,7 +177,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 
 	writeRootFormat(stdout, "serving hoveld role for workspace %s\n", displayWorkspace(*workspacePath))
-	if err := daemonruntime.Serve(ctx, daemonruntime.Args{
+	if err := daemonlocal.Serve(ctx, daemonruntime.Args{
 		WorkspacePath: *workspacePath,
 		SocketPath:    *socketPath,
 		ListenAddress: *listenAddress,
@@ -232,7 +232,7 @@ func runDaemonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	if !ok {
 		return code
 	}
-	session, err := daemonmanager.New().EnsureWithConfig(ctx, parsed.Workspace, "", parsed.Config)
+	session, err := daemonlocal.NewManager().EnsureWithConfig(ctx, parsed.Workspace, "", parsed.Config)
 	if err != nil {
 		writeRootLine(stderr, err)
 		return 1

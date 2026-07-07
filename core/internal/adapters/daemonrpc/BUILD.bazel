@@ -4,7 +4,7 @@ go_library(
     name = "daemonrpc",
     srcs = ["daemonrpc.go"],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
     deps = [
         "//internal/app/launchkey",
         "//internal/app/operatorlog",

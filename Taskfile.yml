@@ -123,6 +123,7 @@ tasks:
     desc: Run the full-checkout gate.
     cmds:
       - task: checkout:require-full
+      - task: repo:quality
       - task: core:ci
       - task: sdk:ci
       - task: modules:ci
@@ -197,6 +198,30 @@ tasks:
     cmds:
       - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
 
+  bazel:query:
+    desc: Run a root integration Bazel query.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} query {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  bazel:cquery:
+    desc: Run a root integration Bazel configured query.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} cquery {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  bazel:aquery:
+    desc: Run a root integration Bazel action query.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} aquery {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  bazel:mod:
+    desc: Run a root integration Bazel module graph command.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} mod {{.CLI_ARGS}}
+
   bazel:clean:
     desc: Clean root integration Bazel outputs.
     dir: '{{.REPO_ROOT}}'
@@ -222,6 +247,76 @@ tasks:
             --bep=.test-report/bep/picblobs.json
             --scan-testlogs=core/bazel-testlogs
             --scan-testlogs=bazel-testlogs
+
+  graph:deps:
+    desc: Render a bounded dependency graph to graph.dot; usage task graph:deps -- //path/to:target.
+    cmds:
+      - |
+        test -n "{{.CLI_ARGS}}" || { echo "usage: task graph:deps -- //path/to:target"; exit 2; }
+        task bazel:query -- --notool_deps --noimplicit_deps 'deps({{.CLI_ARGS}})' --output=graph > "{{.OUT | default "graph.dot"}}"
+
+  graph:rdeps:
+    desc: Query reverse dependencies; usage task graph:rdeps -- //path/to:target.
+    cmds:
+      - |
+        test -n "{{.CLI_ARGS}}" || { echo "usage: task graph:rdeps -- //path/to:target"; exit 2; }
+        task bazel:query -- 'rdeps(//..., {{.CLI_ARGS}})'
+
+  graph:why:
+    desc: Explain why one target depends on another; usage task graph:why -- //from:target //to:target.
+    cmds:
+      - |
+        set -- {{.CLI_ARGS}}
+        test "$#" -eq 2 || { echo "usage: task graph:why -- //from:target //to:target"; exit 2; }
+        task bazel:query -- "somepath($1, $2)"
+
+  policy:check:
+    desc: Run all repository architecture policy checks.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //tools/bazel/policy:repo_policy
+
+  policy:layers:
+    desc: Check core production layering policy.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //tools/bazel/policy:repo_policy -- --check=layers
+
+  visibility:check:
+    desc: Check enforced Bazel visibility policy.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //tools/bazel/policy:repo_policy -- --check=visibility
+
+  ownership:check:
+    desc: Check repository ownership anchors.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //tools/bazel/policy:repo_policy -- --check=ownership
+
+  buildifier:check:
+    desc: Check repository BUILD, MODULE, and Starlark formatting with pinned buildifier.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //tools/bazel/buildifier:buildifier -- --mode=check
+
+  buildifier:fix:
+    desc: Format repository BUILD, MODULE, and Starlark files with pinned buildifier.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //tools/bazel/buildifier:buildifier -- --mode=fix {{.CLI_ARGS}}
+
+  repo:quality:
+    desc: Run repo-wide Bazel policy and BUILD/Starlark hygiene checks.
+    cmds:
+      - task: buildifier:check
+      - task: policy:check
 
   test:report:
     desc: Run wired monorepo test suites and generate the static HTML test report.
@@ -605,6 +700,13 @@ tasks:
         vars:
           CLI_ARGS: //docs/tools/demo:materialize_squatter_wine_demo_outputs
 
+  docs:demos:all:
+    desc: Render and materialize all docs demo GIFs, including host-service demos.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //docs/tools/demo:materialize_all_demo_outputs
+
   docs:stage:
     desc: Stage the GitHub Pages site into _site.
     cmds:
@@ -616,7 +718,7 @@ tasks:
     desc: Run the docs slice CI gate.
     cmds:
       - task: docs:test
-      - task: docs:demos
+      - task: docs:demos:all
       - task: docs:stage
 
   start:

@@ -10,6 +10,7 @@ go_library(
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/commandmode",
+        "//internal/adapters/daemonlocal",
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
         "//internal/app/commands",

@@ -1,0 +1,22 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+BUILDIFIER_ARGS = [
+    "--buildifier-linux-amd64=$(rootpath @buildifier_linux_amd64//file)",
+    "--buildifier-linux-arm64=$(rootpath @buildifier_linux_arm64//file)",
+]
+
+BUILDIFIER_DATA = [
+    "@buildifier_linux_amd64//file",
+    "@buildifier_linux_arm64//file",
+]
+
+py_binary(
+    name = "buildifier",
+    srcs = ["run_buildifier_workspace.py"],
+    args = BUILDIFIER_ARGS,
+    data = BUILDIFIER_DATA,
+    main = "run_buildifier_workspace.py",
+    python_version = "PY3",
+)

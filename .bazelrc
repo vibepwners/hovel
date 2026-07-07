@@ -44,32 +44,35 @@ build:picblobs_base --sandbox_default_allow_network=false
 build:picblobs_base --nolegacy_external_runfiles
 build:picblobs_base --extra_toolchains=//modules/picblobs/toolchains:all
 
-build:linux_x86_64          --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_x86_64
-build:linux_i686            --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_i686
-build:linux_aarch64         --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_aarch64
-build:linux_armv5_arm       --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_armv5_arm
-build:linux_armv5_thumb     --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_armv5_thumb
-build:linux_armv7_thumb     --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_armv7_thumb
-build:linux_s390x           --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_s390x
-build:linux_mipsel32        --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_mipsel32
-build:linux_mipsbe32        --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_mipsbe32
-build:linux_sparcv8         --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_sparcv8
-build:linux_powerpc         --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_powerpc
-build:linux_ppc64le         --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_ppc64le
-build:linux_riscv64         --config=picblobs_base --platforms=//modules/picblobs/platforms:linux_riscv64
+# Platform configs intentionally do not expand picblobs_base. Combine them with
+# --config=picblobs_base or --config=picblobs_ci so the base config is applied
+# exactly once.
+build:linux_x86_64          --platforms=//modules/picblobs/platforms:linux_x86_64
+build:linux_i686            --platforms=//modules/picblobs/platforms:linux_i686
+build:linux_aarch64         --platforms=//modules/picblobs/platforms:linux_aarch64
+build:linux_armv5_arm       --platforms=//modules/picblobs/platforms:linux_armv5_arm
+build:linux_armv5_thumb     --platforms=//modules/picblobs/platforms:linux_armv5_thumb
+build:linux_armv7_thumb     --platforms=//modules/picblobs/platforms:linux_armv7_thumb
+build:linux_s390x           --platforms=//modules/picblobs/platforms:linux_s390x
+build:linux_mipsel32        --platforms=//modules/picblobs/platforms:linux_mipsel32
+build:linux_mipsbe32        --platforms=//modules/picblobs/platforms:linux_mipsbe32
+build:linux_sparcv8         --platforms=//modules/picblobs/platforms:linux_sparcv8
+build:linux_powerpc         --platforms=//modules/picblobs/platforms:linux_powerpc
+build:linux_ppc64le         --platforms=//modules/picblobs/platforms:linux_ppc64le
+build:linux_riscv64         --platforms=//modules/picblobs/platforms:linux_riscv64
 
-build:freebsd_x86_64        --config=picblobs_base --platforms=//modules/picblobs/platforms:freebsd_x86_64
-build:freebsd_i686          --config=picblobs_base --platforms=//modules/picblobs/platforms:freebsd_i686
-build:freebsd_aarch64       --config=picblobs_base --platforms=//modules/picblobs/platforms:freebsd_aarch64
-build:freebsd_armv5_arm     --config=picblobs_base --platforms=//modules/picblobs/platforms:freebsd_armv5_arm
-build:freebsd_armv5_thumb   --config=picblobs_base --platforms=//modules/picblobs/platforms:freebsd_armv5_thumb
-build:freebsd_armv7_thumb   --config=picblobs_base --platforms=//modules/picblobs/platforms:freebsd_armv7_thumb
-build:freebsd_mipsel32      --config=picblobs_base --platforms=//modules/picblobs/platforms:freebsd_mipsel32
-build:freebsd_mipsbe32      --config=picblobs_base --platforms=//modules/picblobs/platforms:freebsd_mipsbe32
+build:freebsd_x86_64        --platforms=//modules/picblobs/platforms:freebsd_x86_64
+build:freebsd_i686          --platforms=//modules/picblobs/platforms:freebsd_i686
+build:freebsd_aarch64       --platforms=//modules/picblobs/platforms:freebsd_aarch64
+build:freebsd_armv5_arm     --platforms=//modules/picblobs/platforms:freebsd_armv5_arm
+build:freebsd_armv5_thumb   --platforms=//modules/picblobs/platforms:freebsd_armv5_thumb
+build:freebsd_armv7_thumb   --platforms=//modules/picblobs/platforms:freebsd_armv7_thumb
+build:freebsd_mipsel32      --platforms=//modules/picblobs/platforms:freebsd_mipsel32
+build:freebsd_mipsbe32      --platforms=//modules/picblobs/platforms:freebsd_mipsbe32
 
-build:windows_x86_64        --config=picblobs_base --platforms=//modules/picblobs/platforms:windows_x86_64
-build:windows_i686          --config=picblobs_base --platforms=//modules/picblobs/platforms:windows_i686
-build:windows_aarch64       --config=picblobs_base --platforms=//modules/picblobs/platforms:windows_aarch64
+build:windows_x86_64        --platforms=//modules/picblobs/platforms:windows_x86_64
+build:windows_i686          --platforms=//modules/picblobs/platforms:windows_i686
+build:windows_aarch64       --platforms=//modules/picblobs/platforms:windows_aarch64
 
 build:picblobs_debug --copt=-g --copt=-DPIC_LOG_ENABLE
 build:picblobs_debug --strip=never

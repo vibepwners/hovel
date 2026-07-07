@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/app/commands"
@@ -141,7 +142,7 @@ func Run(ctx context.Context, cfg Config) error {
 		ctx = context.Background()
 	}
 	workspacePath := workspaceOrDefault(cfg.Workspace)
-	manager := daemonmanager.New()
+	manager := daemonlocal.NewManager()
 	if cfg.Manager != nil {
 		manager = *cfg.Manager
 	}

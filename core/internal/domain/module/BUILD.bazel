@@ -4,7 +4,7 @@ go_library(
     name = "module",
     srcs = ["module.go"],
     importpath = "github.com/Vibe-Pwners/hovel/internal/domain/module",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
 )
 
 go_test(

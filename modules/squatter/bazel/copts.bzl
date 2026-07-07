@@ -8,9 +8,9 @@ docs/C_STYLE_GUIDE.md for the rationale behind each warning.
 SQ_COPTS = [
     "-std=c11",
     "-D_WIN32_WINNT=0x0501",  # Windows XP SP3 API floor
-    "-DUNICODE",              # this is a wide (UTF-16) application: generic
-    "-D_UNICODE",             # Win32 macros resolve to their ...W variants
-    "-DDECLSPEC_IMPORT=",     # calls bind to local stubs unless a binary opts into import libs
+    "-DUNICODE",  # this is a wide (UTF-16) application: generic
+    "-D_UNICODE",  # Win32 macros resolve to their ...W variants
+    "-DDECLSPEC_IMPORT=",  # calls bind to local stubs unless a binary opts into import libs
     "-Wall",
     "-Wextra",
     "-Wpedantic",

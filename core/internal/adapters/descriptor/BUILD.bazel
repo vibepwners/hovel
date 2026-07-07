@@ -7,7 +7,7 @@ go_library(
         "validator.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/descriptor",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
     deps = [
         "//internal/app/commands",
         "//internal/domain/module",

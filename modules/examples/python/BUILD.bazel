@@ -4,18 +4,19 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "sources",
-    srcs = glob([
+    srcs = [
         "hovel-modules.json",
-        "ms17_010_exploit/**/*.py",
-        "ms17_010_exploit/pyproject.toml",
-        "ms17_010_survey/**/*.py",
-        "ms17_010_survey/pyproject.toml",
-        "mock_exploit/**/*.py",
         "mock_exploit/pyproject.toml",
-        "mock_exploit_session/**/*.py",
         "mock_exploit_session/pyproject.toml",
-        "mock_survey/**/*.py",
         "mock_survey/pyproject.toml",
+        "ms17_010_exploit/pyproject.toml",
+        "ms17_010_survey/pyproject.toml",
+    ] + glob([
+        "ms17_010_exploit/**/*.py",
+        "ms17_010_survey/**/*.py",
+        "mock_exploit/**/*.py",
+        "mock_exploit_session/**/*.py",
+        "mock_survey/**/*.py",
     ]),
 )
 

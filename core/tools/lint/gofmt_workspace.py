@@ -23,7 +23,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    workspace = Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path.cwd())).resolve()
+    workspace = find_workspace()
     gofmt = resolve_runfile(args.gofmt)
     roots = [resolve_scan_path(workspace, path) for path in args.path] or [workspace]
     files = [file for root in roots for file in go_files(root)]
@@ -83,6 +83,29 @@ def resolve_runfile(path: str) -> Path:
     if candidate.exists():
         return candidate.resolve()
     raise SystemExit(f"missing runfile: {path}")
+
+
+def find_workspace() -> Path:
+    workspace = os.environ.get("BUILD_WORKSPACE_DIRECTORY")
+    if workspace:
+        return Path(workspace).resolve()
+    for root in candidate_roots():
+        candidate = root.resolve()
+        if (candidate / "MODULE.bazel").is_file() and (candidate / "go.mod").is_file():
+            return candidate
+    return Path.cwd().resolve()
+
+
+def candidate_roots() -> list[Path]:
+    roots = [Path.cwd()]
+    for root_name in ("RUNFILES_DIR", "TEST_SRCDIR"):
+        value = os.environ.get(root_name)
+        if value:
+            roots.append(Path(value))
+    expanded: list[Path] = []
+    for root in roots:
+        expanded.extend([root, root / "_main", root / "hovel"])
+    return expanded
 
 
 if __name__ == "__main__":

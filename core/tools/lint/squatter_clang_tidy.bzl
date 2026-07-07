@@ -69,7 +69,13 @@ _clang_tidy_check = rule(
 )
 
 def squatter_clang_tidy(name, srcs, hdrs):
-    """Creates one cacheable clang-tidy action per C source file."""
+    """Creates one cacheable clang-tidy action per C source file.
+
+    Args:
+      name: Name of the aggregate filegroup target.
+      srcs: C source files to check.
+      hdrs: Header files made available to each clang-tidy action.
+    """
 
     checks = []
     package_include = native.package_name()

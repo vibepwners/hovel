@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
@@ -57,7 +58,7 @@ func NewApp() App {
 func newAppWithSessionAndModules(session commands.OperatorSession, modules modulecatalog.Catalog) App {
 	return App{
 		commands:    commandmode.NewAppWithSessionAndModules(session, modules),
-		manager:     daemonmanager.New(),
+		manager:     daemonlocal.NewManager(),
 		theme:       DefaultTheme(),
 		session:     session,
 		modules:     modules,

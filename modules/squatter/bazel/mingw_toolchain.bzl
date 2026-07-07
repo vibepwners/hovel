@@ -120,7 +120,15 @@ mingw_cc_toolchain_config = rule(
 )
 
 def mingw_cc_toolchain(name, target, cpu, static_runtime = True, builtin_include_dirs = []):
-    """Define a cc_toolchain (+ registration target) over the extracted tarball."""
+    """Define a cc_toolchain (+ registration target) over the extracted tarball.
+
+    Args:
+      name: Base name for the filegroup, config, cc_toolchain, and toolchain targets.
+      target: MinGW toolchain target triple.
+      cpu: Bazel CPU constraint suffix for the Windows target.
+      static_runtime: Whether to link the GCC/C++ runtime statically.
+      builtin_include_dirs: Built-in include directories reported by the toolchain.
+    """
     native.filegroup(
         name = "%s_all" % name,
         srcs = native.glob(["**"], allow_empty = False),
