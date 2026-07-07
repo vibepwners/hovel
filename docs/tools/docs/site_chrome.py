@@ -88,6 +88,18 @@ MODULE_SECTIONS = [
                     ("Specification", "picblobs/guide/specification.html"),
                 ],
             },
+            {
+                "label": "squatter",
+                "href": "squatter/index.html",
+                "prefix": "squatter/",
+                "pages": [
+                    ("Overview", "squatter/index.html"),
+                    ("User Guide", "squatter/user-guide.html"),
+                    ("Building", "squatter/building.html"),
+                    ("Testing", "squatter/testing.html"),
+                    ("Reference", "squatter/reference.html"),
+                ],
+            },
         ],
     ),
 ]
