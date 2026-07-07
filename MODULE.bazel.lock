@@ -205,7 +205,7 @@
   "moduleExtensions": {
     "//core/tools/bzlmod:external_tools.bzl%external_tools": {
       "general": {
-        "bzlTransitiveDigest": "hcdVBTGg2+n3pCoocehaoXf/n05cv33N6k1ZpOmdkuI=",
+        "bzlTransitiveDigest": "RmhImV+m3Cs+dXrhYxR46HANNywBqktVQfct5PIH5OU=",
         "usagesDigest": "DiQN12Ie0gRzu20kjE1VlHQ4tELSNrBO/skd7+x/OIs=",
         "recordedInputs": [
           "REPO_MAPPING:,bazel_tools bazel_tools"
