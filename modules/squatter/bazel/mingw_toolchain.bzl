@@ -14,7 +14,6 @@ else mirrors upstream so behaviour for the existing C binaries is unchanged.
 """
 
 load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
-load("@rules_cc//cc:defs.bzl", "CcToolchainConfigInfo", "cc_common", "cc_toolchain")
 load(
     "@rules_cc//cc:cc_toolchain_config_lib.bzl",
     "feature",
@@ -22,11 +21,19 @@ load(
     "flag_set",
     "tool_path",
 )
+load("@rules_cc//cc:defs.bzl", "CcToolchainConfigInfo", "cc_common", "cc_toolchain")
 
 _LINK_ACTIONS = [
     ACTION_NAMES.cpp_link_executable,
     ACTION_NAMES.cpp_link_dynamic_library,
     ACTION_NAMES.cpp_link_nodeps_dynamic_library,
+]
+
+_COMPILE_ACTIONS = [
+    ACTION_NAMES.c_compile,
+    ACTION_NAMES.cpp_compile,
+    ACTION_NAMES.assemble,
+    ACTION_NAMES.preprocess_assemble,
 ]
 
 def _config_impl(ctx):
@@ -42,7 +49,25 @@ def _config_impl(ctx):
         tool_path(name = "strip", path = "bin/%sstrip" % tools),
     ]
 
-    features = []
+    features = [
+        feature(
+            name = "path_normalization",
+            enabled = True,
+            flag_sets = [
+                flag_set(
+                    actions = _COMPILE_ACTIONS,
+                    flag_groups = [flag_group(flags = [
+                        "-no-canonical-prefixes",
+                        "-fno-canonical-system-headers",
+                    ])],
+                ),
+                flag_set(
+                    actions = _LINK_ACTIONS,
+                    flag_groups = [flag_group(flags = ["-no-canonical-prefixes"])],
+                ),
+            ],
+        ),
+    ]
     if ctx.attr.static_runtime:
         features.append(feature(
             name = "static_runtime",

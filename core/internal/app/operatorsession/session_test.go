@@ -415,8 +415,13 @@ func TestSessionExportsAndImportsState(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	exported := session.Export()
+	if exported.SchemaVersion != PersistedStateSchemaVersion {
+		t.Fatalf("schema version = %d, want %d", exported.SchemaVersion, PersistedStateSchemaVersion)
+	}
+
 	imported := New()
-	imported.Import(session.Export())
+	imported.Import(exported)
 
 	state := imported.Snapshot()
 	if state.ActiveChain != "alpha" {
@@ -434,6 +439,70 @@ func TestSessionExportsAndImportsState(t *testing.T) {
 	}
 	if step.ID != "step-2" {
 		t.Fatalf("next step ID = %q, want step-2", step.ID)
+	}
+}
+
+func TestSessionImportsLegacyOperationTargetsAsChainBindings(t *testing.T) {
+	imported := New()
+	imported.Import(PersistedState{
+		ActiveOperation: "redteam-lab",
+		ActiveChain:     "alpha",
+		Operations: []PersistedOperation{
+			{
+				Name:    "redteam-lab",
+				Targets: []string{"mock://legacy"},
+				TargetConfigs: map[string]map[string]string{
+					"mock://legacy": {"target.host": "legacy.local"},
+				},
+				Chains: []PersistedChain{
+					{Name: "alpha", Steps: []Step{{ID: "step-1", ModuleID: "mock-exploit"}}},
+					{Name: "beta", Steps: []Step{{ID: "step-1", ModuleID: "mock-survey"}}},
+				},
+			},
+		},
+	})
+
+	state := imported.Snapshot()
+	if got, want := state.OperationTargets, []string{"mock://legacy"}; !equalStrings(got, want) {
+		t.Fatalf("operation targets = %#v, want %#v", got, want)
+	}
+	if got, want := state.Targets, []string{"mock://legacy"}; !equalStrings(got, want) {
+		t.Fatalf("alpha targets = %#v, want %#v", got, want)
+	}
+	if config := state.TargetConfigs["mock://legacy"]; config["target.host"] != "legacy.local" {
+		t.Fatalf("target config = %#v", config)
+	}
+	if err := imported.UseChain("beta"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := imported.Snapshot().Targets, []string{"mock://legacy"}; !equalStrings(got, want) {
+		t.Fatalf("beta targets = %#v, want %#v", got, want)
+	}
+}
+
+func TestSessionDoesNotBackfillVersionedOperationTargets(t *testing.T) {
+	imported := New()
+	imported.Import(PersistedState{
+		SchemaVersion:   PersistedStateSchemaVersion,
+		ActiveOperation: "redteam-lab",
+		ActiveChain:     "alpha",
+		Operations: []PersistedOperation{
+			{
+				Name:    "redteam-lab",
+				Targets: []string{"mock://ops"},
+				Chains: []PersistedChain{
+					{Name: "alpha", Steps: []Step{{ID: "step-1", ModuleID: "mock-exploit"}}},
+				},
+			},
+		},
+	})
+
+	state := imported.Snapshot()
+	if got, want := state.OperationTargets, []string{"mock://ops"}; !equalStrings(got, want) {
+		t.Fatalf("operation targets = %#v, want %#v", got, want)
+	}
+	if len(state.Targets) != 0 {
+		t.Fatalf("chain targets = %#v, want none", state.Targets)
 	}
 }
 

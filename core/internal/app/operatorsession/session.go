@@ -12,6 +12,7 @@ import (
 )
 
 const DefaultOperation = "default"
+const PersistedStateSchemaVersion = 1
 
 type Operation struct {
 	Name          string
@@ -61,6 +62,7 @@ type State struct {
 }
 
 type PersistedState struct {
+	SchemaVersion   int                  `json:"schemaVersion,omitempty"`
 	ActiveOperation string               `json:"activeOperation,omitempty"`
 	ActiveChain     string               `json:"activeChain"`
 	Operations      []PersistedOperation `json:"operations,omitempty"`
@@ -784,6 +786,7 @@ func (s *Store) export(activeOperation, activeChain string) PersistedState {
 		})
 	}
 	state := PersistedState{
+		SchemaVersion:   PersistedStateSchemaVersion,
 		ActiveOperation: activeOperation,
 		ActiveChain:     activeChain,
 		Operations:      operations,
@@ -798,9 +801,10 @@ func (s *Store) importState(state PersistedState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.operations = map[string]*operationState{}
+	legacyDefaultTargets := state.SchemaVersion == 0
 	if len(state.Operations) > 0 {
 		for _, persistedOperation := range state.Operations {
-			s.importOperation(persistedOperation)
+			s.importOperation(persistedOperation, legacyDefaultTargets)
 		}
 		return
 	}
@@ -808,10 +812,10 @@ func (s *Store) importState(state PersistedState) {
 	if operationName == "" {
 		operationName = DefaultOperation
 	}
-	s.importOperation(PersistedOperation{Name: operationName, Chains: state.Chains})
+	s.importOperation(PersistedOperation{Name: operationName, Chains: state.Chains}, legacyDefaultTargets)
 }
 
-func (s *Store) importOperation(persistedOperation PersistedOperation) {
+func (s *Store) importOperation(persistedOperation PersistedOperation, legacyDefaultTargets bool) {
 	name := normalizeOperation(persistedOperation.Name)
 	if name == "" {
 		name = DefaultOperation
@@ -821,6 +825,7 @@ func (s *Store) importOperation(persistedOperation PersistedOperation) {
 	operation.TargetConfigs = cloneTargetConfigs(persistedOperation.TargetConfigs)
 	operation.TargetSets = cloneTargetSets(persistedOperation.TargetSets)
 	operation.chains = map[string]*Chain{}
+	legacyDefaultTargets = legacyDefaultTargets && len(operation.Targets) != 0 && !persistedChainsHaveTargets(persistedOperation.Chains)
 	for _, persisted := range persistedOperation.Chains {
 		chainName := normalizeName(persisted.Name)
 		if chainName == "" {
@@ -848,6 +853,13 @@ func (s *Store) importOperation(persistedOperation PersistedOperation) {
 		operation.chains[chainName] = chain
 		operation.importLegacyTargets(chain.Targets, chain.TargetConfigs)
 		chain.TargetConfigs = map[string]map[string]string{}
+	}
+	if legacyDefaultTargets {
+		for _, chain := range operation.chains {
+			if len(chain.Targets) == 0 {
+				chain.Targets = append([]string(nil), operation.Targets...)
+			}
+		}
 	}
 }
 
@@ -970,6 +982,15 @@ func persistedChains(chains []Chain) []PersistedChain {
 		})
 	}
 	return persisted
+}
+
+func persistedChainsHaveTargets(chains []PersistedChain) bool {
+	for _, chain := range chains {
+		if len(chain.Targets) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneChain(chain Chain) Chain {

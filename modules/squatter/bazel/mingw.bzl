@@ -13,10 +13,26 @@ So at repository-fetch time we *ask the compiler* where it looks:
     <target>-gcc -E -x c -v - < /dev/null
 
 and parse the `#include <...> search starts here:` block out of stderr. Those
-absolute paths are handed to the MinGW cc_toolchain helper as
-`builtin_include_dirs`. The result is a toolchain definition that re-derives
-itself from whatever tarball it is pointed at -- no per-version edits.
+paths are converted into Bazel `%package(...)%` paths before being handed to the
+MinGW cc_toolchain helper as `builtin_include_dirs`, so the whitelist follows
+the toolchain repo under local and remote exec roots. The result is a toolchain
+definition that re-derives itself from whatever tarball it is pointed at -- no
+per-version edits.
 """
+
+def _builtin_include_prefix(rctx):
+    return "%package(@@{}//)%".format(rctx.name)
+
+def _builtin_include_dir(rctx, path):
+    repo_root = str(rctx.path("."))
+    absolute = str(rctx.path(path))
+    prefix = repo_root + "/"
+    if not absolute.startswith(prefix):
+        fail("MinGW builtin include dir is outside the toolchain repository: {} (repo root {})".format(
+            absolute,
+            repo_root,
+        ))
+    return "{}/{}".format(_builtin_include_prefix(rctx), absolute[len(prefix):])
 
 def _fallback_builtin_include_dirs(rctx, target):
     """Return the known GCC/MinGW include layout without running the compiler.
@@ -27,9 +43,9 @@ def _fallback_builtin_include_dirs(rctx, target):
     probe `gcc -v`.
     """
     return [
-        str(rctx.path("lib/gcc/{}/15.2.0/include".format(target))),
-        str(rctx.path("lib/gcc/{}/15.2.0/include-fixed".format(target))),
-        str(rctx.path("{}/include".format(target))),
+        "{}/lib/gcc/{}/15.2.0/include".format(_builtin_include_prefix(rctx), target),
+        "{}/lib/gcc/{}/15.2.0/include-fixed".format(_builtin_include_prefix(rctx), target),
+        "{}/{}/include".format(_builtin_include_prefix(rctx), target),
     ]
 
 def _write_toolchain_build(rctx, include_dirs):
@@ -87,7 +103,7 @@ def _probe_builtin_include_dirs(rctx, gcc_path):
         if capturing and line:
             # rctx.path() realpaths the entry, collapsing the `bin/../lib/...`
             # segments GCC prints so the strings match what the sandbox sees.
-            dirs.append(str(rctx.path(line)))
+            dirs.append(_builtin_include_dir(rctx, line))
 
     if not dirs:
         fail("no builtin include dirs parsed from gcc -v output:\n%s" % result.stderr)

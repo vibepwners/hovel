@@ -1854,6 +1854,38 @@ func TestThrowActiveChainDoesNotFallBackToOperationTargets(t *testing.T) {
 	}
 }
 
+func TestThrowUsesLegacyImportedOperationTargetsForDefaultChain(t *testing.T) {
+	session := operatorsession.New()
+	session.Import(operatorsession.PersistedState{
+		ActiveOperation: "op1",
+		ActiveChain:     "alpha",
+		Operations: []operatorsession.PersistedOperation{
+			{
+				Name:    "op1",
+				Targets: []string{"mock://legacy"},
+				TargetConfigs: map[string]map[string]string{
+					"mock://legacy": {"target.host": "legacy.local", "target.port": "22"},
+				},
+				Chains: []operatorsession.PersistedChain{
+					{
+						Name:   "alpha",
+						Steps:  []operatorsession.Step{{ID: "step-1", ModuleID: "mock-exploit@v0.0.0-example"}},
+						Config: map[string]string{"operator.confirmed_lab": "true"},
+					},
+				},
+			},
+		},
+	})
+
+	throw, err := throwInputs(context.Background(), Runtime{Session: session, Modules: exampleCatalog()}, Invocation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := throw.Targets, []string{"mock://legacy"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("targets = %#v, want %#v", got, want)
+	}
+}
+
 func TestThrowInputsSquatterTypeDerivesMS17010InstallConfig(t *testing.T) {
 	session := operatorsession.New()
 	if err := session.UseOperation("op1"); err != nil {
