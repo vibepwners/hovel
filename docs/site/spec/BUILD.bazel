@@ -59,6 +59,11 @@ _SMOKE_PAGES = [
     "//docs/site/modules/picblobs:reference.html",
     "//docs/site/modules/picblobs:testing.html",
     "//docs/site/modules/picblobs:user-guide.html",
+    "//docs/site/modules/squatter:building.html",
+    "//docs/site/modules/squatter:index.html",
+    "//docs/site/modules/squatter:reference.html",
+    "//docs/site/modules/squatter:testing.html",
+    "//docs/site/modules/squatter:user-guide.html",
 ]
 
 py_test(
