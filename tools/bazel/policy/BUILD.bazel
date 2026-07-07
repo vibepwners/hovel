@@ -1,0 +1,10 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "repo_policy",
+    srcs = ["check_repo_policy.py"],
+    main = "check_repo_policy.py",
+    python_version = "PY3",
+)

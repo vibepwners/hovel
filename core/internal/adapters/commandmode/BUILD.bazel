@@ -124,6 +124,7 @@ go_test(
         "manual",
     ],
     deps = [
+        "//internal/adapters/daemonlocal",
         "//internal/adapters/storage/filesystem",
         "//internal/app/commands",
         "//internal/domain/daemon",

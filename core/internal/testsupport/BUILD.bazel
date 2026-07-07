@@ -4,8 +4,9 @@ go_library(
     name = "testsupport",
     srcs = ["testsupport.go"],
     importpath = "github.com/Vibe-Pwners/hovel/internal/testsupport",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
     deps = [
+        "//internal/adapters/daemonlocal",
         "//internal/adapters/storage/filesystem",
         "//internal/app/commands",
         "//internal/domain/daemon",

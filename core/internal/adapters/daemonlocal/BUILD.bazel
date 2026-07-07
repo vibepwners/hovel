@@ -1,0 +1,20 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "daemonlocal",
+    srcs = [
+        "daemonlocal.go",
+        "logging.go",
+    ],
+    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/adapters/daemonrpc",
+        "//internal/adapters/storage/filesystem",
+        "//internal/adapters/storage/sqlite",
+        "//internal/app/services",
+        "//internal/infra/daemonmanager",
+        "//internal/infra/daemonruntime",
+        "//internal/moduleruntime/pythonrpc",
+    ],
+)

@@ -22,12 +22,12 @@ func TestServeReclaimsDeadPIDWorkspaceLock(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
-		errs <- Serve(ctx, Args{
+		errs <- Serve(ctx, runtimeTestArgs(Args{
 			WorkspacePath: workspacePath,
 			SocketPath:    workspacePath + "/hoveld.sock",
 			PID:           123,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-		})
+		}))
 	}()
 	defer func() {
 		cancel()

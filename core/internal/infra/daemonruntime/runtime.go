@@ -13,9 +13,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
-	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
 	"github.com/Vibe-Pwners/hovel/internal/app/hovelconfig"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
@@ -24,22 +21,90 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
 	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
-	"github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc"
 )
 
+type Endpoint struct {
+	Network string
+	Address string
+	Display string
+}
+
+func (e Endpoint) String() string {
+	if e.Display != "" {
+		return e.Display
+	}
+	if e.Network == "tcp" {
+		return "tcp://" + e.Address
+	}
+	return e.Address
+}
+
+type EndpointParser func(string) (Endpoint, error)
+
+type WorkspaceLock interface {
+	Release() error
+}
+
+type WorkspaceLockFactory func(workspacePath, owner string) (WorkspaceLock, error)
+
+type WorkspaceStore interface {
+	EnsureWorkspaceDatabase(context.Context, string) error
+	SaveOperatorSession(context.Context, string, operatorsession.PersistedState) error
+	LoadOperatorSession(context.Context, string) (operatorsession.PersistedState, bool, error)
+	WriteDaemonStatus(context.Context, daemon.Identity) error
+	ClearDaemonStatus(context.Context, string) error
+}
+
+type EventSinkFactory func(workspacePath string) services.EventSink
+
+type LogPublisher interface {
+	Publish(operation, chain string, entries ...operatorlog.Entry)
+}
+
+type LogPublisherFactory func() LogPublisher
+
+type RPCServerConfig struct {
+	Runs            services.RunService
+	Session         *operatorsession.Session
+	Logs            LogPublisher
+	PersistSession  func(operatorsession.PersistedState) error
+	ModuleSessions  services.SessionBroker
+	LaunchKeyPolicy operatordomain.LaunchKeyPolicy
+}
+
+type RPCServerFactory func(RPCServerConfig) (http.Handler, error)
+
+type ModuleRuntimeConfig struct {
+	ModuleConfig  string
+	HovelConfig   string
+	WorkspacePath string
+	Events        services.EventSink
+	IDs           services.IDGenerator
+	Clock         services.Clock
+}
+
+type ModuleRuntimeFactory func(ModuleRuntimeConfig) (services.ModuleRunner, services.SessionBroker)
+
 type Args struct {
-	WorkspacePath  string
-	SocketPath     string
-	ListenAddress  string
-	ModuleConfig   string
-	HovelConfig    string
-	PID            int
-	StartedAt      time.Time
-	IDs            services.IDGenerator
-	Clock          services.Clock
-	Events         services.EventSink
-	ModuleRunner   services.ModuleRunner
-	ModuleSessions services.SessionBroker
+	WorkspacePath        string
+	SocketPath           string
+	ListenAddress        string
+	ModuleConfig         string
+	HovelConfig          string
+	PID                  int
+	StartedAt            time.Time
+	IDs                  services.IDGenerator
+	Clock                services.Clock
+	Events               services.EventSink
+	ModuleRunner         services.ModuleRunner
+	ModuleSessions       services.SessionBroker
+	ParseEndpoint        EndpointParser
+	Store                WorkspaceStore
+	AcquireWorkspaceLock WorkspaceLockFactory
+	NewEventSink         EventSinkFactory
+	NewLogPublisher      LogPublisherFactory
+	NewRPCServer         RPCServerFactory
+	NewModuleRuntime     ModuleRuntimeFactory
 }
 
 func Serve(ctx context.Context, args Args) error {
@@ -55,7 +120,10 @@ func Serve(ctx context.Context, args Args) error {
 	if listenAddress == "" {
 		listenAddress = filepath.Join(workspacePath, "hoveld.sock")
 	}
-	endpoint, err := daemonrpc.ParseEndpoint(listenAddress)
+	if args.ParseEndpoint == nil {
+		return errors.New("daemon runtime endpoint parser is not configured")
+	}
+	endpoint, err := args.ParseEndpoint(listenAddress)
 	if err != nil {
 		return err
 	}
@@ -77,16 +145,31 @@ func Serve(ctx context.Context, args Args) error {
 	}
 	baseEvents := args.Events
 	if baseEvents == nil {
-		baseEvents = sqlitestore.NewStore(workspacePath)
+		if args.NewEventSink == nil {
+			return errors.New("daemon runtime event sink factory is not configured")
+		}
+		baseEvents = args.NewEventSink(workspacePath)
+	}
+	store := args.Store
+	if store == nil {
+		return errors.New("daemon runtime workspace store is not configured")
+	}
+	if args.AcquireWorkspaceLock == nil {
+		return errors.New("daemon runtime workspace lock factory is not configured")
+	}
+	if args.NewLogPublisher == nil {
+		return errors.New("daemon runtime log publisher factory is not configured")
+	}
+	if args.NewRPCServer == nil {
+		return errors.New("daemon runtime rpc server factory is not configured")
 	}
 
-	lock, err := filesystem.AcquireWorkspaceLock(workspacePath, fmt.Sprintf("pid:%d", os.Getpid()))
+	lock, err := args.AcquireWorkspaceLock(workspacePath, fmt.Sprintf("pid:%d", os.Getpid()))
 	if err != nil {
 		return err
 	}
 	defer func() { logDaemonRuntimeError("release workspace lock", lock.Release()) }()
 
-	store := filesystem.NewWorkspaceStore()
 	if err := store.EnsureWorkspaceDatabase(ctx, workspacePath); err != nil {
 		return err
 	}
@@ -99,23 +182,26 @@ func Serve(ctx context.Context, args Args) error {
 	persistSession := func(state operatorsession.PersistedState) error {
 		return store.SaveOperatorSession(context.Background(), workspacePath, state)
 	}
-	logs := daemonrpc.NewLogBroker()
+	logs := args.NewLogPublisher()
 	events := newPublishingEventSink(baseEvents, session, logs, func() error {
 		return persistSession(session.Export())
 	})
 	runner := args.ModuleRunner
 	sessionBroker := args.ModuleSessions
 	if runner == nil {
-		pythonSessions := pythonrpc.NewSessionBroker()
-		sessionBroker = pythonSessions
-		runner = pythonrpc.Runner{
-			ConfigPath:    args.ModuleConfig,
+		if args.NewModuleRuntime == nil {
+			return errors.New("daemon runtime module runtime factory is not configured")
+		}
+		runner, sessionBroker = args.NewModuleRuntime(ModuleRuntimeConfig{
+			ModuleConfig:  args.ModuleConfig,
 			HovelConfig:   args.HovelConfig,
 			WorkspacePath: workspacePath,
 			Events:        events,
 			IDs:           ids,
 			Clock:         clock,
-			Sessions:      pythonSessions,
+		})
+		if runner == nil {
+			return errors.New("daemon runtime module runner factory returned nil")
 		}
 	}
 
@@ -153,7 +239,14 @@ func Serve(ctx context.Context, args Args) error {
 	if err != nil {
 		return err
 	}
-	handler, err := daemonrpc.NewHandler(runs, daemonrpc.WithSession(session), daemonrpc.WithLogBroker(logs), daemonrpc.WithSessionPersistence(persistSession), daemonrpc.WithModuleSessions(sessionBroker), daemonrpc.WithLaunchKeyPolicy(launchKeyPolicyFromConfig(config.Policy.LaunchKey)))
+	handler, err := args.NewRPCServer(RPCServerConfig{
+		Runs:            runs,
+		Session:         session,
+		Logs:            logs,
+		PersistSession:  persistSession,
+		ModuleSessions:  sessionBroker,
+		LaunchKeyPolicy: launchKeyPolicyFromConfig(config.Policy.LaunchKey),
+	})
 	if err != nil {
 		return err
 	}
@@ -208,13 +301,13 @@ type publishingEventSink struct {
 	mu          sync.Mutex
 	next        services.EventSink
 	session     *operatorsession.Session
-	logs        *daemonrpc.LogBroker
+	logs        LogPublisher
 	persist     func() error
 	runStarts   map[string]time.Time
 	throwStarts map[string]time.Time
 }
 
-func newPublishingEventSink(next services.EventSink, session *operatorsession.Session, logs *daemonrpc.LogBroker, persist func() error) *publishingEventSink {
+func newPublishingEventSink(next services.EventSink, session *operatorsession.Session, logs LogPublisher, persist func() error) *publishingEventSink {
 	return &publishingEventSink{
 		next:        next,
 		session:     session,
@@ -261,7 +354,7 @@ func (s *publishingEventSink) Append(ctx context.Context, evt event.Event) error
 		if err := s.session.AppendLogToChain(chain, entry); err != nil {
 			return err
 		}
-		s.logs.Publish(operation, chain, entry)
+		s.publishLog(operation, chain, entry)
 		return s.persistIfConfigured()
 	case "hovel.session.created", "session.created":
 		entry := s.runEventEntry(operation, chain, evt, operatorlog.Info("session", "session opened",
@@ -272,24 +365,30 @@ func (s *publishingEventSink) Append(ctx context.Context, evt event.Event) error
 		if err := s.session.AppendLogToChain(chain, entry); err != nil {
 			return err
 		}
-		s.logs.Publish(operation, chain, entry)
+		s.publishLog(operation, chain, entry)
 		return s.persistIfConfigured()
 	case "hovel.run.completed", "run.succeeded":
 		entry := s.runEventEntry(operation, chain, evt, operatorlog.Success("throw", "run completed"))
 		if err := s.session.AppendLogToChain(chain, entry); err != nil {
 			return err
 		}
-		s.logs.Publish(operation, chain, entry)
+		s.publishLog(operation, chain, entry)
 		return s.persistIfConfigured()
 	case "hovel.run.failed", "run.failed":
 		entry := s.runEventEntry(operation, chain, evt, operatorlog.Finding("throw", "run failed"))
 		if err := s.session.AppendLogToChain(chain, entry); err != nil {
 			return err
 		}
-		s.logs.Publish(operation, chain, entry)
+		s.publishLog(operation, chain, entry)
 		return s.persistIfConfigured()
 	}
 	return nil
+}
+
+func (s *publishingEventSink) publishLog(operation, chain string, entry operatorlog.Entry) {
+	if s.logs != nil {
+		s.logs.Publish(operation, chain, entry)
+	}
 }
 
 func (s *publishingEventSink) persistIfConfigured() error {

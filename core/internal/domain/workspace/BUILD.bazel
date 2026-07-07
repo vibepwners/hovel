@@ -4,7 +4,7 @@ go_library(
     name = "workspace",
     srcs = ["workspace.go"],
     importpath = "github.com/Vibe-Pwners/hovel/internal/domain/workspace",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
 )
 
 go_test(

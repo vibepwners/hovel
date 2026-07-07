@@ -9,15 +9,16 @@ import (
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/cli"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	mcpadapter "github.com/Vibe-Pwners/hovel/internal/adapters/mcp"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
-	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc"
+	"github.com/Vibe-Pwners/hovel/internal/version"
 	"github.com/akamensky/argparse"
 )
 
@@ -43,6 +44,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runMCP(ctx, args[1:], stdout, stderr)
 	case "daemon":
 		return runDaemon(ctx, args[1:], stdout, stderr)
+	case "version":
+		return runVersion(args[1:], stdout, stderr)
 	case "tui":
 		if len(args) > 1 && helpRequested(args[1:]) {
 			writeRootText(stdout, newTUIParser().Usage(nil))
@@ -116,7 +119,7 @@ func runDirectSessionConnect(ctx context.Context, args []string, stdout, stderr 
 		return 2
 	}
 	workspacePath := workspacepath.ResolvePath(parsed.Workspace)
-	status, err := daemonmanager.New().Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
+	status, err := daemonlocal.NewManager().Daemons.Status(ctx, services.DaemonStatusRequest{WorkspacePath: workspacePath})
 	if err != nil {
 		writeRootLine(stderr, err)
 		return 1
@@ -135,7 +138,7 @@ func runDirectSessionConnect(ctx context.Context, args []string, stdout, stderr 
 }
 
 func runOneShotThrow(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	session, err := daemonmanager.New().Ensure(ctx, throwWorkspaceArg(args[1:]))
+	session, err := daemonlocal.NewManager().Ensure(ctx, throwWorkspaceArg(args[1:]))
 	if err != nil {
 		writeRootLine(stderr, err)
 		return 1
@@ -177,7 +180,7 @@ func runDaemonServe(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 
 	writeRootFormat(stdout, "serving hoveld role for workspace %s\n", displayWorkspace(*workspacePath))
-	if err := daemonruntime.Serve(ctx, daemonruntime.Args{
+	if err := daemonlocal.Serve(ctx, daemonruntime.Args{
 		WorkspacePath: *workspacePath,
 		SocketPath:    *socketPath,
 		ListenAddress: *listenAddress,
@@ -209,6 +212,7 @@ func newRootParser() *argparse.Parser {
 		{"run", "Run one command against a daemon-backed operator session."},
 		{"cli", "Launch the interactive prompt shell. Alias for shell."},
 		{"mcp", "Launch the MCP agent interface."},
+		{"version", "Print the Hovel version."},
 	} {
 		parser.NewCommand(role.name, role.summary)
 	}
@@ -217,6 +221,20 @@ func newRootParser() *argparse.Parser {
 	daemon.NewCommand("status", "Inspect daemon status.")
 	parser.NewCommand("tui", "Launch the terminal UI.")
 	return parser
+}
+
+func runVersion(args []string, stdout, stderr io.Writer) int {
+	switch {
+	case len(args) == 0:
+		writeRootLine(stdout, "version "+version.Version)
+		return 0
+	case len(args) == 1 && (args[0] == "-h" || args[0] == "--help"):
+		writeRootText(stdout, "Usage: hovel version\n\nPrint the Hovel version.\n")
+		return 0
+	default:
+		writeRootText(stderr, "Usage: hovel version\n\nversion does not take arguments\n")
+		return 2
+	}
 }
 
 type runCommandArgs struct {
@@ -232,7 +250,7 @@ func runDaemonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	if !ok {
 		return code
 	}
-	session, err := daemonmanager.New().EnsureWithConfig(ctx, parsed.Workspace, "", parsed.Config)
+	session, err := daemonlocal.NewManager().EnsureWithConfig(ctx, parsed.Workspace, "", parsed.Config)
 	if err != nil {
 		writeRootLine(stderr, err)
 		return 1

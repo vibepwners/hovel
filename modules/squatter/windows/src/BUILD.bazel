@@ -1,6 +1,3 @@
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
-load("//modules/squatter/bazel:copts.bzl", "SQ_COPTS")
-load("//modules/squatter/bazel:transitions.bzl", "windows_multiplatform")
 load("@hovel_core//tools/lint:squatter_clang_tidy.bzl", "squatter_clang_tidy")
 load(
     "@hovel_core//tools/lint:static_checks.bzl",
@@ -8,6 +5,9 @@ load(
     "squatter_cppcheck",
     "squatter_format_check",
 )
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("//modules/squatter/bazel:copts.bzl", "SQ_COPTS")
+load("//modules/squatter/bazel:transitions.bzl", "windows_multiplatform")
 
 # gazelle:exclude wire
 

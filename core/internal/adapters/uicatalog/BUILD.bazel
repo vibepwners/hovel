@@ -10,7 +10,7 @@ go_library(
         "progress.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/uicatalog",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/clistyle",
         "//internal/adapters/commandview",

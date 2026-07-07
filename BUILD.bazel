@@ -24,6 +24,13 @@ filegroup(
 )
 
 test_suite(
+    name = "repo_quality_test",
+    tests = [
+        "//repo-tools/tasks:checkout_test",
+    ],
+)
+
+test_suite(
     name = "sdk_test",
     tests = [
         "//sdk/go/hovel:hovel_test",
@@ -54,11 +61,11 @@ filegroup(
         "//modules/examples/go/mock_exploit",
         "//modules/examples/go/mock_exploit_session",
         "//modules/examples/go/mock_survey",
-        "//modules/examples/python:ms17_010_exploit_module",
-        "//modules/examples/python:ms17_010_survey_module",
         "//modules/examples/python:mock_exploit_module",
         "//modules/examples/python:mock_exploit_session_module",
         "//modules/examples/python:mock_survey_module",
+        "//modules/examples/python:ms17_010_exploit_module",
+        "//modules/examples/python:ms17_010_survey_module",
         "//modules/examples/rust/mock_exploit:mock-exploit-rust",
         "//modules/examples/rust/mock_exploit_session:mock-exploit-session-rust",
         "//modules/examples/rust/mock_survey:mock-survey-rust",
@@ -93,11 +100,11 @@ test_suite(
         "//modules/examples/go/mock_exploit:mock_exploit_test",
         "//modules/examples/go/mock_exploit_session:mock_exploit_session_test",
         "//modules/examples/go/mock_survey:mock_survey_test",
-        "//modules/examples/python:ms17_010_exploit_test",
-        "//modules/examples/python:ms17_010_survey_test",
         "//modules/examples/python:mock_exploit_session_test",
         "//modules/examples/python:mock_exploit_test",
         "//modules/examples/python:mock_survey_test",
+        "//modules/examples/python:ms17_010_exploit_test",
+        "//modules/examples/python:ms17_010_survey_test",
         "//modules/examples/rust/mock_exploit:mock_exploit_rust_test",
         "//modules/examples/rust/mock_exploit_session:mock_exploit_session_rust_test",
         "//modules/examples/rust/mock_survey:mock_survey_rust_test",

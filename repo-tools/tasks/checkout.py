@@ -18,6 +18,12 @@ class Slice:
 
 SLICES: tuple[Slice, ...] = (
     Slice(
+        name="repo",
+        description="root Bazel policy, ownership, visibility, and BUILD/Starlark hygiene",
+        paths=("BUILD.bazel", "OWNERS", "tools/bazel"),
+        check_task="repo:quality",
+    ),
+    Slice(
         name="core",
         description="framework, CLI, daemon, domain/app layers, schemas, and core build system",
         paths=("core",),
@@ -65,11 +71,14 @@ SLICES: tuple[Slice, ...] = (
 )
 
 FULL_CHECKOUT_PATHS: tuple[str, ...] = (
+    "BUILD.bazel",
+    "OWNERS",
     "core",
     "docs",
     "modules",
     "repo-tools",
     "sdk",
+    "tools/bazel",
 )
 
 

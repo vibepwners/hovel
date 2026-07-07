@@ -321,14 +321,14 @@ tasks:
           CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=write
 
   gofmt:check:
-    desc: Check Go formatting.
+    desc: Check Go formatting with the explicit workspace formatter runner.
     cmds:
       - task: run
         vars:
           CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=check
 
   go:lint:
-    desc: Run golangci-lint over Go packages.
+    desc: Run the explicit workspace golangci-lint runner with Bazel-managed tools.
     cmds:
       - task: run
         vars:

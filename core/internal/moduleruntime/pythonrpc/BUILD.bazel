@@ -8,7 +8,7 @@ go_library(
         "step_runtime.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
     deps = [
         "//internal/app/chainruntime",
         "//internal/app/hovelconfig",

@@ -15,9 +15,10 @@ go_library(
         "terminal_state_unsupported.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/cli",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/commandmode",
+        "//internal/adapters/daemonlocal",
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
         "//internal/adapters/storage/sqlite",
@@ -31,6 +32,7 @@ go_library(
         "//internal/domain/workspace",
         "//internal/infra/daemonmanager",
         "//internal/moduleruntime/pythonrpc",
+        "//internal/version",
         "@com_github_c_bata_go_prompt//:go-prompt",
         "@com_github_charmbracelet_huh//:huh",
         "@com_github_charmbracelet_lipgloss//:lipgloss",
@@ -120,6 +122,7 @@ go_test(
     ],
     deps = [
         "//internal/adapters/commandmode",
+        "//internal/adapters/daemonlocal",
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
         "//internal/app/commands",

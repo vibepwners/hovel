@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Vibe-Pwners/hovel/internal/version"
 )
 
 func TestCommandRoleDelegatesToCommandAdapter(t *testing.T) {
@@ -178,6 +180,22 @@ func TestCLIRoleRejectsOneShotCommandArguments(t *testing.T) {
 	}
 }
 
+func TestVersionCommandPrintsVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := Run(context.Background(), []string{"version"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	want := "version " + version.Version
+	if got := strings.TrimSpace(stdout.String()); got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestRootHelpShowsRoleMenu(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -186,7 +204,7 @@ func TestRootHelpShowsRoleMenu(t *testing.T) {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{"hovel", "op", "chain", "module", "artifact", "target", "throw", "shell", "command", "run", "cli", "mcp", "daemon", "tui"} {
+	for _, want := range []string{"hovel", "op", "chain", "module", "artifact", "target", "throw", "shell", "command", "run", "cli", "mcp", "version", "daemon", "tui"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("help output missing %q:\n%s", want, output)
 		}

@@ -27,8 +27,7 @@ _ABIS = {
     "i686": ("//platforms:windows_x86", "win-x86", "@mingw_i686//:toolchain"),
 }
 
-def _split_impl(settings, attr):
-    _ = (settings, attr)  # unused; the mapping is static
+def _split_impl(_settings, _attr):
     return {
         abi: {
             "//command_line_option:platforms": [platform],

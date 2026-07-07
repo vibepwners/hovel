@@ -11,7 +11,7 @@ go_library(
         "workspace_store.go",
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/storage/sqlite",
         "//internal/app/commands",

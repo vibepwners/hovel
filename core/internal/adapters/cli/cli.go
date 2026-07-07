@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
@@ -25,6 +26,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
 	"github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc"
+	"github.com/Vibe-Pwners/hovel/internal/version"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
@@ -57,7 +59,7 @@ func NewApp() App {
 func newAppWithSessionAndModules(session commands.OperatorSession, modules modulecatalog.Catalog) App {
 	return App{
 		commands:    commandmode.NewAppWithSessionAndModules(session, modules),
-		manager:     daemonmanager.New(),
+		manager:     daemonlocal.NewManager(),
 		theme:       DefaultTheme(),
 		session:     session,
 		modules:     modules,
@@ -1601,6 +1603,8 @@ func (t Theme) Welcome(info WelcomeInfo) string {
 		details := []string{
 			t.accent.Render(hovelCompactWordmark),
 			"",
+			t.versionLine(lipgloss.Width(hovelCompactWordmark)),
+			"",
 			t.detail("modules", strconv.Itoa(info.ModuleCount)),
 			t.detail("hoveld", info.DaemonAddress),
 			t.detail("mode", info.DaemonMode),
@@ -1611,6 +1615,8 @@ func (t Theme) Welcome(info WelcomeInfo) string {
 
 	details := []string{
 		t.accent.Render(hovelWordmark),
+		"",
+		t.versionLine(lipgloss.Width(hovelWordmark)),
 		"",
 		t.detail("modules", strconv.Itoa(info.ModuleCount)),
 		t.detail("hoveld", info.DaemonAddress),
@@ -1641,6 +1647,10 @@ func cliWelcomeEnabled() bool {
 
 func (t Theme) detail(label, value string) string {
 	return t.label.Render(label+":") + " " + t.muted.Render(value)
+}
+
+func (t Theme) versionLine(width int) string {
+	return t.muted.Render(lipgloss.PlaceHorizontal(width, lipgloss.Center, "version "+version.Version))
 }
 
 func operatorLog(log daemonrpc.PublishedLog) operatorlog.Log {

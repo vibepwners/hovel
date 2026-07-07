@@ -1,0 +1,11 @@
+load("@rules_python//python:defs.bzl", "py_test")
+
+py_test(
+    name = "checkout_test",
+    srcs = [
+        "checkout.py",
+        "checkout_test.py",
+    ],
+    imports = ["."],
+    python_version = "PY3",
+)

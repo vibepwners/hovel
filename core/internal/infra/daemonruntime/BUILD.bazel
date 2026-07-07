@@ -4,11 +4,8 @@ go_library(
     name = "daemonruntime",
     srcs = ["runtime.go"],
     importpath = "github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime",
-    visibility = ["//visibility:public"],
+    visibility = ["//:__subpackages__"],
     deps = [
-        "//internal/adapters/daemonrpc",
-        "//internal/adapters/storage/filesystem",
-        "//internal/adapters/storage/sqlite",
         "//internal/app/hovelconfig",
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
@@ -17,7 +14,6 @@ go_library(
         "//internal/domain/event",
         "//internal/domain/operator",
         "//internal/domain/workspace",
-        "//internal/moduleruntime/pythonrpc",
     ],
 )
 
@@ -38,6 +34,9 @@ go_test(
     deps = [
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
+        "//internal/adapters/storage/sqlite",
+        "//internal/app/services",
         "//internal/domain/daemon",
+        "//internal/moduleruntime/pythonrpc",
     ],
 )

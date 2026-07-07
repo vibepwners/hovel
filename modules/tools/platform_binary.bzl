@@ -1,7 +1,6 @@
 """Helpers for gathering one binary target for a specific host platform."""
 
-def _platform_binary_transition_impl(settings, attr):
-    _ = settings
+def _platform_binary_transition_impl(_settings, attr):
     return {
         "//command_line_option:platform_suffix": attr.platform_suffix,
         "//command_line_option:platforms": [str(attr.platform)],

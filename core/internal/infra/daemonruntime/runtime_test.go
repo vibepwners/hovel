@@ -1,25 +1,27 @@
 package daemonruntime
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
+	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
+	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc"
 )
-
-func TestMain(m *testing.M) {
-	if err := os.Setenv("HOVEL_MODULE_CONFIG", "modules/examples/python/hovel-modules.json"); err != nil {
-		panic(err)
-	}
-	os.Exit(m.Run())
-}
 
 func TestServeWritesStatusAndClearsOnCancel(t *testing.T) {
 	workspacePath := shortTempDir(t)
@@ -28,12 +30,12 @@ func TestServeWritesStatusAndClearsOnCancel(t *testing.T) {
 	errs := make(chan error, 1)
 
 	go func() {
-		errs <- Serve(ctx, Args{
+		errs <- Serve(ctx, runtimeTestArgs(Args{
 			WorkspacePath: workspacePath,
 			SocketPath:    workspacePath + "/hoveld.sock",
 			PID:           123,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-		})
+		}))
 	}()
 
 	waitFor(t, func() bool {
@@ -59,12 +61,12 @@ func TestServeRejectsDuplicateWorkspace(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
-		errs <- Serve(ctx, Args{
+		errs <- Serve(ctx, runtimeTestArgs(Args{
 			WorkspacePath: workspacePath,
 			SocketPath:    workspacePath + "/hoveld.sock",
 			PID:           123,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-		})
+		}))
 	}()
 	defer func() {
 		cancel()
@@ -77,12 +79,12 @@ func TestServeRejectsDuplicateWorkspace(t *testing.T) {
 		return err == nil && status.State == daemon.StateRunning
 	})
 
-	err := Serve(context.Background(), Args{
+	err := Serve(context.Background(), runtimeTestArgs(Args{
 		WorkspacePath: workspacePath,
 		SocketPath:    workspacePath + "/other.sock",
 		PID:           456,
 		StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-	})
+	}))
 	if err == nil {
 		t.Fatal("Serve returned nil error for duplicate workspace")
 	}
@@ -94,17 +96,25 @@ func TestServeRejectsDuplicateWorkspace(t *testing.T) {
 func TestServeRunsMockExploitOverRPC(t *testing.T) {
 	workspacePath := shortTempDir(t)
 	socketPath := workspacePath + "/hoveld.sock"
+	moduleConfig := writeRuntimeModuleConfig(t, runtimeModule{
+		ID:             "mock-exploit",
+		ModuleType:     "exploit",
+		Summary:        "test mock exploit",
+		ExecuteSummary: "mock exploit completed without target interaction",
+		FindingTitle:   "mock exploit path verified",
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
-		errs <- Serve(ctx, Args{
+		errs <- Serve(ctx, runtimeTestArgs(Args{
 			WorkspacePath: workspacePath,
 			SocketPath:    socketPath,
 			PID:           123,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
+			ModuleConfig:  moduleConfig,
 			IDs:           &sequenceIDs{values: []string{"run-1", "event-1", "event-2", "event-3", "event-4", "event-5"}},
 			Clock:         fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
-		})
+		}))
 	}()
 	defer func() {
 		cancel()
@@ -147,17 +157,23 @@ func TestServeRunsMockExploitOverRPC(t *testing.T) {
 func TestServeRestoresOperatorSessionFromWorkspaceDatabase(t *testing.T) {
 	workspacePath := shortTempDir(t)
 	socketPath := workspacePath + "/hoveld.sock"
+	moduleConfig := writeRuntimeModuleConfig(t, runtimeModule{
+		ID:         "mock-survey",
+		ModuleType: "survey",
+		Summary:    "test mock survey",
+	})
 	store := filesystem.NewWorkspaceStore()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
-		errs <- Serve(ctx, Args{
+		errs <- Serve(ctx, runtimeTestArgs(Args{
 			WorkspacePath: workspacePath,
 			SocketPath:    socketPath,
 			PID:           123,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),
-		})
+			ModuleConfig:  moduleConfig,
+		}))
 	}()
 	waitFor(t, func() bool {
 		client, err := daemonrpc.Dial(socketPath)
@@ -206,12 +222,13 @@ func TestServeRestoresOperatorSessionFromWorkspaceDatabase(t *testing.T) {
 	ctx, cancel = context.WithCancel(context.Background())
 	errs = make(chan error, 1)
 	go func() {
-		errs <- Serve(ctx, Args{
+		errs <- Serve(ctx, runtimeTestArgs(Args{
 			WorkspacePath: workspacePath,
 			SocketPath:    socketPath,
 			PID:           456,
 			StartedAt:     time.Date(2026, 4, 26, 12, 1, 0, 0, time.UTC),
-		})
+			ModuleConfig:  moduleConfig,
+		}))
 	}()
 	defer func() {
 		cancel()
@@ -320,4 +337,283 @@ func closeRuntimeClient(t *testing.T, client *daemonrpc.Client) {
 	if err := client.Close(); err != nil {
 		t.Logf("close daemon runtime client: %v", err)
 	}
+}
+
+type runtimeModule struct {
+	ID             string
+	ModuleType     string
+	Summary        string
+	ExecuteSummary string
+	FindingTitle   string
+}
+
+func writeRuntimeModuleConfig(t *testing.T, modules ...runtimeModule) string {
+	t.Helper()
+	root := t.TempDir()
+	config := pythonrpc.ModuleConfig{}
+	for _, module := range modules {
+		if module.ID == "" {
+			t.Fatal("runtime module fixture id is required")
+		}
+		moduleType := module.ModuleType
+		if moduleType == "" {
+			moduleType = "survey"
+		}
+		summary := module.Summary
+		if summary == "" {
+			summary = module.ID + " fixture"
+		}
+		executeSummary := module.ExecuteSummary
+		if executeSummary == "" {
+			executeSummary = module.ID + " executed"
+		}
+		findingTitle := module.FindingTitle
+		if findingTitle == "" {
+			findingTitle = module.ID + " finding"
+		}
+		config.Modules = append(config.Modules, pythonrpc.ModuleEntry{
+			ID:      module.ID,
+			Runtime: "jsonrpc-stdio",
+			Command: []string{
+				os.Args[0],
+				"-test.run=TestRuntimeModuleProcess",
+				"--",
+				"--runtime-module-helper",
+				module.ID,
+				moduleType,
+				summary,
+				executeSummary,
+				findingTitle,
+			},
+		})
+	}
+	configBody, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "modules.json")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return configPath
+}
+
+func TestRuntimeModuleProcess(t *testing.T) {
+	args := runtimeModuleProcessArgs()
+	if args == nil {
+		return
+	}
+	if err := runRuntimeModuleProcess(os.Stdin, os.Stdout, args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func runtimeModuleProcessArgs() []string {
+	for i, arg := range os.Args {
+		if arg == "--runtime-module-helper" {
+			return os.Args[i+1:]
+		}
+	}
+	return nil
+}
+
+func runRuntimeModuleProcess(in io.Reader, out io.Writer, args []string) error {
+	if len(args) != 5 {
+		return fmt.Errorf("usage: --runtime-module-helper <name> <type> <summary> <execute-summary> <finding-title>")
+	}
+	module := runtimeModule{
+		ID:             args[0],
+		ModuleType:     args[1],
+		Summary:        args[2],
+		ExecuteSummary: args[3],
+		FindingTitle:   args[4],
+	}
+	reader := bufio.NewReader(in)
+	for {
+		request, ok, err := readRuntimeModuleRequest(reader)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		id := request["id"]
+		method, _ := request["method"].(string)
+		switch method {
+		case "handshake":
+			if err := writeRuntimeModuleResponse(out, id, map[string]any{
+				"name":       module.ID,
+				"version":    "v0.0.0-test",
+				"moduleType": module.ModuleType,
+				"summary":    module.Summary,
+				"tags":       []string{},
+			}); err != nil {
+				return err
+			}
+		case "schema":
+			if err := writeRuntimeModuleResponse(out, id, map[string]any{
+				"chainConfig":  []any{},
+				"targetConfig": []any{},
+				"outputs":      map[string]any{},
+			}); err != nil {
+				return err
+			}
+		case "execute":
+			if err := writeRuntimeModuleResponse(out, id, map[string]any{
+				"status":    "succeeded",
+				"summary":   module.ExecuteSummary,
+				"findings":  []any{map[string]any{"title": module.FindingTitle, "severity": "info", "detail": ""}},
+				"artifacts": []any{},
+				"outputs":   map[string]any{},
+				"sessions":  []any{},
+			}); err != nil {
+				return err
+			}
+		case "shutdown":
+			if err := writeRuntimeModuleResponse(out, id, map[string]any{"status": "ok"}); err != nil {
+				return err
+			}
+			return nil
+		default:
+			if err := writeRuntimeModuleError(out, id, "unknown method "+method); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func readRuntimeModuleRequest(reader *bufio.Reader) (map[string]any, bool, error) {
+	headers := map[string]string{}
+	for {
+		line, err := reader.ReadString('\n')
+		if errors.Is(err, io.EOF) && line == "" {
+			return nil, false, nil
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, false, err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		name, value, ok := strings.Cut(line, ":")
+		if !ok {
+			return nil, false, fmt.Errorf("invalid header line %q", line)
+		}
+		headers[strings.ToLower(name)] = strings.TrimSpace(value)
+	}
+	length, err := strconv.Atoi(headers["content-length"])
+	if err != nil {
+		return nil, false, fmt.Errorf("invalid content-length: %w", err)
+	}
+	body := make([]byte, length)
+	if _, err := io.ReadFull(reader, body); err != nil {
+		return nil, false, err
+	}
+	var request map[string]any
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, false, err
+	}
+	return request, true, nil
+}
+
+func writeRuntimeModuleResponse(out io.Writer, id any, result map[string]any) error {
+	return writeRuntimeModuleMessage(out, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result":  result,
+	})
+}
+
+func writeRuntimeModuleError(out io.Writer, id any, message string) error {
+	return writeRuntimeModuleMessage(out, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"message": message},
+	})
+}
+
+func writeRuntimeModuleMessage(out io.Writer, message map[string]any) error {
+	body, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
+		return err
+	}
+	_, err = out.Write(body)
+	return err
+}
+
+func runtimeTestArgs(args Args) Args {
+	if args.ParseEndpoint == nil {
+		args.ParseEndpoint = runtimeTestParseEndpoint
+	}
+	if args.Store == nil {
+		args.Store = filesystem.NewWorkspaceStore()
+	}
+	if args.AcquireWorkspaceLock == nil {
+		args.AcquireWorkspaceLock = func(workspacePath, owner string) (WorkspaceLock, error) {
+			return filesystem.AcquireWorkspaceLock(workspacePath, owner)
+		}
+	}
+	if args.NewEventSink == nil {
+		args.NewEventSink = func(workspacePath string) services.EventSink {
+			return sqlitestore.NewStore(workspacePath)
+		}
+	}
+	if args.NewLogPublisher == nil {
+		args.NewLogPublisher = func() LogPublisher {
+			return daemonrpc.NewLogBroker()
+		}
+	}
+	if args.NewRPCServer == nil {
+		args.NewRPCServer = runtimeTestNewRPCServer
+	}
+	if args.NewModuleRuntime == nil {
+		args.NewModuleRuntime = runtimeTestNewModuleRuntime
+	}
+	return args
+}
+
+func runtimeTestParseEndpoint(value string) (Endpoint, error) {
+	endpoint, err := daemonrpc.ParseEndpoint(value)
+	if err != nil {
+		return Endpoint{}, err
+	}
+	return Endpoint{
+		Network: endpoint.Network,
+		Address: endpoint.Address,
+		Display: endpoint.String(),
+	}, nil
+}
+
+func runtimeTestNewRPCServer(config RPCServerConfig) (http.Handler, error) {
+	logs, ok := config.Logs.(*daemonrpc.LogBroker)
+	if !ok {
+		return nil, errors.New("test rpc server requires daemonrpc log broker")
+	}
+	return daemonrpc.NewHandler(
+		config.Runs,
+		daemonrpc.WithSession(config.Session),
+		daemonrpc.WithLogBroker(logs),
+		daemonrpc.WithSessionPersistence(config.PersistSession),
+		daemonrpc.WithModuleSessions(config.ModuleSessions),
+		daemonrpc.WithLaunchKeyPolicy(config.LaunchKeyPolicy),
+	)
+}
+
+func runtimeTestNewModuleRuntime(config ModuleRuntimeConfig) (services.ModuleRunner, services.SessionBroker) {
+	sessions := pythonrpc.NewSessionBroker()
+	return pythonrpc.Runner{
+		ConfigPath:    config.ModuleConfig,
+		HovelConfig:   config.HovelConfig,
+		WorkspacePath: config.WorkspacePath,
+		Events:        config.Events,
+		IDs:           config.IDs,
+		Clock:         config.Clock,
+		Sessions:      sessions,
+	}, sessions
 }

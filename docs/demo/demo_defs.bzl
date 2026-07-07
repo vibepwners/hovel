@@ -203,12 +203,17 @@ def _vhs_demo(name, tape, wine = False):
         **kwargs
     )
 
-def vhs_demo_targets():
-    for name, tape in STANDARD_DEMOS:
-        _vhs_demo(name, tape)
+def vhs_demo_targets(name):
+    """Declares the standard, UI component, and Wine VHS demo targets.
 
-    for name, tape in UI_COMPONENT_DEMOS:
-        _vhs_demo(name, tape)
+    Args:
+      name: Conventional macro name for BUILD-file tooling.
+    """
+    for demo_name, tape in STANDARD_DEMOS:
+        _vhs_demo(demo_name, tape)
+
+    for demo_name, tape in UI_COMPONENT_DEMOS:
+        _vhs_demo(demo_name, tape)
 
     _vhs_demo(
         "mcp-agent-02-squatter-wine",

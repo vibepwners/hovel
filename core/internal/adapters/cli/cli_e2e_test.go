@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
 	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
@@ -17,6 +18,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
 	"github.com/Vibe-Pwners/hovel/internal/testsupport"
+	"github.com/Vibe-Pwners/hovel/internal/version"
 )
 
 func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {
@@ -740,6 +742,7 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 	defer closeDaemonManagerSession(t, session)
 
 	welcome := app.Welcome(session)
+	versionLabel := "version " + version.Version
 	for _, want := range []string{
 		`.-"""-.`,
 		"╭",
@@ -747,6 +750,7 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 		"━",
 		"┃",
 		"███████",
+		versionLabel,
 		"modules: 3",
 		"hoveld:",
 		"hoveld.sock",
@@ -767,6 +771,7 @@ func TestWelcomeShowsOperatorAndDaemonState(t *testing.T) {
 	for _, want := range []string{
 		"|   |,---..    ,,---.|",
 		"`   '`---'  `'  `---'`---'",
+		versionLabel,
 		"modules:",
 	} {
 		if !strings.Contains(narrow, want) {
@@ -941,7 +946,7 @@ func startCLITestDaemon(t *testing.T, workspacePath, socketPath string) (context
 	ctx, cancel := context.WithCancel(context.Background())
 	errs := make(chan error, 1)
 	go func() {
-		errs <- daemonruntime.Serve(ctx, daemonruntime.Args{
+		errs <- daemonlocal.Serve(ctx, daemonruntime.Args{
 			WorkspacePath: workspacePath,
 			SocketPath:    socketPath,
 			StartedAt:     time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC),

@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
-import re
 import shutil
 import sys
 from pathlib import Path
@@ -46,8 +45,7 @@ def main() -> int:
     copy_tree(source / "spec", site / "spec", ignore_names={"BUILD.bazel"})
     copy_tree(source / "modules", site / "modules", ignore_names={"BUILD.bazel"})
     replace_version_tokens(site, (repo / "VERSION").read_text().strip())
-    missing_demo_assets = copy_demo_outputs(repo, site)
-    remove_missing_demo_figures(site, missing_demo_assets)
+    copy_demo_outputs(repo, site)
     stage_test_report(repo, site)
 
     generate_sdk_api_docs.main_with_paths(
@@ -169,26 +167,10 @@ def copy_demo_outputs(repo: Path, site: Path) -> set[str]:
             missing.add(Path(output).name)
             continue
         copy_file(src, dest / Path(output).name)
+    if missing:
+        names = ", ".join(sorted(missing))
+        raise SystemExit(f"missing or empty docs demo artifacts: {names}; run `task docs:demos:all` before staging")
     return missing
-
-
-def remove_missing_demo_figures(site: Path, missing_demo_assets: set[str]) -> None:
-    if not missing_demo_assets:
-        return
-    for page in site.rglob("*.html"):
-        text = page.read_text(encoding="utf-8")
-        updated = text
-        for asset in missing_demo_assets:
-            updated = re.sub(
-                r"\s*<figure\b[^>]*>\s*<img\b[^>]*assets/demos/"
-                + re.escape(asset)
-                + r"[^>]*>.*?</figure>",
-                "",
-                updated,
-                flags=re.DOTALL,
-            )
-        if updated != text:
-            page.write_text(updated, encoding="utf-8")
 
 
 def stage_test_report(repo: Path, site: Path) -> None:
