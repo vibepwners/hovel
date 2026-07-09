@@ -146,6 +146,11 @@
             <tr><td><code>connect_session</code></td><td><code>ConnectSessionRequest</code></td><td><code>SessionRef</code></td><td>Go</td></tr>
             <tr><td><code>cleanup_payload</code></td><td><code>CleanupPayloadRequest</code></td><td><code>CleanupResult</code></td><td>Go</td></tr>
             <tr><td><code>read_payload_chunk</code></td><td><code>ReadPayloadChunkRequest</code></td><td><code>PayloadChunk</code></td><td>Go</td></tr>
+            <tr><td><code>mesh.describe</code></td><td><code>MeshDescribeRequest</code></td><td><code>MeshDescriptor</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.topology</code></td><td><code>MeshTopologyRequest</code></td><td><code>MeshTopology</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.beacons</code></td><td><code>MeshBeaconRequest</code></td><td><code>{ "beacons": MeshBeacon[] }</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.task</code></td><td><code>MeshTaskRequest</code></td><td><code>MeshTaskResult</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.open_stream</code></td><td><code>MeshStreamRequest</code></td><td><code>SessionRef</code></td><td>Python, Go, Rust</td></tr>
           </tbody>
         </table>
 
@@ -448,6 +453,130 @@
   "eof": false,
   "encoding": "base64"
 }</code></pre>
+
+        <h3>mesh.describe</h3>
+        <p>
+          Reports a provider-owned Mesh's static capabilities, task specs, declared
+          triggers, and cheap topology. A Mesh can be one node, a chain, or a routed
+          tree/graph; it is broader than a transport or tunnel. This is the only
+          common method every Mesh provider should implement. Other Mesh methods are
+          optional and should match the descriptor's advertised capabilities.
+        </p>
+<pre data-lang="params"><code>{
+  "agentContext": AgentContext
+}</code></pre>
+<pre data-lang="result"><code>{
+  "name": "routed-node-mesh",
+  "version": "v0.1.0",
+  "capabilities": ["topology.tree", "task.survey", "task.command", "task.load", "stream.tcp"],
+  "tasks": [
+    { "kind": "survey", "summary": "survey a node", "readOnly": true, "targetScopes": ["node"] },
+    { "kind": "upload_execute", "summary": "upload and execute a file", "destructive": true, "targetScopes": ["node", "destination"] },
+    { "kind": "load", "summary": "load a provider-native component or implant", "destructive": true, "targetScopes": ["node", "destination"] },
+    { "kind": "command", "summary": "run a node or routed destination command", "targetScopes": ["node", "destination"] }
+  ],
+  "triggers": [
+    { "id": "beacon-command", "kind": "beacon", "nodeId": "node-2", "state": "armed" }
+  ]
+}</code></pre>
+
+        <h3>mesh.topology</h3>
+        <p>
+          Returns current nodes, links, and optional routes. This may inspect
+          provider-local state but must not mutate target-side state.
+        </p>
+<pre data-lang="params"><code>{
+  "root": "controller",
+  "includeRoutes": true
+}</code></pre>
+<pre data-lang="result"><code>{
+  "root": "controller",
+  "nodes": [
+    { "id": "controller", "kind": "controller", "state": "online" },
+    { "id": "relay-1", "parentId": "controller", "kind": "relay", "state": "online" },
+    { "id": "leaf-1", "parentId": "relay-1", "kind": "agent", "state": "online" }
+  ],
+  "links": [
+    { "id": "link-controller-relay-1", "source": "controller", "target": "relay-1", "state": "up" }
+  ],
+  "routes": [
+    { "id": "route-leaf-1", "nodes": ["controller", "relay-1", "leaf-1"] }
+  ]
+}</code></pre>
+
+        <h3>mesh.beacons</h3>
+        <p>
+          Returns recent node liveness or status signals. Beacons are evidence and
+          routing context; they never bypass planning, confirmation, or guardrails.
+        </p>
+<pre data-lang="params"><code>{
+  "nodeId": "leaf-1",
+  "since": "2026-07-09T00:00:00Z",
+  "limit": 50
+}</code></pre>
+<pre data-lang="result"><code>{
+  "beacons": [
+    { "id": "beacon-1", "nodeId": "leaf-1", "state": "alive", "time": "2026-07-09T00:01:00Z" }
+  ]
+}</code></pre>
+
+        <h3>mesh.task</h3>
+        <p>
+          Runs a provider-owned node, route, or destination task after the operator's plan has been
+          reviewed and confirmed. Common task kinds are <code>survey</code>,
+          <code>upload</code>, <code>execute</code>, <code>upload_execute</code>,
+          <code>command</code>, <code>load</code>, and <code>stream</code>.
+          Destination-scoped tasks use <code>nodeId</code> or <code>route</code> as
+          the pivot and <code>destinationHost</code>, <code>destinationPort</code>,
+          and <code>protocol</code> as the endpoint reachable through that pivot.
+          Implant loading is modeled the same way: use <code>upload_execute</code>
+          for "copy bytes, then run them" and <code>load</code> only when the
+          provider owns a native loader. Payload bytes may be inline
+          <code>inputData</code> with <code>inputEncoding</code>, or a
+          provider-defined artifact/payload reference in <code>config</code>.
+          Providers do not need to implement every task kind; unsupported methods
+          or task kinds should fail explicitly.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "taskId": "upload-execute-through-node-2",
+  "kind": "upload_execute",
+  "nodeId": "node-2",
+  "destinationHost": "10.10.10.10",
+  "destinationPort": 445,
+  "protocol": "tcp",
+  "config": { "remotePath": "C:\\\\Windows\\\\Temp\\\\payload.exe" },
+  "inputData": "TVqQAAMAAAAEAAAA...",
+  "inputEncoding": "base64"
+}</code></pre>
+<pre data-lang="result"><code>{
+  "taskId": "upload-execute-through-node-2",
+  "status": "succeeded",
+  "summary": "uploaded and executed through node-2",
+  "nodeId": "node-2",
+  "destinationHost": "10.10.10.10",
+  "destinationPort": 445,
+  "protocol": "tcp",
+  "outputs": { "exitCode": 0 },
+  "findings": [],
+  "sessions": []
+}</code></pre>
+
+        <h3>mesh.open_stream</h3>
+        <p>
+          Opens a routed byte stream to an endpoint reachable through a Mesh node or
+          route. The result is a normal <code>SessionRef</code>, so existing session IO,
+          transcript capture, and local IP:port bridging use the same broker.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "moduleId": "routed-node-mesh@v0.1.0",
+  "nodeId": "node-2",
+  "destinationHost": "10.10.10.10",
+  "destinationPort": 443,
+  "protocol": "tcp"
+}</code></pre>
+<pre data-lang="result"><code>SessionRef</code></pre>
 
         <h3>execute</h3>
         <p>Runs the module against one target. The daemon supplies the resolved configuration; the module returns its result.</p>

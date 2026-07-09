@@ -29,6 +29,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
 	domainmodule "github.com/Vibe-Pwners/hovel/internal/domain/module"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
@@ -548,6 +549,7 @@ type ModuleInspectPayload struct {
 	Discovery    *modulecatalog.Context      `json:"discoveryContext,omitempty"`
 	Planning     *modulecatalog.Context      `json:"planningContext,omitempty"`
 	Steps        []ModuleStepPayload         `json:"steps,omitempty"`
+	Mesh         *mesh.Descriptor            `json:"mesh,omitempty"`
 }
 
 type ModuleStepPayload struct {
@@ -6059,6 +6061,18 @@ func moduleInspect(payload ModuleInspectPayload) string {
 			}
 		}
 	}
+	if payload.Mesh != nil {
+		lines = append(lines, "", "mesh")
+		lines = append(lines, fmt.Sprintf("  name         %s", payload.Mesh.Name))
+		lines = append(lines, fmt.Sprintf("  tasks        %d", len(payload.Mesh.Tasks)))
+		lines = append(lines, fmt.Sprintf("  triggers     %d", len(payload.Mesh.Triggers)))
+		if payload.Mesh.Topology != nil {
+			lines = append(lines, fmt.Sprintf("  nodes        %d", len(payload.Mesh.Topology.Nodes)))
+		}
+		if len(payload.Mesh.Capabilities) > 0 {
+			lines = append(lines, "  capabilities "+strings.Join(payload.Mesh.Capabilities, ", "))
+		}
+	}
 	lines = append(lines, "", "Next: chain add "+payload.ID)
 	return strings.Join(lines, "\n")
 }
@@ -6111,7 +6125,22 @@ func moduleInspectPayload(module modulecatalog.Module, steps []ModuleStepPayload
 		planning := module.Planning
 		payload.Planning = &planning
 	}
+	if meshDescriptorPresent(module.Mesh) {
+		meshDescriptor := module.Mesh
+		payload.Mesh = &meshDescriptor
+	}
 	return payload
+}
+
+func meshDescriptorPresent(descriptor mesh.Descriptor) bool {
+	return descriptor.Name != "" ||
+		descriptor.Version != "" ||
+		descriptor.Summary != "" ||
+		len(descriptor.Capabilities) > 0 ||
+		descriptor.Topology != nil ||
+		len(descriptor.Tasks) > 0 ||
+		len(descriptor.Triggers) > 0 ||
+		len(descriptor.Attributes) > 0
 }
 
 func moduleStepPayloads(moduleID string, availability []modulecatalog.StepAvailability) []ModuleStepPayload {

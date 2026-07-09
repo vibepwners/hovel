@@ -110,8 +110,26 @@ func (r Renderer) moduleInspect(payload commands.ModuleInspectPayload) string {
 	if len(payload.Steps) > 0 {
 		sections = append(sections, r.steps(payload.Steps))
 	}
+	if payload.Mesh != nil {
+		details := []string{
+			fmt.Sprintf("%d nodes", meshNodeCount(payload)),
+			fmt.Sprintf("%d tasks", len(payload.Mesh.Tasks)),
+			fmt.Sprintf("%d triggers", len(payload.Mesh.Triggers)),
+		}
+		if len(payload.Mesh.Capabilities) > 0 {
+			details = append(details, "capabilities: "+strings.Join(payload.Mesh.Capabilities, ", "))
+		}
+		sections = append(sections, r.styles.Cyan.Render("mesh")+"  "+strings.Join(details, "; "))
+	}
 	sections = append(sections, r.styles.Muted.Render("Next: chain add "+payload.ID))
 	return r.styles.Panel("MODULE", payload.ID, strings.Join(nonEmpty(sections), "\n\n"), r.panelWidth())
+}
+
+func meshNodeCount(payload commands.ModuleInspectPayload) int {
+	if payload.Mesh == nil || payload.Mesh.Topology == nil {
+		return 0
+	}
+	return len(payload.Mesh.Topology.Nodes)
 }
 
 func (r Renderer) requirements(title string, requirements []modulecatalog.Requirement) string {

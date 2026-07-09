@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 
 def main() -> int:
@@ -30,6 +31,7 @@ def main() -> int:
     parser.add_argument("--chrome-bin", required=True, type=Path)
     parser.add_argument("--ffmpeg-bin", required=True, type=Path)
     parser.add_argument("--ttyd-bin", required=True, type=Path)
+    parser.add_argument("--font-file", action="append", default=[], type=Path)
     parser.add_argument("--squatter-provider", type=Path)
     parser.add_argument("--squatter-exe", type=Path)
     parser.add_argument("--dockerfile", type=Path)
@@ -47,11 +49,16 @@ def main() -> int:
         require_command("docker")
         require_wine_inputs(args)
 
-    with tempfile.TemporaryDirectory(prefix="hovel-vhs-", dir=os.environ.get("TMPDIR")) as work_raw:
-        work = Path(work_raw)
+    keep_failed_tmp = os.environ.get("HOVEL_DEMO_KEEP_FAILED_TMP") == "1"
+    work = Path(tempfile.mkdtemp(prefix="hovel-vhs-", dir=os.environ.get("TMPDIR")))
+    try:
         repo = work / "repo"
         build_synthetic_repo(repo, args)
+        fontconfig_file = write_fontconfig(repo / "demo/tmp/fonts.conf", repo / "demo/tmp/fonts", repo / "demo/tmp/cache/fontconfig")
         chrome_wrapper = write_chrome_wrapper(repo / "demo/tmp/chrome-bin/chrome", executable_path(args.chrome_bin))
+        capture_ffmpeg_root = os.environ.get("HOVEL_DEMO_CAPTURE_FFMPEG_INPUTS")
+        if capture_ffmpeg_root:
+            write_ffmpeg_capture_wrapper(chrome_wrapper.parent / "ffmpeg", ffmpeg, Path(capture_ffmpeg_root))
         env = os.environ | {
             "TMPDIR": str(repo / "demo/tmp/vhs-tmp"),
             "HOME": str(repo / "demo/tmp/home"),
@@ -62,18 +69,31 @@ def main() -> int:
             "HOVEL_DEMO_UI_BIN": str(repo / "demo/tmp/hovel-ui-catalog"),
             "PATH": tool_path(chrome_wrapper.parent, Path(vhs).parent, Path(ffmpeg).parent, Path(ttyd).parent),
             "PYTHONDONTWRITEBYTECODE": "1",
+            "FONTCONFIG_FILE": str(fontconfig_file),
         }
-        run_vhs(vhs, args.tape_rel, repo, env)
+        vhs_output = run_vhs(vhs, args.tape_rel, repo, env)
         rendered = rendered_output(repo, repo / args.tape_rel)
         if not rendered.is_file() or rendered.stat().st_size == 0:
+            if vhs_output:
+                sys.stderr.write(vhs_output)
+                if not vhs_output.endswith("\n"):
+                    sys.stderr.write("\n")
+            print_demo_diagnostics(repo)
             raise SystemExit(f"expected demo output was not generated: {rendered}")
         subprocess.run([sys.executable, str(repo / "tools/demo/check_gif_duration.py"), str(rendered)], check=True)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(rendered, args.output)
+    except BaseException:
+        if keep_failed_tmp:
+            sys.stderr.write(f"kept failed demo workspace: {work}\n")
+        else:
+            shutil.rmtree(work, ignore_errors=True)
+        raise
+    shutil.rmtree(work, ignore_errors=True)
     return 0
 
 
-def run_vhs(vhs: str, tape_rel: str, repo: Path, env: dict[str, str]) -> None:
+def run_vhs(vhs: str, tape_rel: str, repo: Path, env: dict[str, str]) -> str:
     result = subprocess.run(
         [vhs, tape_rel],
         cwd=repo,
@@ -84,7 +104,7 @@ def run_vhs(vhs: str, tape_rel: str, repo: Path, env: dict[str, str]) -> None:
         check=False,
     )
     if result.returncode == 0:
-        return
+        return result.stdout
     if result.stdout:
         sys.stderr.write(result.stdout)
         if not result.stdout.endswith("\n"):
@@ -111,6 +131,7 @@ def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:
         Path("demo/chains"),
         Path("demo/out"),
         Path("demo/tmp/cache"),
+        Path("demo/tmp/fonts"),
         Path("demo/tmp/home"),
         Path("demo/tmp/vhs-tmp"),
         Path("examples/bin"),
@@ -131,6 +152,8 @@ def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:
     install(args.ui_catalog_bin, repo / "demo/tmp/hovel-ui-catalog")
     install(args.mock_survey_go, repo / "modules/examples/bin/mock-survey-go")
     install(args.mock_exploit_session_go, repo / "modules/examples/bin/mock-exploit-session-go")
+    for font_file in sorted(args.font_file):
+        install(font_file, repo / "demo/tmp/fonts" / font_file.name, executable=False)
     write_module_config(
         repo / "modules/examples/hovel-modules.json",
         [
@@ -175,6 +198,21 @@ def write_module_config(path: Path, modules: list[dict[str, object]]) -> None:
     path.write_text(json.dumps({"modules": modules}, indent=2) + "\n")
 
 
+def write_fontconfig(path: Path, font_dir: Path, cache_dir: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '<?xml version="1.0"?>\n'
+        '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">\n'
+        "<fontconfig>\n"
+        f"  <dir>{xml_escape(str(font_dir))}</dir>\n"
+        f"  <cachedir>{xml_escape(str(cache_dir))}</cachedir>\n"
+        "  <config></config>\n"
+        "</fontconfig>\n"
+    )
+    return path
+
+
 def write_chrome_wrapper(path: Path, chrome: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -182,12 +220,51 @@ def write_chrome_wrapper(path: Path, chrome: str) -> Path:
         "import os\n"
         "import sys\n"
         f"chrome = {chrome!r}\n"
+        "library_path = os.environ.get('HOVEL_CHROME_LIBRARY_PATH')\n"
+        "if library_path:\n"
+        "    current = os.environ.get('LD_LIBRARY_PATH')\n"
+        "    os.environ['LD_LIBRARY_PATH'] = library_path if not current else library_path + os.pathsep + current\n"
         "flags = [\n"
         "    '--no-sandbox',\n"
         "    '--disable-dev-shm-usage',\n"
         "    '--disable-gpu',\n"
         "]\n"
         "os.execv(chrome, [chrome, *flags, *sys.argv[1:]])\n"
+    )
+    path.chmod(0o755)
+    return path
+
+
+def write_ffmpeg_capture_wrapper(path: Path, ffmpeg: str, capture_root: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    capture_root.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import glob\n"
+        "import os\n"
+        "import shutil\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        f"ffmpeg = {ffmpeg!r}\n"
+        f"capture = Path({str(capture_root)!r})\n"
+        "capture.mkdir(parents=True, exist_ok=True)\n"
+        "with (capture / 'args.txt').open('a', encoding='utf-8') as handle:\n"
+        "    handle.write(repr(sys.argv[1:]) + '\\n')\n"
+        "for arg in sys.argv[1:]:\n"
+        "    if 'frame-' not in arg or '%' not in arg:\n"
+        "        continue\n"
+        "    for pattern in (arg.replace('%05d', '*'), arg.replace('%d', '*')):\n"
+        "        for source in sorted(glob.glob(pattern))[:40]:\n"
+        "            source_path = Path(source)\n"
+        "            dest = capture / source_path.name\n"
+        "            try:\n"
+        "                shutil.copy2(source_path, dest)\n"
+        "                with (capture / 'files.txt').open('a', encoding='utf-8') as handle:\n"
+        "                    handle.write(f'{source_path} {source_path.stat().st_size} -> {dest}\\n')\n"
+        "            except OSError as exc:\n"
+        "                with (capture / 'files.txt').open('a', encoding='utf-8') as handle:\n"
+        "                    handle.write(f'{source_path} error: {exc}\\n')\n"
+        "os.execv(ffmpeg, [ffmpeg, *sys.argv[1:]])\n"
     )
     path.chmod(0o755)
     return path

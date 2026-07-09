@@ -35,6 +35,7 @@
         <li><a href="domain-model.html">Domain Model</a></li>
         <li><a href="modules-services.html">Modules and Services</a></li>
         <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="mesh.html">Mesh</a></li>
         <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
@@ -102,7 +103,8 @@ Content-Type: application/json
         <p>The contract is unary. Logs and session output are polled through <code>PollLogs</code>, <code>ActiveLogs</code>, <code>ReadSession</code>, and <code>TailSession</code> rather than streamed over a long-lived HTTP response.</p>
 
         <h2>Daemon-Owned State</h2>
-        <p><code>hoveld</code> owns operation, chain, target, config, log, session, launch-key, payload, and live entity state for a workspace. Front ends may keep local active selections for ergonomics, but authoritative mutation goes through daemon methods. The default operation name is <code>default</code> when callers omit an operation where the server accepts that fallback.</p>
+        <p><code>hoveld</code> owns operation, chain, target, config, log, session, launch-key, payload, Mesh bookkeeping, and live entity state for a workspace. Front ends may keep local active selections for ergonomics, but authoritative mutation goes through daemon methods. The default operation name is <code>default</code> when callers omit an operation where the server accepts that fallback.</p>
+        <p>Mesh task and stream calls are recorded in daemon memory with route, node, destination, caller-reported local bridge address, session, state, and timestamps. Front ends can inspect that audit surface with <code>ListMeshOperations</code> instead of guessing which local listener or session belongs to a routed Mesh operation.</p>
         <p>CLI, one-shot execution, MCP, and future front ends must not create parallel persistence or confirmation paths. A throw still needs a persisted plan and a recorded confirmation before execution, and dangerous modules still require the explicit dangerous-module allowance.</p>
 
         <h2>Front-End Use</h2>
@@ -164,6 +166,12 @@ Content-Type: application/json
             <tr><td>Launch key</td><td><code>CancelPendingThrow</code></td><td>Cancel a pending throw.</td></tr>
             <tr><td>Launch key</td><td><code>GetLaunchKeyPolicy</code></td><td>Read effective launch-key policy for an operation.</td></tr>
             <tr><td>Launch key</td><td><code>SetLaunchKeyPolicy</code></td><td>Set launch-key policy mode, quorum, and heartbeat timeout for an operation.</td></tr>
+            <tr><td>Mesh</td><td><code>DescribeMesh</code></td><td>Ask a Mesh provider to report static topology, task specs, triggers, and capabilities.</td></tr>
+            <tr><td>Mesh</td><td><code>MeshTopology</code></td><td>Ask a Mesh provider for current nodes, links, and optional routes.</td></tr>
+            <tr><td>Mesh</td><td><code>ListMeshBeacons</code></td><td>List recent Mesh beacons for one node or the provider-owned Mesh.</td></tr>
+            <tr><td>Mesh</td><td><code>RunMeshTask</code></td><td>Run a provider-owned Mesh task such as survey, command, upload, execute, or upload_execute.</td></tr>
+            <tr><td>Mesh</td><td><code>OpenMeshStream</code></td><td>Open a routed Mesh byte stream as a normal daemon session for local IP:port bridging.</td></tr>
+            <tr><td>Mesh</td><td><code>ListMeshOperations</code></td><td>List daemon bookkeeping records for Mesh tasks and streams, including route, destination, session, and state.</td></tr>
             <tr><td>Payload providers</td><td><code>GeneratePayload</code></td><td>Ask a payload-provider module to generate payload artifacts.</td></tr>
             <tr><td>Payload providers</td><td><code>ListPayloadCommands</code></td><td>List provider-owned commands for a payload provider and installed payload context.</td></tr>
             <tr><td>Payload providers</td><td><code>RunPayloadCommand</code></td><td>Run one provider-owned payload command through daemon-owned provider services.</td></tr>

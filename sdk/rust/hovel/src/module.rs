@@ -1,8 +1,14 @@
 //! The module contract: metadata, configuration schema, and the [`Module`] trait.
 
 use crate::context::Context;
+use crate::mesh::{
+    MeshBeacon, MeshBeaconRequest, MeshDescriptor, MeshDescribeRequest,
+    MeshStreamRequest, MeshTaskRequest, MeshTaskResult, MeshTopology,
+    MeshTopologyRequest,
+};
 use crate::json::Value;
 use crate::result::Outcome;
+use crate::session::SessionRef;
 
 /// The kind of work a module performs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,4 +102,53 @@ pub trait Module {
     fn info(&self) -> Info;
     fn schema(&self) -> Schema;
     fn run(&self, ctx: &mut Context) -> Outcome;
+
+    fn describe_mesh(
+        &self,
+        _req: MeshDescribeRequest,
+    ) -> Result<MeshDescriptor, String> {
+        Err(format!("module {:?} is not a mesh provider", self.info().name))
+    }
+
+    fn mesh_topology(
+        &self,
+        _req: MeshTopologyRequest,
+    ) -> Result<MeshTopology, String> {
+        Err(format!(
+            "module {:?} does not implement mesh.topology",
+            self.info().name
+        ))
+    }
+
+    fn list_mesh_beacons(
+        &self,
+        _req: MeshBeaconRequest,
+    ) -> Result<Vec<MeshBeacon>, String> {
+        Err(format!(
+            "module {:?} does not implement mesh.beacons",
+            self.info().name
+        ))
+    }
+
+    fn run_mesh_task(
+        &self,
+        _ctx: &mut Context,
+        _req: MeshTaskRequest,
+    ) -> Result<MeshTaskResult, String> {
+        Err(format!(
+            "module {:?} does not implement mesh.task",
+            self.info().name
+        ))
+    }
+
+    fn open_mesh_stream(
+        &self,
+        _ctx: &mut Context,
+        _req: MeshStreamRequest,
+    ) -> Result<SessionRef, String> {
+        Err(format!(
+            "module {:?} does not implement mesh.open_stream",
+            self.info().name
+        ))
+    }
 }

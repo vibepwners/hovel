@@ -57,6 +57,7 @@ def _vhs_demo_impl(ctx):
     args.add("--chrome-bin", ctx.file._chrome)
     args.add("--ffmpeg-bin", ctx.file._ffmpeg)
     args.add("--ttyd-bin", ctx.file._ttyd)
+    args.add_all(ctx.files._dejavu_fonts, before_each = "--font-file")
 
     inputs = [
         ctx.file.tape,
@@ -66,6 +67,7 @@ def _vhs_demo_impl(ctx):
         ctx.file.duration_checker,
         ctx.file.vhs_version,
     ]
+    inputs.extend(ctx.files._dejavu_fonts)
     tools = []
     transitive_tools = []
     for attr_name in ("runner", "hovel", "agent", "ui_catalog", "mock_survey_go", "mock_exploit_session_go"):
@@ -104,6 +106,11 @@ def _vhs_demo_impl(ctx):
         },
         mnemonic = "VhsDemo",
         progress_message = "Rendering VHS demo %{label}",
+        # VHS/Chrome rendering is already a host-service action: it invokes
+        # tmux and sometimes Docker, and local Chrome builds may need host
+        # dynamic-loader hints such as HOVEL_CHROME_LIBRARY_PATH passed via
+        # --action_env.
+        use_default_shell_env = True,
     )
     return [DefaultInfo(files = depset([out]))]
 
@@ -144,6 +151,11 @@ _vhs_demo_rule = rule(
         ),
         "_chrome_files": attr.label(
             default = "@chrome_for_testing_linux_x86_64//:chrome_files",
+            cfg = "exec",
+        ),
+        "_dejavu_fonts": attr.label(
+            default = "@dejavu_fonts_ttf//:dejavu_ttf",
+            allow_files = True,
             cfg = "exec",
         ),
         "_ffmpeg": attr.label(

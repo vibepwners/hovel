@@ -163,8 +163,9 @@
         <p>
           All three SDKs expose the same concepts under language-appropriate names: a
           module object/trait with <code>info</code>, <code>schema</code>, and <code>run</code>;
-          a context for inputs, logging, and sessions; and a result carrying findings and
-          artifacts. Pick the one your tooling and target environment favor.
+          optional extension hooks such as steps and Mesh; a context for inputs, logging,
+          and sessions; and a result carrying findings and artifacts. Pick the one your
+          tooling and target environment favor.
         </p>
 
         <h2>Implementing one module in all three SDKs</h2>
@@ -198,7 +199,7 @@
         </p>
         <ul>
           <li><strong>Stdout belongs to the protocol.</strong> Never print progress, banners, debug output, or child-process output to stdout. The daemon reads stdout as framed JSON-RPC. Use the SDK logger for operator-visible logs and stderr only for crash diagnostics.</li>
-          <li><strong>Metadata paths must be boring.</strong> Catalog loading calls <code>handshake</code>, <code>schema</code>, and <code>step.describe</code>. Those paths must be fast, deterministic, offline, and side-effect free: no target contact, listener startup, random prepared values, payload generation, credential creation, or filesystem mutation.</li>
+          <li><strong>Metadata paths must be boring.</strong> Catalog loading calls <code>handshake</code>, <code>schema</code>, optional <code>step.describe</code>, and optional <code>mesh.describe</code>. Those paths must be fast, deterministic, offline, and side-effect free: no target contact, listener startup, random prepared values, payload generation, credential creation, or filesystem mutation.</li>
           <li><strong>Configuration is explicit.</strong> Declare every operator-controlled value as a <code>Requirement</code>. Do not read arbitrary environment variables or hidden config files for target behavior unless the value is also surfaced in the schema or returned evidence.</li>
           <li><strong>Use Hovel's log rail.</strong> Logs should be structured fields, not prose blobs. Log target host, stage, protocol, handle, and provider ids as fields so transcripts are searchable.</li>
           <li><strong>Return durable state deliberately.</strong> Facts belong in <code>outputs</code>, human/audit observations in <code>findings</code>, blobs in <code>artifacts</code>, live handles in <code>sessions</code>, and target-side payload inventory only in explicit <code>installedPayloads</code> descriptors.</li>
@@ -212,8 +213,9 @@
           <code>hovel-module.yaml</code> manifest. The manifest describes package identity,
           trusted install scripts, and how Hovel launches the module on the operator's
           host. Runtime schema still comes from <code>handshake</code>, <code>schema</code>,
-          and <code>step.describe</code>; the package manifest is install and launch
-          metadata, not the authoritative module behavior schema.
+          optional <code>step.describe</code>, and optional <code>mesh.describe</code>;
+          the package manifest is install and launch metadata, not the authoritative
+          module behavior schema.
         </p>
 <pre data-lang="tree"><code>my-module-0.1.0.tgz
   hovel-module.yaml

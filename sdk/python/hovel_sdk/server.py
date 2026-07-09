@@ -9,8 +9,17 @@ from typing import Any, BinaryIO
 from hovel_sdk.context import AgentContext, Context
 from hovel_sdk.framing import FrameError, MessageWriter, read_message
 from hovel_sdk.logging import setup_logging
+from hovel_sdk.mesh import (
+    MeshBeacon,
+    MeshBeaconRequest,
+    MeshDescribeRequest,
+    MeshStreamRequest,
+    MeshTaskRequest,
+    MeshTaskResult,
+    MeshTopologyRequest,
+)
 from hovel_sdk.module import HovelModule
-from hovel_sdk.session import SessionManager
+from hovel_sdk.session import SessionManager, SessionRef
 
 _MODULE_TYPES = {"survey", "exploit", "payload_provider"}
 
@@ -73,19 +82,23 @@ class JSONRPCServer:
         if method == "handshake":
             info = self._module.info()
             _validate_handshake_info(info)
-            return info
-        if method == "schema":
-            return self._module.module_schema()
-        if method.startswith("step."):
-            return self._dispatch_step(method, params)
-        if method == "execute":
-            return self._loop.run_until_complete(self._execute(params))
-        if method.startswith("session/"):
-            return self._loop.run_until_complete(self._dispatch_session(method, params))
-        if method == "shutdown":
+            result = info
+        elif method == "schema":
+            result = self._module.module_schema()
+        elif method.startswith("mesh."):
+            result = self._loop.run_until_complete(self._dispatch_mesh(method, params))
+        elif method.startswith("step."):
+            result = self._dispatch_step(method, params)
+        elif method == "execute":
+            result = self._loop.run_until_complete(self._execute(params))
+        elif method.startswith("session/"):
+            result = self._loop.run_until_complete(self._dispatch_session(method, params))
+        elif method == "shutdown":
             self._loop.run_until_complete(self._sessions.close_all())
-            return {"status": "ok"}
-        raise ValueError(f"unknown method {method!r}")
+            result = {"status": "ok"}
+        else:
+            raise ValueError(f"unknown method {method!r}")
+        return result
 
     def _dispatch_step(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if method == "step.describe":
@@ -96,6 +109,22 @@ class JSONRPCServer:
             return self._module.execute_step(params)
         if method == "step.cleanup":
             return self._module.cleanup_step(params)
+        raise ValueError(f"unknown method {method!r}")
+
+    async def _dispatch_mesh(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method == "mesh.describe":
+            descriptor = await _resolve(self._module.describe_mesh(MeshDescribeRequest.from_rpc(params)))
+            return descriptor.to_rpc() if hasattr(descriptor, "to_rpc") else dict(descriptor)
+        if method == "mesh.topology":
+            topology = await _resolve(self._module.mesh_topology(MeshTopologyRequest.from_rpc(params)))
+            return topology.to_rpc() if hasattr(topology, "to_rpc") else dict(topology)
+        if method == "mesh.beacons":
+            beacons = await _resolve(self._module.list_mesh_beacons(MeshBeaconRequest.from_rpc(params)))
+            return {"beacons": [_mesh_beacon_to_rpc(beacon) for beacon in beacons]}
+        if method == "mesh.task":
+            return await self._run_mesh_task(params)
+        if method == "mesh.open_stream":
+            return await self._open_mesh_stream(params)
         raise ValueError(f"unknown method {method!r}")
 
     async def _dispatch_session(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -130,6 +159,49 @@ class JSONRPCServer:
             result = maybe_result
         return result.to_rpc(sessions=sessions.refs())
 
+    async def _run_mesh_task(self, params: dict[str, Any]) -> dict[str, Any]:
+        request = MeshTaskRequest.from_rpc(params)
+        ctx = self._mesh_context(params)
+        result = await _resolve(self._module.run_mesh_task(ctx, request))
+        if isinstance(result, MeshTaskResult):
+            return result.to_rpc(sessions=ctx.sessions.refs() if ctx.sessions is not None else [])
+        out = dict(result)
+        _merge_rpc_sessions(out, ctx.sessions.refs() if ctx.sessions is not None else [])
+        return out
+
+    async def _open_mesh_stream(self, params: dict[str, Any]) -> dict[str, Any]:
+        request = MeshStreamRequest.from_rpc(params)
+        ctx = self._mesh_context(params)
+        session = await _resolve(self._module.open_mesh_stream(ctx, request))
+        return session.to_rpc() if isinstance(session, SessionRef) else dict(session)
+
+    def _mesh_context(self, params: dict[str, Any]) -> Context:
+        context_params = self._mesh_context_params(params)
+        run_id = str(context_params.get("runId", ""))
+        module_id = str(context_params.get("moduleId", self._module.name))
+        target = str(context_params.get("target", ""))
+        config = context_params.get("config") or {}
+        sessions = self._sessions.for_run(run_id=run_id, module_id=module_id, target=target)
+        return Context(
+            run_id=run_id,
+            module_id=module_id,
+            target=target,
+            inputs=dict(config) if isinstance(config, dict) else {},
+            agent=AgentContext.from_rpc(context_params.get("agentContext")),
+            log=logging.getLogger(self._module.name or "hovel.module"),
+            sessions=sessions,
+        )
+
+    def _mesh_context_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        out = dict(params)
+        out.setdefault("moduleId", self._module.name)
+        out.setdefault("runId", "mesh")
+        if not out.get("target") and out.get("destinationHost"):
+            out["target"] = out["destinationHost"]
+        if not out.get("target") and out.get("nodeId"):
+            out["target"] = out["nodeId"]
+        return out
+
     def _emit_log(self, params: dict[str, Any]) -> None:
         self._writer.write({"jsonrpc": "2.0", "method": "module/log", "params": params})
 
@@ -159,3 +231,28 @@ def _validate_handshake_info(info: dict[str, Any]) -> None:
     module_type = _required_handshake_string(info, "moduleType")
     if module_type not in _MODULE_TYPES:
         raise ValueError(f"module handshake moduleType {module_type!r} is invalid")
+
+
+async def _resolve(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _mesh_beacon_to_rpc(beacon: MeshBeacon | dict[str, Any]) -> dict[str, Any]:
+    return beacon.to_rpc() if hasattr(beacon, "to_rpc") else dict(beacon)
+
+
+def _merge_rpc_sessions(out: dict[str, Any], sessions: list[SessionRef]) -> None:
+    if not sessions:
+        return
+    existing = out.get("sessions")
+    if not isinstance(existing, list):
+        out["sessions"] = [session.to_rpc() for session in sessions]
+        return
+    seen = {
+        session.get("id")
+        for session in existing
+        if isinstance(session, dict)
+    }
+    existing.extend(session.to_rpc() for session in sessions if session.id not in seen)

@@ -1,8 +1,8 @@
 # Go SDK
 
 The Go SDK is the most complete module-author surface today. Use it for normal
-modules, PTY-backed post-exploitation sessions, typed chain-step providers, and
-payload-provider modules.
+modules, PTY-backed post-exploitation sessions, typed chain-step providers,
+payload-provider modules, and Mesh providers.
 
 Import path:
 
@@ -66,6 +66,7 @@ Rules that matter in real integrations:
 | PTY-backed session | `hovel.PTYSession` opened with `ctx.OpenSession(...)`. |
 | Durable installed payload inventory | `hovel.InstalledPayloadDescriptor` and `hovel.WithInstalledPayloads`. |
 | Payload provider | Implement `hovel.PayloadProvider`. |
+| Node Mesh provider | Implement `hovel.MeshDescriber` plus the optional Mesh operation interfaces you support. Use `hovel.MeshProvider` only for a full-surface provider. |
 | Typed chain steps | Implement `hovel.StepProvider`. |
 | Provider contract tests | `github.com/Vibe-Pwners/hovel/sdk/go/hoveltest`. |
 
@@ -73,6 +74,22 @@ The provider methods are real RPC endpoints: `list_payloads`,
 `resolve_payload`, `prepare_listener`, `generate_payload`, `connect_session`,
 `cleanup_payload`, and `read_payload_chunk`. The step methods are also real RPC
 endpoints: `step.describe`, `step.prepare`, `step.execute`, and `step.cleanup`.
+Mesh providers expose `mesh.describe`, `mesh.topology`, `mesh.beacons`,
+`mesh.task`, and `mesh.open_stream` for one-node tools through routed
+tree/graph node operations.
+The Go SDK intentionally splits those methods into optional interfaces
+(`MeshDescriber`, `MeshTopologyProvider`, `MeshBeaconProvider`,
+`MeshTaskProvider`, and `MeshStreamProvider`) so a simple stream Mesh does not
+need to stub tasking, beacons, or topology.
+Use `MeshTaskSpec.TargetScopes` to say whether a task targets a Mesh node,
+route, or destination reachable through a node. `MeshTaskRequest` and
+`MeshStreamRequest` both carry `DestinationHost`, `DestinationPort`, and
+`Protocol`, which is the contract Hovel needs to run tools or exploit delivery
+through a Mesh-backed local bridge without hard-coding the provider internals.
+Use `MeshTaskUploadExecute` for implant copy-then-run flows and `MeshTaskLoad`
+for provider-native implant/component loaders. The request can carry inline
+payload bytes in `InputData`/`InputEncoding` or provider-defined artifact
+references in `Config`; the SDK does not implement the loader.
 
 ## Test Loop
 

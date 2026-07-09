@@ -16,6 +16,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
 	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	"github.com/Vibe-Pwners/hovel/internal/testmodules/mockexploit"
@@ -97,6 +98,137 @@ func TestClientCanDialDaemonRPCOverTCP(t *testing.T) {
 	}
 	if result.RunID != "run-1" || result.State != "succeeded" {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestDaemonRPCTracksMeshTaskAndStreamOperations(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(recordingSessionBroker{}))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	task, err := client.RunMeshTask(context.Background(), MeshTaskRunRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.TaskRequest{
+			RunID:           "run-mesh-1",
+			TaskID:          "deliver-exploit",
+			Kind:            string(mesh.TaskUploadExecute),
+			NodeID:          "relay-1",
+			Target:          "dc-1",
+			DestinationHost: "10.10.10.10",
+			DestinationPort: 445,
+			Protocol:        "tcp",
+			Route:           &mesh.Route{ID: "route-relay-1", Nodes: []string{"controller", "relay-1"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != "succeeded" || task.DestinationHost != "10.10.10.10" {
+		t.Fatalf("mesh task = %#v", task)
+	}
+
+	session, err := client.OpenMeshStream(context.Background(), MeshStreamOpenRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-2",
+			NodeID:          "relay-1",
+			Target:          "dc-1",
+			DestinationHost: "10.10.10.10",
+			DestinationPort: 445,
+			Protocol:        "tcp",
+			Config:          map[string]any{"bridge.localAddress": "127.0.0.1:1445"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ID != "mesh-session-1" {
+		t.Fatalf("mesh stream session = %#v", session)
+	}
+
+	operations, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations.Operations) != 2 {
+		t.Fatalf("mesh operations = %#v, want task and stream", operations.Operations)
+	}
+	taskOperation := operations.Operations[0]
+	if taskOperation.Kind != "task" ||
+		taskOperation.State != "succeeded" ||
+		taskOperation.TaskKind != "upload_execute" ||
+		taskOperation.SessionID != "mesh-task-session-1" ||
+		taskOperation.DestinationHost != "10.10.10.10" ||
+		taskOperation.DestinationPort != 445 ||
+		taskOperation.RouteID != "route-relay-1" {
+		t.Fatalf("task operation = %#v", taskOperation)
+	}
+	if !reflect.DeepEqual(taskOperation.SessionIDs, []string{"mesh-task-session-1", "mesh-task-session-2"}) {
+		t.Fatalf("task operation sessions = %#v", taskOperation.SessionIDs)
+	}
+	streamOperation := operations.Operations[1]
+	if streamOperation.Kind != "stream" ||
+		streamOperation.State != "active" ||
+		streamOperation.SessionID != "mesh-session-1" ||
+		streamOperation.LocalAddress != "127.0.0.1:1445" {
+		t.Fatalf("stream operation = %#v", streamOperation)
+	}
+
+	byTaskSession, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		SessionID: "mesh-task-session-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byTaskSession.Operations) != 1 || byTaskSession.Operations[0].Kind != "task" {
+		t.Fatalf("task session operations = %#v, want task operation", byTaskSession.Operations)
+	}
+	bySecondaryTaskSession, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		SessionID: "mesh-task-session-2",
+		State:     "closed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bySecondaryTaskSession.Operations) != 0 {
+		t.Fatalf("closed secondary task session operations = %#v, want none", bySecondaryTaskSession.Operations)
+	}
+
+	if err := client.CloseSession(context.Background(), "mesh-session-1"); err != nil {
+		t.Fatal(err)
+	}
+	closed, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		SessionID: "mesh-session-1",
+		State:     "closed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closed.Operations) != 1 || closed.Operations[0].ClosedAt == "" {
+		t.Fatalf("closed operations = %#v, want closed stream with timestamp", closed.Operations)
+	}
+	stillSucceeded, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		SessionID: "mesh-task-session-1",
+		State:     "succeeded",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stillSucceeded.Operations) != 1 || stillSucceeded.Operations[0].Kind != "task" {
+		t.Fatalf("task operations after stream close = %#v, want succeeded task", stillSucceeded.Operations)
 	}
 }
 
@@ -1022,6 +1154,128 @@ func contextOrMissing(ctx context.Context) error {
 		return err
 	}
 	return errors.New("request context was not propagated")
+}
+
+type fakeMeshRunner struct{}
+
+func (fakeMeshRunner) Run(_ context.Context, req run.Request) (run.Result, error) {
+	return run.Succeeded(req, run.ResultArgs{Summary: "unused fake mesh run"})
+}
+
+func (fakeMeshRunner) DescribeMesh(
+	_ context.Context,
+	_ string,
+	_ mesh.DescribeRequest,
+) (mesh.Descriptor, error) {
+	return mesh.Descriptor{Name: "mesh-provider"}, nil
+}
+
+func (fakeMeshRunner) MeshTopology(
+	_ context.Context,
+	_ string,
+	_ mesh.TopologyRequest,
+) (mesh.Topology, error) {
+	return mesh.Topology{}, nil
+}
+
+func (fakeMeshRunner) ListMeshBeacons(
+	_ context.Context,
+	_ string,
+	_ mesh.BeaconRequest,
+) ([]mesh.Beacon, error) {
+	return []mesh.Beacon{}, nil
+}
+
+func (fakeMeshRunner) RunMeshTask(
+	_ context.Context,
+	moduleID string,
+	req mesh.TaskRequest,
+) (mesh.TaskResult, error) {
+	return mesh.TaskResult{
+		TaskID:          req.TaskID,
+		Status:          "succeeded",
+		Summary:         "mesh task routed",
+		NodeID:          req.NodeID,
+		Route:           req.Route,
+		DestinationHost: req.DestinationHost,
+		DestinationPort: req.DestinationPort,
+		Protocol:        req.Protocol,
+		Sessions: []run.SessionRef{
+			{
+				ID:       "mesh-task-session-1",
+				RunID:    req.RunID,
+				ModuleID: moduleID,
+				Target:   req.Target,
+				Name:     "task-opened session",
+				Kind:     "agent",
+				State:    "active",
+			},
+			{
+				ID:       "mesh-task-session-2",
+				RunID:    req.RunID,
+				ModuleID: moduleID,
+				Target:   req.Target,
+				Name:     "task-secondary session",
+				Kind:     "stream",
+				State:    "active",
+			},
+		},
+	}, nil
+}
+
+func (fakeMeshRunner) OpenMeshStream(
+	_ context.Context,
+	moduleID string,
+	req mesh.StreamRequest,
+) (run.SessionRef, error) {
+	return run.SessionRef{
+		ID:        "mesh-session-1",
+		RunID:     req.RunID,
+		ModuleID:  moduleID,
+		Target:    req.Target,
+		Name:      "Mesh routed TCP stream",
+		Kind:      "stream",
+		State:     "active",
+		Transport: "mesh-route",
+	}, nil
+}
+
+type recordingSessionBroker struct{}
+
+func (recordingSessionBroker) ListSessions(context.Context) ([]run.SessionRef, error) {
+	return []run.SessionRef{}, nil
+}
+
+func (recordingSessionBroker) WriteSession(context.Context, string, []byte) error {
+	return nil
+}
+
+func (recordingSessionBroker) ReadSession(context.Context, string, time.Duration) (run.SessionChunk, error) {
+	return run.SessionChunk{}, nil
+}
+
+func (recordingSessionBroker) TailSession(context.Context, string, run.SessionTailOptions) (run.SessionChunk, error) {
+	return run.SessionChunk{}, nil
+}
+
+func (recordingSessionBroker) CloseSession(context.Context, string) error {
+	return nil
+}
+
+func (recordingSessionBroker) ListSessionCommands(
+	context.Context,
+	string,
+	run.PayloadCommandListRequest,
+) ([]run.PayloadCommand, error) {
+	return []run.PayloadCommand{}, nil
+}
+
+func (recordingSessionBroker) RunSessionCommand(
+	context.Context,
+	string,
+	run.PayloadCommandRequest,
+) (run.PayloadCommandResult, error) {
+	return run.PayloadCommandResult{}, nil
 }
 
 func serveTestDaemon(t *testing.T, endpoint string, runs services.RunService, options ...ServerOption) {

@@ -52,6 +52,15 @@ filegroup(
 )
 """
 
+_DEJAVU_FONTS_BUILD = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "dejavu_ttf",
+    srcs = glob(["ttf/*.ttf"]),
+)
+"""
+
 _LLVM_MINGW_BUILD = """\
 package(default_visibility = ["//visibility:public"])
 
@@ -120,6 +129,15 @@ _TOOLS = {
             "urls": ["https://storage.googleapis.com/chrome-for-testing-public/150.0.7871.46/linux64/chrome-linux64.zip"],
         },
     ),
+    "dejavu_fonts_ttf": struct(
+        rule = "http_archive",
+        attrs = {
+            "build_file_content": _DEJAVU_FONTS_BUILD,
+            "sha256": "7576310b219e04159d35ff61dd4a4ec4cdba4f35c00e002a136f00e96a908b0a",
+            "strip_prefix": "dejavu-fonts-ttf-2.37",
+            "urls": ["https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.zip"],
+        },
+    ),
     "ffmpeg_linux_x86_64": struct(
         rule = "http_archive",
         attrs = {
@@ -183,6 +201,7 @@ _GROUPS = {
     ],
     "docs": [
         "chrome_for_testing_linux_x86_64",
+        "dejavu_fonts_ttf",
         "ffmpeg_linux_x86_64",
         "ttyd_linux_x86_64",
         "uv_linux_x86_64",

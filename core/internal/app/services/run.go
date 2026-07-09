@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
@@ -21,6 +22,14 @@ type PayloadCommandRunner interface {
 
 type PayloadGenerator interface {
 	GeneratePayload(context.Context, string, run.GeneratePayloadRequest) (run.PayloadArtifactSet, error)
+}
+
+type MeshRunner interface {
+	DescribeMesh(context.Context, string, mesh.DescribeRequest) (mesh.Descriptor, error)
+	MeshTopology(context.Context, string, mesh.TopologyRequest) (mesh.Topology, error)
+	ListMeshBeacons(context.Context, string, mesh.BeaconRequest) ([]mesh.Beacon, error)
+	RunMeshTask(context.Context, string, mesh.TaskRequest) (mesh.TaskResult, error)
+	OpenMeshStream(context.Context, string, mesh.StreamRequest) (run.SessionRef, error)
 }
 
 type SessionBroker interface {
@@ -139,6 +148,73 @@ func (s RunService) GeneratePayload(ctx context.Context, req GeneratePayloadRequ
 		return run.PayloadArtifactSet{}, errors.New("payload generator is not configured")
 	}
 	return runner.GeneratePayload(ctx, req.ModuleID, req.Request)
+}
+
+func (s RunService) DescribeMesh(
+	ctx context.Context,
+	moduleID string,
+	req mesh.DescribeRequest,
+) (mesh.Descriptor, error) {
+	runner, ok := s.runner.(MeshRunner)
+	if !ok {
+		return mesh.Descriptor{}, errors.New("mesh runner is not configured")
+	}
+	return runner.DescribeMesh(ctx, moduleID, req)
+}
+
+func (s RunService) MeshTopology(
+	ctx context.Context,
+	moduleID string,
+	req mesh.TopologyRequest,
+) (mesh.Topology, error) {
+	runner, ok := s.runner.(MeshRunner)
+	if !ok {
+		return mesh.Topology{}, errors.New("mesh runner is not configured")
+	}
+	return runner.MeshTopology(ctx, moduleID, req)
+}
+
+func (s RunService) ListMeshBeacons(
+	ctx context.Context,
+	moduleID string,
+	req mesh.BeaconRequest,
+) ([]mesh.Beacon, error) {
+	runner, ok := s.runner.(MeshRunner)
+	if !ok {
+		return nil, errors.New("mesh runner is not configured")
+	}
+	return runner.ListMeshBeacons(ctx, moduleID, req)
+}
+
+func (s RunService) RunMeshTask(
+	ctx context.Context,
+	moduleID string,
+	req mesh.TaskRequest,
+) (mesh.TaskResult, error) {
+	runner, ok := s.runner.(MeshRunner)
+	if !ok {
+		return mesh.TaskResult{}, errors.New("mesh runner is not configured")
+	}
+	result, err := runner.RunMeshTask(ctx, moduleID, req)
+	if err != nil {
+		return mesh.TaskResult{}, err
+	}
+	if result.Status == "" {
+		result.Status = string(run.StateSucceeded)
+	}
+	return result, nil
+}
+
+func (s RunService) OpenMeshStream(
+	ctx context.Context,
+	moduleID string,
+	req mesh.StreamRequest,
+) (run.SessionRef, error) {
+	runner, ok := s.runner.(MeshRunner)
+	if !ok {
+		return run.SessionRef{}, errors.New("mesh runner is not configured")
+	}
+	return runner.OpenMeshStream(ctx, moduleID, req)
 }
 
 func (s RunService) ListPayloadCommands(ctx context.Context, req PayloadCommandListRequest) ([]run.PayloadCommand, error) {

@@ -53,6 +53,20 @@ Rules that matter in real integrations:
 | Line-oriented post-exploitation sessions | `LineShellSession` opened with `await ctx.open_session(...)`. |
 | Durable installed payload inventory | `InstalledPayload` and `PayloadProviderRecord` in a result. |
 | Typed chain steps | Override `describe_steps`, `prepare_step`, `execute_step`, and `cleanup_step`. |
+| Provider-owned node operations | Override `describe_mesh`, `mesh_topology`, `list_mesh_beacons`, `run_mesh_task`, and `open_mesh_stream`. |
+
+Mesh is the SDK contract for one-node or routed node-operation providers. A
+Mesh may expose topology, routes, beacons, triggers, survey/upload/execute/
+command/load tasks, and stream sessions that a future local bridge can connect
+to an IP and port. The Python SDK only dispatches those contracts; provider code
+owns the routing/task behavior, and Hovel guardrails still live above the SDK.
+Override only the methods your provider supports. A minimal stream Mesh can
+override `describe_mesh` and `open_mesh_stream`; a deeper implant/stager Mesh
+can also override topology, beacons, triggers in the descriptor, and tasking.
+Use `MESH_TASK_UPLOAD_EXECUTE` for implant copy-then-run flows and
+`MESH_TASK_LOAD` for provider-native implant/component loaders. Requests can
+carry inline bytes in `input_data`/`input_encoding` or provider-defined artifact
+references in `config`.
 
 Python does not currently dispatch payload-provider RPC methods such as
 `list_payloads` or `generate_payload`. Use Go for provider modules today, or

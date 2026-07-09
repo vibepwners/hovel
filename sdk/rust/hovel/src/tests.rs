@@ -6,8 +6,13 @@ use std::rc::Rc;
 
 use crate::json::{self, Value};
 use crate::{
-    base64, serve_with, Context, Info, InstalledPayloadDescriptor, LineShellSession, Module,
-    ModuleType, Outcome, PayloadProviderRecord, Schema, Session, SessionOptions,
+    base64, serve_with, Context, MeshBeacon, MeshBeaconRequest, MeshDescriptor,
+    MeshDescribeRequest, MeshLink, MeshNode, MeshRoute, MeshStreamRequest,
+    MeshTaskRequest, MeshTaskResult, MeshTaskSpec, MeshTopology,
+    MeshTopologyRequest, MeshTrigger, Info, InstalledPayloadDescriptor, LineShellSession,
+    Module, ModuleType, Outcome, PayloadProviderRecord, Schema, Session, SessionOptions,
+    MESH_TARGET_DESTINATION, MESH_TARGET_NODE, MESH_TASK_COMMAND, MESH_TASK_SURVEY,
+    MESH_TASK_UPLOAD_EXECUTE,
 };
 
 #[test]
@@ -239,6 +244,226 @@ impl Module for AgentAwareModule {
     }
 }
 
+struct FakeMeshModule;
+
+impl Module for FakeMeshModule {
+    fn info(&self) -> Info {
+        Info {
+            name: "fake-mesh-rust".into(),
+            version: "v0.0.0-test".into(),
+            module_type: ModuleType::PayloadProvider,
+            summary: "fake node mesh".into(),
+            description: String::new(),
+            tags: vec!["test".into(), "mesh".into()],
+            discovery_context: Vec::new(),
+        }
+    }
+
+    fn schema(&self) -> Schema {
+        Schema::default()
+    }
+
+    fn run(&self, _ctx: &mut Context) -> Outcome {
+        Outcome::ok(Vec::new()).with_summary("mesh provider execute placeholder")
+    }
+
+    fn describe_mesh(
+        &self,
+        _req: MeshDescribeRequest,
+    ) -> Result<MeshDescriptor, String> {
+        Ok(MeshDescriptor {
+            name: "fake-mesh-rust".into(),
+            version: "v0.0.0-test".into(),
+            summary: "tree-routed test mesh".into(),
+            capabilities: vec![
+                "topology.tree".into(),
+                "task.survey".into(),
+                "task.command".into(),
+                "stream.tcp".into(),
+            ],
+            topology: fake_mesh_topology(true),
+            tasks: vec![
+                MeshTaskSpec {
+                    kind: MESH_TASK_SURVEY.into(),
+                    summary: "survey a mesh node".into(),
+                    read_only: true,
+                    target_scopes: vec![MESH_TARGET_NODE.into()],
+                    ..MeshTaskSpec::default()
+                },
+                MeshTaskSpec {
+                    kind: MESH_TASK_COMMAND.into(),
+                    summary: "run a node command or routed destination command".into(),
+                    target_scopes: vec![MESH_TARGET_NODE.into(), MESH_TARGET_DESTINATION.into()],
+                    ..MeshTaskSpec::default()
+                },
+                MeshTaskSpec {
+                    kind: MESH_TASK_UPLOAD_EXECUTE.into(),
+                    summary: "upload and execute a file".into(),
+                    destructive: true,
+                    target_scopes: vec![MESH_TARGET_NODE.into(), MESH_TARGET_DESTINATION.into()],
+                    ..MeshTaskSpec::default()
+                },
+            ],
+            triggers: vec![MeshTrigger {
+                id: "trig-beacon-command".into(),
+                kind: "beacon".into(),
+                node_id: "node-2".into(),
+                state: "armed".into(),
+                action_kind: MESH_TASK_COMMAND.into(),
+                ..MeshTrigger::default()
+            }],
+            attributes: Vec::new(),
+        })
+    }
+
+    fn mesh_topology(
+        &self,
+        req: MeshTopologyRequest,
+    ) -> Result<MeshTopology, String> {
+        Ok(fake_mesh_topology(req.include_routes))
+    }
+
+    fn list_mesh_beacons(
+        &self,
+        req: MeshBeaconRequest,
+    ) -> Result<Vec<MeshBeacon>, String> {
+        let node_id = if req.node_id.is_empty() {
+            "node-2"
+        } else {
+            req.node_id.as_str()
+        };
+        Ok(vec![MeshBeacon {
+            id: "beacon-1".into(),
+            node_id: node_id.into(),
+            time: "2026-07-09T00:00:00Z".into(),
+            state: "alive".into(),
+            transport: "relay".into(),
+            remote_addr: "10.0.0.2:4444".into(),
+            interval_seconds: 30,
+            fields: vec![("route".into(), Value::from("root>node-1>node-2"))],
+        }])
+    }
+
+    fn run_mesh_task(
+        &self,
+        ctx: &mut Context,
+        req: MeshTaskRequest,
+    ) -> Result<MeshTaskResult, String> {
+        ctx.info(
+            "mesh task",
+            &[
+                ("kind", Value::from(req.kind.as_str())),
+                ("node", Value::from(req.node_id.as_str())),
+            ],
+        );
+        if req.kind != MESH_TASK_SURVEY {
+            return Ok(MeshTaskResult {
+                task_id: req.task_id,
+                status: "failed".into(),
+                summary: "unsupported mesh task".into(),
+                node_id: req.node_id,
+                ..MeshTaskResult::default()
+            });
+        }
+        Ok(MeshTaskResult {
+            task_id: req.task_id,
+            status: "succeeded".into(),
+            summary: format!("surveyed {}", req.node_id),
+            node_id: req.node_id,
+            outputs: vec![
+                ("os".into(), Value::from("linux")),
+                ("reachable".into(), Value::Bool(true)),
+            ],
+            ..MeshTaskResult::default()
+        })
+    }
+
+    fn open_mesh_stream(
+        &self,
+        ctx: &mut Context,
+        req: MeshStreamRequest,
+    ) -> Result<crate::SessionRef, String> {
+        let destination = req.destination_host.clone();
+        let shell = LineShellSession::new("mesh$ ", true, move |command| {
+            format!("routed {command} to {destination}")
+        });
+        ctx.open_session(
+            Box::new(shell),
+            SessionOptions {
+                name: format!("mesh stream to {}", req.destination_host),
+                kind: "stream".into(),
+                transport: "mesh-route".into(),
+                capabilities: vec![
+                    "read".into(),
+                    "write".into(),
+                    "close".into(),
+                    "stream.tcp".into(),
+                ],
+            },
+        )
+        .map_err(|err| err.to_string())
+    }
+}
+
+fn fake_mesh_topology(include_routes: bool) -> MeshTopology {
+    let mut topology = MeshTopology {
+        root: "root".into(),
+        nodes: vec![
+            MeshNode {
+                id: "root".into(),
+                name: "controller".into(),
+                kind: "controller".into(),
+                state: "online".into(),
+                ..MeshNode::default()
+            },
+            MeshNode {
+                id: "node-1".into(),
+                parent_id: "root".into(),
+                name: "relay".into(),
+                kind: "relay".into(),
+                state: "online".into(),
+                ..MeshNode::default()
+            },
+            MeshNode {
+                id: "node-2".into(),
+                parent_id: "node-1".into(),
+                name: "leaf".into(),
+                kind: "agent".into(),
+                state: "online".into(),
+                ..MeshNode::default()
+            },
+        ],
+        links: vec![
+            MeshLink {
+                id: "link-root-node-1".into(),
+                source: "root".into(),
+                target: "node-1".into(),
+                kind: "relay".into(),
+                state: "up".into(),
+                ..MeshLink::default()
+            },
+            MeshLink {
+                id: "link-node-1-node-2".into(),
+                source: "node-1".into(),
+                target: "node-2".into(),
+                kind: "relay".into(),
+                state: "up".into(),
+                ..MeshLink::default()
+            },
+        ],
+        ..MeshTopology::default()
+    };
+    if include_routes {
+        topology.routes.push(MeshRoute {
+            id: "route-node-2".into(),
+            nodes: vec!["root".into(), "node-1".into(), "node-2".into()],
+            links: vec!["link-root-node-1".into(), "link-node-1-node-2".into()],
+            ..MeshRoute::default()
+        });
+    }
+    topology
+}
+
 fn frame(value: Value) -> Vec<u8> {
     let body = value.to_string();
     let mut out = format!("Content-Length: {}\r\n\r\n", body.len()).into_bytes();
@@ -406,6 +631,179 @@ fn serve_execute_exposes_optional_agent_context() {
     assert_eq!(
         hints[0].get("schema").and_then(Value::as_str),
         Some("hovel.agent_hint.v1")
+    );
+}
+
+#[test]
+fn serve_mesh_provider_methods() {
+    let mut input = Vec::new();
+    input.extend(frame(request(
+        1,
+        "mesh.describe",
+        Value::Object(Vec::new()),
+    )));
+    input.extend(frame(request(
+        2,
+        "mesh.topology",
+        Value::object(vec![("includeRoutes", Value::Bool(true))]),
+    )));
+    input.extend(frame(request(
+        3,
+        "mesh.beacons",
+        Value::object(vec![("nodeId", Value::from("node-2"))]),
+    )));
+    input.extend(frame(request(
+        4,
+        "mesh.task",
+        Value::object(vec![
+            ("runId", Value::from("run-mesh-1")),
+            ("taskId", Value::from("task-survey-1")),
+            ("kind", Value::from(MESH_TASK_SURVEY)),
+            ("nodeId", Value::from("node-2")),
+        ]),
+    )));
+    input.extend(frame(request(5, "shutdown", Value::Object(Vec::new()))));
+
+    let messages = run_session(input, FakeMeshModule);
+    let responses = responses(&messages);
+    assert_eq!(responses.len(), 5);
+
+    let describe = responses[0].get("result").unwrap();
+    assert_eq!(
+        describe.get("name").and_then(Value::as_str),
+        Some("fake-mesh-rust")
+    );
+    match describe.get("tasks") {
+        Some(Value::Array(items)) => {
+            assert_eq!(items.len(), 3);
+            let scopes = items[2]
+                .get("targetScopes")
+                .expect("upload_execute target scopes");
+            match scopes {
+                Value::Array(values) => assert_eq!(values.len(), 2),
+                other => panic!("unexpected target scopes: {other:?}"),
+            }
+        }
+        other => panic!("missing mesh tasks: {other:?}"),
+    }
+    match describe.get("triggers") {
+        Some(Value::Array(items)) => assert_eq!(items.len(), 1),
+        other => panic!("missing mesh triggers: {other:?}"),
+    }
+
+    let topology = responses[1].get("result").unwrap();
+    match topology.get("nodes") {
+        Some(Value::Array(items)) => assert_eq!(items.len(), 3),
+        other => panic!("missing mesh nodes: {other:?}"),
+    }
+    match topology.get("links") {
+        Some(Value::Array(items)) => assert_eq!(items.len(), 2),
+        other => panic!("missing mesh links: {other:?}"),
+    }
+    match topology.get("routes") {
+        Some(Value::Array(items)) => assert_eq!(items.len(), 1),
+        other => panic!("missing mesh routes: {other:?}"),
+    }
+
+    let beacons = responses[2].get("result").unwrap();
+    let beacon = match beacons.get("beacons") {
+        Some(Value::Array(items)) => &items[0],
+        other => panic!("missing mesh beacons: {other:?}"),
+    };
+    assert_eq!(beacon.get("nodeId").and_then(Value::as_str), Some("node-2"));
+    assert_eq!(beacon.get("state").and_then(Value::as_str), Some("alive"));
+
+    let task = responses[3].get("result").unwrap();
+    assert_eq!(task.get("status").and_then(Value::as_str), Some("succeeded"));
+    assert_eq!(
+        task.get("summary").and_then(Value::as_str),
+        Some("surveyed node-2")
+    );
+    assert_eq!(
+        task.get("outputs")
+            .and_then(|outputs| outputs.get("os"))
+            .and_then(Value::as_str),
+        Some("linux")
+    );
+}
+
+#[test]
+fn serve_mesh_open_stream_creates_session() {
+    let session_id = "run-mesh-2-session-1";
+    let mut input = Vec::new();
+    input.extend(frame(request(
+        1,
+        "mesh.open_stream",
+        Value::object(vec![
+            ("runId", Value::from("run-mesh-2")),
+            ("moduleId", Value::from("fake-mesh-rust@v0.0.0-test")),
+            ("target", Value::from("mock://mesh")),
+            ("nodeId", Value::from("node-2")),
+            ("destinationHost", Value::from("10.10.10.10")),
+            ("destinationPort", Value::from(443_i64)),
+            ("protocol", Value::from("tcp")),
+        ]),
+    )));
+    input.extend(frame(request(
+        2,
+        "session/read",
+        Value::object(vec![
+            ("sessionId", Value::from(session_id)),
+            ("timeoutMs", Value::from(0_i64)),
+        ]),
+    )));
+    input.extend(frame(request(
+        3,
+        "session/write",
+        Value::object(vec![
+            ("sessionId", Value::from(session_id)),
+            (
+                "data",
+                Value::from(base64::encode(b"GET / HTTP/1.0\n").as_str()),
+            ),
+        ]),
+    )));
+    input.extend(frame(request(
+        4,
+        "session/read",
+        Value::object(vec![
+            ("sessionId", Value::from(session_id)),
+            ("timeoutMs", Value::from(0_i64)),
+        ]),
+    )));
+    input.extend(frame(request(
+        5,
+        "session/read",
+        Value::object(vec![
+            ("sessionId", Value::from(session_id)),
+            ("timeoutMs", Value::from(0_i64)),
+        ]),
+    )));
+    input.extend(frame(request(6, "shutdown", Value::Object(Vec::new()))));
+
+    let messages = run_session(input, FakeMeshModule);
+    let responses = responses(&messages);
+    let session = responses[0].get("result").unwrap();
+    assert_eq!(session.get("id").and_then(Value::as_str), Some(session_id));
+    assert_eq!(session.get("kind").and_then(Value::as_str), Some("stream"));
+    assert_eq!(
+        session.get("transport").and_then(Value::as_str),
+        Some("mesh-route")
+    );
+
+    let mut output = Vec::new();
+    for response in &responses[1..] {
+        if let Some(result) = response.get("result") {
+            if let Some(data) = result.get("data").and_then(Value::as_str) {
+                output.extend(base64::decode(data).unwrap());
+            }
+        }
+    }
+    let text = String::from_utf8_lossy(&output);
+    assert!(text.contains("mesh$"), "missing prompt in {text:?}");
+    assert!(
+        text.contains("routed GET / HTTP/1.0 to 10.10.10.10"),
+        "missing routed stream output in {text:?}"
     );
 }
 

@@ -23,6 +23,7 @@
 //!             summary: "say hello".into(),
 //!             description: String::new(),
 //!             tags: vec!["example".into()],
+//!             discovery_context: Vec::new(),
 //!         }
 //!     }
 //!     fn schema(&self) -> Schema { Schema::default() }
@@ -39,6 +40,7 @@ pub mod base64;
 pub mod json;
 
 mod context;
+mod mesh;
 mod framing;
 mod module;
 mod result;
@@ -49,6 +51,14 @@ mod session;
 mod tests;
 
 pub use context::Context;
+pub use mesh::{
+    MeshBeacon, MeshBeaconRequest, MeshDescriptor, MeshDescribeRequest, MeshEvent,
+    MeshLink, MeshNode, MeshRoute, MeshStreamRequest, MeshTaskRequest,
+    MeshTaskResult, MeshTaskSpec, MeshTopology, MeshTopologyRequest, MeshTrigger,
+    MESH_TASK_COMMAND, MESH_TASK_EXECUTE, MESH_TASK_LOAD, MESH_TASK_STREAM,
+    MESH_TASK_SURVEY, MESH_TASK_UPLOAD, MESH_TASK_UPLOAD_EXECUTE,
+    MESH_TARGET_DESTINATION, MESH_TARGET_NODE, MESH_TARGET_ROUTE,
+};
 pub use module::{Info, Module, ModuleType, Requirement, Schema};
 pub use result::{Artifact, Finding, InstalledPayloadDescriptor, Outcome, PayloadProviderRecord};
 pub use server::{serve, serve_with};

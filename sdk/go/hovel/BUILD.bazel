@@ -7,6 +7,7 @@ go_library(
         "context.go",
         "framing.go",
         "logging.go",
+        "mesh.go",
         "module.go",
         "payload.go",
         "pty_linux.go",

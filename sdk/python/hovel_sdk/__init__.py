@@ -1,6 +1,33 @@
 from hovel_sdk.config import Requirement
 from hovel_sdk.context import AgentContext, AgentEntity, Context
 from hovel_sdk.logging import setup_logging
+from hovel_sdk.mesh import (
+    MESH_TARGET_DESTINATION,
+    MESH_TARGET_NODE,
+    MESH_TARGET_ROUTE,
+    MESH_TASK_COMMAND,
+    MESH_TASK_EXECUTE,
+    MESH_TASK_LOAD,
+    MESH_TASK_STREAM,
+    MESH_TASK_SURVEY,
+    MESH_TASK_UPLOAD,
+    MESH_TASK_UPLOAD_EXECUTE,
+    MeshBeacon,
+    MeshBeaconRequest,
+    MeshDescribeRequest,
+    MeshDescriptor,
+    MeshEvent,
+    MeshLink,
+    MeshNode,
+    MeshRoute,
+    MeshStreamRequest,
+    MeshTaskRequest,
+    MeshTaskResult,
+    MeshTaskSpec,
+    MeshTopology,
+    MeshTopologyRequest,
+    MeshTrigger,
+)
 from hovel_sdk.module import HovelModule
 from hovel_sdk.result import AgentHint, Artifact, Finding, InstalledPayload, PayloadProviderRecord, Result
 from hovel_sdk.server import serve
@@ -8,6 +35,16 @@ from hovel_sdk.session import LineShellSession, SessionRef
 from hovel_sdk.testing import ModuleRPC, RPCError, drive_module
 
 __all__ = [
+    "MESH_TARGET_DESTINATION",
+    "MESH_TARGET_NODE",
+    "MESH_TARGET_ROUTE",
+    "MESH_TASK_COMMAND",
+    "MESH_TASK_EXECUTE",
+    "MESH_TASK_LOAD",
+    "MESH_TASK_STREAM",
+    "MESH_TASK_SURVEY",
+    "MESH_TASK_UPLOAD",
+    "MESH_TASK_UPLOAD_EXECUTE",
     "AgentContext",
     "AgentEntity",
     "AgentHint",
@@ -17,6 +54,21 @@ __all__ = [
     "HovelModule",
     "InstalledPayload",
     "LineShellSession",
+    "MeshBeacon",
+    "MeshBeaconRequest",
+    "MeshDescribeRequest",
+    "MeshDescriptor",
+    "MeshEvent",
+    "MeshLink",
+    "MeshNode",
+    "MeshRoute",
+    "MeshStreamRequest",
+    "MeshTaskRequest",
+    "MeshTaskResult",
+    "MeshTaskSpec",
+    "MeshTopology",
+    "MeshTopologyRequest",
+    "MeshTrigger",
     "ModuleRPC",
     "PayloadProviderRecord",
     "RPCError",

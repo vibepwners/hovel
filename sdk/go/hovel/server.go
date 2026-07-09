@@ -110,6 +110,16 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.listPayloadCommands(params)
 	case "payload.command.run":
 		return s.runPayloadCommand(params)
+	case "mesh.describe":
+		return s.describeMesh(params)
+	case "mesh.topology":
+		return s.meshTopology(params)
+	case "mesh.beacons":
+		return s.listMeshBeacons(params)
+	case "mesh.task":
+		return s.runMeshTask(params)
+	case "mesh.open_stream":
+		return s.openMeshStream(params)
 	case "step.describe":
 		return s.describeSteps()
 	case "step.prepare":
@@ -227,6 +237,46 @@ func (s *server) payloadCommandProvider() (PayloadCommandProvider, error) {
 	provider, ok := s.module.(PayloadCommandProvider)
 	if !ok {
 		return nil, fmt.Errorf("module %q is not a payload command provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func (s *server) meshDescriber() (MeshDescriber, error) {
+	provider, ok := s.module.(MeshDescriber)
+	if !ok {
+		return nil, fmt.Errorf("module %q is not a mesh provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func (s *server) meshTopologyProvider() (MeshTopologyProvider, error) {
+	provider, ok := s.module.(MeshTopologyProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement mesh.topology", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func (s *server) meshBeaconProvider() (MeshBeaconProvider, error) {
+	provider, ok := s.module.(MeshBeaconProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement mesh.beacons", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func (s *server) meshTaskProvider() (MeshTaskProvider, error) {
+	provider, ok := s.module.(MeshTaskProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement mesh.task", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func (s *server) meshStreamProvider() (MeshStreamProvider, error) {
+	provider, ok := s.module.(MeshStreamProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement mesh.open_stream", s.module.Info().Name)
 	}
 	return provider, nil
 }
@@ -396,6 +446,149 @@ func (s *server) runPayloadCommand(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return provider.RunPayloadCommand(req)
+}
+
+func (s *server) describeMesh(params json.RawMessage) (any, error) {
+	provider, err := s.meshDescriber()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshDescribeRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.DescribeMesh(req)
+}
+
+func (s *server) meshTopology(params json.RawMessage) (any, error) {
+	provider, err := s.meshTopologyProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshTopologyRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.MeshTopology(req)
+}
+
+func (s *server) listMeshBeacons(params json.RawMessage) (any, error) {
+	provider, err := s.meshBeaconProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshBeaconRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	beacons, err := provider.ListMeshBeacons(req)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"beacons": beacons}, nil
+}
+
+func (s *server) runMeshTask(params json.RawMessage) (any, error) {
+	provider, err := s.meshTaskProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshTaskRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	ctx := s.meshContext(
+		req.RunID,
+		"",
+		req.Target,
+		req.NodeID,
+		req.DestinationHost,
+		req.Agent,
+	)
+	result, err := provider.RunMeshTask(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(result.Status) == "" {
+		result.Status = "succeeded"
+	}
+	result.Sessions = mergeSessionRefs(result.Sessions, ctx.sessions.refs())
+	return result, nil
+}
+
+func (s *server) openMeshStream(params json.RawMessage) (any, error) {
+	provider, err := s.meshStreamProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshStreamRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	ctx := s.meshContext(
+		req.RunID,
+		req.ModuleID,
+		req.Target,
+		req.NodeID,
+		req.DestinationHost,
+		req.Agent,
+	)
+	return provider.OpenMeshStream(ctx, req)
+}
+
+func (s *server) meshContext(
+	runID string,
+	moduleID string,
+	target string,
+	nodeID string,
+	destinationHost string,
+	agent *AgentContext,
+) *MeshContext {
+	info := s.module.Info()
+	if strings.TrimSpace(runID) == "" {
+		runID = "mesh"
+	}
+	if strings.TrimSpace(moduleID) == "" {
+		moduleID = meshModuleID(info)
+	}
+	if strings.TrimSpace(target) == "" {
+		target = destinationHost
+	}
+	if strings.TrimSpace(target) == "" {
+		target = nodeID
+	}
+	scope := sessionScope{
+		runID:    runID,
+		moduleID: moduleID,
+		target:   target,
+	}
+	return &MeshContext{
+		RunID:    runID,
+		ModuleID: moduleID,
+		Target:   target,
+		NodeID:   nodeID,
+		Agent:    agent,
+		Log:      &Logger{name: info.Name, emit: s.emitLog},
+		sessions: s.sessions.forRun(scope),
+	}
+}
+
+func mergeSessionRefs(explicit []SessionRef, opened []SessionRef) []SessionRef {
+	merged := append([]SessionRef(nil), explicit...)
+	seen := make(map[string]bool, len(merged)+len(opened))
+	for _, session := range merged {
+		if session.ID != "" {
+			seen[session.ID] = true
+		}
+	}
+	for _, session := range opened {
+		if session.ID == "" || seen[session.ID] {
+			continue
+		}
+		seen[session.ID] = true
+		merged = append(merged, session)
+	}
+	return merged
 }
 
 func requirementsToRPC(requirements []Requirement) []map[string]any {

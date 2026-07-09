@@ -114,10 +114,11 @@ shutdown() -&gt; ShutdownResult
         <p>
           Session-capable SDKs also implement <code>session/write</code>,
           <code>session/read</code>, and <code>session/close</code>. During catalog
-          inspection, Hovel calls <code>handshake</code>, <code>schema</code>, and
-          <code>step.describe</code>. SDKs that do not expose step contracts either return
-          an empty step set or a missing-step-provider JSON-RPC error; the runner treats
-          both as an ordinary non-step module.
+          inspection, Hovel calls <code>handshake</code>, <code>schema</code>,
+          optional <code>step.describe</code>, and optional <code>mesh.describe</code>.
+          SDKs that do not expose step or Mesh contracts either return an empty
+          step set, an empty Mesh descriptor, or a missing-provider JSON-RPC error;
+          the runner treats those as ordinary modules without that extension.
         </p>
         <p>
           Step-provider modules share the base lifecycle and add generic step methods
@@ -143,6 +144,14 @@ connect_session(request) -&gt; SessionRef
 cleanup_payload(request) -&gt; CleanupResult
 read_payload_chunk(request) -&gt; PayloadChunk
 </code></pre>
+        <p>
+          Mesh providers follow the same module runtime path rather than a separate
+          plugin system. A module can add <code>mesh.describe</code>,
+          <code>mesh.topology</code>, <code>mesh.beacons</code>,
+          <code>mesh.task</code>, and <code>mesh.open_stream</code> to expose one-node
+          or routed node operations through the existing package, catalog, logging,
+          session, and daemon RPC contracts.
+        </p>
         <p>
           Install steps and ordinary <code>execute</code> paths may return explicit
           installed-payload descriptors. Hovel core validates those descriptors and
@@ -270,19 +279,19 @@ close_session(sessionRef) -&gt; CloseResult
           <tbody>
             <tr>
               <td><a href="module-python.html">Python</a></td>
-              <td>Subclass <code>HovelModule</code>; implement sync or async <code>run</code>.</td>
+              <td>Subclass <code>HovelModule</code>; implement sync or async <code>run</code> and optional step or Mesh hooks.</td>
               <td>Package launcher using managed Python, an interpreter path, or a bundled interpreter.</td>
               <td><code>modules/examples/python/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
             </tr>
             <tr>
               <td><a href="module-go.html">Go</a></td>
-              <td>Implement <code>hovel.Module</code>; optionally <code>StepProvider</code> or <code>PayloadProvider</code>.</td>
+              <td>Implement <code>hovel.Module</code>; optionally <code>StepProvider</code>, <code>PayloadProvider</code>, or Mesh operation interfaces.</td>
               <td>Package launch entry pointing at a compiled binary.</td>
               <td><code>modules/examples/go/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
             </tr>
             <tr>
               <td><a href="module-rust.html">Rust</a></td>
-              <td>Implement the <code>hovel::Module</code> trait and return <code>Outcome</code>.</td>
+              <td>Implement the <code>hovel::Module</code> trait, optional Mesh methods, and return <code>Outcome</code>.</td>
               <td>Package launch entry pointing at a compiled binary.</td>
               <td><code>modules/examples/rust/mock_survey</code>, <code>mock_exploit</code>, <code>mock_exploit_session</code></td>
             </tr>

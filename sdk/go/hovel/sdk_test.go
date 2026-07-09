@@ -291,6 +291,222 @@ func (agentAwareModule) Run(ctx *Context) (Result, error) {
 	), nil
 }
 
+type fakeMeshModule struct{}
+
+func (fakeMeshModule) Info() Info {
+	return Info{
+		Name:    "fake-mesh",
+		Version: "v0.0.0-test",
+		Type:    TypePayloadProvider,
+		Summary: "fake node mesh",
+		Tags:    []string{"test", "mesh"},
+	}
+}
+
+func (fakeMeshModule) Schema() Schema {
+	return Schema{}
+}
+
+func (fakeMeshModule) Run(*Context) (Result, error) {
+	return Ok(nil, WithSummary("mesh provider execute placeholder")), nil
+}
+
+func (fakeMeshModule) DescribeMesh(MeshDescribeRequest) (MeshDescriptor, error) {
+	topology := fakeMeshTopology(true)
+	return MeshDescriptor{
+		Name:    "fake-mesh",
+		Version: "v0.0.0-test",
+		Summary: "tree-routed test mesh",
+		Capabilities: []string{
+			"topology.tree",
+			"task.survey",
+			"task.command",
+			"stream.tcp",
+		},
+		Topology: &topology,
+		Tasks: []MeshTaskSpec{
+			{
+				Kind:         string(MeshTaskSurvey),
+				Summary:      "survey a mesh node",
+				ReadOnly:     true,
+				TargetScopes: []string{string(MeshTargetNode)},
+			},
+			{
+				Kind:         string(MeshTaskCommand),
+				Summary:      "run a node command or routed destination command",
+				TargetScopes: []string{string(MeshTargetNode), string(MeshTargetDestination)},
+			},
+			{
+				Kind:         string(MeshTaskUploadExecute),
+				Summary:      "upload and execute a file",
+				Destructive:  true,
+				TargetScopes: []string{string(MeshTargetNode), string(MeshTargetDestination)},
+			},
+		},
+		Triggers: []MeshTrigger{{
+			ID:         "trig-beacon-command",
+			Kind:       "beacon",
+			NodeID:     "node-2",
+			State:      "armed",
+			ActionKind: string(MeshTaskCommand),
+		}},
+	}, nil
+}
+
+func (fakeMeshModule) MeshTopology(req MeshTopologyRequest) (MeshTopology, error) {
+	return fakeMeshTopology(req.IncludeRoutes), nil
+}
+
+func (fakeMeshModule) ListMeshBeacons(req MeshBeaconRequest) ([]MeshBeacon, error) {
+	nodeID := req.NodeID
+	if nodeID == "" {
+		nodeID = "node-2"
+	}
+	return []MeshBeacon{{
+		ID:              "beacon-1",
+		NodeID:          nodeID,
+		Time:            "2026-07-09T00:00:00Z",
+		State:           "alive",
+		Transport:       "relay",
+		RemoteAddr:      "10.0.0.2:4444",
+		IntervalSeconds: 30,
+		Fields:          map[string]any{"route": "root>node-1>node-2"},
+	}}, nil
+}
+
+func (fakeMeshModule) RunMeshTask(ctx *MeshContext, req MeshTaskRequest) (MeshTaskResult, error) {
+	ctx.Log.Info("mesh task", "kind", req.Kind, "node", req.NodeID)
+	switch req.Kind {
+	case string(MeshTaskSurvey):
+		return MeshTaskResult{
+			TaskID:  req.TaskID,
+			Status:  "succeeded",
+			Summary: "surveyed " + req.NodeID,
+			NodeID:  req.NodeID,
+			Outputs: map[string]any{
+				"os":        "linux",
+				"reachable": true,
+			},
+			Findings: []Finding{{Title: "node reachable", Severity: "info", Detail: req.NodeID}},
+		}, nil
+	case string(MeshTaskCommand):
+		return MeshTaskResult{
+			TaskID:          req.TaskID,
+			Status:          "succeeded",
+			Summary:         "command completed",
+			NodeID:          req.NodeID,
+			DestinationHost: req.DestinationHost,
+			DestinationPort: req.DestinationPort,
+			Protocol:        req.Protocol,
+			Outputs:         map[string]any{"stdout": strings.Join(req.Args, " ")},
+		}, nil
+	default:
+		return MeshTaskResult{
+			TaskID:  req.TaskID,
+			Status:  "failed",
+			Summary: "unsupported mesh task",
+			NodeID:  req.NodeID,
+		}, nil
+	}
+}
+
+func (fakeMeshModule) OpenMeshStream(ctx *MeshContext, req MeshStreamRequest) (SessionRef, error) {
+	shell := &LineShellSession{
+		Prompt: "mesh$ ",
+		Echo:   true,
+		Handle: func(command string) (string, error) {
+			return "routed " + command + " to " + req.DestinationHost, nil
+		},
+	}
+	return ctx.OpenSession(
+		shell,
+		WithName("mesh stream to "+req.DestinationHost),
+		WithKind("stream"),
+		WithTransport("mesh-route"),
+		WithCapabilities("read", "write", "close", "stream.tcp"),
+	)
+}
+
+type streamOnlyMeshModule struct{}
+
+func (streamOnlyMeshModule) Info() Info {
+	return Info{
+		Name:    "stream-only-mesh",
+		Version: "v0.0.0-test",
+		Type:    TypePayloadProvider,
+		Summary: "minimal stream mesh",
+		Tags:    []string{"mesh"},
+	}
+}
+
+func (streamOnlyMeshModule) Schema() Schema {
+	return Schema{}
+}
+
+func (streamOnlyMeshModule) Run(*Context) (Result, error) {
+	return Ok(nil, WithSummary("not used")), nil
+}
+
+func (streamOnlyMeshModule) DescribeMesh(MeshDescribeRequest) (MeshDescriptor, error) {
+	return MeshDescriptor{
+		Name:         "stream-only-mesh",
+		Version:      "v0.0.0-test",
+		Summary:      "one stream operation, no task or beacon surface",
+		Capabilities: []string{"stream.tcp"},
+		Tasks: []MeshTaskSpec{{
+			Kind:         string(MeshTaskStream),
+			Summary:      "open one routed TCP stream",
+			OpensStream:  true,
+			TargetScopes: []string{string(MeshTargetDestination)},
+		}},
+	}, nil
+}
+
+func (streamOnlyMeshModule) OpenMeshStream(ctx *MeshContext, req MeshStreamRequest) (SessionRef, error) {
+	return ctx.OpenSession(
+		&LineShellSession{Prompt: "stream$ ", Echo: true},
+		WithName("minimal stream to "+req.DestinationHost),
+		WithKind("stream"),
+		WithTransport("mesh-stream"),
+		WithCapabilities("read", "write", "close"),
+	)
+}
+
+func fakeMeshTopology(includeRoutes bool) MeshTopology {
+	topology := MeshTopology{
+		Root: "root",
+		Nodes: []MeshNode{
+			{ID: "root", Name: "controller", Kind: "controller", State: "online"},
+			{ID: "node-1", ParentID: "root", Name: "relay", Kind: "relay", State: "online"},
+			{ID: "node-2", ParentID: "node-1", Name: "leaf", Kind: "agent", State: "online"},
+		},
+		Links: []MeshLink{
+			{
+				ID:     "link-root-node-1",
+				Source: "root",
+				Target: "node-1",
+				Kind:   "relay",
+				State:  "up",
+			},
+			{
+				ID:     "link-node-1-node-2",
+				Source: "node-1",
+				Target: "node-2",
+				Kind:   "relay",
+				State:  "up",
+			},
+		},
+	}
+	if includeRoutes {
+		topology.Routes = []MeshRoute{{
+			ID:    "route-node-2",
+			Nodes: []string{"root", "node-1", "node-2"},
+			Links: []string{"link-root-node-1", "link-node-1-node-2"},
+		}}
+	}
+	return topology
+}
+
 func fakePayloadInfo() PayloadInfo {
 	return PayloadInfo{
 		ID:           "fake/windows/x86/reverse-tcp/pe-exe",
@@ -307,6 +523,126 @@ func fakePayloadInfo() PayloadInfo {
 		Capabilities: []string{"file.get"},
 		Transport:    PayloadTransport{Kind: "reverse-tcp"},
 		Session:      PayloadSession{Kind: "agent", Acquisition: "callback", RequiresPreThrowListener: true, Owner: "payload_provider"},
+	}
+}
+
+func TestServeMeshProviderMethods(t *testing.T) {
+	conn := newRPCConn(t, fakeMeshModule{})
+	defer conn.close()
+
+	describe := conn.call("mesh.describe", nil)
+	if describe["name"] != "fake-mesh" {
+		t.Fatalf("mesh.describe = %#v", describe)
+	}
+	tasks, _ := describe["tasks"].([]any)
+	if len(tasks) != 3 {
+		t.Fatalf("mesh tasks = %#v, want three common task specs", describe["tasks"])
+	}
+	uploadExecute, _ := tasks[2].(map[string]any)
+	targetScopes, _ := uploadExecute["targetScopes"].([]any)
+	if len(targetScopes) != 2 || targetScopes[1] != string(MeshTargetDestination) {
+		t.Fatalf("mesh upload_execute target scopes = %#v", targetScopes)
+	}
+	triggers, _ := describe["triggers"].([]any)
+	if len(triggers) != 1 {
+		t.Fatalf("mesh triggers = %#v, want one trigger", describe["triggers"])
+	}
+
+	topology := conn.call("mesh.topology", map[string]any{"includeRoutes": true})
+	nodes, _ := topology["nodes"].([]any)
+	links, _ := topology["links"].([]any)
+	routes, _ := topology["routes"].([]any)
+	if len(nodes) != 3 || len(links) != 2 || len(routes) != 1 {
+		t.Fatalf("mesh topology = %#v", topology)
+	}
+
+	beacons := conn.call("mesh.beacons", map[string]any{"nodeId": "node-2"})
+	items, _ := beacons["beacons"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("mesh beacons = %#v, want one", beacons["beacons"])
+	}
+	beacon, _ := items[0].(map[string]any)
+	if beacon["nodeId"] != "node-2" || beacon["state"] != "alive" {
+		t.Fatalf("mesh beacon = %#v", beacon)
+	}
+
+	task := conn.call("mesh.task", map[string]any{
+		"runId":  "run-mesh-1",
+		"taskId": "task-survey-1",
+		"kind":   string(MeshTaskSurvey),
+		"nodeId": "node-2",
+	})
+	if task["status"] != "succeeded" || task["summary"] != "surveyed node-2" {
+		t.Fatalf("mesh task = %#v", task)
+	}
+	outputs, _ := task["outputs"].(map[string]any)
+	if outputs["os"] != "linux" || outputs["reachable"] != true {
+		t.Fatalf("mesh task outputs = %#v", outputs)
+	}
+}
+
+func TestServeMeshOpenStreamCreatesSession(t *testing.T) {
+	conn := newRPCConn(t, fakeMeshModule{})
+	defer conn.close()
+
+	session := conn.call("mesh.open_stream", map[string]any{
+		"runId":           "run-mesh-2",
+		"moduleId":        "fake-mesh@v0.0.0-test",
+		"target":          "mock://mesh",
+		"nodeId":          "node-2",
+		"destinationHost": "10.10.10.10",
+		"destinationPort": 443,
+		"protocol":        "tcp",
+	})
+	sessionID, _ := session["id"].(string)
+	if sessionID == "" {
+		t.Fatalf("mesh stream session = %#v", session)
+	}
+	if session["kind"] != "stream" || session["transport"] != "mesh-route" {
+		t.Fatalf("mesh stream session metadata = %#v", session)
+	}
+
+	prompt := readSession(t, conn, sessionID)
+	if !strings.Contains(prompt, "mesh$") {
+		t.Fatalf("mesh stream prompt = %q", prompt)
+	}
+
+	conn.call("session/write", map[string]any{
+		"sessionId": sessionID,
+		"data":      base64.StdEncoding.EncodeToString([]byte("GET / HTTP/1.0\n")),
+	})
+	output := readSession(t, conn, sessionID)
+	if !strings.Contains(output, "routed GET / HTTP/1.0 to 10.10.10.10") {
+		t.Fatalf("mesh stream output = %q", output)
+	}
+}
+
+func TestServeMeshProviderCanImplementOnlySupportedSurfaces(t *testing.T) {
+	conn := newRPCConn(t, streamOnlyMeshModule{})
+	defer conn.close()
+
+	describe := conn.call("mesh.describe", nil)
+	if describe["name"] != "stream-only-mesh" {
+		t.Fatalf("mesh.describe = %#v", describe)
+	}
+	tasks, _ := describe["tasks"].([]any)
+	if len(tasks) != 1 {
+		t.Fatalf("mesh tasks = %#v, want one stream task", describe["tasks"])
+	}
+
+	session := conn.call("mesh.open_stream", map[string]any{
+		"runId":           "run-stream-only",
+		"destinationHost": "10.10.10.10",
+		"destinationPort": 443,
+		"protocol":        "tcp",
+	})
+	if session["transport"] != "mesh-stream" {
+		t.Fatalf("stream-only session = %#v", session)
+	}
+
+	errText := conn.callError("mesh.task", map[string]any{"kind": string(MeshTaskCommand)})
+	if !strings.Contains(errText, "does not implement mesh.task") {
+		t.Fatalf("mesh.task error = %q, want unsupported surface", errText)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
 	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
@@ -1021,6 +1022,215 @@ while True:
 	}
 }
 
+func TestRunnerCallsMeshProviderMethods(t *testing.T) {
+	configPath := writePythonModuleFixture(t, `
+import base64
+
+last_stream_input = ""
+
+DESCRIPTOR = {
+    "name": "mesh-provider",
+    "version": "v0.0.0-test",
+    "summary": "tree routed mesh",
+    "capabilities": ["topology.tree", "task.survey", "stream.tcp"],
+    "topology": {
+        "root": "root",
+        "nodes": [
+            {"id": "root", "name": "controller", "kind": "controller", "state": "online"},
+            {"id": "node-1", "parentId": "root", "name": "relay", "kind": "relay", "state": "online"},
+            {"id": "node-2", "parentId": "node-1", "name": "leaf", "kind": "agent", "state": "online"}
+        ],
+        "links": [
+            {"id": "link-root-node-1", "source": "root", "target": "node-1", "kind": "relay", "state": "up"},
+            {"id": "link-node-1-node-2", "source": "node-1", "target": "node-2", "kind": "relay", "state": "up"}
+        ],
+        "routes": [{
+            "id": "route-node-2",
+            "nodes": ["root", "node-1", "node-2"],
+            "links": ["link-root-node-1", "link-node-1-node-2"]
+        }]
+    },
+    "tasks": [
+        {"kind": "survey", "summary": "survey node", "readOnly": True, "targetScopes": ["node"]},
+        {"kind": "command", "summary": "run command", "targetScopes": ["node", "destination"]},
+        {"kind": "upload_execute", "summary": "upload and execute", "destructive": True, "targetScopes": ["node", "destination"]}
+    ],
+    "triggers": [{
+        "id": "trig-beacon-command",
+        "kind": "beacon",
+        "nodeId": "node-2",
+        "state": "armed",
+        "actionKind": "command"
+    }]
+}
+
+while True:
+    body = read()
+    if not body:
+        break
+    request = json.loads(body)
+    rid = request.get("id")
+    method = request.get("method")
+    params = request.get("params") or {}
+    if method == "handshake":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "name": "mesh-provider",
+            "version": "v0.0.0-test",
+            "moduleType": "payload_provider"
+        }})
+    elif method == "schema":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
+    elif method == "step.describe":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"steps": []}})
+    elif method == "mesh.describe":
+        send({"jsonrpc": "2.0", "id": rid, "result": DESCRIPTOR})
+    elif method == "mesh.topology":
+        send({"jsonrpc": "2.0", "id": rid, "result": DESCRIPTOR["topology"]})
+    elif method == "mesh.beacons":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"beacons": [{
+            "id": "beacon-1",
+            "nodeId": params.get("nodeId", "node-2"),
+            "state": "alive",
+            "transport": "relay"
+        }]}})
+    elif method == "mesh.task":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "taskId": params.get("taskId", ""),
+            "status": "succeeded",
+            "summary": "surveyed " + params.get("nodeId", ""),
+            "nodeId": params.get("nodeId", ""),
+            "destinationHost": params.get("destinationHost", ""),
+            "destinationPort": params.get("destinationPort", 0),
+            "protocol": params.get("protocol", ""),
+            "outputs": {"os": "linux", "reachable": True},
+            "beacons": [{"id": "beacon-task", "nodeId": params.get("nodeId", ""), "state": "alive"}]
+        }})
+    elif method == "mesh.open_stream":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "id": "mesh-session-1",
+            "runId": params.get("runId", ""),
+            "moduleId": "mesh-provider@v0.0.0-test",
+            "target": params.get("target", ""),
+            "name": "Mesh TCP stream",
+            "kind": "stream",
+            "state": "active",
+            "transport": "mesh-route",
+            "capabilities": ["read", "write", "close", "stream.tcp"]
+        }})
+    elif method == "session/read":
+        if last_stream_input:
+            send({"jsonrpc": "2.0", "id": rid, "result": {
+                "sessionId": "mesh-session-1",
+                "data": base64.b64encode(("routed " + last_stream_input).encode()).decode(),
+                "closed": False
+            }})
+            last_stream_input = ""
+        else:
+            send({"jsonrpc": "2.0", "id": rid, "result": {
+                "sessionId": "mesh-session-1",
+                "data": base64.b64encode(b"mesh$ ").decode(),
+                "closed": False
+            }})
+    elif method == "session/write":
+        last_stream_input = base64.b64decode(params.get("data", "")).decode()
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+    elif method == "session/close":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        break
+    else:
+        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "unknown method " + str(method)}})
+`)
+
+	runner := Runner{ConfigPath: configPath, Timeout: 2 * time.Second, Sessions: NewSessionBroker()}
+	module, err := runner.Inspect(context.Background(), "broken")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if module.Mesh.Name != "mesh-provider" || len(module.Mesh.Tasks) != 3 {
+		t.Fatalf("catalog mesh descriptor = %#v", module.Mesh)
+	}
+	if module.Mesh.Topology == nil || len(module.Mesh.Topology.Nodes) != 3 {
+		t.Fatalf("catalog mesh topology = %#v", module.Mesh.Topology)
+	}
+
+	descriptor, err := runner.DescribeMesh(context.Background(), "broken", mesh.DescribeRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if descriptor.Name != "mesh-provider" || len(descriptor.Triggers) != 1 {
+		t.Fatalf("mesh descriptor = %#v", descriptor)
+	}
+	topology, err := runner.MeshTopology(context.Background(), "broken", mesh.TopologyRequest{IncludeRoutes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topology.Nodes) != 3 || len(topology.Routes) != 1 {
+		t.Fatalf("mesh topology = %#v", topology)
+	}
+	beacons, err := runner.ListMeshBeacons(context.Background(), "broken", mesh.BeaconRequest{NodeID: "node-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beacons) != 1 || beacons[0].NodeID != "node-2" {
+		t.Fatalf("mesh beacons = %#v", beacons)
+	}
+	task, err := runner.RunMeshTask(context.Background(), "broken", mesh.TaskRequest{
+		RunID:           "run-mesh-1",
+		TaskID:          "task-survey-1",
+		Kind:            string(mesh.TaskSurvey),
+		NodeID:          "node-2",
+		DestinationHost: "10.10.10.10",
+		DestinationPort: 445,
+		Protocol:        "tcp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Status != string(run.StateSucceeded) ||
+		task.Outputs["os"] != "linux" ||
+		task.DestinationHost != "10.10.10.10" {
+		t.Fatalf("mesh task = %#v", task)
+	}
+	session, err := runner.OpenMeshStream(context.Background(), "broken", mesh.StreamRequest{
+		RunID:           "run-mesh-2",
+		Target:          "mock://mesh",
+		NodeID:          "node-2",
+		DestinationHost: "10.10.10.10",
+		DestinationPort: 443,
+		Protocol:        "tcp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ID != "mesh-session-1" || session.Transport != "mesh-route" {
+		t.Fatalf("mesh stream session = %#v", session)
+	}
+	defer func() {
+		if err := runner.Sessions.CloseSession(context.Background(), session.ID); err != nil {
+			t.Logf("close mesh session: %v", err)
+		}
+	}()
+	chunk, err := runner.Sessions.ReadSession(context.Background(), session.ID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(chunk.Data), "mesh$ ") {
+		t.Fatalf("mesh stream prompt = %q", string(chunk.Data))
+	}
+	if err := runner.Sessions.WriteSession(context.Background(), session.ID, []byte("GET / HTTP/1.0\n")); err != nil {
+		t.Fatal(err)
+	}
+	chunk, err = runner.Sessions.ReadSession(context.Background(), session.ID, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(chunk.Data), "routed GET / HTTP/1.0") {
+		t.Fatalf("mesh stream output = %q", string(chunk.Data))
+	}
+}
+
 func TestIsMissingStepProviderRecognizesLegacyResponses(t *testing.T) {
 	for _, message := range []string{
 		"unknown method step.describe",
@@ -1033,6 +1243,21 @@ func TestIsMissingStepProviderRecognizesLegacyResponses(t *testing.T) {
 	}
 	if isMissingStepProvider(errors.New("step.describe exploded")) {
 		t.Fatal("isMissingStepProvider accepted unrelated error")
+	}
+}
+
+func TestIsMissingMeshProviderRecognizesLegacyResponses(t *testing.T) {
+	for _, message := range []string{
+		"unknown method mesh.describe",
+		`unknown method "mesh.describe"`,
+		`module "mock-survey-go" is not a mesh provider`,
+	} {
+		if !isMissingMeshProvider(errors.New(message)) {
+			t.Fatalf("isMissingMeshProvider(%q) = false, want true", message)
+		}
+	}
+	if isMissingMeshProvider(errors.New("mesh.describe exploded")) {
+		t.Fatal("isMissingMeshProvider accepted unrelated error")
 	}
 }
 

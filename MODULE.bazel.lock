@@ -205,7 +205,7 @@
   "moduleExtensions": {
     "//core/tools/bzlmod:external_tools.bzl%external_tools": {
       "general": {
-        "bzlTransitiveDigest": "RmhImV+m3Cs+dXrhYxR46HANNywBqktVQfct5PIH5OU=",
+        "bzlTransitiveDigest": "Gc0xil5FpVCEFN5ZI6mDMkS0hJp+xR4IBYRIc9djWzg=",
         "usagesDigest": "DiQN12Ie0gRzu20kjE1VlHQ4tELSNrBO/skd7+x/OIs=",
         "recordedInputs": [
           "REPO_MAPPING:,bazel_tools bazel_tools"
@@ -241,6 +241,17 @@
               "strip_prefix": "",
               "urls": [
                 "https://storage.googleapis.com/chrome-for-testing-public/150.0.7871.46/linux64/chrome-linux64.zip"
+              ]
+            }
+          },
+          "dejavu_fonts_ttf": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nfilegroup(\n    name = \"dejavu_ttf\",\n    srcs = glob([\"ttf/*.ttf\"]),\n)\n",
+              "sha256": "7576310b219e04159d35ff61dd4a4ec4cdba4f35c00e002a136f00e96a908b0a",
+              "strip_prefix": "dejavu-fonts-ttf-2.37",
+              "urls": [
+                "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.zip"
               ]
             }
           },

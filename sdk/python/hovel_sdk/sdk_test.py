@@ -8,15 +8,37 @@ from pathlib import Path
 from typing import Any, BinaryIO, ClassVar, cast
 
 from hovel_sdk import (
+    MESH_TARGET_DESTINATION,
+    MESH_TARGET_NODE,
+    MESH_TARGET_ROUTE,
+    MESH_TASK_COMMAND,
+    MESH_TASK_STREAM,
+    MESH_TASK_SURVEY,
+    MESH_TASK_UPLOAD_EXECUTE,
     AgentHint,
     Artifact,
     Context,
     HovelModule,
     InstalledPayload,
     LineShellSession,
+    MeshBeacon,
+    MeshBeaconRequest,
+    MeshDescribeRequest,
+    MeshDescriptor,
+    MeshLink,
+    MeshNode,
+    MeshRoute,
+    MeshStreamRequest,
+    MeshTaskRequest,
+    MeshTaskResult,
+    MeshTaskSpec,
+    MeshTopology,
+    MeshTopologyRequest,
+    MeshTrigger,
     PayloadProviderRecord,
     Requirement,
     Result,
+    SessionRef,
     setup_logging,
 )
 from hovel_sdk.framing import (
@@ -163,6 +185,114 @@ class StepModule(HovelModule):
 
     def cleanup_step(self, _request: dict[str, Any]) -> dict[str, Any]:
         return {"status": "cleanup_verified"}
+
+    def run(self, _ctx: Context) -> Result:
+        return Result.ok(summary="not used")
+
+
+class MeshModule(HovelModule):
+    name = "mesh-module"
+    version = "v0.0.0-test"
+    module_type = "exploit"
+
+    def describe_mesh(self, _request: MeshDescribeRequest) -> MeshDescriptor:
+        return MeshDescriptor(
+            name="lab mesh",
+            version="v0.1.0",
+            summary="Node operations plane for lab routing.",
+            capabilities=["mesh.node", "mesh.route", "mesh.destination", "mesh.beacon", "mesh.trigger"],
+            topology=self.mesh_topology(MeshTopologyRequest(root="controller", include_routes=True)),
+            tasks=[
+                MeshTaskSpec(
+                    kind=MESH_TASK_SURVEY,
+                    summary="Survey one mesh node.",
+                    read_only=True,
+                    target_scopes=[MESH_TARGET_NODE],
+                ),
+                MeshTaskSpec(
+                    kind=MESH_TASK_COMMAND,
+                    summary="Run a provider-owned command task.",
+                    target_scopes=[MESH_TARGET_NODE, MESH_TARGET_ROUTE, MESH_TARGET_DESTINATION],
+                ),
+                MeshTaskSpec(
+                    kind=MESH_TASK_UPLOAD_EXECUTE,
+                    summary="Upload and execute through a node-owned delivery path.",
+                    destructive=True,
+                    target_scopes=[MESH_TARGET_DESTINATION],
+                ),
+                MeshTaskSpec(
+                    kind=MESH_TASK_STREAM,
+                    summary="Open a routed byte stream.",
+                    opens_stream=True,
+                    target_scopes=[MESH_TARGET_ROUTE, MESH_TARGET_DESTINATION],
+                ),
+            ],
+            triggers=[
+                MeshTrigger(
+                    id="trigger-beacon-late",
+                    kind="beacon.stale",
+                    node_id="leaf-1",
+                    action_kind=MESH_TASK_SURVEY,
+                )
+            ],
+        )
+
+    def mesh_topology(self, _request: MeshTopologyRequest) -> MeshTopology:
+        return MeshTopology(
+            root="controller",
+            nodes=[
+                MeshNode(id="controller", kind="controller", state="online"),
+                MeshNode(id="relay-1", parent_id="controller", kind="relay", state="online"),
+                MeshNode(id="leaf-1", parent_id="relay-1", kind="agent", state="online"),
+            ],
+            links=[
+                MeshLink(id="controller-relay-1", source="controller", target="relay-1", state="up"),
+                MeshLink(id="relay-1-leaf-1", source="relay-1", target="leaf-1", state="up"),
+            ],
+            routes=[
+                MeshRoute(
+                    id="route-leaf-1",
+                    nodes=["controller", "relay-1", "leaf-1"],
+                    links=["controller-relay-1", "relay-1-leaf-1"],
+                )
+            ],
+        )
+
+    def list_mesh_beacons(self, request: MeshBeaconRequest) -> list[MeshBeacon]:
+        node_id = request.node_id or "leaf-1"
+        return [
+            MeshBeacon(
+                id="beacon-1",
+                node_id=node_id,
+                state="online",
+                transport="relay",
+                remote_addr="10.10.0.5:4444",
+                interval_seconds=30,
+            )
+        ]
+
+    def run_mesh_task(self, _ctx: Context, request: MeshTaskRequest) -> MeshTaskResult:
+        return MeshTaskResult(
+            task_id=request.task_id,
+            status="succeeded",
+            summary=f"{request.kind} completed",
+            node_id=request.node_id,
+            route=request.route,
+            destination_host=request.destination_host,
+            destination_port=request.destination_port,
+            protocol=request.protocol,
+            outputs={"args": request.args, "config": request.config},
+            beacons=self.list_mesh_beacons(MeshBeaconRequest(node_id=request.node_id)),
+        )
+
+    async def open_mesh_stream(self, ctx: Context, request: MeshStreamRequest) -> SessionRef:
+        return await ctx.open_session(
+            TestShell(prompt="mesh$ "),
+            name=f"stream to {request.destination_host}:{request.destination_port}",
+            kind="stream",
+            transport="mesh-route",
+            capabilities=("read", "write", "close"),
+        )
 
     def run(self, _ctx: Context) -> Result:
         return Result.ok(summary="not used")
@@ -416,6 +546,64 @@ class SDKTest(unittest.TestCase):
         self.assertEqual(messages[2]["result"]["status"], "succeeded")
         self.assertEqual(messages[3]["result"]["status"], "cleanup_verified")
 
+    def test_mesh_methods_dispatch_over_json_rpc(self) -> None:
+        route = {"id": "route-leaf-1", "nodes": ["controller", "relay-1", "leaf-1"]}
+        stdin = io.BytesIO(
+            encode_message({"jsonrpc": "2.0", "id": 1, "method": "mesh.describe"})
+            + encode_message({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "mesh.topology",
+                "params": {"root": "controller", "includeRoutes": True},
+            })
+            + encode_message({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "mesh.beacons",
+                "params": {"nodeId": "leaf-1"},
+            })
+            + encode_message({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "mesh.task",
+                "params": {
+                    "runId": "run-mesh-1",
+                    "taskId": "task-1",
+                    "kind": MESH_TASK_COMMAND,
+                    "nodeId": "relay-1",
+                    "route": route,
+                    "destinationHost": "10.10.0.99",
+                    "destinationPort": 445,
+                    "protocol": "tcp",
+                    "config": {"command": "whoami"},
+                    "args": ["--read-only"],
+                },
+            })
+        )
+        stdout = io.BytesIO()
+
+        JSONRPCServer(MeshModule(), stdin, stdout).serve_forever()
+
+        messages: list[dict[str, Any]] = []
+        stdout.seek(0)
+        while True:
+            message = read_message(stdout)
+            if message is None:
+                break
+            messages.append(message)
+
+        describe = next(message for message in messages if message.get("id") == 1)
+        self.assertEqual(describe["result"]["name"], "lab mesh")
+        self.assertEqual(describe["result"]["tasks"][2]["targetScopes"], [MESH_TARGET_DESTINATION])
+        topology = next(message for message in messages if message.get("id") == 2)
+        self.assertEqual(topology["result"]["routes"][0]["nodes"], ["controller", "relay-1", "leaf-1"])
+        beacons = next(message for message in messages if message.get("id") == 3)
+        self.assertEqual(beacons["result"]["beacons"][0]["nodeId"], "leaf-1")
+        task = next(message for message in messages if message.get("id") == 4)
+        self.assertEqual(task["result"]["destinationHost"], "10.10.0.99")
+        self.assertEqual(task["result"]["route"]["id"], "route-leaf-1")
+        self.assertEqual(task["result"]["outputs"]["config"]["command"], "whoami")
+
     def test_artifact_helpers_emit_inline_and_file_references(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "loot.txt"
@@ -607,6 +795,32 @@ class SDKTest(unittest.TestCase):
             self.assertEqual(describe["steps"][0]["id"], "squatter.connect_smb")
             self.assertEqual(prepared["preparedValues"]["username"]["value"], "m7q4z92d")
             self.assertEqual(executed["capabilities"][0]["type"], "SessionRef")
+
+    def test_module_rpc_helper_drives_mesh_stream_session(self) -> None:
+        with ModuleRPC(MeshModule()) as rpc:
+            session = rpc.call(
+                "mesh.open_stream",
+                {
+                    "runId": "run-mesh-1",
+                    "nodeId": "relay-1",
+                    "route": {"id": "route-leaf-1", "nodes": ["controller", "relay-1", "leaf-1"]},
+                    "destinationHost": "10.10.0.99",
+                    "destinationPort": 445,
+                    "protocol": "tcp",
+                },
+            )
+            self.assertEqual(session["kind"], "stream")
+            self.assertEqual(session["transport"], "mesh-route")
+
+            prompt = rpc.call("session/read", {"sessionId": "run-mesh-1-session-1", "timeoutMs": 100})
+            rpc.call(
+                "session/write",
+                {"sessionId": "run-mesh-1-session-1", "data": base64.b64encode(b"whoami\n").decode()},
+            )
+            output = rpc.call("session/read", {"sessionId": "run-mesh-1-session-1", "timeoutMs": 100})
+
+            self.assertEqual(base64.b64decode(prompt["data"]), b"mesh$ ")
+            self.assertEqual(base64.b64decode(output["data"]), b"mock-user\n")
 
     def test_module_rpc_helper_raises_on_rpc_error(self) -> None:
         with ModuleRPC(EchoModule()) as rpc:

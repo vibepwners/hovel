@@ -24,6 +24,7 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/protocol/framing"
@@ -186,12 +187,25 @@ func (r Runner) inspect(ctx context.Context, moduleID string, start func(context
 			return modulecatalog.Module{}, moduleFailure("module failed while reporting step contracts", "module step describe failed", err, process.stderrString())
 		}
 	}
+	meshDescriptor, err := process.client.call(ctx, "mesh.describe", nil)
+	if err != nil {
+		if isMissingMeshProvider(err) {
+			meshDescriptor = nil
+		} else {
+			return modulecatalog.Module{}, moduleFailure(
+				"module failed while reporting mesh",
+				"module mesh describe failed",
+				err,
+				process.stderrString(),
+			)
+		}
+	}
 	_, err = process.client.call(context.Background(), "shutdown", nil)
 	logPythonRPCError("shut down module after catalog load", err)
 	if err := process.wait(); err != nil {
 		return modulecatalog.Module{}, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
 	}
-	module, err := moduleFromRPC(moduleID, info, schema, stepContracts)
+	module, err := moduleFromRPC(moduleID, info, schema, stepContracts, meshDescriptor)
 	if err != nil {
 		return modulecatalog.Module{}, err
 	}
@@ -208,7 +222,19 @@ func isMissingStepProvider(err error) bool {
 	message := err.Error()
 	return strings.Contains(message, "unknown method step.describe") ||
 		strings.Contains(message, `unknown method "step.describe"`) ||
+		strings.Contains(message, "unknown method 'step.describe'") ||
 		strings.Contains(message, "not a step provider")
+}
+
+func isMissingMeshProvider(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "unknown method mesh.describe") ||
+		strings.Contains(message, `unknown method "mesh.describe"`) ||
+		strings.Contains(message, "unknown method 'mesh.describe'") ||
+		strings.Contains(message, "not a mesh provider")
 }
 
 func (r Runner) PrepareStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
@@ -273,6 +299,79 @@ func (r Runner) RunPayloadCommand(ctx context.Context, moduleID string, request 
 	return decoded, nil
 }
 
+func (r Runner) DescribeMesh(
+	ctx context.Context,
+	moduleID string,
+	request mesh.DescribeRequest,
+) (mesh.Descriptor, error) {
+	result, err := r.callMeshProvider(ctx, moduleID, "mesh.describe", request)
+	if err != nil {
+		return mesh.Descriptor{}, err
+	}
+	var decoded mesh.Descriptor
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return mesh.Descriptor{}, services.NewModuleExecutionFailure("module returned invalid mesh descriptor", err)
+	}
+	return decoded, nil
+}
+
+func (r Runner) MeshTopology(
+	ctx context.Context,
+	moduleID string,
+	request mesh.TopologyRequest,
+) (mesh.Topology, error) {
+	result, err := r.callMeshProvider(ctx, moduleID, "mesh.topology", request)
+	if err != nil {
+		return mesh.Topology{}, err
+	}
+	var decoded mesh.Topology
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return mesh.Topology{}, services.NewModuleExecutionFailure("module returned invalid mesh topology", err)
+	}
+	return decoded, nil
+}
+
+func (r Runner) ListMeshBeacons(
+	ctx context.Context,
+	moduleID string,
+	request mesh.BeaconRequest,
+) ([]mesh.Beacon, error) {
+	result, err := r.callMeshProvider(ctx, moduleID, "mesh.beacons", request)
+	if err != nil {
+		return nil, err
+	}
+	var decoded struct {
+		Beacons []mesh.Beacon `json:"beacons"`
+	}
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return nil, services.NewModuleExecutionFailure("module returned invalid mesh beacons", err)
+	}
+	return decoded.Beacons, nil
+}
+
+func (r Runner) RunMeshTask(
+	ctx context.Context,
+	moduleID string,
+	request mesh.TaskRequest,
+) (mesh.TaskResult, error) {
+	result, err := r.callMeshTask(ctx, moduleID, request)
+	if err != nil {
+		return mesh.TaskResult{}, err
+	}
+	if result.Status == "" {
+		result.Status = string(run.StateSucceeded)
+	}
+	return result, nil
+}
+
+func (r Runner) OpenMeshStream(
+	ctx context.Context,
+	moduleID string,
+	request mesh.StreamRequest,
+) (run.SessionRef, error) {
+	return r.callMeshStream(ctx, moduleID, request)
+}
+
 func (r Runner) callPayloadCommand(ctx context.Context, moduleID, method string, params any) (map[string]any, error) {
 	timeout := r.Timeout
 	if timeout == 0 {
@@ -296,6 +395,148 @@ func (r Runner) callPayloadCommand(ctx context.Context, moduleID, method string,
 		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
 	}
 	return result, nil
+}
+
+func (r Runner) callMeshProvider(ctx context.Context, moduleID, method string, params any) (json.RawMessage, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	process, err := r.start(ctx, moduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer process.killAndWait()
+	result, err := process.client.callRaw(ctx, method, params)
+	if err != nil {
+		return nil, moduleFailure(
+			"module failed during mesh provider call",
+			"module mesh provider call failed",
+			err,
+			process.stderrString(),
+		)
+	}
+	_, err = process.client.call(context.Background(), "shutdown", nil)
+	logPythonRPCError("shut down module after mesh provider call", err)
+	if err := process.wait(); err != nil {
+		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
+	}
+	return result, nil
+}
+
+func (r Runner) callMeshTask(
+	ctx context.Context,
+	moduleID string,
+	request mesh.TaskRequest,
+) (mesh.TaskResult, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	process, err := r.start(context.Background(), moduleID)
+	if err != nil {
+		return mesh.TaskResult{}, err
+	}
+	keepProcess := false
+	defer func() {
+		if !keepProcess {
+			process.killAndWait()
+		}
+	}()
+	result, err := process.client.callRaw(ctx, "mesh.task", request)
+	if err != nil {
+		return mesh.TaskResult{}, moduleFailure(
+			"module failed during mesh task",
+			"module mesh task failed",
+			err,
+			process.stderrString(),
+		)
+	}
+	var decoded mesh.TaskResult
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return mesh.TaskResult{}, services.NewModuleExecutionFailure("module returned invalid mesh task result", err)
+	}
+	if len(decoded.Sessions) > 0 && r.Sessions != nil {
+		r.Sessions.adopt(process, decoded.Sessions)
+		keepProcess = true
+		return decoded, nil
+	}
+	_, err = process.client.call(context.Background(), "shutdown", nil)
+	logPythonRPCError("shut down module after mesh task", err)
+	if err := process.wait(); err != nil {
+		return mesh.TaskResult{}, moduleFailure(
+			"module exited with error",
+			"module exited with error",
+			err,
+			process.stderrString(),
+		)
+	}
+	return decoded, nil
+}
+
+func (r Runner) callMeshStream(
+	ctx context.Context,
+	moduleID string,
+	request mesh.StreamRequest,
+) (run.SessionRef, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	process, err := r.start(context.Background(), moduleID)
+	if err != nil {
+		return run.SessionRef{}, err
+	}
+	keepProcess := false
+	defer func() {
+		if !keepProcess {
+			process.killAndWait()
+		}
+	}()
+	result, err := process.client.callRaw(ctx, "mesh.open_stream", request)
+	if err != nil {
+		return run.SessionRef{}, moduleFailure(
+			"module failed while opening mesh stream",
+			"module mesh stream failed",
+			err,
+			process.stderrString(),
+		)
+	}
+	var session run.SessionRef
+	if err := json.Unmarshal(result, &session); err != nil {
+		return run.SessionRef{}, services.NewModuleExecutionFailure("module returned invalid mesh stream session", err)
+	}
+	if session.ID == "" {
+		return run.SessionRef{}, services.NewModuleExecutionFailure(
+			"module returned invalid mesh stream session",
+			errors.New("session id is required"),
+		)
+	}
+	if r.Sessions != nil {
+		r.Sessions.adopt(process, []run.SessionRef{session})
+		keepProcess = true
+		return session, nil
+	}
+	_, err = process.client.call(context.Background(), "shutdown", nil)
+	logPythonRPCError("shut down module after mesh stream", err)
+	if err := process.wait(); err != nil {
+		return run.SessionRef{}, moduleFailure(
+			"module exited with error",
+			"module exited with error",
+			err,
+			process.stderrString(),
+		)
+	}
+	return session, nil
 }
 
 func (r Runner) callPayloadProvider(ctx context.Context, moduleID, method string, params any) (json.RawMessage, error) {
@@ -1564,7 +1805,12 @@ func logsFromRPC(request run.Request, logs []rpcLog) []run.LogEntry {
 	return out
 }
 
-func moduleFromRPC(_ string, info, schema map[string]any, stepContractValues ...map[string]any) (modulecatalog.Module, error) {
+func moduleFromRPC(
+	_ string,
+	info map[string]any,
+	schema map[string]any,
+	optionalValues ...map[string]any,
+) (modulecatalog.Module, error) {
 	name := strings.TrimSpace(stringValue(info["name"]))
 	version := strings.TrimSpace(stringValue(info["version"]))
 	if name == "" {
@@ -1617,12 +1863,19 @@ func moduleFromRPC(_ string, info, schema map[string]any, stepContractValues ...
 	}
 	module.Discovery = discovery
 	module.Planning = planning
-	if len(stepContractValues) > 0 {
-		stepContracts, err := stepContractsFromRPC(stepContractValues[0])
+	if len(optionalValues) > 0 && optionalValues[0] != nil {
+		stepContracts, err := stepContractsFromRPC(optionalValues[0])
 		if err != nil {
 			return modulecatalog.Module{}, err
 		}
 		module.StepContracts = stepContracts
+	}
+	if len(optionalValues) > 1 && optionalValues[1] != nil {
+		meshDescriptor, err := meshDescriptorFromRPC(optionalValues[1])
+		if err != nil {
+			return modulecatalog.Module{}, err
+		}
+		module.Mesh = meshDescriptor
 	}
 	return module, nil
 }
@@ -1679,6 +1932,17 @@ func stepContractsFromRPC(value map[string]any) (modulecatalog.StepContractSet, 
 		})
 	}
 	return set, nil
+}
+
+func meshDescriptorFromRPC(value map[string]any) (mesh.Descriptor, error) {
+	var descriptor mesh.Descriptor
+	if len(value) == 0 {
+		return descriptor, nil
+	}
+	if err := decodeRPCMap(value, &descriptor); err != nil {
+		return mesh.Descriptor{}, err
+	}
+	return descriptor, nil
 }
 
 func contextFromRPC(value any, label string) (modulecatalog.Context, error) {

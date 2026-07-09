@@ -28,7 +28,7 @@ impl Finding {
         }
     }
 
-    fn to_value(&self) -> Value {
+    pub(crate) fn to_value(&self) -> Value {
         Value::object(vec![
             ("title", Value::Str(self.title.clone())),
             ("severity", Value::Str(self.severity.clone())),
@@ -62,7 +62,7 @@ impl Artifact {
         Artifact::inline(name, "text/plain", data)
     }
 
-    fn to_value(&self) -> Value {
+    pub(crate) fn to_value(&self) -> Value {
         let mut members = vec![
             ("name".to_string(), Value::Str(self.name.clone())),
             ("kind".to_string(), Value::Str(self.kind.clone())),

@@ -1,5 +1,6 @@
 .hovel/
 .task/
+.local/
 _site/
 dist/
 modules/examples/bin/

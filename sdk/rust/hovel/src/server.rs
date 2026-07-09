@@ -4,6 +4,10 @@ use std::io::{self, BufRead, Write};
 
 use crate::base64;
 use crate::context::{Context, Emitter};
+use crate::mesh::{
+    context_params, MeshBeaconRequest, MeshDescribeRequest, MeshStreamRequest,
+    MeshTaskRequest, MeshTopologyRequest,
+};
 use crate::framing::read_message;
 use crate::json::Value;
 use crate::module::Module;
@@ -95,6 +99,11 @@ fn dispatch(
     match method {
         "handshake" => handshake(module),
         "schema" => Ok(schema(module)),
+        "mesh.describe" => describe_mesh(module, params),
+        "mesh.topology" => mesh_topology(module, params),
+        "mesh.beacons" => mesh_beacons(module, params),
+        "mesh.task" => mesh_task(module, emitter, params),
+        "mesh.open_stream" => mesh_open_stream(module, emitter, params),
         "execute" => Ok(execute(module, emitter, params)),
         "session/write" => session_write(emitter, params),
         "session/read" => session_read(emitter, params),
@@ -163,6 +172,69 @@ fn execute(module: &dyn Module, emitter: &mut Emitter, params: &Value) -> Value 
     };
     let refs = emitter.refs_for_run(&run_id);
     outcome.to_value(refs)
+}
+
+fn module_id(module: &dyn Module) -> String {
+    let info = module.info();
+    if info.version.trim().is_empty() {
+        info.name
+    } else {
+        format!("{}@{}", info.name, info.version)
+    }
+}
+
+fn describe_mesh(module: &dyn Module, params: &Value) -> Result<Value, String> {
+    module
+        .describe_mesh(MeshDescribeRequest::from_value(params))
+        .map(|descriptor| descriptor.to_value())
+}
+
+fn mesh_topology(module: &dyn Module, params: &Value) -> Result<Value, String> {
+    module
+        .mesh_topology(MeshTopologyRequest::from_value(params))
+        .map(|topology| topology.to_value())
+}
+
+fn mesh_beacons(module: &dyn Module, params: &Value) -> Result<Value, String> {
+    let beacons = module.list_mesh_beacons(MeshBeaconRequest::from_value(params))?;
+    Ok(Value::object(vec![(
+        "beacons",
+        Value::Array(beacons.iter().map(|beacon| beacon.to_value()).collect()),
+    )]))
+}
+
+fn mesh_task(
+    module: &dyn Module,
+    emitter: &mut Emitter,
+    params: &Value,
+) -> Result<Value, String> {
+    let req = MeshTaskRequest::from_value(params);
+    let context_params = context_params(&module_id(module), params);
+    let run_id = context_params
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let result = {
+        let mut ctx = Context::new(emitter, &module.info().name, &context_params);
+        module.run_mesh_task(&mut ctx, req)?
+    };
+    let refs = emitter.refs_for_run(&run_id);
+    Ok(result.to_value(refs))
+}
+
+fn mesh_open_stream(
+    module: &dyn Module,
+    emitter: &mut Emitter,
+    params: &Value,
+) -> Result<Value, String> {
+    let req = MeshStreamRequest::from_value(params);
+    let context_params = context_params(&module_id(module), params);
+    let sref = {
+        let mut ctx = Context::new(emitter, &module.info().name, &context_params);
+        module.open_mesh_stream(&mut ctx, req)?
+    };
+    Ok(sref.to_value())
 }
 
 fn session_write(emitter: &mut Emitter, params: &Value) -> Result<Value, String> {

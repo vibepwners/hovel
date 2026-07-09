@@ -9,6 +9,11 @@ const (
 	CapabilityPayloadArtifact CapabilityType = "PayloadArtifact"
 	CapabilityPayloadInstance CapabilityType = "PayloadInstance"
 	CapabilityTransport       CapabilityType = "TransportEndpoint"
+	CapabilityMeshNode        CapabilityType = "MeshNode"
+	CapabilityMeshRoute       CapabilityType = "MeshRoute"
+	CapabilityMeshDestination CapabilityType = "MeshDestination"
+	CapabilityMeshBeacon      CapabilityType = "MeshBeacon"
+	CapabilityMeshTrigger     CapabilityType = "MeshTrigger"
 	CapabilitySessionRef      CapabilityType = "SessionRef"
 	CapabilityCleanupHandle   CapabilityType = "CleanupHandle"
 )
