@@ -68,6 +68,14 @@ picblobs_pip.parse(
 )
 use_repo(picblobs_pip, "picblobs_pip")
 
+mbed_pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+mbed_pip.parse(
+    hub_name = "mbed_pip",
+    python_version = "3.12",
+    requirements_lock = "//modules/picblobs/mbed:requirements.txt",
+)
+use_repo(mbed_pip, "mbed_pip")
+
 external_tools = use_extension("//core/tools/bzlmod:external_tools.bzl", "external_tools")
 external_tools.group(name = "core")
 external_tools.group(name = "docs")
@@ -137,6 +145,7 @@ use_repo(
     "bootlin_s390x",
     "bootlin_sparcv8",
     "bootlin_x86_64",
+    "mbed_arm_none_eabi",
     "qemu_arm_static",
     "qemu_user_static",
 )

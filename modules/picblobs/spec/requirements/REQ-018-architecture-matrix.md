@@ -95,7 +95,7 @@ In addition to the Linux/FreeBSD/Windows blob matrix, picblobs supports hosted-m
 |---|---|---|---|---|---|
 | cortexm4_baremetal | ARMv7E-M | Little | 32-bit | Thumb-2 | Cortex-M4 bare-metal (Mbed OS 5.15) |
 
-Cortex-M4 Thumb-2 blobs are verified by running them under QEMU user-mode via the Linux Thumb hosted runner, proving the compiled code is correct without requiring real hardware.
+Cortex-M4 Thumb-2 blobs are verified by running them under QEMU user-mode via the Linux Thumb hosted runner. The Mbed application entrypoint is compile/link checked against API-faithful mocks, and the encrypted client/server exchange runs through the real platform adapter. This verifies the machine code and adapter contract without pretending to replace a physical-board Ethernet, TRNG, and SRAM-execution smoke test.
 
 ### Future Architecture Candidates
 

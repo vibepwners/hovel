@@ -326,7 +326,7 @@
     },
     "//modules/picblobs/toolchains:repositories.bzl%picblobs_toolchains": {
       "general": {
-        "bzlTransitiveDigest": "WdkFyGcG8h69nRZqVSbfAIB1mHaSO5+Vh4ecgqMwUUc=",
+        "bzlTransitiveDigest": "NUYOfcsQjDeJZFmB82FhRRixOXtHmIGqT+JaKXn6oPI=",
         "usagesDigest": "lcP6J1gUaMnUVALwJ4KtVyDJV5MUHCJJ3bJ+Yht+jkM=",
         "recordedInputs": [],
         "generatedRepoSpecs": {
@@ -341,6 +341,19 @@
               "sha256": "95c011cee430e64dd6087c75c800f04b9c49832cc1000127a92a97f9c8d83af4",
               "strip_prefix": "arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi",
               "url": "https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz"
+            }
+          },
+          "mbed_arm_none_eabi": {
+            "repoRuleId": "@@//modules/picblobs/toolchains:arm_none_eabi.bzl%arm_none_eabi_repo",
+            "attributes": {
+              "extra_cflags": [
+                "-mcpu=cortex-m4",
+                "-mthumb",
+                "-mfloat-abi=soft"
+              ],
+              "sha256": "bcd840f839d5bf49279638e9f67890b2ef3a7c9c7a9b25271e83ec4ff41d177a",
+              "strip_prefix": "gcc-arm-none-eabi-9-2019-q4-major",
+              "url": "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/9-2019q4/gcc-arm-none-eabi-9-2019-q4-major-x86_64-linux.tar.bz2"
             }
           },
           "bootlin_x86_64": {

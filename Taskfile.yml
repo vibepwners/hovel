@@ -538,6 +538,26 @@ tasks:
         vars:
           CLI_ARGS: --config=picblobs_ci //modules/picblobs/tools:generate_check
 
+  picblobs:module-lock:
+    desc: Refresh the standalone picblobs Bazel module lock.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} mod deps
+
+  picblobs:mbed-blobs:
+    desc: Materialize configured Cortex-M4 NaCl blob headers for the Mbed OS PoC.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: --config=picblobs_base //modules/picblobs/mbed:materialize_blobs -- {{.CLI_ARGS}}
+
+  picblobs:mbed-compile:
+    desc: Compile the PoC against the checked-out Mbed OS 5.15.9 target SDK.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: --config=picblobs_base //modules/picblobs/mbed:compile_mbed_os -- {{.CLI_ARGS}}
+
   picblobs:bazel-build:
     desc: Build representative picblobs Bazel targets across platform configs.
     cmds:

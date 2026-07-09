@@ -822,6 +822,17 @@ _ARM_NONE_EABI_TOOLCHAIN = {
     "url": "https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz",
 }
 
+_MBED_ARM_NONE_EABI_TOOLCHAIN = {
+    "extra_cflags": [
+        "-mcpu=cortex-m4",
+        "-mthumb",
+        "-mfloat-abi=soft",
+    ],
+    "sha256": "bcd840f839d5bf49279638e9f67890b2ef3a7c9c7a9b25271e83ec4ff41d177a",
+    "strip_prefix": "gcc-arm-none-eabi-9-2019-q4-major",
+    "url": "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/9-2019q4/gcc-arm-none-eabi-9-2019-q4-major-x86_64-linux.tar.bz2",
+}
+
 
 def _bootlin_toolchain_name(arch_name: str) -> str:
     if arch_name.startswith("armv5_"):
@@ -909,6 +920,12 @@ def _gen_toolchain_repositories_bzl() -> str:
         f"    strip_prefix = {_starlark_string(_ARM_NONE_EABI_TOOLCHAIN['strip_prefix'])},\n",
         f"    url = {_starlark_string(_ARM_NONE_EABI_TOOLCHAIN['url'])},\n",
         ")\n\n",
+        "_MBED_ARM_NONE_EABI_TOOLCHAIN = struct(\n",
+        f"    extra_cflags = {_starlark_string_list(_MBED_ARM_NONE_EABI_TOOLCHAIN['extra_cflags'])},\n",
+        f"    sha256 = {_starlark_string(_MBED_ARM_NONE_EABI_TOOLCHAIN['sha256'])},\n",
+        f"    strip_prefix = {_starlark_string(_MBED_ARM_NONE_EABI_TOOLCHAIN['strip_prefix'])},\n",
+        f"    url = {_starlark_string(_MBED_ARM_NONE_EABI_TOOLCHAIN['url'])},\n",
+        ")\n\n",
         "_BOOTLIN_TOOLCHAINS = [\n",
     ]
 
@@ -946,6 +963,13 @@ def _gen_toolchain_repositories_bzl() -> str:
                     sha256 = _ARM_NONE_EABI_TOOLCHAIN.sha256,
                     strip_prefix = _ARM_NONE_EABI_TOOLCHAIN.strip_prefix,
                     url = _ARM_NONE_EABI_TOOLCHAIN.url,
+                )
+                arm_none_eabi_repo(
+                    name = "mbed_arm_none_eabi",
+                    extra_cflags = _MBED_ARM_NONE_EABI_TOOLCHAIN.extra_cflags,
+                    sha256 = _MBED_ARM_NONE_EABI_TOOLCHAIN.sha256,
+                    strip_prefix = _MBED_ARM_NONE_EABI_TOOLCHAIN.strip_prefix,
+                    url = _MBED_ARM_NONE_EABI_TOOLCHAIN.url,
                 )
                 for toolchain in _BOOTLIN_TOOLCHAINS:
                     repo_name = "bootlin_{}".format(toolchain.name)

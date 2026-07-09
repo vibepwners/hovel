@@ -6,6 +6,7 @@ Exercises every sub-command in ``picblobs_cli.cli`` plus the
 
 from __future__ import annotations
 
+import socket
 import stat
 import struct
 import subprocess
@@ -1147,11 +1148,16 @@ class TestVerifyNaclE2E:
         detail = cli._verify_nacl_e2e("freebsd", "x86_64", 30.0)
         assert "Hello from NaCl PIC blob!" in detail
         kwargs = captured["kwargs"]
-        expected = struct.pack("<H", 45678) + cli._NACL_VERIFY_AUTH_KEY
-        assert kwargs["server_config"] == expected
-        assert kwargs["client_config"] == expected
-        # Config must carry the port plus the 32-byte handshake auth key.
-        assert len(expected) == 2 + 32
+        expected_server = struct.pack("<H", 45678) + cli._NACL_VERIFY_AUTH_KEY
+        expected_client = (
+            struct.pack("<H", 45678)
+            + socket.inet_aton("127.0.0.1")
+            + cli._NACL_VERIFY_AUTH_KEY
+        )
+        assert kwargs["server_config"] == expected_server
+        assert kwargs["client_config"] == expected_client
+        assert len(expected_server) == 2 + 32
+        assert len(expected_client) == 2 + 4 + 32
 
 
 class TestDisasmAndListing:
