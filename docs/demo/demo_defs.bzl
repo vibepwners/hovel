@@ -37,6 +37,15 @@ def _runfiles_for(ctx, attr_name):
         target[DefaultInfo].data_runfiles.files,
     ]
 
+def _vhs_demo_resource_set(_os_name, _inputs_size):
+    # VHS drives a real Chrome/ttyd/tmux stack. Running many recordings at once
+    # makes Chrome miss terminal input events, so make each action reserve a
+    # whole local worker's worth of resources.
+    return {
+        "cpu": 8,
+        "memory": 4096,
+    }
+
 def _vhs_demo_impl(ctx):
     out = ctx.actions.declare_file("out/" + ctx.attr.demo_name + ".gif")
     args = ctx.actions.args()
@@ -111,6 +120,7 @@ def _vhs_demo_impl(ctx):
         # dynamic-loader hints such as HOVEL_CHROME_LIBRARY_PATH passed via
         # --action_env.
         use_default_shell_env = True,
+        resource_set = _vhs_demo_resource_set,
     )
     return [DefaultInfo(files = depset([out]))]
 
