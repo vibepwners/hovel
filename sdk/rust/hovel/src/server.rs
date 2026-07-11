@@ -4,12 +4,13 @@ use std::io::{self, BufRead, Write};
 
 use crate::base64;
 use crate::context::{Context, Emitter};
-use crate::mesh::{
-    context_params, MeshBeaconRequest, MeshDescribeRequest, MeshStreamRequest,
-    MeshTaskRequest, MeshTopologyRequest,
-};
 use crate::framing::read_message;
 use crate::json::Value;
+use crate::mesh::{
+    context_params, MeshBeaconRequest, MeshDescribeRequest, MeshStreamRequest, MeshTaskRequest,
+    MeshTopologyRequest, MESH_RPC_BEACONS_METHOD, MESH_RPC_DESCRIBE_METHOD,
+    MESH_RPC_OPEN_STREAM_METHOD, MESH_RPC_TASK_METHOD, MESH_RPC_TOPOLOGY_METHOD,
+};
 use crate::module::Module;
 
 /// Runs `module` over stdin/stdout until the daemon sends "shutdown" or the
@@ -99,11 +100,11 @@ fn dispatch(
     match method {
         "handshake" => handshake(module),
         "schema" => Ok(schema(module)),
-        "mesh.describe" => describe_mesh(module, params),
-        "mesh.topology" => mesh_topology(module, params),
-        "mesh.beacons" => mesh_beacons(module, params),
-        "mesh.task" => mesh_task(module, emitter, params),
-        "mesh.open_stream" => mesh_open_stream(module, emitter, params),
+        MESH_RPC_DESCRIBE_METHOD => describe_mesh(module, params),
+        MESH_RPC_TOPOLOGY_METHOD => mesh_topology(module, params),
+        MESH_RPC_BEACONS_METHOD => mesh_beacons(module, params),
+        MESH_RPC_TASK_METHOD => mesh_task(module, emitter, params),
+        MESH_RPC_OPEN_STREAM_METHOD => mesh_open_stream(module, emitter, params),
         "execute" => Ok(execute(module, emitter, params)),
         "session/write" => session_write(emitter, params),
         "session/read" => session_read(emitter, params),
@@ -203,11 +204,7 @@ fn mesh_beacons(module: &dyn Module, params: &Value) -> Result<Value, String> {
     )]))
 }
 
-fn mesh_task(
-    module: &dyn Module,
-    emitter: &mut Emitter,
-    params: &Value,
-) -> Result<Value, String> {
+fn mesh_task(module: &dyn Module, emitter: &mut Emitter, params: &Value) -> Result<Value, String> {
     let req = MeshTaskRequest::from_value(params);
     let context_params = context_params(&module_id(module), params);
     let run_id = context_params

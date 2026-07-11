@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import logging
@@ -6,6 +7,8 @@ import threading
 import unittest
 from pathlib import Path
 from typing import Any, BinaryIO, ClassVar, cast
+
+import pytest
 
 from hovel_sdk import (
     MESH_TARGET_DESTINATION,
@@ -25,6 +28,7 @@ from hovel_sdk import (
     MeshBeaconRequest,
     MeshDescribeRequest,
     MeshDescriptor,
+    MeshEvent,
     MeshLink,
     MeshNode,
     MeshRoute,
@@ -50,7 +54,87 @@ from hovel_sdk.framing import (
     write_message,
 )
 from hovel_sdk.server import JSONRPCServer
+from hovel_sdk.session import SessionManager, SessionOpenOptions, SessionScope
 from hovel_sdk.testing import ModuleRPC, RPCError, drive_module
+
+
+def test_session_manager_does_not_track_failed_open() -> None:
+    class FailingSession:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        @property
+        def closed(self) -> bool:
+            return False
+
+        async def open(self) -> None:
+            raise RuntimeError("open failed")
+
+        async def write(self, _data: bytes) -> None:
+            pass
+
+        async def read(self, wait: float | None = None) -> bytes:
+            _ = wait
+            return b""
+
+        async def close(self, reason: str = "closed") -> None:
+            _ = reason
+            self.close_calls += 1
+
+    async def exercise() -> None:
+        manager = SessionManager()
+        session = FailingSession()
+        with pytest.raises(RuntimeError, match=r"^open failed$"):
+            await manager.open(
+                session,
+                scope=SessionScope(run_id="run-1", module_id="mod", target="target"),
+                options=SessionOpenOptions(),
+            )
+
+        assert manager.refs_for_run("run-1") == []
+        await manager.close_all(reason="test")
+        assert session.close_calls == 0
+
+    asyncio.run(exercise())
+
+
+def test_mesh_task_result_deduplicates_opened_sessions() -> None:
+    def session_ref(session_id: str) -> SessionRef:
+        return SessionRef(
+            id=session_id,
+            run_id="run-1",
+            module_id="mesh-module",
+            target="target-1",
+        )
+
+    result = MeshTaskResult(sessions=[session_ref("session-1")]).to_rpc(
+        sessions=[
+            session_ref("session-1"),
+            session_ref("session-2"),
+            session_ref("session-2"),
+        ]
+    )
+
+    assert [session["id"] for session in result["sessions"]] == ["session-1", "session-2"]
+
+
+def test_mesh_requests_reject_mismatched_wire_types() -> None:
+    request = MeshTaskRequest.from_rpc(
+        {
+            "runId": 7,
+            "kind": False,
+            "destinationPort": "445",
+            "args": ["whoami", 1, True],
+            "route": {"nodes": ["relay-1", 2]},
+        }
+    )
+
+    assert request.run_id == ""
+    assert request.kind == ""
+    assert request.destination_port == 0
+    assert request.args == ["whoami"]
+    assert request.route == MeshRoute(nodes=["relay-1"])
+    assert not MeshTopologyRequest.from_rpc({"includeRoutes": "false"}).include_routes
 
 
 class EchoModule(HovelModule):
@@ -271,7 +355,7 @@ class MeshModule(HovelModule):
             )
         ]
 
-    def run_mesh_task(self, _ctx: Context, request: MeshTaskRequest) -> MeshTaskResult:
+    def run_mesh_task(self, ctx: Context, request: MeshTaskRequest) -> MeshTaskResult:
         return MeshTaskResult(
             task_id=request.task_id,
             status="succeeded",
@@ -281,7 +365,13 @@ class MeshModule(HovelModule):
             destination_host=request.destination_host,
             destination_port=request.destination_port,
             protocol=request.protocol,
-            outputs={"args": request.args, "config": request.config},
+            outputs={
+                "args": request.args,
+                "config": request.config,
+                "contextRunId": ctx.run_id,
+                "contextModuleId": ctx.module_id,
+                "contextTarget": ctx.target,
+            },
             beacons=self.list_mesh_beacons(MeshBeaconRequest(node_id=request.node_id)),
         )
 
@@ -345,11 +435,13 @@ class _FragmentingStream:
 
 def _write_many_messages(writer: MessageWriter, prefix: str) -> None:
     for index in range(25):
-        writer.write({
-            "jsonrpc": "2.0",
-            "method": "module/log",
-            "params": {"message": f"{prefix}-{index}"},
-        })
+        writer.write(
+            {
+                "jsonrpc": "2.0",
+                "method": "module/log",
+                "params": {"message": f"{prefix}-{index}"},
+            }
+        )
 
 
 def _read_all_messages(stream: BinaryIO) -> list[dict[str, Any]]:
@@ -366,6 +458,10 @@ class SDKTest(unittest.TestCase):
         message = {"jsonrpc": "2.0", "id": 1, "method": "handshake"}
         stream = io.BytesIO(encode_message(message))
         self.assertEqual(read_message(stream), message)
+
+    def test_mesh_required_fields_are_serialized_when_empty(self) -> None:
+        self.assertEqual(MeshRoute(nodes=[]).to_rpc()["nodes"], [])
+        self.assertEqual(MeshEvent(kind="").to_rpc()["kind"], "")
 
     def test_read_message_rejects_oversized_frame_before_body_read(self) -> None:
         stream = io.BytesIO(f"Content-Length: {MAX_FRAME_BYTES + 1}\r\n\r\n".encode())
@@ -385,10 +481,7 @@ class SDKTest(unittest.TestCase):
         stream = _FragmentingStream()
         writer = MessageWriter(cast("BinaryIO", stream))
 
-        threads = [
-            threading.Thread(target=_write_many_messages, args=(writer, prefix))
-            for prefix in ("a", "b", "c")
-        ]
+        threads = [threading.Thread(target=_write_many_messages, args=(writer, prefix)) for prefix in ("a", "b", "c")]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -405,12 +498,14 @@ class SDKTest(unittest.TestCase):
 
     def test_server_executes_module_and_emits_log_notification(self) -> None:
         stdin = io.BytesIO(
-            encode_message({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "execute",
-                "params": {"runId": "run-1", "moduleId": "echo", "target": "mock://target"},
-            })
+            encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "execute",
+                    "params": {"runId": "run-1", "moduleId": "echo", "target": "mock://target"},
+                }
+            )
             + encode_message({"jsonrpc": "2.0", "id": 2, "method": "shutdown"}),
         )
         stdout = io.BytesIO()
@@ -449,12 +544,14 @@ class SDKTest(unittest.TestCase):
 
     def test_execute_exposes_optional_agent_context(self) -> None:
         without_agent = io.BytesIO(
-            encode_message({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "execute",
-                "params": {"runId": "run-1", "moduleId": "agent-aware", "target": "mock://target"},
-            })
+            encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "execute",
+                    "params": {"runId": "run-1", "moduleId": "agent-aware", "target": "mock://target"},
+                }
+            )
         )
         stdout = io.BytesIO()
         JSONRPCServer(AgentAwareModule(), without_agent, stdout).serve_forever()
@@ -466,32 +563,34 @@ class SDKTest(unittest.TestCase):
         self.assertNotIn("agentHints", message["result"])
 
         with_agent = io.BytesIO(
-            encode_message({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "execute",
-                "params": {
-                    "runId": "run-2",
-                    "moduleId": "agent-aware",
-                    "target": "mock://target",
-                    "agentContext": {
-                        "schema": "hovel.agent_context.v1",
-                        "entity": {
-                            "id": "entity-mcp",
-                            "kind": "mcp",
-                            "displayName": "Codex",
-                            "agent": True,
+            encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "execute",
+                    "params": {
+                        "runId": "run-2",
+                        "moduleId": "agent-aware",
+                        "target": "mock://target",
+                        "agentContext": {
+                            "schema": "hovel.agent_context.v1",
+                            "entity": {
+                                "id": "entity-mcp",
+                                "kind": "mcp",
+                                "displayName": "Codex",
+                                "agent": True,
+                            },
+                            "operation": "redteam-lab",
+                            "chain": "alpha",
+                            "planId": "plan-1",
+                            "planHash": "hash-1",
+                            "approvalState": "pending",
+                            "phase": "execute",
+                            "resources": ["hovel://throw-plan/plan-1"],
                         },
-                        "operation": "redteam-lab",
-                        "chain": "alpha",
-                        "planId": "plan-1",
-                        "planHash": "hash-1",
-                        "approvalState": "pending",
-                        "phase": "execute",
-                        "resources": ["hovel://throw-plan/plan-1"],
                     },
-                },
-            })
+                }
+            )
         )
         stdout = io.BytesIO()
         JSONRPCServer(AgentAwareModule(), with_agent, stdout).serve_forever()
@@ -507,24 +606,30 @@ class SDKTest(unittest.TestCase):
     def test_step_contract_methods_dispatch_over_json_rpc(self) -> None:
         stdin = io.BytesIO(
             encode_message({"jsonrpc": "2.0", "id": 1, "method": "step.describe"})
-            + encode_message({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "step.prepare",
-                "params": {"preparedPlanId": "prep-1", "stepId": "windows.credential.create_local_admin"},
-            })
-            + encode_message({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "step.execute",
-                "params": {"runId": "run-1", "stepId": "squatter.connect_smb"},
-            })
-            + encode_message({
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "step.cleanup",
-                "params": {"runId": "run-1", "stepId": "squatter.cleanup_smb"},
-            })
+            + encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "step.prepare",
+                    "params": {"preparedPlanId": "prep-1", "stepId": "windows.credential.create_local_admin"},
+                }
+            )
+            + encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "step.execute",
+                    "params": {"runId": "run-1", "stepId": "squatter.connect_smb"},
+                }
+            )
+            + encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "step.cleanup",
+                    "params": {"runId": "run-1", "stepId": "squatter.cleanup_smb"},
+                }
+            )
         )
         stdout = io.BytesIO()
 
@@ -550,35 +655,41 @@ class SDKTest(unittest.TestCase):
         route = {"id": "route-leaf-1", "nodes": ["controller", "relay-1", "leaf-1"]}
         stdin = io.BytesIO(
             encode_message({"jsonrpc": "2.0", "id": 1, "method": "mesh.describe"})
-            + encode_message({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "mesh.topology",
-                "params": {"root": "controller", "includeRoutes": True},
-            })
-            + encode_message({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "mesh.beacons",
-                "params": {"nodeId": "leaf-1"},
-            })
-            + encode_message({
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "mesh.task",
-                "params": {
-                    "runId": "run-mesh-1",
-                    "taskId": "task-1",
-                    "kind": MESH_TASK_COMMAND,
-                    "nodeId": "relay-1",
-                    "route": route,
-                    "destinationHost": "10.10.0.99",
-                    "destinationPort": 445,
-                    "protocol": "tcp",
-                    "config": {"command": "whoami"},
-                    "args": ["--read-only"],
-                },
-            })
+            + encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "mesh.topology",
+                    "params": {"root": "controller", "includeRoutes": True},
+                }
+            )
+            + encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "mesh.beacons",
+                    "params": {"nodeId": "leaf-1"},
+                }
+            )
+            + encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "mesh.task",
+                    "params": {
+                        "runId": "run-mesh-1",
+                        "taskId": "task-1",
+                        "kind": MESH_TASK_COMMAND,
+                        "nodeId": "relay-1",
+                        "route": route,
+                        "destinationHost": "10.10.0.99",
+                        "destinationPort": 445,
+                        "protocol": "tcp",
+                        "config": {"command": "whoami"},
+                        "args": ["--read-only"],
+                    },
+                }
+            )
         )
         stdout = io.BytesIO()
 
@@ -604,17 +715,37 @@ class SDKTest(unittest.TestCase):
         self.assertEqual(task["result"]["route"]["id"], "route-leaf-1")
         self.assertEqual(task["result"]["outputs"]["config"]["command"], "whoami")
 
+    def test_mesh_context_defaults_blank_scope_fields(self) -> None:
+        with ModuleRPC(MeshModule()) as rpc:
+            result = rpc.call(
+                "mesh.task",
+                {
+                    "runId": " ",
+                    "moduleId": " ",
+                    "target": " ",
+                    "destinationHost": "10.10.0.99",
+                    "kind": MESH_TASK_SURVEY,
+                },
+            )
+
+        outputs = result["outputs"]
+        self.assertEqual(outputs["contextRunId"], "mesh")
+        self.assertEqual(outputs["contextModuleId"], "mesh-module@v0.0.0-test")
+        self.assertEqual(outputs["contextTarget"], "10.10.0.99")
+
     def test_artifact_helpers_emit_inline_and_file_references(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "loot.txt"
             path.write_text("loot", encoding="utf-8")
 
-            result = Result.ok(artifacts=[
-                Artifact.inline("transcript.txt", "text/plain", "inline bytes"),
-                Artifact.text("notes.txt", b"operator notes"),
-                Artifact.json("summary.json", {"ok": True, "count": 2}),
-                Artifact.file(path, kind="text/plain"),
-            ])
+            result = Result.ok(
+                artifacts=[
+                    Artifact.inline("transcript.txt", "text/plain", "inline bytes"),
+                    Artifact.text("notes.txt", b"operator notes"),
+                    Artifact.json("summary.json", {"ok": True, "count": 2}),
+                    Artifact.file(path, kind="text/plain"),
+                ]
+            )
             artifacts = result.to_rpc()["artifacts"]
 
         self.assertEqual(artifacts[0], {"name": "transcript.txt", "kind": "text/plain", "data": "inline bytes"})
@@ -676,35 +807,45 @@ class SDKTest(unittest.TestCase):
 
     def test_async_module_can_open_and_drive_shell_session(self) -> None:
         stdin = io.BytesIO(
-            encode_message({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "execute",
-                "params": {"runId": "run-1", "moduleId": "session-echo", "target": "mock://target"},
-            })
-            + encode_message({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "session/read",
-                "params": {"sessionId": "run-1-session-1", "timeoutMs": 100},
-            })
-            + encode_message({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "session/write",
-                "params": {"sessionId": "run-1-session-1", "data": base64.b64encode(b"whoami\n").decode()},
-            })
-            + encode_message({
-                "jsonrpc": "2.0",
-                "id": 4,
-                "method": "session/read",
-                "params": {"sessionId": "run-1-session-1", "timeoutMs": 100},
-            })
-            + encode_message({
-                "jsonrpc": "2.0",
-                "id": 5,
-                "method": "shutdown",
-            }),
+            encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "execute",
+                    "params": {"runId": "run-1", "moduleId": "session-echo", "target": "mock://target"},
+                }
+            )
+            + encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "session/read",
+                    "params": {"sessionId": "run-1-session-1", "timeoutMs": 100},
+                }
+            )
+            + encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "session/write",
+                    "params": {"sessionId": "run-1-session-1", "data": base64.b64encode(b"whoami\n").decode()},
+                }
+            )
+            + encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "session/read",
+                    "params": {"sessionId": "run-1-session-1", "timeoutMs": 100},
+                }
+            )
+            + encode_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "shutdown",
+                }
+            ),
         )
         stdout = io.BytesIO()
 
@@ -841,4 +982,4 @@ class SDKTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    raise SystemExit(pytest.main([__file__]))

@@ -13,16 +13,18 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name != 'release' || startsWith(github.ref_name, 'v')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install Task
-        uses: arduino/setup-task@v2
+        uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
         with:
-          version: 3.x
+          version: 3.52.0
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
 
       - name: Check committed version
         shell: bash
@@ -48,7 +50,7 @@ jobs:
         run: task release:hovel-sdk-dist
 
       - name: Upload dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hovel-sdk-dist
           path: dist/*
@@ -69,13 +71,13 @@ jobs:
       contents: read
     steps:
       - name: Download dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: hovel-sdk-dist
           path: dist
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
 
       - name: Job summary
         if: always()
@@ -90,7 +92,7 @@ jobs:
             echo "| Status | ${{ job.status }} |"
             echo "| Environment | pypi |"
             echo "| Artifact | hovel-sdk-dist |"
-            echo "| Publisher | pypa/gh-action-pypi-publish@release/v1 |"
+            echo "| Publisher | pypa/gh-action-pypi-publish@v1.14.0 |"
             echo ""
             echo "### What This Proves"
             echo ""

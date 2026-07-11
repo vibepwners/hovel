@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from hovel_sdk import Artifact, Context, Finding, HovelModule, Requirement, Result
+
 from hovel_ms17_010_survey.smb import (
     PIPE_WHITELIST,
     STATUS_ACCESS_DENIED,
@@ -11,7 +13,6 @@ from hovel_ms17_010_survey.smb import (
     SmbResponse,
     SmbTouchClient,
 )
-from hovel_sdk import Artifact, Context, Finding, HovelModule, Requirement, Result
 
 _DEFAULT_PORT = "445"
 _DEFAULT_TIMEOUT = "10"

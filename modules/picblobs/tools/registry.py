@@ -71,7 +71,7 @@ class Architecture:
     is_big_endian: bool = False  # Big-endian byte order.
 
     # Bootlin toolchain version.
-    bootlin_version: str = "2024.05-1"
+    bootlin_version: str = "2025.08-1"
 
     # SHA256 of the Bootlin archive (empty = unpinned).
     bootlin_sha256: str = ""
@@ -124,7 +124,7 @@ _register_arch(
         gcc_triple="x86_64-buildroot-linux-gnu",
         extra_cflags=["-march=x86-64"],
         cpu_constraint="@platforms//cpu:x86_64",
-        bootlin_sha256="932823ca9a3e067e7e2a29810a666d20c9cc5bb550de947f6879e38ace1aa955",
+        bootlin_sha256="760acd5c3159448b618e237b61935335baada74fe0cdc0d7611826cb49b41c8c",
     )
 )
 
@@ -139,7 +139,7 @@ _register_arch(
         cpu_constraint="@platforms//cpu:x86_32",
         uses_mmap2=True,
         is_32bit=True,
-        bootlin_sha256="023e4f03cd212b5545c4c184238693b61b40fa36d257b84546100a92ea2c1d8b",
+        bootlin_sha256="f9b365d7fd8f8860dfb1845ff731013550f071ca4a8de0e5074abc995296b26c",
     )
 )
 
@@ -152,7 +152,7 @@ _register_arch(
         gcc_triple="aarch64-buildroot-linux-gnu",
         cpu_constraint="@platforms//cpu:aarch64",
         openat_only=True,
-        bootlin_sha256="b0fad860eb94b503a56d66ca8b9ba06d2d4826943e37ebd1d7217423f6ea5bb2",
+        bootlin_sha256="dfb47eee874eef9e8a7fc042eee4e0a183f444b6bcde6a82fef8f009918389c9",
     )
 )
 
@@ -167,7 +167,7 @@ _register_arch(
         cpu_constraint="@platforms//cpu:arm",
         uses_mmap2=True,
         is_32bit=True,
-        bootlin_sha256="13f2bea0b06fe560fe60d199cd9d3fb1f20e2335bcc79b90c5130c3916a3ed92",
+        bootlin_sha256="53f3d7c2b0ce32f120043bf4b338b3ea3f3375015ed63f5b382a5f62894baeec",
     )
 )
 
@@ -182,7 +182,7 @@ _register_arch(
         cpu_constraint="@platforms//cpu:arm",
         uses_mmap2=True,
         is_32bit=True,
-        bootlin_sha256="13f2bea0b06fe560fe60d199cd9d3fb1f20e2335bcc79b90c5130c3916a3ed92",
+        bootlin_sha256="53f3d7c2b0ce32f120043bf4b338b3ea3f3375015ed63f5b382a5f62894baeec",
     )
 )
 
@@ -197,7 +197,7 @@ _register_arch(
         cpu_constraint="@platforms//cpu:armv7",
         uses_mmap2=True,
         is_32bit=True,
-        bootlin_sha256="608263bc9dc3eadf0962ddb1165f1c2291001190f9927dee47d464e26374462c",
+        bootlin_sha256="97d6fbaf19832002f3d6aa8fd31b2d29c1dc7b0752f4ae8ed35860fd33c1f9b4",
     )
 )
 
@@ -214,7 +214,7 @@ _register_arch(
         needs_got_reloc=True,
         needs_trampoline=True,
         is_32bit=True,
-        bootlin_sha256="d0139b6ade7f3b72a5f9c33814696af817661e826c9c501f6cefcab4ac684c8f",
+        bootlin_sha256="1085fe6b13d74205ef6e92d1d40fb3960bf6e4bad50555c723fa07416cb53c1c",
     )
 )
 
@@ -229,7 +229,7 @@ _register_arch(
         cpu_constraint="@platforms//cpu:s390x",
         uses_old_mmap=True,
         is_big_endian=True,
-        bootlin_sha256="b37ed02693a370f28434c34655c64bcb96dc0d428a92ddbc99feb5608bcf64a1",
+        bootlin_sha256="4e67f2751487493c2d68aab643de22a6e8cf81e6d918125b96b50eb5e02a85d5",
     )
 )
 
@@ -247,7 +247,7 @@ _register_arch(
         needs_trampoline=True,
         is_32bit=True,
         is_big_endian=True,
-        bootlin_sha256="677402719c545e49eb71c3d27a5f495af38f60463b40ed705e24e43a9834c137",
+        bootlin_sha256="23d0f36aa7962230ef43338ba14ac2a7fa6eb68e15ef39cb9114ac711b907f70",
     )
 )
 
@@ -264,7 +264,7 @@ _register_arch(
         uses_mmap2=True,
         is_32bit=True,
         is_big_endian=True,
-        bootlin_sha256="8ec2c84b84a13b854a13802537f0b04848056ebc65f6212202f6d8c8a78d4bc3",
+        bootlin_sha256="5d099c4ecdac8e030e04e5b5139e635a9a1faa64bb77f452b33ef469f93b6e46",
     )
 )
 
@@ -281,7 +281,7 @@ _register_arch(
         needs_got_reloc=True,
         is_32bit=True,
         is_big_endian=True,
-        bootlin_sha256="6c975a7293fde77a52f348124049645ee2ceee19e75ab6e0b2364043090a2dff",
+        bootlin_sha256="581d0441a31bff4f3a0996b824afb3fe35c6c32f543765b28a6b63a5684fc116",
     )
 )
 
@@ -294,7 +294,7 @@ _register_arch(
         gcc_triple="powerpc64le-buildroot-linux-gnu",
         extra_cflags=["-mcpu=power8"],
         cpu_constraint="@platforms//cpu:ppc64le",
-        bootlin_sha256="8133b74614f880eb8b76730efee77b8fd281c982bfa2791b72c5f836a529530d",
+        bootlin_sha256="819c8dee94b1baff33943f3b01d669ea794a825e7b4cbead340ad5de8cff6baa",
     )
 )
 
@@ -307,7 +307,7 @@ _register_arch(
         gcc_triple="riscv64-buildroot-linux-gnu",
         cpu_constraint="@platforms//cpu:riscv64",
         openat_only=True,
-        bootlin_sha256="78e16f3def8b2ff3da09c16155f993ac7e4dc1791d0904ada03fcb2e04910aab",
+        bootlin_sha256="45209041e9ba5054aa9787c40bce0ac1e48b78528b6635b79dfb4253e1491ff0",
     )
 )
 

@@ -20,13 +20,29 @@ const (
 	defaultMeshBridgeHost = "127.0.0.1"
 	meshBridgeReadTimeout = 250 * time.Millisecond
 	meshBridgeBufferSize  = 32 * 1024
+	maxNetworkPort        = int(^uint16(0))
 
 	meshBridgeProtocolTCP = "tcp"
 	meshBridgeProtocolUDP = "udp"
 
-	meshBridgeDatagramBufferSize = 64 * 1024
+	// UDP over IPv4 can carry at most 65,507 payload bytes. Using the IPv4
+	// ceiling keeps the bridge behavior stable for either loopback family.
 	maxMeshBridgeDatagramSize    = 65_507
+	meshBridgeDatagramBufferSize = maxMeshBridgeDatagramSize + 1
+	meshBridgeConfigFieldCount   = 4
+
+	meshBridgeConfigLocalAddress = "bridge.localAddress"
+	meshBridgeConfigOwner        = "bridge.owner"
+	meshBridgeConfigProtocol     = "bridge.protocol"
+	meshBridgeConfigDatagram     = "bridge.datagram"
+	meshBridgeOwnerDaemon        = "daemon"
 )
+
+// MeshStreamOpener opens a provider-owned Mesh session flow. It is the narrow
+// application-service seam required by the local bridge adapter.
+type MeshStreamOpener interface {
+	OpenMeshStream(context.Context, string, mesh.StreamRequest) (run.SessionRef, error)
+}
 
 // MeshBridgeOpenArgs gathers the collaborators needed to create a daemon-owned
 // local listener for a provider-owned Mesh session flow.
@@ -35,7 +51,7 @@ type MeshBridgeOpenArgs struct {
 	Request  mesh.StreamRequest
 	Host     string
 	Port     int
-	Runs     services.RunService
+	Runs     MeshStreamOpener
 	Sessions services.SessionBroker
 	Book     *MeshBook
 	Bridges  *MeshBridgeManager
@@ -45,49 +61,72 @@ type MeshBridgeOpenArgs struct {
 // MeshBridgeManager owns active daemon-local listeners that bridge local
 // clients to Mesh session flows.
 type MeshBridgeManager struct {
-	mu      sync.Mutex
-	bridges map[string]*MeshBridge
+	mu          sync.RWMutex
+	byOperation map[string]*MeshBridge
+	bySession   map[string]*MeshBridge
 }
 
+// NewMeshBridgeManager creates an empty, concurrency-safe bridge registry.
 func NewMeshBridgeManager() *MeshBridgeManager {
-	return &MeshBridgeManager{bridges: map[string]*MeshBridge{}}
+	return &MeshBridgeManager{
+		byOperation: map[string]*MeshBridge{},
+		bySession:   map[string]*MeshBridge{},
+	}
 }
 
-func (m *MeshBridgeManager) Add(bridge *MeshBridge) {
-	if m == nil || bridge == nil {
-		return
+// Add indexes a bridge by its operation and provider session identifiers.
+func (m *MeshBridgeManager) Add(bridge *MeshBridge) error {
+	if m == nil {
+		return errors.New("mesh bridge manager is not configured")
+	}
+	if bridge == nil {
+		return errors.New("mesh bridge is required")
+	}
+	operationID := strings.TrimSpace(bridge.OperationID())
+	sessionID := strings.TrimSpace(bridge.SessionID())
+	if operationID == "" || sessionID == "" {
+		return errors.New("mesh bridge operation id and session id are required")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.bridges == nil {
-		m.bridges = map[string]*MeshBridge{}
+	if m.byOperation == nil {
+		m.byOperation = map[string]*MeshBridge{}
 	}
-	m.bridges[bridge.OperationID()] = bridge
+	if m.bySession == nil {
+		m.bySession = map[string]*MeshBridge{}
+	}
+	if _, exists := m.byOperation[operationID]; exists {
+		return fmt.Errorf("mesh bridge operation %q is already tracked", operationID)
+	}
+	if _, exists := m.bySession[sessionID]; exists {
+		return fmt.Errorf("mesh bridge session %q is already tracked", sessionID)
+	}
+	m.byOperation[operationID] = bridge
+	m.bySession[sessionID] = bridge
+	return nil
 }
 
+// Find returns a bridge by operation ID, or by session ID when operationID is empty.
 func (m *MeshBridgeManager) Find(operationID, sessionID string) (*MeshBridge, bool) {
 	if m == nil {
 		return nil, false
 	}
 	operationID = strings.TrimSpace(operationID)
 	sessionID = strings.TrimSpace(sessionID)
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if operationID != "" {
-		bridge, ok := m.bridges[operationID]
+		bridge, ok := m.byOperation[operationID]
 		return bridge, ok
 	}
 	if sessionID == "" {
 		return nil, false
 	}
-	for _, bridge := range m.bridges {
-		if bridge.SessionID() == sessionID {
-			return bridge, true
-		}
-	}
-	return nil, false
+	bridge, ok := m.bySession[sessionID]
+	return bridge, ok
 }
 
+// Remove deletes both indexes for the bridge identified by operationID.
 func (m *MeshBridgeManager) Remove(operationID string) {
 	if m == nil {
 		return
@@ -98,7 +137,12 @@ func (m *MeshBridgeManager) Remove(operationID string) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.bridges, operationID)
+	bridge, ok := m.byOperation[operationID]
+	if !ok {
+		return
+	}
+	delete(m.byOperation, operationID)
+	delete(m.bySession, strings.TrimSpace(bridge.SessionID()))
 }
 
 // MeshBridge is a daemon-owned local socket endpoint backed by one Mesh session
@@ -141,6 +185,7 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
+	args.Now = now
 	if args.Sessions == nil {
 		return MeshBridgeOpenResponse{}, errors.New("session broker is not configured")
 	}
@@ -149,6 +194,9 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 	}
 	if args.Bridges == nil {
 		return MeshBridgeOpenResponse{}, errors.New("mesh bridge manager is not configured")
+	}
+	if args.Runs == nil {
+		return MeshBridgeOpenResponse{}, errors.New("mesh stream opener is not configured")
 	}
 	moduleID := strings.TrimSpace(args.ModuleID)
 	if moduleID == "" {
@@ -183,49 +231,66 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 	operation := args.Book.StartBridge(moduleID, request, localAddress, now())
 	session, err := args.Runs.OpenMeshStream(ctx, moduleID, request)
 	if err != nil {
-		err = fmt.Errorf("open mesh bridge session flow: %w", err)
-		closeErr := closeMeshBridgeEndpoint(listener, packetConn)
-		args.Book.Fail(operation.ID, err, now())
-		if closeErr != nil {
-			return MeshBridgeOpenResponse{}, errors.Join(err, closeErr)
-		}
-		return MeshBridgeOpenResponse{}, err
+		return MeshBridgeOpenResponse{}, failMeshBridgeOpen(
+			context.WithoutCancel(ctx),
+			args,
+			operation.ID,
+			listener,
+			packetConn,
+			"",
+			fmt.Errorf("open mesh bridge session flow: %w", err),
+		)
 	}
-	if strings.TrimSpace(session.ID) == "" {
-		err := errors.New("mesh bridge stream session id is required")
-		closeErr := closeMeshBridgeEndpoint(listener, packetConn)
-		args.Book.Fail(operation.ID, err, now())
-		if closeErr != nil {
-			return MeshBridgeOpenResponse{}, errors.Join(err, closeErr)
-		}
-		return MeshBridgeOpenResponse{}, err
+	session.ID = strings.TrimSpace(session.ID)
+	if session.ID == "" {
+		return MeshBridgeOpenResponse{}, failMeshBridgeOpen(
+			context.WithoutCancel(ctx),
+			args,
+			operation.ID,
+			listener,
+			packetConn,
+			"",
+			errors.New("mesh bridge stream session id is required"),
+		)
 	}
 	if protocol == meshBridgeProtocolUDP && !session.HasCapability(run.SessionCapabilityDatagram) {
-		err := errors.New("mesh bridge udp session must advertise the datagram capability")
-		cleanupErr := errors.Join(
-			closeMeshBridgeEndpoint(listener, packetConn),
-			args.Sessions.CloseSession(context.WithoutCancel(ctx), session.ID),
+		return MeshBridgeOpenResponse{}, failMeshBridgeOpen(
+			context.WithoutCancel(ctx),
+			args,
+			operation.ID,
+			listener,
+			packetConn,
+			session.ID,
+			errors.New("mesh bridge udp session must advertise the datagram capability"),
 		)
-		resultErr := errors.Join(err, cleanupErr)
-		args.Book.Fail(operation.ID, resultErr, now())
-		return MeshBridgeOpenResponse{}, resultErr
+	}
+	bridge := newMeshBridge(context.WithoutCancel(ctx), meshBridgeConfig{
+		operationID: operation.ID,
+		sessionID:   session.ID,
+		localHost:   localHost,
+		localPort:   localPort,
+		protocol:    protocol,
+		listener:    listener,
+		packetConn:  packetConn,
+		sessions:    args.Sessions,
+		book:        args.Book,
+		manager:     args.Bridges,
+		now:         now,
+	})
+	if err := args.Bridges.Add(bridge); err != nil {
+		// A duplicate session ID may already back another live bridge. Do not
+		// close that provider session while rejecting the new local endpoint.
+		return MeshBridgeOpenResponse{}, failMeshBridgeOpen(
+			context.WithoutCancel(ctx),
+			args,
+			operation.ID,
+			listener,
+			packetConn,
+			"",
+			fmt.Errorf("track mesh bridge: %w", err),
+		)
 	}
 	args.Book.ActivateBridge(operation.ID, session, localAddress, now())
-	bridge := newMeshBridge(
-		context.WithoutCancel(ctx),
-		operation.ID,
-		session.ID,
-		localHost,
-		localPort,
-		protocol,
-		listener,
-		packetConn,
-		args.Sessions,
-		args.Book,
-		args.Bridges,
-		now,
-	)
-	args.Bridges.Add(bridge)
 	go bridge.Serve()
 	return MeshBridgeOpenResponse{
 		OperationID:  operation.ID,
@@ -236,42 +301,44 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 	}, nil
 }
 
-func newMeshBridge(
-	parent context.Context,
-	operationID string,
-	sessionID string,
-	localHost string,
-	localPort int,
-	protocol string,
-	listener net.Listener,
-	packetConn net.PacketConn,
-	sessions services.SessionBroker,
-	book *MeshBook,
-	manager *MeshBridgeManager,
-	now func() time.Time,
-) *MeshBridge {
+type meshBridgeConfig struct {
+	operationID string
+	sessionID   string
+	localHost   string
+	localPort   int
+	protocol    string
+	listener    net.Listener
+	packetConn  net.PacketConn
+	sessions    services.SessionBroker
+	book        *MeshBook
+	manager     *MeshBridgeManager
+	now         func() time.Time
+}
+
+func newMeshBridge(parent context.Context, config meshBridgeConfig) *MeshBridge {
 	ctx, cancel := context.WithCancel(parent)
-	if now == nil {
-		now = func() time.Time { return time.Now().UTC() }
+	if config.now == nil {
+		config.now = func() time.Time { return time.Now().UTC() }
 	}
 	return &MeshBridge{
-		operationID: operationID,
-		sessionID:   sessionID,
-		localHost:   localHost,
-		localPort:   localPort,
-		protocol:    protocol,
-		listener:    listener,
-		packetConn:  packetConn,
-		sessions:    sessions,
-		book:        book,
-		manager:     manager,
-		now:         now,
+		operationID: config.operationID,
+		sessionID:   config.sessionID,
+		localHost:   config.localHost,
+		localPort:   config.localPort,
+		protocol:    config.protocol,
+		listener:    config.listener,
+		packetConn:  config.packetConn,
+		sessions:    config.sessions,
+		book:        config.book,
+		manager:     config.manager,
+		now:         config.now,
 		ctx:         ctx,
 		cancel:      cancel,
 		peerReady:   make(chan struct{}),
 	}
 }
 
+// OperationID returns the daemon bookkeeping identifier for the bridge.
 func (b *MeshBridge) OperationID() string {
 	if b == nil {
 		return ""
@@ -279,6 +346,7 @@ func (b *MeshBridge) OperationID() string {
 	return b.operationID
 }
 
+// SessionID returns the provider-owned session backing the bridge.
 func (b *MeshBridge) SessionID() string {
 	if b == nil {
 		return ""
@@ -286,6 +354,7 @@ func (b *MeshBridge) SessionID() string {
 	return b.sessionID
 }
 
+// Serve transfers data until the local endpoint or provider session closes.
 func (b *MeshBridge) Serve() {
 	switch b.protocol {
 	case meshBridgeProtocolUDP:
@@ -333,6 +402,7 @@ func (b *MeshBridge) serveDatagrams() {
 	))
 }
 
+// Close stops the endpoint, closes the provider session, and updates bookkeeping.
 func (b *MeshBridge) Close(ctx context.Context) error {
 	return b.close(ctx, nil)
 }
@@ -634,8 +704,8 @@ func normalizeMeshBridgeListen(host string, port int) (string, int, error) {
 	if host == "" || strings.EqualFold(host, "localhost") {
 		host = defaultMeshBridgeHost
 	}
-	if port < 0 || port > 65535 {
-		return "", 0, fmt.Errorf("mesh bridge local port %d is outside 0-65535", port)
+	if port < 0 || port > maxNetworkPort {
+		return "", 0, fmt.Errorf("mesh bridge local port %d is outside 0-%d", port, maxNetworkPort)
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {
@@ -700,17 +770,36 @@ func closeMeshBridgeEndpoint(listener net.Listener, packetConn net.PacketConn) e
 }
 
 func meshBridgeRequest(request mesh.StreamRequest, localAddress string, protocol string) mesh.StreamRequest {
-	config := make(map[string]any, len(request.Config)+3)
+	config := make(map[string]any, len(request.Config)+meshBridgeConfigFieldCount)
 	for key, value := range request.Config {
 		config[key] = value
 	}
-	config["bridge.localAddress"] = localAddress
-	config["bridge.owner"] = "daemon"
-	config["bridge.protocol"] = protocol
-	if protocol == meshBridgeProtocolUDP {
-		config["bridge.datagram"] = true
-	}
+	config[meshBridgeConfigLocalAddress] = localAddress
+	config[meshBridgeConfigOwner] = meshBridgeOwnerDaemon
+	config[meshBridgeConfigProtocol] = protocol
+	config[meshBridgeConfigDatagram] = protocol == meshBridgeProtocolUDP
 	request.Protocol = protocol
 	request.Config = config
 	return request
+}
+
+func failMeshBridgeOpen(
+	ctx context.Context,
+	args MeshBridgeOpenArgs,
+	operationID string,
+	listener net.Listener,
+	packetConn net.PacketConn,
+	sessionID string,
+	cause error,
+) error {
+	cleanupErr := closeMeshBridgeEndpoint(listener, packetConn)
+	if sessionID != "" {
+		cleanupErr = errors.Join(
+			cleanupErr,
+			args.Sessions.CloseSession(ctx, sessionID),
+		)
+	}
+	resultErr := errors.Join(cause, cleanupErr)
+	args.Book.Fail(operationID, resultErr, args.Now())
+	return resultErr
 }

@@ -122,7 +122,7 @@ func TestDaemonRPCTracksMeshTaskAndStreamOperations(t *testing.T) {
 		Request: mesh.TaskRequest{
 			RunID:           "run-mesh-1",
 			TaskID:          "deliver-exploit",
-			Kind:            string(mesh.TaskUploadExecute),
+			Kind:            mesh.TaskUploadExecute,
 			NodeID:          "relay-1",
 			Target:          "dc-1",
 			DestinationHost: "10.10.10.10",
@@ -790,6 +790,149 @@ func TestMeshBridgeRejectsRawProtocolLocalEndpoint(t *testing.T) {
 	}
 }
 
+func TestOpenMeshBridgeRejectsMissingStreamOpener(t *testing.T) {
+	_, err := OpenMeshBridge(context.Background(), MeshBridgeOpenArgs{
+		ModuleID: "mesh-provider@v0.1.0",
+		Sessions: newBridgeSessionBroker(),
+		Book:     NewMeshBook(),
+		Bridges:  NewMeshBridgeManager(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "mesh stream opener is not configured") {
+		t.Fatalf("OpenMeshBridge error = %v, want missing stream opener", err)
+	}
+}
+
+func TestMeshBridgeManagerIndexesAndRemovesBothSelectors(t *testing.T) {
+	manager := NewMeshBridgeManager()
+	bridge := &MeshBridge{operationID: "mesh-op-1", sessionID: "mesh-session-1"}
+	if err := manager.Add(bridge); err != nil {
+		t.Fatal(err)
+	}
+
+	for operationID, sessionID := range map[string]string{
+		"mesh-op-1": "",
+		"":          "mesh-session-1",
+	} {
+		got, ok := manager.Find(operationID, sessionID)
+		if !ok || got != bridge {
+			t.Fatalf("Find(%q, %q) = %#v, %v; want bridge", operationID, sessionID, got, ok)
+		}
+	}
+
+	manager.Remove("mesh-op-1")
+	if _, ok := manager.Find("mesh-op-1", ""); ok {
+		t.Fatal("removed bridge remains indexed by operation")
+	}
+	if _, ok := manager.Find("", "mesh-session-1"); ok {
+		t.Fatal("removed bridge remains indexed by session")
+	}
+}
+
+func TestMeshBridgeManagerRejectsDuplicateSelectors(t *testing.T) {
+	manager := NewMeshBridgeManager()
+	if err := manager.Add(&MeshBridge{operationID: "mesh-op-1", sessionID: "mesh-session-1"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, bridge := range []*MeshBridge{
+		{operationID: "mesh-op-1", sessionID: "mesh-session-2"},
+		{operationID: "mesh-op-2", sessionID: "mesh-session-1"},
+	} {
+		if err := manager.Add(bridge); err == nil {
+			t.Fatalf("Add(%#v) error = nil, want duplicate rejection", bridge)
+		}
+	}
+}
+
+func TestOpenMeshBridgeDoesNotAssociateRejectedDuplicateSession(t *testing.T) {
+	book := NewMeshBook()
+	manager := NewMeshBridgeManager()
+	sessions := newBridgeSessionBroker()
+	args := MeshBridgeOpenArgs{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-duplicate",
+			DestinationHost: "10.10.10.10",
+			DestinationPort: 445,
+			Protocol:        meshBridgeProtocolTCP,
+		},
+		Runs: services.NewRunService(
+			fakeMeshRunner{},
+			discardEvents{},
+			&sequenceIDs{values: []string{"run-unused"}},
+			fixedClock{now: time.Date(2026, 7, 9, 13, 50, 0, 0, time.UTC)},
+		),
+		Sessions: sessions,
+		Book:     book,
+		Bridges:  manager,
+	}
+	first, err := OpenMeshBridge(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge, ok := manager.Find(first.OperationID, "")
+	if !ok {
+		t.Fatal("first bridge is not tracked")
+	}
+	defer func() {
+		if err := bridge.Close(context.Background()); err != nil {
+			t.Errorf("close first bridge: %v", err)
+		}
+	}()
+
+	if _, err := OpenMeshBridge(context.Background(), args); err == nil ||
+		!strings.Contains(err.Error(), "already tracked") {
+		t.Fatalf("second OpenMeshBridge error = %v, want duplicate session rejection", err)
+	}
+	failed := book.List(MeshOperationListRequest{
+		Kind:  MeshOperationKindBridge,
+		State: MeshOperationStateFailed,
+	})
+	if len(failed) != 1 || failed[0].SessionID != "" || len(failed[0].SessionIDs) != 0 {
+		t.Fatalf("failed duplicate bridge operation = %#v, want no associated session", failed)
+	}
+}
+
+func TestMeshBridgeRequestOwnsReservedConfig(t *testing.T) {
+	tests := []struct {
+		name             string
+		protocol         string
+		forgedDatagram   bool
+		expectedDatagram bool
+	}{
+		{
+			name:             "udp owns datagram mode",
+			protocol:         meshBridgeProtocolUDP,
+			forgedDatagram:   false,
+			expectedDatagram: true,
+		},
+		{
+			name:             "tcp clears forged datagram mode",
+			protocol:         meshBridgeProtocolTCP,
+			forgedDatagram:   true,
+			expectedDatagram: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := meshBridgeRequest(mesh.StreamRequest{Config: map[string]any{
+				"provider.option":            "preserved",
+				meshBridgeConfigLocalAddress: "forged",
+				meshBridgeConfigOwner:        "caller",
+				meshBridgeConfigProtocol:     "forged",
+				meshBridgeConfigDatagram:     test.forgedDatagram,
+			}}, "127.0.0.1:1445", test.protocol)
+
+			if request.Config["provider.option"] != "preserved" ||
+				request.Config[meshBridgeConfigLocalAddress] != "127.0.0.1:1445" ||
+				request.Config[meshBridgeConfigOwner] != meshBridgeOwnerDaemon ||
+				request.Config[meshBridgeConfigProtocol] != test.protocol ||
+				request.Config[meshBridgeConfigDatagram] != test.expectedDatagram {
+				t.Fatalf("mesh bridge config = %#v", request.Config)
+			}
+		})
+	}
+}
+
 func TestOpenMeshBridgeDefaultsClock(t *testing.T) {
 	book := NewMeshBook()
 	manager := NewMeshBridgeManager()
@@ -980,6 +1123,13 @@ func TestMeshBookListDefensivelyCopiesSessionIDs(t *testing.T) {
 	listed = book.List(MeshOperationListRequest{})
 	if got := listed[0].SessionIDs[0]; got != "mesh-session-1" {
 		t.Fatalf("stored session id = %q, want defensive copy", got)
+	}
+}
+
+func TestMeshBookFormatsZeroTimeDeterministically(t *testing.T) {
+	zero := time.Time{}
+	if got, want := formatMeshTime(zero), zero.UTC().Format(time.RFC3339Nano); got != want {
+		t.Fatalf("formatMeshTime(zero) = %q, want %q", got, want)
 	}
 }
 

@@ -202,6 +202,11 @@ tasks:
     cmds:
       - bazel {{.BAZEL_STARTUP_ARGS}} run {{.BAZEL_ARGS}} {{.CLI_ARGS}}
 
+  bazel:mod:
+    desc: Run a core Bazel module graph command.
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} mod {{.CLI_ARGS}}
+
   ui:demo:
     desc: Run all terminal UI catalog demos.
     interactive: true

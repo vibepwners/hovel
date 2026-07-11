@@ -31,6 +31,7 @@ go_test(
     deps = [
         "//internal/domain/daemon",
         "//internal/domain/event",
+        "//internal/domain/mesh",
         "//internal/domain/run",
         "//internal/domain/workspace",
     ],

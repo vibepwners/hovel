@@ -1,6 +1,7 @@
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "go.work.bazel",
     "scripts/demo-mcp-agent-tmux.sh",
     "scripts/demo-step-setup.sh",
 ])
@@ -26,6 +27,7 @@ filegroup(
 test_suite(
     name = "repo_quality_test",
     tests = [
+        "//repo-tools/deps:update_python_locks_test",
         "//repo-tools/tasks:checkout_test",
     ],
 )

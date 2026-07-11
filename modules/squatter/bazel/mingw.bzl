@@ -21,7 +21,9 @@ per-version edits.
 """
 
 def _builtin_include_prefix(rctx):
-    return "%package(@@{}//)%".format(rctx.name)
+    # Repository rules expose only their canonical name through rctx.name; the
+    # package placeholder needs that name to remain valid from the exec root.
+    return "%package(@@{}//)%".format(rctx.name)  # buildifier: disable=canonical-repository
 
 def _builtin_include_dir(rctx, path):
     repo_root = str(rctx.path("."))

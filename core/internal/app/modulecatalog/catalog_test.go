@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	domainmesh "github.com/Vibe-Pwners/hovel/internal/domain/mesh"
 )
 
 func TestBuiltInsExposeMockModulesByType(t *testing.T) {
@@ -114,6 +116,39 @@ func TestCatalogSearchesAndClonesModuleContext(t *testing.T) {
 	again, _ := catalog.Find("ctx-module")
 	if again.Planning.Examples[0].ChainConfig["operator.confirmed_lab"] != "true" {
 		t.Fatalf("catalog context was mutated through clone: %#v", again.Planning.Examples[0].ChainConfig)
+	}
+}
+
+func TestCatalogDeepClonesMeshMetadata(t *testing.T) {
+	nested := map[string]any{
+		"policy": map[string]any{
+			"allowed": []any{"survey", map[string]any{"kind": "command"}},
+		},
+	}
+	catalog := New(Module{
+		ID:      "mesh-module",
+		Type:    TypeExploit,
+		Version: "v1.0.0",
+		Mesh: domainmesh.Descriptor{
+			Attributes: nested,
+		},
+	})
+
+	nested["policy"].(map[string]any)["allowed"].([]any)[1].(map[string]any)["kind"] = "mutated input"
+	module, ok := catalog.Find("mesh-module")
+	if !ok {
+		t.Fatal("Find(mesh-module) failed")
+	}
+	allowed := module.Mesh.Attributes["policy"].(map[string]any)["allowed"].([]any)
+	if got := allowed[1].(map[string]any)["kind"]; got != "command" {
+		t.Fatalf("stored mesh metadata = %q, want original value", got)
+	}
+
+	allowed[1].(map[string]any)["kind"] = "mutated result"
+	again, _ := catalog.Find("mesh-module")
+	againAllowed := again.Mesh.Attributes["policy"].(map[string]any)["allowed"].([]any)
+	if got := againAllowed[1].(map[string]any)["kind"]; got != "command" {
+		t.Fatalf("catalog mesh metadata was mutated through clone: %q", got)
 	}
 }
 

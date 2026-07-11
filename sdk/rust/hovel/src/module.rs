@@ -1,12 +1,12 @@
 //! The module contract: metadata, configuration schema, and the [`Module`] trait.
 
 use crate::context::Context;
-use crate::mesh::{
-    MeshBeacon, MeshBeaconRequest, MeshDescriptor, MeshDescribeRequest,
-    MeshStreamRequest, MeshTaskRequest, MeshTaskResult, MeshTopology,
-    MeshTopologyRequest,
-};
 use crate::json::Value;
+use crate::mesh::{
+    MeshBeacon, MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshStreamRequest,
+    MeshTaskRequest, MeshTaskResult, MeshTopology, MeshTopologyRequest, MESH_RPC_BEACONS_METHOD,
+    MESH_RPC_OPEN_STREAM_METHOD, MESH_RPC_TASK_METHOD, MESH_RPC_TOPOLOGY_METHOD,
+};
 use crate::result::Outcome;
 use crate::session::SessionRef;
 
@@ -103,30 +103,24 @@ pub trait Module {
     fn schema(&self) -> Schema;
     fn run(&self, ctx: &mut Context) -> Outcome;
 
-    fn describe_mesh(
-        &self,
-        _req: MeshDescribeRequest,
-    ) -> Result<MeshDescriptor, String> {
-        Err(format!("module {:?} is not a mesh provider", self.info().name))
-    }
-
-    fn mesh_topology(
-        &self,
-        _req: MeshTopologyRequest,
-    ) -> Result<MeshTopology, String> {
+    fn describe_mesh(&self, _req: MeshDescribeRequest) -> Result<MeshDescriptor, String> {
         Err(format!(
-            "module {:?} does not implement mesh.topology",
+            "module {:?} is not a mesh provider",
             self.info().name
         ))
     }
 
-    fn list_mesh_beacons(
-        &self,
-        _req: MeshBeaconRequest,
-    ) -> Result<Vec<MeshBeacon>, String> {
+    fn mesh_topology(&self, _req: MeshTopologyRequest) -> Result<MeshTopology, String> {
         Err(format!(
-            "module {:?} does not implement mesh.beacons",
-            self.info().name
+            "module {:?} does not implement {MESH_RPC_TOPOLOGY_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn list_mesh_beacons(&self, _req: MeshBeaconRequest) -> Result<Vec<MeshBeacon>, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_BEACONS_METHOD}",
+            self.info().name,
         ))
     }
 
@@ -136,8 +130,8 @@ pub trait Module {
         _req: MeshTaskRequest,
     ) -> Result<MeshTaskResult, String> {
         Err(format!(
-            "module {:?} does not implement mesh.task",
-            self.info().name
+            "module {:?} does not implement {MESH_RPC_TASK_METHOD}",
+            self.info().name,
         ))
     }
 
@@ -147,8 +141,8 @@ pub trait Module {
         _req: MeshStreamRequest,
     ) -> Result<SessionRef, String> {
         Err(format!(
-            "module {:?} does not implement mesh.open_stream",
-            self.info().name
+            "module {:?} does not implement {MESH_RPC_OPEN_STREAM_METHOD}",
+            self.info().name,
         ))
     }
 }

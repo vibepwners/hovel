@@ -817,11 +817,12 @@ _ARM_NONE_EABI_TOOLCHAIN = {
         "-mthumb",
         "-mfloat-abi=soft",
     ],
-    "sha256": "95c011cee430e64dd6087c75c800f04b9c49832cc1000127a92a97f9c8d83af4",
-    "strip_prefix": "arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi",
-    "url": "https://developer.arm.com/-/media/Files/downloads/gnu/13.3.rel1/binrel/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi.tar.xz",
+    "sha256": "597893282ac8c6ab1a4073977f2362990184599643b4c5ee34870a8215783a16",
+    "strip_prefix": "arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi",
+    "url": "https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz",
 }
 
+# Mbed OS 5.15.9's legacy build profiles require its supported GCC 9 toolchain.
 _MBED_ARM_NONE_EABI_TOOLCHAIN = {
     "extra_cflags": [
         "-mcpu=cortex-m4",

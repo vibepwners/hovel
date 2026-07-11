@@ -199,8 +199,9 @@ func (s RunService) RunMeshTask(
 	if err != nil {
 		return mesh.TaskResult{}, err
 	}
+	result.Status = mesh.TaskStatus(strings.TrimSpace(string(result.Status)))
 	if result.Status == "" {
-		result.Status = string(run.StateSucceeded)
+		result.Status = mesh.TaskStatusSucceeded
 	}
 	return result, nil
 }
@@ -214,7 +215,15 @@ func (s RunService) OpenMeshStream(
 	if !ok {
 		return run.SessionRef{}, errors.New("mesh runner is not configured")
 	}
-	return runner.OpenMeshStream(ctx, moduleID, req)
+	session, err := runner.OpenMeshStream(ctx, moduleID, req)
+	if err != nil {
+		return run.SessionRef{}, err
+	}
+	session.ID = strings.TrimSpace(session.ID)
+	if session.ID == "" {
+		return run.SessionRef{}, errors.New("mesh stream session id is required")
+	}
+	return session, nil
 }
 
 func (s RunService) ListPayloadCommands(ctx context.Context, req PayloadCommandListRequest) ([]run.PayloadCommand, error) {

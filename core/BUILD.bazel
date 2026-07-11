@@ -58,6 +58,8 @@ _CI_TESTS = [
     "//internal/adapters/terminallog:terminallog_test",
     "//internal/adapters/uicatalog:uicatalog_test",
     "//internal/infra/daemonmanager:daemonmanager_test",
+    "//internal/moduleruntime/pythonrpc:process_lifecycle_test",
+    "//internal/moduleruntime/pythonrpc:session_history_test",
     "//internal/testmodules/mockexploit:mockexploit_test",
     "//schemas:schema_smoke_test",
     "//tools/release:upver_test",
@@ -71,7 +73,6 @@ _FULL_CHECKOUT_TESTS = [
     "//internal/adapters/rootcli:rootcli_test",
     "//internal/infra/daemonruntime:daemonruntime_test",
     "//internal/moduleruntime/pythonrpc:pythonrpc_test",
-    "//tools/lint:python_check_test",
 ]
 
 test_suite(
@@ -104,6 +105,7 @@ test_suite(
         "//internal/app/operatorlog:operatorlog_race_test",
         "//internal/app/operatorsession:operatorsession_race_test",
         "//internal/app/services:services_race_test",
+        "//internal/moduleruntime/pythonrpc:session_history_race_test",
     ],
 )
 

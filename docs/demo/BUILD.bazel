@@ -77,7 +77,7 @@ demo_manifest(
 
 py_test(
     name = "standard_verification_test",
-    size = "medium",
+    size = "small",
     srcs = ["//docs/tools/demo:verify_standard_demos.py"],
     args = [
         "$(rootpath @hovel_core//cmd/hovel:hovel)",

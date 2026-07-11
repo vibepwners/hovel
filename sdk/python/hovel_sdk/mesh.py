@@ -19,6 +19,17 @@ MESH_TARGET_NODE = "node"
 MESH_TARGET_ROUTE = "route"
 MESH_TARGET_DESTINATION = "destination"
 
+MESH_TASK_STATUS_SUCCEEDED = "succeeded"
+MESH_TASK_STATUS_FAILED = "failed"
+
+_MESH_RPC_PREFIX = "mesh."
+_MESH_RPC_DESCRIBE_METHOD = "mesh.describe"
+_MESH_RPC_TOPOLOGY_METHOD = "mesh.topology"
+_MESH_RPC_BEACONS_METHOD = "mesh.beacons"
+_MESH_RPC_TASK_METHOD = "mesh.task"
+_MESH_RPC_OPEN_STREAM_METHOD = "mesh.open_stream"
+_DEFAULT_MESH_RUN_ID = "mesh"
+
 
 @dataclass(frozen=True)
 class MeshNode:
@@ -93,7 +104,7 @@ class MeshRoute:
         if not isinstance(value, dict):
             return None
         return cls(
-            id=str(value.get("id", "")),
+            id=_string_value(value.get("id")),
             nodes=_string_list(value.get("nodes")),
             links=_string_list(value.get("links")),
             cost=_int_value(value.get("cost")),
@@ -101,9 +112,8 @@ class MeshRoute:
         )
 
     def to_rpc(self) -> dict[str, Any]:
-        out: dict[str, Any] = {}
+        out: dict[str, Any] = {"nodes": list(self.nodes)}
         _put_string(out, "id", self.id)
-        _put_list(out, "nodes", self.nodes)
         _put_list(out, "links", self.links)
         _put_int(out, "cost", self.cost)
         _put_dict(out, "attributes", self.attributes)
@@ -251,8 +261,8 @@ class MeshTopologyRequest:
     @classmethod
     def from_rpc(cls, value: dict[str, Any]) -> MeshTopologyRequest:
         return cls(
-            root=str(value.get("root", "")),
-            include_routes=bool(value.get("includeRoutes", False)),
+            root=_string_value(value.get("root")),
+            include_routes=_bool_value(value.get("includeRoutes")),
             agent=AgentContext.from_rpc(value.get("agentContext")),
         )
 
@@ -267,8 +277,8 @@ class MeshBeaconRequest:
     @classmethod
     def from_rpc(cls, value: dict[str, Any]) -> MeshBeaconRequest:
         return cls(
-            node_id=str(value.get("nodeId", "")),
-            since=str(value.get("since", "")),
+            node_id=_string_value(value.get("nodeId")),
+            since=_string_value(value.get("since")),
             limit=_int_value(value.get("limit")),
             agent=AgentContext.from_rpc(value.get("agentContext")),
         )
@@ -294,19 +304,19 @@ class MeshTaskRequest:
     @classmethod
     def from_rpc(cls, value: dict[str, Any]) -> MeshTaskRequest:
         return cls(
-            run_id=str(value.get("runId", "")),
-            task_id=str(value.get("taskId", "")),
-            kind=str(value.get("kind", "")),
-            node_id=str(value.get("nodeId", "")),
-            target=str(value.get("target", "")),
+            run_id=_string_value(value.get("runId")),
+            task_id=_string_value(value.get("taskId")),
+            kind=_string_value(value.get("kind")),
+            node_id=_string_value(value.get("nodeId")),
+            target=_string_value(value.get("target")),
             route=MeshRoute.from_rpc(value.get("route")),
-            destination_host=str(value.get("destinationHost", "")),
+            destination_host=_string_value(value.get("destinationHost")),
             destination_port=_int_value(value.get("destinationPort")),
-            protocol=str(value.get("protocol", "")),
+            protocol=_string_value(value.get("protocol")),
             config=_dict_value(value.get("config")),
             args=_string_list(value.get("args")),
-            input_data=str(value.get("inputData", "")),
-            input_encoding=str(value.get("inputEncoding", "")),
+            input_data=_string_value(value.get("inputData")),
+            input_encoding=_string_value(value.get("inputEncoding")),
             agent=AgentContext.from_rpc(value.get("agentContext")),
         )
 
@@ -321,9 +331,8 @@ class MeshEvent:
     fields: dict[str, Any] = field(default_factory=dict)
 
     def to_rpc(self) -> dict[str, Any]:
-        out: dict[str, Any] = {}
+        out: dict[str, Any] = {"kind": self.kind}
         _put_string(out, "id", self.id)
-        _put_string(out, "kind", self.kind)
         _put_string(out, "nodeId", self.node_id)
         _put_string(out, "level", self.level)
         _put_string(out, "message", self.message)
@@ -333,7 +342,7 @@ class MeshEvent:
 
 @dataclass(frozen=True)
 class MeshTaskResult:
-    status: str = "succeeded"
+    status: str = MESH_TASK_STATUS_SUCCEEDED
     summary: str = ""
     task_id: str = ""
     node_id: str = ""
@@ -351,12 +360,12 @@ class MeshTaskResult:
 
     @classmethod
     def succeeded(cls, summary: str) -> MeshTaskResult:
-        return cls(status="succeeded", summary=summary)
+        return cls(status=MESH_TASK_STATUS_SUCCEEDED, summary=summary)
 
     def to_rpc(self, *, sessions: list[SessionRef] | None = None) -> dict[str, Any]:
         session_refs = _merge_session_refs(self.sessions, sessions or [])
         out: dict[str, Any] = {
-            "status": self.status or "succeeded",
+            "status": self.status.strip() or MESH_TASK_STATUS_SUCCEEDED,
         }
         _put_string(out, "summary", self.summary)
         _put_string(out, "taskId", self.task_id)
@@ -378,10 +387,7 @@ class MeshTaskResult:
         if self.events:
             out["events"] = [event.to_rpc() for event in self.events]
         if self.agent_hints:
-            out["agentHints"] = [
-                hint.to_rpc() if hasattr(hint, "to_rpc") else dict(hint)
-                for hint in self.agent_hints
-            ]
+            out["agentHints"] = [hint.to_rpc() if hasattr(hint, "to_rpc") else dict(hint) for hint in self.agent_hints]
         return out
 
 
@@ -401,14 +407,14 @@ class MeshStreamRequest:
     @classmethod
     def from_rpc(cls, value: dict[str, Any]) -> MeshStreamRequest:
         return cls(
-            run_id=str(value.get("runId", "")),
-            module_id=str(value.get("moduleId", "")),
-            target=str(value.get("target", "")),
-            node_id=str(value.get("nodeId", "")),
+            run_id=_string_value(value.get("runId")),
+            module_id=_string_value(value.get("moduleId")),
+            target=_string_value(value.get("target")),
+            node_id=_string_value(value.get("nodeId")),
             route=MeshRoute.from_rpc(value.get("route")),
-            destination_host=str(value.get("destinationHost", "")),
+            destination_host=_string_value(value.get("destinationHost")),
             destination_port=_int_value(value.get("destinationPort")),
-            protocol=str(value.get("protocol", "")),
+            protocol=_string_value(value.get("protocol")),
             config=_dict_value(value.get("config")),
             agent=AgentContext.from_rpc(value.get("agentContext")),
         )
@@ -417,7 +423,11 @@ class MeshStreamRequest:
 def _merge_session_refs(explicit: list[SessionRef], opened: list[SessionRef]) -> list[SessionRef]:
     refs = list(explicit)
     seen = {ref.id for ref in refs}
-    refs.extend(ref for ref in opened if ref.id and ref.id not in seen)
+    for ref in opened:
+        if not ref.id or ref.id in seen:
+            continue
+        seen.add(ref.id)
+        refs.append(ref)
     return refs
 
 
@@ -452,22 +462,19 @@ def _dict_value(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _string_value(value: Any) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _bool_value(value: Any) -> bool:
+    return value if isinstance(value, bool) else False
+
+
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
-    return [str(item) for item in value]
+    return [item for item in value if isinstance(item, str)]
 
 
 def _int_value(value: Any) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str) and value.strip():
-        try:
-            return int(value)
-        except ValueError:
-            return 0
-    return 0
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0

@@ -19,6 +19,7 @@ py_binary(
 
 py_test(
     name = "testreport_test",
+    size = "small",
     srcs = [
         "testreport.py",
         "testreport_test.py",

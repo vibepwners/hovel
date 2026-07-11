@@ -837,7 +837,7 @@ func cloneMeshTaskSpecs(tasks []domainmesh.TaskSpec) []domainmesh.TaskSpec {
 	out := make([]domainmesh.TaskSpec, 0, len(tasks))
 	for _, task := range tasks {
 		task.ConfigSchema = cloneAnyMap(task.ConfigSchema)
-		task.TargetScopes = append([]string(nil), task.TargetScopes...)
+		task.TargetScopes = append([]domainmesh.TargetScope(nil), task.TargetScopes...)
 		task.Capabilities = append([]string(nil), task.Capabilities...)
 		out = append(out, task)
 	}
@@ -928,14 +928,16 @@ func meshSearchText(descriptor domainmesh.Descriptor) string {
 	for _, task := range descriptor.Tasks {
 		parts = append(
 			parts,
-			task.Kind,
+			string(task.Kind),
 			task.Summary,
-			strings.Join(task.TargetScopes, " "),
-			strings.Join(task.Capabilities, " "),
 		)
+		for _, scope := range task.TargetScopes {
+			parts = append(parts, string(scope))
+		}
+		parts = append(parts, strings.Join(task.Capabilities, " "))
 	}
 	for _, trigger := range descriptor.Triggers {
-		parts = append(parts, trigger.Kind, trigger.ActionKind, trigger.NodeID)
+		parts = append(parts, trigger.Kind, string(trigger.ActionKind), trigger.NodeID)
 	}
 	if descriptor.Topology != nil {
 		for _, node := range descriptor.Topology.Nodes {
@@ -961,7 +963,26 @@ func cloneAnyMap(values map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(values))
 	for key, value := range values {
-		out[key] = value
+		out[key] = cloneAnyValue(value)
 	}
 	return out
+}
+
+func cloneAnyValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneAnyMap(value)
+	case []any:
+		out := make([]any, len(value))
+		for index, item := range value {
+			out[index] = cloneAnyValue(item)
+		}
+		return out
+	case map[string]string:
+		return cloneStringMap(value)
+	case []string:
+		return append([]string(nil), value...)
+	default:
+		return value
+	}
 }

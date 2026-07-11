@@ -1,13 +1,15 @@
-load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("@rules_python//python:defs.bzl", "py_binary")
 load("@rules_python//python/entry_points:py_console_script_binary.bzl", "py_console_script_binary")
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["requirements.in"])
+
 py_binary(
     name = "format_rust_workspace",
     srcs = ["format_rust_workspace.py"],
-    args = ["--rustfmt=$(rootpath @@rules_rust++rust+rustfmt_nightly-2026-04-16__x86_64-unknown-linux-gnu_tools//:rustfmt_bin)"],
-    data = ["@@rules_rust++rust+rustfmt_nightly-2026-04-16__x86_64-unknown-linux-gnu_tools//:rustfmt_bin"],
+    args = ["--rustfmt=$(rootpath @rules_rust//tools/upstream_wrapper:rustfmt)"],
+    data = ["@rules_rust//tools/upstream_wrapper:rustfmt"],
     python_version = "PY3",
 )
 
@@ -78,9 +80,8 @@ py_binary(
     python_version = "PY3",
 )
 
-py_test(
-    name = "python_check_test",
-    size = "medium",
+py_binary(
+    name = "python_check",
     srcs = ["run_python_check.py"],
     args = [
         "--ruff=$(rootpath :ruff)",
@@ -88,19 +89,13 @@ py_test(
         "--pydoclint=$(rootpath :pydoclint)",
     ],
     data = [
+        "stubs/pytest/__init__.pyi",
         ":mypy",
         ":pydoclint",
         ":ruff",
     ],
     main = "run_python_check.py",
     python_version = "PY3",
-    # Excluded from `//...` (and thus `task test`): this lints the sibling `sdk`
-    # slice's Python sources (sdk/python, examples/python), which are not part of
-    # core's graph and cannot be resolved as declared inputs from here — so it
-    # fails under both local and remote execution when swept up by the wildcard.
-    # Same convention core uses for its race/fuzz tests. Run it from an assembled
-    # full checkout where the sdk sources are present.
-    tags = ["manual"],
 )
 
 py_console_script_binary(

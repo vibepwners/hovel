@@ -19,6 +19,7 @@ go_test(
     size = "small",
     srcs = ["catalog_test.go"],
     embed = [":modulecatalog"],
+    deps = ["//internal/domain/mesh"],
 )
 
 go_test(

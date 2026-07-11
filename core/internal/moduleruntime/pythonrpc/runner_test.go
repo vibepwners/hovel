@@ -950,6 +950,8 @@ while True:
             "context": {"summary": "Connect to SMB named-pipe payload", "capabilities": ["session.shell"]},
             "prepare": {"materializes": []}
         }]}})
+    elif method == "mesh.describe":
+        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "module is not a mesh provider"}})
     elif method == "shutdown":
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
         break
@@ -1005,6 +1007,8 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "result": {"chainConfig": [], "targetConfig": [], "outputs": {}}})
     elif method == "step.describe":
         send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "module \"legacy-module\" is not a step provider"}})
+    elif method == "mesh.describe":
+        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "module is not a mesh provider"}})
     elif method == "shutdown":
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
         break
@@ -1025,8 +1029,11 @@ while True:
 func TestRunnerCallsMeshProviderMethods(t *testing.T) {
 	configPath := writePythonModuleFixture(t, `
 import base64
+import time
 
 last_stream_input = ""
+prompt_sent = False
+session_poll_seconds = 0.01
 
 DESCRIPTOR = {
     "name": "mesh-provider",
@@ -1125,10 +1132,18 @@ while True:
                 "closed": False
             }})
             last_stream_input = ""
-        else:
+        elif not prompt_sent:
             send({"jsonrpc": "2.0", "id": rid, "result": {
                 "sessionId": "mesh-session-1",
                 "data": base64.b64encode(b"mesh$ ").decode(),
+                "closed": False
+            }})
+            prompt_sent = True
+        else:
+            time.sleep(session_poll_seconds)
+            send({"jsonrpc": "2.0", "id": rid, "result": {
+                "sessionId": "mesh-session-1",
+                "data": "",
                 "closed": False
             }})
     elif method == "session/write":
@@ -1179,7 +1194,7 @@ while True:
 	task, err := runner.RunMeshTask(context.Background(), "broken", mesh.TaskRequest{
 		RunID:           "run-mesh-1",
 		TaskID:          "task-survey-1",
-		Kind:            string(mesh.TaskSurvey),
+		Kind:            mesh.TaskSurvey,
 		NodeID:          "node-2",
 		DestinationHost: "10.10.10.10",
 		DestinationPort: 445,
@@ -1188,7 +1203,7 @@ while True:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.Status != string(run.StateSucceeded) ||
+	if task.Status != mesh.TaskStatusSucceeded ||
 		task.Outputs["os"] != "linux" ||
 		task.DestinationHost != "10.10.10.10" {
 		t.Fatalf("mesh task = %#v", task)
@@ -2151,6 +2166,8 @@ const exampleModuleConfig = "modules/examples/python/hovel-modules.json"
 
 func TestRunnerConfigPathDiscoversRepoDefault(t *testing.T) {
 	t.Setenv(ModuleConfigEnv, "")
+	t.Setenv("HOVEL_REPO_ROOT", "")
+	t.Setenv("BUILD_WORKSPACE_DIRECTORY", "")
 	root := t.TempDir()
 	configPath := filepath.Join(root, "modules", "examples", "hovel-modules.json")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -2321,6 +2338,8 @@ while True:
             "chainConfig": [], "targetConfig": [], "outputs": {}}})
     elif method == "step.describe":
         send({"jsonrpc": "2.0", "id": rid, "result": {"steps": []}})
+    elif method == "mesh.describe":
+        send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "module is not a mesh provider"}})
     elif method == "execute":
         send({"jsonrpc": "2.0", "id": rid, "result": {
             "status": "succeeded", "summary": "command module executed",

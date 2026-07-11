@@ -26,6 +26,15 @@ import (
 
 const (
 	serviceURLPrefix = "/hovel.daemon.v1.DaemonService/"
+
+	rpcMethodDescribeMesh       = "DescribeMesh"
+	rpcMethodMeshTopology       = "MeshTopology"
+	rpcMethodListMeshBeacons    = "ListMeshBeacons"
+	rpcMethodRunMeshTask        = "RunMeshTask"
+	rpcMethodOpenMeshStream     = "OpenMeshStream"
+	rpcMethodOpenMeshBridge     = "OpenMeshBridge"
+	rpcMethodCloseMeshBridge    = "CloseMeshBridge"
+	rpcMethodListMeshOperations = "ListMeshOperations"
 )
 
 type RunMockExploitRequest struct {
@@ -332,9 +341,9 @@ type MeshBridgeCloseRequest struct {
 }
 
 type MeshBridgeCloseResponse struct {
-	OperationID string `json:"operationId,omitempty"`
-	SessionID   string `json:"sessionId,omitempty"`
-	State       string `json:"state"`
+	OperationID string             `json:"operationId,omitempty"`
+	SessionID   string             `json:"sessionId,omitempty"`
+	State       MeshOperationState `json:"state"`
 }
 
 type operatorClock interface {
@@ -423,14 +432,14 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[PayloadGenerateRequest, PayloadGenerateResponse](mux, "GeneratePayload", rpcServer.generatePayloadRPC)
 	registerUnary[PayloadCommandListRequest, PayloadCommandListResponse](mux, "ListPayloadCommands", rpcServer.listPayloadCommandsRPC)
 	registerUnary[PayloadCommandRunRequest, PayloadCommandRunResponse](mux, "RunPayloadCommand", rpcServer.runPayloadCommandRPC)
-	registerUnary[MeshDescribeRequest, MeshDescribeResponse](mux, "DescribeMesh", rpcServer.describeMeshRPC)
-	registerUnary[MeshTopologyRequest, MeshTopologyResponse](mux, "MeshTopology", rpcServer.meshTopologyRPC)
-	registerUnary[MeshBeaconListRequest, MeshBeaconListResponse](mux, "ListMeshBeacons", rpcServer.listMeshBeaconsRPC)
-	registerUnary[MeshTaskRunRequest, MeshTaskRunResponse](mux, "RunMeshTask", rpcServer.runMeshTaskRPC)
-	registerUnary[MeshStreamOpenRequest, MeshStreamOpenResponse](mux, "OpenMeshStream", rpcServer.openMeshStreamRPC)
-	registerUnary[MeshBridgeOpenRequest, MeshBridgeOpenResponse](mux, "OpenMeshBridge", rpcServer.openMeshBridgeRPC)
-	registerUnary[MeshBridgeCloseRequest, MeshBridgeCloseResponse](mux, "CloseMeshBridge", rpcServer.closeMeshBridgeRPC)
-	registerUnary[MeshOperationListRequest, MeshOperationListResponse](mux, "ListMeshOperations", rpcServer.listMeshOperationsRPC)
+	registerUnary[MeshDescribeRequest, MeshDescribeResponse](mux, rpcMethodDescribeMesh, rpcServer.describeMeshRPC)
+	registerUnary[MeshTopologyRequest, MeshTopologyResponse](mux, rpcMethodMeshTopology, rpcServer.meshTopologyRPC)
+	registerUnary[MeshBeaconListRequest, MeshBeaconListResponse](mux, rpcMethodListMeshBeacons, rpcServer.listMeshBeaconsRPC)
+	registerUnary[MeshTaskRunRequest, MeshTaskRunResponse](mux, rpcMethodRunMeshTask, rpcServer.runMeshTaskRPC)
+	registerUnary[MeshStreamOpenRequest, MeshStreamOpenResponse](mux, rpcMethodOpenMeshStream, rpcServer.openMeshStreamRPC)
+	registerUnary[MeshBridgeOpenRequest, MeshBridgeOpenResponse](mux, rpcMethodOpenMeshBridge, rpcServer.openMeshBridgeRPC)
+	registerUnary[MeshBridgeCloseRequest, MeshBridgeCloseResponse](mux, rpcMethodCloseMeshBridge, rpcServer.closeMeshBridgeRPC)
+	registerUnary[MeshOperationListRequest, MeshOperationListResponse](mux, rpcMethodListMeshOperations, rpcServer.listMeshOperationsRPC)
 	return nil
 }
 
@@ -705,7 +714,7 @@ func (s *Server) closeMeshBridgeRPC(
 	return MeshBridgeCloseResponse{
 		OperationID: bridge.OperationID(),
 		SessionID:   bridge.SessionID(),
-		State:       meshOperationClosed,
+		State:       MeshOperationStateClosed,
 	}, nil
 }
 
@@ -1928,56 +1937,56 @@ func (c *Client) DescribeMesh(
 	ctx context.Context,
 	req MeshDescribeRequest,
 ) (MeshDescribeResponse, error) {
-	return invoke[MeshDescribeRequest, MeshDescribeResponse](c, ctx, "DescribeMesh", req)
+	return invoke[MeshDescribeRequest, MeshDescribeResponse](c, ctx, rpcMethodDescribeMesh, req)
 }
 
 func (c *Client) MeshTopology(
 	ctx context.Context,
 	req MeshTopologyRequest,
 ) (MeshTopologyResponse, error) {
-	return invoke[MeshTopologyRequest, MeshTopologyResponse](c, ctx, "MeshTopology", req)
+	return invoke[MeshTopologyRequest, MeshTopologyResponse](c, ctx, rpcMethodMeshTopology, req)
 }
 
 func (c *Client) ListMeshBeacons(
 	ctx context.Context,
 	req MeshBeaconListRequest,
 ) (MeshBeaconListResponse, error) {
-	return invoke[MeshBeaconListRequest, MeshBeaconListResponse](c, ctx, "ListMeshBeacons", req)
+	return invoke[MeshBeaconListRequest, MeshBeaconListResponse](c, ctx, rpcMethodListMeshBeacons, req)
 }
 
 func (c *Client) RunMeshTask(
 	ctx context.Context,
 	req MeshTaskRunRequest,
 ) (MeshTaskRunResponse, error) {
-	return invoke[MeshTaskRunRequest, MeshTaskRunResponse](c, ctx, "RunMeshTask", req)
+	return invoke[MeshTaskRunRequest, MeshTaskRunResponse](c, ctx, rpcMethodRunMeshTask, req)
 }
 
 func (c *Client) OpenMeshStream(
 	ctx context.Context,
 	req MeshStreamOpenRequest,
 ) (MeshStreamOpenResponse, error) {
-	return invoke[MeshStreamOpenRequest, MeshStreamOpenResponse](c, ctx, "OpenMeshStream", req)
+	return invoke[MeshStreamOpenRequest, MeshStreamOpenResponse](c, ctx, rpcMethodOpenMeshStream, req)
 }
 
 func (c *Client) OpenMeshBridge(
 	ctx context.Context,
 	req MeshBridgeOpenRequest,
 ) (MeshBridgeOpenResponse, error) {
-	return invoke[MeshBridgeOpenRequest, MeshBridgeOpenResponse](c, ctx, "OpenMeshBridge", req)
+	return invoke[MeshBridgeOpenRequest, MeshBridgeOpenResponse](c, ctx, rpcMethodOpenMeshBridge, req)
 }
 
 func (c *Client) CloseMeshBridge(
 	ctx context.Context,
 	req MeshBridgeCloseRequest,
 ) (MeshBridgeCloseResponse, error) {
-	return invoke[MeshBridgeCloseRequest, MeshBridgeCloseResponse](c, ctx, "CloseMeshBridge", req)
+	return invoke[MeshBridgeCloseRequest, MeshBridgeCloseResponse](c, ctx, rpcMethodCloseMeshBridge, req)
 }
 
 func (c *Client) ListMeshOperations(
 	ctx context.Context,
 	req MeshOperationListRequest,
 ) (MeshOperationListResponse, error) {
-	return invoke[MeshOperationListRequest, MeshOperationListResponse](c, ctx, "ListMeshOperations", req)
+	return invoke[MeshOperationListRequest, MeshOperationListResponse](c, ctx, rpcMethodListMeshOperations, req)
 }
 
 func (c *Client) ListSessions(ctx context.Context) ([]SessionRef, error) {

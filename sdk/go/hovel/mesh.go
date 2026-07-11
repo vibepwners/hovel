@@ -1,6 +1,13 @@
 package hovel
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
+
+const defaultMeshRunID = "mesh"
+
+var errMeshSessionUnavailable = errors.New("hovel: session support is not available in this mesh runtime")
 
 // MeshDescriber is the common Mesh discovery surface. A module that supports
 // any Mesh operation should implement this method and advertise only the
@@ -75,6 +82,15 @@ const (
 	MeshTargetDestination MeshTargetScope = "destination"
 )
 
+// MeshTaskStatus describes the terminal outcome of provider-owned Mesh work.
+// Providers may use additional status values when their contract requires it.
+type MeshTaskStatus string
+
+const (
+	MeshTaskStatusSucceeded MeshTaskStatus = "succeeded"
+	MeshTaskStatusFailed    MeshTaskStatus = "failed"
+)
+
 // MeshNode is an operator-addressable participant in a mesh.
 type MeshNode struct {
 	ID           string         `json:"id"`
@@ -125,14 +141,14 @@ type MeshTopology struct {
 
 // MeshTaskSpec describes one task kind a provider can perform.
 type MeshTaskSpec struct {
-	Kind         string         `json:"kind"`
-	Summary      string         `json:"summary,omitempty"`
-	ConfigSchema map[string]any `json:"configSchema,omitempty"`
-	ReadOnly     bool           `json:"readOnly,omitempty"`
-	Destructive  bool           `json:"destructive,omitempty"`
-	OpensStream  bool           `json:"opensStream,omitempty"`
-	TargetScopes []string       `json:"targetScopes,omitempty"`
-	Capabilities []string       `json:"capabilities,omitempty"`
+	Kind         MeshTaskKind      `json:"kind"`
+	Summary      string            `json:"summary,omitempty"`
+	ConfigSchema map[string]any    `json:"configSchema,omitempty"`
+	ReadOnly     bool              `json:"readOnly,omitempty"`
+	Destructive  bool              `json:"destructive,omitempty"`
+	OpensStream  bool              `json:"opensStream,omitempty"`
+	TargetScopes []MeshTargetScope `json:"targetScopes,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
 }
 
 // MeshTrigger declares a condition that can cause mesh work or state
@@ -145,7 +161,7 @@ type MeshTrigger struct {
 	State      string         `json:"state,omitempty"`
 	Expression string         `json:"expression,omitempty"`
 	Schedule   string         `json:"schedule,omitempty"`
-	ActionKind string         `json:"actionKind,omitempty"`
+	ActionKind MeshTaskKind   `json:"actionKind,omitempty"`
 	Config     map[string]any `json:"config,omitempty"`
 	LastFired  string         `json:"lastFired,omitempty"`
 }
@@ -196,7 +212,7 @@ type MeshBeaconRequest struct {
 type MeshTaskRequest struct {
 	RunID           string         `json:"runId,omitempty"`
 	TaskID          string         `json:"taskId,omitempty"`
-	Kind            string         `json:"kind"`
+	Kind            MeshTaskKind   `json:"kind"`
 	NodeID          string         `json:"nodeId,omitempty"`
 	Target          string         `json:"target,omitempty"`
 	Route           *MeshRoute     `json:"route,omitempty"`
@@ -215,7 +231,7 @@ type MeshTaskRequest struct {
 // externally brokered SessionRef values explicitly.
 type MeshTaskResult struct {
 	TaskID          string         `json:"taskId,omitempty"`
-	Status          string         `json:"status,omitempty"`
+	Status          MeshTaskStatus `json:"status,omitempty"`
 	Summary         string         `json:"summary,omitempty"`
 	NodeID          string         `json:"nodeId,omitempty"`
 	Route           *MeshRoute     `json:"route,omitempty"`
@@ -234,7 +250,7 @@ type MeshTaskResult struct {
 // SucceededMeshTask builds a successful mesh task result.
 func SucceededMeshTask(summary string) MeshTaskResult {
 	return MeshTaskResult{
-		Status:  "succeeded",
+		Status:  MeshTaskStatusSucceeded,
 		Summary: summary,
 	}
 }
@@ -283,19 +299,9 @@ type MeshContext struct {
 // provider-backed command channels that must outlive the RPC response.
 func (c *MeshContext) OpenSession(session Session, opts ...SessionOption) (SessionRef, error) {
 	if c.sessions == nil {
-		return SessionRef{}, errSessionUnavailable()
+		return SessionRef{}, errMeshSessionUnavailable
 	}
 	return c.sessions.open(session, opts...)
-}
-
-func errSessionUnavailable() error {
-	return meshError("hovel: session support is not available in this mesh runtime")
-}
-
-type meshError string
-
-func (e meshError) Error() string {
-	return string(e)
 }
 
 func meshModuleID(info Info) string {

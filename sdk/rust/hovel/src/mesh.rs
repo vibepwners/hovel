@@ -20,6 +20,16 @@ pub const MESH_TARGET_NODE: &str = "node";
 pub const MESH_TARGET_ROUTE: &str = "route";
 pub const MESH_TARGET_DESTINATION: &str = "destination";
 
+pub const MESH_TASK_STATUS_SUCCEEDED: &str = "succeeded";
+pub const MESH_TASK_STATUS_FAILED: &str = "failed";
+
+pub(crate) const DEFAULT_MESH_RUN_ID: &str = "mesh";
+pub(crate) const MESH_RPC_DESCRIBE_METHOD: &str = "mesh.describe";
+pub(crate) const MESH_RPC_TOPOLOGY_METHOD: &str = "mesh.topology";
+pub(crate) const MESH_RPC_BEACONS_METHOD: &str = "mesh.beacons";
+pub(crate) const MESH_RPC_TASK_METHOD: &str = "mesh.task";
+pub(crate) const MESH_RPC_OPEN_STREAM_METHOD: &str = "mesh.open_stream";
+
 #[derive(Clone, Debug, Default)]
 pub struct MeshNode {
     pub id: String,
@@ -72,8 +82,8 @@ pub struct MeshLink {
 impl MeshLink {
     fn to_value(&self) -> Value {
         let mut members = required_str("id", &self.id);
-        push_str(&mut members, "source", &self.source);
-        push_str(&mut members, "target", &self.target);
+        members.push(("source".to_string(), Value::from(self.source.as_str())));
+        members.push(("target".to_string(), Value::from(self.target.as_str())));
         push_str(&mut members, "kind", &self.kind);
         push_str(&mut members, "state", &self.state);
         push_str(&mut members, "transport", &self.transport);
@@ -110,7 +120,10 @@ impl MeshRoute {
     pub(crate) fn to_value(&self) -> Value {
         let mut members = Vec::new();
         push_str(&mut members, "id", &self.id);
-        push_strings(&mut members, "nodes", &self.nodes);
+        members.push((
+            "nodes".to_string(),
+            Value::Array(self.nodes.iter().cloned().map(Value::Str).collect()),
+        ));
         push_strings(&mut members, "links", &self.links);
         push_i64(&mut members, "cost", self.cost);
         push_object(&mut members, "attributes", &self.attributes);
@@ -225,7 +238,7 @@ pub struct MeshBeacon {
 impl MeshBeacon {
     pub(crate) fn to_value(&self) -> Value {
         let mut members = required_str("id", &self.id);
-        push_str(&mut members, "nodeId", &self.node_id);
+        members.push(("nodeId".to_string(), Value::from(self.node_id.as_str())));
         push_str(&mut members, "time", &self.time);
         push_str(&mut members, "state", &self.state);
         push_str(&mut members, "transport", &self.transport);
@@ -390,7 +403,7 @@ pub struct MeshTaskResult {
 impl MeshTaskResult {
     pub fn succeeded(summary: &str) -> MeshTaskResult {
         MeshTaskResult {
-            status: "succeeded".to_string(),
+            status: MESH_TASK_STATUS_SUCCEEDED.to_string(),
             summary: summary.to_string(),
             ..MeshTaskResult::default()
         }
@@ -400,10 +413,11 @@ impl MeshTaskResult {
         self.sessions = merge_sessions(self.sessions, opened_sessions);
         let mut members = Vec::new();
         push_str(&mut members, "taskId", &self.task_id);
-        let status = if self.status.is_empty() {
-            "succeeded"
+        let normalized_status = self.status.trim();
+        let status = if normalized_status.is_empty() {
+            MESH_TASK_STATUS_SUCCEEDED
         } else {
-            self.status.as_str()
+            normalized_status
         };
         push_str(&mut members, "status", status);
         push_str(&mut members, "summary", &self.summary);
@@ -466,7 +480,7 @@ impl MeshEvent {
     fn to_value(&self) -> Value {
         let mut members = Vec::new();
         push_str(&mut members, "id", &self.id);
-        push_str(&mut members, "kind", &self.kind);
+        members.push(("kind".to_string(), Value::from(self.kind.as_str())));
         push_str(&mut members, "nodeId", &self.node_id);
         push_str(&mut members, "level", &self.level);
         push_str(&mut members, "message", &self.message);
@@ -511,30 +525,20 @@ pub(crate) fn context_params(module_id: &str, params: &Value) -> Value {
         Value::Object(items) => items.clone(),
         _ => Vec::new(),
     };
-    if !has_key(&members, "moduleId") {
-        members.push(("moduleId".to_string(), Value::from(module_id)));
-    }
-    if !has_key(&members, "runId") {
-        members.push(("runId".to_string(), Value::from("mesh")));
-    }
-    if !has_key(&members, "target") {
-        let destination_host = members
-            .iter()
-            .find(|(key, _)| key == "destinationHost")
-            .and_then(|(_, value)| value.as_str())
-            .unwrap_or("");
-        if !destination_host.is_empty() {
-            members.push(("target".to_string(), Value::from(destination_host)));
+    set_default_string(&mut members, "moduleId", module_id);
+    set_default_string(&mut members, "runId", DEFAULT_MESH_RUN_ID);
+    if string_member_is_blank(&members, "target") {
+        let destination_host = string_member(&members, "destinationHost")
+            .unwrap_or("")
+            .to_string();
+        if !destination_host.trim().is_empty() {
+            set_string_member(&mut members, "target", &destination_host);
         }
     }
-    if !has_key(&members, "target") {
-        let node_id = members
-            .iter()
-            .find(|(key, _)| key == "nodeId")
-            .and_then(|(_, value)| value.as_str())
-            .unwrap_or("");
-        if !node_id.is_empty() {
-            members.push(("target".to_string(), Value::from(node_id)));
+    if string_member_is_blank(&members, "target") {
+        let node_id = string_member(&members, "nodeId").unwrap_or("").to_string();
+        if !node_id.trim().is_empty() {
+            set_string_member(&mut members, "target", &node_id);
         }
     }
     Value::Object(members)
@@ -549,8 +553,29 @@ fn merge_sessions(mut explicit: Vec<SessionRef>, opened: Vec<SessionRef>) -> Vec
     explicit
 }
 
-fn has_key(members: &[(String, Value)], key: &str) -> bool {
-    members.iter().any(|(existing, _)| existing == key)
+fn string_member<'a>(members: &'a [(String, Value)], key: &str) -> Option<&'a str> {
+    members
+        .iter()
+        .find(|(existing, _)| existing == key)
+        .and_then(|(_, value)| value.as_str())
+}
+
+fn string_member_is_blank(members: &[(String, Value)], key: &str) -> bool {
+    string_member(members, key).is_none_or(|value| value.trim().is_empty())
+}
+
+fn set_default_string(members: &mut Vec<(String, Value)>, key: &str, default: &str) {
+    if string_member_is_blank(members, key) {
+        set_string_member(members, key, default);
+    }
+}
+
+fn set_string_member(members: &mut Vec<(String, Value)>, key: &str, value: &str) {
+    if let Some((_, existing)) = members.iter_mut().find(|(existing, _)| existing == key) {
+        *existing = Value::from(value);
+        return;
+    }
+    members.push((key.to_string(), Value::from(value)));
 }
 
 fn required_str(key: &str, value: &str) -> Vec<(String, Value)> {
@@ -603,7 +628,16 @@ fn bool_field(value: &Value, key: &str) -> bool {
 }
 
 fn i64_field(value: &Value, key: &str) -> i64 {
-    value.get(key).and_then(Value::as_f64).unwrap_or(0.0) as i64
+    value
+        .get(key)
+        .and_then(Value::as_f64)
+        .filter(|number| {
+            number.is_finite()
+                && number.fract() == 0.0
+                && *number >= i64::MIN as f64
+                && *number < i64::MAX as f64
+        })
+        .map_or(0, |number| number as i64)
 }
 
 fn object_field(value: &Value, key: &str) -> Vec<(String, Value)> {
@@ -621,5 +655,66 @@ fn string_array(value: &Value, key: &str) -> Vec<String> {
             .map(str::to_string)
             .collect(),
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{context_params, i64_field, MeshBeacon, MeshEvent, MeshLink, MeshRoute};
+    use crate::json::Value;
+
+    #[test]
+    fn required_mesh_fields_are_serialized_when_empty() {
+        let route = MeshRoute::default().to_value();
+        assert!(matches!(route.get("nodes"), Some(Value::Array(nodes)) if nodes.is_empty()));
+
+        let link = MeshLink::default().to_value();
+        assert_eq!(link.get("source").and_then(Value::as_str), Some(""));
+        assert_eq!(link.get("target").and_then(Value::as_str), Some(""));
+
+        let beacon = MeshBeacon::default().to_value();
+        assert_eq!(beacon.get("nodeId").and_then(Value::as_str), Some(""));
+
+        let event = MeshEvent::default().to_value();
+        assert_eq!(event.get("kind").and_then(Value::as_str), Some(""));
+    }
+
+    #[test]
+    fn mesh_context_replaces_non_string_scope_fields() {
+        let params = Value::object(vec![
+            ("moduleId", Value::from(7_i64)),
+            ("runId", Value::Null),
+            ("target", Value::from(false)),
+            ("destinationHost", Value::from("10.10.0.99")),
+        ]);
+
+        let context = context_params("mesh-provider@v1", &params);
+        assert_eq!(
+            context.get("moduleId").and_then(Value::as_str),
+            Some("mesh-provider@v1")
+        );
+        assert_eq!(context.get("runId").and_then(Value::as_str), Some("mesh"));
+        assert_eq!(
+            context.get("target").and_then(Value::as_str),
+            Some("10.10.0.99")
+        );
+    }
+
+    #[test]
+    fn integer_fields_reject_non_integer_wire_values() {
+        for invalid in [
+            Value::from(1.5_f64),
+            Value::from("7"),
+            Value::from(true),
+            Value::from(f64::NAN),
+            Value::from(f64::INFINITY),
+            Value::from(i64::MAX as f64),
+        ] {
+            let value = Value::object(vec![("field", invalid)]);
+            assert_eq!(i64_field(&value, "field"), 0);
+        }
+
+        let value = Value::object(vec![("field", Value::from(7_i64))]);
+        assert_eq!(i64_field(&value, "field"), 7);
     }
 }

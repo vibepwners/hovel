@@ -2,6 +2,7 @@ load("@rules_python//python:defs.bzl", "py_test")
 
 py_test(
     name = "checkout_test",
+    size = "small",
     srcs = [
         "checkout.py",
         "checkout_test.py",

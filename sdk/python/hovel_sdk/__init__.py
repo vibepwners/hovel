@@ -8,6 +8,8 @@ from hovel_sdk.mesh import (
     MESH_TASK_COMMAND,
     MESH_TASK_EXECUTE,
     MESH_TASK_LOAD,
+    MESH_TASK_STATUS_FAILED,
+    MESH_TASK_STATUS_SUCCEEDED,
     MESH_TASK_STREAM,
     MESH_TASK_SURVEY,
     MESH_TASK_UPLOAD,
@@ -31,7 +33,7 @@ from hovel_sdk.mesh import (
 from hovel_sdk.module import HovelModule
 from hovel_sdk.result import AgentHint, Artifact, Finding, InstalledPayload, PayloadProviderRecord, Result
 from hovel_sdk.server import serve
-from hovel_sdk.session import LineShellSession, SESSION_CAPABILITY_DATAGRAM, SessionRef
+from hovel_sdk.session import SESSION_CAPABILITY_DATAGRAM, LineShellSession, SessionRef
 from hovel_sdk.testing import ModuleRPC, RPCError, drive_module
 
 __all__ = [
@@ -41,10 +43,13 @@ __all__ = [
     "MESH_TASK_COMMAND",
     "MESH_TASK_EXECUTE",
     "MESH_TASK_LOAD",
+    "MESH_TASK_STATUS_FAILED",
+    "MESH_TASK_STATUS_SUCCEEDED",
     "MESH_TASK_STREAM",
     "MESH_TASK_SURVEY",
     "MESH_TASK_UPLOAD",
     "MESH_TASK_UPLOAD_EXECUTE",
+    "SESSION_CAPABILITY_DATAGRAM",
     "AgentContext",
     "AgentEntity",
     "AgentHint",
@@ -74,7 +79,6 @@ __all__ = [
     "RPCError",
     "Requirement",
     "Result",
-    "SESSION_CAPABILITY_DATAGRAM",
     "SessionRef",
     "drive_module",
     "serve",

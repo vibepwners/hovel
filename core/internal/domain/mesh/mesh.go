@@ -27,6 +27,15 @@ const (
 	TargetDestination TargetScope = "destination"
 )
 
+// TaskStatus describes the terminal outcome of provider-owned Mesh work.
+// Providers may return additional statuses when their contract requires it.
+type TaskStatus string
+
+const (
+	TaskStatusSucceeded TaskStatus = "succeeded"
+	TaskStatusFailed    TaskStatus = "failed"
+)
+
 // Node is an operator-addressable participant in a provider-owned mesh.
 type Node struct {
 	ID           string         `json:"id"`
@@ -77,13 +86,13 @@ type Topology struct {
 
 // TaskSpec describes one mesh task kind a provider can perform.
 type TaskSpec struct {
-	Kind         string         `json:"kind"`
+	Kind         TaskKind       `json:"kind"`
 	Summary      string         `json:"summary,omitempty"`
 	ConfigSchema map[string]any `json:"configSchema,omitempty"`
 	ReadOnly     bool           `json:"readOnly,omitempty"`
 	Destructive  bool           `json:"destructive,omitempty"`
 	OpensStream  bool           `json:"opensStream,omitempty"`
-	TargetScopes []string       `json:"targetScopes,omitempty"`
+	TargetScopes []TargetScope  `json:"targetScopes,omitempty"`
 	Capabilities []string       `json:"capabilities,omitempty"`
 }
 
@@ -96,7 +105,7 @@ type Trigger struct {
 	State      string         `json:"state,omitempty"`
 	Expression string         `json:"expression,omitempty"`
 	Schedule   string         `json:"schedule,omitempty"`
-	ActionKind string         `json:"actionKind,omitempty"`
+	ActionKind TaskKind       `json:"actionKind,omitempty"`
 	Config     map[string]any `json:"config,omitempty"`
 	LastFired  string         `json:"lastFired,omitempty"`
 }
@@ -150,7 +159,7 @@ type BeaconRequest struct {
 type TaskRequest struct {
 	RunID           string            `json:"runId,omitempty"`
 	TaskID          string            `json:"taskId,omitempty"`
-	Kind            string            `json:"kind"`
+	Kind            TaskKind          `json:"kind"`
 	NodeID          string            `json:"nodeId,omitempty"`
 	Target          string            `json:"target,omitempty"`
 	Route           *Route            `json:"route,omitempty"`
@@ -167,7 +176,7 @@ type TaskRequest struct {
 // TaskResult is the outcome of a provider-owned mesh task.
 type TaskResult struct {
 	TaskID          string           `json:"taskId,omitempty"`
-	Status          string           `json:"status"`
+	Status          TaskStatus       `json:"status"`
 	Summary         string           `json:"summary,omitempty"`
 	NodeID          string           `json:"nodeId,omitempty"`
 	Route           *Route           `json:"route,omitempty"`

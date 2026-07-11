@@ -312,7 +312,9 @@ def _bootlin_toolchain_repo_impl(ctx):
     # Exec-root-stable versions of the compiler's builtin search roots, in the
     # order reported by `g++ -E -xc++ - -v`. They are listed as builtin include
     # dirs so hosted compiles pass Bazel's absolute-path hermeticity check.
-    builtin_include_prefix = "%package(@@{}//)%".format(ctx.name)
+    # Repository rules expose only their canonical name through ctx.name; the
+    # package placeholder needs that name to remain valid from the exec root.
+    builtin_include_prefix = "%package(@@{}//)%".format(ctx.name)  # buildifier: disable=canonical-repository
     builtin_include_dirs = [
         "{}/{}/include/c++/{}".format(builtin_include_prefix, triple, gcc_version),
         "{}/{}/include/c++/{}/{}".format(builtin_include_prefix, triple, gcc_version, triple),

@@ -10,6 +10,14 @@ from hovel_sdk.context import AgentContext, Context
 from hovel_sdk.framing import FrameError, MessageWriter, read_message
 from hovel_sdk.logging import setup_logging
 from hovel_sdk.mesh import (
+    _DEFAULT_MESH_RUN_ID,
+    _MESH_RPC_BEACONS_METHOD,
+    _MESH_RPC_DESCRIBE_METHOD,
+    _MESH_RPC_OPEN_STREAM_METHOD,
+    _MESH_RPC_PREFIX,
+    _MESH_RPC_TASK_METHOD,
+    _MESH_RPC_TOPOLOGY_METHOD,
+    MESH_TASK_STATUS_SUCCEEDED,
     MeshBeacon,
     MeshBeaconRequest,
     MeshDescribeRequest,
@@ -85,7 +93,7 @@ class JSONRPCServer:
             result = info
         elif method == "schema":
             result = self._module.module_schema()
-        elif method.startswith("mesh."):
+        elif method.startswith(_MESH_RPC_PREFIX):
             result = self._loop.run_until_complete(self._dispatch_mesh(method, params))
         elif method.startswith("step."):
             result = self._dispatch_step(method, params)
@@ -112,18 +120,18 @@ class JSONRPCServer:
         raise ValueError(f"unknown method {method!r}")
 
     async def _dispatch_mesh(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        if method == "mesh.describe":
+        if method == _MESH_RPC_DESCRIBE_METHOD:
             descriptor = await _resolve(self._module.describe_mesh(MeshDescribeRequest.from_rpc(params)))
             return descriptor.to_rpc() if hasattr(descriptor, "to_rpc") else dict(descriptor)
-        if method == "mesh.topology":
+        if method == _MESH_RPC_TOPOLOGY_METHOD:
             topology = await _resolve(self._module.mesh_topology(MeshTopologyRequest.from_rpc(params)))
             return topology.to_rpc() if hasattr(topology, "to_rpc") else dict(topology)
-        if method == "mesh.beacons":
+        if method == _MESH_RPC_BEACONS_METHOD:
             beacons = await _resolve(self._module.list_mesh_beacons(MeshBeaconRequest.from_rpc(params)))
             return {"beacons": [_mesh_beacon_to_rpc(beacon) for beacon in beacons]}
-        if method == "mesh.task":
+        if method == _MESH_RPC_TASK_METHOD:
             return await self._run_mesh_task(params)
-        if method == "mesh.open_stream":
+        if method == _MESH_RPC_OPEN_STREAM_METHOD:
             return await self._open_mesh_stream(params)
         raise ValueError(f"unknown method {method!r}")
 
@@ -166,6 +174,11 @@ class JSONRPCServer:
         if isinstance(result, MeshTaskResult):
             return result.to_rpc(sessions=ctx.sessions.refs() if ctx.sessions is not None else [])
         out = dict(result)
+        status = out.get("status")
+        if status is None:
+            out["status"] = MESH_TASK_STATUS_SUCCEEDED
+        elif isinstance(status, str):
+            out["status"] = status.strip() or MESH_TASK_STATUS_SUCCEEDED
         _merge_rpc_sessions(out, ctx.sessions.refs() if ctx.sessions is not None else [])
         return out
 
@@ -194,11 +207,13 @@ class JSONRPCServer:
 
     def _mesh_context_params(self, params: dict[str, Any]) -> dict[str, Any]:
         out = dict(params)
-        out.setdefault("moduleId", self._module.name)
-        out.setdefault("runId", "mesh")
-        if not out.get("target") and out.get("destinationHost"):
+        if not _nonblank_string(out.get("moduleId")):
+            out["moduleId"] = _mesh_module_id(self._module)
+        if not _nonblank_string(out.get("runId")):
+            out["runId"] = _DEFAULT_MESH_RUN_ID
+        if not _nonblank_string(out.get("target")) and _nonblank_string(out.get("destinationHost")):
             out["target"] = out["destinationHost"]
-        if not out.get("target") and out.get("nodeId"):
+        if not _nonblank_string(out.get("target")) and _nonblank_string(out.get("nodeId")):
             out["target"] = out["nodeId"]
         return out
 
@@ -233,6 +248,16 @@ def _validate_handshake_info(info: dict[str, Any]) -> None:
         raise ValueError(f"module handshake moduleType {module_type!r} is invalid")
 
 
+def _nonblank_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _mesh_module_id(module: HovelModule) -> str:
+    name = module.name.strip()
+    version = module.version.strip()
+    return f"{name}@{version}" if version else name
+
+
 async def _resolve(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
@@ -250,9 +275,5 @@ def _merge_rpc_sessions(out: dict[str, Any], sessions: list[SessionRef]) -> None
     if not isinstance(existing, list):
         out["sessions"] = [session.to_rpc() for session in sessions]
         return
-    seen = {
-        session.get("id")
-        for session in existing
-        if isinstance(session, dict)
-    }
+    seen = {session.get("id") for session in existing if isinstance(session, dict)}
     existing.extend(session.to_rpc() for session in sessions if session.id not in seen)

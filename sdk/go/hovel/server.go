@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+const (
+	meshRPCDescribeMethod   = "mesh.describe"
+	meshRPCTopologyMethod   = "mesh.topology"
+	meshRPCBeaconsMethod    = "mesh.beacons"
+	meshRPCTaskMethod       = "mesh.task"
+	meshRPCOpenStreamMethod = "mesh.open_stream"
+)
+
 // logRecord is the wire shape of a "module/log" notification.
 type logRecord struct {
 	Level     string         `json:"level"`
@@ -69,21 +77,29 @@ func ServeIO(module Module, in io.Reader, out io.Writer) error {
 		}
 		params := append(json.RawMessage(nil), message["params"]...)
 		id := append(json.RawMessage(nil), idRaw...)
+		if method == "shutdown" {
+			requests.Wait()
+			s.handleRequest(id, method, params)
+			return nil
+		}
 		requests.Add(1)
 		go func() {
 			defer requests.Done()
-			result, derr := s.dispatch(method, params)
-			if derr != nil {
-				logSDKError("write error response", s.writer.write(errorResponse(id, derr)))
-			} else {
-				logSDKError("write response", s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result}))
-			}
+			s.handleRequest(id, method, params)
 		}()
-		if method == "shutdown" {
-			requests.Wait()
-			return nil
-		}
 	}
+}
+
+func (s *server) handleRequest(id json.RawMessage, method string, params json.RawMessage) {
+	result, err := s.dispatch(method, params)
+	if err != nil {
+		logSDKError("write error response", s.writer.write(errorResponse(id, err)))
+		return
+	}
+	logSDKError(
+		"write response",
+		s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result}),
+	)
 }
 
 func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
@@ -110,15 +126,15 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.listPayloadCommands(params)
 	case "payload.command.run":
 		return s.runPayloadCommand(params)
-	case "mesh.describe":
+	case meshRPCDescribeMethod:
 		return s.describeMesh(params)
-	case "mesh.topology":
+	case meshRPCTopologyMethod:
 		return s.meshTopology(params)
-	case "mesh.beacons":
+	case meshRPCBeaconsMethod:
 		return s.listMeshBeacons(params)
-	case "mesh.task":
+	case meshRPCTaskMethod:
 		return s.runMeshTask(params)
-	case "mesh.open_stream":
+	case meshRPCOpenStreamMethod:
 		return s.openMeshStream(params)
 	case "step.describe":
 		return s.describeSteps()
@@ -252,7 +268,7 @@ func (s *server) meshDescriber() (MeshDescriber, error) {
 func (s *server) meshTopologyProvider() (MeshTopologyProvider, error) {
 	provider, ok := s.module.(MeshTopologyProvider)
 	if !ok {
-		return nil, fmt.Errorf("module %q does not implement mesh.topology", s.module.Info().Name)
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCTopologyMethod)
 	}
 	return provider, nil
 }
@@ -260,7 +276,7 @@ func (s *server) meshTopologyProvider() (MeshTopologyProvider, error) {
 func (s *server) meshBeaconProvider() (MeshBeaconProvider, error) {
 	provider, ok := s.module.(MeshBeaconProvider)
 	if !ok {
-		return nil, fmt.Errorf("module %q does not implement mesh.beacons", s.module.Info().Name)
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCBeaconsMethod)
 	}
 	return provider, nil
 }
@@ -268,7 +284,7 @@ func (s *server) meshBeaconProvider() (MeshBeaconProvider, error) {
 func (s *server) meshTaskProvider() (MeshTaskProvider, error) {
 	provider, ok := s.module.(MeshTaskProvider)
 	if !ok {
-		return nil, fmt.Errorf("module %q does not implement mesh.task", s.module.Info().Name)
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCTaskMethod)
 	}
 	return provider, nil
 }
@@ -276,7 +292,7 @@ func (s *server) meshTaskProvider() (MeshTaskProvider, error) {
 func (s *server) meshStreamProvider() (MeshStreamProvider, error) {
 	provider, ok := s.module.(MeshStreamProvider)
 	if !ok {
-		return nil, fmt.Errorf("module %q does not implement mesh.open_stream", s.module.Info().Name)
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCOpenStreamMethod)
 	}
 	return provider, nil
 }
@@ -509,8 +525,9 @@ func (s *server) runMeshTask(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(result.Status) == "" {
-		result.Status = "succeeded"
+	result.Status = MeshTaskStatus(strings.TrimSpace(string(result.Status)))
+	if result.Status == "" {
+		result.Status = MeshTaskStatusSucceeded
 	}
 	result.Sessions = mergeSessionRefs(result.Sessions, ctx.sessions.refs())
 	return result, nil
@@ -546,7 +563,7 @@ func (s *server) meshContext(
 ) *MeshContext {
 	info := s.module.Info()
 	if strings.TrimSpace(runID) == "" {
-		runID = "mesh"
+		runID = defaultMeshRunID
 	}
 	if strings.TrimSpace(moduleID) == "" {
 		moduleID = meshModuleID(info)

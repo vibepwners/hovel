@@ -33,6 +33,7 @@ go_library(
 
 go_test(
     name = "hovel_test",
+    size = "small",
     srcs = ["sdk_test.go"],
     embed = [":hovel"],
 )

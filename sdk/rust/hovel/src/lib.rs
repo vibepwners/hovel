@@ -40,8 +40,8 @@ pub mod base64;
 pub mod json;
 
 mod context;
-mod mesh;
 mod framing;
+mod mesh;
 mod module;
 mod result;
 mod server;
@@ -52,12 +52,12 @@ mod tests;
 
 pub use context::Context;
 pub use mesh::{
-    MeshBeacon, MeshBeaconRequest, MeshDescriptor, MeshDescribeRequest, MeshEvent,
-    MeshLink, MeshNode, MeshRoute, MeshStreamRequest, MeshTaskRequest,
-    MeshTaskResult, MeshTaskSpec, MeshTopology, MeshTopologyRequest, MeshTrigger,
-    MESH_TASK_COMMAND, MESH_TASK_EXECUTE, MESH_TASK_LOAD, MESH_TASK_STREAM,
-    MESH_TASK_SURVEY, MESH_TASK_UPLOAD, MESH_TASK_UPLOAD_EXECUTE,
-    MESH_TARGET_DESTINATION, MESH_TARGET_NODE, MESH_TARGET_ROUTE,
+    MeshBeacon, MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshEvent, MeshLink,
+    MeshNode, MeshRoute, MeshStreamRequest, MeshTaskRequest, MeshTaskResult, MeshTaskSpec,
+    MeshTopology, MeshTopologyRequest, MeshTrigger, MESH_TARGET_DESTINATION, MESH_TARGET_NODE,
+    MESH_TARGET_ROUTE, MESH_TASK_COMMAND, MESH_TASK_EXECUTE, MESH_TASK_LOAD,
+    MESH_TASK_STATUS_FAILED, MESH_TASK_STATUS_SUCCEEDED, MESH_TASK_STREAM, MESH_TASK_SURVEY,
+    MESH_TASK_UPLOAD, MESH_TASK_UPLOAD_EXECUTE,
 };
 pub use module::{Info, Module, ModuleType, Requirement, Schema};
 pub use result::{Artifact, Finding, InstalledPayloadDescriptor, Outcome, PayloadProviderRecord};

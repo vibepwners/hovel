@@ -6,13 +6,12 @@ use std::rc::Rc;
 
 use crate::json::{self, Value};
 use crate::{
-    base64, serve_with, Context, MeshBeacon, MeshBeaconRequest, MeshDescriptor,
-    MeshDescribeRequest, MeshLink, MeshNode, MeshRoute, MeshStreamRequest,
-    MeshTaskRequest, MeshTaskResult, MeshTaskSpec, MeshTopology,
-    MeshTopologyRequest, MeshTrigger, Info, InstalledPayloadDescriptor, LineShellSession,
-    Module, ModuleType, Outcome, PayloadProviderRecord, Schema, Session, SessionOptions,
-    MESH_TARGET_DESTINATION, MESH_TARGET_NODE, MESH_TASK_COMMAND, MESH_TASK_SURVEY,
-    MESH_TASK_UPLOAD_EXECUTE,
+    base64, serve_with, Context, Info, InstalledPayloadDescriptor, LineShellSession, MeshBeacon,
+    MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshLink, MeshNode, MeshRoute,
+    MeshStreamRequest, MeshTaskRequest, MeshTaskResult, MeshTaskSpec, MeshTopology,
+    MeshTopologyRequest, MeshTrigger, Module, ModuleType, Outcome, PayloadProviderRecord, Schema,
+    Session, SessionOptions, MESH_TARGET_DESTINATION, MESH_TARGET_NODE, MESH_TASK_COMMAND,
+    MESH_TASK_SURVEY, MESH_TASK_UPLOAD_EXECUTE,
 };
 
 #[test]
@@ -267,10 +266,7 @@ impl Module for FakeMeshModule {
         Outcome::ok(Vec::new()).with_summary("mesh provider execute placeholder")
     }
 
-    fn describe_mesh(
-        &self,
-        _req: MeshDescribeRequest,
-    ) -> Result<MeshDescriptor, String> {
+    fn describe_mesh(&self, _req: MeshDescribeRequest) -> Result<MeshDescriptor, String> {
         Ok(MeshDescriptor {
             name: "fake-mesh-rust".into(),
             version: "v0.0.0-test".into(),
@@ -316,17 +312,11 @@ impl Module for FakeMeshModule {
         })
     }
 
-    fn mesh_topology(
-        &self,
-        req: MeshTopologyRequest,
-    ) -> Result<MeshTopology, String> {
+    fn mesh_topology(&self, req: MeshTopologyRequest) -> Result<MeshTopology, String> {
         Ok(fake_mesh_topology(req.include_routes))
     }
 
-    fn list_mesh_beacons(
-        &self,
-        req: MeshBeaconRequest,
-    ) -> Result<Vec<MeshBeacon>, String> {
+    fn list_mesh_beacons(&self, req: MeshBeaconRequest) -> Result<Vec<MeshBeacon>, String> {
         let node_id = if req.node_id.is_empty() {
             "node-2"
         } else {
@@ -373,6 +363,12 @@ impl Module for FakeMeshModule {
             outputs: vec![
                 ("os".into(), Value::from("linux")),
                 ("reachable".into(), Value::Bool(true)),
+                ("contextRunId".into(), Value::from(ctx.run_id.as_str())),
+                (
+                    "contextModuleId".into(),
+                    Value::from(ctx.module_id.as_str()),
+                ),
+                ("contextTarget".into(), Value::from(ctx.target.as_str())),
             ],
             ..MeshTaskResult::default()
         })
@@ -662,11 +658,22 @@ fn serve_mesh_provider_methods() {
             ("nodeId", Value::from("node-2")),
         ]),
     )));
-    input.extend(frame(request(5, "shutdown", Value::Object(Vec::new()))));
+    input.extend(frame(request(
+        5,
+        "mesh.task",
+        Value::object(vec![
+            ("runId", Value::from(" ")),
+            ("moduleId", Value::from(" ")),
+            ("target", Value::from(" ")),
+            ("destinationHost", Value::from("10.10.0.99")),
+            ("kind", Value::from(MESH_TASK_SURVEY)),
+        ]),
+    )));
+    input.extend(frame(request(6, "shutdown", Value::Object(Vec::new()))));
 
     let messages = run_session(input, FakeMeshModule);
     let responses = responses(&messages);
-    assert_eq!(responses.len(), 5);
+    assert_eq!(responses.len(), 6);
 
     let describe = responses[0].get("result").unwrap();
     assert_eq!(
@@ -714,7 +721,10 @@ fn serve_mesh_provider_methods() {
     assert_eq!(beacon.get("state").and_then(Value::as_str), Some("alive"));
 
     let task = responses[3].get("result").unwrap();
-    assert_eq!(task.get("status").and_then(Value::as_str), Some("succeeded"));
+    assert_eq!(
+        task.get("status").and_then(Value::as_str),
+        Some("succeeded")
+    );
     assert_eq!(
         task.get("summary").and_then(Value::as_str),
         Some("surveyed node-2")
@@ -724,6 +734,21 @@ fn serve_mesh_provider_methods() {
             .and_then(|outputs| outputs.get("os"))
             .and_then(Value::as_str),
         Some("linux")
+    );
+
+    let defaulted = responses[4].get("result").unwrap();
+    let outputs = defaulted.get("outputs").expect("defaulted mesh outputs");
+    assert_eq!(
+        outputs.get("contextRunId").and_then(Value::as_str),
+        Some("mesh")
+    );
+    assert_eq!(
+        outputs.get("contextModuleId").and_then(Value::as_str),
+        Some("fake-mesh-rust@v0.0.0-test")
+    );
+    assert_eq!(
+        outputs.get("contextTarget").and_then(Value::as_str),
+        Some("10.10.0.99")
     );
 }
 

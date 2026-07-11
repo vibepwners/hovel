@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
@@ -22,6 +24,26 @@ EXPECTED_AUTHORS = [
     {"name": "William Born", "email": "william.born.git@gmail.com"},
     {"name": "Ricardo Rivera", "email": "ricardo.rivera@zetier.com"},
 ]
+
+REQUIRED_LIBRARY_DEV_DEPENDENCIES = frozenset(
+    {
+        "clang-format",
+        "click",
+        "cppcheck",
+        "lefthook",
+        "lizard",
+        "ruff",
+        "tomli",
+    }
+)
+REQUIREMENT_DELIMITER = re.compile(r"[<>=!~;\s\[]")
+
+
+def _dependency_names(requirements: list[str]) -> set[str]:
+    return {
+        REQUIREMENT_DELIMITER.split(requirement, maxsplit=1)[0]
+        for requirement in requirements
+    }
 
 
 class TestPicblobsPackaging:
@@ -50,11 +72,9 @@ class TestPicblobsPackaging:
         assert project["urls"]["Documentation"]
         assert project["urls"]["Issues"]
         dev_deps = project["optional-dependencies"]["dev"]
-        assert "clang-format==22.1.1" in dev_deps
-        assert any(dep.startswith("lefthook>=") for dep in dev_deps)
-        assert any(dep.startswith("lizard>=") for dep in dev_deps)
-        assert any(dep.startswith("tomli>=") for dep in dev_deps)
-        assert any(dep.startswith("ruff>=") for dep in dev_deps)
+        assert _dependency_names(dev_deps).issuperset(
+            REQUIRED_LIBRARY_DEV_DEPENDENCIES,
+        )
 
     def test_library_wheel_excludes_dev_so_tree(self) -> None:
         pyproject = _load_pyproject("python")

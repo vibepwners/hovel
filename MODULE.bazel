@@ -3,34 +3,27 @@ module(
     version = "0.2.4",
 )
 
-bazel_dep(name = "gazelle", version = "0.50.0")
-bazel_dep(name = "googletest", version = "1.17.0")
-bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "rules_cc", version = "0.2.17")
-bazel_dep(name = "rules_go", version = "0.60.0")
+bazel_dep(name = "gazelle", version = "0.51.3")
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "rules_go", version = "0.61.1")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
-bazel_dep(name = "rules_python", version = "1.8.4")
-bazel_dep(name = "rules_rust", version = "0.70.0")
-bazel_dep(name = "rules_shell", version = "0.6.1")
-
-single_version_override(
-    module_name = "googletest",
-    patch_strip = 0,
-    patches = ["//core/third_party/patches:googletest-bazel9-cc-rules.patch"],
-    version = "1.17.0",
-)
+bazel_dep(name = "rules_python", version = "2.2.0")
+bazel_dep(name = "rules_rust", version = "0.71.3")
+bazel_dep(name = "rules_shell", version = "0.8.0")
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.download(
     name = "go_sdk",
-    version = "1.25.4",
+    version = "1.26.5",
 )
 use_repo(go_sdk, "go_sdk")
 
 register_toolchains("@go_sdk//:all")
 
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
-go_deps.from_file(go_mod = "//core:go.mod")
+go_deps.from_file(go_work = "//:go.work.bazel")
 use_repo(
     go_deps,
     "com_github_akamensky_argparse",
@@ -106,7 +99,7 @@ rust.repository_set(
         "@platforms//os:linux",
     ],
     target_triple = "aarch64-unknown-linux-musl",
-    versions = ["1.84.0"],
+    versions = ["1.96.1"],
 )
 rust.toolchain(
     allocator_library = "@rules_rust//rust/private/cc:empty",
@@ -123,7 +116,7 @@ rust.toolchain(
         "x86_64-pc-windows-gnullvm",
         "x86_64-unknown-linux-gnu",
     ],
-    versions = ["1.84.0"],
+    versions = ["1.96.1"],
 )
 use_repo(rust, "rust_toolchains")
 

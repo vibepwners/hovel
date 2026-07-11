@@ -11,54 +11,70 @@ import (
 )
 
 const (
-	meshOperationTask   = "task"
-	meshOperationStream = "stream"
-	meshOperationBridge = "bridge"
+	// MeshOperationKindTask records a provider-owned task invocation.
+	MeshOperationKindTask MeshOperationKind = "task"
+	// MeshOperationKindStream records a provider-owned session flow.
+	MeshOperationKindStream MeshOperationKind = "stream"
+	// MeshOperationKindBridge records a daemon-owned local socket endpoint.
+	MeshOperationKindBridge MeshOperationKind = "bridge"
 
-	meshOperationStarted   = "started"
-	meshOperationActive    = "active"
-	meshOperationSucceeded = "succeeded"
-	meshOperationFailed    = "failed"
-	meshOperationClosed    = "closed"
+	// MeshOperationStateStarted means invocation has begun but is not active.
+	MeshOperationStateStarted MeshOperationState = "started"
+	// MeshOperationStateActive means a long-lived session flow is available.
+	MeshOperationStateActive MeshOperationState = "active"
+	// MeshOperationStateSucceeded means a task completed successfully.
+	MeshOperationStateSucceeded MeshOperationState = "succeeded"
+	// MeshOperationStateFailed means invocation or cleanup failed.
+	MeshOperationStateFailed MeshOperationState = "failed"
+	// MeshOperationStateClosed means a stream or bridge closed cleanly.
+	MeshOperationStateClosed MeshOperationState = "closed"
 )
+
+// MeshOperationKind identifies the daemon-side class of Mesh work.
+type MeshOperationKind string
+
+// MeshOperationState describes daemon-side Mesh bookkeeping lifecycle state.
+type MeshOperationState string
 
 // MeshOperation is daemon-side bookkeeping for provider-owned mesh work.
 // It records enough routing context to audit node tasks, routed sessions, and
 // daemon-owned local bridges, including future "throw through a node" flows
 // that bridge an exploit to a destination reachable from a mesh node or route.
 type MeshOperation struct {
-	ID              string   `json:"id"`
-	Kind            string   `json:"kind"`
-	State           string   `json:"state"`
-	ModuleID        string   `json:"moduleId"`
-	RunID           string   `json:"runId,omitempty"`
-	TaskID          string   `json:"taskId,omitempty"`
-	TaskKind        string   `json:"taskKind,omitempty"`
-	SessionID       string   `json:"sessionId,omitempty"`
-	SessionIDs      []string `json:"sessionIds,omitempty"`
-	NodeID          string   `json:"nodeId,omitempty"`
-	Target          string   `json:"target,omitempty"`
-	RouteID         string   `json:"routeId,omitempty"`
-	DestinationHost string   `json:"destinationHost,omitempty"`
-	DestinationPort int      `json:"destinationPort,omitempty"`
-	Protocol        string   `json:"protocol,omitempty"`
-	LocalAddress    string   `json:"localAddress,omitempty"`
-	Summary         string   `json:"summary,omitempty"`
-	Error           string   `json:"error,omitempty"`
-	StartedAt       string   `json:"startedAt"`
-	UpdatedAt       string   `json:"updatedAt"`
-	ClosedAt        string   `json:"closedAt,omitempty"`
+	ID              string             `json:"id"`
+	Kind            MeshOperationKind  `json:"kind"`
+	State           MeshOperationState `json:"state"`
+	ModuleID        string             `json:"moduleId"`
+	RunID           string             `json:"runId,omitempty"`
+	TaskID          string             `json:"taskId,omitempty"`
+	TaskKind        mesh.TaskKind      `json:"taskKind,omitempty"`
+	SessionID       string             `json:"sessionId,omitempty"`
+	SessionIDs      []string           `json:"sessionIds,omitempty"`
+	NodeID          string             `json:"nodeId,omitempty"`
+	Target          string             `json:"target,omitempty"`
+	RouteID         string             `json:"routeId,omitempty"`
+	DestinationHost string             `json:"destinationHost,omitempty"`
+	DestinationPort int                `json:"destinationPort,omitempty"`
+	Protocol        string             `json:"protocol,omitempty"`
+	LocalAddress    string             `json:"localAddress,omitempty"`
+	Summary         string             `json:"summary,omitempty"`
+	Error           string             `json:"error,omitempty"`
+	StartedAt       string             `json:"startedAt"`
+	UpdatedAt       string             `json:"updatedAt"`
+	ClosedAt        string             `json:"closedAt,omitempty"`
 }
 
+// MeshOperationListRequest filters daemon Mesh bookkeeping records.
 type MeshOperationListRequest struct {
-	ModuleID  string `json:"moduleId,omitempty"`
-	RunID     string `json:"runId,omitempty"`
-	NodeID    string `json:"nodeId,omitempty"`
-	SessionID string `json:"sessionId,omitempty"`
-	Kind      string `json:"kind,omitempty"`
-	State     string `json:"state,omitempty"`
+	ModuleID  string             `json:"moduleId,omitempty"`
+	RunID     string             `json:"runId,omitempty"`
+	NodeID    string             `json:"nodeId,omitempty"`
+	SessionID string             `json:"sessionId,omitempty"`
+	Kind      MeshOperationKind  `json:"kind,omitempty"`
+	State     MeshOperationState `json:"state,omitempty"`
 }
 
+// MeshOperationListResponse contains matching daemon Mesh bookkeeping records.
 type MeshOperationListResponse struct {
 	Operations []MeshOperation `json:"operations"`
 }
@@ -66,21 +82,25 @@ type MeshOperationListResponse struct {
 // MeshBook stores in-memory daemon bookkeeping for mesh tasks, routed sessions,
 // and local bridges.
 type MeshBook struct {
-	mu         sync.Mutex
+	mu         sync.RWMutex
 	next       uint64
 	operations []MeshOperation
+	byID       map[string]int
 }
 
+// NewMeshBook creates an empty in-memory Mesh operation book.
 func NewMeshBook() *MeshBook {
 	return &MeshBook{
 		operations: []MeshOperation{},
+		byID:       map[string]int{},
 	}
 }
 
+// StartTask records a provider-owned Mesh task before it is invoked.
 func (b *MeshBook) StartTask(moduleID string, request mesh.TaskRequest, now time.Time) MeshOperation {
 	return b.start(MeshOperation{
-		Kind:            meshOperationTask,
-		State:           meshOperationStarted,
+		Kind:            MeshOperationKindTask,
+		State:           MeshOperationStateStarted,
 		ModuleID:        moduleID,
 		RunID:           request.RunID,
 		TaskID:          request.TaskID,
@@ -94,49 +114,29 @@ func (b *MeshBook) StartTask(moduleID string, request mesh.TaskRequest, now time
 	}, now)
 }
 
+// StartStream records a provider-owned Mesh stream before it is opened.
 func (b *MeshBook) StartStream(moduleID string, request mesh.StreamRequest, now time.Time) MeshOperation {
-	return b.start(MeshOperation{
-		Kind:            meshOperationStream,
-		State:           meshOperationStarted,
-		ModuleID:        moduleID,
-		RunID:           request.RunID,
-		NodeID:          request.NodeID,
-		Target:          request.Target,
-		RouteID:         routeID(request.Route),
-		DestinationHost: request.DestinationHost,
-		DestinationPort: request.DestinationPort,
-		Protocol:        request.Protocol,
-	}, now)
+	return b.start(meshStreamOperation(MeshOperationKindStream, moduleID, request, ""), now)
 }
 
+// StartBridge records a daemon-owned local endpoint before its Mesh stream opens.
 func (b *MeshBook) StartBridge(
 	moduleID string,
 	request mesh.StreamRequest,
 	localAddress string,
 	now time.Time,
 ) MeshOperation {
-	return b.start(MeshOperation{
-		Kind:            meshOperationBridge,
-		State:           meshOperationStarted,
-		ModuleID:        moduleID,
-		RunID:           request.RunID,
-		NodeID:          request.NodeID,
-		Target:          request.Target,
-		RouteID:         routeID(request.Route),
-		DestinationHost: request.DestinationHost,
-		DestinationPort: request.DestinationPort,
-		Protocol:        request.Protocol,
-		LocalAddress:    strings.TrimSpace(localAddress),
-	}, now)
+	return b.start(meshStreamOperation(MeshOperationKindBridge, moduleID, request, localAddress), now)
 }
 
+// CompleteTask records the terminal result and any sessions opened by a task.
 func (b *MeshBook) CompleteTask(id string, result mesh.TaskResult, now time.Time) {
-	state := strings.TrimSpace(result.Status)
+	state := strings.TrimSpace(string(result.Status))
 	if state == "" {
-		state = meshOperationSucceeded
+		state = string(MeshOperationStateSucceeded)
 	}
 	b.update(id, now, func(operation *MeshOperation) {
-		operation.State = state
+		operation.State = MeshOperationState(state)
 		operation.Summary = result.Summary
 		if result.TaskID != "" {
 			operation.TaskID = result.TaskID
@@ -166,50 +166,34 @@ func (b *MeshBook) CompleteTask(id string, result mesh.TaskResult, now time.Time
 	})
 }
 
+// ActivateStream associates an opened provider session with a stream operation.
 func (b *MeshBook) ActivateStream(id string, session run.SessionRef, now time.Time) {
 	b.update(id, now, func(operation *MeshOperation) {
-		operation.State = meshOperationActive
-		operation.SessionID = session.ID
-		if operation.RunID == "" {
-			operation.RunID = session.RunID
-		}
-		if operation.Target == "" {
-			operation.Target = session.Target
-		}
-		if session.ID != "" {
-			operation.SessionIDs = []string{session.ID}
-		}
+		activateMeshSession(operation, session)
 	})
 }
 
+// ActivateBridge associates an opened provider session and local endpoint with a bridge.
 func (b *MeshBook) ActivateBridge(id string, session run.SessionRef, localAddress string, now time.Time) {
 	b.update(id, now, func(operation *MeshOperation) {
-		operation.State = meshOperationActive
-		operation.SessionID = session.ID
-		if session.ID != "" {
-			operation.SessionIDs = []string{session.ID}
-		}
-		if operation.RunID == "" {
-			operation.RunID = session.RunID
-		}
-		if operation.Target == "" {
-			operation.Target = session.Target
-		}
+		activateMeshSession(operation, session)
 		if address := strings.TrimSpace(localAddress); address != "" {
 			operation.LocalAddress = address
 		}
 	})
 }
 
+// Fail marks an operation failed and retains its error for audit queries.
 func (b *MeshBook) Fail(id string, err error, now time.Time) {
 	b.update(id, now, func(operation *MeshOperation) {
-		operation.State = meshOperationFailed
+		operation.State = MeshOperationStateFailed
 		if err != nil {
 			operation.Error = err.Error()
 		}
 	})
 }
 
+// CloseSession closes active stream and bridge operations backed by sessionID.
 func (b *MeshBook) CloseSession(sessionID string, now time.Time) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
@@ -220,20 +204,21 @@ func (b *MeshBook) CloseSession(sessionID string, now time.Time) {
 	updatedAt := formatMeshTime(now)
 	for i := range b.operations {
 		operation := &b.operations[i]
-		isClosableKind := operation.Kind == meshOperationStream || operation.Kind == meshOperationBridge
-		isTerminal := operation.State == meshOperationClosed || operation.State == meshOperationFailed
+		isClosableKind := operation.Kind == MeshOperationKindStream || operation.Kind == MeshOperationKindBridge
+		isTerminal := operation.State == MeshOperationStateClosed || operation.State == MeshOperationStateFailed
 		if !isClosableKind || operation.SessionID != sessionID || isTerminal {
 			continue
 		}
-		operation.State = meshOperationClosed
+		operation.State = MeshOperationStateClosed
 		operation.ClosedAt = updatedAt
 		operation.UpdatedAt = updatedAt
 	}
 }
 
+// List returns defensively copied operations matching filter.
 func (b *MeshBook) List(filter MeshOperationListRequest) []MeshOperation {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 	out := make([]MeshOperation, 0, len(b.operations))
 	for _, operation := range b.operations {
 		if !meshOperationMatches(operation, filter) {
@@ -251,27 +236,28 @@ func (b *MeshBook) start(operation MeshOperation, now time.Time) MeshOperation {
 	b.next++
 	operation.ID = fmt.Sprintf("mesh-op-%d", b.next)
 	if operation.State == "" {
-		operation.State = meshOperationStarted
+		operation.State = MeshOperationStateStarted
 	}
 	timestamp := formatMeshTime(now)
 	operation.StartedAt = timestamp
 	operation.UpdatedAt = timestamp
 	b.operations = append(b.operations, operation)
+	if b.byID == nil {
+		b.byID = map[string]int{}
+	}
+	b.byID[operation.ID] = len(b.operations) - 1
 	return operation
 }
 
 func (b *MeshBook) update(id string, now time.Time, apply func(*MeshOperation)) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	updatedAt := formatMeshTime(now)
-	for i := range b.operations {
-		if b.operations[i].ID != id {
-			continue
-		}
-		apply(&b.operations[i])
-		b.operations[i].UpdatedAt = updatedAt
+	index, ok := b.byID[id]
+	if !ok || index < 0 || index >= len(b.operations) {
 		return
 	}
+	apply(&b.operations[index])
+	b.operations[index].UpdatedAt = formatMeshTime(now)
 }
 
 func meshOperationMatches(operation MeshOperation, filter MeshOperationListRequest) bool {
@@ -307,16 +293,52 @@ func routeID(route *mesh.Route) string {
 
 func sessionIDs(sessions []run.SessionRef) []string {
 	out := make([]string, 0, len(sessions))
-	seen := map[string]bool{}
+	seen := map[string]struct{}{}
 	for _, session := range sessions {
 		id := strings.TrimSpace(session.ID)
-		if id == "" || seen[id] {
+		if _, exists := seen[id]; id == "" || exists {
 			continue
 		}
-		seen[id] = true
+		seen[id] = struct{}{}
 		out = append(out, id)
 	}
 	return out
+}
+
+func meshStreamOperation(
+	kind MeshOperationKind,
+	moduleID string,
+	request mesh.StreamRequest,
+	localAddress string,
+) MeshOperation {
+	return MeshOperation{
+		Kind:            kind,
+		State:           MeshOperationStateStarted,
+		ModuleID:        moduleID,
+		RunID:           request.RunID,
+		NodeID:          request.NodeID,
+		Target:          request.Target,
+		RouteID:         routeID(request.Route),
+		DestinationHost: request.DestinationHost,
+		DestinationPort: request.DestinationPort,
+		Protocol:        request.Protocol,
+		LocalAddress:    strings.TrimSpace(localAddress),
+	}
+}
+
+func activateMeshSession(operation *MeshOperation, session run.SessionRef) {
+	session.ID = strings.TrimSpace(session.ID)
+	operation.State = MeshOperationStateActive
+	operation.SessionID = session.ID
+	if session.ID != "" {
+		operation.SessionIDs = []string{session.ID}
+	}
+	if operation.RunID == "" {
+		operation.RunID = session.RunID
+	}
+	if operation.Target == "" {
+		operation.Target = session.Target
+	}
 }
 
 func containsString(values []string, wanted string) bool {
@@ -329,8 +351,5 @@ func containsString(values []string, wanted string) bool {
 }
 
 func formatMeshTime(t time.Time) string {
-	if t.IsZero() {
-		t = time.Now().UTC()
-	}
 	return t.UTC().Format(time.RFC3339Nano)
 }

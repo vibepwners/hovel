@@ -8,7 +8,13 @@ import unittest
 from pathlib import Path
 
 
-REGISTER_RE = re.compile(r'registerUnary\[[^\n]+\]\(mux,\s*"([^"]+)"')
+REGISTER_RE = re.compile(
+    r"registerUnary\[[^\n]+\]\(mux,\s*(?P<method>\"[^\"]+\"|[A-Za-z_]\w*)\s*,"
+)
+STRING_CONST_RE = re.compile(
+    r'^\s*(?P<name>[A-Za-z_]\w*)\s*=\s*"(?P<value>[^"]+)"',
+    re.MULTILINE,
+)
 SERVICE_PREFIX = "/hovel.daemon.v1.DaemonService/"
 ARGS = sys.argv[1:]
 
@@ -29,8 +35,24 @@ class DaemonRPCOpenAPITest(unittest.TestCase):
         self.daemonrpc_source = self.daemonrpc_path.read_text(encoding="utf-8")
         self.doc_html = self.doc_path.read_text(encoding="utf-8")
 
+    def registered_methods(self) -> list[str]:
+        string_constants = {
+            match.group("name"): match.group("value")
+            for match in STRING_CONST_RE.finditer(self.daemonrpc_source)
+        }
+        methods = []
+        for match in REGISTER_RE.finditer(self.daemonrpc_source):
+            token = match.group("method")
+            if token.startswith('"'):
+                methods.append(json.loads(token))
+                continue
+            if token not in string_constants:
+                raise AssertionError(f"unresolved RPC method constant: {token}")
+            methods.append(string_constants[token])
+        return methods
+
     def test_openapi_paths_match_registered_daemon_rpc_methods(self) -> None:
-        registered = REGISTER_RE.findall(self.daemonrpc_source)
+        registered = self.registered_methods()
         self.assertGreater(len(registered), 10)
 
         paths = self.openapi.get("paths", {})
@@ -56,7 +78,7 @@ class DaemonRPCOpenAPITest(unittest.TestCase):
 
     def test_human_docs_link_contract_and_name_every_method(self) -> None:
         self.assertIn("reference/daemon-rpc.openapi.json", self.doc_html)
-        for method in REGISTER_RE.findall(self.daemonrpc_source):
+        for method in self.registered_methods():
             with self.subTest(method=method):
                 self.assertIn(method, self.doc_html)
 

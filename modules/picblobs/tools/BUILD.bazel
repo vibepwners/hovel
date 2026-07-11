@@ -264,6 +264,7 @@ py_console_script_binary(
 
 py_test(
     name = "format_check",
+    timeout = "short",
     srcs = ["quality_check.py"],
     args = ["--mode=fmt"] + QUALITY_TOOL_ARGS,
     data = QUALITY_TOOL_DATA,
@@ -274,6 +275,7 @@ py_test(
 
 py_test(
     name = "generate_check",
+    timeout = "short",
     srcs = ["quality_check.py"],
     args = ["--mode=generate"] + QUALITY_TOOL_ARGS,
     data = QUALITY_TOOL_DATA,
@@ -284,6 +286,7 @@ py_test(
 
 py_test(
     name = "lint_check",
+    timeout = "short",
     srcs = ["quality_check.py"],
     args = ["--mode=lint"] + QUALITY_TOOL_ARGS,
     data = QUALITY_TOOL_DATA,

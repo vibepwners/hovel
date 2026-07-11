@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
@@ -116,10 +117,86 @@ func TestRunServiceReturnsHostRunnerError(t *testing.T) {
 	}
 }
 
+func TestRunServiceNormalizesMeshStreamSessionID(t *testing.T) {
+	runner := &fakeMeshServiceRunner{session: run.SessionRef{ID: "  mesh-session-1  "}}
+	service := NewRunService(runner, nil, nil, nil)
+
+	session, err := service.OpenMeshStream(context.Background(), "mesh-provider", mesh.StreamRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.ID != "mesh-session-1" {
+		t.Fatalf("session id = %q, want normalized id", session.ID)
+	}
+}
+
+func TestRunServiceRejectsMeshStreamWithoutSessionID(t *testing.T) {
+	service := NewRunService(&fakeMeshServiceRunner{}, nil, nil, nil)
+
+	_, err := service.OpenMeshStream(context.Background(), "mesh-provider", mesh.StreamRequest{})
+	if err == nil || err.Error() != "mesh stream session id is required" {
+		t.Fatalf("OpenMeshStream error = %v, want missing session id", err)
+	}
+}
+
+func TestRunServiceNormalizesMeshTaskStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status mesh.TaskStatus
+		want   mesh.TaskStatus
+	}{
+		{name: "blank defaults to success", status: "   ", want: mesh.TaskStatusSucceeded},
+		{name: "custom status is trimmed", status: "  partial  ", want: "partial"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &fakeMeshServiceRunner{result: mesh.TaskResult{Status: test.status}}
+			service := NewRunService(runner, nil, nil, nil)
+
+			result, err := service.RunMeshTask(context.Background(), "mesh-provider", mesh.TaskRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Status != test.want {
+				t.Fatalf("status = %q, want %q", result.Status, test.want)
+			}
+		})
+	}
+}
+
 type fakeModuleRunner struct {
 	called  bool
 	request run.Request
 	err     error
+}
+
+type fakeMeshServiceRunner struct {
+	session run.SessionRef
+	result  mesh.TaskResult
+}
+
+func (r *fakeMeshServiceRunner) Run(context.Context, run.Request) (run.Result, error) {
+	return run.Result{}, nil
+}
+
+func (r *fakeMeshServiceRunner) DescribeMesh(context.Context, string, mesh.DescribeRequest) (mesh.Descriptor, error) {
+	return mesh.Descriptor{}, nil
+}
+
+func (r *fakeMeshServiceRunner) MeshTopology(context.Context, string, mesh.TopologyRequest) (mesh.Topology, error) {
+	return mesh.Topology{}, nil
+}
+
+func (r *fakeMeshServiceRunner) ListMeshBeacons(context.Context, string, mesh.BeaconRequest) ([]mesh.Beacon, error) {
+	return nil, nil
+}
+
+func (r *fakeMeshServiceRunner) RunMeshTask(context.Context, string, mesh.TaskRequest) (mesh.TaskResult, error) {
+	return r.result, nil
+}
+
+func (r *fakeMeshServiceRunner) OpenMeshStream(context.Context, string, mesh.StreamRequest) (run.SessionRef, error) {
+	return r.session, nil
 }
 
 func (r *fakeModuleRunner) Run(_ context.Context, request run.Request) (run.Result, error) {

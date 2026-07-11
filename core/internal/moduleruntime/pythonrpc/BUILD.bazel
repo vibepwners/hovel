@@ -23,13 +23,11 @@ go_library(
     ],
 )
 
+# keep: full-checkout module runner E2E tests require external SDK/module data.
 go_test(
     name = "pythonrpc_test",
     size = "small",
-    srcs = [
-        "runner_test.go",
-        "session_history_test.go",
-    ],
+    srcs = ["runner_test.go"],
     data = [
     ],
     embed = [":pythonrpc"],
@@ -44,4 +42,31 @@ go_test(
         "//internal/domain/mesh",
         "//internal/domain/run",
     ],
+)
+
+# keep: hermetic broker regressions run in the normal core CI suite.
+go_test(
+    name = "session_history_test",
+    size = "small",
+    srcs = ["session_history_test.go"],
+    embed = [":pythonrpc"],
+    deps = ["//internal/domain/run"],
+)
+
+go_test(
+    name = "process_lifecycle_test",
+    size = "small",
+    srcs = ["process_lifecycle_test.go"],
+    embed = [":pythonrpc"],
+)
+
+# keep: broker lifecycle concurrency regressions also run with Go's race detector.
+go_test(
+    name = "session_history_race_test",
+    size = "small",
+    srcs = ["session_history_test.go"],
+    embed = [":pythonrpc"],
+    race = "on",
+    tags = ["manual"],
+    deps = ["//internal/domain/run"],
 )

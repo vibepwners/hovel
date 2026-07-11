@@ -29,6 +29,7 @@ def main() -> int:
     pydoclint = resolve_tool(root, args.pydoclint)
 
     subprocess.run([ruff, "check", str(package), str(examples)], check=True, cwd=root, env=env)
+    type_stubs = root / "core/tools/lint/stubs"
     for source_root, import_roots in mypy_invocations(root):
         subprocess.run(
             [
@@ -41,7 +42,7 @@ def main() -> int:
             ],
             check=True,
             cwd=root,
-            env=env | {"MYPYPATH": os.pathsep.join(str(item) for item in import_roots)},
+            env=env | {"MYPYPATH": os.pathsep.join(str(item) for item in (*import_roots, type_stubs))},
         )
     commands = [
         [
