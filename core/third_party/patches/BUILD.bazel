@@ -1,1 +1,0 @@
-exports_files(["googletest-bazel9-cc-rules.patch"])

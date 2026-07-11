@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+)
+
+const (
+	shutdownBarrierObservationWindow = 50 * time.Millisecond
+	testRPCResponseTimeout           = time.Second
 )
 
 // fakeModule is a survey-style module that also opens a shell session so a
@@ -71,6 +77,23 @@ func (missingVersionModule) Run(*Context) (Result, error) { return Ok(nil), nil 
 type fakeCommandSession struct {
 	*LineShellSession
 }
+
+type failingOpenSession struct {
+	closeCalls int
+}
+
+func (*failingOpenSession) Open() error { return errors.New("open failed") }
+
+func (*failingOpenSession) Write([]byte) error { return nil }
+
+func (*failingOpenSession) Read(time.Duration) ([]byte, error) { return nil, nil }
+
+func (s *failingOpenSession) Close(string) error {
+	s.closeCalls++
+	return nil
+}
+
+func (*failingOpenSession) Closed() bool { return false }
 
 func (s *fakeCommandSession) ListPayloadCommands(PayloadCommandListRequest) ([]PayloadCommand, error) {
 	return []PayloadCommand{{Name: "session.info", Summary: "return mock session facts", ReadOnly: true}}, nil
@@ -291,6 +314,341 @@ func (agentAwareModule) Run(ctx *Context) (Result, error) {
 	), nil
 }
 
+type fakeMeshModule struct{}
+
+func (fakeMeshModule) Info() Info {
+	return Info{
+		Name:    "fake-mesh",
+		Version: "v0.0.0-test",
+		Type:    TypePayloadProvider,
+		Summary: "fake node mesh",
+		Tags:    []string{"test", "mesh"},
+	}
+}
+
+func (fakeMeshModule) Schema() Schema {
+	return Schema{}
+}
+
+func (fakeMeshModule) Run(*Context) (Result, error) {
+	return Ok(nil, WithSummary("mesh provider execute placeholder")), nil
+}
+
+func (fakeMeshModule) DescribeMesh(MeshDescribeRequest) (MeshDescriptor, error) {
+	topology := fakeMeshTopology(true)
+	return MeshDescriptor{
+		Name:    "fake-mesh",
+		Version: "v0.0.0-test",
+		Summary: "tree-routed test mesh",
+		Capabilities: []string{
+			"topology.tree",
+			"task.survey",
+			"task.command",
+			"stream.tcp",
+		},
+		Topology: &topology,
+		Tasks: []MeshTaskSpec{
+			{
+				Kind:         MeshTaskSurvey,
+				Summary:      "survey a mesh node",
+				ReadOnly:     true,
+				TargetScopes: []MeshTargetScope{MeshTargetNode},
+			},
+			{
+				Kind:         MeshTaskCommand,
+				Summary:      "run a node command or routed destination command",
+				TargetScopes: []MeshTargetScope{MeshTargetNode, MeshTargetDestination},
+			},
+			{
+				Kind:         MeshTaskUploadExecute,
+				Summary:      "upload and execute a file",
+				Destructive:  true,
+				TargetScopes: []MeshTargetScope{MeshTargetNode, MeshTargetDestination},
+			},
+		},
+		ListenerTypes: []MeshListenerSpec{{
+			Kind:            "https",
+			Summary:         "HTTPS rendezvous listener",
+			Deployments:     []MeshListenerDeployment{MeshListenerDeploymentEmbedded, MeshListenerDeploymentSeparate},
+			ManagementModes: []MeshListenerManagement{MeshListenerManagementProvider, MeshListenerManagementExternal},
+			Protocols:       []string{"https"},
+			ConfigSchema:    map[string]any{"type": "object"},
+		}},
+		Triggers: []MeshTrigger{{
+			ID:         "trig-beacon-command",
+			Kind:       "beacon",
+			NodeID:     "node-2",
+			ListenerID: "listener-primary",
+			State:      "armed",
+			ActionKind: MeshTaskCommand,
+		}},
+	}, nil
+}
+
+func (fakeMeshModule) MeshTopology(req MeshTopologyRequest) (MeshTopology, error) {
+	return fakeMeshTopology(req.IncludeRoutes), nil
+}
+
+func (fakeMeshModule) ListMeshBeacons(req MeshBeaconRequest) ([]MeshBeacon, error) {
+	nodeID := req.NodeID
+	if nodeID == "" {
+		nodeID = "node-2"
+	}
+	return []MeshBeacon{{
+		ID:              "beacon-1",
+		NodeID:          nodeID,
+		ListenerID:      "listener-primary",
+		Time:            "2026-07-09T00:00:00Z",
+		State:           "alive",
+		Transport:       "relay",
+		RemoteAddr:      "10.0.0.2:4444",
+		IntervalSeconds: 30,
+		Fields:          map[string]any{"route": "root>node-1>node-2"},
+	}}, nil
+}
+
+func (fakeMeshModule) ListMeshListeners(req MeshListenerListRequest) ([]MeshListener, error) {
+	listenerID := req.ListenerID
+	if listenerID == "" {
+		listenerID = "listener-primary"
+	}
+	return []MeshListener{{
+		ID:         listenerID,
+		Name:       "primary HTTPS listener",
+		Kind:       "https",
+		State:      MeshListenerStateActive,
+		Deployment: MeshListenerDeploymentSeparate,
+		Management: MeshListenerManagementProvider,
+		Addresses:  []string{"https://127.0.0.1:8443"},
+		Protocols:  []string{"https"},
+	}}, nil
+}
+
+type emptyMeshListenerModule struct {
+	fakeMeshModule
+}
+
+func (emptyMeshListenerModule) ListMeshListeners(MeshListenerListRequest) ([]MeshListener, error) {
+	return nil, nil
+}
+
+func (fakeMeshModule) StartMeshListener(req MeshListenerStartRequest) (MeshListener, error) {
+	return MeshListener{
+		ID:         req.ListenerID,
+		Name:       req.Name,
+		Kind:       req.Kind,
+		State:      MeshListenerStateActive,
+		Deployment: req.Deployment,
+		Management: req.Management,
+		Addresses:  []string{"https://127.0.0.1:8443"},
+		Protocols:  []string{"https"},
+	}, nil
+}
+
+func (fakeMeshModule) StopMeshListener(req MeshListenerStopRequest) (MeshListener, error) {
+	return MeshListener{
+		ID:         req.ListenerID,
+		State:      MeshListenerStateStopped,
+		Deployment: MeshListenerDeploymentSeparate,
+		Management: MeshListenerManagementProvider,
+	}, nil
+}
+
+func (fakeMeshModule) RunMeshTask(ctx *MeshContext, req MeshTaskRequest) (MeshTaskResult, error) {
+	ctx.Log.Info("mesh task", "kind", req.Kind, "node", req.NodeID)
+	switch req.Kind {
+	case MeshTaskSurvey:
+		return MeshTaskResult{
+			TaskID:     req.TaskID,
+			Status:     MeshTaskStatusSucceeded,
+			Summary:    "surveyed " + req.NodeID,
+			NodeID:     req.NodeID,
+			ListenerID: req.ListenerID,
+			Outputs: map[string]any{
+				"os":              "linux",
+				"reachable":       true,
+				"contextRunId":    ctx.RunID,
+				"contextModuleId": ctx.ModuleID,
+				"contextTarget":   ctx.Target,
+			},
+			Findings: []Finding{{Title: "node reachable", Severity: "info", Detail: req.NodeID}},
+		}, nil
+	case MeshTaskCommand:
+		return MeshTaskResult{
+			TaskID:          req.TaskID,
+			Status:          MeshTaskStatusSucceeded,
+			Summary:         "command completed",
+			NodeID:          req.NodeID,
+			ListenerID:      req.ListenerID,
+			DestinationHost: req.DestinationHost,
+			DestinationPort: req.DestinationPort,
+			Protocol:        req.Protocol,
+			Outputs:         map[string]any{"stdout": strings.Join(req.Args, " ")},
+		}, nil
+	default:
+		return MeshTaskResult{
+			TaskID:  req.TaskID,
+			Status:  MeshTaskStatusFailed,
+			Summary: "unsupported mesh task",
+			NodeID:  req.NodeID,
+		}, nil
+	}
+}
+
+func (fakeMeshModule) OpenMeshStream(ctx *MeshContext, req MeshStreamRequest) (SessionRef, error) {
+	shell := &LineShellSession{
+		Prompt: "mesh$ ",
+		Echo:   true,
+		Handle: func(command string) (string, error) {
+			return "routed " + command + " to " + req.DestinationHost, nil
+		},
+	}
+	return ctx.OpenSession(
+		shell,
+		WithName("mesh stream to "+req.DestinationHost),
+		WithKind("stream"),
+		WithTransport("mesh-route"),
+		WithCapabilities("read", "write", "close", "stream.tcp"),
+	)
+}
+
+type emptyStatusMeshModule struct {
+	fakeMeshModule
+}
+
+func (emptyStatusMeshModule) RunMeshTask(_ *MeshContext, req MeshTaskRequest) (MeshTaskResult, error) {
+	return MeshTaskResult{
+		TaskID:  req.TaskID,
+		Status:  "   ",
+		Summary: "completed without an explicit status",
+	}, nil
+}
+
+type streamOnlyMeshModule struct{}
+
+func (streamOnlyMeshModule) Info() Info {
+	return Info{
+		Name:    "stream-only-mesh",
+		Version: "v0.0.0-test",
+		Type:    TypePayloadProvider,
+		Summary: "minimal stream mesh",
+		Tags:    []string{"mesh"},
+	}
+}
+
+func (streamOnlyMeshModule) Schema() Schema {
+	return Schema{}
+}
+
+func (streamOnlyMeshModule) Run(*Context) (Result, error) {
+	return Ok(nil, WithSummary("not used")), nil
+}
+
+func (streamOnlyMeshModule) DescribeMesh(MeshDescribeRequest) (MeshDescriptor, error) {
+	return MeshDescriptor{
+		Name:         "stream-only-mesh",
+		Version:      "v0.0.0-test",
+		Summary:      "one stream operation, no task or beacon surface",
+		Capabilities: []string{"stream.tcp"},
+		Tasks: []MeshTaskSpec{{
+			Kind:         MeshTaskStream,
+			Summary:      "open one routed TCP stream",
+			OpensStream:  true,
+			TargetScopes: []MeshTargetScope{MeshTargetDestination},
+		}},
+	}, nil
+}
+
+func (streamOnlyMeshModule) OpenMeshStream(ctx *MeshContext, req MeshStreamRequest) (SessionRef, error) {
+	return ctx.OpenSession(
+		&LineShellSession{Prompt: "stream$ ", Echo: true},
+		WithName("minimal stream to "+req.DestinationHost),
+		WithKind("stream"),
+		WithTransport("mesh-stream"),
+		WithCapabilities("read", "write", "close"),
+	)
+}
+
+type shutdownBarrierMeshModule struct {
+	fakeMeshModule
+	started chan struct{}
+	release chan struct{}
+	session *shutdownTrackingSession
+}
+
+func (m shutdownBarrierMeshModule) RunMeshTask(ctx *MeshContext, _ MeshTaskRequest) (MeshTaskResult, error) {
+	close(m.started)
+	<-m.release
+	ref, err := ctx.OpenSession(m.session)
+	if err != nil {
+		return MeshTaskResult{}, err
+	}
+	return MeshTaskResult{Status: MeshTaskStatusSucceeded, Sessions: []SessionRef{ref}}, nil
+}
+
+type shutdownTrackingSession struct {
+	closed chan struct{}
+}
+
+func (*shutdownTrackingSession) Open() error { return nil }
+
+func (*shutdownTrackingSession) Write([]byte) error { return nil }
+
+func (*shutdownTrackingSession) Read(time.Duration) ([]byte, error) { return nil, nil }
+
+func (s *shutdownTrackingSession) Close(string) error {
+	select {
+	case <-s.closed:
+	default:
+		close(s.closed)
+	}
+	return nil
+}
+
+func (s *shutdownTrackingSession) Closed() bool {
+	select {
+	case <-s.closed:
+		return true
+	default:
+		return false
+	}
+}
+
+func fakeMeshTopology(includeRoutes bool) MeshTopology {
+	topology := MeshTopology{
+		Root: "root",
+		Nodes: []MeshNode{
+			{ID: "root", Name: "controller", Kind: "controller", State: "online"},
+			{ID: "node-1", ParentID: "root", Name: "relay", Kind: "relay", State: "online"},
+			{ID: "node-2", ParentID: "node-1", Name: "leaf", Kind: "agent", State: "online"},
+		},
+		Links: []MeshLink{
+			{
+				ID:     "link-root-node-1",
+				Source: "root",
+				Target: "node-1",
+				Kind:   "relay",
+				State:  "up",
+			},
+			{
+				ID:     "link-node-1-node-2",
+				Source: "node-1",
+				Target: "node-2",
+				Kind:   "relay",
+				State:  "up",
+			},
+		},
+	}
+	if includeRoutes {
+		topology.Routes = []MeshRoute{{
+			ID:    "route-node-2",
+			Nodes: []string{"root", "node-1", "node-2"},
+			Links: []string{"link-root-node-1", "link-node-1-node-2"},
+		}}
+	}
+	return topology
+}
+
 func fakePayloadInfo() PayloadInfo {
 	return PayloadInfo{
 		ID:           "fake/windows/x86/reverse-tcp/pe-exe",
@@ -307,6 +665,280 @@ func fakePayloadInfo() PayloadInfo {
 		Capabilities: []string{"file.get"},
 		Transport:    PayloadTransport{Kind: "reverse-tcp"},
 		Session:      PayloadSession{Kind: "agent", Acquisition: "callback", RequiresPreThrowListener: true, Owner: "payload_provider"},
+	}
+}
+
+func TestServeMeshProviderMethods(t *testing.T) {
+	conn := newRPCConn(t, fakeMeshModule{})
+	defer conn.close()
+
+	describe := conn.call("mesh.describe", nil)
+	if describe["name"] != "fake-mesh" {
+		t.Fatalf("mesh.describe = %#v", describe)
+	}
+	tasks, _ := describe["tasks"].([]any)
+	if len(tasks) != 3 {
+		t.Fatalf("mesh tasks = %#v, want three common task specs", describe["tasks"])
+	}
+	uploadExecute, _ := tasks[2].(map[string]any)
+	targetScopes, _ := uploadExecute["targetScopes"].([]any)
+	if len(targetScopes) != 2 || targetScopes[1] != string(MeshTargetDestination) {
+		t.Fatalf("mesh upload_execute target scopes = %#v", targetScopes)
+	}
+	triggers, _ := describe["triggers"].([]any)
+	if len(triggers) != 1 {
+		t.Fatalf("mesh triggers = %#v, want one trigger", describe["triggers"])
+	}
+	listenerTypes, _ := describe["listenerTypes"].([]any)
+	if len(listenerTypes) != 1 {
+		t.Fatalf("mesh listener types = %#v, want one", describe["listenerTypes"])
+	}
+
+	topology := conn.call("mesh.topology", map[string]any{"includeRoutes": true})
+	nodes, _ := topology["nodes"].([]any)
+	links, _ := topology["links"].([]any)
+	routes, _ := topology["routes"].([]any)
+	if len(nodes) != 3 || len(links) != 2 || len(routes) != 1 {
+		t.Fatalf("mesh topology = %#v", topology)
+	}
+
+	beacons := conn.call("mesh.beacons", map[string]any{"nodeId": "node-2"})
+	items, _ := beacons["beacons"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("mesh beacons = %#v, want one", beacons["beacons"])
+	}
+	beacon, _ := items[0].(map[string]any)
+	if beacon["nodeId"] != "node-2" || beacon["listenerId"] != "listener-primary" || beacon["state"] != "alive" {
+		t.Fatalf("mesh beacon = %#v", beacon)
+	}
+
+	listeners := conn.call("mesh.listeners", map[string]any{
+		"listenerId": "  listener-primary  ",
+		"state":      "  active  ",
+	})
+	listenerItems, _ := listeners["listeners"].([]any)
+	if len(listenerItems) != 1 {
+		t.Fatalf("mesh listeners = %#v, want one", listeners["listeners"])
+	}
+	listener, _ := listenerItems[0].(map[string]any)
+	if listener["id"] != "listener-primary" || listener["state"] != "active" ||
+		listener["deployment"] != "separate" || listener["management"] != "provider" {
+		t.Fatalf("mesh listener = %#v", listener)
+	}
+
+	startedListener := conn.call("mesh.listener.start", map[string]any{
+		"listenerId": "listener-web",
+		"name":       "web-controlled listener",
+		"kind":       "https",
+		"deployment": "  separate  ",
+		"management": "  provider  ",
+		"config":     map[string]any{"token": "write-only-secret"},
+	})
+	if startedListener["id"] != "listener-web" || startedListener["state"] != "active" ||
+		startedListener["deployment"] != "separate" || startedListener["management"] != "provider" {
+		t.Fatalf("started mesh listener = %#v", startedListener)
+	}
+	if _, exposesConfig := startedListener["config"]; exposesConfig {
+		t.Fatalf("started mesh listener exposed write-only config: %#v", startedListener)
+	}
+
+	stoppedListener := conn.call("mesh.listener.stop", map[string]any{"listenerId": "listener-web"})
+	if stoppedListener["id"] != "listener-web" || stoppedListener["state"] != "stopped" {
+		t.Fatalf("stopped mesh listener = %#v", stoppedListener)
+	}
+
+	task := conn.call("mesh.task", map[string]any{
+		"runId":      "run-mesh-1",
+		"taskId":     "task-survey-1",
+		"kind":       string(MeshTaskSurvey),
+		"nodeId":     "node-2",
+		"listenerId": "listener-primary",
+	})
+	if task["status"] != "succeeded" || task["summary"] != "surveyed node-2" {
+		t.Fatalf("mesh task = %#v", task)
+	}
+	if task["listenerId"] != "listener-primary" {
+		t.Fatalf("mesh task listener = %#v", task["listenerId"])
+	}
+	outputs, _ := task["outputs"].(map[string]any)
+	if outputs["os"] != "linux" || outputs["reachable"] != true {
+		t.Fatalf("mesh task outputs = %#v", outputs)
+	}
+
+	defaulted := conn.call("mesh.task", map[string]any{
+		"runId":           " ",
+		"moduleId":        " ",
+		"target":          " ",
+		"destinationHost": "10.10.0.99",
+		"kind":            string(MeshTaskSurvey),
+	})
+	defaultedOutputs, _ := defaulted["outputs"].(map[string]any)
+	if defaultedOutputs["contextRunId"] != "mesh" ||
+		defaultedOutputs["contextModuleId"] != "fake-mesh@v0.0.0-test" ||
+		defaultedOutputs["contextTarget"] != "10.10.0.99" {
+		t.Fatalf("defaulted mesh context = %#v", defaultedOutputs)
+	}
+}
+
+func TestListMeshListenersEncodesEmptyListAsArray(t *testing.T) {
+	server := server{module: emptyMeshListenerModule{}}
+
+	result, err := server.listMeshListeners(json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("listener response type = %T, want map[string]any", result)
+	}
+	listeners, ok := response["listeners"].([]MeshListener)
+	if !ok || listeners == nil || len(listeners) != 0 {
+		t.Fatalf("listeners = %#v, want non-nil empty array", response["listeners"])
+	}
+}
+
+func TestServeMeshOpenStreamCreatesSession(t *testing.T) {
+	conn := newRPCConn(t, fakeMeshModule{})
+	defer conn.close()
+
+	session := conn.call("mesh.open_stream", map[string]any{
+		"runId":           "run-mesh-2",
+		"moduleId":        "fake-mesh@v0.0.0-test",
+		"target":          "mock://mesh",
+		"nodeId":          "node-2",
+		"destinationHost": "10.10.10.10",
+		"destinationPort": 443,
+		"protocol":        "tcp",
+	})
+	sessionID, _ := session["id"].(string)
+	if sessionID == "" {
+		t.Fatalf("mesh stream session = %#v", session)
+	}
+	if session["kind"] != "stream" || session["transport"] != "mesh-route" {
+		t.Fatalf("mesh stream session metadata = %#v", session)
+	}
+
+	prompt := readSession(t, conn, sessionID)
+	if !strings.Contains(prompt, "mesh$") {
+		t.Fatalf("mesh stream prompt = %q", prompt)
+	}
+
+	conn.call("session/write", map[string]any{
+		"sessionId": sessionID,
+		"data":      base64.StdEncoding.EncodeToString([]byte("GET / HTTP/1.0\n")),
+	})
+	output := readSession(t, conn, sessionID)
+	if !strings.Contains(output, "routed GET / HTTP/1.0 to 10.10.10.10") {
+		t.Fatalf("mesh stream output = %q", output)
+	}
+}
+
+func TestServeMeshTaskDefaultsEmptyStatus(t *testing.T) {
+	conn := newRPCConn(t, emptyStatusMeshModule{})
+	defer conn.close()
+
+	task := conn.call("mesh.task", map[string]any{
+		"taskId": "task-default-status",
+		"kind":   string(MeshTaskSurvey),
+	})
+	if task["status"] != string(MeshTaskStatusSucceeded) {
+		t.Fatalf("mesh task status = %#v, want %q", task["status"], MeshTaskStatusSucceeded)
+	}
+}
+
+func TestServeMeshProviderCanImplementOnlySupportedSurfaces(t *testing.T) {
+	conn := newRPCConn(t, streamOnlyMeshModule{})
+	defer conn.close()
+
+	describe := conn.call("mesh.describe", nil)
+	if describe["name"] != "stream-only-mesh" {
+		t.Fatalf("mesh.describe = %#v", describe)
+	}
+	tasks, _ := describe["tasks"].([]any)
+	if len(tasks) != 1 {
+		t.Fatalf("mesh tasks = %#v, want one stream task", describe["tasks"])
+	}
+
+	session := conn.call("mesh.open_stream", map[string]any{
+		"runId":           "run-stream-only",
+		"destinationHost": "10.10.10.10",
+		"destinationPort": 443,
+		"protocol":        "tcp",
+	})
+	if session["transport"] != "mesh-stream" {
+		t.Fatalf("stream-only session = %#v", session)
+	}
+
+	errText := conn.callError("mesh.task", map[string]any{"kind": string(MeshTaskCommand)})
+	if !strings.Contains(errText, "does not implement mesh.task") {
+		t.Fatalf("mesh.task error = %q, want unsupported surface", errText)
+	}
+
+	errText = conn.callError("mesh.listeners", nil)
+	if !strings.Contains(errText, "does not implement mesh.listeners") {
+		t.Fatalf("mesh.listeners error = %q, want unsupported surface", errText)
+	}
+}
+
+func TestServeShutdownWaitsForInFlightMeshTask(t *testing.T) {
+	module := shutdownBarrierMeshModule{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		session: &shutdownTrackingSession{closed: make(chan struct{})},
+	}
+	conn := newRPCConn(t, module)
+	conn.writeRequest(1, meshRPCTaskMethod, map[string]any{"runId": "run-1", "kind": MeshTaskCommand})
+	select {
+	case <-module.started:
+	case <-time.After(testRPCResponseTimeout):
+		t.Fatal("mesh task did not start")
+	}
+	conn.writeRequest(2, "shutdown", nil)
+
+	responses := make(chan map[string]any, 2)
+	go func() {
+		for {
+			message := conn.readFrame()
+			id, ok := responseID(message)
+			if !ok {
+				continue
+			}
+			responses <- message
+			if id == 2 {
+				return
+			}
+		}
+	}()
+	select {
+	case message := <-responses:
+		t.Fatalf("shutdown responded before the in-flight mesh task completed: %#v", message)
+	case <-time.After(shutdownBarrierObservationWindow):
+	}
+
+	close(module.release)
+	seenShutdown := false
+	for !seenShutdown {
+		var message map[string]any
+		select {
+		case message = <-responses:
+		case <-time.After(testRPCResponseTimeout):
+			t.Fatal("timed out waiting for mesh task and shutdown responses")
+		}
+		id, ok := responseID(message)
+		if ok && id == 2 {
+			seenShutdown = true
+		}
+	}
+	select {
+	case <-module.session.closed:
+	case <-time.After(testRPCResponseTimeout):
+		t.Fatal("shutdown did not close the session opened by the in-flight mesh task")
+	}
+	if err := <-conn.done; err != nil {
+		t.Fatalf("serve returned error: %v", err)
+	}
+	if err := conn.in.Close(); err != nil {
+		t.Logf("close rpc input pipe: %v", err)
 	}
 }
 
@@ -929,6 +1561,25 @@ func TestSessionManagerMarksPTYSessionCapability(t *testing.T) {
 	defer closeTestSession(t, session)
 	if !hasString(ref.Capabilities, CapabilityTerminalPTY) {
 		t.Fatalf("capabilities = %#v, want %q", ref.Capabilities, CapabilityTerminalPTY)
+	}
+}
+
+func TestSessionManagerDoesNotTrackFailedOpen(t *testing.T) {
+	manager := newSessionManager(nil)
+	session := &failingOpenSession{}
+	_, err := manager.open(
+		sessionScope{runID: "run-1", moduleID: "mod", target: "target"},
+		session,
+	)
+	if err == nil {
+		t.Fatal("open session succeeded, want error")
+	}
+	if refs := manager.refsForRun("run-1"); len(refs) != 0 {
+		t.Fatalf("refs = %#v, want no tracked sessions", refs)
+	}
+	manager.closeAll("test")
+	if session.closeCalls != 0 {
+		t.Fatalf("close calls = %d, want 0", session.closeCalls)
 	}
 }
 

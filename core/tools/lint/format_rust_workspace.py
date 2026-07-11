@@ -7,10 +7,9 @@ import subprocess
 from pathlib import Path
 
 
-RUST_SOURCE_GLOBS = [
-    "examples/rust/*/src/*.rs",
+RUST_SOURCE_GLOBS = (
     "sdk/rust/hovel/src/*.rs",
-]
+)
 
 
 def main() -> int:
@@ -40,16 +39,19 @@ def rust_sources(workspace: Path) -> list[Path]:
 
 
 def workspace_root() -> Path:
-    value = os.environ.get("BUILD_WORKSPACE_DIRECTORY")
-    if value:
-        return Path(value).resolve()
+    for name in ("HOVEL_REPO_ROOT", "BUILD_WORKSPACE_DIRECTORY"):
+        value = os.environ.get(name)
+        if not value:
+            continue
+        candidate = Path(value)
+        for root in (candidate, candidate.parent):
+            if (root / "sdk/rust/hovel/BUILD.bazel").exists():
+                return root.resolve()
     cwd = Path.cwd()
-    if (cwd / "MODULE.bazel").exists():
-        return cwd.resolve()
-    for parent in cwd.parents:
-        if (parent / "MODULE.bazel").exists():
+    for parent in (cwd, *cwd.parents):
+        if (parent / "sdk/rust/hovel/BUILD.bazel").exists():
             return parent.resolve()
-    raise SystemExit("could not locate workspace root")
+    raise SystemExit("could not locate Hovel repository root")
 
 
 def runfiles_root(workspace: Path) -> Path:

@@ -1,4 +1,4 @@
-# picblobs development environment — Fedora 43
+# picblobs development environment — Fedora 44
 #
 # Always targets linux/amd64 — Bazel, Bootlin toolchains, and the
 # cross-compiled blob runners are x86_64 binaries.  On Apple Silicon
@@ -15,7 +15,7 @@
 #     'cd /workspace && python tools/generate.py --check && python tools/fmt.py --check && python tools/stage_blobs.py && python -m pytest python/tests/ -v'
 
 # check=skip=FromPlatformFlagConstDisallowed
-FROM --platform=linux/amd64 registry.fedoraproject.org/fedora:43
+FROM --platform=linux/amd64 registry.fedoraproject.org/fedora:44@sha256:506a168098c3d93dfbd26679db1982c5a0aa52a70b97dbfe1ea4b80dbd816542
 
 # Avoid interactive prompts during install.
 ENV DNFP="dnf -y --setopt=install_weak_deps=False"
@@ -30,7 +30,7 @@ RUN $DNFP install \
         qemu-user-static \
         # C linting and formatting
         clang-tools-extra \
-        # Python (Fedora 43 ships 3.14)
+        # Python (Fedora 44 ships 3.14)
         python3 python3-pip python3-devel \
         # General utilities
         git curl wget xz findutils diffutils which \
@@ -44,15 +44,12 @@ RUN curl -fSL -o /usr/local/bin/bazel \
     && bazel --version
 
 # ── uv (fast Python package manager) ─────────────────────────────
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa /uv /usr/local/bin/uv
 
 # ── Python dev dependencies ──────────────────────────────────────
-COPY python/pyproject.toml /tmp/pyproject.toml
 COPY python/requirements.txt /tmp/requirements.txt
-RUN pip install --break-system-packages \
-        pyelftools pycparser pytest pygments ruff \
-    && pip install --break-system-packages -r /tmp/requirements.txt \
-    && rm /tmp/pyproject.toml /tmp/requirements.txt
+RUN uv pip install --system --require-hashes -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
 # ── QEMU binfmt verification ─────────────────────────────────────
 # Verify the QEMU binaries we need are present.

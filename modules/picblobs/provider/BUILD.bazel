@@ -22,6 +22,7 @@ go_binary(
 
 go_test(
     name = "provider_test",
+    size = "small",
     srcs = ["provider_test.go"],
     embed = [":provider_lib"],
     deps = [

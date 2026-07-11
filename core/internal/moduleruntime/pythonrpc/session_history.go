@@ -14,27 +14,36 @@ const (
 )
 
 type brokerSession struct {
-	ref     run.SessionRef
-	process *moduleProcess
-	limit   int
-	order   uint64
+	ref      run.SessionRef
+	process  *moduleProcess
+	limit    int
+	order    uint64
+	datagram bool
+	ctx      context.Context
+	cancel   context.CancelFunc
 
-	mu      sync.Mutex
-	history []byte
-	pending []byte
-	closed  bool
-	notify  chan struct{}
+	mu                   sync.Mutex
+	history              []byte
+	pending              []byte
+	pendingDatagrams     [][]byte
+	pendingDatagramBytes int
+	closed               bool
+	notify               chan struct{}
 }
 
 func newBrokerSession(ref run.SessionRef, process *moduleProcess, limit int) *brokerSession {
 	if limit <= 0 {
 		limit = defaultSessionHistoryBytes
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &brokerSession{
-		ref:     cloneSessionRef(ref),
-		process: process,
-		limit:   limit,
-		notify:  make(chan struct{}),
+		ref:      cloneSessionRef(ref),
+		process:  process,
+		limit:    limit,
+		datagram: ref.HasCapability(run.SessionCapabilityDatagram),
+		ctx:      ctx,
+		cancel:   cancel,
+		notify:   make(chan struct{}),
 	}
 }
 
@@ -45,8 +54,23 @@ func (s *brokerSession) appendData(data []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.history = appendBounded(s.history, data, s.limit)
-	s.pending = appendBounded(s.pending, data, s.limit)
+	if s.datagram {
+		s.appendPendingDatagramLocked(data)
+	} else {
+		s.pending = appendBounded(s.pending, data, s.limit)
+	}
 	s.notifyLocked()
+}
+
+func (s *brokerSession) appendPendingDatagramLocked(data []byte) {
+	datagram := append([]byte(nil), data...)
+	s.pendingDatagrams = append(s.pendingDatagrams, datagram)
+	s.pendingDatagramBytes += len(datagram)
+	for s.pendingDatagramBytes > s.limit && len(s.pendingDatagrams) > 1 {
+		s.pendingDatagramBytes -= len(s.pendingDatagrams[0])
+		s.pendingDatagrams[0] = nil
+		s.pendingDatagrams = s.pendingDatagrams[1:]
+	}
 }
 
 func (s *brokerSession) read(ctx context.Context, sessionID string, timeout time.Duration) (run.SessionChunk, error) {
@@ -56,6 +80,15 @@ func (s *brokerSession) read(ctx context.Context, sessionID string, timeout time
 	}
 	for {
 		s.mu.Lock()
+		if len(s.pendingDatagrams) > 0 {
+			data := s.pendingDatagrams[0]
+			s.pendingDatagrams[0] = nil
+			s.pendingDatagrams = s.pendingDatagrams[1:]
+			s.pendingDatagramBytes -= len(data)
+			closed := s.closed && len(s.pendingDatagrams) == 0
+			s.mu.Unlock()
+			return run.SessionChunk{SessionID: sessionID, Data: data, Closed: closed}, nil
+		}
 		if len(s.pending) > 0 {
 			size := len(s.pending)
 			if size > sessionReadChunkBytes {
@@ -77,21 +110,45 @@ func (s *brokerSession) read(ctx context.Context, sessionID string, timeout time
 		if timeout == 0 {
 			return run.SessionChunk{SessionID: sessionID}, nil
 		}
-		var timer <-chan time.Time
-		if !deadline.IsZero() {
-			remaining := time.Until(deadline)
-			if remaining <= 0 {
-				return run.SessionChunk{SessionID: sessionID}, nil
-			}
-			timer = time.After(remaining)
+		timedOut, err := waitForSessionNotification(ctx, notify, deadline)
+		if err != nil {
+			return run.SessionChunk{}, err
 		}
-		select {
-		case <-ctx.Done():
-			return run.SessionChunk{}, ctx.Err()
-		case <-notify:
-		case <-timer:
+		if timedOut {
 			return run.SessionChunk{SessionID: sessionID}, nil
 		}
+	}
+}
+
+func waitForSessionNotification(ctx context.Context, notify <-chan struct{}, deadline time.Time) (bool, error) {
+	if deadline.IsZero() {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-notify:
+			return false, nil
+		}
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return true, nil
+	}
+	timer := time.NewTimer(remaining)
+	defer func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}()
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case <-notify:
+		return false, nil
+	case <-timer.C:
+		return true, nil
 	}
 }
 
@@ -109,18 +166,25 @@ func (s *brokerSession) tail(sessionID string, options run.SessionTailOptions) r
 	}
 	if options.Consume {
 		s.pending = nil
+		s.pendingDatagrams = nil
+		s.pendingDatagramBytes = 0
 	}
 	return run.SessionChunk{SessionID: sessionID, Data: data, Closed: s.closed}
 }
 
 func (s *brokerSession) closeLocal() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return
 	}
 	s.closed = true
 	s.notifyLocked()
+	cancel := s.cancel
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (s *brokerSession) isClosed() bool {

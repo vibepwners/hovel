@@ -32,6 +32,7 @@ class RPCLogHandler(logging.Handler):
 
 def setup_logging(emit: Callable[[dict[str, Any]], None] | None = None) -> RPCLogHandler:
     if emit is None:
+
         def emit(_params: dict[str, Any]) -> None:
             return
 

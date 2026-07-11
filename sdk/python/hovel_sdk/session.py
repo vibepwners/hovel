@@ -8,6 +8,8 @@ from typing import Any, Protocol
 
 _TIMEOUT_ERRORS = (asyncio.TimeoutError,)
 
+SESSION_CAPABILITY_DATAGRAM = "datagram"
+
 
 @dataclass(frozen=True)
 class SessionRef:
@@ -203,8 +205,8 @@ class SessionManager:
             transport=options.transport,
             capabilities=options.capabilities,
         )
-        self._sessions[session_id] = _ManagedSession(ref=ref, session=session)
         await session.open()
+        self._sessions[session_id] = _ManagedSession(ref=ref, session=session)
         self._emit("session.created", ref)
         return ref
 

@@ -3,6 +3,7 @@ common --announce_rc
 build --color=yes
 build --curses=yes
 build --action_env=PYTHONDONTWRITEBYTECODE=1
+build --incompatible_default_to_explicit_init_py
 
 test --test_output=errors
 test --test_env=PYTHONDONTWRITEBYTECODE=1

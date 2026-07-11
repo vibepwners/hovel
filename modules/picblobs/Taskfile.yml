@@ -71,6 +71,11 @@ tasks:
     cmds:
       - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:generate-check
 
+  module:lock:
+    desc: "Refresh the standalone Bazel module lock"
+    cmds:
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:module-lock
+
   # -------------------------------------------------------------- check ---
   check:
     desc: "Run every non-mutating check: codegen freshness, format, lint, C lint"
@@ -112,6 +117,16 @@ tasks:
     desc: "Codegen freshness via Bazel (sandboxed; no venv needed)"
     cmds:
       - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:generate-check
+
+  mbed:blobs:
+    desc: "Materialize configured Cortex-M4 NaCl headers for the Mbed OS PoC"
+    cmds:
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:mbed-blobs -- {{.CLI_ARGS}}
+
+  mbed:compile:
+    desc: "Compile the PoC against the checked-out Mbed OS 5.15.9 target SDK"
+    cmds:
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:mbed-compile -- {{.CLI_ARGS}}
 
   # --------------------------------------------------------------- tests ---
   test:

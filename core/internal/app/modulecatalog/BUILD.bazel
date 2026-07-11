@@ -8,7 +8,10 @@ go_library(
     ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/app/modulecatalog",
     visibility = ["//:__subpackages__"],
-    deps = ["//internal/domain/module"],
+    deps = [
+        "//internal/domain/mesh",
+        "//internal/domain/module",
+    ],
 )
 
 go_test(
@@ -16,6 +19,7 @@ go_test(
     size = "small",
     srcs = ["catalog_test.go"],
     embed = [":modulecatalog"],
+    deps = ["//internal/domain/mesh"],
 )
 
 go_test(

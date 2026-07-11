@@ -25,6 +25,15 @@ typedef int nsapi_error_t;
 typedef unsigned nsapi_size_t;
 typedef int nsapi_size_or_error_t;
 #define NSAPI_ERROR_OK 0
+#define DEVICE_TRNG 1
+#define NSAPI_SOCKET 7000
+#define NSAPI_REUSEADDR 0
+
+enum nsapi_version_t {
+	NSAPI_UNSPEC = 0,
+	NSAPI_IPv4 = 4,
+	NSAPI_IPv6 = 6,
+};
 
 /* ---- PinName ---- */
 
@@ -57,72 +66,91 @@ class NetworkInterface
 {
 };
 
-/* ---- TCPSocket ---- */
+namespace mbed
+{
+class ScopedRamExecutionLock
+{
+      public:
+	ScopedRamExecutionLock() {}
+	~ScopedRamExecutionLock() {}
+};
+} // namespace mbed
 
-class TCPServer; /* forward */
+/* ---- SocketAddress ---- */
+
+class SocketAddress
+{
+	struct sockaddr_in _addr;
+	bool _valid;
+	char _text[INET_ADDRSTRLEN];
+
+      public:
+	SocketAddress() : _valid(false)
+	{
+		memset(&_addr, 0, sizeof(_addr));
+		memset(_text, 0, sizeof(_text));
+	}
+	SocketAddress(const void *bytes, nsapi_version_t version, uint16_t port)
+	    : _valid(version == NSAPI_IPv4 && bytes != NULL)
+	{
+		memset(&_addr, 0, sizeof(_addr));
+		memset(_text, 0, sizeof(_text));
+		if (_valid) {
+			_addr.sin_family = AF_INET;
+			_addr.sin_port = htons(port);
+			memcpy(&_addr.sin_addr, bytes, 4);
+			inet_ntop(
+				AF_INET, &_addr.sin_addr, _text, sizeof(_text));
+		}
+	}
+	SocketAddress(const char *address, uint16_t port = 0) : _valid(false)
+	{
+		memset(&_addr, 0, sizeof(_addr));
+		memset(_text, 0, sizeof(_text));
+		_addr.sin_family = AF_INET;
+		_addr.sin_port = htons(port);
+		_valid = address &&
+			inet_pton(AF_INET, address, &_addr.sin_addr) == 1;
+		if (_valid) {
+			inet_ntop(
+				AF_INET, &_addr.sin_addr, _text, sizeof(_text));
+		}
+	}
+
+	operator bool() const { return _valid; }
+	const char *get_ip_address() const { return _valid ? _text : NULL; }
+	const struct sockaddr_in &native() const { return _addr; }
+};
+
+/* ---- TCPSocket ---- */
 
 class TCPSocket
 {
 	int _fd;
-	friend class TCPServer;
+	bool _factory_allocated;
 
       public:
-	TCPSocket() : _fd(-1) {}
-	~TCPSocket() { close(); }
-
-	nsapi_error_t open(NetworkInterface *)
-	{
-		_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-		return _fd >= 0 ? NSAPI_ERROR_OK : -1;
-	}
-
-	nsapi_error_t connect(const char *host, uint16_t port)
-	{
-		struct sockaddr_in addr;
-		memset(&addr, 0, sizeof(addr));
-		addr.sin_family = AF_INET;
-		addr.sin_port = htons(port);
-		inet_aton(host, &addr.sin_addr);
-		return ::connect(_fd, (struct sockaddr *)&addr, sizeof(addr)) ==
-				0
-			? NSAPI_ERROR_OK
-			: -1;
-	}
-
-	nsapi_size_or_error_t send(const void *data, nsapi_size_t size)
-	{
-		return (nsapi_size_or_error_t)::send(_fd, data, size, 0);
-	}
-
-	nsapi_size_or_error_t recv(void *data, nsapi_size_t size)
-	{
-		return (nsapi_size_or_error_t)::recv(_fd, data, size, 0);
-	}
-
-	nsapi_error_t close()
+	TCPSocket() : _fd(-1), _factory_allocated(false) {}
+	~TCPSocket()
 	{
 		if (_fd >= 0) {
 			::close(_fd);
-			_fd = -1;
 		}
-		return NSAPI_ERROR_OK;
 	}
-};
-
-/* ---- TCPServer ---- */
-
-class TCPServer
-{
-	int _fd;
-
-      public:
-	TCPServer() : _fd(-1) {}
-	~TCPServer() { close(); }
 
 	nsapi_error_t open(NetworkInterface *)
 	{
 		_fd = ::socket(AF_INET, SOCK_STREAM, 0);
 		return _fd >= 0 ? NSAPI_ERROR_OK : -1;
+	}
+
+	nsapi_error_t connect(const SocketAddress &address)
+	{
+		const struct sockaddr_in &addr = address.native();
+		return ::connect(_fd, (const struct sockaddr *)&addr,
+			       sizeof(addr)) == 0
+			? NSAPI_ERROR_OK
+			: -1;
 	}
 
 	nsapi_error_t bind(uint16_t port)
@@ -144,14 +172,45 @@ class TCPServer
 		return ::listen(_fd, backlog) == 0 ? NSAPI_ERROR_OK : -1;
 	}
 
-	nsapi_error_t accept(TCPSocket *client)
+	nsapi_error_t setsockopt(
+		int level, int option, const void *value, unsigned length)
 	{
-		int cfd = ::accept(_fd, NULL, NULL);
-		if (cfd < 0) {
+		if (level != NSAPI_SOCKET || option != NSAPI_REUSEADDR) {
 			return -1;
 		}
-		client->_fd = cfd;
-		return NSAPI_ERROR_OK;
+		return ::setsockopt(_fd, SOL_SOCKET, SO_REUSEADDR, value,
+			       length) == 0
+			? NSAPI_ERROR_OK
+			: -1;
+	}
+
+	TCPSocket *accept(nsapi_error_t *error = NULL)
+	{
+		int accepted_fd = ::accept(_fd, NULL, NULL);
+		if (accepted_fd < 0) {
+			if (error) {
+				*error = -1;
+			}
+			return NULL;
+		}
+
+		TCPSocket *client = new TCPSocket();
+		client->_fd = accepted_fd;
+		client->_factory_allocated = true;
+		if (error) {
+			*error = NSAPI_ERROR_OK;
+		}
+		return client;
+	}
+
+	nsapi_size_or_error_t send(const void *data, nsapi_size_t size)
+	{
+		return (nsapi_size_or_error_t)::send(_fd, data, size, 0);
+	}
+
+	nsapi_size_or_error_t recv(void *data, nsapi_size_t size)
+	{
+		return (nsapi_size_or_error_t)::recv(_fd, data, size, 0);
 	}
 
 	nsapi_error_t close()
@@ -160,28 +219,13 @@ class TCPServer
 			::close(_fd);
 			_fd = -1;
 		}
+		if (_factory_allocated) {
+			_factory_allocated = false;
+			delete this;
+		}
 		return NSAPI_ERROR_OK;
 	}
 };
-
-/* ---- mbedtls hardware poll mock (uses /dev/urandom) ---- */
-
-extern "C" {
-static inline int mbedtls_hardware_poll(
-	void *, unsigned char *output, size_t len, size_t *olen)
-{
-	int fd = ::open("/dev/urandom", O_RDONLY);
-	if (fd < 0) {
-		return -1;
-	}
-	ssize_t n = ::read(fd, output, len);
-	::close(fd);
-	if (olen) {
-		*olen = (n > 0) ? (size_t)n : 0;
-	}
-	return (n > 0) ? 0 : -1;
-}
-}
 
 /* ---- ARM intrinsic mock ---- */
 

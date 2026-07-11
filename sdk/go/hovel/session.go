@@ -25,6 +25,10 @@ type SessionRef struct {
 // CapabilityTerminalPTY marks sessions backed by a local pseudoterminal.
 const CapabilityTerminalPTY = "terminal.pty"
 
+// CapabilityDatagram marks sessions whose non-empty read and write calls each
+// carry exactly one datagram.
+const CapabilityDatagram = "datagram"
+
 // TerminalPTYSession is implemented by sessions that expose a local
 // pseudoterminal. PTYSession implements it directly; wrappers can embed
 // PTYSession and keep the terminal capability visible to Hovel.
@@ -323,6 +327,7 @@ func (m *sessionManager) open(scope sessionScope, session Session, opts ...sessi
 	m.mu.Lock()
 	m.counter++
 	id := fmt.Sprintf("%s-session-%d", scope.runID, m.counter)
+	m.mu.Unlock()
 	ref := SessionRef{
 		ID:           id,
 		RunID:        scope.runID,
@@ -334,11 +339,12 @@ func (m *sessionManager) open(scope sessionScope, session Session, opts ...sessi
 		Transport:    options.transport,
 		Capabilities: capabilities,
 	}
-	m.sessions[id] = &managedSession{ref: ref, session: session}
-	m.mu.Unlock()
 	if err := session.Open(); err != nil {
 		return SessionRef{}, err
 	}
+	m.mu.Lock()
+	m.sessions[id] = &managedSession{ref: ref, session: session}
+	m.mu.Unlock()
 	m.fire("session.created", ref, nil)
 	return ref, nil
 }

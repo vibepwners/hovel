@@ -2117,17 +2117,20 @@ def _verify_nacl_e2e(
     server_blob = picblobs.get_blob("nacl_server", os_name, arch)
     client_blob = picblobs.get_blob("nacl_client", os_name, arch)
     port = reserve_tcp_port()
-    # Config is port (u16 LE) + the shared 32-byte handshake auth key. Both
-    # blobs need the same key to authenticate the ephemeral X25519 exchange;
-    # a wire attacker without it cannot MITM. A fixed value is fine for verify.
-    config = struct.pack("<H", port) + _NACL_VERIFY_AUTH_KEY
+    # Server config is port + key. Client config also carries the peer IPv4.
+    # Both blobs need the same key to authenticate the ephemeral X25519
+    # exchange; a fixed value is appropriate only for this local verifier.
+    server_config = struct.pack("<H", port) + _NACL_VERIFY_AUTH_KEY
+    client_config = (
+        struct.pack("<H", port) + socket.inet_aton("127.0.0.1") + _NACL_VERIFY_AUTH_KEY
+    )
     result = run_blob_pair(
         server_blob,
         client_blob,
         runner_path,
         os_name,
-        server_config=config,
-        client_config=config,
+        server_config=server_config,
+        client_config=client_config,
         timeout=timeout,
     )
     _require_nacl_pair_success(result)

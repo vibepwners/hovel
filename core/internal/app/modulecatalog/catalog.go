@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	domainmesh "github.com/Vibe-Pwners/hovel/internal/domain/mesh"
 	domainmodule "github.com/Vibe-Pwners/hovel/internal/domain/module"
 )
 
@@ -79,6 +80,7 @@ type Module struct {
 	Discovery     Context
 	Planning      Context
 	StepContracts StepContractSet
+	Mesh          domainmesh.Descriptor
 }
 
 type Context struct {
@@ -162,6 +164,11 @@ const (
 	CapabilityPayloadArtifact CapabilityType = "PayloadArtifact"
 	CapabilityPayloadInstance CapabilityType = "PayloadInstance"
 	CapabilityTransport       CapabilityType = "TransportEndpoint"
+	CapabilityMeshNode        CapabilityType = "MeshNode"
+	CapabilityMeshRoute       CapabilityType = "MeshRoute"
+	CapabilityMeshDestination CapabilityType = "MeshDestination"
+	CapabilityMeshBeacon      CapabilityType = "MeshBeacon"
+	CapabilityMeshTrigger     CapabilityType = "MeshTrigger"
 	CapabilitySessionRef      CapabilityType = "SessionRef"
 	CapabilityCleanupHandle   CapabilityType = "CleanupHandle"
 )
@@ -312,7 +319,16 @@ func (c Catalog) Search(query string) []Module {
 	}
 	var modules []Module
 	for _, module := range c.List() {
-		haystack := strings.ToLower(module.ID + " " + ReferenceName(module.ID) + " " + module.Name + " " + module.Summary + " " + strings.Join(module.Tags, " ") + " " + contextSearchText(module.Discovery) + " " + contextSearchText(module.Planning))
+		haystack := strings.ToLower(strings.Join([]string{
+			module.ID,
+			ReferenceName(module.ID),
+			module.Name,
+			module.Summary,
+			strings.Join(module.Tags, " "),
+			contextSearchText(module.Discovery),
+			contextSearchText(module.Planning),
+			meshSearchText(module.Mesh),
+		}, " "))
 		if strings.Contains(haystack, query) {
 			modules = append(modules, module)
 		}
@@ -416,6 +432,7 @@ func normalizeModule(module Module) Module {
 	module.Discovery = cloneContext(module.Discovery)
 	module.Planning = cloneContext(module.Planning)
 	module.StepContracts = cloneStepContractSet(module.StepContracts)
+	module.Mesh = cloneMeshDescriptor(module.Mesh)
 	return module
 }
 
@@ -726,6 +743,7 @@ func cloneModule(module Module) Module {
 	module.Discovery = cloneContext(module.Discovery)
 	module.Planning = cloneContext(module.Planning)
 	module.StepContracts = cloneStepContractSet(module.StepContracts)
+	module.Mesh = cloneMeshDescriptor(module.Mesh)
 	return module
 }
 
@@ -762,6 +780,91 @@ func cloneStepContract(step StepContract) StepContract {
 		step.Cleanup = &cleanup
 	}
 	return step
+}
+
+func cloneMeshDescriptor(descriptor domainmesh.Descriptor) domainmesh.Descriptor {
+	descriptor.Capabilities = append([]string(nil), descriptor.Capabilities...)
+	if descriptor.Topology != nil {
+		topology := cloneMeshTopology(*descriptor.Topology)
+		descriptor.Topology = &topology
+	}
+	descriptor.Tasks = cloneMeshTaskSpecs(descriptor.Tasks)
+	descriptor.ListenerTypes = cloneMeshListenerSpecs(descriptor.ListenerTypes)
+	descriptor.Triggers = cloneMeshTriggers(descriptor.Triggers)
+	descriptor.Attributes = cloneAnyMap(descriptor.Attributes)
+	return descriptor
+}
+
+func cloneMeshTopology(topology domainmesh.Topology) domainmesh.Topology {
+	topology.Nodes = cloneMeshNodes(topology.Nodes)
+	topology.Links = cloneMeshLinks(topology.Links)
+	topology.Routes = cloneMeshRoutes(topology.Routes)
+	topology.Attributes = cloneAnyMap(topology.Attributes)
+	return topology
+}
+
+func cloneMeshNodes(nodes []domainmesh.Node) []domainmesh.Node {
+	out := make([]domainmesh.Node, 0, len(nodes))
+	for _, node := range nodes {
+		node.Labels = cloneAnyMap(node.Labels)
+		node.Attributes = cloneAnyMap(node.Attributes)
+		node.Capabilities = append([]string(nil), node.Capabilities...)
+		out = append(out, node)
+	}
+	return out
+}
+
+func cloneMeshLinks(links []domainmesh.Link) []domainmesh.Link {
+	out := make([]domainmesh.Link, 0, len(links))
+	for _, link := range links {
+		link.Attributes = cloneAnyMap(link.Attributes)
+		out = append(out, link)
+	}
+	return out
+}
+
+func cloneMeshRoutes(routes []domainmesh.Route) []domainmesh.Route {
+	out := make([]domainmesh.Route, 0, len(routes))
+	for _, route := range routes {
+		route.Nodes = append([]string(nil), route.Nodes...)
+		route.Links = append([]string(nil), route.Links...)
+		route.Attributes = cloneAnyMap(route.Attributes)
+		out = append(out, route)
+	}
+	return out
+}
+
+func cloneMeshTaskSpecs(tasks []domainmesh.TaskSpec) []domainmesh.TaskSpec {
+	out := make([]domainmesh.TaskSpec, 0, len(tasks))
+	for _, task := range tasks {
+		task.ConfigSchema = cloneAnyMap(task.ConfigSchema)
+		task.TargetScopes = append([]domainmesh.TargetScope(nil), task.TargetScopes...)
+		task.Capabilities = append([]string(nil), task.Capabilities...)
+		out = append(out, task)
+	}
+	return out
+}
+
+func cloneMeshListenerSpecs(specs []domainmesh.ListenerSpec) []domainmesh.ListenerSpec {
+	out := make([]domainmesh.ListenerSpec, 0, len(specs))
+	for _, spec := range specs {
+		spec.Deployments = append([]domainmesh.ListenerDeployment(nil), spec.Deployments...)
+		spec.ManagementModes = append([]domainmesh.ListenerManagement(nil), spec.ManagementModes...)
+		spec.Protocols = append([]string(nil), spec.Protocols...)
+		spec.ConfigSchema = cloneAnyMap(spec.ConfigSchema)
+		spec.Capabilities = append([]string(nil), spec.Capabilities...)
+		out = append(out, spec)
+	}
+	return out
+}
+
+func cloneMeshTriggers(triggers []domainmesh.Trigger) []domainmesh.Trigger {
+	out := make([]domainmesh.Trigger, 0, len(triggers))
+	for _, trigger := range triggers {
+		trigger.Config = cloneAnyMap(trigger.Config)
+		out = append(out, trigger)
+	}
+	return out
 }
 
 func cloneContext(context Context) Context {
@@ -830,6 +933,56 @@ func contextSearchText(context Context) string {
 	return strings.Join(parts, " ")
 }
 
+func meshSearchText(descriptor domainmesh.Descriptor) string {
+	parts := []string{
+		descriptor.Name,
+		descriptor.Summary,
+		strings.Join(descriptor.Capabilities, " "),
+	}
+	for _, task := range descriptor.Tasks {
+		parts = append(
+			parts,
+			string(task.Kind),
+			task.Summary,
+		)
+		for _, scope := range task.TargetScopes {
+			parts = append(parts, string(scope))
+		}
+		parts = append(parts, strings.Join(task.Capabilities, " "))
+	}
+	for _, listener := range descriptor.ListenerTypes {
+		parts = append(
+			parts,
+			listener.Kind,
+			listener.Summary,
+			strings.Join(listener.Protocols, " "),
+			strings.Join(listener.Capabilities, " "),
+		)
+		for _, deployment := range listener.Deployments {
+			parts = append(parts, string(deployment))
+		}
+		for _, management := range listener.ManagementModes {
+			parts = append(parts, string(management))
+		}
+	}
+	for _, trigger := range descriptor.Triggers {
+		parts = append(parts, trigger.Kind, string(trigger.ActionKind), trigger.NodeID, trigger.ListenerID)
+	}
+	if descriptor.Topology != nil {
+		for _, node := range descriptor.Topology.Nodes {
+			parts = append(
+				parts,
+				node.ID,
+				node.ListenerID,
+				node.Name,
+				node.Kind,
+				strings.Join(node.Capabilities, " "),
+			)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
 func cloneCapabilityRequirements(requirements []CapabilityRequirement) []CapabilityRequirement {
 	out := make([]CapabilityRequirement, 0, len(requirements))
 	for _, requirement := range requirements {
@@ -846,7 +999,26 @@ func cloneAnyMap(values map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(values))
 	for key, value := range values {
-		out[key] = value
+		out[key] = cloneAnyValue(value)
 	}
 	return out
+}
+
+func cloneAnyValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneAnyMap(value)
+	case []any:
+		out := make([]any, len(value))
+		for index, item := range value {
+			out[index] = cloneAnyValue(item)
+		}
+		return out
+	case map[string]string:
+		return cloneStringMap(value)
+	case []string:
+		return append([]string(nil), value...)
+	default:
+		return value
+	}
 }

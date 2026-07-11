@@ -2,7 +2,11 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "daemonrpc",
-    srcs = ["daemonrpc.go"],
+    srcs = [
+        "daemonrpc.go",
+        "mesh_book.go",
+        "mesh_bridge.go",
+    ],
     importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc",
     visibility = ["//:__subpackages__"],
     deps = [
@@ -10,6 +14,7 @@ go_library(
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
         "//internal/app/services",
+        "//internal/domain/mesh",
         "//internal/domain/operator",
         "//internal/domain/run",
     ],
@@ -25,6 +30,26 @@ go_test(
         "//internal/app/operatorsession",
         "//internal/app/services",
         "//internal/domain/event",
+        "//internal/domain/mesh",
+        "//internal/domain/operator",
+        "//internal/domain/run",
+        "//internal/testmodules/mockexploit",
+    ],
+)
+
+go_test(
+    name = "daemonrpc_race_test",
+    size = "small",
+    srcs = ["daemonrpc_test.go"],
+    embed = [":daemonrpc"],
+    race = "on",
+    tags = ["manual"],
+    deps = [
+        "//internal/app/operatorlog",
+        "//internal/app/operatorsession",
+        "//internal/app/services",
+        "//internal/domain/event",
+        "//internal/domain/mesh",
         "//internal/domain/operator",
         "//internal/domain/run",
         "//internal/testmodules/mockexploit",

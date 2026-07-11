@@ -19,12 +19,25 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
+	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
 	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 )
 
 const (
 	serviceURLPrefix = "/hovel.daemon.v1.DaemonService/"
+
+	rpcMethodDescribeMesh       = "DescribeMesh"
+	rpcMethodMeshTopology       = "MeshTopology"
+	rpcMethodListMeshBeacons    = "ListMeshBeacons"
+	rpcMethodListMeshListeners  = "ListMeshListeners"
+	rpcMethodStartMeshListener  = "StartMeshListener"
+	rpcMethodStopMeshListener   = "StopMeshListener"
+	rpcMethodRunMeshTask        = "RunMeshTask"
+	rpcMethodOpenMeshStream     = "OpenMeshStream"
+	rpcMethodOpenMeshBridge     = "OpenMeshBridge"
+	rpcMethodCloseMeshBridge    = "CloseMeshBridge"
+	rpcMethodListMeshOperations = "ListMeshOperations"
 )
 
 type RunMockExploitRequest struct {
@@ -273,6 +286,98 @@ type PayloadCommandRunRequest struct {
 
 type PayloadCommandRunResponse = run.PayloadCommandResult
 
+type MeshDescribeRequest struct {
+	ModuleID string               `json:"moduleId"`
+	Request  mesh.DescribeRequest `json:"request"`
+}
+
+type MeshDescribeResponse = mesh.Descriptor
+
+type MeshTopologyRequest struct {
+	ModuleID string               `json:"moduleId"`
+	Request  mesh.TopologyRequest `json:"request"`
+}
+
+type MeshTopologyResponse = mesh.Topology
+
+type MeshBeaconListRequest struct {
+	ModuleID string             `json:"moduleId"`
+	Request  mesh.BeaconRequest `json:"request"`
+}
+
+type MeshBeaconListResponse struct {
+	Beacons []mesh.Beacon `json:"beacons"`
+}
+
+type MeshListenerListRequest struct {
+	ModuleID string                   `json:"moduleId"`
+	Request  mesh.ListenerListRequest `json:"request"`
+}
+
+type MeshListenerListResponse struct {
+	Listeners []mesh.Listener `json:"listeners"`
+}
+
+type MeshListenerStartRequest struct {
+	ModuleID string                    `json:"moduleId"`
+	Request  mesh.ListenerStartRequest `json:"request"`
+}
+
+type MeshListenerStartResponse struct {
+	OperationID string        `json:"operationId"`
+	Listener    mesh.Listener `json:"listener"`
+}
+
+type MeshListenerStopRequest struct {
+	ModuleID string                   `json:"moduleId"`
+	Request  mesh.ListenerStopRequest `json:"request"`
+}
+
+type MeshListenerStopResponse struct {
+	OperationID string        `json:"operationId"`
+	Listener    mesh.Listener `json:"listener"`
+}
+
+type MeshTaskRunRequest struct {
+	ModuleID string           `json:"moduleId"`
+	Request  mesh.TaskRequest `json:"request"`
+}
+
+type MeshTaskRunResponse = mesh.TaskResult
+
+type MeshStreamOpenRequest struct {
+	ModuleID string             `json:"moduleId"`
+	Request  mesh.StreamRequest `json:"request"`
+}
+
+type MeshStreamOpenResponse = run.SessionRef
+
+type MeshBridgeOpenRequest struct {
+	ModuleID  string             `json:"moduleId"`
+	Request   mesh.StreamRequest `json:"request"`
+	LocalHost string             `json:"localHost,omitempty"`
+	LocalPort int                `json:"localPort,omitempty"`
+}
+
+type MeshBridgeOpenResponse struct {
+	OperationID  string `json:"operationId"`
+	SessionID    string `json:"sessionId"`
+	LocalHost    string `json:"localHost"`
+	LocalPort    int    `json:"localPort"`
+	LocalAddress string `json:"localAddress"`
+}
+
+type MeshBridgeCloseRequest struct {
+	OperationID string `json:"operationId,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
+}
+
+type MeshBridgeCloseResponse struct {
+	OperationID string             `json:"operationId,omitempty"`
+	SessionID   string             `json:"sessionId,omitempty"`
+	State       MeshOperationState `json:"state"`
+}
+
 type operatorClock interface {
 	Now() time.Time
 }
@@ -286,6 +391,8 @@ func (systemOperatorClock) Now() time.Time {
 type Server struct {
 	runs            services.RunService
 	moduleSessions  services.SessionBroker
+	meshOps         *MeshBook
+	meshBridges     *MeshBridgeManager
 	session         *operatorsession.Session
 	logs            *LogBroker
 	entities        map[string]operatordomain.Entity
@@ -302,12 +409,14 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 		return errors.New("daemon rpc mux is required")
 	}
 	rpcServer := &Server{
-		runs:       runs,
-		session:    operatorsession.New(),
-		logs:       NewLogBroker(),
-		entities:   map[string]operatordomain.Entity{},
-		launchKeys: launchkey.NewCoordinator(),
-		clock:      systemOperatorClock{},
+		runs:        runs,
+		meshOps:     NewMeshBook(),
+		meshBridges: NewMeshBridgeManager(),
+		session:     operatorsession.New(),
+		logs:        NewLogBroker(),
+		entities:    map[string]operatordomain.Entity{},
+		launchKeys:  launchkey.NewCoordinator(),
+		clock:       systemOperatorClock{},
 	}
 	for _, option := range options {
 		option(rpcServer)
@@ -355,6 +464,17 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[PayloadGenerateRequest, PayloadGenerateResponse](mux, "GeneratePayload", rpcServer.generatePayloadRPC)
 	registerUnary[PayloadCommandListRequest, PayloadCommandListResponse](mux, "ListPayloadCommands", rpcServer.listPayloadCommandsRPC)
 	registerUnary[PayloadCommandRunRequest, PayloadCommandRunResponse](mux, "RunPayloadCommand", rpcServer.runPayloadCommandRPC)
+	registerUnary[MeshDescribeRequest, MeshDescribeResponse](mux, rpcMethodDescribeMesh, rpcServer.describeMeshRPC)
+	registerUnary[MeshTopologyRequest, MeshTopologyResponse](mux, rpcMethodMeshTopology, rpcServer.meshTopologyRPC)
+	registerUnary[MeshBeaconListRequest, MeshBeaconListResponse](mux, rpcMethodListMeshBeacons, rpcServer.listMeshBeaconsRPC)
+	registerUnary[MeshListenerListRequest, MeshListenerListResponse](mux, rpcMethodListMeshListeners, rpcServer.listMeshListenersRPC)
+	registerUnary[MeshListenerStartRequest, MeshListenerStartResponse](mux, rpcMethodStartMeshListener, rpcServer.startMeshListenerRPC)
+	registerUnary[MeshListenerStopRequest, MeshListenerStopResponse](mux, rpcMethodStopMeshListener, rpcServer.stopMeshListenerRPC)
+	registerUnary[MeshTaskRunRequest, MeshTaskRunResponse](mux, rpcMethodRunMeshTask, rpcServer.runMeshTaskRPC)
+	registerUnary[MeshStreamOpenRequest, MeshStreamOpenResponse](mux, rpcMethodOpenMeshStream, rpcServer.openMeshStreamRPC)
+	registerUnary[MeshBridgeOpenRequest, MeshBridgeOpenResponse](mux, rpcMethodOpenMeshBridge, rpcServer.openMeshBridgeRPC)
+	registerUnary[MeshBridgeCloseRequest, MeshBridgeCloseResponse](mux, rpcMethodCloseMeshBridge, rpcServer.closeMeshBridgeRPC)
+	registerUnary[MeshOperationListRequest, MeshOperationListResponse](mux, rpcMethodListMeshOperations, rpcServer.listMeshOperationsRPC)
 	return nil
 }
 
@@ -421,6 +541,22 @@ func WithModuleSessions(sessions services.SessionBroker) ServerOption {
 	}
 }
 
+func WithMeshBook(book *MeshBook) ServerOption {
+	return func(server *Server) {
+		if book != nil {
+			server.meshOps = book
+		}
+	}
+}
+
+func WithMeshBridgeManager(manager *MeshBridgeManager) ServerOption {
+	return func(server *Server) {
+		if manager != nil {
+			server.meshBridges = manager
+		}
+	}
+}
+
 func WithOperatorClock(clock operatorClock) ServerOption {
 	return func(server *Server) {
 		if clock != nil {
@@ -433,6 +569,31 @@ func WithLaunchKeyPolicy(policy operatordomain.LaunchKeyPolicy) ServerOption {
 	return func(server *Server) {
 		server.launchKeyPolicy = operatordomain.NormalizeLaunchKeyPolicy(policy)
 	}
+}
+
+func (s *Server) meshBook() *MeshBook {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.meshOps == nil {
+		s.meshOps = NewMeshBook()
+	}
+	return s.meshOps
+}
+
+func (s *Server) meshBridgeManager() *MeshBridgeManager {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.meshBridges == nil {
+		s.meshBridges = NewMeshBridgeManager()
+	}
+	return s.meshBridges
+}
+
+func (s *Server) now() time.Time {
+	if s.clock == nil {
+		return time.Now().UTC()
+	}
+	return s.clock.Now().UTC()
 }
 
 func (s *Server) RunMockExploit(req RunMockExploitRequest, resp *RunMockExploitResponse) error {
@@ -500,6 +661,152 @@ func (s *Server) runPayloadCommandRPC(ctx context.Context, req PayloadCommandRun
 		ModuleID:  req.ModuleID,
 		Request:   req.Request,
 	})
+}
+
+func (s *Server) describeMeshRPC(ctx context.Context, req MeshDescribeRequest) (MeshDescribeResponse, error) {
+	return s.runs.DescribeMesh(ctx, req.ModuleID, req.Request)
+}
+
+func (s *Server) meshTopologyRPC(ctx context.Context, req MeshTopologyRequest) (MeshTopologyResponse, error) {
+	return s.runs.MeshTopology(ctx, req.ModuleID, req.Request)
+}
+
+func (s *Server) listMeshBeaconsRPC(
+	ctx context.Context,
+	req MeshBeaconListRequest,
+) (MeshBeaconListResponse, error) {
+	beacons, err := s.runs.ListMeshBeacons(ctx, req.ModuleID, req.Request)
+	if err != nil {
+		return MeshBeaconListResponse{}, err
+	}
+	return MeshBeaconListResponse{Beacons: beacons}, nil
+}
+
+func (s *Server) listMeshListenersRPC(
+	ctx context.Context,
+	req MeshListenerListRequest,
+) (MeshListenerListResponse, error) {
+	listeners, err := s.runs.ListMeshListeners(ctx, req.ModuleID, req.Request)
+	if err != nil {
+		return MeshListenerListResponse{}, err
+	}
+	return MeshListenerListResponse{Listeners: listeners}, nil
+}
+
+func (s *Server) startMeshListenerRPC(
+	ctx context.Context,
+	req MeshListenerStartRequest,
+) (MeshListenerStartResponse, error) {
+	operation := s.meshBook().StartListener(
+		req.ModuleID,
+		MeshListenerActionStart,
+		req.Request.ListenerID,
+		s.now(),
+	)
+	listener, err := s.runs.StartMeshListener(ctx, req.ModuleID, req.Request)
+	if err != nil {
+		s.meshBook().Fail(operation.ID, err, s.now())
+		return MeshListenerStartResponse{}, err
+	}
+	s.meshBook().CompleteListener(operation.ID, listener, s.now())
+	return MeshListenerStartResponse{OperationID: operation.ID, Listener: listener}, nil
+}
+
+func (s *Server) stopMeshListenerRPC(
+	ctx context.Context,
+	req MeshListenerStopRequest,
+) (MeshListenerStopResponse, error) {
+	operation := s.meshBook().StartListener(
+		req.ModuleID,
+		MeshListenerActionStop,
+		req.Request.ListenerID,
+		s.now(),
+	)
+	listener, err := s.runs.StopMeshListener(ctx, req.ModuleID, req.Request)
+	if err != nil {
+		s.meshBook().Fail(operation.ID, err, s.now())
+		return MeshListenerStopResponse{}, err
+	}
+	s.meshBook().CompleteListener(operation.ID, listener, s.now())
+	return MeshListenerStopResponse{OperationID: operation.ID, Listener: listener}, nil
+}
+
+func (s *Server) runMeshTaskRPC(ctx context.Context, req MeshTaskRunRequest) (MeshTaskRunResponse, error) {
+	operation := s.meshBook().StartTask(req.ModuleID, req.Request, s.now())
+	result, err := s.runs.RunMeshTask(ctx, req.ModuleID, req.Request)
+	if err != nil {
+		s.meshBook().Fail(operation.ID, err, s.now())
+		return MeshTaskRunResponse{}, err
+	}
+	s.meshBook().CompleteTask(operation.ID, result, s.now())
+	return result, nil
+}
+
+func (s *Server) openMeshStreamRPC(
+	ctx context.Context,
+	req MeshStreamOpenRequest,
+) (MeshStreamOpenResponse, error) {
+	operation := s.meshBook().StartStream(req.ModuleID, req.Request, s.now())
+	session, err := s.runs.OpenMeshStream(ctx, req.ModuleID, req.Request)
+	if err != nil {
+		s.meshBook().Fail(operation.ID, err, s.now())
+		return run.SessionRef{}, err
+	}
+	s.meshBook().ActivateStream(operation.ID, session, s.now())
+	return session, nil
+}
+
+func (s *Server) openMeshBridgeRPC(
+	ctx context.Context,
+	req MeshBridgeOpenRequest,
+) (MeshBridgeOpenResponse, error) {
+	if s.moduleSessions == nil {
+		return MeshBridgeOpenResponse{}, errors.New("session broker is not configured")
+	}
+	return OpenMeshBridge(
+		ctx,
+		MeshBridgeOpenArgs{
+			ModuleID: req.ModuleID,
+			Request:  req.Request,
+			Host:     req.LocalHost,
+			Port:     req.LocalPort,
+			Runs:     s.runs,
+			Sessions: s.moduleSessions,
+			Book:     s.meshBook(),
+			Bridges:  s.meshBridgeManager(),
+			Now:      s.now,
+		},
+	)
+}
+
+func (s *Server) closeMeshBridgeRPC(
+	ctx context.Context,
+	req MeshBridgeCloseRequest,
+) (MeshBridgeCloseResponse, error) {
+	operationID := strings.TrimSpace(req.OperationID)
+	sessionID := strings.TrimSpace(req.SessionID)
+	if (operationID == "") == (sessionID == "") {
+		return MeshBridgeCloseResponse{}, errors.New("exactly one mesh bridge operation id or session id is required")
+	}
+	bridge, ok := s.meshBridgeManager().Find(operationID, sessionID)
+	if !ok {
+		return MeshBridgeCloseResponse{}, errors.New("mesh bridge does not exist")
+	}
+	if err := bridge.Close(ctx); err != nil {
+		return MeshBridgeCloseResponse{}, err
+	}
+	return MeshBridgeCloseResponse{
+		OperationID: bridge.OperationID(),
+		SessionID:   bridge.SessionID(),
+		State:       MeshOperationStateClosed,
+	}, nil
+}
+
+func (s *Server) listMeshOperationsRPC(
+	_ context.Context,
+	req MeshOperationListRequest,
+) (MeshOperationListResponse, error) {
+	return MeshOperationListResponse{Operations: s.meshBook().List(req)}, nil
 }
 
 type SessionReadRequest struct {
@@ -583,6 +890,9 @@ func (s *Server) ReadSession(req SessionReadRequest, resp *SessionChunk) error {
 		Data:      append([]byte(nil), chunk.Data...),
 		Closed:    chunk.Closed,
 	}
+	if resp.Closed {
+		s.meshBook().CloseSession(req.SessionID, s.now())
+	}
 	return nil
 }
 
@@ -600,6 +910,9 @@ func (s *Server) readSessionRPC(ctx context.Context, req SessionReadRequest) (Se
 		SessionID: chunk.SessionID,
 		Data:      append([]byte(nil), chunk.Data...),
 		Closed:    chunk.Closed,
+	}
+	if resp.Closed {
+		s.meshBook().CloseSession(req.SessionID, s.now())
 	}
 	return resp, nil
 }
@@ -620,6 +933,9 @@ func (s *Server) TailSession(req SessionTailRequest, resp *SessionChunk) error {
 		SessionID: chunk.SessionID,
 		Data:      append([]byte(nil), chunk.Data...),
 		Closed:    chunk.Closed,
+	}
+	if resp.Closed {
+		s.meshBook().CloseSession(req.SessionID, s.now())
 	}
 	return nil
 }
@@ -642,6 +958,9 @@ func (s *Server) tailSessionRPC(ctx context.Context, req SessionTailRequest) (Se
 		Data:      append([]byte(nil), chunk.Data...),
 		Closed:    chunk.Closed,
 	}
+	if resp.Closed {
+		s.meshBook().CloseSession(req.SessionID, s.now())
+	}
 	return resp, nil
 }
 
@@ -663,14 +982,22 @@ func (s *Server) CloseSession(req SessionCloseRequest, resp *EmptyResponse) erro
 	if s.moduleSessions == nil {
 		return errors.New("session broker is not configured")
 	}
-	return s.moduleSessions.CloseSession(context.Background(), req.SessionID)
+	if err := s.moduleSessions.CloseSession(context.Background(), req.SessionID); err != nil {
+		return err
+	}
+	s.meshBook().CloseSession(req.SessionID, s.now())
+	return nil
 }
 
 func (s *Server) closeSessionRPC(ctx context.Context, req SessionCloseRequest) (EmptyResponse, error) {
 	if s.moduleSessions == nil {
 		return EmptyResponse{}, errors.New("session broker is not configured")
 	}
-	return EmptyResponse{}, s.moduleSessions.CloseSession(ctx, req.SessionID)
+	if err := s.moduleSessions.CloseSession(ctx, req.SessionID); err != nil {
+		return EmptyResponse{}, err
+	}
+	s.meshBook().CloseSession(req.SessionID, s.now())
+	return EmptyResponse{}, nil
 }
 
 func (s *Server) ListSessionCommands(req SessionCommandListRequest, resp *SessionCommandListResponse) error {
@@ -1611,13 +1938,6 @@ func launchKeyPolicyResponse(operation string, policy operatordomain.LaunchKeyPo
 	}
 }
 
-func (s *Server) now() time.Time {
-	if s.clock == nil {
-		return time.Now().UTC()
-	}
-	return s.clock.Now().UTC()
-}
-
 func operatorEntityFromDomain(entity operatordomain.Entity) OperatorEntity {
 	return OperatorEntity{
 		ID:           entity.ID,
@@ -1695,6 +2015,83 @@ func (c *Client) ListPayloadCommands(ctx context.Context, req PayloadCommandList
 
 func (c *Client) RunPayloadCommand(ctx context.Context, req PayloadCommandRunRequest) (PayloadCommandRunResponse, error) {
 	return invoke[PayloadCommandRunRequest, PayloadCommandRunResponse](c, ctx, "RunPayloadCommand", req)
+}
+
+func (c *Client) DescribeMesh(
+	ctx context.Context,
+	req MeshDescribeRequest,
+) (MeshDescribeResponse, error) {
+	return invoke[MeshDescribeRequest, MeshDescribeResponse](c, ctx, rpcMethodDescribeMesh, req)
+}
+
+func (c *Client) MeshTopology(
+	ctx context.Context,
+	req MeshTopologyRequest,
+) (MeshTopologyResponse, error) {
+	return invoke[MeshTopologyRequest, MeshTopologyResponse](c, ctx, rpcMethodMeshTopology, req)
+}
+
+func (c *Client) ListMeshBeacons(
+	ctx context.Context,
+	req MeshBeaconListRequest,
+) (MeshBeaconListResponse, error) {
+	return invoke[MeshBeaconListRequest, MeshBeaconListResponse](c, ctx, rpcMethodListMeshBeacons, req)
+}
+
+func (c *Client) ListMeshListeners(
+	ctx context.Context,
+	req MeshListenerListRequest,
+) (MeshListenerListResponse, error) {
+	return invoke[MeshListenerListRequest, MeshListenerListResponse](c, ctx, rpcMethodListMeshListeners, req)
+}
+
+func (c *Client) StartMeshListener(
+	ctx context.Context,
+	req MeshListenerStartRequest,
+) (MeshListenerStartResponse, error) {
+	return invoke[MeshListenerStartRequest, MeshListenerStartResponse](c, ctx, rpcMethodStartMeshListener, req)
+}
+
+func (c *Client) StopMeshListener(
+	ctx context.Context,
+	req MeshListenerStopRequest,
+) (MeshListenerStopResponse, error) {
+	return invoke[MeshListenerStopRequest, MeshListenerStopResponse](c, ctx, rpcMethodStopMeshListener, req)
+}
+
+func (c *Client) RunMeshTask(
+	ctx context.Context,
+	req MeshTaskRunRequest,
+) (MeshTaskRunResponse, error) {
+	return invoke[MeshTaskRunRequest, MeshTaskRunResponse](c, ctx, rpcMethodRunMeshTask, req)
+}
+
+func (c *Client) OpenMeshStream(
+	ctx context.Context,
+	req MeshStreamOpenRequest,
+) (MeshStreamOpenResponse, error) {
+	return invoke[MeshStreamOpenRequest, MeshStreamOpenResponse](c, ctx, rpcMethodOpenMeshStream, req)
+}
+
+func (c *Client) OpenMeshBridge(
+	ctx context.Context,
+	req MeshBridgeOpenRequest,
+) (MeshBridgeOpenResponse, error) {
+	return invoke[MeshBridgeOpenRequest, MeshBridgeOpenResponse](c, ctx, rpcMethodOpenMeshBridge, req)
+}
+
+func (c *Client) CloseMeshBridge(
+	ctx context.Context,
+	req MeshBridgeCloseRequest,
+) (MeshBridgeCloseResponse, error) {
+	return invoke[MeshBridgeCloseRequest, MeshBridgeCloseResponse](c, ctx, rpcMethodCloseMeshBridge, req)
+}
+
+func (c *Client) ListMeshOperations(
+	ctx context.Context,
+	req MeshOperationListRequest,
+) (MeshOperationListResponse, error) {
+	return invoke[MeshOperationListRequest, MeshOperationListResponse](c, ctx, rpcMethodListMeshOperations, req)
 }
 
 func (c *Client) ListSessions(ctx context.Context) ([]SessionRef, error) {

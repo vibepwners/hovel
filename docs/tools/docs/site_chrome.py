@@ -19,6 +19,7 @@ BOOK_NAV = [
             ("Domain Model", "domain-model.html"),
             ("Modules and Services", "modules-services.html"),
             ("Providers, Artifacts, Logging", "providers-artifacts.html"),
+            ("Mesh", "mesh.html"),
             ("Operations, Chains, Throws", "chains-runs.html"),
             ("Operator Workflows", "operator-workflows.html"),
             ("Front Ends", "front-ends.html"),

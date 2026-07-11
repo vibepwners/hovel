@@ -95,6 +95,11 @@ while True:
     elif method == "shutdown":
         send({"jsonrpc": "2.0", "id": request_id, "result": {"status": "ok"}})
         break
+    else:
+        send({"jsonrpc": "2.0", "id": request_id, "error": {
+            "code": -32601,
+            "message": f"unknown method {method}"
+        }})
 PY
   chmod +x "$HOVEL_DEMO_PACKAGE/bin/linked-demo"
 }

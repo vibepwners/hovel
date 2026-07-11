@@ -354,6 +354,7 @@ Settings / Theme Selector
 
         <h2>REST/OpenAPI</h2>
         <p>No public REST adapter is currently implemented. The source tree does have an OpenAPI artifact for the local daemon RPC because that contract is HTTP/JSON and stable; see <a href="daemon-rpc.html">Daemon RPC Contract</a>. A future public REST API should be a separate adapter over application services and should be generated from source-backed types where possible.</p>
+        <p>A local web application, Elixir control plane, or other trusted client can already generate a client from the daemon OpenAPI document. In particular, Mesh listening posts use stable list/start/stop methods and daemon bookkeeping rather than requiring the front end to import a Mesh SDK or speak provider JSON-RPC. A remotely exposed API still needs its own authentication, authorization, and transport-security adapter; the local daemon listener is not that public boundary.</p>
         <p>REST should not block the first useful command/CLI and event-stream loop. It may ship in the first alpha if needed for MCP or external automation, but it must remain an adapter over application services.</p>
         <p>Primary uses:</p>
         <ol>
@@ -363,7 +364,7 @@ Settings / Theme Selector
           <li>Future web UI.</li>
           <li>Chain-file execution from scripts.</li>
           <li>Service lifecycle management.</li>
-          <li>Listener and session inspection.</li>
+          <li>Mesh listening-post lifecycle plus listener and session inspection.</li>
         </ol>
         <p>Recommended API groups:</p>
 <pre data-lang="api"><code>/api/v1/modules

@@ -23,6 +23,7 @@ go_binary(
 
 go_test(
     name = "mcpagent_test",
+    size = "small",
     srcs = ["harness_test.go"],
     embed = [":mcpagent_lib"],
     deps = ["@com_github_modelcontextprotocol_go_sdk//mcp"],

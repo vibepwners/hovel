@@ -10,6 +10,7 @@ go_library(
 
 go_test(
     name = "hoveltest_test",
+    size = "small",
     srcs = ["payload_provider_test.go"],
     embed = [":hoveltest"],
     deps = [

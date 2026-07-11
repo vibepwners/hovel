@@ -8,6 +8,7 @@ See: spec/verification/TEST-011-payload-pytest-suite.md
 
 from __future__ import annotations
 
+import socket
 import struct
 
 import pytest
@@ -176,15 +177,18 @@ class TestNaClE2E:
             )
 
         port = reserve_tcp_port()
-        config = struct.pack("<H", port) + E2E_AUTH_KEY
+        server_config = struct.pack("<H", port) + E2E_AUTH_KEY
+        client_config = (
+            struct.pack("<H", port) + socket.inet_aton("127.0.0.1") + E2E_AUTH_KEY
+        )
         try:
             result = run_blob_pair(
                 server_blob,
                 client_blob,
                 runner_path,
                 runner_type,
-                server_config=config,
-                client_config=config,
+                server_config=server_config,
+                client_config=client_config,
                 timeout=E2E_TIMEOUT,
             )
         except RuntimeError as e:

@@ -3,12 +3,24 @@ package hovel
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	meshRPCDescribeMethod      = "mesh.describe"
+	meshRPCTopologyMethod      = "mesh.topology"
+	meshRPCBeaconsMethod       = "mesh.beacons"
+	meshRPCListenersMethod     = "mesh.listeners"
+	meshRPCListenerStartMethod = "mesh.listener.start"
+	meshRPCListenerStopMethod  = "mesh.listener.stop"
+	meshRPCTaskMethod          = "mesh.task"
+	meshRPCOpenStreamMethod    = "mesh.open_stream"
 )
 
 // logRecord is the wire shape of a "module/log" notification.
@@ -69,21 +81,29 @@ func ServeIO(module Module, in io.Reader, out io.Writer) error {
 		}
 		params := append(json.RawMessage(nil), message["params"]...)
 		id := append(json.RawMessage(nil), idRaw...)
+		if method == "shutdown" {
+			requests.Wait()
+			s.handleRequest(id, method, params)
+			return nil
+		}
 		requests.Add(1)
 		go func() {
 			defer requests.Done()
-			result, derr := s.dispatch(method, params)
-			if derr != nil {
-				logSDKError("write error response", s.writer.write(errorResponse(id, derr)))
-			} else {
-				logSDKError("write response", s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result}))
-			}
+			s.handleRequest(id, method, params)
 		}()
-		if method == "shutdown" {
-			requests.Wait()
-			return nil
-		}
 	}
+}
+
+func (s *server) handleRequest(id json.RawMessage, method string, params json.RawMessage) {
+	result, err := s.dispatch(method, params)
+	if err != nil {
+		logSDKError("write error response", s.writer.write(errorResponse(id, err)))
+		return
+	}
+	logSDKError(
+		"write response",
+		s.writer.write(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": result}),
+	)
 }
 
 func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
@@ -110,6 +130,22 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.listPayloadCommands(params)
 	case "payload.command.run":
 		return s.runPayloadCommand(params)
+	case meshRPCDescribeMethod:
+		return s.describeMesh(params)
+	case meshRPCTopologyMethod:
+		return s.meshTopology(params)
+	case meshRPCBeaconsMethod:
+		return s.listMeshBeacons(params)
+	case meshRPCListenersMethod:
+		return s.listMeshListeners(params)
+	case meshRPCListenerStartMethod:
+		return s.startMeshListener(params)
+	case meshRPCListenerStopMethod:
+		return s.stopMeshListener(params)
+	case meshRPCTaskMethod:
+		return s.runMeshTask(params)
+	case meshRPCOpenStreamMethod:
+		return s.openMeshStream(params)
 	case "step.describe":
 		return s.describeSteps()
 	case "step.prepare":
@@ -227,6 +263,62 @@ func (s *server) payloadCommandProvider() (PayloadCommandProvider, error) {
 	provider, ok := s.module.(PayloadCommandProvider)
 	if !ok {
 		return nil, fmt.Errorf("module %q is not a payload command provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func (s *server) meshDescriber() (MeshDescriber, error) {
+	provider, ok := s.module.(MeshDescriber)
+	if !ok {
+		return nil, fmt.Errorf("module %q is not a mesh provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
+func (s *server) meshTopologyProvider() (MeshTopologyProvider, error) {
+	provider, ok := s.module.(MeshTopologyProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCTopologyMethod)
+	}
+	return provider, nil
+}
+
+func (s *server) meshBeaconProvider() (MeshBeaconProvider, error) {
+	provider, ok := s.module.(MeshBeaconProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCBeaconsMethod)
+	}
+	return provider, nil
+}
+
+func (s *server) meshListenerProvider() (MeshListenerProvider, error) {
+	provider, ok := s.module.(MeshListenerProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCListenersMethod)
+	}
+	return provider, nil
+}
+
+func (s *server) meshListenerLifecycleProvider(method string) (MeshListenerLifecycleProvider, error) {
+	provider, ok := s.module.(MeshListenerLifecycleProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, method)
+	}
+	return provider, nil
+}
+
+func (s *server) meshTaskProvider() (MeshTaskProvider, error) {
+	provider, ok := s.module.(MeshTaskProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCTaskMethod)
+	}
+	return provider, nil
+}
+
+func (s *server) meshStreamProvider() (MeshStreamProvider, error) {
+	provider, ok := s.module.(MeshStreamProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCOpenStreamMethod)
 	}
 	return provider, nil
 }
@@ -396,6 +488,228 @@ func (s *server) runPayloadCommand(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return provider.RunPayloadCommand(req)
+}
+
+func (s *server) describeMesh(params json.RawMessage) (any, error) {
+	provider, err := s.meshDescriber()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshDescribeRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.DescribeMesh(req)
+}
+
+func (s *server) meshTopology(params json.RawMessage) (any, error) {
+	provider, err := s.meshTopologyProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshTopologyRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	return provider.MeshTopology(req)
+}
+
+func (s *server) listMeshBeacons(params json.RawMessage) (any, error) {
+	provider, err := s.meshBeaconProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshBeaconRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	beacons, err := provider.ListMeshBeacons(req)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"beacons": beacons}, nil
+}
+
+func (s *server) listMeshListeners(params json.RawMessage) (any, error) {
+	provider, err := s.meshListenerProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshListenerListRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	req.ListenerID = strings.TrimSpace(req.ListenerID)
+	req.State = MeshListenerState(strings.TrimSpace(string(req.State)))
+	listeners, err := provider.ListMeshListeners(req)
+	if err != nil {
+		return nil, err
+	}
+	if listeners == nil {
+		listeners = []MeshListener{}
+	}
+	return map[string]any{"listeners": listeners}, nil
+}
+
+func (s *server) startMeshListener(params json.RawMessage) (any, error) {
+	provider, err := s.meshListenerLifecycleProvider(meshRPCListenerStartMethod)
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshListenerStartRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	req.ListenerID = strings.TrimSpace(req.ListenerID)
+	if req.ListenerID == "" {
+		return nil, fmt.Errorf("%s listenerId is required", meshRPCListenerStartMethod)
+	}
+	req.Deployment = MeshListenerDeployment(strings.TrimSpace(string(req.Deployment)))
+	req.Management = MeshListenerManagement(strings.TrimSpace(string(req.Management)))
+	listener, err := provider.StartMeshListener(req)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeMeshListenerResult(req.ListenerID, listener)
+}
+
+func (s *server) stopMeshListener(params json.RawMessage) (any, error) {
+	provider, err := s.meshListenerLifecycleProvider(meshRPCListenerStopMethod)
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshListenerStopRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	req.ListenerID = strings.TrimSpace(req.ListenerID)
+	if req.ListenerID == "" {
+		return nil, fmt.Errorf("%s listenerId is required", meshRPCListenerStopMethod)
+	}
+	listener, err := provider.StopMeshListener(req)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeMeshListenerResult(req.ListenerID, listener)
+}
+
+func normalizeMeshListenerResult(listenerID string, listener MeshListener) (MeshListener, error) {
+	listener.ID = strings.TrimSpace(listener.ID)
+	if listener.ID == "" {
+		return MeshListener{}, errors.New("mesh listener result id is required")
+	}
+	if listener.ID != listenerID {
+		return MeshListener{}, fmt.Errorf(
+			"mesh listener result id %q does not match requested id %q",
+			listener.ID,
+			listenerID,
+		)
+	}
+	return listener, nil
+}
+
+func (s *server) runMeshTask(params json.RawMessage) (any, error) {
+	provider, err := s.meshTaskProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshTaskRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	ctx := s.meshContext(
+		req.RunID,
+		"",
+		req.Target,
+		req.NodeID,
+		req.DestinationHost,
+		req.Agent,
+	)
+	result, err := provider.RunMeshTask(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	result.Status = MeshTaskStatus(strings.TrimSpace(string(result.Status)))
+	if result.Status == "" {
+		result.Status = MeshTaskStatusSucceeded
+	}
+	result.Sessions = mergeSessionRefs(result.Sessions, ctx.sessions.refs())
+	return result, nil
+}
+
+func (s *server) openMeshStream(params json.RawMessage) (any, error) {
+	provider, err := s.meshStreamProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshStreamRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	ctx := s.meshContext(
+		req.RunID,
+		req.ModuleID,
+		req.Target,
+		req.NodeID,
+		req.DestinationHost,
+		req.Agent,
+	)
+	return provider.OpenMeshStream(ctx, req)
+}
+
+func (s *server) meshContext(
+	runID string,
+	moduleID string,
+	target string,
+	nodeID string,
+	destinationHost string,
+	agent *AgentContext,
+) *MeshContext {
+	info := s.module.Info()
+	if strings.TrimSpace(runID) == "" {
+		runID = defaultMeshRunID
+	}
+	if strings.TrimSpace(moduleID) == "" {
+		moduleID = meshModuleID(info)
+	}
+	if strings.TrimSpace(target) == "" {
+		target = destinationHost
+	}
+	if strings.TrimSpace(target) == "" {
+		target = nodeID
+	}
+	scope := sessionScope{
+		runID:    runID,
+		moduleID: moduleID,
+		target:   target,
+	}
+	return &MeshContext{
+		RunID:    runID,
+		ModuleID: moduleID,
+		Target:   target,
+		NodeID:   nodeID,
+		Agent:    agent,
+		Log:      &Logger{name: info.Name, emit: s.emitLog},
+		sessions: s.sessions.forRun(scope),
+	}
+}
+
+func mergeSessionRefs(explicit []SessionRef, opened []SessionRef) []SessionRef {
+	merged := append([]SessionRef(nil), explicit...)
+	seen := make(map[string]bool, len(merged)+len(opened))
+	for _, session := range merged {
+		if session.ID != "" {
+			seen[session.ID] = true
+		}
+	}
+	for _, session := range opened {
+		if session.ID == "" || seen[session.ID] {
+			continue
+		}
+		seen[session.ID] = true
+		merged = append(merged, session)
+	}
+	return merged
 }
 
 func requirementsToRPC(requirements []Requirement) []map[string]any {

@@ -67,6 +67,8 @@ filegroup(
 test_suite(
     name = "bazel_test_suite",
     tests = [
+        "//modules/picblobs/mbed:compile_mbed_os_test",
+        "//modules/picblobs/mbed:materialize_blobs_test",
         "//modules/picblobs/provider:provider_test",
         "//modules/picblobs/python:pytest_suite",
         "//modules/picblobs/python:sync_test",

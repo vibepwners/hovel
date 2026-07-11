@@ -6,6 +6,10 @@ and keep the public boundary small: subclass `HovelModule`, describe cheap
 metadata/configuration, then put target interaction in `run` or explicit step
 hooks.
 
+For a complete Mesh development path—capability design, tasking, streams,
+listening posts, daemon calls, and routing an existing module through a local
+bridge—see the [Mesh Provider Development Guide](../../docs/site/spec/mesh-development.html).
+
 ## Module Shape
 
 ```python
@@ -53,6 +57,30 @@ Rules that matter in real integrations:
 | Line-oriented post-exploitation sessions | `LineShellSession` opened with `await ctx.open_session(...)`. |
 | Durable installed payload inventory | `InstalledPayload` and `PayloadProviderRecord` in a result. |
 | Typed chain steps | Override `describe_steps`, `prepare_step`, `execute_step`, and `cleanup_step`. |
+| Provider-owned node operations | Override the Mesh methods you support, including optional listener list/start/stop lifecycle hooks. |
+
+Mesh is the SDK contract for one-node or routed node-operation providers. A
+Mesh may expose topology, routes, beacons, triggers, survey/upload/execute/
+command/load tasks, and provider-defined protocol flows. The daemon can bridge
+TCP streams or UDP datagrams to a loopback socket; ICMP, raw IP, and custom
+protocols remain provider task/session contracts unless Hovel grows an explicit
+local adapter. UDP session flows must include
+`SESSION_CAPABILITY_DATAGRAM` in their capabilities and preserve exactly one
+datagram per non-empty `write` call and `read` result; one bridge keeps one
+local UDP peer. The Python SDK only dispatches those contracts; provider code
+owns the routing/task behavior, and Hovel guardrails still live above the SDK.
+Override only the methods your provider supports. A minimal stream Mesh can
+override `describe_mesh` and `open_mesh_stream`; a deeper implant/stager Mesh
+can also override topology, beacons, triggers in the descriptor, listener
+lifecycle, and tasking. `start_mesh_listener` uses a caller-selected stable ID;
+its provider-specific config is write-only and must not be copied into returned
+`MeshListener` values, logs, or audit records. Long-lived listeners must remain
+durable across individual RPC calls because the SDK adapter is not a listener
+host.
+Use `MESH_TASK_UPLOAD_EXECUTE` for implant copy-then-run flows and
+`MESH_TASK_LOAD` for provider-native implant/component loaders. Requests can
+carry inline bytes in `input_data`/`input_encoding` or provider-defined artifact
+references in `config`.
 
 Python does not currently dispatch payload-provider RPC methods such as
 `list_payloads` or `generate_payload`. Use Go for provider modules today, or

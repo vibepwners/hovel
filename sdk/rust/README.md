@@ -1,8 +1,12 @@
 # Rust SDK
 
 The Rust SDK is intentionally small and dependency-light. Use it when you want a
-native module binary with the core Hovel module lifecycle, line sessions, and
-explicit installed-payload result records.
+native module binary with the core Hovel module lifecycle, line sessions,
+explicit installed-payload result records, and Mesh provider hooks.
+
+For a complete Mesh development path—capability design, tasking, streams,
+listening posts, daemon calls, and routing an existing module through a local
+bridge—see the [Mesh Provider Development Guide](../../docs/site/spec/mesh-development.html).
 
 The crate name is `hovel` inside this repository.
 
@@ -23,6 +27,7 @@ impl Module for MyModule {
             summary: "Run a scoped module action.".into(),
             description: String::new(),
             tags: vec!["example".into(), "rust".into()],
+            discovery_context: Vec::new(),
         }
     }
 
@@ -63,11 +68,35 @@ Rules that matter in real integrations:
 | Config requirements | `Requirement::new` in `Schema`. |
 | Line-oriented post-exploitation sessions | `LineShellSession` opened with `ctx.open_session(...)`. |
 | Durable installed payload inventory | `InstalledPayloadDescriptor`, `PayloadProviderRecord`, and `Outcome::with_installed_payload`. |
+| Node Mesh provider | Override the `Module` Mesh methods you support, including optional listener list/start/stop lifecycle hooks. |
 
-Rust does not currently dispatch `step.*` methods or payload-provider RPC
-methods. If you need those extension points today, use the Go SDK. Rust modules
-can still return installed-payload descriptors when they install or observe
-durable target-side payloads.
+Rust dispatches Mesh RPC methods for topology, beacons, tasks, and routed
+protocol flows. Mesh task specs can advertise `target_scopes` (`node`, `route`,
+or `destination`), and task/stream requests carry `destination_host`, optional
+`destination_port`, and provider-defined `protocol` for systems reachable
+through a Mesh node. That supports pivoted upload/execute, daemon-owned TCP/UDP
+local bridge workflows, or provider-native ICMP/raw/custom protocol flows
+without making the Mesh provider implement the exploit module itself.
+For UDP bridges, include `SESSION_CAPABILITY_DATAGRAM` in the returned
+session's capabilities and preserve one datagram per non-empty `Session::write`
+call and `Session::read` result. One bridge keeps one local UDP peer.
+Override only the `Module` Mesh methods your provider supports. A minimal
+stream Mesh can implement `describe_mesh` and `open_mesh_stream`; a deeper
+implant/stager Mesh can also implement topology, beacons, and tasking.
+Listener starts use a caller-selected stable ID for idempotent retries. Their
+provider-specific config is write-only and must not be copied into returned
+`MeshListener` values, logs, or audit records. Long-lived listeners must remain
+durable across individual RPC calls because the SDK adapter is not a listener
+host.
+Use `MESH_TASK_UPLOAD_EXECUTE` for implant copy-then-run flows and
+`MESH_TASK_LOAD` for provider-native implant/component loaders. Requests can
+carry inline bytes in `input_data`/`input_encoding` or provider-defined artifact
+references in `config`.
+
+Rust does not currently dispatch `step.*` methods or payload-provider
+RPC methods. If you need those extension points today, use the Go SDK. Rust
+modules can still return installed-payload descriptors when they install or
+observe durable target-side payloads.
 
 ## Test Loop
 

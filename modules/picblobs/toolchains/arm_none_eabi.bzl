@@ -141,7 +141,7 @@ filegroup(
         "{triple}/bin/**",
         "{triple}/include/**",
         "{triple}/lib/**",
-    ]),
+    ], allow_empty = True),
 )
 
 filegroup(
@@ -152,7 +152,12 @@ filegroup(
         "libexec/gcc/{triple}/**",
         "{triple}/bin/**",
         "{triple}/include/**",
-    ]),
+    ], allow_empty = True),
+)
+
+filegroup(
+    name = "gcc_binary",
+    srcs = ["bin/{triple}-gcc"],
 )
 
 filegroup(
@@ -163,7 +168,7 @@ filegroup(
         "libexec/gcc/{triple}/**",
         "{triple}/bin/**",
         "{triple}/lib/**",
-    ]),
+    ], allow_empty = True),
 )
 
 filegroup(

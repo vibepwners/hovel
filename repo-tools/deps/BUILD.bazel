@@ -1,0 +1,32 @@
+load("@lint_pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+package(default_visibility = ["//visibility:private"])
+
+py_binary(
+    name = "update_python_locks",
+    srcs = ["update_python_locks.py"],
+    args = ["--uv=$(rootpath @uv_linux_x86_64//:uv_bin)"],
+    data = [
+        "//core/tools/lint:requirements.in",
+        "//modules/picblobs/mbed:requirements.in",
+        "//modules/picblobs/python:pyproject.toml",
+        "//modules/picblobs/python:uv.lock",
+        "//sdk/python:pyproject.toml",
+        "//sdk/python:uv.lock",
+        "@uv_linux_x86_64//:uv_bin",
+    ],
+    python_version = "PY3",
+)
+
+py_test(
+    name = "update_python_locks_test",
+    size = "small",
+    srcs = [
+        "update_python_locks.py",
+        "update_python_locks_test.py",
+    ],
+    imports = ["."],
+    main = "update_python_locks_test.py",
+    deps = [requirement("pytest")],
+)

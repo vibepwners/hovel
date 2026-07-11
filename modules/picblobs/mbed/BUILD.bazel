@@ -1,10 +1,106 @@
+load("@mbed_pip//:requirements.bzl", "requirement")
+load("@picblobs_pip//:requirements.bzl", picblobs_requirement = "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("//modules/picblobs/bazel:transition.bzl", "platform_filegroup")
+
 package(default_visibility = ["//visibility:public"])
+
+_CORTEX_M4 = "//modules/picblobs/platforms:cortexm4_baremetal"
 
 exports_files([
     "platform_mbed.cpp",
     "platform_mbed.h",
+    "main.cpp",
     ".mbed",
+    ".mbedignore",
+    "requirements.in",
+    "requirements.txt",
 ])
+
+platform_filegroup(
+    name = "nacl_server_hosted_bin_cortexm4",
+    platform = _CORTEX_M4,
+    deps = ["//modules/picblobs/src/payload:nacl_server_hosted_bin"],
+)
+
+platform_filegroup(
+    name = "nacl_client_hosted_bin_cortexm4",
+    platform = _CORTEX_M4,
+    deps = ["//modules/picblobs/src/payload:nacl_client_hosted_bin"],
+)
+
+py_binary(
+    name = "materialize_blobs",
+    srcs = ["materialize_blobs.py"],
+    args = [
+        "--server-bin=$(rootpath :nacl_server_hosted_bin_cortexm4)",
+        "--client-bin=$(rootpath :nacl_client_hosted_bin_cortexm4)",
+    ],
+    data = [
+        ":nacl_client_hosted_bin_cortexm4",
+        ":nacl_server_hosted_bin_cortexm4",
+    ],
+    python_version = "PY3",
+)
+
+py_test(
+    name = "compile_mbed_os_test",
+    size = "small",
+    srcs = [
+        "compile_mbed_os.py",
+        "compile_mbed_os_test.py",
+        "materialize_blobs.py",
+    ],
+    imports = ["."],
+    main = "compile_mbed_os_test.py",
+    python_version = "PY3",
+    deps = [picblobs_requirement("pytest")],
+)
+
+py_test(
+    name = "materialize_blobs_test",
+    size = "small",
+    srcs = [
+        "materialize_blobs.py",
+        "materialize_blobs_test.py",
+    ],
+    imports = ["."],
+    main = "materialize_blobs_test.py",
+    python_version = "PY3",
+    deps = [picblobs_requirement("pytest")],
+)
+
+py_binary(
+    name = "compile_mbed_os",
+    srcs = ["compile_mbed_os.py"],
+    args = [
+        "--client-bin=$(rootpath :nacl_client_hosted_bin_cortexm4)",
+        "--gcc=$(rootpath @mbed_arm_none_eabi//:gcc_binary)",
+        "--server-bin=$(rootpath :nacl_server_hosted_bin_cortexm4)",
+    ],
+    data = [
+        ":nacl_client_hosted_bin_cortexm4",
+        ":nacl_server_hosted_bin_cortexm4",
+        "@mbed_arm_none_eabi//:all_files",
+        "@mbed_arm_none_eabi//:gcc_binary",
+    ],
+    python_version = "PY3",
+    deps = [
+        requirement("attrs"),
+        requirement("future"),
+        requirement("intelhex"),
+        requirement("jinja2"),
+        requirement("jsonschema"),
+        requirement("jsonschema-specifications"),
+        requirement("markupsafe"),
+        requirement("prettytable"),
+        requirement("pyelftools"),
+        requirement("referencing"),
+        requirement("rpds-py"),
+        requirement("setuptools"),
+        requirement("six"),
+    ],
+)
 
 filegroup(
     name = "quality_sources",
@@ -12,10 +108,14 @@ filegroup(
         [
             "**/*.cpp",
             "**/*.h",
+            "**/*.py",
+            "**/*.txt",
         ],
         allow_empty = True,
     ) + [
         ".mbed",
+        ".mbedignore",
         "BUILD.bazel",
+        "README.md",
     ],
 )

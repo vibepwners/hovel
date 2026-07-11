@@ -713,7 +713,7 @@ func InstallArchive(opts InstallOptions) (InstallResult, error) {
 			logCleanup("remove install backup directory", func() error { return os.RemoveAll(backupParent) })
 			return InstallResult{}, err
 		}
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return InstallResult{}, err
 	}
 	if err := os.Rename(temp, dest); err != nil {
@@ -985,7 +985,7 @@ func ensureManagedPython(pkg Package, py Python, opts InstallOptions) error {
 	venvPython := managedVenvPython(pkg.Root, opts.HostOS)
 	if _, err := os.Stat(venvPython); err == nil {
 		return nil
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	basePython, err := ensurePBSInterpreter(py.Managed.Versions, opts)

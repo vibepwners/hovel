@@ -52,6 +52,15 @@ filegroup(
 )
 """
 
+_DEJAVU_FONTS_BUILD = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "dejavu_ttf",
+    srcs = glob(["ttf/*.ttf"]),
+)
+"""
+
 _LLVM_MINGW_BUILD = """\
 package(default_visibility = ["//visibility:public"])
 
@@ -98,8 +107,8 @@ _TOOLS = {
         attrs = {
             "downloaded_file_path": "buildifier",
             "executable": True,
-            "sha256": "5474cc5128a74e806783d54081f581662c4be8ae65022f557e9281ed5dc88009",
-            "urls": ["https://github.com/bazelbuild/buildtools/releases/download/v7.3.1/buildifier-linux-amd64"],
+            "sha256": "887377fc64d23a850f4d18a077b5db05b19913f4b99b270d193f3c7334b5a9a7",
+            "urls": ["https://github.com/bazelbuild/buildtools/releases/download/v8.5.1/buildifier-linux-amd64"],
         },
     ),
     "buildifier_linux_arm64": struct(
@@ -107,26 +116,35 @@ _TOOLS = {
         attrs = {
             "downloaded_file_path": "buildifier",
             "executable": True,
-            "sha256": "0bf86c4bfffaf4f08eed77bde5b2082e4ae5039a11e2e8b03984c173c34a561c",
-            "urls": ["https://github.com/bazelbuild/buildtools/releases/download/v7.3.1/buildifier-linux-arm64"],
+            "sha256": "947bf6700d708026b2057b09bea09abbc3cafc15d9ecea35bb3885c4b09ccd04",
+            "urls": ["https://github.com/bazelbuild/buildtools/releases/download/v8.5.1/buildifier-linux-arm64"],
         },
     ),
     "chrome_for_testing_linux_x86_64": struct(
         rule = "http_archive",
         attrs = {
             "build_file_content": _CHROME_BUILD,
-            "sha256": "ad115a7498a17f53f6ed0914458326c6516addc756224db14c32184a9b1ab078",
+            "sha256": "1be2db033133c5e2dd1a4e8664bf67b19a61bcf6ed28d2b00f433b3f0b4f9585",
             "strip_prefix": "",
-            "urls": ["https://storage.googleapis.com/chrome-for-testing-public/150.0.7871.46/linux64/chrome-linux64.zip"],
+            "urls": ["https://storage.googleapis.com/chrome-for-testing-public/150.0.7871.115/linux64/chrome-linux64.zip"],
+        },
+    ),
+    "dejavu_fonts_ttf": struct(
+        rule = "http_archive",
+        attrs = {
+            "build_file_content": _DEJAVU_FONTS_BUILD,
+            "sha256": "7576310b219e04159d35ff61dd4a4ec4cdba4f35c00e002a136f00e96a908b0a",
+            "strip_prefix": "dejavu-fonts-ttf-2.37",
+            "urls": ["https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.zip"],
         },
     ),
     "ffmpeg_linux_x86_64": struct(
         rule = "http_archive",
         attrs = {
             "build_file_content": _FFMPEG_BUILD,
-            "sha256": "7aadf7d95d94e9dc71d4283d64be209ef1ba4cab5eb09893c29037223704d0b1",
-            "strip_prefix": "ffmpeg-n8.1.2-21-gce3c09c101-linux64-gpl-8.1",
-            "urls": ["https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-03-13-21/ffmpeg-n8.1.2-21-gce3c09c101-linux64-gpl-8.1.tar.xz"],
+            "sha256": "8a3a9d2919b687602dfed430e0397779405589357e7108950e506a3291af9371",
+            "strip_prefix": "ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1",
+            "urls": ["https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-10-13-44/ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1.tar.xz"],
         },
     ),
     "golangci_lint_linux_amd64": struct(
@@ -160,9 +178,9 @@ _TOOLS = {
         rule = "http_archive",
         attrs = {
             "build_file_content": _UV_BUILD,
-            "sha256": "6426a73c3837e6e2483ee344cbc00f36394d179afcba6183cb77437e67db4af0",
+            "sha256": "e490a6464492183c5d4534a5527fb4440f7f2bb2f228162ad7e4afe076dc0224",
             "strip_prefix": "uv-x86_64-unknown-linux-gnu",
-            "urls": ["https://github.com/astral-sh/uv/releases/download/0.11.26/uv-x86_64-unknown-linux-gnu.tar.gz"],
+            "urls": ["https://github.com/astral-sh/uv/releases/download/0.11.28/uv-x86_64-unknown-linux-gnu.tar.gz"],
         },
     ),
     "vhs_linux_x86_64": struct(
@@ -183,6 +201,7 @@ _GROUPS = {
     ],
     "docs": [
         "chrome_for_testing_linux_x86_64",
+        "dejavu_fonts_ttf",
         "ffmpeg_linux_x86_64",
         "ttyd_linux_x86_64",
         "uv_linux_x86_64",

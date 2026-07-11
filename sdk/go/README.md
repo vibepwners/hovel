@@ -1,8 +1,12 @@
 # Go SDK
 
 The Go SDK is the most complete module-author surface today. Use it for normal
-modules, PTY-backed post-exploitation sessions, typed chain-step providers, and
-payload-provider modules.
+modules, PTY-backed post-exploitation sessions, typed chain-step providers,
+payload-provider modules, and Mesh providers.
+
+For a complete Mesh development path—capability design, tasking, streams,
+listening posts, daemon calls, and routing an existing module through a local
+bridge—see the [Mesh Provider Development Guide](../../docs/site/spec/mesh-development.html).
 
 Import path:
 
@@ -66,6 +70,7 @@ Rules that matter in real integrations:
 | PTY-backed session | `hovel.PTYSession` opened with `ctx.OpenSession(...)`. |
 | Durable installed payload inventory | `hovel.InstalledPayloadDescriptor` and `hovel.WithInstalledPayloads`. |
 | Payload provider | Implement `hovel.PayloadProvider`. |
+| Node Mesh provider | Implement `hovel.MeshDescriber` plus the optional Mesh operation interfaces you support. Use `hovel.MeshProvider` only for a full-surface provider. |
 | Typed chain steps | Implement `hovel.StepProvider`. |
 | Provider contract tests | `github.com/Vibe-Pwners/hovel/sdk/go/hoveltest`. |
 
@@ -73,6 +78,33 @@ The provider methods are real RPC endpoints: `list_payloads`,
 `resolve_payload`, `prepare_listener`, `generate_payload`, `connect_session`,
 `cleanup_payload`, and `read_payload_chunk`. The step methods are also real RPC
 endpoints: `step.describe`, `step.prepare`, `step.execute`, and `step.cleanup`.
+Mesh providers expose `mesh.describe`, `mesh.topology`, `mesh.beacons`,
+`mesh.listeners`, `mesh.listener.start`, `mesh.listener.stop`, `mesh.task`, and
+`mesh.open_stream` for one-node tools through routed tree/graph node operations,
+listening-post lifecycle, and protocol-specific flows.
+The Go SDK intentionally splits those methods into optional interfaces
+(`MeshDescriber`, `MeshTopologyProvider`, `MeshBeaconProvider`,
+`MeshListenerProvider`, `MeshListenerLifecycleProvider`, `MeshTaskProvider`, and
+`MeshStreamProvider`) so a simple stream Mesh does not need to stub listener
+lifecycle, tasking, beacons, or topology.
+Listener starts use a caller-selected stable ID for idempotent retries. Their
+provider-specific config is write-only and must not be copied into returned
+`MeshListener` values, logs, or audit records. A long-lived listener must remain
+durable across individual RPC calls; the SDK contract does not make the module
+subprocess a listener host.
+Use `MeshTaskSpec.TargetScopes` to say whether a task targets a Mesh node,
+route, or destination reachable through a node. `MeshTaskRequest` and
+`MeshStreamRequest` both carry `DestinationHost`, optional `DestinationPort`,
+and provider-defined `Protocol`, which is the contract Hovel needs to run tools
+or exploit delivery through a daemon-owned TCP/UDP Mesh bridge or a
+provider-native protocol flow without hard-coding the provider internals.
+For UDP bridges, include `hovel.CapabilityDatagram` in the returned session's
+capabilities and preserve one datagram per non-empty `Session.Write` call and
+`Session.Read` result. One bridge keeps one local UDP peer association.
+Use `MeshTaskUploadExecute` for implant copy-then-run flows and `MeshTaskLoad`
+for provider-native implant/component loaders. The request can carry inline
+payload bytes in `InputData`/`InputEncoding` or provider-defined artifact
+references in `Config`; the SDK does not implement the loader.
 
 ## Test Loop
 

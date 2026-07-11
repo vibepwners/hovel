@@ -1,7 +1,8 @@
 import unittest
 
-from hovel_example_survey.module import MockSurvey
 from hovel_sdk import Context
+
+from hovel_example_survey.module import MockSurvey
 
 
 class MockSurveyTest(unittest.TestCase):

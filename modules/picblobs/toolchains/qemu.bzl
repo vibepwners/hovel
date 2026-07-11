@@ -7,6 +7,9 @@ while still exposing the same multi-architecture interpreter set that
 picblobs supports at runtime.
 """
 
+# Debian 12 is intentional: it is the newest stable package that still ships
+# the complete legacy interpreter set below. Newer Debian releases use a
+# transitional package that omits several architectures Picblobs supports.
 _QEMU_USER_STATIC_URLS = [
     "https://deb.debian.org/debian/pool/main/q/qemu/qemu-user-static_7.2+dfsg-7+deb12u18+b2_amd64.deb",
 ]

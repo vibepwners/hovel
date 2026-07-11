@@ -2,8 +2,8 @@
  * platform_mbed.h — Mbed OS 5.15 vtable implementation for PIC blobs.
  *
  * Provides a pic_platform vtable backed by Mbed OS C++ socket API,
- * hardware RNG, and serial console. Socket operations use an fd table
- * mapping integer descriptors to Mbed OS TCPServer/TCPSocket objects.
+ * hardware RNG, and the retargeted console. Socket operations use an fd table
+ * mapping integer descriptors to Mbed OS TCPSocket objects.
  */
 
 #ifndef PLATFORM_MBED_H

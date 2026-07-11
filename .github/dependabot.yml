@@ -1,0 +1,75 @@
+version: 2
+
+updates:
+  - package-ecosystem: bazel
+    directory: /
+    schedule: &weekly
+      interval: weekly
+    groups: &all_dependencies
+      all-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: bazel
+    directory: /core
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: bazel
+    directory: /modules/picblobs
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: gomod
+    directory: /core
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: gomod
+    directory: /third_party/go_deps
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: uv
+    directory: /sdk/python
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: uv
+    directory: /modules/picblobs/python
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: pip
+    directory: /modules/picblobs/python_cli
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: pip
+    directory: /core/tools/lint
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: pip
+    directory: /modules/picblobs/mbed
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: github-actions
+    directory: /modules/picblobs
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: docker
+    directory: /modules/picblobs/ci
+    schedule: *weekly
+    groups: *all_dependencies
+
+  - package-ecosystem: docker
+    directory: /modules/docker/squatter-wine
+    schedule: *weekly
+    groups: *all_dependencies

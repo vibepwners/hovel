@@ -1,4 +1,5 @@
-load("@rules_python//python:defs.bzl", "py_binary")
+load("@lint_pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -7,4 +8,17 @@ py_binary(
     srcs = ["check_repo_policy.py"],
     main = "check_repo_policy.py",
     python_version = "PY3",
+)
+
+py_test(
+    name = "repo_policy_test",
+    size = "small",
+    srcs = [
+        "check_repo_policy.py",
+        "check_repo_policy_test.py",
+    ],
+    imports = ["."],
+    main = "check_repo_policy_test.py",
+    python_version = "PY3",
+    deps = [requirement("pytest")],
 )

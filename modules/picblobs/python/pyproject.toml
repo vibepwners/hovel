@@ -34,7 +34,9 @@ Issues = "https://github.com/williamkborn/pic/issues"
 
 [project.optional-dependencies]
 dev = [
-    "clang-format==22.1.1",
+    "clang-format>=22.1.5,<23",
+    "click>=8,<9",
+    "cppcheck>=1.5.1,<2",
     "libclang>=18",
     "lefthook>=2,<3",
     "lizard>=1.17",

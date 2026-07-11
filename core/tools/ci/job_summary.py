@@ -26,20 +26,30 @@ class JobSummary:
 
 
 JOBS = {
-    "ci-build-test": JobSummary(
-        title="CI Core Gate",
-        purpose="Validates the self-contained core/ workspace: formatting, lint, build, tests, race/fuzz smoke, coverage ratchets, and release wheel buildability for the Hovel binary.",
+    "repo-quality": JobSummary(
+        title="CI Repository Quality Gate",
+        purpose="Validates repository architecture, hermeticity policy, checkout dispatch, and BUILD/Starlark hygiene.",
         commands=(
             "task checkout:status",
-            "task lint",
-            "task build -- //:build",
-            "task test -- //:ci_test",
-            "task test -- //:race_test //:fuzz_smoke_test",
-            "task coverage",
+            "task repo:quality",
+        ),
+        proves=(
+            "Repository layering, visibility, ownership, and hermeticity policies pass.",
+            "BUILD, MODULE, and Starlark files are formatted.",
+            "Repository tooling and checkout-dispatch regression tests pass.",
+        ),
+        details=("This job is separate so repository-policy failures cannot be hidden by otherwise successful slice builds.",),
+    ),
+    "ci-build-test": JobSummary(
+        title="CI Core Gate",
+        purpose="Validates the self-contained core/ workspace: formatting, lint, nilness analysis, build, tests, race/fuzz smoke, coverage ratchets, and release wheel buildability for the Hovel binary.",
+        commands=(
+            "task checkout:status",
+            "task core:ci",
             "task release:hovel-wheels",
         ),
         proves=(
-            "Core Go/Gazelle formatting and lint rules are clean.",
+            "Core Go/Gazelle formatting, lint rules, and Bazel-native nilness analysis are clean.",
             "The hoveld/CLI/TUI/MCP mono-binary builds from core/.",
             "Core tests, race tests, fuzz smoke tests, and coverage ratchets pass.",
             "The PyPI hovel wheel task can cross-build all configured platform wheels.",
@@ -57,6 +67,7 @@ JOBS = {
         commands=("task sdk:ci",),
         proves=(
             "The root integration workspace can build the Go, Python, and Rust SDK targets against core contracts.",
+            "Bazel-native nilness analysis covers the Go SDK and module targets.",
             "SDK unit and protocol tests pass for all wired SDK languages.",
         ),
         details=("SDK versions are kept in lockstep with the root/core Hovel version, but SDK source stays outside core/ for partial checkout work.",),
@@ -79,14 +90,17 @@ JOBS = {
     ),
     "docs-ci": JobSummary(
         title="CI Docs And Demos Gate",
-        purpose="Builds docs tooling, verifies demo harnesses, renders standard terminal GIF demos, generates API documentation, stages _site/, and checks internal links.",
-        commands=("task docs:ci", "actions/upload-artifact docs-site"),
+        purpose="Runs remote-compatible docs verification, then renders host-service terminal demos, generates API documentation, stages _site/, and checks internal links.",
+        commands=("task docs:check", "task docs:site", "actions/upload-artifact docs-site"),
         proves=(
             "Docs tooling and demo verification tests pass.",
             "Standard VHS demos render and materialize into docs/demo/out/.",
             "The GitHub Pages site stages into _site/ with SDK API docs and link checks.",
         ),
-        details=("The docs-site artifact contains the staged _site/ directory.",),
+        details=(
+            "VHS rendering is a separately named host-service step because it drives tmux, Chrome, and optionally Docker.",
+            "The docs-site artifact contains the staged _site/ directory.",
+        ),
         artifact_globs=("../docs/demo/out/*.gif",),
         site_root="../_site",
     ),
@@ -107,7 +121,7 @@ JOBS = {
     "pages-build": JobSummary(
         title="Pages Build",
         purpose="Rebuilds the docs slice after a successful CI run and uploads the staged _site/ tree for GitHub Pages.",
-        commands=("task docs:ci", "actions/configure-pages", "actions/upload-pages-artifact"),
+        commands=("task docs:check", "task docs:site", "actions/configure-pages", "actions/upload-pages-artifact"),
         proves=(
             "The Pages deployment artifact is generated from the same docs task used by CI.",
             "Rendered demos, SDK API docs, and link-checked static pages are present in _site/.",

@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -24,16 +25,34 @@ import (
 	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
 	"github.com/Vibe-Pwners/hovel/internal/app/services"
 	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
 	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
 	"github.com/Vibe-Pwners/hovel/internal/protocol/framing"
 )
 
-const defaultTimeout = 60 * time.Second
-const stderrSettleTimeout = 50 * time.Millisecond
-const maxFrameBytes = framing.DefaultMaxBytes
+const (
+	defaultTimeout        = 60 * time.Second
+	moduleShutdownTimeout = 5 * time.Second
+	stderrSettleTimeout   = 50 * time.Millisecond
+	maxFrameBytes         = framing.DefaultMaxBytes
 
-const ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
+	rpcShutdownMethod    = "shutdown"
+	rpcSessionReadMethod = "session/read"
+
+	sessionPumpReadTimeoutMilliseconds = 250
+
+	meshRPCDescribeMethod      = "mesh.describe"
+	meshRPCTopologyMethod      = "mesh.topology"
+	meshRPCBeaconsMethod       = "mesh.beacons"
+	meshRPCListenersMethod     = "mesh.listeners"
+	meshRPCListenerStartMethod = "mesh.listener.start"
+	meshRPCListenerStopMethod  = "mesh.listener.stop"
+	meshRPCTaskMethod          = "mesh.task"
+	meshRPCOpenStreamMethod    = "mesh.open_stream"
+
+	ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
+)
 
 func logPythonRPCError(action string, err error) {
 	if err != nil {
@@ -145,19 +164,19 @@ func (r Runner) Catalog(ctx context.Context) (modulecatalog.Catalog, error) {
 }
 
 func (r Runner) Inspect(ctx context.Context, moduleID string) (modulecatalog.Module, error) {
-	return r.inspect(ctx, moduleID, func(ctx context.Context) (*moduleProcess, error) {
+	return r.inspect(ctx, func(ctx context.Context) (*moduleProcess, error) {
 		return r.start(ctx, moduleID)
 	})
 }
 
 func (r Runner) InspectEntry(ctx context.Context, entry ModuleEntry) (modulecatalog.Module, error) {
 	entry.ID = strings.TrimSpace(entry.ID)
-	return r.inspect(ctx, entry.ID, func(ctx context.Context) (*moduleProcess, error) {
+	return r.inspect(ctx, func(ctx context.Context) (*moduleProcess, error) {
 		return r.startEntry(ctx, entry)
 	})
 }
 
-func (r Runner) inspect(ctx context.Context, moduleID string, start func(context.Context) (*moduleProcess, error)) (modulecatalog.Module, error) {
+func (r Runner) inspect(ctx context.Context, start func(context.Context) (*moduleProcess, error)) (modulecatalog.Module, error) {
 	timeout := r.Timeout
 	if timeout == 0 {
 		timeout = defaultTimeout
@@ -178,6 +197,10 @@ func (r Runner) inspect(ctx context.Context, moduleID string, start func(context
 	if err != nil {
 		return modulecatalog.Module{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderrString())
 	}
+	module, err := moduleFromRPC(info, schema)
+	if err != nil {
+		return modulecatalog.Module{}, err
+	}
 	stepContracts, err := process.client.call(ctx, "step.describe", nil)
 	if err != nil {
 		if isMissingStepProvider(err) {
@@ -186,17 +209,36 @@ func (r Runner) inspect(ctx context.Context, moduleID string, start func(context
 			return modulecatalog.Module{}, moduleFailure("module failed while reporting step contracts", "module step describe failed", err, process.stderrString())
 		}
 	}
-	_, err = process.client.call(context.Background(), "shutdown", nil)
-	logPythonRPCError("shut down module after catalog load", err)
-	if err := process.wait(); err != nil {
-		return modulecatalog.Module{}, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
-	}
-	module, err := moduleFromRPC(moduleID, info, schema, stepContracts)
+	module.StepContracts, err = stepContractsFromRPC(stepContracts)
 	if err != nil {
 		return modulecatalog.Module{}, err
 	}
 	if issues := modulecatalog.ValidateStepContracts(module); len(issues) > 0 {
 		return modulecatalog.Module{}, fmt.Errorf("step contract invalid: %s", formatStepContractIssue(issues[0]))
+	}
+	meshDescriptor, err := process.client.call(ctx, meshRPCDescribeMethod, nil)
+	if err != nil {
+		if isMissingMeshProvider(err) {
+			meshDescriptor = nil
+		} else {
+			return modulecatalog.Module{}, moduleFailure(
+				"module failed while reporting mesh",
+				"module mesh describe failed",
+				err,
+				process.stderrString(),
+			)
+		}
+	}
+	if meshDescriptor != nil {
+		module.Mesh, err = meshDescriptorFromRPC(meshDescriptor)
+		if err != nil {
+			return modulecatalog.Module{}, err
+		}
+	}
+	shutdownErr, waitErr := process.shutdownAndWait(ctx, moduleShutdownTimeout)
+	logPythonRPCError("shut down module after catalog load", shutdownErr)
+	if waitErr != nil {
+		return modulecatalog.Module{}, moduleFailure("module exited with error", "module exited with error", waitErr, process.stderrString())
 	}
 	return module, nil
 }
@@ -208,7 +250,19 @@ func isMissingStepProvider(err error) bool {
 	message := err.Error()
 	return strings.Contains(message, "unknown method step.describe") ||
 		strings.Contains(message, `unknown method "step.describe"`) ||
+		strings.Contains(message, "unknown method 'step.describe'") ||
 		strings.Contains(message, "not a step provider")
+}
+
+func isMissingMeshProvider(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "unknown method "+meshRPCDescribeMethod) ||
+		strings.Contains(message, `unknown method "`+meshRPCDescribeMethod+`"`) ||
+		strings.Contains(message, "unknown method '"+meshRPCDescribeMethod+"'") ||
+		strings.Contains(message, "not a mesh provider")
 }
 
 func (r Runner) PrepareStep(ctx context.Context, request StepCallRequest) (map[string]any, error) {
@@ -273,6 +327,127 @@ func (r Runner) RunPayloadCommand(ctx context.Context, moduleID string, request 
 	return decoded, nil
 }
 
+func (r Runner) DescribeMesh(
+	ctx context.Context,
+	moduleID string,
+	request mesh.DescribeRequest,
+) (mesh.Descriptor, error) {
+	result, err := r.callMeshProvider(ctx, moduleID, meshRPCDescribeMethod, request)
+	if err != nil {
+		return mesh.Descriptor{}, err
+	}
+	var decoded mesh.Descriptor
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return mesh.Descriptor{}, services.NewModuleExecutionFailure("module returned invalid mesh descriptor", err)
+	}
+	return decoded, nil
+}
+
+func (r Runner) MeshTopology(
+	ctx context.Context,
+	moduleID string,
+	request mesh.TopologyRequest,
+) (mesh.Topology, error) {
+	result, err := r.callMeshProvider(ctx, moduleID, meshRPCTopologyMethod, request)
+	if err != nil {
+		return mesh.Topology{}, err
+	}
+	var decoded mesh.Topology
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return mesh.Topology{}, services.NewModuleExecutionFailure("module returned invalid mesh topology", err)
+	}
+	return decoded, nil
+}
+
+func (r Runner) ListMeshBeacons(
+	ctx context.Context,
+	moduleID string,
+	request mesh.BeaconRequest,
+) ([]mesh.Beacon, error) {
+	result, err := r.callMeshProvider(ctx, moduleID, meshRPCBeaconsMethod, request)
+	if err != nil {
+		return nil, err
+	}
+	var decoded struct {
+		Beacons []mesh.Beacon `json:"beacons"`
+	}
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return nil, services.NewModuleExecutionFailure("module returned invalid mesh beacons", err)
+	}
+	return decoded.Beacons, nil
+}
+
+func (r Runner) ListMeshListeners(
+	ctx context.Context,
+	moduleID string,
+	request mesh.ListenerListRequest,
+) ([]mesh.Listener, error) {
+	result, err := r.callMeshProvider(ctx, moduleID, meshRPCListenersMethod, request)
+	if err != nil {
+		return nil, err
+	}
+	var decoded struct {
+		Listeners []mesh.Listener `json:"listeners"`
+	}
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return nil, services.NewModuleExecutionFailure("module returned invalid mesh listeners", err)
+	}
+	return decoded.Listeners, nil
+}
+
+func (r Runner) StartMeshListener(
+	ctx context.Context,
+	moduleID string,
+	request mesh.ListenerStartRequest,
+) (mesh.Listener, error) {
+	return r.callMeshListener(ctx, moduleID, meshRPCListenerStartMethod, request)
+}
+
+func (r Runner) StopMeshListener(
+	ctx context.Context,
+	moduleID string,
+	request mesh.ListenerStopRequest,
+) (mesh.Listener, error) {
+	return r.callMeshListener(ctx, moduleID, meshRPCListenerStopMethod, request)
+}
+
+func (r Runner) callMeshListener(
+	ctx context.Context,
+	moduleID string,
+	method string,
+	request any,
+) (mesh.Listener, error) {
+	result, err := r.callMeshProvider(ctx, moduleID, method, request)
+	if err != nil {
+		return mesh.Listener{}, err
+	}
+	var listener mesh.Listener
+	if err := json.Unmarshal(result, &listener); err != nil {
+		return mesh.Listener{}, services.NewModuleExecutionFailure("module returned invalid mesh listener", err)
+	}
+	return listener, nil
+}
+
+func (r Runner) RunMeshTask(
+	ctx context.Context,
+	moduleID string,
+	request mesh.TaskRequest,
+) (mesh.TaskResult, error) {
+	result, err := r.callMeshTask(ctx, moduleID, request)
+	if err != nil {
+		return mesh.TaskResult{}, err
+	}
+	return result, nil
+}
+
+func (r Runner) OpenMeshStream(
+	ctx context.Context,
+	moduleID string,
+	request mesh.StreamRequest,
+) (run.SessionRef, error) {
+	return r.callMeshStream(ctx, moduleID, request)
+}
+
 func (r Runner) callPayloadCommand(ctx context.Context, moduleID, method string, params any) (map[string]any, error) {
 	timeout := r.Timeout
 	if timeout == 0 {
@@ -290,12 +465,163 @@ func (r Runner) callPayloadCommand(ctx context.Context, moduleID, method string,
 	if err != nil {
 		return nil, moduleFailure("module failed during payload command", "module payload command failed", err, process.stderrString())
 	}
-	_, err = process.client.call(context.Background(), "shutdown", nil)
-	logPythonRPCError("shut down module after payload command", err)
-	if err := process.wait(); err != nil {
-		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
+	shutdownErr, waitErr := process.shutdownAndWait(ctx, moduleShutdownTimeout)
+	logPythonRPCError("shut down module after payload command", shutdownErr)
+	if waitErr != nil {
+		return nil, moduleFailure("module exited with error", "module exited with error", waitErr, process.stderrString())
 	}
 	return result, nil
+}
+
+func (r Runner) callMeshProvider(ctx context.Context, moduleID, method string, params any) (json.RawMessage, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	process, err := r.start(ctx, moduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer process.killAndWait()
+	result, err := process.client.callRaw(ctx, method, params)
+	if err != nil {
+		return nil, moduleFailure(
+			"module failed during mesh provider call",
+			"module mesh provider call failed",
+			err,
+			process.stderrString(),
+		)
+	}
+	shutdownErr, waitErr := process.shutdownAndWait(ctx, moduleShutdownTimeout)
+	logPythonRPCError("shut down module after mesh provider call", shutdownErr)
+	if waitErr != nil {
+		return nil, moduleFailure("module exited with error", "module exited with error", waitErr, process.stderrString())
+	}
+	return result, nil
+}
+
+func (r Runner) callMeshTask(
+	ctx context.Context,
+	moduleID string,
+	request mesh.TaskRequest,
+) (mesh.TaskResult, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	process, err := r.start(context.Background(), moduleID)
+	if err != nil {
+		return mesh.TaskResult{}, err
+	}
+	keepProcess := false
+	defer func() {
+		if !keepProcess {
+			process.killAndWait()
+		}
+	}()
+	result, err := process.client.callRaw(ctx, meshRPCTaskMethod, request)
+	if err != nil {
+		return mesh.TaskResult{}, moduleFailure(
+			"module failed during mesh task",
+			"module mesh task failed",
+			err,
+			process.stderrString(),
+		)
+	}
+	var decoded mesh.TaskResult
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return mesh.TaskResult{}, services.NewModuleExecutionFailure("module returned invalid mesh task result", err)
+	}
+	decoded.Sessions, err = normalizeSessionRefs(decoded.Sessions)
+	if err != nil {
+		return mesh.TaskResult{}, services.NewModuleExecutionFailure("module returned invalid mesh task sessions", err)
+	}
+	if len(decoded.Sessions) > 0 && r.Sessions != nil {
+		if err := r.Sessions.adopt(process, decoded.Sessions); err != nil {
+			return mesh.TaskResult{}, services.NewModuleExecutionFailure("module returned invalid mesh task sessions", err)
+		}
+		keepProcess = true
+		return decoded, nil
+	}
+	shutdownErr, waitErr := process.shutdownAndWait(ctx, moduleShutdownTimeout)
+	logPythonRPCError("shut down module after mesh task", shutdownErr)
+	if waitErr != nil {
+		return mesh.TaskResult{}, moduleFailure(
+			"module exited with error",
+			"module exited with error",
+			waitErr,
+			process.stderrString(),
+		)
+	}
+	return decoded, nil
+}
+
+func (r Runner) callMeshStream(
+	ctx context.Context,
+	moduleID string,
+	request mesh.StreamRequest,
+) (run.SessionRef, error) {
+	timeout := r.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	process, err := r.start(context.Background(), moduleID)
+	if err != nil {
+		return run.SessionRef{}, err
+	}
+	keepProcess := false
+	defer func() {
+		if !keepProcess {
+			process.killAndWait()
+		}
+	}()
+	result, err := process.client.callRaw(ctx, meshRPCOpenStreamMethod, request)
+	if err != nil {
+		return run.SessionRef{}, moduleFailure(
+			"module failed while opening mesh stream",
+			"module mesh stream failed",
+			err,
+			process.stderrString(),
+		)
+	}
+	var session run.SessionRef
+	if err := json.Unmarshal(result, &session); err != nil {
+		return run.SessionRef{}, services.NewModuleExecutionFailure("module returned invalid mesh stream session", err)
+	}
+	session.ID = strings.TrimSpace(session.ID)
+	if session.ID == "" {
+		return run.SessionRef{}, services.NewModuleExecutionFailure(
+			"module returned invalid mesh stream session",
+			errors.New("session id is required"),
+		)
+	}
+	if r.Sessions != nil {
+		if err := r.Sessions.adopt(process, []run.SessionRef{session}); err != nil {
+			return run.SessionRef{}, services.NewModuleExecutionFailure("module returned invalid mesh stream session", err)
+		}
+		keepProcess = true
+		return session, nil
+	}
+	shutdownErr, waitErr := process.shutdownAndWait(ctx, moduleShutdownTimeout)
+	logPythonRPCError("shut down module after mesh stream", shutdownErr)
+	if waitErr != nil {
+		return run.SessionRef{}, moduleFailure(
+			"module exited with error",
+			"module exited with error",
+			waitErr,
+			process.stderrString(),
+		)
+	}
+	return session, nil
 }
 
 func (r Runner) callPayloadProvider(ctx context.Context, moduleID, method string, params any) (json.RawMessage, error) {
@@ -315,10 +641,10 @@ func (r Runner) callPayloadProvider(ctx context.Context, moduleID, method string
 	if err != nil {
 		return nil, moduleFailure("module failed during payload provider call", "module payload provider call failed", err, process.stderrString())
 	}
-	_, err = process.client.call(context.Background(), "shutdown", nil)
-	logPythonRPCError("shut down module after payload provider call", err)
-	if err := process.wait(); err != nil {
-		return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
+	shutdownErr, waitErr := process.shutdownAndWait(ctx, moduleShutdownTimeout)
+	logPythonRPCError("shut down module after payload provider call", shutdownErr)
+	if waitErr != nil {
+		return nil, moduleFailure("module exited with error", "module exited with error", waitErr, process.stderrString())
 	}
 	return result, nil
 }
@@ -366,17 +692,19 @@ func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, s
 			return nil, services.NewModuleExecutionFailure("module returned invalid step result", err)
 		}
 		if len(sessions) > 0 && r.Sessions != nil {
-			r.Sessions.adopt(process, sessions)
+			if err := r.Sessions.adopt(process, sessions); err != nil {
+				return nil, services.NewModuleExecutionFailure("module returned invalid step sessions", err)
+			}
 			if r.StepProcesses != nil {
 				r.StepProcesses.release(process)
 			}
 		}
 	}
 	if owned {
-		_, err = process.client.call(context.Background(), "shutdown", nil)
-		logPythonRPCError("shut down owned module process", err)
-		if err := process.wait(); err != nil {
-			return nil, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
+		shutdownErr, waitErr := process.shutdownAndWait(ctx, moduleShutdownTimeout)
+		logPythonRPCError("shut down owned module process", shutdownErr)
+		if waitErr != nil {
+			return nil, moduleFailure("module exited with error", "module exited with error", waitErr, process.stderrString())
 		}
 	}
 	return result, nil
@@ -437,7 +765,7 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 	if err != nil {
 		return run.Result{}, moduleFailure("module failed while reporting schema", "module schema failed", err, process.stderrString())
 	}
-	module, err := moduleFromRPC(request.ModuleID, info, schema)
+	module, err := moduleFromRPC(info, schema)
 	if err != nil {
 		return run.Result{}, moduleFailure("module failed while reporting metadata", "module metadata invalid", err, process.stderrString())
 	}
@@ -467,13 +795,15 @@ func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error
 		}
 	}
 	if len(result.Sessions) > 0 && r.Sessions != nil {
-		r.Sessions.adopt(process, result.Sessions)
+		if err := r.Sessions.adopt(process, result.Sessions); err != nil {
+			return run.Result{}, services.NewModuleExecutionFailure("module returned invalid sessions", err)
+		}
 		keepProcess = true
 	} else {
-		_, err = process.client.call(context.Background(), "shutdown", nil)
-		logPythonRPCError("shut down module without sessions", err)
-		if err := process.wait(); err != nil {
-			return run.Result{}, moduleFailure("module exited with error", "module exited with error", err, process.stderrString())
+		shutdownErr, waitErr := process.shutdownAndWait(ctx, moduleShutdownTimeout)
+		logPythonRPCError("shut down module without sessions", shutdownErr)
+		if waitErr != nil {
+			return run.Result{}, moduleFailure("module exited with error", "module exited with error", waitErr, process.stderrString())
 		}
 	}
 	return result, nil
@@ -483,7 +813,10 @@ type moduleProcess struct {
 	cmd    *exec.Cmd
 	client *rpcClient
 	stderr *capturedStderr
-	waited bool
+
+	waitOnce sync.Once
+	waitDone chan struct{}
+	waitErr  error
 }
 
 func (r Runner) start(ctx context.Context, moduleID string) (*moduleProcess, error) {
@@ -531,7 +864,12 @@ func (r Runner) startEntry(ctx context.Context, entrypoint ModuleEntry) (*module
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return &moduleProcess{cmd: cmd, client: newClient(stdout, stdin), stderr: stderr}, nil
+	return &moduleProcess{
+		cmd:      cmd,
+		client:   newClient(stdout, stdin),
+		stderr:   stderr,
+		waitDone: make(chan struct{}),
+	}, nil
 }
 
 // command builds the OS command that launches a module process. Entries with an
@@ -562,21 +900,56 @@ func (r Runner) command(ctx context.Context, entry ModuleEntry) (*exec.Cmd, erro
 	return cmd, nil
 }
 
+func (p *moduleProcess) startWait() {
+	p.waitOnce.Do(func() {
+		go func() {
+			p.waitErr = p.cmd.Wait()
+			close(p.waitDone)
+		}()
+	})
+}
+
 func (p *moduleProcess) wait() error {
-	if p.waited {
-		return nil
+	p.startWait()
+	<-p.waitDone
+	return p.waitErr
+}
+
+func (p *moduleProcess) waitContext(ctx context.Context) error {
+	p.startWait()
+	select {
+	case <-p.waitDone:
+		return p.waitErr
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	p.waited = true
-	return p.cmd.Wait()
+}
+
+func (p *moduleProcess) kill() error {
+	if p.cmd.Process != nil {
+		if err := p.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *moduleProcess) shutdownAndWait(ctx context.Context, timeout time.Duration) (error, error) {
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+
+	_, shutdownErr := p.client.call(shutdownCtx, rpcShutdownMethod, nil)
+	waitErr := p.waitContext(shutdownCtx)
+	if waitErr == nil || shutdownCtx.Err() == nil {
+		return shutdownErr, waitErr
+	}
+
+	killErr := p.kill()
+	return shutdownErr, errors.Join(waitErr, killErr, p.wait())
 }
 
 func (p *moduleProcess) killAndWait() {
-	if p.waited {
-		return
-	}
-	if p.cmd.Process != nil {
-		logPythonRPCError("kill module process", p.cmd.Process.Kill())
-	}
+	logPythonRPCError("kill module process", p.kill())
 	logPythonRPCError("wait for killed module process", p.wait())
 }
 
@@ -700,13 +1073,13 @@ func (b *StepProcessBroker) FinishRun(ctx context.Context, runID string) error {
 
 	var firstErr error
 	for _, process := range processes {
-		_, err := process.client.call(ctx, "shutdown", nil)
-		logPythonRPCError("shut down run module process", err)
-		if err != nil && firstErr == nil {
-			firstErr = err
+		shutdownErr, waitErr := process.shutdownAndWait(ctx, moduleShutdownTimeout)
+		logPythonRPCError("shut down run module process", shutdownErr)
+		if shutdownErr != nil && firstErr == nil {
+			firstErr = shutdownErr
 		}
-		if err := process.wait(); err != nil && firstErr == nil {
-			firstErr = err
+		if waitErr != nil && firstErr == nil {
+			firstErr = waitErr
 		}
 	}
 	return firstErr
@@ -1091,7 +1464,7 @@ func resolveConfigPath(path string) (string, error) {
 }
 
 func runfileRoots() []string {
-	var roots []string
+	roots := workspaceRootsFromEnv()
 	if cwd, err := os.Getwd(); err == nil {
 		dir := cwd
 		for i := 0; i < 8 && dir != "" && dir != string(filepath.Separator); i++ {
@@ -1139,6 +1512,12 @@ func sdkRootCandidates() []string {
 	if cwd, err := os.Getwd(); err == nil {
 		addClimbs(cwd)
 	}
+	for _, root := range workspaceRootsFromEnv() {
+		candidates = append(candidates, filepath.Join(root, "sdk", "python"))
+		if filepath.Base(root) == "core" {
+			candidates = append(candidates, filepath.Join(filepath.Dir(root), "sdk", "python"))
+		}
+	}
 	if exe, err := os.Executable(); err == nil {
 		exeDir := filepath.Dir(exe)
 		addClimbs(exeDir)
@@ -1171,6 +1550,21 @@ func sdkRootCandidates() []string {
 		candidates = append(candidates, filepath.Dir(filepath.Dir(sdkInit)))
 	}
 	return candidates
+}
+
+func workspaceRootsFromEnv() []string {
+	var roots []string
+	for _, name := range []string{"HOVEL_REPO_ROOT", "BUILD_WORKSPACE_DIRECTORY", "BUILD_WORKING_DIRECTORY"} {
+		root := strings.TrimSpace(os.Getenv(name))
+		if root == "" {
+			continue
+		}
+		root = filepath.Clean(root)
+		if !slices.Contains(roots, root) {
+			roots = append(roots, root)
+		}
+	}
+	return roots
 }
 
 func runfileManifestLookup(path string) (string, bool) {
@@ -1564,7 +1958,7 @@ func logsFromRPC(request run.Request, logs []rpcLog) []run.LogEntry {
 	return out
 }
 
-func moduleFromRPC(_ string, info, schema map[string]any, stepContractValues ...map[string]any) (modulecatalog.Module, error) {
+func moduleFromRPC(info, schema map[string]any) (modulecatalog.Module, error) {
 	name := strings.TrimSpace(stringValue(info["name"]))
 	version := strings.TrimSpace(stringValue(info["version"]))
 	if name == "" {
@@ -1617,13 +2011,6 @@ func moduleFromRPC(_ string, info, schema map[string]any, stepContractValues ...
 	}
 	module.Discovery = discovery
 	module.Planning = planning
-	if len(stepContractValues) > 0 {
-		stepContracts, err := stepContractsFromRPC(stepContractValues[0])
-		if err != nil {
-			return modulecatalog.Module{}, err
-		}
-		module.StepContracts = stepContracts
-	}
 	return module, nil
 }
 
@@ -1679,6 +2066,17 @@ func stepContractsFromRPC(value map[string]any) (modulecatalog.StepContractSet, 
 		})
 	}
 	return set, nil
+}
+
+func meshDescriptorFromRPC(value map[string]any) (mesh.Descriptor, error) {
+	var descriptor mesh.Descriptor
+	if len(value) == 0 {
+		return descriptor, nil
+	}
+	if err := decodeRPCMap(value, &descriptor); err != nil {
+		return mesh.Descriptor{}, err
+	}
+	return descriptor, nil
 }
 
 func contextFromRPC(value any, label string) (modulecatalog.Context, error) {
@@ -2043,7 +2441,7 @@ func (b *SessionBroker) TailSession(ctx context.Context, sessionID string, optio
 }
 
 func (b *SessionBroker) CloseSession(ctx context.Context, sessionID string) error {
-	session, err := b.lookup(sessionID)
+	session, processStillUsed, err := b.takeSession(sessionID)
 	if err != nil {
 		return err
 	}
@@ -2051,18 +2449,10 @@ func (b *SessionBroker) CloseSession(ctx context.Context, sessionID string) erro
 		"sessionId": sessionID,
 		"reason":    "operator requested close",
 	})
-	b.remove(sessionID)
-	if !b.hasProcess(session.process) {
-		_, err := session.process.client.call(context.Background(), "shutdown", nil)
-		if err != nil {
-			logPythonRPCError("shut down session module process", err)
-			if callErr == nil {
-				callErr = err
-			}
-		}
-		if err := session.process.wait(); err != nil && callErr == nil {
-			callErr = err
-		}
+	if !processStillUsed {
+		shutdownErr, waitErr := session.process.shutdownAndWait(ctx, moduleShutdownTimeout)
+		logPythonRPCError("shut down session module process", shutdownErr)
+		callErr = errors.Join(callErr, shutdownErr, waitErr)
 	}
 	return callErr
 }
@@ -2107,21 +2497,32 @@ func (b *SessionBroker) RunSessionCommand(ctx context.Context, sessionID string,
 	return decoded, nil
 }
 
-func (b *SessionBroker) adopt(process *moduleProcess, sessions []run.SessionRef) {
+func (b *SessionBroker) adopt(process *moduleProcess, sessions []run.SessionRef) error {
+	if b == nil {
+		return errors.New("session broker is not configured")
+	}
+	if process == nil {
+		return errors.New("module process is required to adopt sessions")
+	}
+	normalized, err := normalizeSessionRefs(sessions)
+	if err != nil {
+		return err
+	}
+
 	b.mu.Lock()
 	if b.sessions == nil {
 		b.sessions = map[string]*brokerSession{}
 	}
-	var adopted []*brokerSession
-	for _, session := range sessions {
-		if session.ID == "" {
-			continue
+	for _, session := range normalized {
+		if _, exists := b.sessions[session.ID]; exists {
+			b.mu.Unlock()
+			return fmt.Errorf("session %q is already tracked", session.ID)
 		}
+	}
+	var adopted []*brokerSession
+	for _, session := range normalized {
 		order := b.nextOrder
 		b.nextOrder++
-		if existing, ok := b.sessions[session.ID]; ok {
-			order = existing.order
-		}
 		brokerSession := newBrokerSession(session, process, b.historyLimit)
 		brokerSession.order = order
 		b.sessions[session.ID] = brokerSession
@@ -2131,6 +2532,7 @@ func (b *SessionBroker) adopt(process *moduleProcess, sessions []run.SessionRef)
 	for _, session := range adopted {
 		go b.pumpSession(session.ref.ID, session)
 	}
+	return nil
 }
 
 func (b *SessionBroker) lookup(sessionID string) (*brokerSession, error) {
@@ -2158,27 +2560,27 @@ func (b *SessionBroker) markClosed(sessionID string) {
 	}
 }
 
-func (b *SessionBroker) remove(sessionID string) {
-	b.mu.Lock()
-	session, ok := b.sessions[sessionID]
-	if ok {
-		delete(b.sessions, sessionID)
+func (b *SessionBroker) takeSession(sessionID string) (*brokerSession, bool, error) {
+	if b == nil {
+		return nil, false, errors.New("session broker is not configured")
 	}
-	b.mu.Unlock()
-	if ok {
-		session.closeLocal()
-	}
-}
-
-func (b *SessionBroker) hasProcess(process *moduleProcess) bool {
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	for _, session := range b.sessions {
-		if session.process == process {
-			return true
+	session, exists := b.sessions[sessionID]
+	if !exists {
+		b.mu.Unlock()
+		return nil, false, fmt.Errorf("session %s does not exist", sessionID)
+	}
+	delete(b.sessions, sessionID)
+	processStillUsed := false
+	for _, remaining := range b.sessions {
+		if remaining.process == session.process {
+			processStillUsed = true
+			break
 		}
 	}
-	return false
+	b.mu.Unlock()
+	session.closeLocal()
+	return session, processStillUsed, nil
 }
 
 func (b *SessionBroker) pumpSession(sessionID string, session *brokerSession) {
@@ -2186,9 +2588,9 @@ func (b *SessionBroker) pumpSession(sessionID string, session *brokerSession) {
 		if session.isClosed() {
 			return
 		}
-		values, err := session.process.client.call(context.Background(), "session/read", map[string]any{
+		values, err := session.process.client.call(session.ctx, rpcSessionReadMethod, map[string]any{
 			"sessionId": sessionID,
-			"timeoutMs": 250,
+			"timeoutMs": sessionPumpReadTimeoutMilliseconds,
 		})
 		if err != nil {
 			b.markClosed(sessionID)
@@ -2210,6 +2612,24 @@ func (b *SessionBroker) pumpSession(sessionID string, session *brokerSession) {
 func cloneSessionRef(session run.SessionRef) run.SessionRef {
 	session.Capabilities = append([]string(nil), session.Capabilities...)
 	return session
+}
+
+func normalizeSessionRefs(sessions []run.SessionRef) ([]run.SessionRef, error) {
+	normalized := make([]run.SessionRef, 0, len(sessions))
+	seen := make(map[string]struct{}, len(sessions))
+	for index, session := range sessions {
+		session = cloneSessionRef(session)
+		session.ID = strings.TrimSpace(session.ID)
+		if session.ID == "" {
+			return nil, fmt.Errorf("session %d id is required", index+1)
+		}
+		if _, exists := seen[session.ID]; exists {
+			return nil, fmt.Errorf("session %q is duplicated", session.ID)
+		}
+		seen[session.ID] = struct{}{}
+		normalized = append(normalized, session)
+	}
+	return normalized, nil
 }
 
 func sessionsFromRPC(request run.Request, value any) ([]run.SessionRef, error) {
@@ -2244,7 +2664,7 @@ func sessionsFromRPC(request run.Request, value any) ([]run.SessionRef, error) {
 		}
 		sessions = append(sessions, session)
 	}
-	return sessions, nil
+	return normalizeSessionRefs(sessions)
 }
 
 func installedPayloadsFromRPC(value any) ([]run.InstalledPayloadDescriptor, error) {

@@ -74,7 +74,7 @@ func checkModuleReference(ctx context.Context, request commands.ModuleCheckReque
 		return report
 	}
 	report.Module = module.ID
-	addModuleCheck(&report, commands.ModuleCheckPass, "rpc discovery", "handshake, schema, step.describe, and shutdown completed")
+	addModuleCheck(&report, commands.ModuleCheckPass, "rpc discovery", "handshake, schema, optional mesh/step discovery, and shutdown completed")
 	addModuleContractChecks(&report, module)
 	return report
 }
@@ -120,7 +120,7 @@ func checkModulePackageDir(ctx context.Context, root string, report commands.Mod
 		return report, nil
 	}
 	report.Module = module.ID
-	addModuleCheck(&report, commands.ModuleCheckPass, "rpc discovery", "handshake, schema, step.describe, and shutdown completed")
+	addModuleCheck(&report, commands.ModuleCheckPass, "rpc discovery", "handshake, schema, optional mesh/step discovery, and shutdown completed")
 	addModuleContractChecks(&report, module)
 	return report, nil
 }

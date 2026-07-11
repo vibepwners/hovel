@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""Materialize configured Cortex-M4 NaCl blobs as Mbed C headers."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import ipaddress
+import os
+import struct
+import tempfile
+from pathlib import Path
+
+SERVER_CONFIG_SIZE = 34
+CLIENT_CONFIG_SIZE = 38
+AUTH_KEY_SIZE = 32
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Generate configured Mbed headers for the NaCl PIC blob PoC."
+    )
+    parser.add_argument("--server-bin", required=True)
+    parser.add_argument("--client-bin", required=True)
+    parser.add_argument("--server-ip", required=True)
+    key_group = parser.add_mutually_exclusive_group(required=True)
+    key_group.add_argument("--auth-key-file")
+    key_group.add_argument("--auth-key-hex")
+    parser.add_argument("--port", type=int, default=9999)
+    parser.add_argument("--output-dir", default="modules/picblobs/mbed/blobs")
+    args = parser.parse_args()
+
+    port = validate_port(args.port)
+    server_ipv4 = parse_ipv4(args.server_ip)
+    auth_key = load_auth_key(args.auth_key_file, args.auth_key_hex)
+
+    server = configure_server_blob(resolve_runfile(args.server_bin).read_bytes(), port, auth_key)
+    client = configure_client_blob(
+        resolve_runfile(args.client_bin).read_bytes(),
+        port,
+        server_ipv4,
+        auth_key,
+    )
+
+    workspace = Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path.cwd())).resolve()
+    output_dir = workspace / args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    write_header(output_dir / "nacl_server_blob.h", "nacl_server_blob", server)
+    write_header(output_dir / "nacl_client_blob.h", "nacl_client_blob", client)
+
+    print("generated configured Mbed blob headers:")
+    print_image(output_dir / "nacl_server_blob.h", server)
+    print_image(output_dir / "nacl_client_blob.h", client)
+    return 0
+
+
+def validate_port(port: int) -> int:
+    if port < 1 or port > 65535:
+        raise ValueError(f"port {port} is outside 1..65535")
+    return port
+
+
+def parse_ipv4(value: str) -> bytes:
+    try:
+        return ipaddress.IPv4Address(value).packed
+    except ipaddress.AddressValueError as error:
+        raise ValueError(f"invalid server IPv4 address: {value!r}") from error
+
+
+def parse_auth_key(value: str) -> bytes:
+    try:
+        key = bytes.fromhex(value)
+    except ValueError as error:
+        raise ValueError("auth key must be hexadecimal") from error
+    if len(key) != AUTH_KEY_SIZE:
+        raise ValueError(f"auth key must be exactly {AUTH_KEY_SIZE} bytes")
+    if not any(key):
+        raise ValueError("auth key must not be all zero")
+    return key
+
+
+def load_auth_key(path_value: str | None, hex_value: str | None) -> bytes:
+    if path_value:
+        path = Path(path_value).expanduser()
+        raw = path.read_bytes()
+        if len(raw) == AUTH_KEY_SIZE:
+            return checked_auth_key(raw)
+        try:
+            return parse_auth_key(raw.decode("ascii").strip())
+        except UnicodeDecodeError as error:
+            raise ValueError(
+                "auth key file must contain 32 raw bytes or 64 hexadecimal characters"
+            ) from error
+    if hex_value:
+        return parse_auth_key(hex_value)
+    raise ValueError("an authentication key is required")
+
+
+def configure_server_blob(blob: bytes, port: int, auth_key: bytes) -> bytes:
+    config = struct.pack("<H", validate_port(port)) + checked_auth_key(auth_key)
+    return replace_config(blob, config, SERVER_CONFIG_SIZE)
+
+
+def configure_client_blob(
+    blob: bytes,
+    port: int,
+    server_ipv4: bytes,
+    auth_key: bytes,
+) -> bytes:
+    if len(server_ipv4) != 4:
+        raise ValueError("server IPv4 address must be exactly 4 bytes")
+    config = (
+        struct.pack("<H", validate_port(port))
+        + server_ipv4
+        + checked_auth_key(auth_key)
+    )
+    return replace_config(blob, config, CLIENT_CONFIG_SIZE)
+
+
+def checked_auth_key(auth_key: bytes) -> bytes:
+    if len(auth_key) != AUTH_KEY_SIZE or not any(auth_key):
+        raise ValueError("auth key must be 32 bytes and must not be all zero")
+    return auth_key
+
+
+def replace_config(blob: bytes, config: bytes, expected_size: int) -> bytes:
+    if len(config) != expected_size:
+        raise ValueError(
+            f"config is {len(config)} bytes; expected exactly {expected_size}"
+        )
+    if len(blob) < expected_size:
+        raise ValueError(
+            f"blob is {len(blob)} bytes; smaller than its {expected_size}-byte config"
+        )
+    configured = bytearray(blob)
+    configured[-expected_size:] = config
+    return bytes(configured)
+
+
+def write_header(path: Path, variable: str, blob: bytes) -> None:
+    guard = f"{variable.upper()}_H"
+    rows = []
+    for offset in range(0, len(blob), 12):
+        values = ", ".join(f"0x{byte:02x}" for byte in blob[offset : offset + 12])
+        rows.append(f"    {values},")
+    body = "\n".join(rows)
+    content = (
+        "/* Generated by task picblobs:mbed-blobs; do not edit. */\n"
+        f"#ifndef {guard}\n"
+        f"#define {guard}\n\n"
+        f"static const unsigned char {variable}[] = {{\n"
+        f"{body}\n"
+        "};\n"
+        f"static const unsigned int {variable}_len = {len(blob)};\n\n"
+        f"#endif /* {guard} */\n"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            output.write(content)
+        temporary.chmod(0o600)
+        temporary.replace(path)
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+    path.chmod(0o600)
+
+
+def print_image(path: Path, blob: bytes) -> None:
+    digest = hashlib.sha256(blob).hexdigest()
+    print(f"  {path}: {len(blob)} bytes, sha256={digest}")
+
+
+def resolve_runfile(value: str) -> Path:
+    raw = Path(value)
+    if raw.is_absolute() and raw.is_file():
+        return raw
+    for root_name in ("RUNFILES_DIR", "TEST_SRCDIR"):
+        root = os.environ.get(root_name)
+        if not root:
+            continue
+        for prefix in ("", "_main", "hovel"):
+            candidate = Path(root) / prefix / value
+            if candidate.is_file():
+                return candidate.resolve()
+    candidate = Path.cwd() / value
+    if candidate.is_file():
+        return candidate.resolve()
+    raise FileNotFoundError(f"missing runfile: {value}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

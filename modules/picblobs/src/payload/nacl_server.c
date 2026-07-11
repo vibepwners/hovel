@@ -7,17 +7,19 @@
  *
  * Why: this runs on an isolated test/development network where all traffic
  * must be encrypted so an attacker on the wire cannot hijack the session.
- * A static pre-shared key baked into the blob does not achieve that — the
- * blob is the payload on the wire and on disk, so the key is trivially
- * extractable, and a static key gives no forward secrecy. Instead we do a
- * fresh ephemeral X25519 exchange per session (forward secrecy) and seal the
- * exchanged public keys under a 32-byte auth key injected via config and
- * NEVER embedded in the blob. A wire attacker who lacks the injected key
- * cannot substitute public keys, so cannot MITM / hijack the session.
+ * A static data-encryption key reused directly by every session gives no
+ * forward secrecy. Instead we do a fresh ephemeral X25519 exchange per
+ * session (forward secrecy) and seal the exchanged public keys under a
+ * 32-byte auth key injected via deployment config. A wire attacker who lacks
+ * the provisioned key cannot substitute public keys, so cannot MITM / hijack
+ * the session.
  *
  * Residual trust assumption: security rests on the secrecy of the injected
- * auth key. Anyone who holds it for a deployment can impersonate either peer
- * for that deployment; use a distinct random key per deployment.
+ * auth key. The configured runtime image contains that key; provisioning and
+ * deployed firmware must therefore be protected. Anyone who extracts it can
+ * impersonate either peer for that deployment. Use a distinct random key per
+ * deployment. Later key compromise does not decrypt previously recorded
+ * sessions unless an ephemeral secret was also retained.
  *
  * Protocol:
  *   1. Bind 0.0.0.0:<configured port>, accept one connection.
@@ -50,16 +52,16 @@
 #include "picblobs/sys/socket.h"
 #include "picblobs/sys/write.h"
 
-#define MAX_CT 4096
+#define MAX_PLAINTEXT 4096
+#define MAX_CIPHERTEXT (MAX_PLAINTEXT + crypto_secretbox_BOXZEROBYTES)
 
 /*
  * Config layout: port (u16 LE) followed by a 32-byte handshake
  * authentication key. The auth key is injected at deploy time into the
- * .config section — it is deliberately NOT compiled into the blob, so an
- * attacker who captures the payload cannot recover it and therefore cannot
- * authenticate (and thus cannot MITM) the X25519 key exchange. The .skip
- * below only reserves space; a deployment must overwrite it with a real
- * random key (an all-zero key authenticates nothing).
+ * .config section rather than hard-coded in source or unconfigured release
+ * artifacts. A configured image does contain the key, so protect provisioning
+ * and the deployed image. The .skip below only reserves space; a deployment
+ * must overwrite it with a real random key. The blob rejects an all-zero key.
  */
 struct __attribute__((packed)) nacl_server_config {
 	pic_u16 port; /* little-endian */
@@ -127,6 +129,26 @@ static const unsigned char *config_auth_key(void)
 	return (const unsigned char *)(void *)(nacl_server_config + 2);
 }
 
+PIC_TEXT
+static int auth_key_is_zero(const unsigned char *key)
+{
+	unsigned char aggregate = 0;
+	for (pic_size_t i = 0; i < crypto_secretbox_KEYBYTES; i++) {
+		aggregate |= key[i];
+	}
+	return aggregate == 0;
+}
+
+PIC_TEXT
+static void secure_zero(void *buf, pic_size_t len)
+{
+	volatile pic_u8 *p = (volatile pic_u8 *)buf;
+	while (len > 0) {
+		*p++ = 0;
+		len--;
+	}
+}
+
 /* Read a framed message: nonce(24) + len(4 LE) + ciphertext(len).
  * Returns plaintext length on success, -1 on failure.
  * Plaintext is in pt + crypto_secretbox_ZEROBYTES. */
@@ -135,7 +157,7 @@ static long recv_decrypt(
 	int fd, const unsigned char *key, unsigned char *pt, pic_size_t pt_cap)
 {
 	unsigned char nonce[crypto_secretbox_NONCEBYTES] = {0};
-	unsigned char ct[crypto_secretbox_ZEROBYTES + MAX_CT];
+	unsigned char ct[crypto_secretbox_ZEROBYTES + MAX_PLAINTEXT];
 	pic_u8 len_buf[4] = {0};
 	pic_u32 ct_len = 0;
 	pic_u64 box_len = 0;
@@ -149,7 +171,7 @@ static long recv_decrypt(
 
 	ct_len = (pic_u32)len_buf[0] | ((pic_u32)len_buf[1] << 8) |
 		((pic_u32)len_buf[2] << 16) | ((pic_u32)len_buf[3] << 24);
-	if (ct_len > MAX_CT) {
+	if (ct_len > MAX_CIPHERTEXT) {
 		return -1;
 	}
 
@@ -176,13 +198,13 @@ static int encrypt_send(
 	int fd, const unsigned char *key, const void *msg, pic_size_t msg_len)
 {
 	unsigned char nonce[crypto_secretbox_NONCEBYTES] = {0};
-	unsigned char pt[crypto_secretbox_ZEROBYTES + MAX_CT];
-	unsigned char ct[crypto_secretbox_ZEROBYTES + MAX_CT];
+	unsigned char pt[crypto_secretbox_ZEROBYTES + MAX_PLAINTEXT];
+	unsigned char ct[crypto_secretbox_ZEROBYTES + MAX_PLAINTEXT];
 	pic_u64 box_len = crypto_secretbox_ZEROBYTES + msg_len;
 	pic_u32 ct_len = 0;
 	pic_u8 len_buf[4] = {0};
 
-	if (msg_len > MAX_CT) {
+	if (msg_len > MAX_PLAINTEXT) {
 		return -1;
 	}
 
@@ -233,31 +255,62 @@ static int handshake(int fd, const unsigned char *auth_key,
 	unsigned char peer_pk[crypto_scalarmult_BYTES] = {0};
 	unsigned char hs[crypto_secretbox_ZEROBYTES + 64] = {0};
 	long n = 0;
+	int result = -1;
 
-	crypto_box_keypair(eph_pk, eph_sk);
+	if (crypto_box_keypair(eph_pk, eph_sk) != 0) {
+		goto cleanup;
+	}
 
 	if (send_first) {
 		if (encrypt_send(fd, auth_key, eph_pk, sizeof(eph_pk)) < 0) {
-			return -1;
+			goto cleanup;
 		}
 		n = recv_decrypt(fd, auth_key, hs, sizeof(hs));
 		if (n != (long)sizeof(eph_pk)) {
-			return -1;
+			goto cleanup;
 		}
 	} else {
 		n = recv_decrypt(fd, auth_key, hs, sizeof(hs));
 		if (n != (long)sizeof(eph_pk)) {
-			return -1;
+			goto cleanup;
 		}
 		if (encrypt_send(fd, auth_key, eph_pk, sizeof(eph_pk)) < 0) {
-			return -1;
+			goto cleanup;
 		}
 	}
 
 	pic_memcpy(peer_pk, hs + crypto_secretbox_ZEROBYTES, sizeof(peer_pk));
-	crypto_box_beforenm(session_key, peer_pk, eph_sk);
-	pic_memset(eph_sk, 0, sizeof(eph_sk));
-	return 0;
+	result = crypto_box_beforenm(session_key, peer_pk, eph_sk);
+
+cleanup:
+	secure_zero(eph_sk, sizeof(eph_sk));
+	return result;
+}
+
+PIC_TEXT
+static int open_listener(void)
+{
+	int sock = (int)pic_socket(PIC_AF_INET, PIC_SOCK_STREAM, 0);
+	if (sock < 0) {
+		return -1;
+	}
+
+	int one = 1;
+	pic_setsockopt(
+		sock, PIC_SOL_SOCKET, PIC_SO_REUSEADDR, &one, sizeof(one));
+
+	struct pic_sockaddr_in addr;
+	pic_memset(&addr, 0, sizeof(addr));
+	addr.sin_family = PIC_AF_INET;
+	addr.sin_port = pic_htons(config_port());
+	addr.sin_addr = PIC_INADDR_ANY;
+
+	if (pic_bind(sock, &addr, sizeof(addr)) < 0 ||
+		pic_listen(sock, 1) < 0) {
+		pic_close(sock);
+		return -1;
+	}
+	return sock;
 }
 
 PIC_ENTRY
@@ -274,34 +327,20 @@ void _start(
 	PIC_PLATFORM_INIT(plat);
 #endif
 
-	unsigned char pt[crypto_secretbox_ZEROBYTES + MAX_CT];
-	unsigned char session_key[crypto_secretbox_KEYBYTES];
-	int sock = 0;
-	int conn = 0;
+	unsigned char pt[crypto_secretbox_ZEROBYTES + MAX_PLAINTEXT] = {0};
+	unsigned char session_key[crypto_secretbox_KEYBYTES] = {0};
+	int sock = -1;
+	int conn = -1;
 	long pt_len = 0;
-	pic_u16 port = 0;
+	const unsigned char *auth_key = config_auth_key();
 
-	/* Create listening socket. */
-	sock = (int)pic_socket(PIC_AF_INET, PIC_SOCK_STREAM, 0);
-	if (sock < 0) {
-		pic_exit_group(1);
-	}
-
-	int one = 1;
-	pic_setsockopt(
-		sock, PIC_SOL_SOCKET, PIC_SO_REUSEADDR, &one, sizeof(one));
-
-	struct pic_sockaddr_in addr;
-	pic_memset(&addr, 0, sizeof(addr));
-	addr.sin_family = PIC_AF_INET;
-	port = config_port();
-	addr.sin_port = pic_htons(port);
-	addr.sin_addr = PIC_INADDR_ANY;
-
-	if (pic_bind(sock, &addr, sizeof(addr)) < 0) {
+	if (auth_key_is_zero(auth_key)) {
 		goto fail_sock;
 	}
-	if (pic_listen(sock, 1) < 0) {
+
+	/* Create listening socket. */
+	sock = open_listener();
+	if (sock < 0) {
 		goto fail_sock;
 	}
 
@@ -316,7 +355,7 @@ void _start(
 
 	/* Authenticated ephemeral X25519 key exchange (server receives first).
 	 */
-	if (handshake(conn, config_auth_key(), session_key, 0) < 0) {
+	if (handshake(conn, auth_key, session_key, 0) < 0) {
 		goto fail_conn;
 	}
 
@@ -338,12 +377,20 @@ void _start(
 	pic_write(1, tag_ok, sizeof(tag_ok) - 1);
 	pic_close(conn);
 	pic_close(sock);
+	secure_zero(pt, sizeof(pt));
+	secure_zero(session_key, sizeof(session_key));
 	pic_exit_group(0);
 
 fail_conn:
-	pic_close(conn);
+	if (conn >= 0) {
+		pic_close(conn);
+	}
 fail_sock:
 	pic_write(2, tag_fail, sizeof(tag_fail) - 1);
-	pic_close(sock);
+	if (sock >= 0) {
+		pic_close(sock);
+	}
+	secure_zero(pt, sizeof(pt));
+	secure_zero(session_key, sizeof(session_key));
 	pic_exit_group(1);
 }

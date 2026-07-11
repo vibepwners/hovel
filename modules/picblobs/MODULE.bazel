@@ -6,14 +6,14 @@ module(
 )
 
 # --- C/C++ rules ---
-bazel_dep(name = "rules_cc", version = "0.2.17")
-bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "platforms", version = "1.1.0")
 
 # --- Shell rules ---
-bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "rules_shell", version = "0.8.0")
 
 # --- Python rules ---
-bazel_dep(name = "rules_python", version = "1.7.0")
+bazel_dep(name = "rules_python", version = "2.2.0")
 
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
@@ -23,8 +23,16 @@ pip.parse(
 )
 use_repo(pip, "picblobs_pip")
 
+mbed_pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+mbed_pip.parse(
+    hub_name = "mbed_pip",
+    python_version = "3.11",
+    requirements_lock = "//mbed:requirements.txt",
+)
+use_repo(mbed_pip, "mbed_pip")
+
 # --- Hermetic cross-compilation and emulator toolchains ---
-picblobs_toolchains = use_extension("//modules/picblobs/toolchains:repositories.bzl", "picblobs_toolchains")
+picblobs_toolchains = use_extension("//toolchains:repositories.bzl", "picblobs_toolchains")
 use_repo(
     picblobs_toolchains,
     "arm_none_eabi",
@@ -40,8 +48,9 @@ use_repo(
     "bootlin_s390x",
     "bootlin_sparcv8",
     "bootlin_x86_64",
+    "mbed_arm_none_eabi",
     "qemu_arm_static",
     "qemu_user_static",
 )
 
-register_toolchains("//modules/picblobs/toolchains:all")
+register_toolchains("//toolchains:all")

@@ -35,7 +35,7 @@ vars:
         "") echo "" ;;
         *) echo "unknown Bazel config mode in $config_file: $mode" >&2; exit 2 ;;
       esac
-  PICBLOBS_BUILDIFIER_VERSION: '7.3.1'
+  PICBLOBS_BUILDIFIER_VERSION: '8.5.1'
 
 tasks:
   default:
@@ -120,17 +120,17 @@ tasks:
       - python3 repo-tools/tasks/checkout.py check
 
   ci:
-    desc: Run the full-checkout gate.
+    desc: Run the remote-compatible full-checkout gate.
     cmds:
       - task: checkout:require-full
       - task: repo:quality
       - task: core:ci
       - task: sdk:ci
       - task: modules:ci
-      - task: docs:ci
+      - task: docs:check
 
   ci:report:
-    desc: Run the full-checkout gate with a generated static HTML test report.
+    desc: Run the full-checkout gate, host demos, and a static HTML test report.
     cmds:
       - task: checkout:require-full
       - task: test:report
@@ -152,8 +152,23 @@ tasks:
   run:
     desc: Run an arbitrary core Bazel target.
     dir: core
+    env:
+      HOVEL_REPO_ROOT: '{{.REPO_ROOT}}'
     cmds:
       - task run -- {{.CLI_ARGS}}
+
+  go:deps:
+    desc: 'Add or update root integration Go dependencies: task go:deps -- module@version.'
+    dir: third_party/go_deps
+    cmds:
+      - 'test -n "{{.CLI_ARGS}}" || { echo "usage: task go:deps -- module@version"; exit 2; }'
+      - go get {{.CLI_ARGS}}
+      - go mod tidy
+
+  python:deps:
+    desc: Update uv project locks and hashed Bazel Python requirements.
+    cmds:
+      - task bazel:run -- //repo-tools/deps:update_python_locks
 
   ui:demo:
     desc: Run all terminal UI catalog demos from core.
@@ -446,6 +461,12 @@ tasks:
     cmds:
       - task check
 
+  core:bazel:mod:
+    desc: Run a core Bazel module graph command.
+    dir: core
+    cmds:
+      - task bazel:mod -- {{.CLI_ARGS}}
+
   core:ci:
     desc: Run the core Hovel binary workspace CI gate.
     dir: core
@@ -460,9 +481,29 @@ tasks:
 
   sdk:fmt:
     desc: Format SDK sources with wired formatters.
-    dir: core
     cmds:
-      - task run -- //tools/lint:gofmt_workspace -- --mode=write --path ../sdk/go/hovel
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:ruff -- check --fix-only --config sdk/python/pyproject.toml sdk/python/hovel_sdk modules/examples/python
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:ruff -- format --config sdk/python/pyproject.toml sdk/python/hovel_sdk modules/examples/python
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=write --path ../sdk/go/hovel
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:format_rust_workspace -- --mode=write
+
+  sdk:lint:
+    desc: Run SDK Python lint/type/docs checks and Rust formatting checks.
+    cmds:
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:python_check
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:format_rust_workspace -- --mode=check
 
   sdk:build:
     desc: Build SDK targets in the root integration workspace.
@@ -481,6 +522,7 @@ tasks:
   sdk:ci:
     desc: Run the SDK slice CI gate.
     cmds:
+      - task: sdk:lint
       - task: sdk:build
       - task: sdk:test
 
@@ -508,7 +550,7 @@ tasks:
     cmds:
       - task: bazel:test
         vars:
-          CLI_ARGS: --config=picblobs_ci //modules/picblobs/tools:format_check
+          CLI_ARGS: --config=picblobs_quality //modules/picblobs/tools:format_check
 
   picblobs:lint:
     desc: Run picblobs Python and Bazel lint checks.
@@ -522,7 +564,7 @@ tasks:
     cmds:
       - task: bazel:test
         vars:
-          CLI_ARGS: --config=picblobs_ci //modules/picblobs/tools:lint_check
+          CLI_ARGS: --config=picblobs_quality //modules/picblobs/tools:lint_check
 
   picblobs:generate:
     desc: Regenerate picblobs derived files from the registry.
@@ -536,7 +578,27 @@ tasks:
     cmds:
       - task: bazel:test
         vars:
-          CLI_ARGS: --config=picblobs_ci //modules/picblobs/tools:generate_check
+          CLI_ARGS: --config=picblobs_quality //modules/picblobs/tools:generate_check
+
+  picblobs:module-lock:
+    desc: Refresh the standalone picblobs Bazel module lock.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} mod deps
+
+  picblobs:mbed-blobs:
+    desc: Materialize configured Cortex-M4 NaCl blob headers for the Mbed OS PoC.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: --config=picblobs_cross //modules/picblobs/mbed:materialize_blobs -- {{.CLI_ARGS}}
+
+  picblobs:mbed-compile:
+    desc: Compile the PoC against the checked-out Mbed OS 5.15.9 target SDK.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: --config=picblobs_cross //modules/picblobs/mbed:compile_mbed_os -- {{.CLI_ARGS}}
 
   picblobs:bazel-build:
     desc: Build representative picblobs Bazel targets across platform configs.
@@ -573,14 +635,14 @@ tasks:
     cmds:
       - task: bazel:run
         vars:
-          CLI_ARGS: --config=picblobs_base //modules/picblobs/tools:stage_blobs -- {{.CLI_ARGS}}
+          CLI_ARGS: --config=picblobs_cross //modules/picblobs/tools:stage_blobs -- {{.CLI_ARGS}}
 
   picblobs:stage-release:
     desc: Build and stage release picblobs blobs without CLI runners.
     cmds:
       - task: bazel:run
         vars:
-          CLI_ARGS: --config=picblobs_base //modules/picblobs/tools:stage_blobs_release -- {{.CLI_ARGS}}
+          CLI_ARGS: --config=picblobs_cross //modules/picblobs/tools:stage_blobs_release -- {{.CLI_ARGS}}
 
   picblobs:provider-stage:
     desc: Build and stage the Hovel picblobs payload-provider binary.
@@ -683,7 +745,7 @@ tasks:
           CLI_ARGS: //:docs_build
 
   docs:test:
-    desc: Test docs helpers and standard demo flows.
+    desc: Test docs helpers and standard verification flows.
     cmds:
       - task: bazel:test
         vars:
@@ -717,12 +779,22 @@ tasks:
         vars:
           CLI_ARGS: //docs/tools/docs:stage_site
 
-  docs:ci:
-    desc: Run the docs slice CI gate.
+  docs:check:
+    desc: Run the remote-compatible docs verification gate.
     cmds:
       - task: docs:test
+
+  docs:site:
+    desc: Render host-service demos and stage the complete docs site.
+    cmds:
       - task: docs:demos:all
       - task: docs:stage
+
+  docs:ci:
+    desc: Run remote-compatible docs checks plus host-service site rendering.
+    cmds:
+      - task: docs:check
+      - task: docs:site
 
   start:
     aliases: [dev, up, cli]

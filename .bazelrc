@@ -3,6 +3,7 @@ common --announce_rc
 build --color=yes
 build --curses=yes
 build --action_env=PYTHONDONTWRITEBYTECODE=1
+build --incompatible_default_to_explicit_init_py
 
 test --test_output=errors
 test --test_env=PYTHONDONTWRITEBYTECODE=1
@@ -42,11 +43,16 @@ build:ci --remote_upload_local_results=true
 build:picblobs_base --action_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 build:picblobs_base --sandbox_default_allow_network=false
 build:picblobs_base --nolegacy_external_runfiles
-build:picblobs_base --extra_toolchains=//modules/picblobs/toolchains:all
 
-# Platform configs intentionally do not expand picblobs_base. Combine them with
-# --config=picblobs_base or --config=picblobs_ci so the base config is applied
-# exactly once.
+# Register the cross-toolchain matrix only for targets that compile C/C++.
+# Pure repository quality targets use picblobs_base so they neither fetch
+# unrelated compiler archives nor invalidate Bazel's analysis cache.
+build:picblobs_cross --config=picblobs_base
+build:picblobs_cross --extra_toolchains=//modules/picblobs/toolchains:all
+
+# Platform configs intentionally do not expand Picblobs defaults. Combine them
+# with --config=picblobs_cross or --config=picblobs_ci so the cross toolchains
+# and base settings are applied exactly once.
 build:linux_x86_64          --platforms=//modules/picblobs/platforms:linux_x86_64
 build:linux_i686            --platforms=//modules/picblobs/platforms:linux_i686
 build:linux_aarch64         --platforms=//modules/picblobs/platforms:linux_aarch64
@@ -78,7 +84,7 @@ build:picblobs_debug --copt=-g --copt=-DPIC_LOG_ENABLE
 build:picblobs_debug --strip=never
 build:picblobs_release --strip=always
 
-build:picblobs_lint --config=picblobs_base
+build:picblobs_lint --config=picblobs_cross
 build:picblobs_lint --aspects=//modules/picblobs/bazel:lint.bzl%clang_tidy_aspect
 build:picblobs_lint --output_groups=lint_results
 
@@ -87,5 +93,10 @@ build:picblobs_ci --action_env=PICBLOBS_REQUIRE_LINT_TOOLS=1
 test:picblobs_ci --test_env=PICBLOBS_REQUIRE_LINT_TOOLS=1
 test:picblobs_ci --test_output=all
 test:picblobs_ci --test_verbose_timeout_warnings
+
+build:picblobs_quality --config=picblobs_base
+build:picblobs_quality --action_env=PICBLOBS_REQUIRE_LINT_TOOLS=1
+test:picblobs_quality --test_env=PICBLOBS_REQUIRE_LINT_TOOLS=1
+test:picblobs_quality --test_output=all
 
 try-import %workspace%/.bazelrc.user

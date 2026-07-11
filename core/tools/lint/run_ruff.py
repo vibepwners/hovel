@@ -28,5 +28,16 @@ def _find_ruff() -> str:
     raise FileNotFoundError("Bazel-managed ruff binary was not present in runfiles")
 
 
+def _working_directory() -> Path:
+    for name in ("HOVEL_REPO_ROOT", "BUILD_WORKSPACE_DIRECTORY", "BUILD_WORKING_DIRECTORY"):
+        value = os.environ.get(name)
+        if value:
+            candidate = Path(value)
+            if candidate.is_dir():
+                return candidate
+    return Path.cwd()
+
+
 if __name__ == "__main__":
+    os.chdir(_working_directory())
     os.execv(_find_ruff(), ["ruff", *sys.argv[1:]])

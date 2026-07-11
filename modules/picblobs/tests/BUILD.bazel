@@ -358,6 +358,11 @@ cc_library(
     name = "mbed_mock_hdrs",
     hdrs = [
         "mbed_mock/EthernetInterface.h",
+        "mbed_mock/SocketAddress.h",
+        "mbed_mock/TCPSocket.h",
+        "mbed_mock/blobs/nacl_client_blob.h",
+        "mbed_mock/blobs/nacl_server_blob.h",
+        "mbed_mock/hal/trng_api.h",
         "mbed_mock/mbed.h",
     ],
     strip_include_prefix = "mbed_mock",
@@ -406,6 +411,58 @@ arm_filegroup(
     deps = [":test_mbed_runner_bin"],
 )
 
+# Compile and link the actual Mbed application entrypoint against API-faithful
+# mocks. The blob arrays are tiny compile fixtures; the encrypted E2E below
+# exercises the real Cortex-M4 blob images through the same platform adapter.
+pic_cc_binary(
+    name = "test_mbed_app_bin",
+    srcs = [
+        "//modules/picblobs/mbed:main.cpp",
+        "//modules/picblobs/mbed:platform_mbed.cpp",
+    ],
+    hdrs = ["//modules/picblobs/mbed:platform_mbed.h"],
+    copts = [
+        "-mthumb",
+        "-Os",
+        "-Wall",
+    ],
+    freestanding = False,
+    linkopts = [
+        "-static",
+        "-lstdc++",
+        "-lm",
+    ],
+    local_defines = [
+        "MBED_CONF_APP_BLOB_ROLE=\"server\"",
+        "PIC_PLATFORM_HOSTED",
+    ],
+    quote_includes = [
+        "modules/picblobs/mbed",
+        "mbed",
+    ],
+    target_compatible_with = ["@platforms//cpu:arm"],
+    deps = [
+        ":mbed_mock_hdrs",
+        "//modules/picblobs/src/include/picblobs:headers",
+    ],
+)
+
+arm_filegroup(
+    name = "test_mbed_app_thumb",
+    platform = _ARM_THUMB,
+    deps = [":test_mbed_app_bin"],
+)
+
+py_test(
+    name = "mbed_app_build_test",
+    timeout = "short",
+    srcs = ["mbed_app_build_test.py"],
+    args = ["$(location :test_mbed_app_thumb)"],
+    data = [":test_mbed_app_thumb"],
+    main = "mbed_app_build_test.py",
+    python_version = "PY3",
+)
+
 # E2E: runs actual Cortex-M4 blobs through the real platform_mbed.cpp
 # vtable (fd table, sockaddr parsing, socket lifecycle, RNG wrapper),
 # all backed by POSIX sockets under QEMU user-mode.
@@ -418,6 +475,7 @@ py_test(
         "$(location :test_mbed_runner_thumb)",
         "$(location :nacl_server_hosted_bin_cortexm4)",
         "$(location :nacl_client_hosted_bin_cortexm4)",
+        "--negative",
     ],
     data = [
         ":nacl_client_hosted_bin_cortexm4",
@@ -435,6 +493,7 @@ py_test(
 test_suite(
     name = "nacl_suite",
     tests = [
+        ":mbed_app_build_test",
         ":nacl_e2e_arm",
         ":nacl_e2e_cortexm4",
         ":nacl_e2e_hosted_thumb",

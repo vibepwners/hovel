@@ -215,12 +215,8 @@ class Result:
         }
         if self.installed_payloads:
             out["installedPayloads"] = [
-                payload.to_rpc() if hasattr(payload, "to_rpc") else dict(payload)
-                for payload in self.installed_payloads
+                payload.to_rpc() if hasattr(payload, "to_rpc") else dict(payload) for payload in self.installed_payloads
             ]
         if self.agent_hints:
-            out["agentHints"] = [
-                hint.to_rpc() if hasattr(hint, "to_rpc") else dict(hint)
-                for hint in self.agent_hints
-            ]
+            out["agentHints"] = [hint.to_rpc() if hasattr(hint, "to_rpc") else dict(hint) for hint in self.agent_hints]
         return out

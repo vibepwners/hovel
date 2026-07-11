@@ -8,13 +8,14 @@
  * Forward secrecy: the session key is derived from ephemeral keypairs that
  * never leave memory, so recovering the long-term auth key later does not
  * decrypt past sessions. Authentication: the ephemeral public keys are sealed
- * under a 32-byte auth key supplied via config (never embedded in the blob),
- * so a wire attacker who lacks that key cannot substitute keys and therefore
- * cannot man-in-the-middle / hijack the session. See nacl_server.c for the
- * security rationale and the residual trust assumption.
+ * under a 32-byte auth key supplied via deployment config, so a wire attacker
+ * who lacks that key cannot substitute keys and therefore cannot
+ * man-in-the-middle / hijack the session. The configured runtime image does
+ * contain the key and must be provisioned over a protected path. See
+ * nacl_server.c for the security rationale and residual trust assumptions.
  *
  * Protocol:
- *   1. Connect to 127.0.0.1:<configured port>.
+ *   1. Connect to <configured IPv4 address>:<configured port>.
  *   2. Handshake: send secretbox(auth_key, eph_pk); recv secretbox(auth_key,
  *      peer eph_pk); session_key = X25519(eph_sk, peer eph_pk).
  *   3. Send the message encrypted under session_key.
@@ -41,27 +42,30 @@
 #include "picblobs/sys/socket.h"
 #include "picblobs/sys/write.h"
 
-#define MAX_CT 4096
+#define MAX_PLAINTEXT 4096
+#define MAX_CIPHERTEXT (MAX_PLAINTEXT + crypto_secretbox_BOXZEROBYTES)
 
 /*
- * Config layout: port (u16 LE) followed by a 32-byte handshake
- * authentication key. The auth key is injected at deploy time into the
- * .config section — it is deliberately NOT compiled into the blob, so an
- * attacker who captures the payload cannot recover it and therefore cannot
- * authenticate (and thus cannot MITM) the X25519 key exchange. The .skip
- * below only reserves space; a deployment must overwrite it with a real
- * random key (an all-zero key authenticates nothing).
+ * Config layout: port (u16 LE), server IPv4 address (4 bytes in network
+ * order), then a 32-byte handshake authentication key. The auth key is
+ * injected at deploy time into the .config section rather than hard-coded in
+ * source or unconfigured release artifacts. A configured image does contain
+ * the key, so protect provisioning and the deployed image. The .skip below
+ * only reserves space; a deployment must overwrite it with a real random key.
+ * The blob rejects an all-zero key.
  */
 struct __attribute__((packed)) nacl_client_config {
 	pic_u16 port; /* little-endian */
+	unsigned char server_ipv4[4];
 	unsigned char auth_key[32];
 };
 
 __asm__(".section .config,\"aw\"\n"
 	".globl nacl_client_config\n"
 	"nacl_client_config:\n"
-	".byte 0x0f, 0x27\n" /* port = 9999 */
-	".skip 32, 0\n"	     /* auth_key placeholder — inject at deploy time */
+	".byte 0x0f, 0x27\n"   /* port = 9999 */
+	".byte 127, 0, 0, 1\n" /* server IPv4 placeholder */
+	".skip 32, 0\n" /* auth_key placeholder — inject at deploy time */
 	".previous\n");
 
 PIC_RODATA static const char tag_send[] =
@@ -71,7 +75,7 @@ PIC_RODATA static const char tag_ok[] = "[client] secure channel OK\n";
 PIC_RODATA static const char tag_fail[] = "[client] FAILED\n";
 PIC_RODATA static const char newline[] = "\n";
 PIC_RODATA static const char message[] = "Hello from NaCl PIC blob!";
-PIC_RODATA static const char server_ip[] = "127.0.0.1";
+PIC_RODATA static const char expected_ack[] = "OK";
 
 PIC_TEXT
 static int read_exact(int fd, void *buf, pic_size_t n)
@@ -104,36 +108,11 @@ static int write_all(int fd, const void *buf, pic_size_t n)
 }
 
 PIC_TEXT
-static pic_u32 parse_ipv4(const char *s)
-{
-	pic_u32 octets[4] = {0, 0, 0, 0};
-	int idx = 0;
-	while (*s && idx < 4) {
-		if (*s == '.') {
-			idx++;
-			s++;
-			continue;
-		}
-		octets[idx] = octets[idx] * 10 + (pic_u32)(*s - '0');
-		s++;
-	}
-	/* Pack bytes in network order (big-endian), regardless of host
-	 * endianness. */
-	pic_u32 addr = 0;
-	pic_u8 *p = (pic_u8 *)&addr;
-	p[0] = (pic_u8)octets[0];
-	p[1] = (pic_u8)octets[1];
-	p[2] = (pic_u8)octets[2];
-	p[3] = (pic_u8)octets[3];
-	return addr;
-}
-
-PIC_TEXT
 static long recv_decrypt(
 	int fd, const unsigned char *key, unsigned char *pt, pic_size_t pt_cap)
 {
 	unsigned char nonce[crypto_secretbox_NONCEBYTES] = {0};
-	unsigned char ct[crypto_secretbox_ZEROBYTES + MAX_CT];
+	unsigned char ct[crypto_secretbox_ZEROBYTES + MAX_PLAINTEXT];
 	pic_u8 len_buf[4] = {0};
 	pic_u32 ct_len = 0;
 	pic_u64 box_len = 0;
@@ -147,7 +126,7 @@ static long recv_decrypt(
 
 	ct_len = (pic_u32)len_buf[0] | ((pic_u32)len_buf[1] << 8) |
 		((pic_u32)len_buf[2] << 16) | ((pic_u32)len_buf[3] << 24);
-	if (ct_len > MAX_CT) {
+	if (ct_len > MAX_CIPHERTEXT) {
 		return -1;
 	}
 
@@ -173,13 +152,13 @@ static int encrypt_send(
 	int fd, const unsigned char *key, const void *msg, pic_size_t msg_len)
 {
 	unsigned char nonce[crypto_secretbox_NONCEBYTES] = {0};
-	unsigned char pt[crypto_secretbox_ZEROBYTES + MAX_CT];
-	unsigned char ct[crypto_secretbox_ZEROBYTES + MAX_CT];
+	unsigned char pt[crypto_secretbox_ZEROBYTES + MAX_PLAINTEXT];
+	unsigned char ct[crypto_secretbox_ZEROBYTES + MAX_PLAINTEXT];
 	pic_u64 box_len = crypto_secretbox_ZEROBYTES + msg_len;
 	pic_u32 ct_len = 0;
 	pic_u8 len_buf[4] = {0};
 
-	if (msg_len > MAX_CT) {
+	if (msg_len > MAX_PLAINTEXT) {
 		return -1;
 	}
 
@@ -215,12 +194,40 @@ static pic_u16 config_port(void)
 	return (pic_u16)cfg[0] | ((pic_u16)cfg[1] << 8);
 }
 
+/* Pointer to the configured server IPv4 bytes in network order. */
+PIC_TEXT
+static const unsigned char *config_server_ipv4(void)
+{
+	extern char nacl_client_config[] __attribute__((visibility("hidden")));
+	return (const unsigned char *)(void *)(nacl_client_config + 2);
+}
+
 /* Pointer to the 32-byte handshake auth key within the config section. */
 PIC_TEXT
 static const unsigned char *config_auth_key(void)
 {
 	extern char nacl_client_config[] __attribute__((visibility("hidden")));
-	return (const unsigned char *)(void *)(nacl_client_config + 2);
+	return (const unsigned char *)(void *)(nacl_client_config + 6);
+}
+
+PIC_TEXT
+static int auth_key_is_zero(const unsigned char *key)
+{
+	unsigned char aggregate = 0;
+	for (pic_size_t i = 0; i < crypto_secretbox_KEYBYTES; i++) {
+		aggregate |= key[i];
+	}
+	return aggregate == 0;
+}
+
+PIC_TEXT
+static void secure_zero(void *buf, pic_size_t len)
+{
+	volatile pic_u8 *p = (volatile pic_u8 *)buf;
+	while (len > 0) {
+		*p++ = 0;
+		len--;
+	}
 }
 
 /*
@@ -246,31 +253,36 @@ static int handshake(int fd, const unsigned char *auth_key,
 	unsigned char peer_pk[crypto_scalarmult_BYTES] = {0};
 	unsigned char hs[crypto_secretbox_ZEROBYTES + 64] = {0};
 	long n = 0;
+	int result = -1;
 
-	crypto_box_keypair(eph_pk, eph_sk);
+	if (crypto_box_keypair(eph_pk, eph_sk) != 0) {
+		goto cleanup;
+	}
 
 	if (send_first) {
 		if (encrypt_send(fd, auth_key, eph_pk, sizeof(eph_pk)) < 0) {
-			return -1;
+			goto cleanup;
 		}
 		n = recv_decrypt(fd, auth_key, hs, sizeof(hs));
 		if (n != (long)sizeof(eph_pk)) {
-			return -1;
+			goto cleanup;
 		}
 	} else {
 		n = recv_decrypt(fd, auth_key, hs, sizeof(hs));
 		if (n != (long)sizeof(eph_pk)) {
-			return -1;
+			goto cleanup;
 		}
 		if (encrypt_send(fd, auth_key, eph_pk, sizeof(eph_pk)) < 0) {
-			return -1;
+			goto cleanup;
 		}
 	}
 
 	pic_memcpy(peer_pk, hs + crypto_secretbox_ZEROBYTES, sizeof(peer_pk));
-	crypto_box_beforenm(session_key, peer_pk, eph_sk);
-	pic_memset(eph_sk, 0, sizeof(eph_sk));
-	return 0;
+	result = crypto_box_beforenm(session_key, peer_pk, eph_sk);
+
+cleanup:
+	secure_zero(eph_sk, sizeof(eph_sk));
+	return result;
 }
 
 PIC_TEXT
@@ -309,7 +321,7 @@ static void init_sockaddr(struct pic_sockaddr_in *addr)
 	pic_memset(addr, 0, sizeof(*addr));
 	addr->sin_family = PIC_AF_INET;
 	addr->sin_port = pic_htons(config_port());
-	addr->sin_addr = parse_ipv4(server_ip);
+	pic_memcpy(&addr->sin_addr, config_server_ipv4(), 4);
 }
 
 PIC_ENTRY
@@ -326,10 +338,15 @@ void _start(
 	PIC_PLATFORM_INIT(plat);
 #endif
 
-	unsigned char pt[crypto_secretbox_ZEROBYTES + MAX_CT];
-	unsigned char session_key[crypto_secretbox_KEYBYTES];
-	int sock = 0;
+	unsigned char pt[crypto_secretbox_ZEROBYTES + MAX_PLAINTEXT] = {0};
+	unsigned char session_key[crypto_secretbox_KEYBYTES] = {0};
+	int sock = -1;
 	long pt_len = 0;
+	const unsigned char *auth_key = config_auth_key();
+
+	if (auth_key_is_zero(auth_key)) {
+		goto fail;
+	}
 
 	struct pic_sockaddr_in addr;
 	init_sockaddr(&addr);
@@ -339,7 +356,7 @@ void _start(
 	}
 
 	/* Authenticated ephemeral X25519 key exchange (client sends first). */
-	if (handshake(sock, config_auth_key(), session_key, 1) < 0) {
+	if (handshake(sock, auth_key, session_key, 1) < 0) {
 		goto fail;
 	}
 
@@ -351,7 +368,9 @@ void _start(
 
 	/* Receive encrypted ACK. */
 	pt_len = recv_decrypt(sock, session_key, pt, sizeof(pt));
-	if (pt_len < 0) {
+	if (pt_len != (long)(sizeof(expected_ack) - 1) ||
+		pic_memcmp(pt + crypto_secretbox_ZEROBYTES, expected_ack,
+			sizeof(expected_ack) - 1) != 0) {
 		goto fail;
 	}
 
@@ -361,10 +380,16 @@ void _start(
 
 	pic_write(1, tag_ok, sizeof(tag_ok) - 1);
 	pic_close(sock);
+	secure_zero(pt, sizeof(pt));
+	secure_zero(session_key, sizeof(session_key));
 	pic_exit_group(0);
 
 fail:
 	pic_write(2, tag_fail, sizeof(tag_fail) - 1);
-	pic_close(sock);
+	if (sock >= 0) {
+		pic_close(sock);
+	}
+	secure_zero(pt, sizeof(pt));
+	secure_zero(session_key, sizeof(session_key));
 	pic_exit_group(1);
 }

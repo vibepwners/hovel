@@ -2,7 +2,15 @@
 
 use crate::context::Context;
 use crate::json::Value;
+use crate::mesh::{
+    MeshBeacon, MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshListener,
+    MeshListenerListRequest, MeshListenerStartRequest, MeshListenerStopRequest, MeshStreamRequest,
+    MeshTaskRequest, MeshTaskResult, MeshTopology, MeshTopologyRequest, MESH_RPC_BEACONS_METHOD,
+    MESH_RPC_LISTENERS_METHOD, MESH_RPC_LISTENER_START_METHOD, MESH_RPC_LISTENER_STOP_METHOD,
+    MESH_RPC_OPEN_STREAM_METHOD, MESH_RPC_TASK_METHOD, MESH_RPC_TOPOLOGY_METHOD,
+};
 use crate::result::Outcome;
+use crate::session::SessionRef;
 
 /// The kind of work a module performs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,4 +104,71 @@ pub trait Module {
     fn info(&self) -> Info;
     fn schema(&self) -> Schema;
     fn run(&self, ctx: &mut Context) -> Outcome;
+
+    fn describe_mesh(&self, _req: MeshDescribeRequest) -> Result<MeshDescriptor, String> {
+        Err(format!(
+            "module {:?} is not a mesh provider",
+            self.info().name
+        ))
+    }
+
+    fn mesh_topology(&self, _req: MeshTopologyRequest) -> Result<MeshTopology, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_TOPOLOGY_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn list_mesh_beacons(&self, _req: MeshBeaconRequest) -> Result<Vec<MeshBeacon>, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_BEACONS_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn list_mesh_listeners(
+        &self,
+        _req: MeshListenerListRequest,
+    ) -> Result<Vec<MeshListener>, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_LISTENERS_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn start_mesh_listener(&self, _req: MeshListenerStartRequest) -> Result<MeshListener, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_LISTENER_START_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn stop_mesh_listener(&self, _req: MeshListenerStopRequest) -> Result<MeshListener, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_LISTENER_STOP_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn run_mesh_task(
+        &self,
+        _ctx: &mut Context,
+        _req: MeshTaskRequest,
+    ) -> Result<MeshTaskResult, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_TASK_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn open_mesh_stream(
+        &self,
+        _ctx: &mut Context,
+        _req: MeshStreamRequest,
+    ) -> Result<SessionRef, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_OPEN_STREAM_METHOD}",
+            self.info().name,
+        ))
+    }
 }

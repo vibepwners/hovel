@@ -36,5 +36,8 @@ py_test(
     imports = ["."],
     main = "hovel_sdk/sdk_test.py",
     python_version = "PY3",
-    deps = [":hovel_sdk"],
+    deps = [
+        ":hovel_sdk",
+        "@lint_pypi//pytest",
+    ],
 )
