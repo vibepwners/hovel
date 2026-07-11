@@ -12,6 +12,10 @@ use crate::json::Value;
 /// this bounds the wait so a blocking read cannot stall the dispatch loop.
 const IDLE_BLOCK_MS: u64 = 1000;
 
+/// Marks sessions whose non-empty read and write calls each carry exactly one
+/// datagram.
+pub const SESSION_CAPABILITY_DATAGRAM: &str = "datagram";
+
 /// Identifies an interactive session to the daemon and the operator.
 #[derive(Clone, Debug)]
 pub struct SessionRef {

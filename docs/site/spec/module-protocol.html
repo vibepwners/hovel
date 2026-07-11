@@ -564,9 +564,11 @@
 
         <h3>mesh.open_stream</h3>
         <p>
-          Opens a routed byte stream to an endpoint reachable through a Mesh node or
+          Opens a routed session flow to an endpoint reachable through a Mesh node or
           route. The result is a normal <code>SessionRef</code>, so existing session IO,
-          transcript capture, and local IP:port bridging use the same broker.
+          transcript capture, and TCP/UDP local socket bridging use the same broker.
+          UDP bridge sessions must advertise the <code>datagram</code> capability;
+          each non-empty read or write then represents exactly one datagram.
         </p>
 <pre data-lang="params"><code>{
   "runId": "run-1",

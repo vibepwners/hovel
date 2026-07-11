@@ -68,9 +68,9 @@
           A <strong>Mesh</strong> is a provider-owned node operations plane. It may be a
           single node, a pair of nodes, a chain such as node 1 ↔ node 2 ↔ node 3,
           or a routed tree/graph. The name is intentionally broader than
-          <em>transport</em> or <em>tunnel</em>: byte streams are one Mesh operation, but
-          the same Mesh can survey devices, upload and execute files, run commands,
-          load provider-defined components, publish triggers, and report beacons.
+          <em>transport</em> or <em>tunnel</em>: byte streams and datagrams are Mesh
+          operations, but the same Mesh can survey devices, upload and execute files,
+          run commands, load provider-defined components, publish triggers, and report beacons.
         </p>
 
         <h2>Why not transport or tunnel?</h2>
@@ -88,6 +88,7 @@
           <li><strong>Mesh Route</strong> — an ordered path across nodes and links used for a task or stream.</li>
           <li><strong>Mesh Destination</strong> — a host or service reachable through a node or route but not modeled as a Mesh Node.</li>
           <li><strong>Mesh Task</strong> — a node, route, or destination operation such as survey, upload, execute, upload_execute, command, load, or stream.</li>
+          <li><strong>Mesh Bridge</strong> — a daemon-owned loopback socket endpoint that forwards ordinary local TCP or UDP client traffic to one provider-owned Mesh session flow.</li>
           <li><strong>Trigger</strong> — a provider-declared condition that can cause Mesh work or state changes.</li>
           <li><strong>Beacon</strong> — a time-stamped liveness or status signal from one node.</li>
         </ul>
@@ -117,7 +118,7 @@
             <tr><td><code>mesh.topology</code></td><td>Return current nodes, links, and optional routes.</td><td>yes</td><td>yes</td><td>yes</td></tr>
             <tr><td><code>mesh.beacons</code></td><td>Return recent beacon records for one node or the mesh.</td><td>yes</td><td>yes</td><td>yes</td></tr>
             <tr><td><code>mesh.task</code></td><td>Run a provider-owned node or route task.</td><td>yes</td><td>yes</td><td>yes</td></tr>
-            <tr><td><code>mesh.open_stream</code></td><td>Open a byte stream as a normal <code>SessionRef</code> so front ends or future tools can bridge it to a local listener.</td><td>yes</td><td>yes</td><td>yes</td></tr>
+            <tr><td><code>mesh.open_stream</code></td><td>Open a routed session flow as a normal <code>SessionRef</code> so the daemon can bridge TCP streams or UDP datagrams to a local listener.</td><td>yes</td><td>yes</td><td>yes</td></tr>
           </tbody>
         </table>
 
@@ -130,19 +131,38 @@
           to speak module JSON-RPC directly.
         </p>
         <p>
-          A Mesh stream is intentionally represented as a normal session. The SDK and
-          daemon RPC contract provide the session abstraction a future tunnel tool
-          needs to open one provider stream per accepted TCP connection and pump bytes
-          between a local listener and the routed session. This change does not build
-          that tunnel tool; it defines the operator-facing “connect to an IP and port”
-          contract while the provider owns how the route reaches node 1, node 2,
-          node 3, or a tree of nodes.
+          A Mesh routed flow is intentionally represented as a normal session. The SDK and
+          daemon RPC contract provide the session abstraction that the daemon bridge
+          uses to pump bytes or datagrams between a local listener and the routed session. A caller
+          can use <code>OpenMeshBridge</code> to receive a loopback
+          <code>localHost</code>/<code>localPort</code> pair, pass that endpoint to an
+          ordinary tool or module, and let the Mesh provider own how the route reaches
+          node 1, node 2, node 3, or a tree of nodes.
+          A bridge is the lifecycle unit for one routed session flow; callers open
+          another bridge when they need another independent local connection or UDP
+          peer association. For UDP, the provider-returned <code>SessionRef</code>
+          must advertise the <code>datagram</code> capability: every non-empty
+          <code>session/write</code> call and <code>session/read</code> result is one
+          datagram. The daemon broker preserves those boundaries, and the bridge
+          keeps its first local UDP peer so replies cannot be redirected by another
+          local socket. A provider datagram that arrives before that first local
+          packet is retained until the peer is known rather than discarded.
+          Non-socket protocols such as ICMP, GRE, or raw IP remain
+          provider-defined Mesh task/session contracts unless Hovel adds an explicit
+          raw/TUN/TAP-style local adapter with its own policy.
         </p>
         <p>
-          The daemon also keeps bookkeeping for Mesh tasks and streams. Each record
+          Loopback is a local-user trust boundary, not client authentication. Hovel
+          rejects non-loopback bridge binds, but an untrusted process running as the
+          operator could still race the intended client for a new endpoint. Protect
+          the operator account and daemon host accordingly.
+        </p>
+        <p>
+          The daemon also keeps bookkeeping for Mesh tasks, streams, and bridges. Each record
           captures the provider module, run, task kind, node, route, destination host
-          and port, protocol, caller-reported local bridge address when present, opened session, state,
-          and timestamps. Front ends read this through <code>ListMeshOperations</code>.
+          and port, protocol, opened session, state, and timestamps. Bridge records also carry
+          the daemon-owned local address; raw task and stream requests cannot populate that
+          audit field. Front ends read this through <code>ListMeshOperations</code>.
         </p>
 
         <h2>Pivoted destination contract</h2>
@@ -152,15 +172,18 @@
           <code>MeshTaskSpec.targetScopes</code>: <code>node</code>, <code>route</code>,
           and <code>destination</code>. Requests then combine <code>nodeId</code> or
           <code>route</code> with <code>destinationHost</code>,
-          <code>destinationPort</code>, and <code>protocol</code>.
+          optional <code>destinationPort</code>, and provider-defined
+          <code>protocol</code>.
         </p>
         <p>
           This is the SDK contract for “throw through a tunnel” without making Mesh
-          providers implement exploit execution. Hovel can open a routed stream to a
-          destination reachable from a node and run an exploit tool against the local
-          bridge, or it can ask a provider for an explicit <code>upload_execute</code>
-          task when the provider owns that delivery mechanism. Planning, confirmation,
-          dangerous-module checks, and audit records still live above the SDK.
+          providers implement exploit execution. Hovel can open a routed session flow
+          to a destination reachable from a node, bind a daemon-owned TCP or UDP
+          loopback bridge with <code>OpenMeshBridge</code>, and run a compatible tool
+          against the local bridge, or it can ask a provider for an explicit
+          <code>upload_execute</code> task when the provider owns that delivery
+          mechanism. Planning, confirmation, dangerous-module checks, and audit
+          records still live above the SDK.
         </p>
         <p>
           Implant loading follows the same rule. A provider that can place and start an
@@ -168,8 +191,8 @@
           for the common "copy bytes, then run them" flow. Providers with a native
           in-memory or protocol-specific loader can advertise <code>load</code> instead.
           The request carries the pivot (<code>nodeId</code> or <code>route</code>), the
-          reached service (<code>destinationHost</code>, <code>destinationPort</code>,
-          <code>protocol</code>), and either inline bytes via <code>inputData</code> plus
+          reached service or protocol (<code>destinationHost</code>, optional
+          <code>destinationPort</code>, <code>protocol</code>), and either inline bytes via <code>inputData</code> plus
           <code>inputEncoding</code> or provider-defined payload/artifact references in
           <code>config</code>. Mesh records the contract and bookkeeping; payload
           generation, confirmation, and the actual loader behavior remain provider or

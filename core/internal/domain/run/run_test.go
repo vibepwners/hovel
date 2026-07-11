@@ -2,6 +2,16 @@ package run
 
 import "testing"
 
+func TestSessionRefHasCapability(t *testing.T) {
+	session := SessionRef{Capabilities: []string{"read", " datagram "}}
+	if !session.HasCapability(SessionCapabilityDatagram) {
+		t.Fatal("HasCapability(datagram) = false, want true")
+	}
+	if session.HasCapability("") || session.HasCapability("write") {
+		t.Fatal("HasCapability reported an unadvertised capability")
+	}
+}
+
 func TestNewRequestRequiresModuleAndTarget(t *testing.T) {
 	_, err := NewRequest(RequestArgs{ID: "run-1", ModuleID: "mock-exploit", Target: ""})
 	if err == nil {

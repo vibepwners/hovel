@@ -46,6 +46,44 @@ func TestBrokerSessionTailConsumeClearsPendingBytes(t *testing.T) {
 	}
 }
 
+func TestBrokerSessionPreservesDatagramBoundaries(t *testing.T) {
+	session := newBrokerSession(run.SessionRef{
+		ID:           "s1",
+		Capabilities: []string{run.SessionCapabilityDatagram},
+	}, nil, 1024)
+	session.appendData([]byte("first"))
+	session.appendData([]byte("second"))
+
+	first, err := session.read(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := session.read(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first.Data) != "first" || string(second.Data) != "second" {
+		t.Fatalf("datagrams = %q, %q; want preserved frames", first.Data, second.Data)
+	}
+}
+
+func TestBrokerSessionTailConsumeClearsPendingDatagrams(t *testing.T) {
+	session := newBrokerSession(run.SessionRef{
+		ID:           "s1",
+		Capabilities: []string{run.SessionCapabilityDatagram},
+	}, nil, 1024)
+	session.appendData([]byte("datagram"))
+	session.tail("s1", run.SessionTailOptions{Consume: true})
+
+	chunk, err := session.read(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunk.Data) != 0 {
+		t.Fatalf("pending datagram = %q, want consumed", chunk.Data)
+	}
+}
+
 func TestSessionBrokerListsSessionsInAdoptionOrder(t *testing.T) {
 	broker := NewSessionBroker()
 	broker.sessions["session-z"] = &brokerSession{ref: run.SessionRef{ID: "session-z"}, order: 0}

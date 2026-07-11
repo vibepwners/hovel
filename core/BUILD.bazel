@@ -94,6 +94,7 @@ test_suite(
     name = "race_test",
     tags = ["manual"],
     tests = [
+        "//internal/adapters/daemonrpc:daemonrpc_race_test",
         "//internal/app/chainruntime:chainruntime_race_test",
         "//internal/app/commands:commands_race_test",
         "//internal/app/hovelconfig:hovelconfig_race_test",

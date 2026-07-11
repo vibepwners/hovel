@@ -1243,6 +1243,56 @@
         }
       }
     },
+    "/hovel.daemon.v1.DaemonService/OpenMeshBridge": {
+      "post": {
+        "tags": [
+          "mesh"
+        ],
+        "operationId": "OpenMeshBridge",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/MeshBridgeOpenRequest"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MeshBridgeOpenResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/TextError"
+          },
+          "405": {
+            "$ref": "#/components/responses/TextError"
+          },
+          "500": {
+            "$ref": "#/components/responses/TextError"
+          }
+        }
+      }
+    },
+    "/hovel.daemon.v1.DaemonService/CloseMeshBridge": {
+      "post": {
+        "tags": [
+          "mesh"
+        ],
+        "operationId": "CloseMeshBridge",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/MeshBridgeCloseRequest"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MeshBridgeCloseResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/TextError"
+          },
+          "405": {
+            "$ref": "#/components/responses/TextError"
+          },
+          "500": {
+            "$ref": "#/components/responses/TextError"
+          }
+        }
+      }
+    },
     "/hovel.daemon.v1.DaemonService/ListMeshOperations": {
       "post": {
         "tags": [
@@ -1650,6 +1700,26 @@
             }
           }
         }
+      },
+      "MeshBridgeOpenRequest": {
+        "description": "Open a daemon-owned local TCP or UDP loopback endpoint backed by one Mesh session flow.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MeshBridgeOpenRequest"
+            }
+          }
+        }
+      },
+      "MeshBridgeCloseRequest": {
+        "description": "Close a daemon-owned Mesh bridge by supplying exactly one operation or session id.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MeshBridgeCloseRequest"
+            }
+          }
+        }
       }
     },
     "responses": {
@@ -1882,6 +1952,26 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/MeshOperationListResponse"
+            }
+          }
+        }
+      },
+      "MeshBridgeOpenResponse": {
+        "description": "Local endpoint for a daemon-owned Mesh bridge session flow.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MeshBridgeOpenResponse"
+            }
+          }
+        }
+      },
+      "MeshBridgeCloseResponse": {
+        "description": "Closed Mesh bridge state.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MeshBridgeCloseResponse"
             }
           }
         }
@@ -3996,6 +4086,103 @@
           },
           "agentContext": {
             "$ref": "#/components/schemas/AgentContext"
+          }
+        }
+      },
+      "MeshBridgeOpenRequest": {
+        "type": "object",
+        "required": [
+          "moduleId"
+        ],
+        "properties": {
+          "moduleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request": {
+            "$ref": "#/components/schemas/MeshStreamRequest"
+          },
+          "localHost": {
+            "type": "string",
+            "description": "Loopback IP address; empty or localhost selects 127.0.0.1."
+          },
+          "localPort": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          }
+        }
+      },
+      "MeshBridgeOpenResponse": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "sessionId",
+          "localHost",
+          "localPort",
+          "localAddress"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "localHost": {
+            "type": "string"
+          },
+          "localPort": {
+            "type": "integer"
+          },
+          "localAddress": {
+            "type": "string"
+          }
+        }
+      },
+      "MeshBridgeCloseRequest": {
+        "type": "object",
+        "oneOf": [
+          {
+            "required": [
+              "operationId"
+            ]
+          },
+          {
+            "required": [
+              "sessionId"
+            ]
+          }
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sessionId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "MeshBridgeCloseResponse": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "sessionId",
+          "state"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
           }
         }
       }

@@ -76,16 +76,20 @@ The provider methods are real RPC endpoints: `list_payloads`,
 endpoints: `step.describe`, `step.prepare`, `step.execute`, and `step.cleanup`.
 Mesh providers expose `mesh.describe`, `mesh.topology`, `mesh.beacons`,
 `mesh.task`, and `mesh.open_stream` for one-node tools through routed
-tree/graph node operations.
+tree/graph node operations and protocol-specific flows.
 The Go SDK intentionally splits those methods into optional interfaces
 (`MeshDescriber`, `MeshTopologyProvider`, `MeshBeaconProvider`,
 `MeshTaskProvider`, and `MeshStreamProvider`) so a simple stream Mesh does not
 need to stub tasking, beacons, or topology.
 Use `MeshTaskSpec.TargetScopes` to say whether a task targets a Mesh node,
 route, or destination reachable through a node. `MeshTaskRequest` and
-`MeshStreamRequest` both carry `DestinationHost`, `DestinationPort`, and
-`Protocol`, which is the contract Hovel needs to run tools or exploit delivery
-through a Mesh-backed local bridge without hard-coding the provider internals.
+`MeshStreamRequest` both carry `DestinationHost`, optional `DestinationPort`,
+and provider-defined `Protocol`, which is the contract Hovel needs to run tools
+or exploit delivery through a daemon-owned TCP/UDP Mesh bridge or a
+provider-native protocol flow without hard-coding the provider internals.
+For UDP bridges, include `hovel.CapabilityDatagram` in the returned session's
+capabilities and preserve one datagram per non-empty `Session.Write` call and
+`Session.Read` result. One bridge keeps one local UDP peer association.
 Use `MeshTaskUploadExecute` for implant copy-then-run flows and `MeshTaskLoad`
 for provider-native implant/component loaders. The request can carry inline
 payload bytes in `InputData`/`InputEncoding` or provider-defined artifact

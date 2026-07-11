@@ -183,7 +183,7 @@ func TestDaemonRPCTracksMeshTaskAndStreamOperations(t *testing.T) {
 	if streamOperation.Kind != "stream" ||
 		streamOperation.State != "active" ||
 		streamOperation.SessionID != "mesh-session-1" ||
-		streamOperation.LocalAddress != "127.0.0.1:1445" {
+		streamOperation.LocalAddress != "" {
 		t.Fatalf("stream operation = %#v", streamOperation)
 	}
 
@@ -229,6 +229,757 @@ func TestDaemonRPCTracksMeshTaskAndStreamOperations(t *testing.T) {
 	}
 	if len(stillSucceeded.Operations) != 1 || stillSucceeded.Operations[0].Kind != "task" {
 		t.Fatalf("task operations after stream close = %#v, want succeeded task", stillSucceeded.Operations)
+	}
+}
+
+func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC)},
+	)
+	sessions := newBridgeSessionBroker()
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(sessions))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID:  "mesh-provider@v0.1.0",
+		LocalHost: "127.0.0.1",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-bridge",
+			NodeID:          "relay-1",
+			Target:          "dc-1",
+			DestinationHost: "10.10.10.10",
+			DestinationPort: 445,
+			Protocol:        "tcp",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bridge.OperationID == "" || bridge.SessionID != "mesh-session-1" {
+		t.Fatalf("mesh bridge = %#v, want operation and mesh session", bridge)
+	}
+	if bridge.LocalHost != "127.0.0.1" || bridge.LocalPort == 0 || bridge.LocalAddress == "" {
+		t.Fatalf("mesh bridge endpoint = %#v, want local loopback address", bridge)
+	}
+
+	conn, err := net.DialTimeout("tcp", bridge.LocalAddress, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("close bridge connection: %v", err)
+		}
+	}()
+
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-sessions.writes:
+		if string(got) != "ping" {
+			t.Fatalf("session write = %q, want ping", string(got))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for mesh bridge to write to session")
+	}
+
+	sessions.reads <- run.SessionChunk{SessionID: bridge.SessionID, Data: []byte("pong")}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 4)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buf[:n]) != "pong" {
+		t.Fatalf("local bridge read = %q, want pong", string(buf[:n]))
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-sessions.closes:
+		if got != bridge.SessionID {
+			t.Fatalf("closed session = %q, want %q", got, bridge.SessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for natural mesh bridge session close")
+	}
+	if _, err := client.CloseMeshBridge(context.Background(), MeshBridgeCloseRequest{
+		OperationID: bridge.OperationID,
+	}); err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("CloseMeshBridge after natural close error = %v, want missing bridge", err)
+	}
+
+	operations, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		Kind:  "bridge",
+		State: "closed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations.Operations) != 1 ||
+		operations.Operations[0].ID != bridge.OperationID ||
+		operations.Operations[0].LocalAddress != bridge.LocalAddress {
+		t.Fatalf("closed bridge operations = %#v", operations.Operations)
+	}
+}
+
+func TestClientOpensUDPMeshBridgeAsLocalEndpoint(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 13, 15, 0, 0, time.UTC)},
+	)
+	sessions := newBridgeSessionBroker()
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(sessions))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID:  "mesh-provider@v0.1.0",
+		LocalHost: "127.0.0.1",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-udp-bridge",
+			NodeID:          "relay-1",
+			Target:          "dc-1",
+			DestinationHost: "10.10.10.53",
+			DestinationPort: 53,
+			Protocol:        "udp",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bridge.OperationID == "" || bridge.SessionID != "mesh-session-1" {
+		t.Fatalf("mesh bridge = %#v, want operation and mesh session", bridge)
+	}
+	if bridge.LocalHost != "127.0.0.1" || bridge.LocalPort == 0 || bridge.LocalAddress == "" {
+		t.Fatalf("mesh bridge endpoint = %#v, want local loopback address", bridge)
+	}
+
+	remote, err := net.ResolveUDPAddr("udp", bridge.LocalAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.DialUDP("udp", nil, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("close udp bridge connection: %v", err)
+		}
+	}()
+
+	if _, err := conn.Write([]byte("dns?")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-sessions.writes:
+		if string(got) != "dns?" {
+			t.Fatalf("session datagram = %q, want dns?", string(got))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for mesh bridge to write UDP datagram to session")
+	}
+
+	sessions.reads <- run.SessionChunk{SessionID: bridge.SessionID, Data: []byte("dns!")}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 4)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buf[:n]) != "dns!" {
+		t.Fatalf("local bridge datagram = %q, want dns!", string(buf[:n]))
+	}
+
+	closed, err := client.CloseMeshBridge(context.Background(), MeshBridgeCloseRequest{
+		SessionID: bridge.SessionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed.State != "closed" || closed.OperationID != bridge.OperationID {
+		t.Fatalf("closed bridge = %#v, want closed operation", closed)
+	}
+	select {
+	case got := <-sessions.closes:
+		if got != bridge.SessionID {
+			t.Fatalf("closed session = %q, want %q", got, bridge.SessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for mesh bridge session close")
+	}
+
+	operations, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		Kind: "bridge",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations.Operations) != 1 ||
+		operations.Operations[0].Protocol != "udp" ||
+		operations.Operations[0].LocalAddress != bridge.LocalAddress {
+		t.Fatalf("udp bridge operations = %#v", operations.Operations)
+	}
+}
+
+func TestUDPMeshBridgePreservesProviderDatagramUntilLocalPeerArrives(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 13, 18, 0, 0, time.UTC)},
+	)
+	sessions := newBridgeSessionBroker()
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(sessions))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-udp-early-reply",
+			DestinationHost: "10.10.10.53",
+			DestinationPort: 53,
+			Protocol:        "udp",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, closeErr := client.CloseMeshBridge(
+			context.Background(),
+			MeshBridgeCloseRequest{OperationID: bridge.OperationID},
+		)
+		if closeErr != nil && !strings.Contains(closeErr.Error(), "does not exist") {
+			t.Errorf("close UDP bridge: %v", closeErr)
+		}
+	}()
+
+	sessions.reads <- run.SessionChunk{SessionID: bridge.SessionID, Data: []byte("early")}
+	select {
+	case <-sessions.readDelivered:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for provider datagram read")
+	}
+	// Give the bridge pump time to process the provider read before a local peer
+	// exists. The datagram must remain pending rather than being discarded.
+	time.Sleep(25 * time.Millisecond)
+
+	remote, err := net.ResolveUDPAddr("udp", bridge.LocalAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.DialUDP("udp", nil, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close UDP peer: %v", err)
+		}
+	}()
+	if _, err := conn.Write([]byte("claim")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-sessions.writes:
+		if string(got) != "claim" {
+			t.Fatalf("session datagram = %q, want claim", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for local peer claim")
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 5)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(buf[:n]); got != "early" {
+		t.Fatalf("pending provider datagram = %q, want early", got)
+	}
+}
+
+func TestUDPMeshBridgeClosesWhenProviderSessionEnds(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 13, 20, 0, 0, time.UTC)},
+	)
+	sessions := newBridgeSessionBroker()
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(sessions))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-udp-close",
+			DestinationHost: "10.10.10.53",
+			DestinationPort: 53,
+			Protocol:        "udp",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessions.reads <- run.SessionChunk{SessionID: bridge.SessionID, Closed: true}
+	select {
+	case got := <-sessions.closes:
+		if got != bridge.SessionID {
+			t.Fatalf("closed session = %q, want %q", got, bridge.SessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for provider-closed UDP bridge cleanup")
+	}
+	if _, err := client.CloseMeshBridge(context.Background(), MeshBridgeCloseRequest{
+		OperationID: bridge.OperationID,
+	}); err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("CloseMeshBridge after provider close error = %v, want missing bridge", err)
+	}
+	operations, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		Kind:  "bridge",
+		State: "closed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations.Operations) != 1 || operations.Operations[0].ID != bridge.OperationID {
+		t.Fatalf("closed UDP bridge operations = %#v", operations.Operations)
+	}
+}
+
+func TestUDPMeshBridgeRequiresDatagramSessionCapability(t *testing.T) {
+	book := NewMeshBook()
+	manager := NewMeshBridgeManager()
+	sessions := newBridgeSessionBroker()
+	_, err := OpenMeshBridge(context.Background(), MeshBridgeOpenArgs{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-udp-capability",
+			DestinationHost: "10.10.10.53",
+			DestinationPort: 53,
+			Protocol:        "udp",
+		},
+		Runs: services.NewRunService(
+			fakeMeshRunner{omitDatagramCapability: true},
+			discardEvents{},
+			&sequenceIDs{values: []string{"run-unused"}},
+			fixedClock{now: time.Date(2026, 7, 9, 13, 25, 0, 0, time.UTC)},
+		),
+		Sessions: sessions,
+		Book:     book,
+		Bridges:  manager,
+	})
+	if err == nil || !strings.Contains(err.Error(), "datagram capability") {
+		t.Fatalf("OpenMeshBridge error = %v, want datagram capability rejection", err)
+	}
+	select {
+	case got := <-sessions.closes:
+		if got != "mesh-session-1" {
+			t.Fatalf("closed session = %q, want mesh-session-1", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for rejected UDP session cleanup")
+	}
+	if _, ok := manager.Find("mesh-op-1", ""); ok {
+		t.Fatal("rejected UDP bridge remains tracked")
+	}
+	operations := book.List(MeshOperationListRequest{Kind: "bridge", State: "failed"})
+	if len(operations) != 1 || !strings.Contains(operations[0].Error, "datagram capability") {
+		t.Fatalf("failed UDP bridge operations = %#v", operations)
+	}
+}
+
+func TestUDPMeshBridgeKeepsFirstLocalPeer(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 13, 27, 0, 0, time.UTC)},
+	)
+	sessions := newBridgeSessionBroker()
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(sessions))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-udp-peer",
+			DestinationHost: "10.10.10.53",
+			DestinationPort: 53,
+			Protocol:        "udp",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, closeErr := client.CloseMeshBridge(
+			context.Background(),
+			MeshBridgeCloseRequest{OperationID: bridge.OperationID},
+		)
+		if closeErr != nil && !strings.Contains(closeErr.Error(), "does not exist") {
+			t.Errorf("close UDP bridge: %v", closeErr)
+		}
+	}()
+	remote, err := net.ResolveUDPAddr("udp", bridge.LocalAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := net.DialUDP("udp", nil, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := first.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close first UDP peer: %v", err)
+		}
+	}()
+	second, err := net.DialUDP("udp", nil, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := second.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close second UDP peer: %v", err)
+		}
+	}()
+
+	if _, err := first.Write([]byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-sessions.writes:
+		if string(got) != "first" {
+			t.Fatalf("first session datagram = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first UDP peer")
+	}
+	if _, err := second.Write([]byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-sessions.writes:
+		t.Fatalf("second UDP peer reached session: %q", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	sessions.reads <- run.SessionChunk{SessionID: bridge.SessionID, Data: []byte("reply")}
+	if err := first.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 5)
+	n, err := first.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(buf[:n]) != "reply" {
+		t.Fatalf("first UDP peer reply = %q", buf[:n])
+	}
+	if err := second.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Read(buf); err == nil {
+		t.Fatal("second UDP peer received bridge reply")
+	}
+}
+
+func TestMeshBridgeRejectsNonLoopbackLocalHost(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 13, 30, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(newBridgeSessionBroker()))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	_, err = client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID:  "mesh-provider@v0.1.0",
+		LocalHost: "0.0.0.0",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-bridge",
+			NodeID:          "relay-1",
+			DestinationHost: "10.10.10.10",
+			DestinationPort: 445,
+			Protocol:        "tcp",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not loopback") {
+		t.Fatalf("OpenMeshBridge error = %v, want loopback rejection", err)
+	}
+}
+
+func TestMeshBridgeRejectsRawProtocolLocalEndpoint(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 13, 45, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(newBridgeSessionBroker()))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	_, err = client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID:  "mesh-provider@v0.1.0",
+		LocalHost: "127.0.0.1",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-bridge",
+			NodeID:          "relay-1",
+			DestinationHost: "10.10.10.10",
+			Protocol:        "icmp",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "local socket bridges currently support tcp or udp") {
+		t.Fatalf("OpenMeshBridge error = %v, want local socket protocol rejection", err)
+	}
+}
+
+func TestOpenMeshBridgeDefaultsClock(t *testing.T) {
+	book := NewMeshBook()
+	manager := NewMeshBridgeManager()
+	response, err := OpenMeshBridge(context.Background(), MeshBridgeOpenArgs{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-bridge",
+			NodeID:          "relay-1",
+			DestinationHost: "10.10.10.10",
+			DestinationPort: 445,
+			Protocol:        "tcp",
+		},
+		Runs: services.NewRunService(
+			fakeMeshRunner{},
+			discardEvents{},
+			&sequenceIDs{values: []string{"run-unused"}},
+			fixedClock{now: time.Date(2026, 7, 9, 14, 0, 0, 0, time.UTC)},
+		),
+		Sessions: newBridgeSessionBroker(),
+		Book:     book,
+		Bridges:  manager,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge, ok := manager.Find(response.OperationID, "")
+	if !ok {
+		t.Fatal("opened bridge is not tracked")
+	}
+	defer func() {
+		if err := bridge.Close(context.Background()); err != nil {
+			t.Fatalf("close bridge: %v", err)
+		}
+	}()
+
+	operations := book.List(MeshOperationListRequest{Kind: "bridge"})
+	if len(operations) != 1 {
+		t.Fatalf("bridge operations = %#v, want one operation", operations)
+	}
+	if operations[0].StartedAt == "" || operations[0].UpdatedAt == "" {
+		t.Fatalf("bridge operation timestamps = %#v, want defaulted clock timestamps", operations[0])
+	}
+}
+
+func TestMeshBridgeDoesNotStoreConnectionAfterClose(t *testing.T) {
+	bridge := &MeshBridge{}
+	bridge.setClosed()
+	client, server := net.Pipe()
+	defer func() {
+		if err := client.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("close client pipe: %v", err)
+		}
+	}()
+
+	if bridge.setConn(server) {
+		t.Fatal("setConn after close = true, want false")
+	}
+	if bridge.currentConn() != nil {
+		t.Fatal("currentConn after close is set, want nil")
+	}
+	if err := server.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMeshBridgeWritesEntireSessionChunkToLocalStream(t *testing.T) {
+	sessions := newBridgeSessionBroker()
+	sessions.reads <- run.SessionChunk{SessionID: "mesh-session-1", Data: []byte("complete"), Closed: true}
+	conn := &shortWriteConn{}
+	bridge := &MeshBridge{sessions: sessions, sessionID: "mesh-session-1"}
+
+	if err := bridge.copySessionToLocal(context.Background(), conn); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(conn.data); got != "complete" {
+		t.Fatalf("local stream write = %q, want complete", got)
+	}
+}
+
+func TestMeshBridgeCloseReturnsStableErrorAndFailsBookkeeping(t *testing.T) {
+	closeFailure := errors.New("provider close failed")
+	book := NewMeshBook()
+	manager := NewMeshBridgeManager()
+	sessions := newBridgeSessionBroker()
+	sessions.closeErr = closeFailure
+	response, err := OpenMeshBridge(context.Background(), MeshBridgeOpenArgs{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-close-error",
+			DestinationHost: "10.10.10.10",
+			DestinationPort: 445,
+			Protocol:        "tcp",
+		},
+		Runs: services.NewRunService(
+			fakeMeshRunner{},
+			discardEvents{},
+			&sequenceIDs{values: []string{"run-unused"}},
+			fixedClock{now: time.Date(2026, 7, 9, 14, 5, 0, 0, time.UTC)},
+		),
+		Sessions: sessions,
+		Book:     book,
+		Bridges:  manager,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge, ok := manager.Find(response.OperationID, "")
+	if !ok {
+		t.Fatal("opened bridge is not tracked")
+	}
+	if err := bridge.Close(context.Background()); !errors.Is(err, closeFailure) {
+		t.Fatalf("first Close error = %v, want provider failure", err)
+	}
+	if err := bridge.Close(context.Background()); !errors.Is(err, closeFailure) {
+		t.Fatalf("second Close error = %v, want stable provider failure", err)
+	}
+	if _, ok := manager.Find(response.OperationID, ""); ok {
+		t.Fatal("failed-close bridge remains tracked")
+	}
+	operations := book.List(MeshOperationListRequest{Kind: "bridge", State: "failed"})
+	if len(operations) != 1 || !strings.Contains(operations[0].Error, closeFailure.Error()) {
+		t.Fatalf("failed-close bridge operations = %#v", operations)
+	}
+}
+
+func TestMeshBridgeFinishRetainsTransferAndCleanupErrors(t *testing.T) {
+	transferFailure := errors.New("bridge transfer failed")
+	closeFailure := errors.New("provider close failed")
+	book := NewMeshBook()
+	manager := NewMeshBridgeManager()
+	sessions := newBridgeSessionBroker()
+	sessions.closeErr = closeFailure
+	response, err := OpenMeshBridge(context.Background(), MeshBridgeOpenArgs{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-transfer-error",
+			DestinationHost: "10.10.10.10",
+			DestinationPort: 445,
+			Protocol:        "tcp",
+		},
+		Runs: services.NewRunService(
+			fakeMeshRunner{},
+			discardEvents{},
+			&sequenceIDs{values: []string{"run-unused"}},
+			fixedClock{now: time.Date(2026, 7, 9, 14, 7, 0, 0, time.UTC)},
+		),
+		Sessions: sessions,
+		Book:     book,
+		Bridges:  manager,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge, ok := manager.Find(response.OperationID, "")
+	if !ok {
+		t.Fatal("opened bridge is not tracked")
+	}
+	bridge.finish(transferFailure)
+
+	operations := book.List(MeshOperationListRequest{Kind: "bridge", State: "failed"})
+	if len(operations) != 1 ||
+		!strings.Contains(operations[0].Error, transferFailure.Error()) ||
+		!strings.Contains(operations[0].Error, closeFailure.Error()) {
+		t.Fatalf("failed bridge operations = %#v, want transfer and cleanup errors", operations)
+	}
+}
+
+func TestCloseMeshBridgeRequiresExactlyOneSelector(t *testing.T) {
+	server := &Server{}
+	for _, req := range []MeshBridgeCloseRequest{
+		{},
+		{OperationID: "mesh-op-1", SessionID: "mesh-session-1"},
+	} {
+		_, err := server.closeMeshBridgeRPC(context.Background(), req)
+		if err == nil || !strings.Contains(err.Error(), "exactly one") {
+			t.Fatalf("closeMeshBridgeRPC(%#v) error = %v, want selector rejection", req, err)
+		}
+	}
+}
+
+func TestMeshBookListDefensivelyCopiesSessionIDs(t *testing.T) {
+	book := NewMeshBook()
+	operation := book.StartStream("mesh-provider@v0.1.0", mesh.StreamRequest{}, time.Now())
+	book.ActivateStream(operation.ID, run.SessionRef{ID: "mesh-session-1"}, time.Now())
+
+	listed := book.List(MeshOperationListRequest{})
+	listed[0].SessionIDs[0] = "mutated"
+	listed = book.List(MeshOperationListRequest{})
+	if got := listed[0].SessionIDs[0]; got != "mesh-session-1" {
+		t.Fatalf("stored session id = %q, want defensive copy", got)
 	}
 }
 
@@ -1156,7 +1907,9 @@ func contextOrMissing(ctx context.Context) error {
 	return errors.New("request context was not propagated")
 }
 
-type fakeMeshRunner struct{}
+type fakeMeshRunner struct {
+	omitDatagramCapability bool
+}
 
 func (fakeMeshRunner) Run(_ context.Context, req run.Request) (run.Result, error) {
 	return run.Succeeded(req, run.ResultArgs{Summary: "unused fake mesh run"})
@@ -1223,21 +1976,25 @@ func (fakeMeshRunner) RunMeshTask(
 	}, nil
 }
 
-func (fakeMeshRunner) OpenMeshStream(
+func (r fakeMeshRunner) OpenMeshStream(
 	_ context.Context,
 	moduleID string,
 	req mesh.StreamRequest,
 ) (run.SessionRef, error) {
-	return run.SessionRef{
+	session := run.SessionRef{
 		ID:        "mesh-session-1",
 		RunID:     req.RunID,
 		ModuleID:  moduleID,
 		Target:    req.Target,
-		Name:      "Mesh routed TCP stream",
+		Name:      "Mesh routed session",
 		Kind:      "stream",
 		State:     "active",
 		Transport: "mesh-route",
-	}, nil
+	}
+	if req.Protocol == "udp" && !r.omitDatagramCapability {
+		session.Capabilities = []string{run.SessionCapabilityDatagram}
+	}
+	return session, nil
 }
 
 type recordingSessionBroker struct{}
@@ -1271,6 +2028,112 @@ func (recordingSessionBroker) ListSessionCommands(
 }
 
 func (recordingSessionBroker) RunSessionCommand(
+	context.Context,
+	string,
+	run.PayloadCommandRequest,
+) (run.PayloadCommandResult, error) {
+	return run.PayloadCommandResult{}, nil
+}
+
+type bridgeSessionBroker struct {
+	writes        chan []byte
+	reads         chan run.SessionChunk
+	readDelivered chan struct{}
+	closes        chan string
+	closeErr      error
+}
+
+func newBridgeSessionBroker() *bridgeSessionBroker {
+	return &bridgeSessionBroker{
+		writes:        make(chan []byte, 8),
+		reads:         make(chan run.SessionChunk, 8),
+		readDelivered: make(chan struct{}, 8),
+		closes:        make(chan string, 8),
+	}
+}
+
+func (b *bridgeSessionBroker) ListSessions(context.Context) ([]run.SessionRef, error) {
+	return []run.SessionRef{}, nil
+}
+
+func (b *bridgeSessionBroker) WriteSession(ctx context.Context, _ string, data []byte) error {
+	copied := append([]byte(nil), data...)
+	select {
+	case b.writes <- copied:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (b *bridgeSessionBroker) ReadSession(
+	ctx context.Context,
+	sessionID string,
+	timeout time.Duration,
+) (run.SessionChunk, error) {
+	if timeout <= 0 {
+		return run.SessionChunk{SessionID: sessionID}, nil
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case chunk := <-b.reads:
+		select {
+		case b.readDelivered <- struct{}{}:
+		default:
+		}
+		if chunk.SessionID == "" {
+			chunk.SessionID = sessionID
+		}
+		return chunk, nil
+	case <-ctx.Done():
+		return run.SessionChunk{}, ctx.Err()
+	case <-timer.C:
+		return run.SessionChunk{SessionID: sessionID}, nil
+	}
+}
+
+func (b *bridgeSessionBroker) TailSession(context.Context, string, run.SessionTailOptions) (run.SessionChunk, error) {
+	return run.SessionChunk{}, nil
+}
+
+func (b *bridgeSessionBroker) CloseSession(ctx context.Context, sessionID string) error {
+	select {
+	case b.closes <- sessionID:
+		return b.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type shortWriteConn struct {
+	data []byte
+}
+
+func (*shortWriteConn) Read([]byte) (int, error) { return 0, errors.New("unexpected read") }
+
+func (c *shortWriteConn) Write(data []byte) (int, error) {
+	n := (len(data) + 1) / 2
+	c.data = append(c.data, data[:n]...)
+	return n, nil
+}
+
+func (*shortWriteConn) Close() error                     { return nil }
+func (*shortWriteConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (*shortWriteConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
+func (*shortWriteConn) SetDeadline(time.Time) error      { return nil }
+func (*shortWriteConn) SetReadDeadline(time.Time) error  { return nil }
+func (*shortWriteConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (b *bridgeSessionBroker) ListSessionCommands(
+	context.Context,
+	string,
+	run.PayloadCommandListRequest,
+) ([]run.PayloadCommand, error) {
+	return []run.PayloadCommand{}, nil
+}
+
+func (b *bridgeSessionBroker) RunSessionCommand(
 	context.Context,
 	string,
 	run.PayloadCommandRequest,

@@ -31,7 +31,7 @@ type MeshTaskProvider interface {
 }
 
 // MeshStreamProvider is implemented by modules that can open a Mesh-backed
-// byte stream as a normal Hovel session.
+// routed flow as a normal Hovel session.
 type MeshStreamProvider interface {
 	Module
 	OpenMeshStream(*MeshContext, MeshStreamRequest) (SessionRef, error)
@@ -249,9 +249,10 @@ type MeshEvent struct {
 	Fields  map[string]any `json:"fields,omitempty"`
 }
 
-// MeshStreamRequest asks a provider to open a byte stream to an endpoint
-// reachable through a node or route. Hovel can later bridge the returned
-// SessionRef to a local listener so tools only connect to an IP and port.
+// MeshStreamRequest asks a provider to open a routed flow to an endpoint
+// reachable through a node or route. Protocol is provider-defined; Hovel can
+// bridge TCP and UDP SessionRefs to daemon-owned local listeners so tools only
+// connect to a loopback socket.
 type MeshStreamRequest struct {
 	RunID           string         `json:"runId,omitempty"`
 	ModuleID        string         `json:"moduleId,omitempty"`
@@ -278,7 +279,7 @@ type MeshContext struct {
 }
 
 // OpenSession registers a provider-owned session opened while serving a mesh
-// task or stream. Use this for interactive shells, routed byte streams, and
+// task or stream. Use this for interactive shells, routed protocol flows, and
 // provider-backed command channels that must outlive the RPC response.
 func (c *MeshContext) OpenSession(session Session, opts ...SessionOption) (SessionRef, error) {
 	if c.sessions == nil {

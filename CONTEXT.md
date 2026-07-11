@@ -35,6 +35,15 @@ against a service connected to a relay node.
 _Avoid_: Overloading Target when the distinction between pivot node and reached
 host matters
 
+**Mesh Bridge**:
+A daemon-owned loopback socket endpoint that forwards ordinary local TCP or UDP
+client traffic to one provider-owned Mesh session flow. Non-socket protocols
+such as ICMP or raw IP remain Mesh task/session contracts unless a future local
+adapter explicitly supports them. UDP bridges require a session with the
+`datagram` capability and keep one local peer association.
+_Avoid_: Making each Mesh provider own local listener lifecycle unless the
+provider has a specific reason to expose its own endpoint
+
 **Beacon**:
 A time-stamped signal from a Mesh Node that proves the node is alive or has
 new work/status to report.
@@ -52,8 +61,12 @@ _Avoid_: Schedule when the condition is not time based
   **Mesh Links**.
 - A **Mesh Task** targets one **Mesh Node**, one **Mesh Route**, or one
   **Mesh Destination** reached through a node or route.
-- A **Mesh Destination** is described by destination host, destination port, and
-  protocol on task and stream requests.
+- A **Mesh Destination** is described by destination host, optional destination
+  port, and protocol on task and stream requests.
+- A **Mesh Bridge** binds a loopback local socket endpoint to a Mesh session
+  flow so an ordinary module or tool can connect without understanding the Mesh
+  route. A separate bridge represents a separate routed session flow or UDP
+  peer association.
 - A **Beacon** belongs to exactly one **Mesh Node**.
 - A **Trigger** belongs to one **Mesh** and may reference one **Mesh Node**.
 - A **TransportEndpoint** remains a narrower chain capability for byte movement;
@@ -63,7 +76,7 @@ _Avoid_: Schedule when the condition is not time based
 
 > **Dev:** "Should the Rust tunnel module be modeled as a Transport?"
 > **Domain expert:** "No — the module owns a **Mesh**. It may expose a
-> **Mesh Route** that Hovel later bridges to a local port, but the same
+> **Mesh Route** that Hovel bridges to a daemon-owned local port, but the same
 > **Mesh** also supports **Mesh Tasks** such as survey, upload, execute,
 > command, triggers, and beacons."
 
@@ -73,4 +86,5 @@ _Avoid_: Schedule when the condition is not time based
   **Mesh** is the umbrella, **TransportEndpoint** is the byte-movement
   capability.
 - "tunnel" was used for the whole framework and for local port forwarding;
-  resolved: local forwarding is a stream operation over a **Mesh Route**.
+  resolved: local forwarding is a daemon-owned **Mesh Bridge** backed by a
+  stream operation over a **Mesh Route**.

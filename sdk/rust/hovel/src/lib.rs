@@ -62,4 +62,6 @@ pub use mesh::{
 pub use module::{Info, Module, ModuleType, Requirement, Schema};
 pub use result::{Artifact, Finding, InstalledPayloadDescriptor, Outcome, PayloadProviderRecord};
 pub use server::{serve, serve_with};
-pub use session::{LineShellSession, Session, SessionOptions, SessionRef};
+pub use session::{
+    LineShellSession, Session, SessionOptions, SessionRef, SESSION_CAPABILITY_DATAGRAM,
+};

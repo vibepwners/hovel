@@ -123,6 +123,24 @@ type SessionRef struct {
 	Capabilities       []string
 }
 
+// SessionCapabilityDatagram marks sessions whose non-empty read and write
+// calls each carry exactly one datagram.
+const SessionCapabilityDatagram = "datagram"
+
+// HasCapability reports whether the session advertises capability.
+func (s SessionRef) HasCapability(capability string) bool {
+	capability = strings.TrimSpace(capability)
+	if capability == "" {
+		return false
+	}
+	for _, actual := range s.Capabilities {
+		if strings.TrimSpace(actual) == capability {
+			return true
+		}
+	}
+	return false
+}
+
 type SessionChunk struct {
 	SessionID string
 	Data      []byte

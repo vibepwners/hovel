@@ -20,14 +20,23 @@ The practical contract is simple:
 - return artifacts, sessions, findings, outputs, and installed payload records
   explicitly; do not hide important operator-controlled values.
 - node operations that go beyond byte movement should use Mesh vocabulary:
-  topology, nodes, links, routes, tasks, triggers, beacons, and streams.
+  topology, nodes, links, routes, tasks, triggers, beacons, streams, datagrams,
+  and protocol-specific flows.
 - Mesh capabilities are opt-in. A simple provider may expose only
   `mesh.describe` plus `mesh.open_stream`; a deep implant/stager Mesh may add
   topology, beacons, triggers, tasking, upload/execute, and native load.
-- Mesh tasks and streams can target a destination reachable through a node or
-  route via `destinationHost`, `destinationPort`, and `protocol`; use this for
-  pivoted upload/execute or local-bridge tooling contracts instead of baking
-  exploit execution into the Mesh provider.
+- Mesh tasks and session flows can target a destination reachable through a
+  node or route via `destinationHost`, optional `destinationPort`, and
+  provider-defined `protocol`; use this for pivoted upload/execute or
+  daemon-owned local bridge tooling contracts instead of baking exploit
+  execution into the Mesh provider.
+- Local socket bridging is daemon-owned: providers expose Mesh session flows,
+  and the daemon binds the TCP or UDP loopback endpoint that ordinary
+  modules/tools use. UDP flows must advertise the session capability
+  `datagram` and preserve one datagram per non-empty write/read call; one bridge
+  keeps one local UDP peer. ICMP, raw IP, or custom protocols remain
+  provider-defined Mesh task/session contracts unless Hovel grows an explicit
+  local adapter.
 - Implant loading through Mesh should be an explicit task contract:
   `upload_execute` for copy-then-run flows, or `load` when a provider owns a
   native loader. Carry bytes in `inputData`/`inputEncoding` or provider-defined

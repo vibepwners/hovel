@@ -25,6 +25,10 @@ type SessionRef struct {
 // CapabilityTerminalPTY marks sessions backed by a local pseudoterminal.
 const CapabilityTerminalPTY = "terminal.pty"
 
+// CapabilityDatagram marks sessions whose non-empty read and write calls each
+// carry exactly one datagram.
+const CapabilityDatagram = "datagram"
+
 // TerminalPTYSession is implemented by sessions that expose a local
 // pseudoterminal. PTYSession implements it directly; wrappers can embed
 // PTYSession and keep the terminal capability visible to Hovel.

@@ -193,7 +193,9 @@ type Event struct {
 	Fields  map[string]any `json:"fields,omitempty"`
 }
 
-// StreamRequest asks a provider to open a byte stream through a node or route.
+// StreamRequest asks a provider to open a routed flow through a node or route.
+// Protocol is provider-defined; daemon local socket bridges currently map TCP
+// streams and capability-marked UDP datagrams onto the returned session.
 type StreamRequest struct {
 	RunID           string            `json:"runId,omitempty"`
 	ModuleID        string            `json:"moduleId,omitempty"`

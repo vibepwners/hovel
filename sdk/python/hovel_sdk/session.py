@@ -8,6 +8,8 @@ from typing import Any, Protocol
 
 _TIMEOUT_ERRORS = (asyncio.TimeoutError,)
 
+SESSION_CAPABILITY_DATAGRAM = "datagram"
+
 
 @dataclass(frozen=True)
 class SessionRef:

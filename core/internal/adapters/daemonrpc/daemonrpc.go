@@ -311,6 +311,32 @@ type MeshStreamOpenRequest struct {
 
 type MeshStreamOpenResponse = run.SessionRef
 
+type MeshBridgeOpenRequest struct {
+	ModuleID  string             `json:"moduleId"`
+	Request   mesh.StreamRequest `json:"request"`
+	LocalHost string             `json:"localHost,omitempty"`
+	LocalPort int                `json:"localPort,omitempty"`
+}
+
+type MeshBridgeOpenResponse struct {
+	OperationID  string `json:"operationId"`
+	SessionID    string `json:"sessionId"`
+	LocalHost    string `json:"localHost"`
+	LocalPort    int    `json:"localPort"`
+	LocalAddress string `json:"localAddress"`
+}
+
+type MeshBridgeCloseRequest struct {
+	OperationID string `json:"operationId,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
+}
+
+type MeshBridgeCloseResponse struct {
+	OperationID string `json:"operationId,omitempty"`
+	SessionID   string `json:"sessionId,omitempty"`
+	State       string `json:"state"`
+}
+
 type operatorClock interface {
 	Now() time.Time
 }
@@ -325,6 +351,7 @@ type Server struct {
 	runs            services.RunService
 	moduleSessions  services.SessionBroker
 	meshOps         *MeshBook
+	meshBridges     *MeshBridgeManager
 	session         *operatorsession.Session
 	logs            *LogBroker
 	entities        map[string]operatordomain.Entity
@@ -341,13 +368,14 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 		return errors.New("daemon rpc mux is required")
 	}
 	rpcServer := &Server{
-		runs:       runs,
-		meshOps:    NewMeshBook(),
-		session:    operatorsession.New(),
-		logs:       NewLogBroker(),
-		entities:   map[string]operatordomain.Entity{},
-		launchKeys: launchkey.NewCoordinator(),
-		clock:      systemOperatorClock{},
+		runs:        runs,
+		meshOps:     NewMeshBook(),
+		meshBridges: NewMeshBridgeManager(),
+		session:     operatorsession.New(),
+		logs:        NewLogBroker(),
+		entities:    map[string]operatordomain.Entity{},
+		launchKeys:  launchkey.NewCoordinator(),
+		clock:       systemOperatorClock{},
 	}
 	for _, option := range options {
 		option(rpcServer)
@@ -400,6 +428,8 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[MeshBeaconListRequest, MeshBeaconListResponse](mux, "ListMeshBeacons", rpcServer.listMeshBeaconsRPC)
 	registerUnary[MeshTaskRunRequest, MeshTaskRunResponse](mux, "RunMeshTask", rpcServer.runMeshTaskRPC)
 	registerUnary[MeshStreamOpenRequest, MeshStreamOpenResponse](mux, "OpenMeshStream", rpcServer.openMeshStreamRPC)
+	registerUnary[MeshBridgeOpenRequest, MeshBridgeOpenResponse](mux, "OpenMeshBridge", rpcServer.openMeshBridgeRPC)
+	registerUnary[MeshBridgeCloseRequest, MeshBridgeCloseResponse](mux, "CloseMeshBridge", rpcServer.closeMeshBridgeRPC)
 	registerUnary[MeshOperationListRequest, MeshOperationListResponse](mux, "ListMeshOperations", rpcServer.listMeshOperationsRPC)
 	return nil
 }
@@ -475,6 +505,14 @@ func WithMeshBook(book *MeshBook) ServerOption {
 	}
 }
 
+func WithMeshBridgeManager(manager *MeshBridgeManager) ServerOption {
+	return func(server *Server) {
+		if manager != nil {
+			server.meshBridges = manager
+		}
+	}
+}
+
 func WithOperatorClock(clock operatorClock) ServerOption {
 	return func(server *Server) {
 		if clock != nil {
@@ -496,6 +534,15 @@ func (s *Server) meshBook() *MeshBook {
 		s.meshOps = NewMeshBook()
 	}
 	return s.meshOps
+}
+
+func (s *Server) meshBridgeManager() *MeshBridgeManager {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.meshBridges == nil {
+		s.meshBridges = NewMeshBridgeManager()
+	}
+	return s.meshBridges
 }
 
 func (s *Server) now() time.Time {
@@ -614,6 +661,52 @@ func (s *Server) openMeshStreamRPC(
 	}
 	s.meshBook().ActivateStream(operation.ID, session, s.now())
 	return session, nil
+}
+
+func (s *Server) openMeshBridgeRPC(
+	ctx context.Context,
+	req MeshBridgeOpenRequest,
+) (MeshBridgeOpenResponse, error) {
+	if s.moduleSessions == nil {
+		return MeshBridgeOpenResponse{}, errors.New("session broker is not configured")
+	}
+	return OpenMeshBridge(
+		ctx,
+		MeshBridgeOpenArgs{
+			ModuleID: req.ModuleID,
+			Request:  req.Request,
+			Host:     req.LocalHost,
+			Port:     req.LocalPort,
+			Runs:     s.runs,
+			Sessions: s.moduleSessions,
+			Book:     s.meshBook(),
+			Bridges:  s.meshBridgeManager(),
+			Now:      s.now,
+		},
+	)
+}
+
+func (s *Server) closeMeshBridgeRPC(
+	ctx context.Context,
+	req MeshBridgeCloseRequest,
+) (MeshBridgeCloseResponse, error) {
+	operationID := strings.TrimSpace(req.OperationID)
+	sessionID := strings.TrimSpace(req.SessionID)
+	if (operationID == "") == (sessionID == "") {
+		return MeshBridgeCloseResponse{}, errors.New("exactly one mesh bridge operation id or session id is required")
+	}
+	bridge, ok := s.meshBridgeManager().Find(operationID, sessionID)
+	if !ok {
+		return MeshBridgeCloseResponse{}, errors.New("mesh bridge does not exist")
+	}
+	if err := bridge.Close(ctx); err != nil {
+		return MeshBridgeCloseResponse{}, err
+	}
+	return MeshBridgeCloseResponse{
+		OperationID: bridge.OperationID(),
+		SessionID:   bridge.SessionID(),
+		State:       meshOperationClosed,
+	}, nil
 }
 
 func (s *Server) listMeshOperationsRPC(
@@ -1864,6 +1957,20 @@ func (c *Client) OpenMeshStream(
 	req MeshStreamOpenRequest,
 ) (MeshStreamOpenResponse, error) {
 	return invoke[MeshStreamOpenRequest, MeshStreamOpenResponse](c, ctx, "OpenMeshStream", req)
+}
+
+func (c *Client) OpenMeshBridge(
+	ctx context.Context,
+	req MeshBridgeOpenRequest,
+) (MeshBridgeOpenResponse, error) {
+	return invoke[MeshBridgeOpenRequest, MeshBridgeOpenResponse](c, ctx, "OpenMeshBridge", req)
+}
+
+func (c *Client) CloseMeshBridge(
+	ctx context.Context,
+	req MeshBridgeCloseRequest,
+) (MeshBridgeCloseResponse, error) {
+	return invoke[MeshBridgeCloseRequest, MeshBridgeCloseResponse](c, ctx, "CloseMeshBridge", req)
 }
 
 func (c *Client) ListMeshOperations(

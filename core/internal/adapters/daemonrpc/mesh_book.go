@@ -13,6 +13,7 @@ import (
 const (
 	meshOperationTask   = "task"
 	meshOperationStream = "stream"
+	meshOperationBridge = "bridge"
 
 	meshOperationStarted   = "started"
 	meshOperationActive    = "active"
@@ -22,9 +23,9 @@ const (
 )
 
 // MeshOperation is daemon-side bookkeeping for provider-owned mesh work.
-// It records enough routing context to audit node tasks and routed streams,
-// including future "throw through a node" flows that bridge an exploit to a
-// destination reachable from a mesh node or route.
+// It records enough routing context to audit node tasks, routed sessions, and
+// daemon-owned local bridges, including future "throw through a node" flows
+// that bridge an exploit to a destination reachable from a mesh node or route.
 type MeshOperation struct {
 	ID              string   `json:"id"`
 	Kind            string   `json:"kind"`
@@ -62,7 +63,8 @@ type MeshOperationListResponse struct {
 	Operations []MeshOperation `json:"operations"`
 }
 
-// MeshBook stores in-memory daemon bookkeeping for mesh tasks and streams.
+// MeshBook stores in-memory daemon bookkeeping for mesh tasks, routed sessions,
+// and local bridges.
 type MeshBook struct {
 	mu         sync.Mutex
 	next       uint64
@@ -89,7 +91,6 @@ func (b *MeshBook) StartTask(moduleID string, request mesh.TaskRequest, now time
 		DestinationHost: request.DestinationHost,
 		DestinationPort: request.DestinationPort,
 		Protocol:        request.Protocol,
-		LocalAddress:    localAddress(request.Config),
 	}, now)
 }
 
@@ -105,7 +106,27 @@ func (b *MeshBook) StartStream(moduleID string, request mesh.StreamRequest, now 
 		DestinationHost: request.DestinationHost,
 		DestinationPort: request.DestinationPort,
 		Protocol:        request.Protocol,
-		LocalAddress:    localAddress(request.Config),
+	}, now)
+}
+
+func (b *MeshBook) StartBridge(
+	moduleID string,
+	request mesh.StreamRequest,
+	localAddress string,
+	now time.Time,
+) MeshOperation {
+	return b.start(MeshOperation{
+		Kind:            meshOperationBridge,
+		State:           meshOperationStarted,
+		ModuleID:        moduleID,
+		RunID:           request.RunID,
+		NodeID:          request.NodeID,
+		Target:          request.Target,
+		RouteID:         routeID(request.Route),
+		DestinationHost: request.DestinationHost,
+		DestinationPort: request.DestinationPort,
+		Protocol:        request.Protocol,
+		LocalAddress:    strings.TrimSpace(localAddress),
 	}, now)
 }
 
@@ -161,6 +182,25 @@ func (b *MeshBook) ActivateStream(id string, session run.SessionRef, now time.Ti
 	})
 }
 
+func (b *MeshBook) ActivateBridge(id string, session run.SessionRef, localAddress string, now time.Time) {
+	b.update(id, now, func(operation *MeshOperation) {
+		operation.State = meshOperationActive
+		operation.SessionID = session.ID
+		if session.ID != "" {
+			operation.SessionIDs = []string{session.ID}
+		}
+		if operation.RunID == "" {
+			operation.RunID = session.RunID
+		}
+		if operation.Target == "" {
+			operation.Target = session.Target
+		}
+		if address := strings.TrimSpace(localAddress); address != "" {
+			operation.LocalAddress = address
+		}
+	})
+}
+
 func (b *MeshBook) Fail(id string, err error, now time.Time) {
 	b.update(id, now, func(operation *MeshOperation) {
 		operation.State = meshOperationFailed
@@ -180,9 +220,9 @@ func (b *MeshBook) CloseSession(sessionID string, now time.Time) {
 	updatedAt := formatMeshTime(now)
 	for i := range b.operations {
 		operation := &b.operations[i]
-		if operation.Kind != meshOperationStream ||
-			operation.SessionID != sessionID ||
-			operation.State == meshOperationClosed {
+		isClosableKind := operation.Kind == meshOperationStream || operation.Kind == meshOperationBridge
+		isTerminal := operation.State == meshOperationClosed || operation.State == meshOperationFailed
+		if !isClosableKind || operation.SessionID != sessionID || isTerminal {
 			continue
 		}
 		operation.State = meshOperationClosed
@@ -199,6 +239,7 @@ func (b *MeshBook) List(filter MeshOperationListRequest) []MeshOperation {
 		if !meshOperationMatches(operation, filter) {
 			continue
 		}
+		operation.SessionIDs = append([]string(nil), operation.SessionIDs...)
 		out = append(out, operation)
 	}
 	return out
@@ -262,22 +303,6 @@ func routeID(route *mesh.Route) string {
 		return ""
 	}
 	return route.ID
-}
-
-func localAddress(config map[string]any) string {
-	for _, key := range []string{"bridge.localAddress", "bridge.localAddr"} {
-		value, ok := config[key]
-		if !ok {
-			continue
-		}
-		switch typed := value.(type) {
-		case string:
-			return strings.TrimSpace(typed)
-		case fmt.Stringer:
-			return strings.TrimSpace(typed.String())
-		}
-	}
-	return ""
 }
 
 func sessionIDs(sessions []run.SessionRef) []string {

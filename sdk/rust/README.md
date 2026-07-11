@@ -67,11 +67,15 @@ Rules that matter in real integrations:
 | Node Mesh provider | Override `describe_mesh`, `mesh_topology`, `list_mesh_beacons`, `run_mesh_task`, and `open_mesh_stream` on `Module`. |
 
 Rust dispatches Mesh RPC methods for topology, beacons, tasks, and routed
-streams. Mesh task specs can advertise `target_scopes` (`node`, `route`, or
-`destination`), and task/stream requests carry `destination_host`,
-`destination_port`, and `protocol` for systems reachable through a Mesh node.
-That supports pivoted upload/execute or local-bridge exploit workflows without
-making the Mesh provider implement the exploit module itself.
+protocol flows. Mesh task specs can advertise `target_scopes` (`node`, `route`,
+or `destination`), and task/stream requests carry `destination_host`, optional
+`destination_port`, and provider-defined `protocol` for systems reachable
+through a Mesh node. That supports pivoted upload/execute, daemon-owned TCP/UDP
+local bridge workflows, or provider-native ICMP/raw/custom protocol flows
+without making the Mesh provider implement the exploit module itself.
+For UDP bridges, include `SESSION_CAPABILITY_DATAGRAM` in the returned
+session's capabilities and preserve one datagram per non-empty `Session::write`
+call and `Session::read` result. One bridge keeps one local UDP peer.
 Override only the `Module` Mesh methods your provider supports. A minimal
 stream Mesh can implement `describe_mesh` and `open_mesh_stream`; a deeper
 implant/stager Mesh can also implement topology, beacons, and tasking.

@@ -31,7 +31,7 @@ from hovel_sdk.mesh import (
 from hovel_sdk.module import HovelModule
 from hovel_sdk.result import AgentHint, Artifact, Finding, InstalledPayload, PayloadProviderRecord, Result
 from hovel_sdk.server import serve
-from hovel_sdk.session import LineShellSession, SessionRef
+from hovel_sdk.session import LineShellSession, SESSION_CAPABILITY_DATAGRAM, SessionRef
 from hovel_sdk.testing import ModuleRPC, RPCError, drive_module
 
 __all__ = [
@@ -74,6 +74,7 @@ __all__ = [
     "RPCError",
     "Requirement",
     "Result",
+    "SESSION_CAPABILITY_DATAGRAM",
     "SessionRef",
     "drive_module",
     "serve",

@@ -57,8 +57,13 @@ Rules that matter in real integrations:
 
 Mesh is the SDK contract for one-node or routed node-operation providers. A
 Mesh may expose topology, routes, beacons, triggers, survey/upload/execute/
-command/load tasks, and stream sessions that a future local bridge can connect
-to an IP and port. The Python SDK only dispatches those contracts; provider code
+command/load tasks, and provider-defined protocol flows. The daemon can bridge
+TCP streams or UDP datagrams to a loopback socket; ICMP, raw IP, and custom
+protocols remain provider task/session contracts unless Hovel grows an explicit
+local adapter. UDP session flows must include
+`SESSION_CAPABILITY_DATAGRAM` in their capabilities and preserve exactly one
+datagram per non-empty `write` call and `read` result; one bridge keeps one
+local UDP peer. The Python SDK only dispatches those contracts; provider code
 owns the routing/task behavior, and Hovel guardrails still live above the SDK.
 Override only the methods your provider supports. A minimal stream Mesh can
 override `describe_mesh` and `open_mesh_stream`; a deeper implant/stager Mesh

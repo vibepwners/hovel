@@ -222,7 +222,7 @@ class MeshModule(HovelModule):
                 ),
                 MeshTaskSpec(
                     kind=MESH_TASK_STREAM,
-                    summary="Open a routed byte stream.",
+                    summary="Open a routed protocol flow.",
                     opens_stream=True,
                     target_scopes=[MESH_TARGET_ROUTE, MESH_TARGET_DESTINATION],
                 ),
