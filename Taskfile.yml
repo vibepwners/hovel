@@ -120,17 +120,17 @@ tasks:
       - python3 repo-tools/tasks/checkout.py check
 
   ci:
-    desc: Run the full-checkout gate.
+    desc: Run the remote-compatible full-checkout gate.
     cmds:
       - task: checkout:require-full
       - task: repo:quality
       - task: core:ci
       - task: sdk:ci
       - task: modules:ci
-      - task: docs:ci
+      - task: docs:check
 
   ci:report:
-    desc: Run the full-checkout gate with a generated static HTML test report.
+    desc: Run the full-checkout gate, host demos, and a static HTML test report.
     cmds:
       - task: checkout:require-full
       - task: test:report
@@ -745,7 +745,7 @@ tasks:
           CLI_ARGS: //:docs_build
 
   docs:test:
-    desc: Test docs helpers and standard demo flows.
+    desc: Test docs helpers and standard verification flows.
     cmds:
       - task: bazel:test
         vars:
@@ -779,12 +779,22 @@ tasks:
         vars:
           CLI_ARGS: //docs/tools/docs:stage_site
 
-  docs:ci:
-    desc: Run the docs slice CI gate.
+  docs:check:
+    desc: Run the remote-compatible docs verification gate.
     cmds:
       - task: docs:test
+
+  docs:site:
+    desc: Render host-service demos and stage the complete docs site.
+    cmds:
       - task: docs:demos:all
       - task: docs:stage
+
+  docs:ci:
+    desc: Run remote-compatible docs checks plus host-service site rendering.
+    cmds:
+      - task: docs:check
+      - task: docs:site
 
   start:
     aliases: [dev, up, cli]

@@ -12,4 +12,5 @@ import (
 	_ "github.com/jfjallid/go-smb/spnego"
 	_ "github.com/modelcontextprotocol/go-sdk/mcp"
 	_ "golang.org/x/sys/unix"
+	_ "golang.org/x/tools/go/analysis/passes/nilness"
 )

@@ -122,13 +122,13 @@ task ci
 core: running task core:check
 sdk: running task sdk:ci
 modules: running task modules:ci
-docs: running task docs:ci
+docs: running task docs:check
 </code></pre>
-        <p><code>task ci</code> is the full-checkout gate. It first verifies that the expected top-level slices are present, then runs the core, SDK, module, and docs gates. CI uses the same root tasks instead of calling Bazel, Go, Rust, Python, or docs tooling directly.</p>
+        <p><code>task ci</code> is the remote-compatible full-checkout gate. It first verifies that the expected top-level slices are present, then runs repository policy, core, SDK, module, and docs verification gates. CI uses the same root tasks instead of calling Bazel, Go, Rust, Python, or docs tooling directly.</p>
 <pre data-lang="bash"><code>task check  # available-slice gate for sparse work
 task ci     # full-checkout gate for every wired slice
 </code></pre>
-        <p>This distinction is deliberate: sparse work should be ergonomic, but a release or merge gate must not silently pretend an absent slice was validated. Missing slices are tolerated only by the sparse-aware aggregate; present slices run their real checks.</p>
+        <p>This distinction is deliberate: sparse work should be ergonomic, but a release or merge gate must not silently pretend an absent slice was validated. Missing slices are tolerated only by the sparse-aware aggregate; present slices run their real checks. Host-service documentation rendering is kept outside these remote-compatible aggregates because it intentionally drives local tmux, Chrome, and, for the Wine recording, Docker.</p>
 
         <h2>Explicit Slice Tasks</h2>
         <p>When you know what you are working on, call the slice task directly. Direct slice tasks fail if their own inputs are absent or broken.</p>
@@ -138,9 +138,12 @@ task core:test -- //internal/domain/...
 task sdk:fmt
 task sdk:ci
 task modules:ci
+task docs:check
+task docs:site
 task docs:ci
 task release:modules-package
 </code></pre>
+        <p><code>task docs:check</code> is the remote-compatible docs test gate. <code>task docs:site</code> renders the host-service demos and stages <code>_site/</code>. <code>task docs:ci</code> composes both when a machine has the required host services.</p>
         <p>General tasks such as <code>task build</code>, <code>task test</code>, <code>task lint</code>, and <code>task coverage</code> dispatch to the core workspace because those names describe the Hovel binary workspace. <code>task fmt</code> formats the wired source slices. <code>task check</code> is the tolerant aggregate.</p>
 
         <h2>Design Rules</h2>

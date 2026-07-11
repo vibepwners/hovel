@@ -1,4 +1,11 @@
+load("@rules_go//go:def.bzl", "nogo")
+
 package(default_visibility = ["//visibility:public"])
+
+nogo(
+    name = "nilness_nogo",
+    deps = ["@org_golang_x_tools//go/analysis/passes/nilness"],
+)
 
 exports_files([
     "go.work.bazel",
@@ -29,6 +36,7 @@ test_suite(
     tests = [
         "//repo-tools/deps:update_python_locks_test",
         "//repo-tools/tasks:checkout_test",
+        "//tools/bazel/policy:repo_policy_test",
     ],
 )
 

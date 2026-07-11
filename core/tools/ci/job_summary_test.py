@@ -35,6 +35,13 @@ def patched_env(**values: str):
 
 
 class JobSummaryTest(unittest.TestCase):
+    def test_repository_quality_summary_matches_workflow_job(self) -> None:
+        rendered = job_summary.render_summary(job_summary.JOBS["repo-quality"])
+
+        self.assertIn("## CI Repository Quality Gate", rendered)
+        self.assertIn("`task repo:quality`", rendered)
+        self.assertIn("hermeticity", rendered)
+
     def test_build_summary_embeds_coverage_ratchets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -48,9 +55,7 @@ class JobSummaryTest(unittest.TestCase):
                 rendered = job_summary.render_summary(job_summary.JOBS["ci-build-test"])
 
         self.assertIn("## CI Core Gate", rendered)
-        self.assertIn("`task lint`", rendered)
-        self.assertIn("`task build -- //:build`", rendered)
-        self.assertIn("`task coverage`", rendered)
+        self.assertIn("`task core:ci`", rendered)
         self.assertIn("### Coverage Ratchets", rendered)
         self.assertIn("| domain | pass |", rendered)
 
@@ -98,7 +103,7 @@ class JobSummaryTest(unittest.TestCase):
 
         self.assertIn("## CI Core Gate", written)
         self.assertIn("| Status | failure |", written)
-        self.assertIn("`task lint`", written)
+        self.assertIn("`task core:ci`", written)
 
 
 if __name__ == "__main__":

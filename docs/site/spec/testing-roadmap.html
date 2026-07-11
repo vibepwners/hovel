@@ -74,7 +74,8 @@ task check
         <p>The full local gate is:</p>
 <pre data-lang="bash"><code>task ci
 </code></pre>
-        <p><code>task ci</code> first requires a full checkout. It then runs lint, version-updater tests, demo-backed documentation staging, build, tests, the Go race gate, fuzz smoke, and coverage ratchets. The docs step builds the Bazel-declared VHS demo outputs, stages the GitHub Pages site, generates SDK API pages, and runs the internal link checker.</p>
+        <p><code>task ci</code> first requires a full checkout. It then runs repository policy, lint, version-updater tests, remote-compatible docs verification, build, tests, the Go race gate, fuzz smoke, and coverage ratchets. Go compilation also runs Bazel-native <code>nogo</code> analysis, including nilness checks, across core, SDK, and module targets.</p>
+        <p>VHS rendering is an explicit host-service boundary: <code>task docs:site</code> drives tmux and Chrome, optionally Docker for Wine, then stages <code>_site/</code>, generates SDK API pages, and runs the internal link checker. <code>task docs:ci</code> composes <code>docs:check</code> and <code>docs:site</code> for hosts that provide those services; the remote-compatible aggregate does not pretend those actions can execute remotely.</p>
 
         <h2>CI Gate</h2>
         <p>The repository split changed the CI shape. The local and hosted gates are modular but Task-backed:</p>
@@ -82,12 +83,12 @@ task check
           <li><code>core</code>: <code>task build</code>, <code>task test</code>, race tests, fuzz smoke, lint, and coverage for the core workspace.</li>
           <li><code>sdk</code>: <code>task sdk:ci</code> builds and tests the Go, Python, and Rust SDK slices.</li>
           <li><code>modules</code>: <code>task modules:ci</code> builds and tests in-repo examples, Squatter provider code, module packaging checks, and workspace install behavior, then <code>task release:modules-package</code> verifies the module package/index release path.</li>
-          <li><code>docs</code>: <code>task docs:ci</code> builds docs tooling, verifies demo harnesses, renders standard demos, stages <code>_site/</code>, generates SDK API pages, and runs the internal link checker.</li>
+          <li><code>docs</code>: <code>task docs:check</code> runs the remote-compatible verification suite; a separate <code>task docs:site</code> step renders host-service demos, stages <code>_site/</code>, generates SDK API pages, and runs the internal link checker.</li>
           <li><code>squatter-wine</code>: installs Wine in CI, then runs <code>task modules:wine-test</code> and <code>task docs:demos:wine</code>.</li>
         </ol>
         <p>CI, Pages, and publish jobs append GitHub Actions job summaries with the commands they ran, coverage ratchets, generated artifacts, staged site statistics, or publish targets where those details apply.</p>
         <p>The staged docs site also includes the latest generated <a href="../reports/tests/latest/index.html">HTML test report</a> when <code>task test:report</code> artifacts are available. The report preserves Bazel target-level evidence, suite-level rollups, per-case XML where present, assertion failure messages, captured case output, full console logs, raw XML, and undeclared outputs for drilldown across the monorepo.</p>
-        <p>Docs and demo checks stay in the docs slice instead of becoming dependencies of every core checkout. The full aggregate <code>task ci</code> requires a complete checkout and runs the wired slice gates together.</p>
+        <p>Docs verification stays in the docs slice instead of becoming a dependency of every core checkout. The full aggregate <code>task ci</code> requires a complete checkout and runs the wired remote-compatible slice gates together. Hosted CI runs host-service demo rendering as a separately named step so failures cannot be confused with hermetic build or test failures.</p>
 
         <h2>Test Inventory</h2>
         <p>The root Bazel test suite covers the main product surfaces:</p>

@@ -1,3 +1,4 @@
+load("@lint_pypi//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_test")
 
 py_test(
@@ -8,5 +9,7 @@ py_test(
         "checkout_test.py",
     ],
     imports = ["."],
+    main = "checkout_test.py",
     python_version = "PY3",
+    deps = [requirement("pytest")],
 )

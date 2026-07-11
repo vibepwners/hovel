@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check repository ownership, visibility, and core layering policy."""
+"""Check repository architecture, ownership, and hermeticity policy."""
 
 from __future__ import annotations
 
@@ -10,7 +10,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SOURCE_ROOTS = {"core", "docs", "modules", "platforms", "repo-tools", "sdk", "tools"}
-EXCLUDED_PARTS = {".git", ".sl", ".task", "__pycache__", "_site", "bazel-bin", "bazel-out", "bazel-testlogs", "dist"}
+EXCLUDED_PARTS = {
+    ".git",
+    ".local",
+    ".sl",
+    ".task",
+    "__pycache__",
+    "_site",
+    "bazel-bin",
+    "bazel-out",
+    "bazel-testlogs",
+    "dist",
+}
+NON_HERMETIC_BAZEL_SETTINGS = ('"no-remote"', '"no-sandbox"', "use_default_shell_env = True")
+HOST_ACTION_ALLOWLIST = {
+    # VHS drives local tmux/Chrome and optionally Docker.
+    Path("docs/demo/demo_defs.bzl"): {'"no-remote"', '"no-sandbox"', "use_default_shell_env = True"},
+    # Manual QEMU tests manage host networking and nested VM processes.
+    Path("modules/picblobs/kernel/BUILD.bazel"): {'"no-sandbox"'},
+}
+REMOTE_COMPATIBLE_TASKS = ("ci", "docs:check")
+REMOTE_TASK_FORBIDDEN_DOCS = re.compile(r"\bdocs:(?:ci|site|demos(?::[A-Za-z0-9:_-]+)?)\b")
 
 
 @dataclass(frozen=True)
@@ -22,12 +42,14 @@ class Violation:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", choices=("all", "layers", "ownership", "visibility"), default="all")
+    parser.add_argument("--check", choices=("all", "hermeticity", "layers", "ownership", "visibility"), default="all")
     args = parser.parse_args()
 
     repo = find_repo_root()
-    checks = [args.check] if args.check != "all" else ["layers", "ownership", "visibility"]
+    checks = [args.check] if args.check != "all" else ["hermeticity", "layers", "ownership", "visibility"]
     violations: list[Violation] = []
+    if "hermeticity" in checks:
+        violations.extend(check_hermeticity(repo))
     if "layers" in checks:
         violations.extend(check_layers(repo))
     if "ownership" in checks:
@@ -43,6 +65,33 @@ def main() -> int:
             location += f":{violation.line}"
         print(f"{location}: {violation.message}")
     return 1
+
+
+def check_hermeticity(repo: Path) -> list[Violation]:
+    violations: list[Violation] = []
+    for path in starlark_files(repo):
+        rel = path.relative_to(repo)
+        allowed = HOST_ACTION_ALLOWLIST.get(rel, set())
+        for line, text in numbered_lines(path):
+            for setting in NON_HERMETIC_BAZEL_SETTINGS:
+                if setting in text and setting not in allowed:
+                    violations.append(Violation(path, f"non-hermetic Bazel setting {setting!r} is not allowlisted", line))
+
+    taskfile = repo / "Taskfile.yml"
+    if not taskfile.is_file():
+        return violations
+    taskfile_text = taskfile.read_text(encoding="utf-8")
+    for task_name in REMOTE_COMPATIBLE_TASKS:
+        body, body_offset = task_block(taskfile_text, task_name)
+        for match in REMOTE_TASK_FORBIDDEN_DOCS.finditer(body):
+            violations.append(
+                Violation(
+                    taskfile,
+                    f"remote-compatible task {task_name!r} invokes host-service task {match.group(0)!r}",
+                    line_number(taskfile_text, body_offset + match.start()),
+                )
+            )
+    return violations
 
 
 def check_layers(repo: Path) -> list[Violation]:
@@ -125,6 +174,27 @@ def package_dirs(repo: Path) -> list[Path]:
             if path.is_file() and not excluded(repo, path):
                 packages.add(path.parent)
     return sorted(packages)
+
+
+def starlark_files(repo: Path) -> list[Path]:
+    files: set[Path] = set()
+    for pattern in ("*.bzl", "BUILD", "BUILD.bazel"):
+        files.update(path for path in repo.rglob(pattern) if path.is_file() and not excluded(repo, path))
+    return sorted(files)
+
+
+def task_block(text: str, task_name: str) -> tuple[str, int]:
+    match = re.search(rf"(?m)^  {re.escape(task_name)}:\s*$", text)
+    if match is None:
+        return "", 0
+    start = match.end()
+    next_task = re.search(r"(?m)^  [A-Za-z0-9:_-]+:\s*$", text[start:])
+    end = start + next_task.start() if next_task else len(text)
+    return text[start:end], start
+
+
+def line_number(text: str, offset: int) -> int:
+    return text.count("\n", 0, max(offset, 0)) + 1
 
 
 def owner_between(root: Path, package: Path) -> bool:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -66,7 +67,7 @@ SLICES: tuple[Slice, ...] = (
         name="docs",
         description="static book, site assets, and demo recordings",
         paths=("docs",),
-        check_task="docs:ci",
+        check_task="docs:check",
     ),
 )
 
@@ -127,13 +128,18 @@ def check_present(repo: Path) -> int:
             continue
         ran += 1
         print(f"{checkout_slice.name}: running task {checkout_slice.check_task}", flush=True)
-        result = subprocess.run(["task", checkout_slice.check_task], cwd=repo, check=False)
+        result = subprocess.run([task_executable(), checkout_slice.check_task], cwd=repo, check=False)
         if result.returncode != 0:
             return result.returncode
     if present == 0:
         print("no recognized checkout slices are present")
         return 1
     return 0
+
+
+def task_executable() -> str:
+    """Return the Task executable selected by the parent Task process."""
+    return os.environ.get("TASK_EXE", "").strip() or "task"
 
 
 def require_paths(repo: Path, paths: tuple[str, ...]) -> int:

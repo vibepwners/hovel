@@ -18,6 +18,10 @@ go_sdk.download(
     name = "go_sdk",
     version = "1.26.5",
 )
+go_sdk.nogo(
+    includes = ["@//:__subpackages__"],
+    nogo = "//:nilness_nogo",
+)
 use_repo(go_sdk, "go_sdk")
 
 register_toolchains("@go_sdk//:all")
@@ -38,6 +42,7 @@ use_repo(
     "com_github_pkg_term",
     "in_gopkg_yaml_v3",
     "org_golang_x_sys",
+    "org_golang_x_tools",
     "org_modernc_sqlite",
 )
 
