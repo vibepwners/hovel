@@ -232,6 +232,95 @@ func TestDaemonRPCTracksMeshTaskAndStreamOperations(t *testing.T) {
 	}
 }
 
+func TestDaemonRPCExposesMeshListenerLifecycleForExternalControl(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 11, 15, 30, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs)
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	started, err := client.StartMeshListener(context.Background(), MeshListenerStartRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.ListenerStartRequest{
+			ListenerID: "listener-web",
+			Name:       "web-controlled listener",
+			Kind:       "https",
+			Deployment: mesh.ListenerDeploymentSeparate,
+			Management: mesh.ListenerManagementProvider,
+			Config:     map[string]any{"token": "write-only-secret"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.OperationID == "" || started.Listener.ID != "listener-web" ||
+		started.Listener.State != mesh.ListenerStateActive {
+		t.Fatalf("started listener = %#v", started)
+	}
+
+	listed, err := client.ListMeshListeners(context.Background(), MeshListenerListRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request:  mesh.ListenerListRequest{ListenerID: "listener-web"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Listeners) != 1 || listed.Listeners[0].ID != "listener-web" {
+		t.Fatalf("listed listeners = %#v", listed.Listeners)
+	}
+
+	stopped, err := client.StopMeshListener(context.Background(), MeshListenerStopRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request:  mesh.ListenerStopRequest{ListenerID: "listener-web"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.OperationID == "" || stopped.Listener.State != mesh.ListenerStateStopped {
+		t.Fatalf("stopped listener = %#v", stopped)
+	}
+
+	operations, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		Kind:       MeshOperationKindListener,
+		ListenerID: "listener-web",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations.Operations) != 2 {
+		t.Fatalf("listener operations = %#v, want start and stop", operations.Operations)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", operations.Operations), "write-only-secret") {
+		t.Fatalf("listener operations exposed write-only configuration: %#v", operations.Operations)
+	}
+	if operations.Operations[0].Action != MeshListenerActionStart ||
+		operations.Operations[0].State != MeshOperationStateSucceeded ||
+		operations.Operations[1].Action != MeshListenerActionStop ||
+		operations.Operations[1].ListenerState != mesh.ListenerStateStopped {
+		t.Fatalf("listener operations = %#v", operations.Operations)
+	}
+	startOperations, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		Kind:       MeshOperationKindListener,
+		ListenerID: "listener-web",
+		Action:     MeshListenerActionStart,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(startOperations.Operations) != 1 || startOperations.Operations[0].ID != started.OperationID {
+		t.Fatalf("listener start operations = %#v, want %q", startOperations.Operations, started.OperationID)
+	}
+}
+
 func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
 	runs := services.NewRunService(
@@ -2087,6 +2176,57 @@ func (fakeMeshRunner) ListMeshBeacons(
 	_ mesh.BeaconRequest,
 ) ([]mesh.Beacon, error) {
 	return []mesh.Beacon{}, nil
+}
+
+func (fakeMeshRunner) ListMeshListeners(
+	_ context.Context,
+	_ string,
+	req mesh.ListenerListRequest,
+) ([]mesh.Listener, error) {
+	listenerID := req.ListenerID
+	if listenerID == "" {
+		listenerID = "listener-primary"
+	}
+	return []mesh.Listener{{
+		ID:         listenerID,
+		Name:       "primary HTTPS listener",
+		Kind:       "https",
+		State:      mesh.ListenerStateActive,
+		Deployment: mesh.ListenerDeploymentSeparate,
+		Management: mesh.ListenerManagementProvider,
+		Addresses:  []string{"https://127.0.0.1:8443"},
+		Protocols:  []string{"https"},
+	}}, nil
+}
+
+func (fakeMeshRunner) StartMeshListener(
+	_ context.Context,
+	_ string,
+	req mesh.ListenerStartRequest,
+) (mesh.Listener, error) {
+	return mesh.Listener{
+		ID:         req.ListenerID,
+		Name:       req.Name,
+		Kind:       req.Kind,
+		State:      mesh.ListenerStateActive,
+		Deployment: req.Deployment,
+		Management: req.Management,
+		Addresses:  []string{"https://127.0.0.1:8443"},
+		Protocols:  []string{"https"},
+	}, nil
+}
+
+func (fakeMeshRunner) StopMeshListener(
+	_ context.Context,
+	_ string,
+	req mesh.ListenerStopRequest,
+) (mesh.Listener, error) {
+	return mesh.Listener{
+		ID:         req.ListenerID,
+		State:      mesh.ListenerStateStopped,
+		Deployment: mesh.ListenerDeploymentSeparate,
+		Management: mesh.ListenerManagementProvider,
+	}, nil
 }
 
 func (fakeMeshRunner) RunMeshTask(

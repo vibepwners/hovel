@@ -52,6 +52,7 @@
       <p class="sidebar-section">Module Development</p>
       <ul>
         <li><a href="module-development.html">Overview</a></li>
+        <li><a href="mesh-development.html">Mesh Provider Guide</a></li>
         <li><a href="module-protocol.html" aria-current="page">Wire Protocol</a></li>
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
@@ -149,6 +150,9 @@
             <tr><td><code>mesh.describe</code></td><td><code>MeshDescribeRequest</code></td><td><code>MeshDescriptor</code></td><td>Python, Go, Rust</td></tr>
             <tr><td><code>mesh.topology</code></td><td><code>MeshTopologyRequest</code></td><td><code>MeshTopology</code></td><td>Python, Go, Rust</td></tr>
             <tr><td><code>mesh.beacons</code></td><td><code>MeshBeaconRequest</code></td><td><code>{ "beacons": MeshBeacon[] }</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.listeners</code></td><td><code>MeshListenerListRequest</code></td><td><code>{ "listeners": MeshListener[] }</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.listener.start</code></td><td><code>MeshListenerStartRequest</code></td><td><code>MeshListener</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.listener.stop</code></td><td><code>MeshListenerStopRequest</code></td><td><code>MeshListener</code></td><td>Python, Go, Rust</td></tr>
             <tr><td><code>mesh.task</code></td><td><code>MeshTaskRequest</code></td><td><code>MeshTaskResult</code></td><td>Python, Go, Rust</td></tr>
             <tr><td><code>mesh.open_stream</code></td><td><code>MeshStreamRequest</code></td><td><code>SessionRef</code></td><td>Python, Go, Rust</td></tr>
           </tbody>
@@ -475,6 +479,16 @@
     { "kind": "load", "summary": "load a provider-native component or implant", "destructive": true, "targetScopes": ["node", "destination"] },
     { "kind": "command", "summary": "run a node or routed destination command", "targetScopes": ["node", "destination"] }
   ],
+  "listenerTypes": [
+    {
+      "kind": "https-beacon",
+      "summary": "HTTPS beacon rendezvous",
+      "deployments": ["embedded", "separate"],
+      "managementModes": ["provider", "external"],
+      "protocols": ["https"],
+      "capabilities": ["beacon"]
+    }
+  ],
   "triggers": [
     { "id": "beacon-command", "kind": "beacon", "nodeId": "node-2", "state": "armed" }
   ]
@@ -518,6 +532,69 @@
   "beacons": [
     { "id": "beacon-1", "nodeId": "leaf-1", "state": "alive", "time": "2026-07-09T00:01:00Z" }
   ]
+}</code></pre>
+
+        <h3>mesh.listeners</h3>
+        <p>
+          Lists dynamic provider-reported listening-post state, optionally filtered
+          by stable listener id or provider-defined state. Listener configuration and
+          credentials are deliberately absent from this read model.
+        </p>
+<pre data-lang="params"><code>{
+  "listenerId": "listener-west"
+}</code></pre>
+<pre data-lang="result"><code>{
+  "listeners": [
+    {
+      "id": "listener-west",
+      "kind": "https-beacon",
+      "state": "active",
+      "deployment": "separate",
+      "management": "provider",
+      "addresses": ["https://127.0.0.1:8443"],
+      "protocols": ["https"]
+    }
+  ]
+}</code></pre>
+
+        <h3>mesh.listener.start</h3>
+        <p>
+          Idempotently starts or attaches a listening post using a caller-selected
+          stable <code>listenerId</code>. <code>config</code> is provider-specific and
+          write-only: implementations must not copy it into the returned listener,
+          logs, or daemon bookkeeping. Long-lived resources must remain durable across
+          individual module RPC invocations; the module adapter is not itself a
+          listening-post host.
+        </p>
+<pre data-lang="params"><code>{
+  "listenerId": "listener-west",
+  "name": "west rendezvous",
+  "kind": "https-beacon",
+  "deployment": "separate",
+  "management": "provider",
+  "config": { "bind": "127.0.0.1:8443", "credentialRef": "vault://listener-west" }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "id": "listener-west",
+  "kind": "https-beacon",
+  "state": "active",
+  "deployment": "separate",
+  "management": "provider",
+  "addresses": ["https://127.0.0.1:8443"]
+}</code></pre>
+
+        <h3>mesh.listener.stop</h3>
+        <p>
+          Idempotently stops or detaches the caller-named listening post. The returned
+          listener must preserve the requested id so external control planes can
+          correlate retries and daemon audit records.
+        </p>
+<pre data-lang="params"><code>{
+  "listenerId": "listener-west"
+}</code></pre>
+<pre data-lang="result"><code>{
+  "id": "listener-west",
+  "state": "stopped"
 }</code></pre>
 
         <h3>mesh.task</h3>

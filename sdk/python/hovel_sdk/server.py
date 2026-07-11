@@ -13,6 +13,9 @@ from hovel_sdk.mesh import (
     _DEFAULT_MESH_RUN_ID,
     _MESH_RPC_BEACONS_METHOD,
     _MESH_RPC_DESCRIBE_METHOD,
+    _MESH_RPC_LISTENER_START_METHOD,
+    _MESH_RPC_LISTENER_STOP_METHOD,
+    _MESH_RPC_LISTENERS_METHOD,
     _MESH_RPC_OPEN_STREAM_METHOD,
     _MESH_RPC_PREFIX,
     _MESH_RPC_TASK_METHOD,
@@ -21,6 +24,10 @@ from hovel_sdk.mesh import (
     MeshBeacon,
     MeshBeaconRequest,
     MeshDescribeRequest,
+    MeshListener,
+    MeshListenerListRequest,
+    MeshListenerStartRequest,
+    MeshListenerStopRequest,
     MeshStreamRequest,
     MeshTaskRequest,
     MeshTaskResult,
@@ -30,6 +37,11 @@ from hovel_sdk.module import HovelModule
 from hovel_sdk.session import SessionManager, SessionRef
 
 _MODULE_TYPES = {"survey", "exploit", "payload_provider"}
+_MESH_LISTENER_METHODS = {
+    _MESH_RPC_LISTENERS_METHOD,
+    _MESH_RPC_LISTENER_START_METHOD,
+    _MESH_RPC_LISTENER_STOP_METHOD,
+}
 
 
 class JSONRPCServer:
@@ -129,10 +141,32 @@ class JSONRPCServer:
         if method == _MESH_RPC_BEACONS_METHOD:
             beacons = await _resolve(self._module.list_mesh_beacons(MeshBeaconRequest.from_rpc(params)))
             return {"beacons": [_mesh_beacon_to_rpc(beacon) for beacon in beacons]}
+        if method in _MESH_LISTENER_METHODS:
+            return await self._dispatch_mesh_listener(method, params)
         if method == _MESH_RPC_TASK_METHOD:
             return await self._run_mesh_task(params)
         if method == _MESH_RPC_OPEN_STREAM_METHOD:
             return await self._open_mesh_stream(params)
+        raise ValueError(f"unknown method {method!r}")
+
+    async def _dispatch_mesh_listener(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method == _MESH_RPC_LISTENERS_METHOD:
+            listeners = await _resolve(self._module.list_mesh_listeners(MeshListenerListRequest.from_rpc(params)))
+            return {"listeners": [_mesh_listener_to_rpc(listener) for listener in listeners]}
+        if method == _MESH_RPC_LISTENER_START_METHOD:
+            start_request = MeshListenerStartRequest.from_rpc(params)
+            requested_id = _required_mesh_listener_id(start_request.listener_id)
+            return _mesh_listener_lifecycle_to_rpc(
+                requested_id,
+                await _resolve(self._module.start_mesh_listener(start_request)),
+            )
+        if method == _MESH_RPC_LISTENER_STOP_METHOD:
+            stop_request = MeshListenerStopRequest.from_rpc(params)
+            requested_id = _required_mesh_listener_id(stop_request.listener_id)
+            return _mesh_listener_lifecycle_to_rpc(
+                requested_id,
+                await _resolve(self._module.stop_mesh_listener(stop_request)),
+            )
         raise ValueError(f"unknown method {method!r}")
 
     async def _dispatch_session(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -231,6 +265,36 @@ def serve(module: HovelModule, stdin: BinaryIO | None = None, stdout: BinaryIO |
     except FrameError as exc:
         sys.stderr.write(f"hovel sdk frame error: {exc}\n")
         raise SystemExit(2) from exc
+
+
+def _mesh_listener_to_rpc(listener: MeshListener | dict[str, Any]) -> dict[str, Any]:
+    out = listener.to_rpc() if isinstance(listener, MeshListener) else dict(listener)
+    if "config" in out:
+        raise ValueError("mesh listener results must not include config")
+    return out
+
+
+def _mesh_listener_lifecycle_to_rpc(
+    requested_id: str,
+    listener: MeshListener | dict[str, Any],
+) -> dict[str, Any]:
+    requested_id = _required_mesh_listener_id(requested_id)
+    out = _mesh_listener_to_rpc(listener)
+    raw_listener_id = out.get("id")
+    listener_id = raw_listener_id.strip() if isinstance(raw_listener_id, str) else ""
+    if not listener_id:
+        raise ValueError("mesh listener result id is required")
+    if listener_id != requested_id:
+        raise ValueError(f"mesh listener result id {listener_id!r} does not match requested id {requested_id!r}")
+    out["id"] = listener_id
+    return out
+
+
+def _required_mesh_listener_id(listener_id: str) -> str:
+    listener_id = listener_id.strip()
+    if not listener_id:
+        raise ValueError("mesh listener listenerId is required")
+    return listener_id
 
 
 def _required_handshake_string(info: dict[str, Any], key: str) -> str:

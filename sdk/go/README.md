@@ -4,6 +4,10 @@ The Go SDK is the most complete module-author surface today. Use it for normal
 modules, PTY-backed post-exploitation sessions, typed chain-step providers,
 payload-provider modules, and Mesh providers.
 
+For a complete Mesh development path—capability design, tasking, streams,
+listening posts, daemon calls, and routing an existing module through a local
+bridge—see the [Mesh Provider Development Guide](../../docs/site/spec/mesh-development.html).
+
 Import path:
 
 ```go
@@ -75,12 +79,19 @@ The provider methods are real RPC endpoints: `list_payloads`,
 `cleanup_payload`, and `read_payload_chunk`. The step methods are also real RPC
 endpoints: `step.describe`, `step.prepare`, `step.execute`, and `step.cleanup`.
 Mesh providers expose `mesh.describe`, `mesh.topology`, `mesh.beacons`,
-`mesh.task`, and `mesh.open_stream` for one-node tools through routed
-tree/graph node operations and protocol-specific flows.
+`mesh.listeners`, `mesh.listener.start`, `mesh.listener.stop`, `mesh.task`, and
+`mesh.open_stream` for one-node tools through routed tree/graph node operations,
+listening-post lifecycle, and protocol-specific flows.
 The Go SDK intentionally splits those methods into optional interfaces
 (`MeshDescriber`, `MeshTopologyProvider`, `MeshBeaconProvider`,
-`MeshTaskProvider`, and `MeshStreamProvider`) so a simple stream Mesh does not
-need to stub tasking, beacons, or topology.
+`MeshListenerProvider`, `MeshListenerLifecycleProvider`, `MeshTaskProvider`, and
+`MeshStreamProvider`) so a simple stream Mesh does not need to stub listener
+lifecycle, tasking, beacons, or topology.
+Listener starts use a caller-selected stable ID for idempotent retries. Their
+provider-specific config is write-only and must not be copied into returned
+`MeshListener` values, logs, or audit records. A long-lived listener must remain
+durable across individual RPC calls; the SDK contract does not make the module
+subprocess a listener host.
 Use `MeshTaskSpec.TargetScopes` to say whether a task targets a Mesh node,
 route, or destination reachable through a node. `MeshTaskRequest` and
 `MeshStreamRequest` both carry `DestinationHost`, optional `DestinationPort`,

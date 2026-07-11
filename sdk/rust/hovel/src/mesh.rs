@@ -23,10 +23,23 @@ pub const MESH_TARGET_DESTINATION: &str = "destination";
 pub const MESH_TASK_STATUS_SUCCEEDED: &str = "succeeded";
 pub const MESH_TASK_STATUS_FAILED: &str = "failed";
 
+pub const MESH_LISTENER_DEPLOYMENT_EMBEDDED: &str = "embedded";
+pub const MESH_LISTENER_DEPLOYMENT_SEPARATE: &str = "separate";
+pub const MESH_LISTENER_MANAGEMENT_PROVIDER: &str = "provider";
+pub const MESH_LISTENER_MANAGEMENT_EXTERNAL: &str = "external";
+pub const MESH_LISTENER_STATE_STARTING: &str = "starting";
+pub const MESH_LISTENER_STATE_ACTIVE: &str = "active";
+pub const MESH_LISTENER_STATE_STOPPING: &str = "stopping";
+pub const MESH_LISTENER_STATE_STOPPED: &str = "stopped";
+pub const MESH_LISTENER_STATE_FAILED: &str = "failed";
+
 pub(crate) const DEFAULT_MESH_RUN_ID: &str = "mesh";
 pub(crate) const MESH_RPC_DESCRIBE_METHOD: &str = "mesh.describe";
 pub(crate) const MESH_RPC_TOPOLOGY_METHOD: &str = "mesh.topology";
 pub(crate) const MESH_RPC_BEACONS_METHOD: &str = "mesh.beacons";
+pub(crate) const MESH_RPC_LISTENERS_METHOD: &str = "mesh.listeners";
+pub(crate) const MESH_RPC_LISTENER_START_METHOD: &str = "mesh.listener.start";
+pub(crate) const MESH_RPC_LISTENER_STOP_METHOD: &str = "mesh.listener.stop";
 pub(crate) const MESH_RPC_TASK_METHOD: &str = "mesh.task";
 pub(crate) const MESH_RPC_OPEN_STREAM_METHOD: &str = "mesh.open_stream";
 
@@ -34,6 +47,7 @@ pub(crate) const MESH_RPC_OPEN_STREAM_METHOD: &str = "mesh.open_stream";
 pub struct MeshNode {
     pub id: String,
     pub parent_id: String,
+    pub listener_id: String,
     pub name: String,
     pub kind: String,
     pub state: String,
@@ -51,6 +65,7 @@ impl MeshNode {
     fn to_value(&self) -> Value {
         let mut members = required_str("id", &self.id);
         push_str(&mut members, "parentId", &self.parent_id);
+        push_str(&mut members, "listenerId", &self.listener_id);
         push_str(&mut members, "name", &self.name);
         push_str(&mut members, "kind", &self.kind);
         push_str(&mut members, "state", &self.state);
@@ -194,11 +209,36 @@ impl MeshTaskSpec {
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct MeshListenerSpec {
+    pub kind: String,
+    pub summary: String,
+    pub deployments: Vec<String>,
+    pub management_modes: Vec<String>,
+    pub protocols: Vec<String>,
+    pub config_schema: Vec<(String, Value)>,
+    pub capabilities: Vec<String>,
+}
+
+impl MeshListenerSpec {
+    fn to_value(&self) -> Value {
+        let mut members = required_str("kind", &self.kind);
+        push_str(&mut members, "summary", &self.summary);
+        push_strings(&mut members, "deployments", &self.deployments);
+        push_strings(&mut members, "managementModes", &self.management_modes);
+        push_strings(&mut members, "protocols", &self.protocols);
+        push_object(&mut members, "configSchema", &self.config_schema);
+        push_strings(&mut members, "capabilities", &self.capabilities);
+        Value::Object(members)
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct MeshTrigger {
     pub id: String,
     pub name: String,
     pub kind: String,
     pub node_id: String,
+    pub listener_id: String,
     pub state: String,
     pub expression: String,
     pub schedule: String,
@@ -213,6 +253,7 @@ impl MeshTrigger {
         push_str(&mut members, "name", &self.name);
         push_str(&mut members, "kind", &self.kind);
         push_str(&mut members, "nodeId", &self.node_id);
+        push_str(&mut members, "listenerId", &self.listener_id);
         push_str(&mut members, "state", &self.state);
         push_str(&mut members, "expression", &self.expression);
         push_str(&mut members, "schedule", &self.schedule);
@@ -227,6 +268,7 @@ impl MeshTrigger {
 pub struct MeshBeacon {
     pub id: String,
     pub node_id: String,
+    pub listener_id: String,
     pub time: String,
     pub state: String,
     pub transport: String,
@@ -239,12 +281,49 @@ impl MeshBeacon {
     pub(crate) fn to_value(&self) -> Value {
         let mut members = required_str("id", &self.id);
         members.push(("nodeId".to_string(), Value::from(self.node_id.as_str())));
+        push_str(&mut members, "listenerId", &self.listener_id);
         push_str(&mut members, "time", &self.time);
         push_str(&mut members, "state", &self.state);
         push_str(&mut members, "transport", &self.transport);
         push_str(&mut members, "remoteAddr", &self.remote_addr);
         push_i64(&mut members, "intervalSeconds", self.interval_seconds);
         push_object(&mut members, "fields", &self.fields);
+        Value::Object(members)
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MeshListener {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub state: String,
+    pub deployment: String,
+    pub management: String,
+    pub node_id: String,
+    pub addresses: Vec<String>,
+    pub protocols: Vec<String>,
+    pub capabilities: Vec<String>,
+    pub labels: Vec<(String, Value)>,
+    pub attributes: Vec<(String, Value)>,
+    pub updated_at: String,
+}
+
+impl MeshListener {
+    pub(crate) fn to_value(&self) -> Value {
+        let mut members = required_str("id", &self.id);
+        push_str(&mut members, "name", &self.name);
+        push_str(&mut members, "kind", &self.kind);
+        push_str(&mut members, "state", &self.state);
+        push_str(&mut members, "deployment", &self.deployment);
+        push_str(&mut members, "management", &self.management);
+        push_str(&mut members, "nodeId", &self.node_id);
+        push_strings(&mut members, "addresses", &self.addresses);
+        push_strings(&mut members, "protocols", &self.protocols);
+        push_strings(&mut members, "capabilities", &self.capabilities);
+        push_object(&mut members, "labels", &self.labels);
+        push_object(&mut members, "attributes", &self.attributes);
+        push_str(&mut members, "updatedAt", &self.updated_at);
         Value::Object(members)
     }
 }
@@ -257,6 +336,7 @@ pub struct MeshDescriptor {
     pub capabilities: Vec<String>,
     pub topology: MeshTopology,
     pub tasks: Vec<MeshTaskSpec>,
+    pub listener_types: Vec<MeshListenerSpec>,
     pub triggers: Vec<MeshTrigger>,
     pub attributes: Vec<(String, Value)>,
 }
@@ -280,6 +360,17 @@ impl MeshDescriptor {
             members.push((
                 "tasks".to_string(),
                 Value::Array(self.tasks.iter().map(MeshTaskSpec::to_value).collect()),
+            ));
+        }
+        if !self.listener_types.is_empty() {
+            members.push((
+                "listenerTypes".to_string(),
+                Value::Array(
+                    self.listener_types
+                        .iter()
+                        .map(MeshListenerSpec::to_value)
+                        .collect(),
+                ),
             ));
         }
         if !self.triggers.is_empty() {
@@ -309,6 +400,7 @@ impl MeshDescribeRequest {
 #[derive(Clone, Debug, Default)]
 pub struct MeshTopologyRequest {
     pub root: String,
+    pub listener_id: String,
     pub include_routes: bool,
     pub agent: Option<Value>,
 }
@@ -317,6 +409,7 @@ impl MeshTopologyRequest {
     pub(crate) fn from_value(value: &Value) -> MeshTopologyRequest {
         MeshTopologyRequest {
             root: string_field(value, "root"),
+            listener_id: string_field(value, "listenerId"),
             include_routes: bool_field(value, "includeRoutes"),
             agent: value.get("agentContext").cloned(),
         }
@@ -326,6 +419,7 @@ impl MeshTopologyRequest {
 #[derive(Clone, Debug, Default)]
 pub struct MeshBeaconRequest {
     pub node_id: String,
+    pub listener_id: String,
     pub since: String,
     pub limit: i64,
     pub agent: Option<Value>,
@@ -335,10 +429,78 @@ impl MeshBeaconRequest {
     pub(crate) fn from_value(value: &Value) -> MeshBeaconRequest {
         MeshBeaconRequest {
             node_id: string_field(value, "nodeId"),
+            listener_id: string_field(value, "listenerId"),
             since: string_field(value, "since"),
             limit: i64_field(value, "limit"),
             agent: value.get("agentContext").cloned(),
         }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MeshListenerListRequest {
+    pub listener_id: String,
+    pub state: String,
+    pub agent: Option<Value>,
+}
+
+impl MeshListenerListRequest {
+    pub(crate) fn from_value(value: &Value) -> Result<MeshListenerListRequest, String> {
+        Ok(MeshListenerListRequest {
+            listener_id: listener_string_field(value, "listenerId")?
+                .trim()
+                .to_string(),
+            state: listener_string_field(value, "state")?.trim().to_string(),
+            agent: value.get("agentContext").cloned(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MeshListenerStartRequest {
+    pub listener_id: String,
+    pub name: String,
+    pub kind: String,
+    pub deployment: String,
+    pub management: String,
+    pub config: Vec<(String, Value)>,
+    pub agent: Option<Value>,
+}
+
+impl MeshListenerStartRequest {
+    pub(crate) fn from_value(value: &Value) -> Result<MeshListenerStartRequest, String> {
+        Ok(MeshListenerStartRequest {
+            listener_id: listener_string_field(value, "listenerId")?
+                .trim()
+                .to_string(),
+            name: listener_string_field(value, "name")?,
+            kind: listener_string_field(value, "kind")?,
+            deployment: listener_string_field(value, "deployment")?
+                .trim()
+                .to_string(),
+            management: listener_string_field(value, "management")?
+                .trim()
+                .to_string(),
+            config: listener_object_field(value, "config")?,
+            agent: value.get("agentContext").cloned(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MeshListenerStopRequest {
+    pub listener_id: String,
+    pub agent: Option<Value>,
+}
+
+impl MeshListenerStopRequest {
+    pub(crate) fn from_value(value: &Value) -> Result<MeshListenerStopRequest, String> {
+        Ok(MeshListenerStopRequest {
+            listener_id: listener_string_field(value, "listenerId")?
+                .trim()
+                .to_string(),
+            agent: value.get("agentContext").cloned(),
+        })
     }
 }
 
@@ -348,6 +510,7 @@ pub struct MeshTaskRequest {
     pub task_id: String,
     pub kind: String,
     pub node_id: String,
+    pub listener_id: String,
     pub target: String,
     pub route: Option<MeshRoute>,
     pub destination_host: String,
@@ -367,6 +530,7 @@ impl MeshTaskRequest {
             task_id: string_field(value, "taskId"),
             kind: string_field(value, "kind"),
             node_id: string_field(value, "nodeId"),
+            listener_id: string_field(value, "listenerId"),
             target: string_field(value, "target"),
             route: value.get("route").and_then(MeshRoute::from_value),
             destination_host: string_field(value, "destinationHost"),
@@ -387,6 +551,7 @@ pub struct MeshTaskResult {
     pub status: String,
     pub summary: String,
     pub node_id: String,
+    pub listener_id: String,
     pub route: Option<MeshRoute>,
     pub destination_host: String,
     pub destination_port: i64,
@@ -422,6 +587,7 @@ impl MeshTaskResult {
         push_str(&mut members, "status", status);
         push_str(&mut members, "summary", &self.summary);
         push_str(&mut members, "nodeId", &self.node_id);
+        push_str(&mut members, "listenerId", &self.listener_id);
         if let Some(route) = self.route {
             members.push(("route".to_string(), route.to_value()));
         }
@@ -471,6 +637,7 @@ pub struct MeshEvent {
     pub id: String,
     pub kind: String,
     pub node_id: String,
+    pub listener_id: String,
     pub level: String,
     pub message: String,
     pub fields: Vec<(String, Value)>,
@@ -482,6 +649,7 @@ impl MeshEvent {
         push_str(&mut members, "id", &self.id);
         members.push(("kind".to_string(), Value::from(self.kind.as_str())));
         push_str(&mut members, "nodeId", &self.node_id);
+        push_str(&mut members, "listenerId", &self.listener_id);
         push_str(&mut members, "level", &self.level);
         push_str(&mut members, "message", &self.message);
         push_object(&mut members, "fields", &self.fields);
@@ -495,6 +663,7 @@ pub struct MeshStreamRequest {
     pub module_id: String,
     pub target: String,
     pub node_id: String,
+    pub listener_id: String,
     pub route: Option<MeshRoute>,
     pub destination_host: String,
     pub destination_port: i64,
@@ -510,6 +679,7 @@ impl MeshStreamRequest {
             module_id: string_field(value, "moduleId"),
             target: string_field(value, "target"),
             node_id: string_field(value, "nodeId"),
+            listener_id: string_field(value, "listenerId"),
             route: value.get("route").and_then(MeshRoute::from_value),
             destination_host: string_field(value, "destinationHost"),
             destination_port: i64_field(value, "destinationPort"),
@@ -644,6 +814,22 @@ fn object_field(value: &Value, key: &str) -> Vec<(String, Value)> {
     match value.get(key) {
         Some(Value::Object(members)) => members.clone(),
         _ => Vec::new(),
+    }
+}
+
+fn listener_string_field(value: &Value, key: &str) -> Result<String, String> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(String::new()),
+        Some(Value::Str(text)) => Ok(text.clone()),
+        Some(_) => Err(format!("mesh listener {key} must be a string")),
+    }
+}
+
+fn listener_object_field(value: &Value, key: &str) -> Result<Vec<(String, Value)>, String> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Object(members)) => Ok(members.clone()),
+        Some(_) => Err(format!("mesh listener {key} must be an object")),
     }
 }
 

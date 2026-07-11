@@ -125,16 +125,33 @@ func TestCatalogDeepClonesMeshMetadata(t *testing.T) {
 			"allowed": []any{"survey", map[string]any{"kind": "command"}},
 		},
 	}
+	listenerSchema := map[string]any{
+		"properties": map[string]any{
+			"endpoint": map[string]any{"type": "string"},
+		},
+	}
 	catalog := New(Module{
 		ID:      "mesh-module",
 		Type:    TypeExploit,
 		Version: "v1.0.0",
 		Mesh: domainmesh.Descriptor{
 			Attributes: nested,
+			ListenerTypes: []domainmesh.ListenerSpec{{
+				Kind:            "https",
+				Deployments:     []domainmesh.ListenerDeployment{domainmesh.ListenerDeploymentSeparate},
+				ManagementModes: []domainmesh.ListenerManagement{domainmesh.ListenerManagementProvider},
+				Protocols:       []string{"https"},
+				ConfigSchema:    listenerSchema,
+				Capabilities:    []string{"beacon"},
+			}},
 		},
 	})
+	if got := catalog.Search("beacon"); len(got) != 1 || got[0].ID != "mesh-module@v1.0.0" {
+		t.Fatalf("listener metadata search = %#v, want mesh-module", got)
+	}
 
 	nested["policy"].(map[string]any)["allowed"].([]any)[1].(map[string]any)["kind"] = "mutated input"
+	listenerSchema["properties"].(map[string]any)["endpoint"].(map[string]any)["type"] = "integer"
 	module, ok := catalog.Find("mesh-module")
 	if !ok {
 		t.Fatal("Find(mesh-module) failed")
@@ -143,12 +160,39 @@ func TestCatalogDeepClonesMeshMetadata(t *testing.T) {
 	if got := allowed[1].(map[string]any)["kind"]; got != "command" {
 		t.Fatalf("stored mesh metadata = %q, want original value", got)
 	}
+	listener := module.Mesh.ListenerTypes[0]
+	endpoint := listener.ConfigSchema["properties"].(map[string]any)["endpoint"].(map[string]any)
+	if got := endpoint["type"]; got != "string" {
+		t.Fatalf("stored listener schema = %q, want original value", got)
+	}
 
 	allowed[1].(map[string]any)["kind"] = "mutated result"
+	listener.Deployments[0] = domainmesh.ListenerDeploymentEmbedded
+	listener.ManagementModes[0] = domainmesh.ListenerManagementExternal
+	listener.Protocols[0] = "mutated"
+	listener.Capabilities[0] = "mutated"
+	endpoint["type"] = "boolean"
 	again, _ := catalog.Find("mesh-module")
 	againAllowed := again.Mesh.Attributes["policy"].(map[string]any)["allowed"].([]any)
 	if got := againAllowed[1].(map[string]any)["kind"]; got != "command" {
 		t.Fatalf("catalog mesh metadata was mutated through clone: %q", got)
+	}
+	againListener := again.Mesh.ListenerTypes[0]
+	if got := againListener.Deployments[0]; got != domainmesh.ListenerDeploymentSeparate {
+		t.Fatalf("catalog listener deployments were mutated through clone: %q", got)
+	}
+	if got := againListener.ManagementModes[0]; got != domainmesh.ListenerManagementProvider {
+		t.Fatalf("catalog listener management modes were mutated through clone: %q", got)
+	}
+	if got := againListener.Protocols[0]; got != "https" {
+		t.Fatalf("catalog listener protocols were mutated through clone: %q", got)
+	}
+	if got := againListener.Capabilities[0]; got != "beacon" {
+		t.Fatalf("catalog listener capabilities were mutated through clone: %q", got)
+	}
+	againEndpoint := againListener.ConfigSchema["properties"].(map[string]any)["endpoint"].(map[string]any)
+	if got := againEndpoint["type"]; got != "string" {
+		t.Fatalf("catalog listener schema was mutated through clone: %q", got)
 	}
 }
 

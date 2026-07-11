@@ -8,6 +8,9 @@ from hovel_sdk.config import Requirement
 from hovel_sdk.context import Context
 from hovel_sdk.mesh import (
     _MESH_RPC_BEACONS_METHOD,
+    _MESH_RPC_LISTENER_START_METHOD,
+    _MESH_RPC_LISTENER_STOP_METHOD,
+    _MESH_RPC_LISTENERS_METHOD,
     _MESH_RPC_OPEN_STREAM_METHOD,
     _MESH_RPC_TASK_METHOD,
     _MESH_RPC_TOPOLOGY_METHOD,
@@ -20,6 +23,10 @@ if TYPE_CHECKING:
         MeshBeaconRequest,
         MeshDescribeRequest,
         MeshDescriptor,
+        MeshListener,
+        MeshListenerListRequest,
+        MeshListenerStartRequest,
+        MeshListenerStopRequest,
         MeshStreamRequest,
         MeshTaskRequest,
         MeshTaskResult,
@@ -88,6 +95,30 @@ class HovelModule(ABC):
     def list_mesh_beacons(self, _request: MeshBeaconRequest) -> list[MeshBeacon] | Awaitable[list[MeshBeacon]]:
         raise NotImplementedError(
             f"{self.name or self.__class__.__name__} does not implement {_MESH_RPC_BEACONS_METHOD}"
+        )
+
+    def list_mesh_listeners(
+        self,
+        _request: MeshListenerListRequest,
+    ) -> list[MeshListener] | Awaitable[list[MeshListener]]:
+        raise NotImplementedError(
+            f"{self.name or self.__class__.__name__} does not implement {_MESH_RPC_LISTENERS_METHOD}"
+        )
+
+    def start_mesh_listener(
+        self,
+        _request: MeshListenerStartRequest,
+    ) -> MeshListener | Awaitable[MeshListener]:
+        raise NotImplementedError(
+            f"{self.name or self.__class__.__name__} does not implement {_MESH_RPC_LISTENER_START_METHOD}"
+        )
+
+    def stop_mesh_listener(
+        self,
+        _request: MeshListenerStopRequest,
+    ) -> MeshListener | Awaitable[MeshListener]:
+        raise NotImplementedError(
+            f"{self.name or self.__class__.__name__} does not implement {_MESH_RPC_LISTENER_STOP_METHOD}"
         )
 
     def run_mesh_task(

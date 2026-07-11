@@ -11,6 +11,10 @@ from typing import Any, BinaryIO, ClassVar, cast
 import pytest
 
 from hovel_sdk import (
+    MESH_LISTENER_DEPLOYMENT_SEPARATE,
+    MESH_LISTENER_MANAGEMENT_PROVIDER,
+    MESH_LISTENER_STATE_ACTIVE,
+    MESH_LISTENER_STATE_STOPPED,
     MESH_TARGET_DESTINATION,
     MESH_TARGET_NODE,
     MESH_TARGET_ROUTE,
@@ -30,6 +34,11 @@ from hovel_sdk import (
     MeshDescriptor,
     MeshEvent,
     MeshLink,
+    MeshListener,
+    MeshListenerListRequest,
+    MeshListenerSpec,
+    MeshListenerStartRequest,
+    MeshListenerStopRequest,
     MeshNode,
     MeshRoute,
     MeshStreamRequest,
@@ -311,6 +320,16 @@ class MeshModule(HovelModule):
                     target_scopes=[MESH_TARGET_ROUTE, MESH_TARGET_DESTINATION],
                 ),
             ],
+            listener_types=[
+                MeshListenerSpec(
+                    kind="https",
+                    summary="HTTPS rendezvous listener",
+                    deployments=[MESH_LISTENER_DEPLOYMENT_SEPARATE],
+                    management_modes=[MESH_LISTENER_MANAGEMENT_PROVIDER],
+                    protocols=["https"],
+                    config_schema={"type": "object"},
+                )
+            ],
             triggers=[
                 MeshTrigger(
                     id="trigger-beacon-late",
@@ -354,6 +373,40 @@ class MeshModule(HovelModule):
                 interval_seconds=30,
             )
         ]
+
+    def list_mesh_listeners(self, request: MeshListenerListRequest) -> list[MeshListener]:
+        return [
+            MeshListener(
+                id=request.listener_id or "listener-primary",
+                name="primary HTTPS listener",
+                kind="https",
+                state=MESH_LISTENER_STATE_ACTIVE,
+                deployment=MESH_LISTENER_DEPLOYMENT_SEPARATE,
+                management=MESH_LISTENER_MANAGEMENT_PROVIDER,
+                addresses=["https://127.0.0.1:8443"],
+                protocols=["https"],
+            )
+        ]
+
+    def start_mesh_listener(self, request: MeshListenerStartRequest) -> MeshListener:
+        return MeshListener(
+            id=request.listener_id,
+            name=request.name,
+            kind=request.kind,
+            state=MESH_LISTENER_STATE_ACTIVE,
+            deployment=request.deployment,
+            management=request.management,
+            addresses=["https://127.0.0.1:8443"],
+            protocols=["https"],
+        )
+
+    def stop_mesh_listener(self, request: MeshListenerStopRequest) -> MeshListener:
+        return MeshListener(
+            id=request.listener_id,
+            state=MESH_LISTENER_STATE_STOPPED,
+            deployment=MESH_LISTENER_DEPLOYMENT_SEPARATE,
+            management=MESH_LISTENER_MANAGEMENT_PROVIDER,
+        )
 
     def run_mesh_task(self, ctx: Context, request: MeshTaskRequest) -> MeshTaskResult:
         return MeshTaskResult(
@@ -732,6 +785,75 @@ class SDKTest(unittest.TestCase):
         self.assertEqual(outputs["contextRunId"], "mesh")
         self.assertEqual(outputs["contextModuleId"], "mesh-module@v0.0.0-test")
         self.assertEqual(outputs["contextTarget"], "10.10.0.99")
+
+    def test_mesh_listener_lifecycle_dispatches_over_json_rpc(self) -> None:
+        with ModuleRPC(MeshModule()) as rpc:
+            listed = rpc.call(
+                "mesh.listeners",
+                {"listenerId": "  listener-primary  ", "state": "  active  "},
+            )
+            started = rpc.call(
+                "mesh.listener.start",
+                {
+                    "listenerId": "  listener-web  ",
+                    "name": "web-controlled listener",
+                    "kind": "https",
+                    "deployment": "  separate  ",
+                    "management": "  provider  ",
+                    "config": {"token": "write-only-secret"},
+                },
+            )
+            stopped = rpc.call("mesh.listener.stop", {"listenerId": "listener-web"})
+
+        self.assertEqual(listed["listeners"][0]["id"], "listener-primary")
+        self.assertEqual(started["id"], "listener-web")
+        self.assertEqual(started["state"], "active")
+        self.assertEqual(started["deployment"], "separate")
+        self.assertEqual(started["management"], "provider")
+        self.assertNotIn("config", started)
+        self.assertEqual(stopped["state"], "stopped")
+
+    def test_mesh_listener_rejects_malformed_or_echoed_config(self) -> None:
+        with ModuleRPC(MeshModule()) as rpc, pytest.raises(RPCError, match="config must be an object"):
+            rpc.call(
+                "mesh.listener.start",
+                {"listenerId": "listener-web", "config": "write-only-secret"},
+            )
+
+        class LeakyMeshModule(MeshModule):
+            def start_mesh_listener(self, request: MeshListenerStartRequest) -> MeshListener:
+                return cast(
+                    "MeshListener",
+                    {"id": request.listener_id, "config": {"token": "leaked-secret"}},
+                )
+
+        with (
+            ModuleRPC(LeakyMeshModule()) as rpc,
+            pytest.raises(RPCError, match="results must not include config"),
+        ):
+            rpc.call("mesh.listener.start", {"listenerId": "listener-web"})
+
+    def test_mesh_listener_rejects_blank_ids_before_provider_invocation(self) -> None:
+        class CountingMeshModule(MeshModule):
+            def __init__(self) -> None:
+                self.lifecycle_calls = 0
+
+            def start_mesh_listener(self, request: MeshListenerStartRequest) -> MeshListener:
+                self.lifecycle_calls += 1
+                return super().start_mesh_listener(request)
+
+            def stop_mesh_listener(self, request: MeshListenerStopRequest) -> MeshListener:
+                self.lifecycle_calls += 1
+                return super().stop_mesh_listener(request)
+
+        module = CountingMeshModule()
+        with ModuleRPC(module) as rpc:
+            with pytest.raises(RPCError, match="listenerId is required"):
+                rpc.call("mesh.listener.start", {"listenerId": "  "})
+            with pytest.raises(RPCError, match="listenerId is required"):
+                rpc.call("mesh.listener.stop", {})
+
+        self.assertEqual(module.lifecycle_calls, 0)
 
     def test_artifact_helpers_emit_inline_and_file_references(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

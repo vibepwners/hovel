@@ -30,6 +30,22 @@ type MeshBeaconProvider interface {
 	ListMeshBeacons(MeshBeaconRequest) ([]MeshBeacon, error)
 }
 
+// MeshListenerProvider is implemented by modules that can report listening
+// posts independently from the provider control-plane adapter.
+type MeshListenerProvider interface {
+	Module
+	ListMeshListeners(MeshListenerListRequest) ([]MeshListener, error)
+}
+
+// MeshListenerLifecycleProvider is implemented by modules that expose start or
+// attach and stop or detach control for listening posts. Calls are idempotent
+// for ListenerID.
+type MeshListenerLifecycleProvider interface {
+	Module
+	StartMeshListener(MeshListenerStartRequest) (MeshListener, error)
+	StopMeshListener(MeshListenerStopRequest) (MeshListener, error)
+}
+
 // MeshTaskProvider is implemented by modules that can run provider-owned Mesh
 // tasks such as survey, command, upload_execute, or load.
 type MeshTaskProvider interface {
@@ -52,6 +68,8 @@ type MeshProvider interface {
 	MeshDescriber
 	MeshTopologyProvider
 	MeshBeaconProvider
+	MeshListenerProvider
+	MeshListenerLifecycleProvider
 	MeshTaskProvider
 	MeshStreamProvider
 }
@@ -91,10 +109,85 @@ const (
 	MeshTaskStatusFailed    MeshTaskStatus = "failed"
 )
 
+// MeshListenerDeployment describes whether a listening post shares the
+// provider deployment or runs as a separate data-plane service.
+type MeshListenerDeployment string
+
+const (
+	MeshListenerDeploymentEmbedded MeshListenerDeployment = "embedded"
+	MeshListenerDeploymentSeparate MeshListenerDeployment = "separate"
+)
+
+// MeshListenerManagement identifies who owns listening-post lifecycle.
+type MeshListenerManagement string
+
+const (
+	MeshListenerManagementProvider MeshListenerManagement = "provider"
+	MeshListenerManagementExternal MeshListenerManagement = "external"
+)
+
+// MeshListenerState describes the provider-reported listening-post state.
+// Providers may return additional states when their contract requires it.
+type MeshListenerState string
+
+const (
+	MeshListenerStateStarting MeshListenerState = "starting"
+	MeshListenerStateActive   MeshListenerState = "active"
+	MeshListenerStateStopping MeshListenerState = "stopping"
+	MeshListenerStateStopped  MeshListenerState = "stopped"
+	MeshListenerStateFailed   MeshListenerState = "failed"
+)
+
+// MeshListener is a provider-reported listening post. Config and credentials
+// are intentionally absent so read APIs cannot echo provider secrets.
+type MeshListener struct {
+	ID           string                 `json:"id"`
+	Name         string                 `json:"name,omitempty"`
+	Kind         string                 `json:"kind,omitempty"`
+	State        MeshListenerState      `json:"state,omitempty"`
+	Deployment   MeshListenerDeployment `json:"deployment,omitempty"`
+	Management   MeshListenerManagement `json:"management,omitempty"`
+	NodeID       string                 `json:"nodeId,omitempty"`
+	Addresses    []string               `json:"addresses,omitempty"`
+	Protocols    []string               `json:"protocols,omitempty"`
+	Capabilities []string               `json:"capabilities,omitempty"`
+	Labels       map[string]any         `json:"labels,omitempty"`
+	Attributes   map[string]any         `json:"attributes,omitempty"`
+	UpdatedAt    string                 `json:"updatedAt,omitempty"`
+}
+
+// MeshListenerListRequest filters dynamic listening-post state.
+type MeshListenerListRequest struct {
+	ListenerID string            `json:"listenerId,omitempty"`
+	State      MeshListenerState `json:"state,omitempty"`
+	Agent      *AgentContext     `json:"agentContext,omitempty"`
+}
+
+// MeshListenerStartRequest asks a provider to idempotently start or attach a
+// listening post with the caller-selected ListenerID. Config is write-only and
+// must not be copied into the returned MeshListener.
+type MeshListenerStartRequest struct {
+	ListenerID string                 `json:"listenerId"`
+	Name       string                 `json:"name,omitempty"`
+	Kind       string                 `json:"kind,omitempty"`
+	Deployment MeshListenerDeployment `json:"deployment,omitempty"`
+	Management MeshListenerManagement `json:"management,omitempty"`
+	Config     map[string]any         `json:"config,omitempty"`
+	Agent      *AgentContext          `json:"agentContext,omitempty"`
+}
+
+// MeshListenerStopRequest asks a provider to idempotently stop or detach a
+// listening post with the caller-selected ListenerID.
+type MeshListenerStopRequest struct {
+	ListenerID string        `json:"listenerId"`
+	Agent      *AgentContext `json:"agentContext,omitempty"`
+}
+
 // MeshNode is an operator-addressable participant in a mesh.
 type MeshNode struct {
 	ID           string         `json:"id"`
 	ParentID     string         `json:"parentId,omitempty"`
+	ListenerID   string         `json:"listenerId,omitempty"`
 	Name         string         `json:"name,omitempty"`
 	Kind         string         `json:"kind,omitempty"`
 	State        string         `json:"state,omitempty"`
@@ -151,6 +244,18 @@ type MeshTaskSpec struct {
 	Capabilities []string          `json:"capabilities,omitempty"`
 }
 
+// MeshListenerSpec advertises one listening-post kind and its supported
+// deployment and management modes without contacting a live listener.
+type MeshListenerSpec struct {
+	Kind            string                   `json:"kind"`
+	Summary         string                   `json:"summary,omitempty"`
+	Deployments     []MeshListenerDeployment `json:"deployments,omitempty"`
+	ManagementModes []MeshListenerManagement `json:"managementModes,omitempty"`
+	Protocols       []string                 `json:"protocols,omitempty"`
+	ConfigSchema    map[string]any           `json:"configSchema,omitempty"`
+	Capabilities    []string                 `json:"capabilities,omitempty"`
+}
+
 // MeshTrigger declares a condition that can cause mesh work or state
 // changes. The provider owns the trigger expression language.
 type MeshTrigger struct {
@@ -158,6 +263,7 @@ type MeshTrigger struct {
 	Name       string         `json:"name,omitempty"`
 	Kind       string         `json:"kind,omitempty"`
 	NodeID     string         `json:"nodeId,omitempty"`
+	ListenerID string         `json:"listenerId,omitempty"`
 	State      string         `json:"state,omitempty"`
 	Expression string         `json:"expression,omitempty"`
 	Schedule   string         `json:"schedule,omitempty"`
@@ -170,6 +276,7 @@ type MeshTrigger struct {
 type MeshBeacon struct {
 	ID              string         `json:"id"`
 	NodeID          string         `json:"nodeId"`
+	ListenerID      string         `json:"listenerId,omitempty"`
 	Time            string         `json:"time,omitempty"`
 	State           string         `json:"state,omitempty"`
 	Transport       string         `json:"transport,omitempty"`
@@ -181,14 +288,15 @@ type MeshBeacon struct {
 // MeshDescriptor reports a provider's mesh capabilities without requiring
 // target contact. Dynamic details belong in MeshTopology or ListMeshBeacons.
 type MeshDescriptor struct {
-	Name         string         `json:"name,omitempty"`
-	Version      string         `json:"version,omitempty"`
-	Summary      string         `json:"summary,omitempty"`
-	Capabilities []string       `json:"capabilities,omitempty"`
-	Topology     *MeshTopology  `json:"topology,omitempty"`
-	Tasks        []MeshTaskSpec `json:"tasks,omitempty"`
-	Triggers     []MeshTrigger  `json:"triggers,omitempty"`
-	Attributes   map[string]any `json:"attributes,omitempty"`
+	Name          string             `json:"name,omitempty"`
+	Version       string             `json:"version,omitempty"`
+	Summary       string             `json:"summary,omitempty"`
+	Capabilities  []string           `json:"capabilities,omitempty"`
+	Topology      *MeshTopology      `json:"topology,omitempty"`
+	Tasks         []MeshTaskSpec     `json:"tasks,omitempty"`
+	ListenerTypes []MeshListenerSpec `json:"listenerTypes,omitempty"`
+	Triggers      []MeshTrigger      `json:"triggers,omitempty"`
+	Attributes    map[string]any     `json:"attributes,omitempty"`
 }
 
 type MeshDescribeRequest struct {
@@ -197,15 +305,17 @@ type MeshDescribeRequest struct {
 
 type MeshTopologyRequest struct {
 	Root          string        `json:"root,omitempty"`
+	ListenerID    string        `json:"listenerId,omitempty"`
 	IncludeRoutes bool          `json:"includeRoutes,omitempty"`
 	Agent         *AgentContext `json:"agentContext,omitempty"`
 }
 
 type MeshBeaconRequest struct {
-	NodeID string        `json:"nodeId,omitempty"`
-	Since  string        `json:"since,omitempty"`
-	Limit  int           `json:"limit,omitempty"`
-	Agent  *AgentContext `json:"agentContext,omitempty"`
+	NodeID     string        `json:"nodeId,omitempty"`
+	ListenerID string        `json:"listenerId,omitempty"`
+	Since      string        `json:"since,omitempty"`
+	Limit      int           `json:"limit,omitempty"`
+	Agent      *AgentContext `json:"agentContext,omitempty"`
 }
 
 // MeshTaskRequest asks a provider to perform a node, route, or destination operation.
@@ -214,6 +324,7 @@ type MeshTaskRequest struct {
 	TaskID          string         `json:"taskId,omitempty"`
 	Kind            MeshTaskKind   `json:"kind"`
 	NodeID          string         `json:"nodeId,omitempty"`
+	ListenerID      string         `json:"listenerId,omitempty"`
 	Target          string         `json:"target,omitempty"`
 	Route           *MeshRoute     `json:"route,omitempty"`
 	DestinationHost string         `json:"destinationHost,omitempty"`
@@ -234,6 +345,7 @@ type MeshTaskResult struct {
 	Status          MeshTaskStatus `json:"status,omitempty"`
 	Summary         string         `json:"summary,omitempty"`
 	NodeID          string         `json:"nodeId,omitempty"`
+	ListenerID      string         `json:"listenerId,omitempty"`
 	Route           *MeshRoute     `json:"route,omitempty"`
 	DestinationHost string         `json:"destinationHost,omitempty"`
 	DestinationPort int            `json:"destinationPort,omitempty"`
@@ -257,12 +369,13 @@ func SucceededMeshTask(summary string) MeshTaskResult {
 
 // MeshEvent is provider-authored audit or progress evidence for mesh work.
 type MeshEvent struct {
-	ID      string         `json:"id,omitempty"`
-	Kind    string         `json:"kind"`
-	NodeID  string         `json:"nodeId,omitempty"`
-	Level   string         `json:"level,omitempty"`
-	Message string         `json:"message,omitempty"`
-	Fields  map[string]any `json:"fields,omitempty"`
+	ID         string         `json:"id,omitempty"`
+	Kind       string         `json:"kind"`
+	NodeID     string         `json:"nodeId,omitempty"`
+	ListenerID string         `json:"listenerId,omitempty"`
+	Level      string         `json:"level,omitempty"`
+	Message    string         `json:"message,omitempty"`
+	Fields     map[string]any `json:"fields,omitempty"`
 }
 
 // MeshStreamRequest asks a provider to open a routed flow to an endpoint
@@ -274,6 +387,7 @@ type MeshStreamRequest struct {
 	ModuleID        string         `json:"moduleId,omitempty"`
 	Target          string         `json:"target,omitempty"`
 	NodeID          string         `json:"nodeId,omitempty"`
+	ListenerID      string         `json:"listenerId,omitempty"`
 	Route           *MeshRoute     `json:"route,omitempty"`
 	DestinationHost string         `json:"destinationHost,omitempty"`
 	DestinationPort int            `json:"destinationPort,omitempty"`

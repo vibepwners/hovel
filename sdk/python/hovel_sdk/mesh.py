@@ -22,10 +22,25 @@ MESH_TARGET_DESTINATION = "destination"
 MESH_TASK_STATUS_SUCCEEDED = "succeeded"
 MESH_TASK_STATUS_FAILED = "failed"
 
+MESH_LISTENER_DEPLOYMENT_EMBEDDED = "embedded"
+MESH_LISTENER_DEPLOYMENT_SEPARATE = "separate"
+
+MESH_LISTENER_MANAGEMENT_PROVIDER = "provider"
+MESH_LISTENER_MANAGEMENT_EXTERNAL = "external"
+
+MESH_LISTENER_STATE_STARTING = "starting"
+MESH_LISTENER_STATE_ACTIVE = "active"
+MESH_LISTENER_STATE_STOPPING = "stopping"
+MESH_LISTENER_STATE_STOPPED = "stopped"
+MESH_LISTENER_STATE_FAILED = "failed"
+
 _MESH_RPC_PREFIX = "mesh."
 _MESH_RPC_DESCRIBE_METHOD = "mesh.describe"
 _MESH_RPC_TOPOLOGY_METHOD = "mesh.topology"
 _MESH_RPC_BEACONS_METHOD = "mesh.beacons"
+_MESH_RPC_LISTENERS_METHOD = "mesh.listeners"
+_MESH_RPC_LISTENER_START_METHOD = "mesh.listener.start"
+_MESH_RPC_LISTENER_STOP_METHOD = "mesh.listener.stop"
 _MESH_RPC_TASK_METHOD = "mesh.task"
 _MESH_RPC_OPEN_STREAM_METHOD = "mesh.open_stream"
 _DEFAULT_MESH_RUN_ID = "mesh"
@@ -35,6 +50,7 @@ _DEFAULT_MESH_RUN_ID = "mesh"
 class MeshNode:
     id: str
     parent_id: str = ""
+    listener_id: str = ""
     name: str = ""
     kind: str = ""
     state: str = ""
@@ -50,6 +66,7 @@ class MeshNode:
     def to_rpc(self) -> dict[str, Any]:
         out: dict[str, Any] = {"id": self.id}
         _put_string(out, "parentId", self.parent_id)
+        _put_string(out, "listenerId", self.listener_id)
         _put_string(out, "name", self.name)
         _put_string(out, "kind", self.kind)
         _put_string(out, "state", self.state)
@@ -165,11 +182,33 @@ class MeshTaskSpec:
 
 
 @dataclass(frozen=True)
+class MeshListenerSpec:
+    kind: str
+    summary: str = ""
+    deployments: list[str] = field(default_factory=list)
+    management_modes: list[str] = field(default_factory=list)
+    protocols: list[str] = field(default_factory=list)
+    config_schema: dict[str, Any] = field(default_factory=dict)
+    capabilities: list[str] = field(default_factory=list)
+
+    def to_rpc(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"kind": self.kind}
+        _put_string(out, "summary", self.summary)
+        _put_list(out, "deployments", self.deployments)
+        _put_list(out, "managementModes", self.management_modes)
+        _put_list(out, "protocols", self.protocols)
+        _put_dict(out, "configSchema", self.config_schema)
+        _put_list(out, "capabilities", self.capabilities)
+        return out
+
+
+@dataclass(frozen=True)
 class MeshTrigger:
     id: str
     name: str = ""
     kind: str = ""
     node_id: str = ""
+    listener_id: str = ""
     state: str = ""
     expression: str = ""
     schedule: str = ""
@@ -182,6 +221,7 @@ class MeshTrigger:
         _put_string(out, "name", self.name)
         _put_string(out, "kind", self.kind)
         _put_string(out, "nodeId", self.node_id)
+        _put_string(out, "listenerId", self.listener_id)
         _put_string(out, "state", self.state)
         _put_string(out, "expression", self.expression)
         _put_string(out, "schedule", self.schedule)
@@ -195,6 +235,7 @@ class MeshTrigger:
 class MeshBeacon:
     id: str
     node_id: str
+    listener_id: str = ""
     time: str = ""
     state: str = ""
     transport: str = ""
@@ -208,11 +249,45 @@ class MeshBeacon:
             "nodeId": self.node_id,
         }
         _put_string(out, "time", self.time)
+        _put_string(out, "listenerId", self.listener_id)
         _put_string(out, "state", self.state)
         _put_string(out, "transport", self.transport)
         _put_string(out, "remoteAddr", self.remote_addr)
         _put_int(out, "intervalSeconds", self.interval_seconds)
         _put_dict(out, "fields", self.fields)
+        return out
+
+
+@dataclass(frozen=True)
+class MeshListener:
+    id: str
+    name: str = ""
+    kind: str = ""
+    state: str = ""
+    deployment: str = ""
+    management: str = ""
+    node_id: str = ""
+    addresses: list[str] = field(default_factory=list)
+    protocols: list[str] = field(default_factory=list)
+    capabilities: list[str] = field(default_factory=list)
+    labels: dict[str, Any] = field(default_factory=dict)
+    attributes: dict[str, Any] = field(default_factory=dict)
+    updated_at: str = ""
+
+    def to_rpc(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"id": self.id}
+        _put_string(out, "name", self.name)
+        _put_string(out, "kind", self.kind)
+        _put_string(out, "state", self.state)
+        _put_string(out, "deployment", self.deployment)
+        _put_string(out, "management", self.management)
+        _put_string(out, "nodeId", self.node_id)
+        _put_list(out, "addresses", self.addresses)
+        _put_list(out, "protocols", self.protocols)
+        _put_list(out, "capabilities", self.capabilities)
+        _put_dict(out, "labels", self.labels)
+        _put_dict(out, "attributes", self.attributes)
+        _put_string(out, "updatedAt", self.updated_at)
         return out
 
 
@@ -224,6 +299,7 @@ class MeshDescriptor:
     capabilities: list[str] = field(default_factory=list)
     topology: MeshTopology | None = None
     tasks: list[MeshTaskSpec] = field(default_factory=list)
+    listener_types: list[MeshListenerSpec] = field(default_factory=list)
     triggers: list[MeshTrigger] = field(default_factory=list)
     attributes: dict[str, Any] = field(default_factory=dict)
 
@@ -237,6 +313,8 @@ class MeshDescriptor:
             out["topology"] = self.topology.to_rpc()
         if self.tasks:
             out["tasks"] = [task.to_rpc() for task in self.tasks]
+        if self.listener_types:
+            out["listenerTypes"] = [listener.to_rpc() for listener in self.listener_types]
         if self.triggers:
             out["triggers"] = [trigger.to_rpc() for trigger in self.triggers]
         _put_dict(out, "attributes", self.attributes)
@@ -255,6 +333,7 @@ class MeshDescribeRequest:
 @dataclass(frozen=True)
 class MeshTopologyRequest:
     root: str = ""
+    listener_id: str = ""
     include_routes: bool = False
     agent: AgentContext | None = None
 
@@ -262,6 +341,7 @@ class MeshTopologyRequest:
     def from_rpc(cls, value: dict[str, Any]) -> MeshTopologyRequest:
         return cls(
             root=_string_value(value.get("root")),
+            listener_id=_string_value(value.get("listenerId")),
             include_routes=_bool_value(value.get("includeRoutes")),
             agent=AgentContext.from_rpc(value.get("agentContext")),
         )
@@ -270,6 +350,7 @@ class MeshTopologyRequest:
 @dataclass(frozen=True)
 class MeshBeaconRequest:
     node_id: str = ""
+    listener_id: str = ""
     since: str = ""
     limit: int = 0
     agent: AgentContext | None = None
@@ -278,8 +359,60 @@ class MeshBeaconRequest:
     def from_rpc(cls, value: dict[str, Any]) -> MeshBeaconRequest:
         return cls(
             node_id=_string_value(value.get("nodeId")),
+            listener_id=_string_value(value.get("listenerId")),
             since=_string_value(value.get("since")),
             limit=_int_value(value.get("limit")),
+            agent=AgentContext.from_rpc(value.get("agentContext")),
+        )
+
+
+@dataclass(frozen=True)
+class MeshListenerListRequest:
+    listener_id: str = ""
+    state: str = ""
+    agent: AgentContext | None = None
+
+    @classmethod
+    def from_rpc(cls, value: dict[str, Any]) -> MeshListenerListRequest:
+        return cls(
+            listener_id=_optional_string(value, "listenerId").strip(),
+            state=_optional_string(value, "state").strip(),
+            agent=AgentContext.from_rpc(value.get("agentContext")),
+        )
+
+
+@dataclass(frozen=True)
+class MeshListenerStartRequest:
+    listener_id: str
+    name: str = ""
+    kind: str = ""
+    deployment: str = ""
+    management: str = ""
+    config: dict[str, Any] = field(default_factory=dict)
+    agent: AgentContext | None = None
+
+    @classmethod
+    def from_rpc(cls, value: dict[str, Any]) -> MeshListenerStartRequest:
+        return cls(
+            listener_id=_optional_string(value, "listenerId").strip(),
+            name=_optional_string(value, "name"),
+            kind=_optional_string(value, "kind"),
+            deployment=_optional_string(value, "deployment").strip(),
+            management=_optional_string(value, "management").strip(),
+            config=_optional_dict(value, "config"),
+            agent=AgentContext.from_rpc(value.get("agentContext")),
+        )
+
+
+@dataclass(frozen=True)
+class MeshListenerStopRequest:
+    listener_id: str
+    agent: AgentContext | None = None
+
+    @classmethod
+    def from_rpc(cls, value: dict[str, Any]) -> MeshListenerStopRequest:
+        return cls(
+            listener_id=_optional_string(value, "listenerId").strip(),
             agent=AgentContext.from_rpc(value.get("agentContext")),
         )
 
@@ -290,6 +423,7 @@ class MeshTaskRequest:
     run_id: str = ""
     task_id: str = ""
     node_id: str = ""
+    listener_id: str = ""
     target: str = ""
     route: MeshRoute | None = None
     destination_host: str = ""
@@ -308,6 +442,7 @@ class MeshTaskRequest:
             task_id=_string_value(value.get("taskId")),
             kind=_string_value(value.get("kind")),
             node_id=_string_value(value.get("nodeId")),
+            listener_id=_string_value(value.get("listenerId")),
             target=_string_value(value.get("target")),
             route=MeshRoute.from_rpc(value.get("route")),
             destination_host=_string_value(value.get("destinationHost")),
@@ -326,6 +461,7 @@ class MeshEvent:
     kind: str
     id: str = ""
     node_id: str = ""
+    listener_id: str = ""
     level: str = ""
     message: str = ""
     fields: dict[str, Any] = field(default_factory=dict)
@@ -334,6 +470,7 @@ class MeshEvent:
         out: dict[str, Any] = {"kind": self.kind}
         _put_string(out, "id", self.id)
         _put_string(out, "nodeId", self.node_id)
+        _put_string(out, "listenerId", self.listener_id)
         _put_string(out, "level", self.level)
         _put_string(out, "message", self.message)
         _put_dict(out, "fields", self.fields)
@@ -346,6 +483,7 @@ class MeshTaskResult:
     summary: str = ""
     task_id: str = ""
     node_id: str = ""
+    listener_id: str = ""
     route: MeshRoute | None = None
     destination_host: str = ""
     destination_port: int = 0
@@ -370,6 +508,7 @@ class MeshTaskResult:
         _put_string(out, "summary", self.summary)
         _put_string(out, "taskId", self.task_id)
         _put_string(out, "nodeId", self.node_id)
+        _put_string(out, "listenerId", self.listener_id)
         if self.route is not None:
             out["route"] = self.route.to_rpc()
         _put_string(out, "destinationHost", self.destination_host)
@@ -397,6 +536,7 @@ class MeshStreamRequest:
     module_id: str = ""
     target: str = ""
     node_id: str = ""
+    listener_id: str = ""
     route: MeshRoute | None = None
     destination_host: str = ""
     destination_port: int = 0
@@ -411,6 +551,7 @@ class MeshStreamRequest:
             module_id=_string_value(value.get("moduleId")),
             target=_string_value(value.get("target")),
             node_id=_string_value(value.get("nodeId")),
+            listener_id=_string_value(value.get("listenerId")),
             route=MeshRoute.from_rpc(value.get("route")),
             destination_host=_string_value(value.get("destinationHost")),
             destination_port=_int_value(value.get("destinationPort")),
@@ -460,6 +601,23 @@ def _dict_value(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return dict(value)
     return {}
+
+
+def _optional_dict(value: dict[str, Any], key: str) -> dict[str, Any]:
+    if key not in value or value[key] is None:
+        return {}
+    if not isinstance(value[key], dict):
+        raise TypeError(f"mesh listener {key} must be an object")
+    return dict(value[key])
+
+
+def _optional_string(value: dict[str, Any], key: str) -> str:
+    if key not in value or value[key] is None:
+        return ""
+    item = value[key]
+    if not isinstance(item, str):
+        raise TypeError(f"mesh listener {key} must be a string")
+    return item
 
 
 def _string_value(value: Any) -> str:

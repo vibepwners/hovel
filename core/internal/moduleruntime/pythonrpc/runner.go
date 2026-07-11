@@ -42,11 +42,14 @@ const (
 
 	sessionPumpReadTimeoutMilliseconds = 250
 
-	meshRPCDescribeMethod   = "mesh.describe"
-	meshRPCTopologyMethod   = "mesh.topology"
-	meshRPCBeaconsMethod    = "mesh.beacons"
-	meshRPCTaskMethod       = "mesh.task"
-	meshRPCOpenStreamMethod = "mesh.open_stream"
+	meshRPCDescribeMethod      = "mesh.describe"
+	meshRPCTopologyMethod      = "mesh.topology"
+	meshRPCBeaconsMethod       = "mesh.beacons"
+	meshRPCListenersMethod     = "mesh.listeners"
+	meshRPCListenerStartMethod = "mesh.listener.start"
+	meshRPCListenerStopMethod  = "mesh.listener.stop"
+	meshRPCTaskMethod          = "mesh.task"
+	meshRPCOpenStreamMethod    = "mesh.open_stream"
 
 	ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
 )
@@ -372,6 +375,57 @@ func (r Runner) ListMeshBeacons(
 		return nil, services.NewModuleExecutionFailure("module returned invalid mesh beacons", err)
 	}
 	return decoded.Beacons, nil
+}
+
+func (r Runner) ListMeshListeners(
+	ctx context.Context,
+	moduleID string,
+	request mesh.ListenerListRequest,
+) ([]mesh.Listener, error) {
+	result, err := r.callMeshProvider(ctx, moduleID, meshRPCListenersMethod, request)
+	if err != nil {
+		return nil, err
+	}
+	var decoded struct {
+		Listeners []mesh.Listener `json:"listeners"`
+	}
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		return nil, services.NewModuleExecutionFailure("module returned invalid mesh listeners", err)
+	}
+	return decoded.Listeners, nil
+}
+
+func (r Runner) StartMeshListener(
+	ctx context.Context,
+	moduleID string,
+	request mesh.ListenerStartRequest,
+) (mesh.Listener, error) {
+	return r.callMeshListener(ctx, moduleID, meshRPCListenerStartMethod, request)
+}
+
+func (r Runner) StopMeshListener(
+	ctx context.Context,
+	moduleID string,
+	request mesh.ListenerStopRequest,
+) (mesh.Listener, error) {
+	return r.callMeshListener(ctx, moduleID, meshRPCListenerStopMethod, request)
+}
+
+func (r Runner) callMeshListener(
+	ctx context.Context,
+	moduleID string,
+	method string,
+	request any,
+) (mesh.Listener, error) {
+	result, err := r.callMeshProvider(ctx, moduleID, method, request)
+	if err != nil {
+		return mesh.Listener{}, err
+	}
+	var listener mesh.Listener
+	if err := json.Unmarshal(result, &listener); err != nil {
+		return mesh.Listener{}, services.NewModuleExecutionFailure("module returned invalid mesh listener", err)
+	}
+	return listener, nil
 }
 
 func (r Runner) RunMeshTask(

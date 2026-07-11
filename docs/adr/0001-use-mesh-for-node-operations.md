@@ -35,3 +35,26 @@ through that path. Providers advertise which task kinds accept node, route, or
 destination targets with `targetScopes`. This keeps "throw an exploit through a
 node" as an SDK/runtime contract without making Mesh providers responsible for
 implementing every exploit module.
+
+A provider-facing **Mesh Listener** models a listening post separately from the
+provider adapter and separately from a daemon-owned Mesh Bridge. The provider
+is the Hovel control-plane adapter; the listener is the data-plane rendezvous
+resource that may accept traffic for many Mesh Nodes. Simple implementations
+may embed a listener, while larger deployments may run it as an independent
+service with separate scaling, credentials, privileges, and availability.
+
+Listener contracts use stable IDs, explicit deployment, management, and
+lifecycle states, and JSON-safe request and response shapes. Provider-exposed
+start/attach and stop/detach calls are idempotent for a caller-selected
+listener ID. Listener IDs are scoped to one provider Mesh, so daemon-wide
+correlation uses the provider module ID and listener ID together. Dynamic
+listener state is listed separately from static Mesh
+description. The daemon exposes the same contract over its stable HTTP/JSON RPC
+and records lifecycle operations, allowing a future web, Elixir, or other
+external control plane to
+manage listeners without importing an SDK implementation or reaching into a
+provider process. Hovel does not implement a listening-post transport itself.
+Because module RPC invocations do not guarantee a persistent provider process,
+an implementation must keep a started listener durable outside any individual
+call. `embedded` means deployment-coupled to the provider, not that Hovel keeps
+the invoking module subprocess alive.

@@ -53,9 +53,14 @@ mod tests;
 pub use context::Context;
 pub use mesh::{
     MeshBeacon, MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshEvent, MeshLink,
-    MeshNode, MeshRoute, MeshStreamRequest, MeshTaskRequest, MeshTaskResult, MeshTaskSpec,
-    MeshTopology, MeshTopologyRequest, MeshTrigger, MESH_TARGET_DESTINATION, MESH_TARGET_NODE,
-    MESH_TARGET_ROUTE, MESH_TASK_COMMAND, MESH_TASK_EXECUTE, MESH_TASK_LOAD,
+    MeshListener, MeshListenerListRequest, MeshListenerSpec, MeshListenerStartRequest,
+    MeshListenerStopRequest, MeshNode, MeshRoute, MeshStreamRequest, MeshTaskRequest,
+    MeshTaskResult, MeshTaskSpec, MeshTopology, MeshTopologyRequest, MeshTrigger,
+    MESH_LISTENER_DEPLOYMENT_EMBEDDED, MESH_LISTENER_DEPLOYMENT_SEPARATE,
+    MESH_LISTENER_MANAGEMENT_EXTERNAL, MESH_LISTENER_MANAGEMENT_PROVIDER,
+    MESH_LISTENER_STATE_ACTIVE, MESH_LISTENER_STATE_FAILED, MESH_LISTENER_STATE_STARTING,
+    MESH_LISTENER_STATE_STOPPED, MESH_LISTENER_STATE_STOPPING, MESH_TARGET_DESTINATION,
+    MESH_TARGET_NODE, MESH_TARGET_ROUTE, MESH_TASK_COMMAND, MESH_TASK_EXECUTE, MESH_TASK_LOAD,
     MESH_TASK_STATUS_FAILED, MESH_TASK_STATUS_SUCCEEDED, MESH_TASK_STREAM, MESH_TASK_SURVEY,
     MESH_TASK_UPLOAD, MESH_TASK_UPLOAD_EXECUTE,
 };

@@ -1,5 +1,6 @@
 //! Unit tests for the Rust SDK, run via `rust_test(crate = ":hovel")`.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::io::Cursor;
 use std::rc::Rc;
@@ -7,11 +8,14 @@ use std::rc::Rc;
 use crate::json::{self, Value};
 use crate::{
     base64, serve_with, Context, Info, InstalledPayloadDescriptor, LineShellSession, MeshBeacon,
-    MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshLink, MeshNode, MeshRoute,
-    MeshStreamRequest, MeshTaskRequest, MeshTaskResult, MeshTaskSpec, MeshTopology,
-    MeshTopologyRequest, MeshTrigger, Module, ModuleType, Outcome, PayloadProviderRecord, Schema,
-    Session, SessionOptions, MESH_TARGET_DESTINATION, MESH_TARGET_NODE, MESH_TASK_COMMAND,
-    MESH_TASK_SURVEY, MESH_TASK_UPLOAD_EXECUTE,
+    MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshLink, MeshListener,
+    MeshListenerListRequest, MeshListenerSpec, MeshListenerStartRequest, MeshListenerStopRequest,
+    MeshNode, MeshRoute, MeshStreamRequest, MeshTaskRequest, MeshTaskResult, MeshTaskSpec,
+    MeshTopology, MeshTopologyRequest, MeshTrigger, Module, ModuleType, Outcome,
+    PayloadProviderRecord, Schema, Session, SessionOptions, MESH_LISTENER_DEPLOYMENT_SEPARATE,
+    MESH_LISTENER_MANAGEMENT_PROVIDER, MESH_LISTENER_STATE_ACTIVE, MESH_LISTENER_STATE_STOPPED,
+    MESH_TARGET_DESTINATION, MESH_TARGET_NODE, MESH_TASK_COMMAND, MESH_TASK_SURVEY,
+    MESH_TASK_UPLOAD_EXECUTE,
 };
 
 #[test]
@@ -300,6 +304,15 @@ impl Module for FakeMeshModule {
                     ..MeshTaskSpec::default()
                 },
             ],
+            listener_types: vec![MeshListenerSpec {
+                kind: "https".into(),
+                summary: "HTTPS rendezvous listener".into(),
+                deployments: vec![MESH_LISTENER_DEPLOYMENT_SEPARATE.into()],
+                management_modes: vec![MESH_LISTENER_MANAGEMENT_PROVIDER.into()],
+                protocols: vec!["https".into()],
+                config_schema: vec![("type".into(), Value::from("object"))],
+                capabilities: Vec::new(),
+            }],
             triggers: vec![MeshTrigger {
                 id: "trig-beacon-command".into(),
                 kind: "beacon".into(),
@@ -325,6 +338,7 @@ impl Module for FakeMeshModule {
         Ok(vec![MeshBeacon {
             id: "beacon-1".into(),
             node_id: node_id.into(),
+            listener_id: "listener-primary".into(),
             time: "2026-07-09T00:00:00Z".into(),
             state: "alive".into(),
             transport: "relay".into(),
@@ -332,6 +346,51 @@ impl Module for FakeMeshModule {
             interval_seconds: 30,
             fields: vec![("route".into(), Value::from("root>node-1>node-2"))],
         }])
+    }
+
+    fn list_mesh_listeners(
+        &self,
+        req: MeshListenerListRequest,
+    ) -> Result<Vec<MeshListener>, String> {
+        Ok(vec![MeshListener {
+            id: if req.listener_id.is_empty() {
+                "listener-primary".into()
+            } else {
+                req.listener_id
+            },
+            name: "primary HTTPS listener".into(),
+            kind: "https".into(),
+            state: MESH_LISTENER_STATE_ACTIVE.into(),
+            deployment: MESH_LISTENER_DEPLOYMENT_SEPARATE.into(),
+            management: MESH_LISTENER_MANAGEMENT_PROVIDER.into(),
+            addresses: vec!["https://127.0.0.1:8443".into()],
+            protocols: vec!["https".into()],
+            ..MeshListener::default()
+        }])
+    }
+
+    fn start_mesh_listener(&self, req: MeshListenerStartRequest) -> Result<MeshListener, String> {
+        Ok(MeshListener {
+            id: req.listener_id,
+            name: req.name,
+            kind: req.kind,
+            state: MESH_LISTENER_STATE_ACTIVE.into(),
+            deployment: req.deployment,
+            management: req.management,
+            addresses: vec!["https://127.0.0.1:8443".into()],
+            protocols: vec!["https".into()],
+            ..MeshListener::default()
+        })
+    }
+
+    fn stop_mesh_listener(&self, req: MeshListenerStopRequest) -> Result<MeshListener, String> {
+        Ok(MeshListener {
+            id: req.listener_id,
+            state: MESH_LISTENER_STATE_STOPPED.into(),
+            deployment: MESH_LISTENER_DEPLOYMENT_SEPARATE.into(),
+            management: MESH_LISTENER_MANAGEMENT_PROVIDER.into(),
+            ..MeshListener::default()
+        })
     }
 
     fn run_mesh_task(
@@ -750,6 +809,161 @@ fn serve_mesh_provider_methods() {
         outputs.get("contextTarget").and_then(Value::as_str),
         Some("10.10.0.99")
     );
+}
+
+#[test]
+fn serve_mesh_listener_lifecycle() {
+    let mut input = Vec::new();
+    input.extend(frame(request(
+        1,
+        "mesh.listeners",
+        Value::object(vec![
+            ("listenerId", Value::from("  listener-primary  ")),
+            ("state", Value::from("  active  ")),
+        ]),
+    )));
+    input.extend(frame(request(
+        2,
+        "mesh.listener.start",
+        Value::object(vec![
+            ("listenerId", Value::from("  listener-web  ")),
+            ("name", Value::from("web-controlled listener")),
+            ("kind", Value::from("https")),
+            ("deployment", Value::from("  separate  ")),
+            ("management", Value::from("  provider  ")),
+            (
+                "config",
+                Value::object(vec![("token", Value::from("write-only-secret"))]),
+            ),
+        ]),
+    )));
+    input.extend(frame(request(
+        3,
+        "mesh.listener.stop",
+        Value::object(vec![("listenerId", Value::from("listener-web"))]),
+    )));
+    input.extend(frame(request(
+        4,
+        "mesh.listener.start",
+        Value::object(vec![
+            ("listenerId", Value::from("listener-invalid")),
+            ("config", Value::from("write-only-secret")),
+        ]),
+    )));
+    input.extend(frame(request(5, "shutdown", Value::Object(Vec::new()))));
+
+    let messages = run_session(input, FakeMeshModule);
+    let responses = responses(&messages);
+    assert_eq!(responses.len(), 5);
+
+    let listed = responses[0].get("result").expect("listed listeners");
+    let listener = match listed.get("listeners") {
+        Some(Value::Array(items)) => &items[0],
+        other => panic!("missing mesh listeners: {other:?}"),
+    };
+    assert_eq!(
+        listener.get("id").and_then(Value::as_str),
+        Some("listener-primary")
+    );
+
+    let started = responses[1].get("result").expect("started listener");
+    assert_eq!(
+        started.get("id").and_then(Value::as_str),
+        Some("listener-web")
+    );
+    assert_eq!(started.get("state").and_then(Value::as_str), Some("active"));
+    assert_eq!(
+        started.get("deployment").and_then(Value::as_str),
+        Some("separate")
+    );
+    assert_eq!(
+        started.get("management").and_then(Value::as_str),
+        Some("provider")
+    );
+    assert!(started.get("config").is_none());
+
+    let stopped = responses[2].get("result").expect("stopped listener");
+    assert_eq!(
+        stopped.get("state").and_then(Value::as_str),
+        Some("stopped")
+    );
+
+    let malformed = responses[3].get("error").expect("malformed listener error");
+    assert!(
+        malformed
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| message.contains("config must be an object")),
+        "unexpected listener error: {malformed:?}",
+    );
+}
+
+#[test]
+fn mesh_listener_rejects_blank_ids_before_provider_invocation() {
+    struct CountingMeshModule {
+        lifecycle_calls: Rc<Cell<usize>>,
+    }
+
+    impl Module for CountingMeshModule {
+        fn info(&self) -> Info {
+            FakeMeshModule.info()
+        }
+
+        fn schema(&self) -> Schema {
+            FakeMeshModule.schema()
+        }
+
+        fn run(&self, ctx: &mut Context) -> Outcome {
+            FakeMeshModule.run(ctx)
+        }
+
+        fn start_mesh_listener(
+            &self,
+            req: MeshListenerStartRequest,
+        ) -> Result<MeshListener, String> {
+            self.lifecycle_calls.set(self.lifecycle_calls.get() + 1);
+            FakeMeshModule.start_mesh_listener(req)
+        }
+
+        fn stop_mesh_listener(&self, req: MeshListenerStopRequest) -> Result<MeshListener, String> {
+            self.lifecycle_calls.set(self.lifecycle_calls.get() + 1);
+            FakeMeshModule.stop_mesh_listener(req)
+        }
+    }
+
+    let lifecycle_calls = Rc::new(Cell::new(0));
+    let mut input = Vec::new();
+    input.extend(frame(request(
+        1,
+        "mesh.listener.start",
+        Value::object(vec![("listenerId", Value::from("  "))]),
+    )));
+    input.extend(frame(request(
+        2,
+        "mesh.listener.stop",
+        Value::Object(Vec::new()),
+    )));
+    input.extend(frame(request(3, "shutdown", Value::Object(Vec::new()))));
+
+    let messages = run_session(
+        input,
+        CountingMeshModule {
+            lifecycle_calls: Rc::clone(&lifecycle_calls),
+        },
+    );
+    let responses = responses(&messages);
+    assert_eq!(responses.len(), 3);
+    for response in &responses[..2] {
+        let error = response.get("error").expect("blank listener id error");
+        assert!(
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .is_some_and(|message| message.contains("listenerId is required")),
+            "unexpected listener error: {error:?}",
+        );
+    }
+    assert_eq!(lifecycle_calls.get(), 0);
 }
 
 #[test]

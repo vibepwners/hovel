@@ -789,6 +789,7 @@ func cloneMeshDescriptor(descriptor domainmesh.Descriptor) domainmesh.Descriptor
 		descriptor.Topology = &topology
 	}
 	descriptor.Tasks = cloneMeshTaskSpecs(descriptor.Tasks)
+	descriptor.ListenerTypes = cloneMeshListenerSpecs(descriptor.ListenerTypes)
 	descriptor.Triggers = cloneMeshTriggers(descriptor.Triggers)
 	descriptor.Attributes = cloneAnyMap(descriptor.Attributes)
 	return descriptor
@@ -840,6 +841,19 @@ func cloneMeshTaskSpecs(tasks []domainmesh.TaskSpec) []domainmesh.TaskSpec {
 		task.TargetScopes = append([]domainmesh.TargetScope(nil), task.TargetScopes...)
 		task.Capabilities = append([]string(nil), task.Capabilities...)
 		out = append(out, task)
+	}
+	return out
+}
+
+func cloneMeshListenerSpecs(specs []domainmesh.ListenerSpec) []domainmesh.ListenerSpec {
+	out := make([]domainmesh.ListenerSpec, 0, len(specs))
+	for _, spec := range specs {
+		spec.Deployments = append([]domainmesh.ListenerDeployment(nil), spec.Deployments...)
+		spec.ManagementModes = append([]domainmesh.ListenerManagement(nil), spec.ManagementModes...)
+		spec.Protocols = append([]string(nil), spec.Protocols...)
+		spec.ConfigSchema = cloneAnyMap(spec.ConfigSchema)
+		spec.Capabilities = append([]string(nil), spec.Capabilities...)
+		out = append(out, spec)
 	}
 	return out
 }
@@ -936,12 +950,34 @@ func meshSearchText(descriptor domainmesh.Descriptor) string {
 		}
 		parts = append(parts, strings.Join(task.Capabilities, " "))
 	}
+	for _, listener := range descriptor.ListenerTypes {
+		parts = append(
+			parts,
+			listener.Kind,
+			listener.Summary,
+			strings.Join(listener.Protocols, " "),
+			strings.Join(listener.Capabilities, " "),
+		)
+		for _, deployment := range listener.Deployments {
+			parts = append(parts, string(deployment))
+		}
+		for _, management := range listener.ManagementModes {
+			parts = append(parts, string(management))
+		}
+	}
 	for _, trigger := range descriptor.Triggers {
-		parts = append(parts, trigger.Kind, string(trigger.ActionKind), trigger.NodeID)
+		parts = append(parts, trigger.Kind, string(trigger.ActionKind), trigger.NodeID, trigger.ListenerID)
 	}
 	if descriptor.Topology != nil {
 		for _, node := range descriptor.Topology.Nodes {
-			parts = append(parts, node.ID, node.Name, node.Kind, strings.Join(node.Capabilities, " "))
+			parts = append(
+				parts,
+				node.ID,
+				node.ListenerID,
+				node.Name,
+				node.Kind,
+				strings.Join(node.Capabilities, " "),
+			)
 		}
 	}
 	return strings.Join(parts, " ")

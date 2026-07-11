@@ -3,6 +3,7 @@ package hovel
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,11 +13,14 @@ import (
 )
 
 const (
-	meshRPCDescribeMethod   = "mesh.describe"
-	meshRPCTopologyMethod   = "mesh.topology"
-	meshRPCBeaconsMethod    = "mesh.beacons"
-	meshRPCTaskMethod       = "mesh.task"
-	meshRPCOpenStreamMethod = "mesh.open_stream"
+	meshRPCDescribeMethod      = "mesh.describe"
+	meshRPCTopologyMethod      = "mesh.topology"
+	meshRPCBeaconsMethod       = "mesh.beacons"
+	meshRPCListenersMethod     = "mesh.listeners"
+	meshRPCListenerStartMethod = "mesh.listener.start"
+	meshRPCListenerStopMethod  = "mesh.listener.stop"
+	meshRPCTaskMethod          = "mesh.task"
+	meshRPCOpenStreamMethod    = "mesh.open_stream"
 )
 
 // logRecord is the wire shape of a "module/log" notification.
@@ -132,6 +136,12 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.meshTopology(params)
 	case meshRPCBeaconsMethod:
 		return s.listMeshBeacons(params)
+	case meshRPCListenersMethod:
+		return s.listMeshListeners(params)
+	case meshRPCListenerStartMethod:
+		return s.startMeshListener(params)
+	case meshRPCListenerStopMethod:
+		return s.stopMeshListener(params)
 	case meshRPCTaskMethod:
 		return s.runMeshTask(params)
 	case meshRPCOpenStreamMethod:
@@ -277,6 +287,22 @@ func (s *server) meshBeaconProvider() (MeshBeaconProvider, error) {
 	provider, ok := s.module.(MeshBeaconProvider)
 	if !ok {
 		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCBeaconsMethod)
+	}
+	return provider, nil
+}
+
+func (s *server) meshListenerProvider() (MeshListenerProvider, error) {
+	provider, ok := s.module.(MeshListenerProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCListenersMethod)
+	}
+	return provider, nil
+}
+
+func (s *server) meshListenerLifecycleProvider(method string) (MeshListenerLifecycleProvider, error) {
+	provider, ok := s.module.(MeshListenerLifecycleProvider)
+	if !ok {
+		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, method)
 	}
 	return provider, nil
 }
@@ -502,6 +528,84 @@ func (s *server) listMeshBeacons(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"beacons": beacons}, nil
+}
+
+func (s *server) listMeshListeners(params json.RawMessage) (any, error) {
+	provider, err := s.meshListenerProvider()
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshListenerListRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	req.ListenerID = strings.TrimSpace(req.ListenerID)
+	req.State = MeshListenerState(strings.TrimSpace(string(req.State)))
+	listeners, err := provider.ListMeshListeners(req)
+	if err != nil {
+		return nil, err
+	}
+	if listeners == nil {
+		listeners = []MeshListener{}
+	}
+	return map[string]any{"listeners": listeners}, nil
+}
+
+func (s *server) startMeshListener(params json.RawMessage) (any, error) {
+	provider, err := s.meshListenerLifecycleProvider(meshRPCListenerStartMethod)
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshListenerStartRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	req.ListenerID = strings.TrimSpace(req.ListenerID)
+	if req.ListenerID == "" {
+		return nil, fmt.Errorf("%s listenerId is required", meshRPCListenerStartMethod)
+	}
+	req.Deployment = MeshListenerDeployment(strings.TrimSpace(string(req.Deployment)))
+	req.Management = MeshListenerManagement(strings.TrimSpace(string(req.Management)))
+	listener, err := provider.StartMeshListener(req)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeMeshListenerResult(req.ListenerID, listener)
+}
+
+func (s *server) stopMeshListener(params json.RawMessage) (any, error) {
+	provider, err := s.meshListenerLifecycleProvider(meshRPCListenerStopMethod)
+	if err != nil {
+		return nil, err
+	}
+	req, err := decodeParams[MeshListenerStopRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	req.ListenerID = strings.TrimSpace(req.ListenerID)
+	if req.ListenerID == "" {
+		return nil, fmt.Errorf("%s listenerId is required", meshRPCListenerStopMethod)
+	}
+	listener, err := provider.StopMeshListener(req)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeMeshListenerResult(req.ListenerID, listener)
+}
+
+func normalizeMeshListenerResult(listenerID string, listener MeshListener) (MeshListener, error) {
+	listener.ID = strings.TrimSpace(listener.ID)
+	if listener.ID == "" {
+		return MeshListener{}, errors.New("mesh listener result id is required")
+	}
+	if listener.ID != listenerID {
+		return MeshListener{}, fmt.Errorf(
+			"mesh listener result id %q does not match requested id %q",
+			listener.ID,
+			listenerID,
+		)
+	}
+	return listener, nil
 }
 
 func (s *server) runMeshTask(params json.RawMessage) (any, error) {

@@ -30,6 +30,9 @@ const (
 	rpcMethodDescribeMesh       = "DescribeMesh"
 	rpcMethodMeshTopology       = "MeshTopology"
 	rpcMethodListMeshBeacons    = "ListMeshBeacons"
+	rpcMethodListMeshListeners  = "ListMeshListeners"
+	rpcMethodStartMeshListener  = "StartMeshListener"
+	rpcMethodStopMeshListener   = "StopMeshListener"
 	rpcMethodRunMeshTask        = "RunMeshTask"
 	rpcMethodOpenMeshStream     = "OpenMeshStream"
 	rpcMethodOpenMeshBridge     = "OpenMeshBridge"
@@ -306,6 +309,35 @@ type MeshBeaconListResponse struct {
 	Beacons []mesh.Beacon `json:"beacons"`
 }
 
+type MeshListenerListRequest struct {
+	ModuleID string                   `json:"moduleId"`
+	Request  mesh.ListenerListRequest `json:"request"`
+}
+
+type MeshListenerListResponse struct {
+	Listeners []mesh.Listener `json:"listeners"`
+}
+
+type MeshListenerStartRequest struct {
+	ModuleID string                    `json:"moduleId"`
+	Request  mesh.ListenerStartRequest `json:"request"`
+}
+
+type MeshListenerStartResponse struct {
+	OperationID string        `json:"operationId"`
+	Listener    mesh.Listener `json:"listener"`
+}
+
+type MeshListenerStopRequest struct {
+	ModuleID string                   `json:"moduleId"`
+	Request  mesh.ListenerStopRequest `json:"request"`
+}
+
+type MeshListenerStopResponse struct {
+	OperationID string        `json:"operationId"`
+	Listener    mesh.Listener `json:"listener"`
+}
+
 type MeshTaskRunRequest struct {
 	ModuleID string           `json:"moduleId"`
 	Request  mesh.TaskRequest `json:"request"`
@@ -435,6 +467,9 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[MeshDescribeRequest, MeshDescribeResponse](mux, rpcMethodDescribeMesh, rpcServer.describeMeshRPC)
 	registerUnary[MeshTopologyRequest, MeshTopologyResponse](mux, rpcMethodMeshTopology, rpcServer.meshTopologyRPC)
 	registerUnary[MeshBeaconListRequest, MeshBeaconListResponse](mux, rpcMethodListMeshBeacons, rpcServer.listMeshBeaconsRPC)
+	registerUnary[MeshListenerListRequest, MeshListenerListResponse](mux, rpcMethodListMeshListeners, rpcServer.listMeshListenersRPC)
+	registerUnary[MeshListenerStartRequest, MeshListenerStartResponse](mux, rpcMethodStartMeshListener, rpcServer.startMeshListenerRPC)
+	registerUnary[MeshListenerStopRequest, MeshListenerStopResponse](mux, rpcMethodStopMeshListener, rpcServer.stopMeshListenerRPC)
 	registerUnary[MeshTaskRunRequest, MeshTaskRunResponse](mux, rpcMethodRunMeshTask, rpcServer.runMeshTaskRPC)
 	registerUnary[MeshStreamOpenRequest, MeshStreamOpenResponse](mux, rpcMethodOpenMeshStream, rpcServer.openMeshStreamRPC)
 	registerUnary[MeshBridgeOpenRequest, MeshBridgeOpenResponse](mux, rpcMethodOpenMeshBridge, rpcServer.openMeshBridgeRPC)
@@ -645,6 +680,55 @@ func (s *Server) listMeshBeaconsRPC(
 		return MeshBeaconListResponse{}, err
 	}
 	return MeshBeaconListResponse{Beacons: beacons}, nil
+}
+
+func (s *Server) listMeshListenersRPC(
+	ctx context.Context,
+	req MeshListenerListRequest,
+) (MeshListenerListResponse, error) {
+	listeners, err := s.runs.ListMeshListeners(ctx, req.ModuleID, req.Request)
+	if err != nil {
+		return MeshListenerListResponse{}, err
+	}
+	return MeshListenerListResponse{Listeners: listeners}, nil
+}
+
+func (s *Server) startMeshListenerRPC(
+	ctx context.Context,
+	req MeshListenerStartRequest,
+) (MeshListenerStartResponse, error) {
+	operation := s.meshBook().StartListener(
+		req.ModuleID,
+		MeshListenerActionStart,
+		req.Request.ListenerID,
+		s.now(),
+	)
+	listener, err := s.runs.StartMeshListener(ctx, req.ModuleID, req.Request)
+	if err != nil {
+		s.meshBook().Fail(operation.ID, err, s.now())
+		return MeshListenerStartResponse{}, err
+	}
+	s.meshBook().CompleteListener(operation.ID, listener, s.now())
+	return MeshListenerStartResponse{OperationID: operation.ID, Listener: listener}, nil
+}
+
+func (s *Server) stopMeshListenerRPC(
+	ctx context.Context,
+	req MeshListenerStopRequest,
+) (MeshListenerStopResponse, error) {
+	operation := s.meshBook().StartListener(
+		req.ModuleID,
+		MeshListenerActionStop,
+		req.Request.ListenerID,
+		s.now(),
+	)
+	listener, err := s.runs.StopMeshListener(ctx, req.ModuleID, req.Request)
+	if err != nil {
+		s.meshBook().Fail(operation.ID, err, s.now())
+		return MeshListenerStopResponse{}, err
+	}
+	s.meshBook().CompleteListener(operation.ID, listener, s.now())
+	return MeshListenerStopResponse{OperationID: operation.ID, Listener: listener}, nil
 }
 
 func (s *Server) runMeshTaskRPC(ctx context.Context, req MeshTaskRunRequest) (MeshTaskRunResponse, error) {
@@ -1952,6 +2036,27 @@ func (c *Client) ListMeshBeacons(
 	req MeshBeaconListRequest,
 ) (MeshBeaconListResponse, error) {
 	return invoke[MeshBeaconListRequest, MeshBeaconListResponse](c, ctx, rpcMethodListMeshBeacons, req)
+}
+
+func (c *Client) ListMeshListeners(
+	ctx context.Context,
+	req MeshListenerListRequest,
+) (MeshListenerListResponse, error) {
+	return invoke[MeshListenerListRequest, MeshListenerListResponse](c, ctx, rpcMethodListMeshListeners, req)
+}
+
+func (c *Client) StartMeshListener(
+	ctx context.Context,
+	req MeshListenerStartRequest,
+) (MeshListenerStartResponse, error) {
+	return invoke[MeshListenerStartRequest, MeshListenerStartResponse](c, ctx, rpcMethodStartMeshListener, req)
+}
+
+func (c *Client) StopMeshListener(
+	ctx context.Context,
+	req MeshListenerStopRequest,
+) (MeshListenerStopResponse, error) {
+	return invoke[MeshListenerStopRequest, MeshListenerStopResponse](c, ctx, rpcMethodStopMeshListener, req)
 }
 
 func (c *Client) RunMeshTask(

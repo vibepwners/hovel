@@ -82,6 +82,32 @@ class DaemonRPCOpenAPITest(unittest.TestCase):
             with self.subTest(method=method):
                 self.assertIn(method, self.doc_html)
 
+    def test_mesh_listener_contract_is_stable_and_does_not_echo_config(self) -> None:
+        schemas = self.openapi["components"]["schemas"]
+        listener = schemas["MeshListener"]
+        self.assertIn("id", listener["required"])
+        self.assertNotIn("config", listener["properties"])
+
+        start_request = schemas["MeshListenerStartInnerRequest"]
+        self.assertIn("listenerId", start_request["required"])
+        self.assertTrue(start_request["properties"]["config"]["writeOnly"])
+
+        for response_name in (
+            "MeshListenerStartResponse",
+            "MeshListenerStopResponse",
+        ):
+            with self.subTest(response=response_name):
+                response = schemas[response_name]
+                self.assertEqual(
+                    response["properties"]["listener"],
+                    {"$ref": "#/components/schemas/MeshListener"},
+                )
+                self.assertIn("operationId", response["required"])
+
+        operation = schemas["MeshOperation"]["properties"]
+        self.assertIn("listenerId", operation)
+        self.assertEqual(operation["action"]["enum"], ["start", "stop"])
+
     def resolve_ref(self, node: object) -> object:
         if not isinstance(node, dict) or "$ref" not in node:
             return node

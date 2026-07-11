@@ -44,6 +44,17 @@ adapter explicitly supports them. UDP bridges require a session with the
 _Avoid_: Making each Mesh provider own local listener lifecycle unless the
 provider has a specific reason to expose its own endpoint
 
+**Mesh Listener**:
+A provider-reported listening post that accepts Mesh Node rendezvous or beacon
+traffic. A Mesh Listener is a data-plane resource with its own stable identity,
+deployment, management, and lifecycle state; it may be embedded with a simple
+provider or deployed separately and controlled through the provider. It is not
+the daemon-owned loopback socket used by a Mesh Bridge. A started listener must
+remain durable across individual provider RPC invocations; embedded describes
+deployment coupling, not module-subprocess lifetime.
+_Avoid_: LP in public contracts, overloading Mesh Node, daemon listener, Mesh
+Bridge
+
 **Beacon**:
 A time-stamped signal from a Mesh Node that proves the node is alive or has
 new work/status to report.
@@ -67,6 +78,15 @@ _Avoid_: Schedule when the condition is not time based
   flow so an ordinary module or tool can connect without understanding the Mesh
   route. A separate bridge represents a separate routed session flow or UDP
   peer association.
+- A **Mesh Listener** belongs to one provider-owned **Mesh** and may accept
+  rendezvous for many **Mesh Nodes**. Nodes, beacons, triggers, tasks, and
+  streams may reference the listener that received or routes their traffic. A
+  listener ID is stable and unique within that provider Mesh; daemon-wide
+  correlation uses the provider module ID together with the listener ID.
+- A **Mesh Listener** may be embedded or separately deployed, and may be
+  provider-managed or externally managed. Provider-exposed lifecycle requests
+  use stable caller-selected listener IDs so daemon and future remote front ends
+  can retry and correlate operations safely.
 - A **Beacon** belongs to exactly one **Mesh Node**.
 - A **Trigger** belongs to one **Mesh** and may reference one **Mesh Node**.
 - A **TransportEndpoint** remains a narrower chain capability for byte movement;

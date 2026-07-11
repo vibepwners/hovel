@@ -16,6 +16,7 @@ _SMOKE_PAGES = [
     ":development-guide.html",
     ":domain-model.html",
     ":mesh.html",
+    ":mesh-development.html",
     ":front-ends.html",
     ":index.html",
     ":introduction.html",

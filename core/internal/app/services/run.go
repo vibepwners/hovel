@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -30,6 +31,17 @@ type MeshRunner interface {
 	ListMeshBeacons(context.Context, string, mesh.BeaconRequest) ([]mesh.Beacon, error)
 	RunMeshTask(context.Context, string, mesh.TaskRequest) (mesh.TaskResult, error)
 	OpenMeshStream(context.Context, string, mesh.StreamRequest) (run.SessionRef, error)
+}
+
+// MeshListenerLister is the optional application port for reading listener state.
+type MeshListenerLister interface {
+	ListMeshListeners(context.Context, string, mesh.ListenerListRequest) ([]mesh.Listener, error)
+}
+
+// MeshListenerLifecycleRunner is the optional application port for mutating listener state.
+type MeshListenerLifecycleRunner interface {
+	StartMeshListener(context.Context, string, mesh.ListenerStartRequest) (mesh.Listener, error)
+	StopMeshListener(context.Context, string, mesh.ListenerStopRequest) (mesh.Listener, error)
 }
 
 type SessionBroker interface {
@@ -155,9 +167,9 @@ func (s RunService) DescribeMesh(
 	moduleID string,
 	req mesh.DescribeRequest,
 ) (mesh.Descriptor, error) {
-	runner, ok := s.runner.(MeshRunner)
-	if !ok {
-		return mesh.Descriptor{}, errors.New("mesh runner is not configured")
+	runner, err := s.meshRunner()
+	if err != nil {
+		return mesh.Descriptor{}, err
 	}
 	return runner.DescribeMesh(ctx, moduleID, req)
 }
@@ -167,9 +179,9 @@ func (s RunService) MeshTopology(
 	moduleID string,
 	req mesh.TopologyRequest,
 ) (mesh.Topology, error) {
-	runner, ok := s.runner.(MeshRunner)
-	if !ok {
-		return mesh.Topology{}, errors.New("mesh runner is not configured")
+	runner, err := s.meshRunner()
+	if err != nil {
+		return mesh.Topology{}, err
 	}
 	return runner.MeshTopology(ctx, moduleID, req)
 }
@@ -179,11 +191,194 @@ func (s RunService) ListMeshBeacons(
 	moduleID string,
 	req mesh.BeaconRequest,
 ) ([]mesh.Beacon, error) {
-	runner, ok := s.runner.(MeshRunner)
-	if !ok {
-		return nil, errors.New("mesh runner is not configured")
+	runner, err := s.meshRunner()
+	if err != nil {
+		return nil, err
 	}
 	return runner.ListMeshBeacons(ctx, moduleID, req)
+}
+
+func (s RunService) ListMeshListeners(
+	ctx context.Context,
+	moduleID string,
+	req mesh.ListenerListRequest,
+) ([]mesh.Listener, error) {
+	runner, err := s.meshListenerLister()
+	if err != nil {
+		return nil, err
+	}
+	req.ListenerID = strings.TrimSpace(req.ListenerID)
+	req.State = mesh.ListenerState(strings.TrimSpace(string(req.State)))
+	listeners, err := runner.ListMeshListeners(ctx, moduleID, req)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(listeners))
+	normalized := make([]mesh.Listener, len(listeners))
+	for index, listener := range listeners {
+		normalized[index], err = normalizeMeshListener(listener)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seen[normalized[index].ID]; exists {
+			return nil, fmt.Errorf("mesh listener id %q is duplicated", normalized[index].ID)
+		}
+		seen[normalized[index].ID] = struct{}{}
+	}
+	return normalized, nil
+}
+
+func (s RunService) StartMeshListener(
+	ctx context.Context,
+	moduleID string,
+	req mesh.ListenerStartRequest,
+) (mesh.Listener, error) {
+	runner, err := s.meshListenerLifecycleRunner()
+	if err != nil {
+		return mesh.Listener{}, err
+	}
+	req, err = normalizeMeshListenerStartRequest(req)
+	if err != nil {
+		return mesh.Listener{}, err
+	}
+	listener, err := runner.StartMeshListener(ctx, moduleID, req)
+	if err != nil {
+		return mesh.Listener{}, err
+	}
+	listener, err = normalizeMeshListener(listener)
+	if err != nil {
+		return mesh.Listener{}, err
+	}
+	if listener.ID != req.ListenerID {
+		return mesh.Listener{}, fmt.Errorf(
+			"mesh listener result id %q does not match requested id %q",
+			listener.ID,
+			req.ListenerID,
+		)
+	}
+	return listener, nil
+}
+
+func (s RunService) StopMeshListener(
+	ctx context.Context,
+	moduleID string,
+	req mesh.ListenerStopRequest,
+) (mesh.Listener, error) {
+	runner, err := s.meshListenerLifecycleRunner()
+	if err != nil {
+		return mesh.Listener{}, err
+	}
+	req.ListenerID = strings.TrimSpace(req.ListenerID)
+	if req.ListenerID == "" {
+		return mesh.Listener{}, errors.New("mesh listener id is required")
+	}
+	listener, err := runner.StopMeshListener(ctx, moduleID, req)
+	if err != nil {
+		return mesh.Listener{}, err
+	}
+	listener, err = normalizeMeshListener(listener)
+	if err != nil {
+		return mesh.Listener{}, err
+	}
+	if listener.ID != req.ListenerID {
+		return mesh.Listener{}, fmt.Errorf(
+			"mesh listener result id %q does not match requested id %q",
+			listener.ID,
+			req.ListenerID,
+		)
+	}
+	return listener, nil
+}
+
+func normalizeMeshListener(listener mesh.Listener) (mesh.Listener, error) {
+	listener.ID = strings.TrimSpace(listener.ID)
+	if listener.ID == "" {
+		return mesh.Listener{}, errors.New("mesh listener result id is required")
+	}
+	listener.State = mesh.ListenerState(strings.TrimSpace(string(listener.State)))
+	listener.Deployment = mesh.ListenerDeployment(strings.TrimSpace(string(listener.Deployment)))
+	listener.Management = mesh.ListenerManagement(strings.TrimSpace(string(listener.Management)))
+	if err := validateMeshListenerDeployment(listener.Deployment); err != nil {
+		return mesh.Listener{}, err
+	}
+	if err := validateMeshListenerManagement(listener.Management); err != nil {
+		return mesh.Listener{}, err
+	}
+	listener.Addresses = append([]string(nil), listener.Addresses...)
+	listener.Protocols = append([]string(nil), listener.Protocols...)
+	listener.Capabilities = append([]string(nil), listener.Capabilities...)
+	listener.Labels = cloneMeshAnyMap(listener.Labels)
+	listener.Attributes = cloneMeshAnyMap(listener.Attributes)
+	return listener, nil
+}
+
+func normalizeMeshListenerStartRequest(req mesh.ListenerStartRequest) (mesh.ListenerStartRequest, error) {
+	req.ListenerID = strings.TrimSpace(req.ListenerID)
+	if req.ListenerID == "" {
+		return mesh.ListenerStartRequest{}, errors.New("mesh listener id is required")
+	}
+	req.Deployment = mesh.ListenerDeployment(strings.TrimSpace(string(req.Deployment)))
+	if err := validateMeshListenerDeployment(req.Deployment); err != nil {
+		return mesh.ListenerStartRequest{}, err
+	}
+	req.Management = mesh.ListenerManagement(strings.TrimSpace(string(req.Management)))
+	if err := validateMeshListenerManagement(req.Management); err != nil {
+		return mesh.ListenerStartRequest{}, err
+	}
+	req.Config = cloneMeshAnyMap(req.Config)
+	return req, nil
+}
+
+func validateMeshListenerDeployment(deployment mesh.ListenerDeployment) error {
+	switch deployment {
+	case "", mesh.ListenerDeploymentEmbedded, mesh.ListenerDeploymentSeparate:
+		return nil
+	default:
+		return fmt.Errorf("mesh listener deployment %q is unsupported", deployment)
+	}
+}
+
+func validateMeshListenerManagement(management mesh.ListenerManagement) error {
+	switch management {
+	case "", mesh.ListenerManagementProvider, mesh.ListenerManagementExternal:
+		return nil
+	default:
+		return fmt.Errorf("mesh listener management %q is unsupported", management)
+	}
+}
+
+func cloneMeshAnyMap(values map[string]any) map[string]any {
+	if values == nil {
+		return nil
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = cloneMeshAnyValue(value)
+	}
+	return out
+}
+
+func cloneMeshAnyValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return cloneMeshAnyMap(value)
+	case []any:
+		out := make([]any, len(value))
+		for index, item := range value {
+			out[index] = cloneMeshAnyValue(item)
+		}
+		return out
+	case map[string]string:
+		out := make(map[string]string, len(value))
+		for key, item := range value {
+			out[key] = item
+		}
+		return out
+	case []string:
+		return append([]string(nil), value...)
+	default:
+		return value
+	}
 }
 
 func (s RunService) RunMeshTask(
@@ -191,9 +386,9 @@ func (s RunService) RunMeshTask(
 	moduleID string,
 	req mesh.TaskRequest,
 ) (mesh.TaskResult, error) {
-	runner, ok := s.runner.(MeshRunner)
-	if !ok {
-		return mesh.TaskResult{}, errors.New("mesh runner is not configured")
+	runner, err := s.meshRunner()
+	if err != nil {
+		return mesh.TaskResult{}, err
 	}
 	result, err := runner.RunMeshTask(ctx, moduleID, req)
 	if err != nil {
@@ -211,9 +406,9 @@ func (s RunService) OpenMeshStream(
 	moduleID string,
 	req mesh.StreamRequest,
 ) (run.SessionRef, error) {
-	runner, ok := s.runner.(MeshRunner)
-	if !ok {
-		return run.SessionRef{}, errors.New("mesh runner is not configured")
+	runner, err := s.meshRunner()
+	if err != nil {
+		return run.SessionRef{}, err
 	}
 	session, err := runner.OpenMeshStream(ctx, moduleID, req)
 	if err != nil {
@@ -224,6 +419,30 @@ func (s RunService) OpenMeshStream(
 		return run.SessionRef{}, errors.New("mesh stream session id is required")
 	}
 	return session, nil
+}
+
+func (s RunService) meshRunner() (MeshRunner, error) {
+	runner, ok := s.runner.(MeshRunner)
+	if !ok {
+		return nil, errors.New("mesh runner is not configured")
+	}
+	return runner, nil
+}
+
+func (s RunService) meshListenerLister() (MeshListenerLister, error) {
+	runner, ok := s.runner.(MeshListenerLister)
+	if !ok {
+		return nil, errors.New("mesh listener listing is not configured")
+	}
+	return runner, nil
+}
+
+func (s RunService) meshListenerLifecycleRunner() (MeshListenerLifecycleRunner, error) {
+	runner, ok := s.runner.(MeshListenerLifecycleRunner)
+	if !ok {
+		return nil, errors.New("mesh listener lifecycle is not configured")
+	}
+	return runner, nil
 }
 
 func (s RunService) ListPayloadCommands(ctx context.Context, req PayloadCommandListRequest) ([]run.PayloadCommand, error) {

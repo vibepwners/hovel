@@ -7,8 +7,10 @@ use crate::context::{Context, Emitter};
 use crate::framing::read_message;
 use crate::json::Value;
 use crate::mesh::{
-    context_params, MeshBeaconRequest, MeshDescribeRequest, MeshStreamRequest, MeshTaskRequest,
+    context_params, MeshBeaconRequest, MeshDescribeRequest, MeshListener, MeshListenerListRequest,
+    MeshListenerStartRequest, MeshListenerStopRequest, MeshStreamRequest, MeshTaskRequest,
     MeshTopologyRequest, MESH_RPC_BEACONS_METHOD, MESH_RPC_DESCRIBE_METHOD,
+    MESH_RPC_LISTENERS_METHOD, MESH_RPC_LISTENER_START_METHOD, MESH_RPC_LISTENER_STOP_METHOD,
     MESH_RPC_OPEN_STREAM_METHOD, MESH_RPC_TASK_METHOD, MESH_RPC_TOPOLOGY_METHOD,
 };
 use crate::module::Module;
@@ -103,6 +105,9 @@ fn dispatch(
         MESH_RPC_DESCRIBE_METHOD => describe_mesh(module, params),
         MESH_RPC_TOPOLOGY_METHOD => mesh_topology(module, params),
         MESH_RPC_BEACONS_METHOD => mesh_beacons(module, params),
+        MESH_RPC_LISTENERS_METHOD => mesh_listeners(module, params),
+        MESH_RPC_LISTENER_START_METHOD => mesh_listener_start(module, params),
+        MESH_RPC_LISTENER_STOP_METHOD => mesh_listener_stop(module, params),
         MESH_RPC_TASK_METHOD => mesh_task(module, emitter, params),
         MESH_RPC_OPEN_STREAM_METHOD => mesh_open_stream(module, emitter, params),
         "execute" => Ok(execute(module, emitter, params)),
@@ -202,6 +207,54 @@ fn mesh_beacons(module: &dyn Module, params: &Value) -> Result<Value, String> {
         "beacons",
         Value::Array(beacons.iter().map(|beacon| beacon.to_value()).collect()),
     )]))
+}
+
+fn mesh_listeners(module: &dyn Module, params: &Value) -> Result<Value, String> {
+    let listeners = module.list_mesh_listeners(MeshListenerListRequest::from_value(params)?)?;
+    Ok(Value::object(vec![(
+        "listeners",
+        Value::Array(listeners.iter().map(MeshListener::to_value).collect()),
+    )]))
+}
+
+fn mesh_listener_start(module: &dyn Module, params: &Value) -> Result<Value, String> {
+    let req = MeshListenerStartRequest::from_value(params)?;
+    let requested_id = required_mesh_listener_id(&req.listener_id)?.to_string();
+    let listener = module.start_mesh_listener(req)?;
+    mesh_listener_lifecycle_value(&requested_id, listener)
+}
+
+fn mesh_listener_stop(module: &dyn Module, params: &Value) -> Result<Value, String> {
+    let req = MeshListenerStopRequest::from_value(params)?;
+    let requested_id = required_mesh_listener_id(&req.listener_id)?.to_string();
+    let listener = module.stop_mesh_listener(req)?;
+    mesh_listener_lifecycle_value(&requested_id, listener)
+}
+
+fn mesh_listener_lifecycle_value(
+    requested_id: &str,
+    mut listener: MeshListener,
+) -> Result<Value, String> {
+    let requested_id = required_mesh_listener_id(requested_id)?;
+    listener.id = listener.id.trim().to_string();
+    if listener.id.is_empty() {
+        return Err("mesh listener result id is required".to_string());
+    }
+    if listener.id != requested_id {
+        return Err(format!(
+            "mesh listener result id {:?} does not match requested id {:?}",
+            listener.id, requested_id,
+        ));
+    }
+    Ok(listener.to_value())
+}
+
+fn required_mesh_listener_id(listener_id: &str) -> Result<&str, String> {
+    let listener_id = listener_id.trim();
+    if listener_id.is_empty() {
+        return Err("mesh listener listenerId is required".to_string());
+    }
+    Ok(listener_id)
 }
 
 fn mesh_task(module: &dyn Module, emitter: &mut Emitter, params: &Value) -> Result<Value, String> {

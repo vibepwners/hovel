@@ -75,6 +75,7 @@ MeshLink
 MeshRoute
 MeshDestination
 MeshTask
+MeshListener
 Beacon
 Trigger
 Service
@@ -200,7 +201,7 @@ ListenerProvider
 SessionProvider
 MeshProvider
 </code></pre>
-        <p>The first provider implementation should only require <code>PayloadProvider</code> and <code>ArtifactProvider</code>. Mesh providers are SDK-level contracts for node operations and may be module-backed before a general service lifecycle exists. Facts may be plain module outputs at first, and credential, listener, and session providers should wait until service lifecycle, policy review, and artifact/event capture are stable.</p>
+        <p>The first general provider implementation should only require <code>PayloadProvider</code> and <code>ArtifactProvider</code>. Mesh providers are SDK-level contracts for node operations and may be module-backed before a general service lifecycle exists. A <code>MeshListener</code> is a Mesh-specific listening-post resource and does not introduce the broader <code>ListenerProvider</code> abstraction shown above. Facts may be plain module outputs at first, and general credential, listener, and session providers should wait until service lifecycle, policy review, and artifact/event capture are stable.</p>
         <p>Future providers may include build, encoder, shellcode, stager, and implant providers.</p>
         <p>Payload generation is outside the Hovel core. Hovel resolves payload bytes through provider interfaces, tags them with declared metadata, records hashes and artifacts, then passes the bytes to the next module in the chain. When a payload provider or installing module reports a successful install, Hovel core validates the explicit install descriptor and persists the installed payload record in the workspace database.</p>
 
@@ -212,10 +213,11 @@ MeshLink   communication edge between nodes
 MeshRoute  ordered path across nodes and links
 MeshDestination host or service reachable through a node or route
 MeshTask   node, route, or destination operation such as survey, upload, execute, command, load, or stream
+MeshListener provider-reported listening post, separate from provider control and daemon local bridges
 Beacon       node liveness or status signal
 Trigger      provider-declared condition that can cause mesh work or state changes
 </code></pre>
-        <p>Transport endpoints and tunnels are narrower byte-movement concepts. A Mesh may expose a stream that Hovel bridges to a local IP and port, but the Mesh also owns tasking, surveys, triggers, and beacons. Destination-scoped Mesh requests identify the pivot with <code>nodeId</code> or <code>route</code> and the reached service with <code>destinationHost</code>, <code>destinationPort</code>, and <code>protocol</code>.</p>
+        <p>Transport endpoints and tunnels are narrower byte-movement concepts. A Mesh may expose a stream that Hovel bridges to a local IP and port, but the Mesh also owns listening posts, tasking, surveys, triggers, and beacons. A Mesh Listener may be embedded or separately deployed and provider- or externally managed; stable caller-selected ids and daemon lifecycle methods let future external control planes manage it without speaking the module protocol. Destination-scoped Mesh requests identify the pivot with <code>nodeId</code> or <code>route</code> and the reached service with <code>destinationHost</code>, <code>destinationPort</code>, and <code>protocol</code>.</p>
 
         <h2>Payload</h2>
         <p>A payload is provider-described capability that can produce tagged bytes. In the target provider model, available payloads are discovered live from provider contracts rather than cached as durable workspace state. In the current operator command path, <code>payloads available</code> lists configured payload-provider modules; Go provider modules already expose the richer <code>list_payloads</code> RPC method for provider integrations and contract tests.</p>

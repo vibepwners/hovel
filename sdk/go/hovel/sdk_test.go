@@ -366,10 +366,19 @@ func (fakeMeshModule) DescribeMesh(MeshDescribeRequest) (MeshDescriptor, error) 
 				TargetScopes: []MeshTargetScope{MeshTargetNode, MeshTargetDestination},
 			},
 		},
+		ListenerTypes: []MeshListenerSpec{{
+			Kind:            "https",
+			Summary:         "HTTPS rendezvous listener",
+			Deployments:     []MeshListenerDeployment{MeshListenerDeploymentEmbedded, MeshListenerDeploymentSeparate},
+			ManagementModes: []MeshListenerManagement{MeshListenerManagementProvider, MeshListenerManagementExternal},
+			Protocols:       []string{"https"},
+			ConfigSchema:    map[string]any{"type": "object"},
+		}},
 		Triggers: []MeshTrigger{{
 			ID:         "trig-beacon-command",
 			Kind:       "beacon",
 			NodeID:     "node-2",
+			ListenerID: "listener-primary",
 			State:      "armed",
 			ActionKind: MeshTaskCommand,
 		}},
@@ -388,6 +397,7 @@ func (fakeMeshModule) ListMeshBeacons(req MeshBeaconRequest) ([]MeshBeacon, erro
 	return []MeshBeacon{{
 		ID:              "beacon-1",
 		NodeID:          nodeID,
+		ListenerID:      "listener-primary",
 		Time:            "2026-07-09T00:00:00Z",
 		State:           "alive",
 		Transport:       "relay",
@@ -397,15 +407,63 @@ func (fakeMeshModule) ListMeshBeacons(req MeshBeaconRequest) ([]MeshBeacon, erro
 	}}, nil
 }
 
+func (fakeMeshModule) ListMeshListeners(req MeshListenerListRequest) ([]MeshListener, error) {
+	listenerID := req.ListenerID
+	if listenerID == "" {
+		listenerID = "listener-primary"
+	}
+	return []MeshListener{{
+		ID:         listenerID,
+		Name:       "primary HTTPS listener",
+		Kind:       "https",
+		State:      MeshListenerStateActive,
+		Deployment: MeshListenerDeploymentSeparate,
+		Management: MeshListenerManagementProvider,
+		Addresses:  []string{"https://127.0.0.1:8443"},
+		Protocols:  []string{"https"},
+	}}, nil
+}
+
+type emptyMeshListenerModule struct {
+	fakeMeshModule
+}
+
+func (emptyMeshListenerModule) ListMeshListeners(MeshListenerListRequest) ([]MeshListener, error) {
+	return nil, nil
+}
+
+func (fakeMeshModule) StartMeshListener(req MeshListenerStartRequest) (MeshListener, error) {
+	return MeshListener{
+		ID:         req.ListenerID,
+		Name:       req.Name,
+		Kind:       req.Kind,
+		State:      MeshListenerStateActive,
+		Deployment: req.Deployment,
+		Management: req.Management,
+		Addresses:  []string{"https://127.0.0.1:8443"},
+		Protocols:  []string{"https"},
+	}, nil
+}
+
+func (fakeMeshModule) StopMeshListener(req MeshListenerStopRequest) (MeshListener, error) {
+	return MeshListener{
+		ID:         req.ListenerID,
+		State:      MeshListenerStateStopped,
+		Deployment: MeshListenerDeploymentSeparate,
+		Management: MeshListenerManagementProvider,
+	}, nil
+}
+
 func (fakeMeshModule) RunMeshTask(ctx *MeshContext, req MeshTaskRequest) (MeshTaskResult, error) {
 	ctx.Log.Info("mesh task", "kind", req.Kind, "node", req.NodeID)
 	switch req.Kind {
 	case MeshTaskSurvey:
 		return MeshTaskResult{
-			TaskID:  req.TaskID,
-			Status:  MeshTaskStatusSucceeded,
-			Summary: "surveyed " + req.NodeID,
-			NodeID:  req.NodeID,
+			TaskID:     req.TaskID,
+			Status:     MeshTaskStatusSucceeded,
+			Summary:    "surveyed " + req.NodeID,
+			NodeID:     req.NodeID,
+			ListenerID: req.ListenerID,
 			Outputs: map[string]any{
 				"os":              "linux",
 				"reachable":       true,
@@ -421,6 +479,7 @@ func (fakeMeshModule) RunMeshTask(ctx *MeshContext, req MeshTaskRequest) (MeshTa
 			Status:          MeshTaskStatusSucceeded,
 			Summary:         "command completed",
 			NodeID:          req.NodeID,
+			ListenerID:      req.ListenerID,
 			DestinationHost: req.DestinationHost,
 			DestinationPort: req.DestinationPort,
 			Protocol:        req.Protocol,
@@ -630,6 +689,10 @@ func TestServeMeshProviderMethods(t *testing.T) {
 	if len(triggers) != 1 {
 		t.Fatalf("mesh triggers = %#v, want one trigger", describe["triggers"])
 	}
+	listenerTypes, _ := describe["listenerTypes"].([]any)
+	if len(listenerTypes) != 1 {
+		t.Fatalf("mesh listener types = %#v, want one", describe["listenerTypes"])
+	}
 
 	topology := conn.call("mesh.topology", map[string]any{"includeRoutes": true})
 	nodes, _ := topology["nodes"].([]any)
@@ -645,18 +708,57 @@ func TestServeMeshProviderMethods(t *testing.T) {
 		t.Fatalf("mesh beacons = %#v, want one", beacons["beacons"])
 	}
 	beacon, _ := items[0].(map[string]any)
-	if beacon["nodeId"] != "node-2" || beacon["state"] != "alive" {
+	if beacon["nodeId"] != "node-2" || beacon["listenerId"] != "listener-primary" || beacon["state"] != "alive" {
 		t.Fatalf("mesh beacon = %#v", beacon)
 	}
 
+	listeners := conn.call("mesh.listeners", map[string]any{
+		"listenerId": "  listener-primary  ",
+		"state":      "  active  ",
+	})
+	listenerItems, _ := listeners["listeners"].([]any)
+	if len(listenerItems) != 1 {
+		t.Fatalf("mesh listeners = %#v, want one", listeners["listeners"])
+	}
+	listener, _ := listenerItems[0].(map[string]any)
+	if listener["id"] != "listener-primary" || listener["state"] != "active" ||
+		listener["deployment"] != "separate" || listener["management"] != "provider" {
+		t.Fatalf("mesh listener = %#v", listener)
+	}
+
+	startedListener := conn.call("mesh.listener.start", map[string]any{
+		"listenerId": "listener-web",
+		"name":       "web-controlled listener",
+		"kind":       "https",
+		"deployment": "  separate  ",
+		"management": "  provider  ",
+		"config":     map[string]any{"token": "write-only-secret"},
+	})
+	if startedListener["id"] != "listener-web" || startedListener["state"] != "active" ||
+		startedListener["deployment"] != "separate" || startedListener["management"] != "provider" {
+		t.Fatalf("started mesh listener = %#v", startedListener)
+	}
+	if _, exposesConfig := startedListener["config"]; exposesConfig {
+		t.Fatalf("started mesh listener exposed write-only config: %#v", startedListener)
+	}
+
+	stoppedListener := conn.call("mesh.listener.stop", map[string]any{"listenerId": "listener-web"})
+	if stoppedListener["id"] != "listener-web" || stoppedListener["state"] != "stopped" {
+		t.Fatalf("stopped mesh listener = %#v", stoppedListener)
+	}
+
 	task := conn.call("mesh.task", map[string]any{
-		"runId":  "run-mesh-1",
-		"taskId": "task-survey-1",
-		"kind":   string(MeshTaskSurvey),
-		"nodeId": "node-2",
+		"runId":      "run-mesh-1",
+		"taskId":     "task-survey-1",
+		"kind":       string(MeshTaskSurvey),
+		"nodeId":     "node-2",
+		"listenerId": "listener-primary",
 	})
 	if task["status"] != "succeeded" || task["summary"] != "surveyed node-2" {
 		t.Fatalf("mesh task = %#v", task)
+	}
+	if task["listenerId"] != "listener-primary" {
+		t.Fatalf("mesh task listener = %#v", task["listenerId"])
 	}
 	outputs, _ := task["outputs"].(map[string]any)
 	if outputs["os"] != "linux" || outputs["reachable"] != true {
@@ -675,6 +777,23 @@ func TestServeMeshProviderMethods(t *testing.T) {
 		defaultedOutputs["contextModuleId"] != "fake-mesh@v0.0.0-test" ||
 		defaultedOutputs["contextTarget"] != "10.10.0.99" {
 		t.Fatalf("defaulted mesh context = %#v", defaultedOutputs)
+	}
+}
+
+func TestListMeshListenersEncodesEmptyListAsArray(t *testing.T) {
+	server := server{module: emptyMeshListenerModule{}}
+
+	result, err := server.listMeshListeners(json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("listener response type = %T, want map[string]any", result)
+	}
+	listeners, ok := response["listeners"].([]MeshListener)
+	if !ok || listeners == nil || len(listeners) != 0 {
+		t.Fatalf("listeners = %#v, want non-nil empty array", response["listeners"])
 	}
 }
 
@@ -753,6 +872,11 @@ func TestServeMeshProviderCanImplementOnlySupportedSurfaces(t *testing.T) {
 	errText := conn.callError("mesh.task", map[string]any{"kind": string(MeshTaskCommand)})
 	if !strings.Contains(errText, "does not implement mesh.task") {
 		t.Fatalf("mesh.task error = %q, want unsupported surface", errText)
+	}
+
+	errText = conn.callError("mesh.listeners", nil)
+	if !strings.Contains(errText, "does not implement mesh.listeners") {
+		t.Fatalf("mesh.listeners error = %q, want unsupported surface", errText)
 	}
 }
 

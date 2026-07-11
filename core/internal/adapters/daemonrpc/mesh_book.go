@@ -17,6 +17,13 @@ const (
 	MeshOperationKindStream MeshOperationKind = "stream"
 	// MeshOperationKindBridge records a daemon-owned local socket endpoint.
 	MeshOperationKindBridge MeshOperationKind = "bridge"
+	// MeshOperationKindListener records a provider listening-post lifecycle call.
+	MeshOperationKindListener MeshOperationKind = "listener"
+
+	// MeshListenerActionStart records an idempotent listening-post start or attach.
+	MeshListenerActionStart MeshListenerAction = "start"
+	// MeshListenerActionStop records an idempotent listening-post stop or detach.
+	MeshListenerActionStop MeshListenerAction = "stop"
 
 	// MeshOperationStateStarted means invocation has begun but is not active.
 	MeshOperationStateStarted MeshOperationState = "started"
@@ -36,6 +43,9 @@ type MeshOperationKind string
 // MeshOperationState describes daemon-side Mesh bookkeeping lifecycle state.
 type MeshOperationState string
 
+// MeshListenerAction identifies a mutating listening-post lifecycle call.
+type MeshListenerAction string
+
 // MeshOperation is daemon-side bookkeeping for provider-owned mesh work.
 // It records enough routing context to audit node tasks, routed sessions, and
 // daemon-owned local bridges, including future "throw through a node" flows
@@ -48,6 +58,9 @@ type MeshOperation struct {
 	RunID           string             `json:"runId,omitempty"`
 	TaskID          string             `json:"taskId,omitempty"`
 	TaskKind        mesh.TaskKind      `json:"taskKind,omitempty"`
+	Action          MeshListenerAction `json:"action,omitempty"`
+	ListenerID      string             `json:"listenerId,omitempty"`
+	ListenerState   mesh.ListenerState `json:"listenerState,omitempty"`
 	SessionID       string             `json:"sessionId,omitempty"`
 	SessionIDs      []string           `json:"sessionIds,omitempty"`
 	NodeID          string             `json:"nodeId,omitempty"`
@@ -66,12 +79,14 @@ type MeshOperation struct {
 
 // MeshOperationListRequest filters daemon Mesh bookkeeping records.
 type MeshOperationListRequest struct {
-	ModuleID  string             `json:"moduleId,omitempty"`
-	RunID     string             `json:"runId,omitempty"`
-	NodeID    string             `json:"nodeId,omitempty"`
-	SessionID string             `json:"sessionId,omitempty"`
-	Kind      MeshOperationKind  `json:"kind,omitempty"`
-	State     MeshOperationState `json:"state,omitempty"`
+	ModuleID   string             `json:"moduleId,omitempty"`
+	RunID      string             `json:"runId,omitempty"`
+	NodeID     string             `json:"nodeId,omitempty"`
+	SessionID  string             `json:"sessionId,omitempty"`
+	ListenerID string             `json:"listenerId,omitempty"`
+	Kind       MeshOperationKind  `json:"kind,omitempty"`
+	Action     MeshListenerAction `json:"action,omitempty"`
+	State      MeshOperationState `json:"state,omitempty"`
 }
 
 // MeshOperationListResponse contains matching daemon Mesh bookkeeping records.
@@ -79,8 +94,8 @@ type MeshOperationListResponse struct {
 	Operations []MeshOperation `json:"operations"`
 }
 
-// MeshBook stores in-memory daemon bookkeeping for mesh tasks, routed sessions,
-// and local bridges.
+// MeshBook stores in-memory daemon bookkeeping for listener lifecycle calls,
+// mesh tasks, routed sessions, and local bridges.
 type MeshBook struct {
 	mu         sync.RWMutex
 	next       uint64
@@ -106,6 +121,7 @@ func (b *MeshBook) StartTask(moduleID string, request mesh.TaskRequest, now time
 		TaskID:          request.TaskID,
 		TaskKind:        request.Kind,
 		NodeID:          request.NodeID,
+		ListenerID:      request.ListenerID,
 		Target:          request.Target,
 		RouteID:         routeID(request.Route),
 		DestinationHost: request.DestinationHost,
@@ -129,6 +145,22 @@ func (b *MeshBook) StartBridge(
 	return b.start(meshStreamOperation(MeshOperationKindBridge, moduleID, request, localAddress), now)
 }
 
+// StartListener records a provider listening-post lifecycle call before it is invoked.
+func (b *MeshBook) StartListener(
+	moduleID string,
+	action MeshListenerAction,
+	listenerID string,
+	now time.Time,
+) MeshOperation {
+	return b.start(MeshOperation{
+		Kind:       MeshOperationKindListener,
+		State:      MeshOperationStateStarted,
+		ModuleID:   strings.TrimSpace(moduleID),
+		Action:     action,
+		ListenerID: strings.TrimSpace(listenerID),
+	}, now)
+}
+
 // CompleteTask records the terminal result and any sessions opened by a task.
 func (b *MeshBook) CompleteTask(id string, result mesh.TaskResult, now time.Time) {
 	state := strings.TrimSpace(string(result.Status))
@@ -143,6 +175,9 @@ func (b *MeshBook) CompleteTask(id string, result mesh.TaskResult, now time.Time
 		}
 		if result.NodeID != "" {
 			operation.NodeID = result.NodeID
+		}
+		if result.ListenerID != "" {
+			operation.ListenerID = result.ListenerID
 		}
 		if result.Route != nil {
 			operation.RouteID = result.Route.ID
@@ -162,6 +197,19 @@ func (b *MeshBook) CompleteTask(id string, result mesh.TaskResult, now time.Time
 			if operation.SessionID == "" {
 				operation.SessionID = ids[0]
 			}
+		}
+	})
+}
+
+// CompleteListener records the provider-reported listener state and terminal
+// outcome of a lifecycle operation.
+func (b *MeshBook) CompleteListener(id string, listener mesh.Listener, now time.Time) {
+	b.update(id, now, func(operation *MeshOperation) {
+		operation.State = MeshOperationStateSucceeded
+		operation.ListenerID = strings.TrimSpace(listener.ID)
+		operation.ListenerState = mesh.ListenerState(strings.TrimSpace(string(listener.State)))
+		if operation.ListenerState == mesh.ListenerStateFailed {
+			operation.State = MeshOperationStateFailed
 		}
 	})
 }
@@ -275,7 +323,13 @@ func meshOperationMatches(operation MeshOperation, filter MeshOperationListReque
 		!containsString(operation.SessionIDs, filter.SessionID) {
 		return false
 	}
+	if filter.ListenerID != "" && filter.ListenerID != operation.ListenerID {
+		return false
+	}
 	if filter.Kind != "" && filter.Kind != operation.Kind {
+		return false
+	}
+	if filter.Action != "" && filter.Action != operation.Action {
 		return false
 	}
 	if filter.State != "" && filter.State != operation.State {
@@ -317,6 +371,7 @@ func meshStreamOperation(
 		ModuleID:        moduleID,
 		RunID:           request.RunID,
 		NodeID:          request.NodeID,
+		ListenerID:      request.ListenerID,
 		Target:          request.Target,
 		RouteID:         routeID(request.Route),
 		DestinationHost: request.DestinationHost,

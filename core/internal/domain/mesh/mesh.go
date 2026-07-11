@@ -36,10 +36,84 @@ const (
 	TaskStatusFailed    TaskStatus = "failed"
 )
 
+// ListenerDeployment describes whether a listening post shares the provider
+// deployment or runs as a separate data-plane service.
+type ListenerDeployment string
+
+const (
+	ListenerDeploymentEmbedded ListenerDeployment = "embedded"
+	ListenerDeploymentSeparate ListenerDeployment = "separate"
+)
+
+// ListenerManagement identifies who owns listening-post lifecycle.
+type ListenerManagement string
+
+const (
+	ListenerManagementProvider ListenerManagement = "provider"
+	ListenerManagementExternal ListenerManagement = "external"
+)
+
+// ListenerState describes provider-reported listening-post lifecycle state.
+// Providers may return additional states when their contract requires it.
+type ListenerState string
+
+const (
+	ListenerStateStarting ListenerState = "starting"
+	ListenerStateActive   ListenerState = "active"
+	ListenerStateStopping ListenerState = "stopping"
+	ListenerStateStopped  ListenerState = "stopped"
+	ListenerStateFailed   ListenerState = "failed"
+)
+
+// Listener is a provider-reported listening post. Provider configuration and
+// credentials are intentionally absent from this read model.
+type Listener struct {
+	ID           string             `json:"id"`
+	Name         string             `json:"name,omitempty"`
+	Kind         string             `json:"kind,omitempty"`
+	State        ListenerState      `json:"state,omitempty"`
+	Deployment   ListenerDeployment `json:"deployment,omitempty"`
+	Management   ListenerManagement `json:"management,omitempty"`
+	NodeID       string             `json:"nodeId,omitempty"`
+	Addresses    []string           `json:"addresses,omitempty"`
+	Protocols    []string           `json:"protocols,omitempty"`
+	Capabilities []string           `json:"capabilities,omitempty"`
+	Labels       map[string]any     `json:"labels,omitempty"`
+	Attributes   map[string]any     `json:"attributes,omitempty"`
+	UpdatedAt    string             `json:"updatedAt,omitempty"`
+}
+
+// ListenerListRequest filters dynamic listening-post state.
+type ListenerListRequest struct {
+	ListenerID string            `json:"listenerId,omitempty"`
+	State      ListenerState     `json:"state,omitempty"`
+	Agent      *run.AgentContext `json:"agentContext,omitempty"`
+}
+
+// ListenerStartRequest asks a provider to idempotently start or attach a
+// listening post. Config is write-only and must not be echoed in Listener.
+type ListenerStartRequest struct {
+	ListenerID string             `json:"listenerId"`
+	Name       string             `json:"name,omitempty"`
+	Kind       string             `json:"kind,omitempty"`
+	Deployment ListenerDeployment `json:"deployment,omitempty"`
+	Management ListenerManagement `json:"management,omitempty"`
+	Config     map[string]any     `json:"config,omitempty"`
+	Agent      *run.AgentContext  `json:"agentContext,omitempty"`
+}
+
+// ListenerStopRequest asks a provider to idempotently stop or detach a
+// listening post.
+type ListenerStopRequest struct {
+	ListenerID string            `json:"listenerId"`
+	Agent      *run.AgentContext `json:"agentContext,omitempty"`
+}
+
 // Node is an operator-addressable participant in a provider-owned mesh.
 type Node struct {
 	ID           string         `json:"id"`
 	ParentID     string         `json:"parentId,omitempty"`
+	ListenerID   string         `json:"listenerId,omitempty"`
 	Name         string         `json:"name,omitempty"`
 	Kind         string         `json:"kind,omitempty"`
 	State        string         `json:"state,omitempty"`
@@ -96,12 +170,25 @@ type TaskSpec struct {
 	Capabilities []string       `json:"capabilities,omitempty"`
 }
 
+// ListenerSpec advertises one listening-post kind and its supported
+// deployment and management modes without contacting a live listener.
+type ListenerSpec struct {
+	Kind            string               `json:"kind"`
+	Summary         string               `json:"summary,omitempty"`
+	Deployments     []ListenerDeployment `json:"deployments,omitempty"`
+	ManagementModes []ListenerManagement `json:"managementModes,omitempty"`
+	Protocols       []string             `json:"protocols,omitempty"`
+	ConfigSchema    map[string]any       `json:"configSchema,omitempty"`
+	Capabilities    []string             `json:"capabilities,omitempty"`
+}
+
 // Trigger declares a provider-owned condition that can fire mesh work.
 type Trigger struct {
 	ID         string         `json:"id"`
 	Name       string         `json:"name,omitempty"`
 	Kind       string         `json:"kind,omitempty"`
 	NodeID     string         `json:"nodeId,omitempty"`
+	ListenerID string         `json:"listenerId,omitempty"`
 	State      string         `json:"state,omitempty"`
 	Expression string         `json:"expression,omitempty"`
 	Schedule   string         `json:"schedule,omitempty"`
@@ -114,6 +201,7 @@ type Trigger struct {
 type Beacon struct {
 	ID              string         `json:"id"`
 	NodeID          string         `json:"nodeId"`
+	ListenerID      string         `json:"listenerId,omitempty"`
 	Time            string         `json:"time,omitempty"`
 	State           string         `json:"state,omitempty"`
 	Transport       string         `json:"transport,omitempty"`
@@ -125,14 +213,15 @@ type Beacon struct {
 // Descriptor reports a provider's mesh capabilities without requiring
 // target contact. Dynamic details belong in Topology or ListBeacons.
 type Descriptor struct {
-	Name         string         `json:"name,omitempty"`
-	Version      string         `json:"version,omitempty"`
-	Summary      string         `json:"summary,omitempty"`
-	Capabilities []string       `json:"capabilities,omitempty"`
-	Topology     *Topology      `json:"topology,omitempty"`
-	Tasks        []TaskSpec     `json:"tasks,omitempty"`
-	Triggers     []Trigger      `json:"triggers,omitempty"`
-	Attributes   map[string]any `json:"attributes,omitempty"`
+	Name          string         `json:"name,omitempty"`
+	Version       string         `json:"version,omitempty"`
+	Summary       string         `json:"summary,omitempty"`
+	Capabilities  []string       `json:"capabilities,omitempty"`
+	Topology      *Topology      `json:"topology,omitempty"`
+	Tasks         []TaskSpec     `json:"tasks,omitempty"`
+	ListenerTypes []ListenerSpec `json:"listenerTypes,omitempty"`
+	Triggers      []Trigger      `json:"triggers,omitempty"`
+	Attributes    map[string]any `json:"attributes,omitempty"`
 }
 
 // DescribeRequest asks a provider to describe its mesh surface.
@@ -143,16 +232,18 @@ type DescribeRequest struct {
 // TopologyRequest asks for provider-owned topology, optionally with routes.
 type TopologyRequest struct {
 	Root          string            `json:"root,omitempty"`
+	ListenerID    string            `json:"listenerId,omitempty"`
 	IncludeRoutes bool              `json:"includeRoutes,omitempty"`
 	Agent         *run.AgentContext `json:"agentContext,omitempty"`
 }
 
 // BeaconRequest asks for recent beacons, optionally filtered by node.
 type BeaconRequest struct {
-	NodeID string            `json:"nodeId,omitempty"`
-	Since  string            `json:"since,omitempty"`
-	Limit  int               `json:"limit,omitempty"`
-	Agent  *run.AgentContext `json:"agentContext,omitempty"`
+	NodeID     string            `json:"nodeId,omitempty"`
+	ListenerID string            `json:"listenerId,omitempty"`
+	Since      string            `json:"since,omitempty"`
+	Limit      int               `json:"limit,omitempty"`
+	Agent      *run.AgentContext `json:"agentContext,omitempty"`
 }
 
 // TaskRequest asks a provider to perform a node, route, or destination operation.
@@ -161,6 +252,7 @@ type TaskRequest struct {
 	TaskID          string            `json:"taskId,omitempty"`
 	Kind            TaskKind          `json:"kind"`
 	NodeID          string            `json:"nodeId,omitempty"`
+	ListenerID      string            `json:"listenerId,omitempty"`
 	Target          string            `json:"target,omitempty"`
 	Route           *Route            `json:"route,omitempty"`
 	DestinationHost string            `json:"destinationHost,omitempty"`
@@ -179,6 +271,7 @@ type TaskResult struct {
 	Status          TaskStatus       `json:"status"`
 	Summary         string           `json:"summary,omitempty"`
 	NodeID          string           `json:"nodeId,omitempty"`
+	ListenerID      string           `json:"listenerId,omitempty"`
 	Route           *Route           `json:"route,omitempty"`
 	DestinationHost string           `json:"destinationHost,omitempty"`
 	DestinationPort int              `json:"destinationPort,omitempty"`
@@ -194,12 +287,13 @@ type TaskResult struct {
 
 // Event is provider-authored audit or progress evidence for mesh work.
 type Event struct {
-	ID      string         `json:"id,omitempty"`
-	Kind    string         `json:"kind"`
-	NodeID  string         `json:"nodeId,omitempty"`
-	Level   string         `json:"level,omitempty"`
-	Message string         `json:"message,omitempty"`
-	Fields  map[string]any `json:"fields,omitempty"`
+	ID         string         `json:"id,omitempty"`
+	Kind       string         `json:"kind"`
+	NodeID     string         `json:"nodeId,omitempty"`
+	ListenerID string         `json:"listenerId,omitempty"`
+	Level      string         `json:"level,omitempty"`
+	Message    string         `json:"message,omitempty"`
+	Fields     map[string]any `json:"fields,omitempty"`
 }
 
 // StreamRequest asks a provider to open a routed flow through a node or route.
@@ -210,6 +304,7 @@ type StreamRequest struct {
 	ModuleID        string            `json:"moduleId,omitempty"`
 	Target          string            `json:"target,omitempty"`
 	NodeID          string            `json:"nodeId,omitempty"`
+	ListenerID      string            `json:"listenerId,omitempty"`
 	Route           *Route            `json:"route,omitempty"`
 	DestinationHost string            `json:"destinationHost,omitempty"`
 	DestinationPort int               `json:"destinationPort,omitempty"`

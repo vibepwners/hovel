@@ -1039,13 +1039,13 @@ DESCRIPTOR = {
     "name": "mesh-provider",
     "version": "v0.0.0-test",
     "summary": "tree routed mesh",
-    "capabilities": ["topology.tree", "task.survey", "stream.tcp"],
+    "capabilities": ["topology.tree", "listener.lifecycle", "task.survey", "stream.tcp"],
     "topology": {
         "root": "root",
         "nodes": [
             {"id": "root", "name": "controller", "kind": "controller", "state": "online"},
             {"id": "node-1", "parentId": "root", "name": "relay", "kind": "relay", "state": "online"},
-            {"id": "node-2", "parentId": "node-1", "name": "leaf", "kind": "agent", "state": "online"}
+            {"id": "node-2", "parentId": "node-1", "listenerId": "listener-primary", "name": "leaf", "kind": "agent", "state": "online"}
         ],
         "links": [
             {"id": "link-root-node-1", "source": "root", "target": "node-1", "kind": "relay", "state": "up"},
@@ -1062,10 +1062,20 @@ DESCRIPTOR = {
         {"kind": "command", "summary": "run command", "targetScopes": ["node", "destination"]},
         {"kind": "upload_execute", "summary": "upload and execute", "destructive": True, "targetScopes": ["node", "destination"]}
     ],
+    "listenerTypes": [{
+        "kind": "https",
+        "summary": "HTTPS beacon rendezvous",
+        "deployments": ["separate"],
+        "managementModes": ["provider", "external"],
+        "protocols": ["https"],
+        "configSchema": {"type": "object"},
+        "capabilities": ["beacon"]
+    }],
     "triggers": [{
         "id": "trig-beacon-command",
         "kind": "beacon",
         "nodeId": "node-2",
+        "listenerId": "listener-primary",
         "state": "armed",
         "actionKind": "command"
     }]
@@ -1097,20 +1107,51 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "result": {"beacons": [{
             "id": "beacon-1",
             "nodeId": params.get("nodeId", "node-2"),
+            "listenerId": params.get("listenerId", "listener-primary"),
             "state": "alive",
             "transport": "relay"
         }]}})
+    elif method == "mesh.listeners":
+        send({"jsonrpc": "2.0", "id": rid, "result": {"listeners": [{
+            "id": params.get("listenerId", "listener-primary"),
+            "name": "primary HTTPS listener",
+            "kind": "https",
+            "state": "active",
+            "deployment": "separate",
+            "management": "provider",
+            "addresses": ["https://127.0.0.1:8443"],
+            "protocols": ["https"]
+        }]}})
+    elif method == "mesh.listener.start":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "id": params.get("listenerId", ""),
+            "name": params.get("name", ""),
+            "kind": params.get("kind", ""),
+            "state": "active",
+            "deployment": params.get("deployment", ""),
+            "management": params.get("management", ""),
+            "addresses": ["https://127.0.0.1:8443"],
+            "protocols": ["https"]
+        }})
+    elif method == "mesh.listener.stop":
+        send({"jsonrpc": "2.0", "id": rid, "result": {
+            "id": params.get("listenerId", ""),
+            "state": "stopped",
+            "deployment": "separate",
+            "management": "provider"
+        }})
     elif method == "mesh.task":
         send({"jsonrpc": "2.0", "id": rid, "result": {
             "taskId": params.get("taskId", ""),
             "status": "succeeded",
             "summary": "surveyed " + params.get("nodeId", ""),
             "nodeId": params.get("nodeId", ""),
+            "listenerId": params.get("listenerId", ""),
             "destinationHost": params.get("destinationHost", ""),
             "destinationPort": params.get("destinationPort", 0),
             "protocol": params.get("protocol", ""),
             "outputs": {"os": "linux", "reachable": True},
-            "beacons": [{"id": "beacon-task", "nodeId": params.get("nodeId", ""), "state": "alive"}]
+            "beacons": [{"id": "beacon-task", "nodeId": params.get("nodeId", ""), "listenerId": params.get("listenerId", ""), "state": "alive"}]
         }})
     elif method == "mesh.open_stream":
         send({"jsonrpc": "2.0", "id": rid, "result": {
@@ -1163,7 +1204,8 @@ while True:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if module.Mesh.Name != "mesh-provider" || len(module.Mesh.Tasks) != 3 {
+	if module.Mesh.Name != "mesh-provider" || len(module.Mesh.Tasks) != 3 ||
+		len(module.Mesh.ListenerTypes) != 1 {
 		t.Fatalf("catalog mesh descriptor = %#v", module.Mesh)
 	}
 	if module.Mesh.Topology == nil || len(module.Mesh.Topology.Nodes) != 3 {
@@ -1174,7 +1216,10 @@ while True:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if descriptor.Name != "mesh-provider" || len(descriptor.Triggers) != 1 {
+	if descriptor.Name != "mesh-provider" || len(descriptor.Triggers) != 1 ||
+		descriptor.Triggers[0].ListenerID != "listener-primary" ||
+		len(descriptor.ListenerTypes) != 1 ||
+		descriptor.ListenerTypes[0].ManagementModes[1] != mesh.ListenerManagementExternal {
 		t.Fatalf("mesh descriptor = %#v", descriptor)
 	}
 	topology, err := runner.MeshTopology(context.Background(), "broken", mesh.TopologyRequest{IncludeRoutes: true})
@@ -1184,18 +1229,56 @@ while True:
 	if len(topology.Nodes) != 3 || len(topology.Routes) != 1 {
 		t.Fatalf("mesh topology = %#v", topology)
 	}
-	beacons, err := runner.ListMeshBeacons(context.Background(), "broken", mesh.BeaconRequest{NodeID: "node-2"})
+	beacons, err := runner.ListMeshBeacons(context.Background(), "broken", mesh.BeaconRequest{
+		NodeID:     "node-2",
+		ListenerID: "listener-primary",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(beacons) != 1 || beacons[0].NodeID != "node-2" {
+	if len(beacons) != 1 || beacons[0].NodeID != "node-2" ||
+		beacons[0].ListenerID != "listener-primary" {
 		t.Fatalf("mesh beacons = %#v", beacons)
+	}
+	listeners, err := runner.ListMeshListeners(context.Background(), "broken", mesh.ListenerListRequest{
+		ListenerID: "listener-primary",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listeners) != 1 || listeners[0].ID != "listener-primary" ||
+		listeners[0].Deployment != mesh.ListenerDeploymentSeparate {
+		t.Fatalf("mesh listeners = %#v", listeners)
+	}
+	startedListener, err := runner.StartMeshListener(context.Background(), "broken", mesh.ListenerStartRequest{
+		ListenerID: "listener-web",
+		Name:       "web-controlled listener",
+		Kind:       "https",
+		Deployment: mesh.ListenerDeploymentSeparate,
+		Management: mesh.ListenerManagementProvider,
+		Config:     map[string]any{"token": "write-only-secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if startedListener.ID != "listener-web" || startedListener.State != mesh.ListenerStateActive {
+		t.Fatalf("started mesh listener = %#v", startedListener)
+	}
+	stoppedListener, err := runner.StopMeshListener(context.Background(), "broken", mesh.ListenerStopRequest{
+		ListenerID: "listener-web",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stoppedListener.ID != "listener-web" || stoppedListener.State != mesh.ListenerStateStopped {
+		t.Fatalf("stopped mesh listener = %#v", stoppedListener)
 	}
 	task, err := runner.RunMeshTask(context.Background(), "broken", mesh.TaskRequest{
 		RunID:           "run-mesh-1",
 		TaskID:          "task-survey-1",
 		Kind:            mesh.TaskSurvey,
 		NodeID:          "node-2",
+		ListenerID:      "listener-primary",
 		DestinationHost: "10.10.10.10",
 		DestinationPort: 445,
 		Protocol:        "tcp",
@@ -1205,6 +1288,8 @@ while True:
 	}
 	if task.Status != mesh.TaskStatusSucceeded ||
 		task.Outputs["os"] != "linux" ||
+		task.ListenerID != "listener-primary" ||
+		len(task.Beacons) != 1 || task.Beacons[0].ListenerID != "listener-primary" ||
 		task.DestinationHost != "10.10.10.10" {
 		t.Fatalf("mesh task = %#v", task)
 	}
@@ -1212,6 +1297,7 @@ while True:
 		RunID:           "run-mesh-2",
 		Target:          "mock://mesh",
 		NodeID:          "node-2",
+		ListenerID:      "listener-primary",
 		DestinationHost: "10.10.10.10",
 		DestinationPort: 443,
 		Protocol:        "tcp",

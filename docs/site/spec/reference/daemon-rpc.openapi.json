@@ -17,7 +17,7 @@
     },
     {
       "url": "http://127.0.0.1:9090",
-      "description": "Example TCP listener for integration or remote-adapter development."
+      "description": "Example loopback TCP listener for trusted integration or remote-adapter development; it is not a public authenticated endpoint."
     }
   ],
   "tags": [
@@ -39,7 +39,7 @@
     },
     {
       "name": "mesh",
-      "description": "Provider-owned Mesh topology, task, stream, beacon, and daemon bookkeeping calls."
+      "description": "Provider-owned Mesh listener lifecycle, topology, task, stream, beacon, and daemon bookkeeping calls."
     }
   ],
   "paths": {
@@ -1317,6 +1317,81 @@
           }
         }
       }
+    },
+    "/hovel.daemon.v1.DaemonService/ListMeshListeners": {
+      "post": {
+        "tags": [
+          "mesh"
+        ],
+        "operationId": "ListMeshListeners",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/MeshListenerListRequest"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MeshListenerListResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/TextError"
+          },
+          "405": {
+            "$ref": "#/components/responses/TextError"
+          },
+          "500": {
+            "$ref": "#/components/responses/TextError"
+          }
+        }
+      }
+    },
+    "/hovel.daemon.v1.DaemonService/StartMeshListener": {
+      "post": {
+        "tags": [
+          "mesh"
+        ],
+        "operationId": "StartMeshListener",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/MeshListenerStartRequest"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MeshListenerStartResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/TextError"
+          },
+          "405": {
+            "$ref": "#/components/responses/TextError"
+          },
+          "500": {
+            "$ref": "#/components/responses/TextError"
+          }
+        }
+      }
+    },
+    "/hovel.daemon.v1.DaemonService/StopMeshListener": {
+      "post": {
+        "tags": [
+          "mesh"
+        ],
+        "operationId": "StopMeshListener",
+        "requestBody": {
+          "$ref": "#/components/requestBodies/MeshListenerStopRequest"
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/MeshListenerStopResponse"
+          },
+          "400": {
+            "$ref": "#/components/responses/TextError"
+          },
+          "405": {
+            "$ref": "#/components/responses/TextError"
+          },
+          "500": {
+            "$ref": "#/components/responses/TextError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1720,6 +1795,36 @@
             }
           }
         }
+      },
+      "MeshListenerListRequest": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MeshListenerListRequest"
+            }
+          }
+        }
+      },
+      "MeshListenerStartRequest": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MeshListenerStartRequest"
+            }
+          }
+        }
+      },
+      "MeshListenerStopRequest": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MeshListenerStopRequest"
+            }
+          }
+        }
       }
     },
     "responses": {
@@ -1972,6 +2077,36 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/MeshBridgeCloseResponse"
+            }
+          }
+        }
+      },
+      "MeshListenerListResponse": {
+        "description": "Provider-reported Mesh listening posts.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MeshListenerListResponse"
+            }
+          }
+        }
+      },
+      "MeshListenerStartResponse": {
+        "description": "Started or attached Mesh listening post and audit operation.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MeshListenerStartResponse"
+            }
+          }
+        }
+      },
+      "MeshListenerStopResponse": {
+        "description": "Stopped or detached Mesh listening post and audit operation.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MeshListenerStopResponse"
             }
           }
         }
@@ -3494,6 +3629,9 @@
           },
           "agentContext": {
             "$ref": "#/components/schemas/AgentContext"
+          },
+          "listenerId": {
+            "type": "string"
           }
         }
       },
@@ -3522,6 +3660,9 @@
           },
           "agentContext": {
             "$ref": "#/components/schemas/AgentContext"
+          },
+          "listenerId": {
+            "type": "string"
           }
         }
       },
@@ -3567,6 +3708,16 @@
           },
           "state": {
             "type": "string"
+          },
+          "listenerId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "start",
+              "stop"
+            ]
           }
         }
       },
@@ -3649,6 +3800,19 @@
           },
           "closedAt": {
             "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "start",
+              "stop"
+            ]
+          },
+          "listenerId": {
+            "type": "string"
+          },
+          "listenerState": {
+            "type": "string"
           }
         }
       },
@@ -3684,6 +3848,12 @@
           },
           "attributes": {
             "$ref": "#/components/schemas/AnyObject"
+          },
+          "listenerTypes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshListenerSpec"
+            }
           }
         }
       },
@@ -3756,6 +3926,9 @@
             "$ref": "#/components/schemas/StringList"
           },
           "lastSeen": {
+            "type": "string"
+          },
+          "listenerId": {
             "type": "string"
           }
         }
@@ -3873,6 +4046,9 @@
           },
           "lastFired": {
             "type": "string"
+          },
+          "listenerId": {
+            "type": "string"
           }
         }
       },
@@ -3902,6 +4078,9 @@
           },
           "fields": {
             "$ref": "#/components/schemas/AnyObject"
+          },
+          "listenerId": {
+            "type": "string"
           }
         }
       },
@@ -3960,6 +4139,9 @@
           },
           "agentContext": {
             "$ref": "#/components/schemas/AgentContext"
+          },
+          "listenerId": {
+            "type": "string"
           }
         }
       },
@@ -4028,6 +4210,9 @@
             "items": {
               "$ref": "#/components/schemas/AgentContext"
             }
+          },
+          "listenerId": {
+            "type": "string"
           }
         }
       },
@@ -4051,6 +4236,9 @@
           },
           "fields": {
             "$ref": "#/components/schemas/AnyObject"
+          },
+          "listenerId": {
+            "type": "string"
           }
         }
       },
@@ -4086,6 +4274,9 @@
           },
           "agentContext": {
             "$ref": "#/components/schemas/AgentContext"
+          },
+          "listenerId": {
+            "type": "string"
           }
         }
       },
@@ -4183,6 +4374,260 @@
           },
           "state": {
             "type": "string"
+          }
+        }
+      },
+      "MeshListenerDeployment": {
+        "type": "string",
+        "enum": [
+          "embedded",
+          "separate"
+        ]
+      },
+      "MeshListenerManagement": {
+        "type": "string",
+        "enum": [
+          "provider",
+          "external"
+        ]
+      },
+      "MeshListener": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "description": "Provider-reported listening post. Start configuration and credentials are intentionally absent.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "deployment": {
+            "$ref": "#/components/schemas/MeshListenerDeployment"
+          },
+          "management": {
+            "$ref": "#/components/schemas/MeshListenerManagement"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "addresses": {
+            "$ref": "#/components/schemas/StringList"
+          },
+          "protocols": {
+            "$ref": "#/components/schemas/StringList"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/StringList"
+          },
+          "labels": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "attributes": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        }
+      },
+      "MeshListenerSpec": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summary": {
+            "type": "string"
+          },
+          "deployments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshListenerDeployment"
+            }
+          },
+          "managementModes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshListenerManagement"
+            }
+          },
+          "protocols": {
+            "$ref": "#/components/schemas/StringList"
+          },
+          "configSchema": {
+            "$ref": "#/components/schemas/AnyObject"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/StringList"
+          }
+        }
+      },
+      "MeshListenerListInnerRequest": {
+        "type": "object",
+        "properties": {
+          "listenerId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "agentContext": {
+            "$ref": "#/components/schemas/AgentContext"
+          }
+        }
+      },
+      "MeshListenerStartInnerRequest": {
+        "type": "object",
+        "required": [
+          "listenerId"
+        ],
+        "properties": {
+          "listenerId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "deployment": {
+            "$ref": "#/components/schemas/MeshListenerDeployment"
+          },
+          "management": {
+            "$ref": "#/components/schemas/MeshListenerManagement"
+          },
+          "config": {
+            "$ref": "#/components/schemas/AnyObject",
+            "writeOnly": true,
+            "description": "Provider-specific write-only configuration; never returned by listener read models."
+          },
+          "agentContext": {
+            "$ref": "#/components/schemas/AgentContext"
+          }
+        }
+      },
+      "MeshListenerStopInnerRequest": {
+        "type": "object",
+        "required": [
+          "listenerId"
+        ],
+        "properties": {
+          "listenerId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agentContext": {
+            "$ref": "#/components/schemas/AgentContext"
+          }
+        }
+      },
+      "MeshListenerListRequest": {
+        "type": "object",
+        "required": [
+          "moduleId",
+          "request"
+        ],
+        "properties": {
+          "moduleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request": {
+            "$ref": "#/components/schemas/MeshListenerListInnerRequest"
+          }
+        }
+      },
+      "MeshListenerStartRequest": {
+        "type": "object",
+        "required": [
+          "moduleId",
+          "request"
+        ],
+        "properties": {
+          "moduleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request": {
+            "$ref": "#/components/schemas/MeshListenerStartInnerRequest"
+          }
+        }
+      },
+      "MeshListenerStopRequest": {
+        "type": "object",
+        "required": [
+          "moduleId",
+          "request"
+        ],
+        "properties": {
+          "moduleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request": {
+            "$ref": "#/components/schemas/MeshListenerStopInnerRequest"
+          }
+        }
+      },
+      "MeshListenerListResponse": {
+        "type": "object",
+        "required": [
+          "listeners"
+        ],
+        "properties": {
+          "listeners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeshListener"
+            }
+          }
+        }
+      },
+      "MeshListenerStartResponse": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "listener"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "listener": {
+            "$ref": "#/components/schemas/MeshListener"
+          }
+        }
+      },
+      "MeshListenerStopResponse": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "listener"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "listener": {
+            "$ref": "#/components/schemas/MeshListener"
           }
         }
       }

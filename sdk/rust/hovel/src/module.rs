@@ -3,8 +3,10 @@
 use crate::context::Context;
 use crate::json::Value;
 use crate::mesh::{
-    MeshBeacon, MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshStreamRequest,
+    MeshBeacon, MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshListener,
+    MeshListenerListRequest, MeshListenerStartRequest, MeshListenerStopRequest, MeshStreamRequest,
     MeshTaskRequest, MeshTaskResult, MeshTopology, MeshTopologyRequest, MESH_RPC_BEACONS_METHOD,
+    MESH_RPC_LISTENERS_METHOD, MESH_RPC_LISTENER_START_METHOD, MESH_RPC_LISTENER_STOP_METHOD,
     MESH_RPC_OPEN_STREAM_METHOD, MESH_RPC_TASK_METHOD, MESH_RPC_TOPOLOGY_METHOD,
 };
 use crate::result::Outcome;
@@ -120,6 +122,30 @@ pub trait Module {
     fn list_mesh_beacons(&self, _req: MeshBeaconRequest) -> Result<Vec<MeshBeacon>, String> {
         Err(format!(
             "module {:?} does not implement {MESH_RPC_BEACONS_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn list_mesh_listeners(
+        &self,
+        _req: MeshListenerListRequest,
+    ) -> Result<Vec<MeshListener>, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_LISTENERS_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn start_mesh_listener(&self, _req: MeshListenerStartRequest) -> Result<MeshListener, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_LISTENER_START_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn stop_mesh_listener(&self, _req: MeshListenerStopRequest) -> Result<MeshListener, String> {
+        Err(format!(
+            "module {:?} does not implement {MESH_RPC_LISTENER_STOP_METHOD}",
             self.info().name,
         ))
     }
