@@ -6,7 +6,7 @@ explicit installed-payload result records, and Mesh provider hooks.
 
 For a complete Mesh development path—capability design, tasking, streams,
 listening posts, daemon calls, and routing an existing module through a local
-bridge—see the [Mesh Provider Development Guide](../../docs/site/spec/mesh-development.html).
+bridge—see the [Mesh Provider Development Guide](../../docs/site/src/content/spec/mesh-development.html).
 
 The crate name is `hovel` inside this repository.
 

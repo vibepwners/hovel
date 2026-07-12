@@ -1,0 +1,37 @@
+<!-- hovel-doc: {"title":"Running Blobs","group":"picblobs","order":100,"navTitle":"Running Blobs"} -->
+<article>
+<h1 id="running-blobs">Running Blobs</h1>
+<p>The <code>picblobs-cli</code> CLI operates on blobs staged in the package. It has
+no knowledge of the build system.</p>
+<pre data-lang="bash"><code># Run hello on x86_64 (native -- no QEMU)
+picblobs-cli run hello linux:x86_64
+
+# Run hello on a cross architecture (via QEMU)
+picblobs-cli run hello linux:aarch64
+
+# Run hello_windows through the mock TEB/PEB runner
+picblobs-cli run hello_windows windows:x86_64
+
+# Verify all staged blobs on all architectures
+picblobs-cli verify
+
+# Verify a specific OS
+picblobs-cli verify --os windows
+
+# List all blobs in the package
+picblobs-cli list
+
+# Show blob metadata
+picblobs-cli info hello linux:x86_64
+picblobs-cli info hello_windows windows:i686
+</code></pre>
+<h2 id="targeted-verification">Targeted verification</h2>
+<p>Run <code>verify</code> against a single architecture while iterating:</p>
+<pre data-lang="bash"><code>picblobs-cli verify --os linux --arch ppc64le
+picblobs-cli verify --os linux --arch riscv64
+</code></pre>
+<h2 id="freebsd-note">FreeBSD coverage</h2>
+<p><code>verify</code> only runs <code>freebsd:x86_64</code>. Other FreeBSD blob architectures are
+still built and shipped, but they are excluded from the Linux-hosted
+verification matrix. <code>ul_exec</code> is only built for <code>freebsd:x86_64</code>.</p>
+      </article>

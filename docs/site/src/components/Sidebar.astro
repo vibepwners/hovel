@@ -1,0 +1,91 @@
+---
+import type { DocArea, DocPage } from "../lib/catalog";
+import { bookParts, navGroups } from "../lib/catalog";
+
+interface Props {
+  area: Exclude<DocArea, "home">;
+  current: DocPage;
+  root: string;
+}
+
+const { area, current, root } = Astro.props;
+const groups = navGroups(area);
+const rootGroup = groups.find((group) => group.label === "Modules");
+const moduleGroups = groups.filter((group) => group.label !== "Modules");
+const label = (page: DocPage) => page.navTitle ?? page.title;
+const navigationId = `${area}-sidebar-navigation`;
+const contentsPage = area === "book" ? groups.flatMap((group) => group.pages).find((page) => page.slug === "spec/index") : undefined;
+const parts = area === "book" ? bookParts() : [];
+---
+
+<aside class="sidebar">
+  <button class="sidebar-toggle" type="button" aria-controls={navigationId} aria-expanded="false">
+    <span>Browse {area === "book" ? "the book" : "modules"}</span>
+    <span aria-hidden="true">+</span>
+  </button>
+  <nav id={navigationId} aria-label={`${area === "book" ? "Book" : "Module"} navigation`}>
+  {area === "book" && contentsPage && (
+    <>
+      <a class="sidebar-contents" href={`${root}${contentsPage.href}`} aria-current={contentsPage.slug === current.slug ? "page" : undefined}>
+        <span>TOC</span>
+        <strong>Book contents</strong>
+      </a>
+      {parts.map((part) => (
+        <section class="sidebar-part">
+          <p class="sidebar-section"><span>{String(part.number).padStart(2, "0")}</span>{part.label}</p>
+          <ul>
+            {part.chapters.map((chapter) => (
+              <li>
+                <a href={`${root}${chapter.page.href}`} aria-current={chapter.page.slug === current.slug ? "page" : undefined}>
+                  <span class="sidebar-chapter-number">{chapter.label}</span>
+                  <span>{label(chapter.page)}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </>
+  )}
+  {area === "modules" && rootGroup && (
+    <>
+      <p class="sidebar-section">Modules</p>
+      <ul>
+        {rootGroup.pages.map((page) => (
+          <li><a href={`${root}${page.href}`} aria-current={page.slug === current.slug ? "page" : undefined}>{label(page)}</a></li>
+        ))}
+      </ul>
+      <p class="sidebar-section">Payload Providers</p>
+      <ul>
+        {moduleGroups.map((group) => {
+          const overview = group.pages.find((page) => page.slug === `modules/${group.label}/index`) ?? group.pages[0];
+          const isOpen = current.group === group.label;
+          return (
+            <li>
+              <details class="module-nav" open={isOpen}>
+                <summary><a href={`${root}${overview.href}`} aria-current={overview.slug === current.slug ? "page" : undefined}>{group.label}</a></summary>
+                <ul class="sidebar-nested">
+                  {group.pages.filter((page) => page !== overview).map((page) => (
+                    <li><a href={`${root}${page.href}`} aria-current={page.slug === current.slug ? "page" : undefined}>{label(page)}</a></li>
+                  ))}
+                </ul>
+              </details>
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  )}
+  </nav>
+</aside>
+
+<script>
+  const sidebar = document.querySelector<HTMLElement>(".sidebar");
+  const toggle = sidebar?.querySelector<HTMLButtonElement>(".sidebar-toggle");
+  toggle?.addEventListener("click", () => {
+    const open = toggle.getAttribute("aria-expanded") !== "true";
+    toggle.setAttribute("aria-expanded", String(open));
+    sidebar?.classList.toggle("sidebar-is-open", open);
+    toggle.querySelector<HTMLElement>("[aria-hidden]")!.textContent = open ? "−" : "+";
+  });
+</script>

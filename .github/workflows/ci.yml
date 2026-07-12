@@ -134,7 +134,7 @@ jobs:
         run: task actions:summary -- modules-ci
 
   docs:
-    name: Docs verification and host demos
+    name: Docs, test report, and Pages artifact
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -153,15 +153,14 @@ jobs:
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         run: task actions:configure-bazel-cache
-      - name: Verify remote-compatible docs
-        run: task docs:check
-      - name: Render host-service demos and stage site
-        run: task docs:site
+      - name: Build evidence-backed Pages site
+        run: task docs:report
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: docs-site
           path: _site/
           if-no-files-found: error
+          include-hidden-files: true
       - if: always()
         env:
           JOB_STATUS: ${{ job.status }}

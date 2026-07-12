@@ -1,0 +1,113 @@
+<!-- hovel-doc: {"title":"Testing Strategy","group":"Engineering","order":150,"navTitle":"Testing Strategy"} -->
+<article>
+        <h1>Testing Strategy</h1>
+
+        <p>Hovel tests contracts first. The main risk is not only that a function breaks; it is that CLI, one-shot execution, MCP, daemon RPC, module hosts, storage, and SDKs disagree about the same operation, chain, throw, provider, payload, session, artifact, or event.</p>
+
+        <h2>Local Gates</h2>
+        <p>All checks run through <a href="https://taskfile.dev/">Task</a>. For sparse checkout work, use the available-slice gate:</p>
+<pre data-lang="bash"><code>task checkout:status
+task check
+</code></pre>
+        <p><code>task check</code> detects the repository slices present in the checkout and runs their slice checks. Missing optional slices are reported as skipped. Real failures in present slices still fail the task.</p>
+        <p>The full local gate is:</p>
+<pre data-lang="bash"><code>task ci
+</code></pre>
+        <p><code>task ci</code> first requires a full checkout. It then runs repository policy, lint, version-updater tests, remote-compatible docs verification, build, tests, the Go race gate, fuzz smoke, and coverage ratchets. Go compilation also runs Bazel-native <code>nogo</code> analysis, including nilness checks, across core, SDK, and module targets.</p>
+        <p>VHS rendering is an explicit host-service boundary: <code>task docs:site</code> drives tmux and Chrome, optionally Docker for Wine, then stages <code>_site/</code>, generates SDK API pages, and runs the internal link checker. <code>task docs:ci</code> composes <code>docs:check</code> and <code>docs:site</code> for hosts that provide those services; the remote-compatible aggregate does not pretend those actions can execute remotely.</p>
+
+        <h2>CI Gate</h2>
+        <p>The repository split changed the CI shape. The local and hosted gates are modular but Task-backed:</p>
+        <ol>
+          <li><code>core</code>: <code>task build</code>, <code>task test</code>, race tests, fuzz smoke, lint, and coverage for the core workspace.</li>
+          <li><code>sdk</code>: <code>task sdk:ci</code> builds and tests the Go, Python, and Rust SDK slices.</li>
+          <li><code>modules</code>: <code>task modules:ci</code> builds and tests in-repo examples, Squatter provider code, module packaging checks, and workspace install behavior, then <code>task release:modules-package</code> verifies the module package/index release path.</li>
+          <li><code>docs</code>: <code>task docs:check</code> runs the remote-compatible verification suite; a separate <code>task docs:site</code> step renders host-service demos, stages <code>_site/</code>, generates SDK API pages, and runs the internal link checker.</li>
+          <li><code>squatter-wine</code>: installs Wine in CI, then runs <code>task modules:wine-test</code> and <code>task docs:demos:wine</code>.</li>
+        </ol>
+        <p>CI, Pages, and publish jobs append GitHub Actions job summaries with the commands they ran, coverage ratchets, generated artifacts, staged site statistics, or publish targets where those details apply.</p>
+        <p>Astro always publishes the <a href="../reports/tests/latest/index.html">test report application</a>. Run <code>task docs:report</code> to execute the report-producing test workflow and attach its JSON, logs, and XML to the application in <code>_site/</code>. A normal <code>task docs:build</code> deterministically publishes the same route without test evidence. The report preserves Bazel target-level evidence, suite-level rollups, per-case XML where present, assertion failure messages, captured case output, full console logs, raw XML, and undeclared outputs for drilldown across the monorepo.</p>
+        <p>Docs verification stays in the docs slice instead of becoming a dependency of every core checkout. The full aggregate <code>task ci</code> requires a complete checkout and runs the wired remote-compatible slice gates together. Hosted CI runs host-service demo rendering as a separately named step so failures cannot be confused with hermetic build or test failures.</p>
+
+        <h2>Test Inventory</h2>
+        <p>The root Bazel test suite covers the main product surfaces:</p>
+        <ol>
+          <li>Go host tests for domain packages, application services, command registry, daemon runtime, daemon manager, SQLite/filesystem storage, descriptors, CLI, command mode, root CLI, daemon RPC, MCP, and the Hovel binary entrypoint.</li>
+          <li>Module-runtime tests for Python RPC, Go SDK, Go SDK test helpers, Python SDK, Rust SDK, Go/Python/Rust example modules, and the MS17-010 Python example modules.</li>
+          <li>Chain, throw, confirmation, launch-key, artifact, event, installed-payload, session, and operator-session behavior through application and adapter tests.</li>
+          <li>Schema smoke tests and documentation smoke tests.</li>
+          <li>Squatter provider tests, PE/source-contract tests, client wire/shell/SMB pipe unit tests, mux/protocol integration tests, file transfer tests, and Wine-backed functional tests in the Wine gate.</li>
+          <li>Module packaging tests for in-repo example modules and workspace installation.</li>
+          <li>Demo harness tests, including standard throw/session/MCP verification and the MCP agent demo harness.</li>
+          <li>Shared throw-audit contract assertions reused by command mode, CLI, and MCP tests.</li>
+          <li>A fuzz smoke target for pure domain parsing behavior.</li>
+        </ol>
+
+        <h2>What Each Layer Protects</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>What it protects</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Domain</td>
+              <td>Validated value objects, state transitions, IDs, and safety-sensitive invariants without adapter imports.</td>
+            </tr>
+            <tr>
+              <td>Application services</td>
+              <td>Planning, confirmation, throw control, chain runtime, operator session state, installed payload records, artifacts, events, and launch-key behavior.</td>
+            </tr>
+            <tr>
+              <td>Adapters</td>
+              <td>CLI, one-shot command mode, root commands, daemon RPC, MCP tools, terminal logging, descriptor loading, and filesystem storage.</td>
+            </tr>
+            <tr>
+              <td>SDKs and modules</td>
+              <td>JSON-RPC framing, handshake/schema paths, logging, step hooks, sessions, provider methods, packaging, and language-specific helper APIs.</td>
+            </tr>
+            <tr>
+              <td>Squatter</td>
+              <td>Provider behavior, Windows PE shape, no-import-table constraints, mux framing, process/file modules, transports, and Wine-backed payload operation.</td>
+            </tr>
+            <tr>
+              <td>Docs and demos</td>
+              <td>Bazel-declared operator demo GIFs, staged Pages content, SDK API docs, and internal links.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>Safety-Sensitive Contracts</h2>
+        <p>Tests around throw execution must preserve these rules:</p>
+        <ol>
+          <li>A throw cannot start without a persisted plan and matching confirmation record.</li>
+          <li><code>throw --now</code> skips the prompt but still persists an auditable bypass confirmation.</li>
+          <li>Dangerous modules require the explicit dangerous-module allowance before execution.</li>
+          <li>CLI, one-shot execution, MCP, and future adapters must use the same planning, confirmation, guardrail, event, artifact, and persistence paths. The shared audit contract asserts durable plan, now-bypass confirmation, and throw lifecycle events after real front-end execution.</li>
+          <li>Installed payload records are created only from explicit provider descriptors and remain visible when reconnect or cleanup fails.</li>
+          <li>Operator-controlled configuration values are not silently redacted or dropped.</li>
+        </ol>
+
+        <h2>Coverage Metrics</h2>
+        <p>Coverage is a ratchet, not a vanity number. <code>task coverage</code> runs Bazel merged LCOV coverage for the Go domain and application layers through <code>task coverage:go</code>, then runs Python SDK coverage through the standard-library trace module. It writes generated reports to <code>coverage/</code>.</p>
+<pre data-lang="targets"><code>Domain ratchet: 75%
+Application ratchet: 65%
+Python SDK ratchet: 80%
+</code></pre>
+        <p>The ratchets start below the existing baselines so the gate fails on regressions without pretending the first enforced number is the long-term target. Run <code>task coverage</code> for the current measured values. The intended long-term goals remain domain 90%+, application services 85%+, Python SDK 85%+, and adapter coverage judged primarily by contract behavior rather than raw line count.</p>
+
+        <h2>Stress Gates</h2>
+        <p><code>task test:race</code> runs the application service layer with the Go race detector through rules_go. <code>task fuzz:smoke</code> runs a short fuzz campaign against the domain event type parser. Both are part of <code>task ci</code> and the GitHub Actions <code>build-test</code> job.</p>
+
+        <h2>Future Coverage</h2>
+        <p>New product surfaces should bring their own contract tests before becoming durable product promises:</p>
+        <ol>
+          <li>The TUI should have model/update tests, rendering tests, and daemon-boundary integration tests.</li>
+          <li>REST/OpenAPI should verify generated API contracts, authorization/session binding, and parity with application services.</li>
+          <li>The general service process runtime should have lifecycle, health-check, supervision, logging, and shutdown tests.</li>
+          <li>Richer MCP resources and prompts should verify that they expose context without granting authority or bypassing confirmation.</li>
+          <li>Coverage ratchets should tighten as focused tests land, rather than jumping directly to aspirational percentages.</li>
+        </ol>
+      </article>

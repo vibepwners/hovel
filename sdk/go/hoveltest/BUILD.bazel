@@ -1,5 +1,11 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
+filegroup(
+    name = "sources",
+    srcs = glob(["*.go"]),
+    visibility = ["//visibility:public"],
+)
+
 go_library(
     name = "hoveltest",
     srcs = ["payload_provider.go"],

@@ -1,0 +1,41 @@
+<!-- hovel-doc: {"title":"Building Squatter","group":"squatter","order":20,"navTitle":"Building"} -->
+<article>
+        <h1>Building Squatter</h1>
+        <p>
+          Build Squatter from the repository root integration workspace. The
+          aggregate module build covers the Go provider, the selected Windows PE
+          payload, and the source module targets that do not require a dedicated
+          Wine runtime. Use Task targets so local and CI Bazel configuration is
+          applied consistently.
+        </p>
+
+        <h2>Primary Build</h2>
+<pre data-lang="shell"><code>task modules:build
+task bazel:build -- //:modules_build
+task bazel:build -- //modules/squatter:build</code></pre>
+
+        <h2>Focused Targets</h2>
+<pre data-lang="shell"><code>task bazel:build -- //modules/squatter/provider:squatter-provider
+task bazel:build -- //modules/squatter/provider:squatter-generate
+task bazel:build -- //modules/squatter/windows:squatter_x86_exe
+task bazel:build -- //modules/squatter/windows/src:squatter_all
+task bazel:build -- //modules/squatter/client/cmd/squatterctl:squatterctl</code></pre>
+
+        <h2>Windows Payload</h2>
+        <p>
+          <code>modules/squatter/windows/src:squatter.exe</code> is the payload
+          product. It links with <code>-nostdlib</code>, enters through
+          <code>_sq_nocrt_entry</code>, and uses the repo-local MinGW toolchain
+          rules in <code>modules/squatter/bazel</code>. The public provider
+          package selects the i686 PE as <code>squatter.exe</code>.
+        </p>
+
+        <h2>Package Artifacts</h2>
+        <p>
+          Module release packaging first stages native launchers and the payload
+          under <code>modules/examples/bin</code>, then writes package archives,
+          indexes, install sets, and checksums under <code>dist/modules</code>.
+        </p>
+<pre data-lang="shell"><code>task release:modules-stage
+task release:modules-package</code></pre>
+      </article>

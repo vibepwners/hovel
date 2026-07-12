@@ -12,22 +12,10 @@ import subprocess
 import tempfile
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, unquote, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
-
-import site_chrome
-
-
-@dataclass(frozen=True)
-class ApiPage:
-    title: str
-    subtitle: str
-    href: str
-    description: str
-
 
 PKGSITE_VERSION = "v0.2.0"
 PKGSITE_PACKAGES = (
@@ -36,14 +24,12 @@ PKGSITE_PACKAGES = (
         "github.com/Vibe-Pwners/hovel/sdk/go/hovel",
         "go/hovel/index.html",
         "go/github.com/Vibe-Pwners/hovel/sdk/go/hovel/index.html",
-        "pkgsite snapshot for the primary Go SDK package.",
     ),
     (
         "Go SDK API: hoveltest",
         "github.com/Vibe-Pwners/hovel/sdk/go/hoveltest",
         "go/hoveltest/index.html",
         "go/github.com/Vibe-Pwners/hovel/sdk/go/hoveltest/index.html",
-        "pkgsite snapshot for Go SDK test helpers.",
     ),
 )
 
@@ -51,20 +37,23 @@ PKGSITE_PACKAGES = (
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate native SDK API reference pages.")
     parser.add_argument("--output", default="_site/api/sdk", type=Path)
-    parser.add_argument("--site-root", default="_site", type=Path)
     parser.add_argument("--repo-root", default=".", type=Path)
+    parser.add_argument("--uv-bin", default=None, type=Path)
+    parser.add_argument("--go-bin", default=None, type=Path)
+    parser.add_argument("--rustdoc-bin", default=None, type=Path)
     args = parser.parse_args()
 
     main_with_paths(
         repo_root=args.repo_root.resolve(),
-        site_root=args.site_root.resolve(),
         output=args.output.resolve(),
+        uv_bin=args.uv_bin.resolve() if args.uv_bin else None,
+        go_bin=args.go_bin.resolve() if args.go_bin else None,
+        rustdoc_bin=args.rustdoc_bin.resolve() if args.rustdoc_bin else None,
     )
 
 
 def main_with_paths(
     repo_root: Path,
-    site_root: Path,
     output: Path,
     *,
     uv_bin: Path | None = None,
@@ -72,21 +61,17 @@ def main_with_paths(
     rustdoc_bin: Path | None = None,
 ) -> None:
     repo = repo_root.resolve()
-    site_root = site_root.resolve()
     output = output.resolve()
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
 
-    pages = [
-        generate_python_docs(repo, output, uv_bin=uv_bin),
-        *generate_go_docs(repo, site_root, output, go_bin=go_bin),
-        generate_rust_docs(repo, output, rustdoc_bin=rustdoc_bin),
-    ]
-    write_index(output / "index.html", site_root, pages)
+    generate_python_docs(repo, output, uv_bin=uv_bin)
+    generate_go_docs(repo, output, go_bin=go_bin)
+    generate_rust_docs(repo, output, rustdoc_bin=rustdoc_bin)
 
 
-def generate_python_docs(repo: Path, output: Path, *, uv_bin: Path | None = None) -> ApiPage:
+def generate_python_docs(repo: Path, output: Path, *, uv_bin: Path | None = None) -> None:
     source = repo / "docs/tools/docs/python_api"
     with (
         tempfile.TemporaryDirectory(prefix="hovel-sphinx-doctrees-") as doctrees,
@@ -117,27 +102,17 @@ def generate_python_docs(repo: Path, output: Path, *, uv_bin: Path | None = None
                 "UV_PROJECT_ENVIRONMENT": uv_env,
             },
         )
-    return ApiPage(
-        title="Python SDK API",
-        subtitle="hovel_sdk",
-        href="python/index.html",
-        description="Sphinx autodoc output from the importable Python SDK package.",
-    )
 
 
-def generate_go_docs(repo: Path, site_root: Path, output: Path, *, go_bin: Path | None = None) -> list[ApiPage]:
-    pages: list[ApiPage] = []
+def generate_go_docs(repo: Path, output: Path, *, go_bin: Path | None = None) -> None:
     go_output = output / "go"
     with run_pkgsite(repo, go_bin=go_bin) as base_url:
-        write_go_index(go_output / "index.html", site_root)
-        for title, import_path, href, snapshot_href, description in PKGSITE_PACKAGES:
+        for title, import_path, href, snapshot_href in PKGSITE_PACKAGES:
             snapshot_pkgsite_package(base_url, go_output, import_path)
             write_redirect(output / href, relative_href(output / href, output / snapshot_href), title)
-            pages.append(ApiPage(title=title, subtitle=import_path, href=href, description=description))
-    return pages
 
 
-def generate_rust_docs(repo: Path, output: Path, *, rustdoc_bin: Path | None = None) -> ApiPage:
+def generate_rust_docs(repo: Path, output: Path, *, rustdoc_bin: Path | None = None) -> None:
     rust_output = output / "rust"
     rust_output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="hovel-rustdoc-") as tmp:
@@ -158,12 +133,6 @@ def generate_rust_docs(repo: Path, output: Path, *, rustdoc_bin: Path | None = N
     (rust_output / ".lock").unlink(missing_ok=True)
     write_redirect(rust_output / "index.html", "hovel/index.html", "Hovel Rust SDK API")
     write_missing_rustdoc_implementor_files(rust_output)
-    return ApiPage(
-        title="Rust SDK API",
-        subtitle="crate hovel",
-        href="rust/hovel/index.html",
-        description="rustdoc output from the Rust SDK crate root.",
-    )
 
 
 @contextmanager
@@ -178,6 +147,10 @@ def run_pkgsite(repo: Path, *, go_bin: Path | None = None):
         copy_file(repo / "core/go.sum", pkg_root / "go.sum")
         copy_tree_contents(repo / "sdk/go", pkg_root / "sdk/go")
         log_path = tmp_root / "pkgsite.log"
+        go_env = os.environ.copy()
+        go_env["GOCACHE"] = str(tmp_root / "go-build-cache")
+        go_env["GOMODCACHE"] = str(tmp_root / "go-module-cache")
+        go_env["GOPATH"] = str(tmp_root / "gopath")
         with log_path.open("w+") as log:
             process = subprocess.Popen(
                 [
@@ -188,6 +161,7 @@ def run_pkgsite(repo: Path, *, go_bin: Path | None = None):
                     "-list=false",
                 ],
                 cwd=pkg_root,
+                env=go_env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -342,76 +316,6 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def write_index(path: Path, site_root: Path, pages: list[ApiPage]) -> None:
-    cards = []
-    for page in pages:
-        cards.append(
-            f'<a class="tile" href="{html.escape(page.href)}">'
-            f'<span class="tile-label">API</span>'
-            f'<span class="tile-title">{html.escape(page.title)}</span>'
-            f'<span class="tile-desc">{html.escape(page.subtitle)}</span>'
-            f'<span class="tile-desc">{html.escape(page.description)}</span>'
-            "</a>"
-        )
-    body = (
-        "<h1>SDK API Reference</h1>"
-        "<p>These pages are generated with each SDK language's documentation tooling: "
-        "Sphinx autodoc for Python, pkgsite for Go, and rustdoc for Rust.</p>"
-        '<div class="tiles">'
-        + "\n".join(cards)
-        + "</div>"
-    )
-    write_hovel_page(path, site_root, "SDK API Reference", body, current="API Docs")
-
-
-def write_go_index(path: Path, site_root: Path) -> None:
-    cards = []
-    for title, import_path, _href, snapshot_href, description in PKGSITE_PACKAGES:
-        cards.append(
-            f'<a class="tile" href="{html.escape(snapshot_href.removeprefix("go/"))}">'
-            '<span class="tile-label">Go</span>'
-            f'<span class="tile-title">{html.escape(title)}</span>'
-            f'<span class="tile-desc">{html.escape(import_path)}</span>'
-            f'<span class="tile-desc">{html.escape(description)}</span>'
-            "</a>"
-        )
-    body = (
-        "<h1>Go SDK API</h1>"
-        f"<p>This section is a static snapshot from pkgsite {html.escape(PKGSITE_VERSION)}, "
-        "the local documentation server for pkg.go.dev-style Go package docs.</p>"
-        '<div class="tiles">'
-        + "\n".join(cards)
-        + "</div>"
-    )
-    write_hovel_page(path, site_root, "Go SDK API", body, current="API Docs")
-
-
-def write_hovel_page(path: Path, site_root: Path, title: str, body: str, *, current: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    root = site_chrome.relative_prefix(path, site_root)
-    html_text = f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{html.escape(title)} - Hovel SDK API</title>
-  <link rel="icon" type="image/png" href="{root}assets/hovel.png">
-  <link rel="stylesheet" href="{root}assets/site.css">
-</head>
-<body>
-{site_chrome.topbar_html(root, current, "// api")}
-  <main class="content" style="max-width: 1040px; margin: 0 auto;">
-    {body}
-  </main>
-  <footer class="sitefoot">
-    <p>Hovel SDK API · generated from native documentation tools · <a href="{root}spec/module-development.html">module docs</a></p>
-  </footer>
-</body>
-</html>
-"""
-    path.write_text(html_text)
-
-
 def write_redirect(path: Path, target: str, title: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -462,13 +366,6 @@ def copy_tree_contents(source: Path, dest: Path) -> None:
 def copy_file(source: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, dest)
-
-
-def relative_prefix(path: Path, site_root: Path) -> str:
-    rel = os.path.relpath(site_root, path.parent)
-    if rel == ".":
-        return ""
-    return rel.replace(os.sep, "/").rstrip("/") + "/"
 
 
 def relative_href(from_path: Path, to_path: Path) -> str:

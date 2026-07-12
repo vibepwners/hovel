@@ -1,0 +1,64 @@
+---
+import BookContents from "../components/BookContents.astro";
+import Sidebar from "../components/Sidebar.astro";
+import type { DocPage } from "../lib/catalog";
+import { bookChapter, orderedPages, rootPrefix } from "../lib/catalog";
+import PageShell from "./PageShell.astro";
+
+interface Props {
+  page: DocPage;
+}
+
+const { page } = Astro.props;
+if (page.area === "home") throw new Error("DocsLayout cannot render the home page");
+const root = rootPrefix(page.slug);
+const ordered = orderedPages(page.area);
+const index = ordered.findIndex((candidate) => candidate.slug === page.slug);
+const previous = index > 0 ? ordered[index - 1] : undefined;
+const next = index + 1 < ordered.length ? ordered[index + 1] : undefined;
+const current = page.area === "book" ? "Book" : "Modules";
+const chapter = page.area === "book" ? bookChapter(page) : undefined;
+const isBookContents = page.slug === "spec/index";
+const navigationNumber = (candidate: DocPage) => page.area === "book" ? (bookChapter(candidate)?.label ?? "TOC") : undefined;
+---
+
+<PageShell
+  area={page.area}
+  current={current}
+  description={page.description}
+  root={root}
+  tag={chapter ? `// chapter ${chapter.label}` : page.area === "book" ? "// book" : "// modules"}
+  title={`${chapter ? `Chapter ${chapter.label}: ` : ""}${page.title} - Hovel ${page.area === "book" ? "book" : "modules"}`}
+>
+  <div class="layout">
+    <Sidebar area={page.area} current={page} root={root} />
+    <main
+      class:list={["content", page.area === "book" && "book-content", chapter && "book-chapter", isBookContents && "book-contents-page"]}
+      data-chapter-number={chapter?.label}
+    >
+      {chapter && (
+        <header class="book-chapter-header">
+          <span class="book-chapter-id">Chapter {chapter.label}</span>
+          <span class="book-chapter-part">Part {String(chapter.partNumber).padStart(2, "0")} / {chapter.partLabel}</span>
+        </header>
+      )}
+      <slot />
+      {isBookContents && <BookContents root={root} />}
+      <nav class="page-nav" aria-label="Page navigation">
+        {previous ? (
+          <a class="prev" href={`${root}${previous.href}`}>
+            <span class="page-nav-direction">← Previous</span>
+            <strong><span>{navigationNumber(previous)}</span>{previous.navTitle ?? previous.title}</strong>
+          </a>
+        ) : <span></span>}
+        <span class="spacer"></span>
+        {next ? (
+          <a class="next" href={`${root}${next.href}`}>
+            <span class="page-nav-direction">Next →</span>
+            <strong><span>{navigationNumber(next)}</span>{next.navTitle ?? next.title}</strong>
+          </a>
+        ) : <span></span>}
+      </nav>
+    </main>
+  </div>
+</PageShell>

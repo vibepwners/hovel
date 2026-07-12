@@ -1,0 +1,37 @@
+<!-- hovel-doc: {"title":"Getting Started","group":"picblobs","order":80,"navTitle":"Getting Started"} -->
+<article>
+<h1 id="getting-started">Getting Started</h1>
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+<li><a href="https://bazel.build/">Bazel 9.1.1</a> (see <code>.bazelversion</code>)</li>
+<li><a href="https://www.qemu.org/">QEMU user-mode</a> for cross-architecture testing — either binfmt_misc handlers (<code>qemu-user-binfmt</code>, preferred) or standalone <code>qemu-*-static</code> interpreters</li>
+<li>Python 3.10+</li>
+<li><a href="https://github.com/astral-sh/uv">uv</a> (recommended) or pip/venv</li>
+<li><code>clang-tidy</code> for full C lint (<code>pre-push</code> / <code>tools/c_lint_check.sh</code>)</li>
+</ul>
+<p>Toolchains are fetched automatically via <a href="https://toolchains.bootlin.com/">Bootlin</a>
+for Linux cross-compilation, including x86, ARM, AArch64, MIPS, s390x,
+SPARC, PowerPC, ppc64le, and RISC-V targets.</p>
+<h2 id="quick-start">Quick start</h2>
+<pre data-lang="bash"><code># Set up Python environment
+source sourceme
+
+# Build and stage all blobs + runners
+task stage
+
+# Verify everything works
+picblobs-cli verify
+
+# Run the full test suite
+task test
+</code></pre>
+<p><code>source sourceme</code> also installs the repo's Git hooks with <code>lefthook</code>, so local
+formatting and lint checks start running automatically on <code>git commit</code> and
+<code>git push</code>.</p>
+<h2 id="docker-podman-no-local-setup">Docker / Podman (no local setup)</h2>
+<p>A Fedora 43 dev container with all dependencies pre-installed is provided
+in <code>ci/</code>:</p>
+<pre data-lang="bash"><code>ci/dev.sh                                      # interactive shell
+ci/dev.sh 'source sourceme &amp;&amp; picblobs-cli verify'  # run a command and exit
+</code></pre>
+      </article>

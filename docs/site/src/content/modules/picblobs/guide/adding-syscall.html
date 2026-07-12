@@ -1,0 +1,11 @@
+<!-- hovel-doc: {"title":"Adding a New Syscall","group":"picblobs","order":150,"navTitle":"Adding a Syscall"} -->
+<article>
+<h1 id="adding-a-new-syscall">Adding a New Syscall</h1>
+<ol>
+<li>Add the number to every architecture's table in <code>SYSCALL_NUMBERS</code> in <code>tools/registry.py</code></li>
+<li>Add a <code>SyscallDef</code> entry to <code>SYSCALL_DEFS</code> in <code>tools/registry.py</code></li>
+<li>Run <code>python tools/generate.py</code></li>
+<li>Run <code>python -m pytest python/tests/test_sync.py -v</code></li>
+</ol>
+<p>The generated <code>sys/{name}.h</code> will contain the numbers, OS guards, and wrapper.</p>
+      </article>

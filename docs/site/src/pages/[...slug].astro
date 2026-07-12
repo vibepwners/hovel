@@ -1,0 +1,16 @@
+---
+import DocsLayout from "../layouts/DocsLayout.astro";
+import { getPage, pages } from "../lib/catalog";
+
+export function getStaticPaths() {
+  return pages
+    .filter((page) => page.slug !== "index")
+    .map((page) => ({ params: { slug: page.slug }, props: { slug: page.slug } }));
+}
+
+const page = getPage(Astro.props.slug);
+---
+
+<DocsLayout page={page}>
+  <Fragment set:html={page.body} />
+</DocsLayout>

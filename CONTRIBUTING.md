@@ -98,7 +98,7 @@ infra    -> app -> domain
 ## Tests
 
 - New behavior needs tests. Coverage ratchets and long-term goals are documented
-  in `docs/site/spec/testing-roadmap.html`; run `task coverage` for the current
+  in `docs/site/src/content/spec/testing-roadmap.html`; run `task coverage` for the current
   core floors.
 - Production commands should exercise the daemon boundary.
 - Mock modules exist for tests and examples only and are not part of the

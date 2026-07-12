@@ -1,0 +1,107 @@
+<!-- hovel-doc: {"title":"picblobs Guide","group":"picblobs","order":50,"navTitle":"Full Guide"} -->
+<article>
+<h1>picblobs Guide</h1>
+        <p>Position-independent code blobs for multiple OS/arch targets — how to build,
+           run, extend, and ship them.</p>
+
+        <h2>Specification</h2>
+        <div class="tiles">
+          <a class="tile" href="introduction.html">
+            <span class="tile-label">01</span>
+            <span class="tile-title">Introduction</span>
+            <span class="tile-desc">What picblobs is, what it ships, and verified status.</span>
+          </a>
+        </div>
+        <h2>How this concept works</h2>
+        <div class="tiles">
+          <a class="tile" href="how-it-works.html">
+            <span class="tile-label">01</span>
+            <span class="tile-title">How PIC extraction works</span>
+            <span class="tile-desc">Plain-language tour of PIC extraction, with diagrams.</span>
+          </a>
+        </div>
+        <h2>User Guide</h2>
+        <div class="tiles">
+          <a class="tile" href="getting-started.html">
+            <span class="tile-label">01</span>
+            <span class="tile-title">Getting started</span>
+            <span class="tile-desc">Prerequisites, the quick-start loop, the dev container.</span>
+          </a>
+          <a class="tile" href="building.html">
+            <span class="tile-label">02</span>
+            <span class="tile-title">Building</span>
+            <span class="tile-desc">Bazel 9, platform configs, debug vs. release, staging.</span>
+          </a>
+          <a class="tile" href="running.html">
+            <span class="tile-label">03</span>
+            <span class="tile-title">Running blobs</span>
+            <span class="tile-desc">Running a blob under QEMU and the test runners.</span>
+          </a>
+          <a class="tile" href="picblobs-cli.html">
+            <span class="tile-label">04</span>
+            <span class="tile-title">picblobs-cli</span>
+            <span class="tile-desc">list, info, extract, run, verify, listing, test.</span>
+          </a>
+          <a class="tile" href="testing.html">
+            <span class="tile-label">05</span>
+            <span class="tile-title">Testing</span>
+            <span class="tile-desc">pytest layout, filters, and the testall sweep.</span>
+          </a>
+        </div>
+        <h2>Development</h2>
+        <div class="tiles">
+          <a class="tile" href="writing-blobs.html">
+            <span class="tile-label">01</span>
+            <span class="tile-title">Writing a blob</span>
+            <span class="tile-desc">Freestanding C, linker conventions, the syscall layer.</span>
+          </a>
+          <a class="tile" href="code-generation.html">
+            <span class="tile-label">02</span>
+            <span class="tile-title">Code generation</span>
+            <span class="tile-desc">What tools/generate.py emits and when to re-run it.</span>
+          </a>
+          <a class="tile" href="adding-architecture.html">
+            <span class="tile-label">03</span>
+            <span class="tile-title">Adding an architecture</span>
+            <span class="tile-desc">Plumbing a new arch into the registry and toolchains.</span>
+          </a>
+          <a class="tile" href="adding-syscall.html">
+            <span class="tile-label">04</span>
+            <span class="tile-title">Adding a syscall</span>
+            <span class="tile-desc">Wiring a new syscall through registry and headers.</span>
+          </a>
+          <a class="tile" href="formatting.html">
+            <span class="tile-label">05</span>
+            <span class="tile-title">Formatting and linting</span>
+            <span class="tile-desc">ruff for Python, clang-format for C, the CI checks.</span>
+          </a>
+        </div>
+        <h2>Reference</h2>
+        <div class="tiles">
+          <a class="tile" href="platform-support.html">
+            <span class="tile-label">01</span>
+            <span class="tile-title">Platform support</span>
+            <span class="tile-desc">Supported OS/arch pairs and their traits.</span>
+          </a>
+          <a class="tile" href="test-runners.html">
+            <span class="tile-label">02</span>
+            <span class="tile-title">Test runners</span>
+            <span class="tile-desc">Linux, FreeBSD, and Windows runner architectures.</span>
+          </a>
+          <a class="tile" href="project-structure.html">
+            <span class="tile-label">03</span>
+            <span class="tile-title">Project structure</span>
+            <span class="tile-desc">Where everything lives in the tree.</span>
+          </a>
+          <a class="tile" href="kernel-toolkit.html">
+            <span class="tile-label">04</span>
+            <span class="tile-title">Kernel toolkit</span>
+            <span class="tile-desc">Red-team lab kernel exercise components.</span>
+          </a>
+          <a class="tile" href="specification.html">
+            <span class="tile-label">05</span>
+            <span class="tile-title">Specification</span>
+            <span class="tile-desc">Pointers into the spec/ requirements tree.</span>
+          </a>
+        </div>
+      </article>

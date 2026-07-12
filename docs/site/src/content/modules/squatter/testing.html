@@ -1,0 +1,40 @@
+<!-- hovel-doc: {"title":"Testing Squatter","group":"squatter","order":30,"navTitle":"Testing"} -->
+<article>
+        <h1>Testing Squatter</h1>
+        <p>
+          The standard module gate runs host-side Go tests, provider contract
+          tests, package/install checks, PE inspection, and source-contract
+          tests. Wine-backed runtime tests are separated because they need a
+          Windows execution environment.
+        </p>
+
+        <h2>Primary Checks</h2>
+<pre data-lang="shell"><code>task modules:test
+task bazel:test -- //:modules_test</code></pre>
+        <p>
+          This gate covers the provider, shell, SMB pipe client, wire framing,
+          Squatter package checks, workspace module-install checks, PE
+          inspection, and source layout contracts.
+        </p>
+
+        <h2>Wine Runtime Checks</h2>
+<pre data-lang="shell"><code>task modules:wine-test
+task bazel:test -- --platforms=//platforms:windows_x86 --extra_toolchains=@mingw_i686//:toolchain --run_under=wine //:modules_wine_test</code></pre>
+        <p>
+          The Wine suite runs C/C++ integration checks for command execution,
+          echo, file transfer, frames, framing, nanopb round trips, and the
+          GoogleTest smoke path. The manual functional test launches the real
+          payload under Wine and drives it through the Go client protocol.
+        </p>
+<pre data-lang="shell"><code>task bazel:test -- //:modules_functest</code></pre>
+
+        <h2>Static and Shape Checks</h2>
+        <p>
+          PE inspection verifies the produced payload shape. Source-contract
+          tests protect the expected Windows payload layout. Manual static
+          checks for the C tree live under <code>modules/squatter/windows/src</code>.
+        </p>
+<pre data-lang="shell"><code>task bazel:test -- //modules/squatter/windows:squatter_x86_exe_pe_test
+task bazel:test -- //modules/squatter/windows:source_contract_test
+task bazel:build -- //modules/squatter/windows/src:static_analysis</code></pre>
+      </article>

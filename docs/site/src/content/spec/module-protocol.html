@@ -1,0 +1,1090 @@
+<!-- hovel-doc: {"title":"Module Wire Protocol","group":"Module Development","order":10,"navTitle":"Wire Protocol"} -->
+<article>
+        <h1>Module Wire Protocol</h1>
+        <p>
+          This is the contract between the Hovel daemon and a module process. The SDKs
+          implement it for you; you only need this page if you are writing an SDK, debugging
+          a module by hand, or porting Hovel modules to a new language. The runtime is
+          identified as <code>jsonrpc-stdio</code>.
+        </p>
+
+        <h2>Framing</h2>
+        <p>
+          Messages are <a href="https://www.jsonrpc.org/specification">JSON-RPC 2.0</a>
+          objects, each prefixed with an HTTP-style <code>Content-Length</code> header. This
+          framing (rather than newline-delimited JSON) lets session payloads carry arbitrary
+          bytes without escaping games.
+        </p>
+<pre data-lang="frame"><code>Content-Length: 58\r\n
+\r\n
+{"jsonrpc":"2.0","id":1,"method":"handshake","params":{}}</code></pre>
+        <ul>
+          <li>Header lines end with <code>\r\n</code>; a bare <code>\r\n</code> terminates the header block.</li>
+          <li>Header names are case-insensitive; only <code>Content-Length</code> is required.</li>
+          <li>The body is exactly <code>Content-Length</code> bytes of UTF-8 JSON.</li>
+        </ul>
+        <p>
+          Stdout is exclusively the framed protocol stream. Any unframed bytes on
+          stdout — banners, debug prints, child-process output, progress bars — are a
+          protocol error. Module authors should send operator-visible progress through
+          <code>module/log</code>, session output through <code>module/session</code> plus
+          <code>session/read</code>, and large captured output through artifacts. Stderr
+          is captured as process diagnostics and may be attached to module startup,
+          schema, execution, or shutdown failures.
+        </p>
+
+        <h2>Message kinds</h2>
+        <p>Three shapes travel over the wire:</p>
+        <ul>
+          <li><strong>Request</strong> (daemon → module): has an integer <code>id</code> and a <code>method</code>. Expects a response.</li>
+          <li><strong>Response</strong> (module → daemon): echoes the <code>id</code> with either <code>result</code> or <code>error</code>.</li>
+          <li><strong>Notification</strong> (module → daemon): has a <code>method</code> but no <code>id</code>. No response. Used for logs and session events.</li>
+        </ul>
+<pre data-lang="response"><code>{"jsonrpc":"2.0","id":1,"result":{ ... }}
+{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"boom"}}</code></pre>
+        <p>The daemon reads only <code>error.message</code>; the code is advisory.</p>
+        <p>
+          SDKs should return JSON-RPC <code>-32600</code> for structurally invalid
+          requests, <code>-32601</code> or <code>-32000</code> for unknown methods, and
+          <code>-32000</code> for module/runtime failures. Hovel treats any error response
+          as a failed RPC call and records the message in the relevant catalog, plan,
+          execute, session, provider, or cleanup path.
+        </p>
+
+        <h2>Methods (daemon → module)</h2>
+        <p>
+          This table is the complete module RPC method set. SDKs may implement only the
+          subset their language surface supports, but unknown or unsupported methods must
+          fail with a JSON-RPC error rather than silently succeeding.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>Params</th>
+              <th>Result</th>
+              <th>Implemented by</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>handshake</code></td><td><code>{}</code></td><td><code>ModuleInfo</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>schema</code></td><td><code>{}</code></td><td><code>ModuleSchema</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>execute</code></td><td><code>ExecuteRequest</code></td><td><code>ModuleResult</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>session/write</code></td><td><code>SessionWriteRequest</code></td><td><code>{ "status": "ok" }</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>session/read</code></td><td><code>SessionReadRequest</code></td><td><code>SessionReadResult</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>session/close</code></td><td><code>SessionCloseRequest</code></td><td><code>{ "status": "ok" }</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>shutdown</code></td><td><code>{}</code></td><td><code>{ "status": "ok" }</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>step.describe</code></td><td><code>{}</code></td><td><code>StepContractSet</code></td><td>Python, Go</td></tr>
+            <tr><td><code>step.prepare</code></td><td><code>StepPrepareRequest</code></td><td><code>StepPrepareResult</code></td><td>Python, Go</td></tr>
+            <tr><td><code>step.execute</code></td><td><code>StepExecuteRequest</code></td><td><code>StepExecuteResult</code></td><td>Python, Go</td></tr>
+            <tr><td><code>step.cleanup</code></td><td><code>StepCleanupRequest</code></td><td><code>StepCleanupResult</code></td><td>Python, Go</td></tr>
+            <tr><td><code>list_payloads</code></td><td><code>PayloadQuery</code></td><td><code>PayloadInfo[]</code></td><td>Go</td></tr>
+            <tr><td><code>resolve_payload</code></td><td><code>PayloadQuery</code></td><td><code>PayloadInfo</code></td><td>Go</td></tr>
+            <tr><td><code>prepare_listener</code></td><td><code>PrepareListenerRequest</code></td><td><code>ListenerRef</code></td><td>Go</td></tr>
+            <tr><td><code>generate_payload</code></td><td><code>GeneratePayloadRequest</code></td><td><code>PayloadArtifactSet</code></td><td>Go</td></tr>
+            <tr><td><code>connect_session</code></td><td><code>ConnectSessionRequest</code></td><td><code>SessionRef</code></td><td>Go</td></tr>
+            <tr><td><code>cleanup_payload</code></td><td><code>CleanupPayloadRequest</code></td><td><code>CleanupResult</code></td><td>Go</td></tr>
+            <tr><td><code>read_payload_chunk</code></td><td><code>ReadPayloadChunkRequest</code></td><td><code>PayloadChunk</code></td><td>Go</td></tr>
+            <tr><td><code>mesh.describe</code></td><td><code>MeshDescribeRequest</code></td><td><code>MeshDescriptor</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.topology</code></td><td><code>MeshTopologyRequest</code></td><td><code>MeshTopology</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.beacons</code></td><td><code>MeshBeaconRequest</code></td><td><code>{ "beacons": MeshBeacon[] }</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.listeners</code></td><td><code>MeshListenerListRequest</code></td><td><code>{ "listeners": MeshListener[] }</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.listener.start</code></td><td><code>MeshListenerStartRequest</code></td><td><code>MeshListener</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.listener.stop</code></td><td><code>MeshListenerStopRequest</code></td><td><code>MeshListener</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.task</code></td><td><code>MeshTaskRequest</code></td><td><code>MeshTaskResult</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>mesh.open_stream</code></td><td><code>MeshStreamRequest</code></td><td><code>SessionRef</code></td><td>Python, Go, Rust</td></tr>
+          </tbody>
+        </table>
+
+        <h3>handshake</h3>
+        <p>Reports module identity. Called while building the catalog and again before each throw.</p>
+<pre data-lang="result"><code>{
+  "name": "mock-survey",
+  "version": "v0.0.0-example",
+  "moduleType": "survey",            // survey | exploit | payload_provider
+  "summary": "Collect example target facts.",
+  "description": "Example survey module ...",
+  "tags": ["example", "survey", "python"]
+}</code></pre>
+
+        <h3>schema</h3>
+        <p>Reports the configuration the module requires, split into chain-level and target-level.</p>
+<pre data-lang="result"><code>{
+  "chainConfig":  [ Requirement, ... ],
+  "targetConfig": [ Requirement, ... ],
+  "outputs": {}
+}</code></pre>
+
+        <h3>step.describe</h3>
+        <p>
+          Reports the module's current chain-step contracts. The current host calls this
+          during catalog inspection and uses the resulting catalog snapshot during
+          validation, module inspection, planning, and capability-step execution.
+          Persisting the exact returned snapshot when the operator confirms, then
+          blocking execution if a referenced contract changes after confirmation, is a
+          target safeguard that is not implemented yet.
+        </p>
+        <p>
+          <code>handshake</code>, <code>schema</code>, and <code>step.describe</code>
+          are inspection paths. They must be deterministic and side-effect free: no
+          target connections, filesystem mutation, listener startup, payload byte
+          generation, credential creation, or random prepared values. Put those actions
+          in <code>step.prepare</code>, <code>step.execute</code>, or
+          <code>execute</code> according to the lifecycle rules below.
+        </p>
+        <p>
+          Planning treats the returned requirements as typed capability predicates.
+          Hovel compares requirement type, attributes, and allowed states against the
+          current capability set, then records either a deterministic capability binding
+          or a typed missing requirement. <code>module inspect --json</code> exposes that
+          same resolved view for operator tooling.
+        </p>
+<pre data-lang="result"><code>{
+  "steps": [
+    {
+      "id": "squatter.connect_smb",
+      "kind": "session.connector",
+      "configSchema": { "type": "object", "properties": {} },
+      "requires": [
+        {
+          "type": "PayloadInstance",
+          "schemaVersion": "v1",
+          "attributes": {
+            "provider": "squatter",
+            "transport": "smb-named-pipe"
+          },
+          "states": ["installed", "connected", "unreachable"]
+        },
+        {
+          "type": "CredentialCapability",
+          "schemaVersion": "v1",
+          "attributes": { "protocol": "smb" },
+          "states": ["active"]
+        }
+      ],
+      "produces": [
+        {
+          "type": "SessionRef",
+          "schemaVersion": "v1",
+          "attributes": {
+            "provider": "squatter",
+            "transport": "smb-named-pipe"
+          }
+        }
+      ],
+      "prepare": { "materializes": [] },
+      "cleanup": null
+    }
+  ]
+}</code></pre>
+
+        <h3>step.prepare</h3>
+        <p>
+          Validates step config and materializes planned values. This method is pure and
+          local: it may generate random names, credentials, paths, endpoints, and planned
+          cleanup handles, but it must not connect to a target, authenticate, stage files,
+          start listeners that accept target traffic, or produce final payload bytes.
+          Repeated prepare for an existing prepared plan preserves materialized values
+          unless the operator explicitly regenerates or edits them.
+        </p>
+<pre data-lang="params"><code>{
+  "preparedPlanId": "prep-1",
+  "stepId": "windows.credential.create_local_admin",
+  "config": { "usernamePolicy": "random", "passwordLength": 24 },
+  "inputs": [
+    { "capabilityId": "cap_remote_execution_f8a21b", "type": "RemoteExecutionCapability" }
+  ],
+  "existingPreparedValues": {}
+}</code></pre>
+<pre data-lang="result"><code>{
+  "plannedOutputs": [
+    {
+      "id": "cap_credential_6mb8pq",
+      "type": "CredentialCapability",
+      "schemaVersion": "v1",
+      "state": "planned",
+      "attributes": {
+        "protocol": "smb",
+        "username": "m7q4z92d",
+        "password": "plain-high-entropy-password",
+        "sensitive": true
+      }
+    }
+  ],
+  "preparedValues": {
+    "username": { "value": "m7q4z92d", "editable": true },
+    "password": { "value": "plain-high-entropy-password", "editable": true }
+  },
+  "operatorSummary": {
+    "warnings": [],
+    "targetSideArtifacts": ["local admin user m7q4z92d"]
+  }
+}</code></pre>
+
+        <h3>step.execute</h3>
+        <p>
+          Executes a confirmed step. The daemon supplies only the capabilities declared
+          by the step contract plus minimal run metadata. A step should be idempotent
+          where possible and must use confirmed prepared values exactly; confirmed
+          collisions fail rather than silently changing target-side names.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "stepId": "squatter.install_smb",
+  "confirmedPreparedValues": {
+    "stagedPath": "C:\\Windows\\Temp\\n4x9q2.exe",
+    "serviceName": "q7mcz91a",
+    "pipeName": "\\\\.\\pipe\\a8kq27mf"
+  },
+  "inputs": [
+    { "capabilityId": "cap_remote_execution_f8a21b", "type": "RemoteExecutionCapability" },
+    { "capabilityId": "cap_credential_6mb8pq", "type": "CredentialCapability" },
+    { "capabilityId": "cap_payload_artifact_vc9s31", "type": "PayloadArtifact" }
+  ]
+}</code></pre>
+<pre data-lang="result"><code>{
+  "status": "succeeded",
+  "capabilities": [ Capability, ... ],
+  "installedPayloads": [ InstalledPayloadDescriptor, ... ],
+  "stateTransitions": [ CapabilityTransition, ... ],
+  "evidence": [ Evidence, ... ]
+}</code></pre>
+        <p>
+          <code>installedPayloads</code> is optional and is the only way a module or
+          provider can ask Hovel to create or update installed payload inventory. Hovel
+          validates each descriptor against the named payload provider before persistence.
+          Logs, artifacts, and generic evidence are never promoted into installed payload
+          records by inference.
+        </p>
+
+        <h3>step.cleanup</h3>
+        <p>
+          Executes or verifies cleanup for a durable <code>CleanupHandle</code>. Cleanup
+          defaults to the module that created the handle. Another module may consume a
+          cleanup handle only when both modules explicitly declare compatibility. Cleanup
+          is retriable until the handle reaches <code>removed</code>,
+          <code>cleanup_verified</code>, or the operator marks it
+          <code>abandoned</code>.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "stepId": "squatter.cleanup_smb",
+  "cleanupHandleId": "cap_cleanup_74m2wq",
+  "mode": "execute"                  // execute | verify
+}</code></pre>
+<pre data-lang="result"><code>{
+  "status": "removed",
+  "stateTransitions": [ CapabilityTransition, ... ],
+  "evidence": [ Evidence, ... ]
+}</code></pre>
+
+        <h3>list_payloads</h3>
+        <p>
+          Lists provider-supported payloads for live discovery. Hovel passes a
+          <code>PayloadQuery</code> directly as params. The provider returns a JSON array of
+          <code>PayloadInfo</code> objects; there is no wrapper object.
+        </p>
+<pre data-lang="params"><code>{
+  "platform": "windows",
+  "arch": "x86",
+  "format": "pe-exe",
+  "transport": "tcp-bind",
+  "config": { "lhost": "10.0.0.5" },
+  "capabilities": ["session.shell"]
+}</code></pre>
+<pre data-lang="result"><code>[
+  PayloadInfo,
+  ...
+]</code></pre>
+
+        <h3>resolve_payload</h3>
+        <p>
+          Resolves one provider-supported payload from a query. Planning uses this for
+          compatibility and review metadata; final bytes are still generated after
+          confirmation by <code>generate_payload</code>.
+        </p>
+<pre data-lang="params"><code>{
+  "target": "10.0.0.42",
+  "platform": "windows",
+  "arch": "x86",
+  "format": "pe-exe",
+  "transport": "tcp-bind"
+}</code></pre>
+<pre data-lang="result"><code>PayloadInfo</code></pre>
+
+        <h3>prepare_listener</h3>
+        <p>
+          Prepares a provider-managed listener before payload generation when the payload
+          acquisition model requires one. This is local provider setup, not target contact.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "target": "10.0.0.42",
+  "payloadId": "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+  "config": { "lhost": "10.0.0.5", "lport": "9101" }
+}</code></pre>
+<pre data-lang="result"><code>ListenerRef</code></pre>
+
+        <h3>generate_payload</h3>
+        <p>
+          Generates or materializes payload artifacts after confirmation. The provider
+          returns a primary artifact plus optional side artifacts. Inline bytes are base64;
+          large artifacts may be exposed through a provider handle and streamed with
+          <code>read_payload_chunk</code>.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "target": "10.0.0.42",
+  "payloadId": "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+  "format": "pe-exe",
+  "config": { "lhost": "10.0.0.5", "lport": "9101" },
+  "listener": ListenerRef
+}</code></pre>
+<pre data-lang="result"><code>PayloadArtifactSet</code></pre>
+
+        <h3>connect_session</h3>
+        <p>
+          Connects to an installed payload from a Hovel-persisted descriptor and returns
+          a normal <code>SessionRef</code>. The provider owns compatibility checks for its
+          reconnect schema. Hovel owns session registration and installed-payload state
+          persistence.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "target": "10.0.0.42",
+  "payloadId": "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+  "installedPayloadId": "installed-payload-uuid",
+  "config": { "timeout": "10s" },
+  "reconnect": PayloadProviderRecord
+}</code></pre>
+<pre data-lang="result"><code>SessionRef</code></pre>
+
+        <h3>cleanup_payload</h3>
+        <p>
+          Attempts provider-executed cleanup for an installed payload. A successful
+          provider result returns <code>{ "status": "ok" }</code>; Hovel then marks the
+          installed payload <code>removed</code>. Failures are recorded as
+          cleanup-attempt events and leave the record active.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "target": "10.0.0.42",
+  "payloadId": "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+  "installedPayloadId": "installed-payload-uuid",
+  "reason": "operator cleanup",
+  "cleanup": PayloadProviderRecord
+}</code></pre>
+<pre data-lang="result"><code>{
+  "status": "ok"
+}</code></pre>
+
+        <h3>read_payload_chunk</h3>
+        <p>
+          Reads bytes from a provider-owned artifact handle returned by
+          <code>generate_payload</code>. The result data is base64-encoded.
+        </p>
+<pre data-lang="params"><code>{
+  "handle": "provider-artifact-handle",
+  "offset": 0,
+  "length": 65536
+}</code></pre>
+<pre data-lang="result"><code>{
+  "handle": "provider-artifact-handle",
+  "offset": 0,
+  "data": "TVqQAAMAAAAEAAAA...",
+  "eof": false,
+  "encoding": "base64"
+}</code></pre>
+
+        <h3>mesh.describe</h3>
+        <p>
+          Reports a provider-owned Mesh's static capabilities, task specs, declared
+          triggers, and cheap topology. A Mesh can be one node, a chain, or a routed
+          tree/graph; it is broader than a transport or tunnel. This is the only
+          common method every Mesh provider should implement. Other Mesh methods are
+          optional and should match the descriptor's advertised capabilities.
+        </p>
+<pre data-lang="params"><code>{
+  "agentContext": AgentContext
+}</code></pre>
+<pre data-lang="result"><code>{
+  "name": "routed-node-mesh",
+  "version": "v0.1.0",
+  "capabilities": ["topology.tree", "task.survey", "task.command", "task.load", "stream.tcp"],
+  "tasks": [
+    { "kind": "survey", "summary": "survey a node", "readOnly": true, "targetScopes": ["node"] },
+    { "kind": "upload_execute", "summary": "upload and execute a file", "destructive": true, "targetScopes": ["node", "destination"] },
+    { "kind": "load", "summary": "load a provider-native component or implant", "destructive": true, "targetScopes": ["node", "destination"] },
+    { "kind": "command", "summary": "run a node or routed destination command", "targetScopes": ["node", "destination"] }
+  ],
+  "listenerTypes": [
+    {
+      "kind": "https-beacon",
+      "summary": "HTTPS beacon rendezvous",
+      "deployments": ["embedded", "separate"],
+      "managementModes": ["provider", "external"],
+      "protocols": ["https"],
+      "capabilities": ["beacon"]
+    }
+  ],
+  "triggers": [
+    { "id": "beacon-command", "kind": "beacon", "nodeId": "node-2", "state": "armed" }
+  ]
+}</code></pre>
+
+        <h3>mesh.topology</h3>
+        <p>
+          Returns current nodes, links, and optional routes. This may inspect
+          provider-local state but must not mutate target-side state.
+        </p>
+<pre data-lang="params"><code>{
+  "root": "controller",
+  "includeRoutes": true
+}</code></pre>
+<pre data-lang="result"><code>{
+  "root": "controller",
+  "nodes": [
+    { "id": "controller", "kind": "controller", "state": "online" },
+    { "id": "relay-1", "parentId": "controller", "kind": "relay", "state": "online" },
+    { "id": "leaf-1", "parentId": "relay-1", "kind": "agent", "state": "online" }
+  ],
+  "links": [
+    { "id": "link-controller-relay-1", "source": "controller", "target": "relay-1", "state": "up" }
+  ],
+  "routes": [
+    { "id": "route-leaf-1", "nodes": ["controller", "relay-1", "leaf-1"] }
+  ]
+}</code></pre>
+
+        <h3>mesh.beacons</h3>
+        <p>
+          Returns recent node liveness or status signals. Beacons are evidence and
+          routing context; they never bypass planning, confirmation, or guardrails.
+        </p>
+<pre data-lang="params"><code>{
+  "nodeId": "leaf-1",
+  "since": "2026-07-09T00:00:00Z",
+  "limit": 50
+}</code></pre>
+<pre data-lang="result"><code>{
+  "beacons": [
+    { "id": "beacon-1", "nodeId": "leaf-1", "state": "alive", "time": "2026-07-09T00:01:00Z" }
+  ]
+}</code></pre>
+
+        <h3>mesh.listeners</h3>
+        <p>
+          Lists dynamic provider-reported listening-post state, optionally filtered
+          by stable listener id or provider-defined state. Listener configuration and
+          credentials are deliberately absent from this read model.
+        </p>
+<pre data-lang="params"><code>{
+  "listenerId": "listener-west"
+}</code></pre>
+<pre data-lang="result"><code>{
+  "listeners": [
+    {
+      "id": "listener-west",
+      "kind": "https-beacon",
+      "state": "active",
+      "deployment": "separate",
+      "management": "provider",
+      "addresses": ["https://127.0.0.1:8443"],
+      "protocols": ["https"]
+    }
+  ]
+}</code></pre>
+
+        <h3>mesh.listener.start</h3>
+        <p>
+          Idempotently starts or attaches a listening post using a caller-selected
+          stable <code>listenerId</code>. <code>config</code> is provider-specific and
+          write-only: implementations must not copy it into the returned listener,
+          logs, or daemon bookkeeping. Long-lived resources must remain durable across
+          individual module RPC invocations; the module adapter is not itself a
+          listening-post host.
+        </p>
+<pre data-lang="params"><code>{
+  "listenerId": "listener-west",
+  "name": "west rendezvous",
+  "kind": "https-beacon",
+  "deployment": "separate",
+  "management": "provider",
+  "config": { "bind": "127.0.0.1:8443", "credentialRef": "vault://listener-west" }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "id": "listener-west",
+  "kind": "https-beacon",
+  "state": "active",
+  "deployment": "separate",
+  "management": "provider",
+  "addresses": ["https://127.0.0.1:8443"]
+}</code></pre>
+
+        <h3>mesh.listener.stop</h3>
+        <p>
+          Idempotently stops or detaches the caller-named listening post. The returned
+          listener must preserve the requested id so external control planes can
+          correlate retries and daemon audit records.
+        </p>
+<pre data-lang="params"><code>{
+  "listenerId": "listener-west"
+}</code></pre>
+<pre data-lang="result"><code>{
+  "id": "listener-west",
+  "state": "stopped"
+}</code></pre>
+
+        <h3>mesh.task</h3>
+        <p>
+          Runs a provider-owned node, route, or destination task after the operator's plan has been
+          reviewed and confirmed. Common task kinds are <code>survey</code>,
+          <code>upload</code>, <code>execute</code>, <code>upload_execute</code>,
+          <code>command</code>, <code>load</code>, and <code>stream</code>.
+          Destination-scoped tasks use <code>nodeId</code> or <code>route</code> as
+          the pivot and <code>destinationHost</code>, <code>destinationPort</code>,
+          and <code>protocol</code> as the endpoint reachable through that pivot.
+          Implant loading is modeled the same way: use <code>upload_execute</code>
+          for "copy bytes, then run them" and <code>load</code> only when the
+          provider owns a native loader. Payload bytes may be inline
+          <code>inputData</code> with <code>inputEncoding</code>, or a
+          provider-defined artifact/payload reference in <code>config</code>.
+          Providers do not need to implement every task kind; unsupported methods
+          or task kinds should fail explicitly.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "taskId": "upload-execute-through-node-2",
+  "kind": "upload_execute",
+  "nodeId": "node-2",
+  "destinationHost": "10.10.10.10",
+  "destinationPort": 445,
+  "protocol": "tcp",
+  "config": { "remotePath": "C:\\\\Windows\\\\Temp\\\\payload.exe" },
+  "inputData": "TVqQAAMAAAAEAAAA...",
+  "inputEncoding": "base64"
+}</code></pre>
+<pre data-lang="result"><code>{
+  "taskId": "upload-execute-through-node-2",
+  "status": "succeeded",
+  "summary": "uploaded and executed through node-2",
+  "nodeId": "node-2",
+  "destinationHost": "10.10.10.10",
+  "destinationPort": 445,
+  "protocol": "tcp",
+  "outputs": { "exitCode": 0 },
+  "findings": [],
+  "sessions": []
+}</code></pre>
+
+        <h3>mesh.open_stream</h3>
+        <p>
+          Opens a routed session flow to an endpoint reachable through a Mesh node or
+          route. The result is a normal <code>SessionRef</code>, so existing session IO,
+          transcript capture, and TCP/UDP local socket bridging use the same broker.
+          UDP bridge sessions must advertise the <code>datagram</code> capability;
+          each non-empty read or write then represents exactly one datagram.
+        </p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "moduleId": "routed-node-mesh@v0.1.0",
+  "nodeId": "node-2",
+  "destinationHost": "10.10.10.10",
+  "destinationPort": 443,
+  "protocol": "tcp"
+}</code></pre>
+<pre data-lang="result"><code>SessionRef</code></pre>
+
+        <h3>execute</h3>
+        <p>Runs the module against one target. The daemon supplies the resolved configuration; the module returns its result.</p>
+<pre data-lang="params"><code>{
+  "runId": "run-1",
+  "moduleId": "mock-survey@v0.0.0-example",
+  "target": "mock://host",
+  "inputs": { "failure_mode": "" },
+  "chainConfig":  { "operator.confirmed_lab": true },
+  "targetConfig": { "target.host": "example.test", "target.port": "443" }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "status": "succeeded",             // or "failed"
+  "summary": "example survey reached example.test:443",
+  "findings":  [ Finding, ... ],
+  "artifacts": [ Artifact, ... ],
+  "outputs":   { "facts": { "host": "example.test", "reachable": true } },
+  "installedPayloads": [ InstalledPayloadDescriptor, ... ],
+  "sessions":  [ SessionRef, ... ]
+}</code></pre>
+        <p>
+          While <code>execute</code> runs, the module may stream <code>module/log</code> and
+          <code>module/session</code> notifications. The daemon resolves a configuration key
+          by preferring per-run <code>inputs</code>, then <code>targetConfig</code>, then
+          <code>chainConfig</code>.
+        </p>
+
+        <h3>session/write, session/read, session/close</h3>
+        <p>Drive a session the module opened during <code>execute</code>. Payloads are base64 so arbitrary bytes survive JSON.</p>
+<pre data-lang="session"><code>// write operator input
+→ {"method":"session/write","params":{"sessionId":"run-1-session-1","data":"d2hvYW1pCg=="}}
+← {"result":{"status":"ok"}}
+
+// read output (timeoutMs &lt; 0 blocks; the daemon usually passes a finite timeout)
+→ {"method":"session/read","params":{"sessionId":"run-1-session-1","timeoutMs":1000}}
+← {"result":{"sessionId":"run-1-session-1","data":"bW9jay1vcGVyYXRvcgo=","closed":false}}
+
+// close
+→ {"method":"session/close","params":{"sessionId":"run-1-session-1","reason":"done"}}
+← {"result":{"status":"ok"}}</code></pre>
+
+        <h3>shutdown</h3>
+        <p>Asks the module to close any sessions and exit. The module replies <code>{"status":"ok"}</code> and then terminates.</p>
+
+        <h2>Notifications (module → daemon)</h2>
+
+        <h3>module/log</h3>
+        <p>A structured log record. Appears in the throw transcript alongside the daemon's own logs.</p>
+<pre data-lang="params"><code>{
+  "level": "info",                   // debug | info | warning | error
+  "message": "connecting to target",
+  "logger": "mock-survey",
+  "fields": { "host": "example.test", "port": "443" },
+  "exception": ""
+}</code></pre>
+
+        <h3>module/session</h3>
+        <p>A session lifecycle event. The daemon's session broker tracks these.</p>
+<pre data-lang="params"><code>{
+  "event": "session.created",        // or "session.closed"
+  "session": SessionRef,
+  "fields": { "reason": "closed" }   // present on session.closed
+}</code></pre>
+
+        <h2>Notifications (daemon → module)</h2>
+
+        <h3>cancel</h3>
+        <p>
+          Best-effort cancellation notification. It has no <code>id</code> and expects no
+          response. Current SDKs may log it or use it to interrupt future cancellable
+          work; the daemon still owns process teardown when a module does not stop
+          cooperatively.
+        </p>
+<pre data-lang="params"><code>{
+  "reason": "operator requested cancel"
+}</code></pre>
+
+        <h2>Data shapes</h2>
+
+        <h3>ModuleInfo</h3>
+<pre data-lang="object"><code>{
+  "name": "mock-exploit",
+  "version": "v0.0.0-example",
+  "moduleType": "exploit",
+  "summary": "Run an example exploit flow.",
+  "description": "Example module for the Hovel stdio JSON-RPC runtime.",
+  "tags": ["example", "exploit"]
+}</code></pre>
+
+        <h3>ModuleSchema</h3>
+<pre data-lang="object"><code>{
+  "chainConfig": [ Requirement, ... ],
+  "targetConfig": [ Requirement, ... ],
+  "outputs": {
+    "facts": { "type": "object" }
+  }
+}</code></pre>
+
+        <h3>ExecuteRequest</h3>
+<pre data-lang="object"><code>{
+  "runId": "run-1",
+  "moduleId": "mock-exploit@v0.0.0-example",
+  "target": "mock://host",
+  "inputs": { "failure_mode": "" },
+  "chainConfig": { "operator.confirmed_lab": true },
+  "targetConfig": { "target.host": "example.test", "target.port": "443" }
+}</code></pre>
+
+        <h3>ModuleResult</h3>
+<pre data-lang="object"><code>{
+  "status": "succeeded",
+  "summary": "module completed",
+  "findings": [ Finding, ... ],
+  "artifacts": [ Artifact, ... ],
+  "outputs": {},
+  "sessions": [ SessionRef, ... ],
+  "installedPayloads": [ InstalledPayloadDescriptor, ... ]
+}</code></pre>
+
+        <h3>Requirement</h3>
+<pre data-lang="object"><code>{
+  "key": "target.host",
+  "type": "host",        // string | secret | bool | int | float | enum |
+                         // duration | url | host | port | cidr | path | list | map
+  "required": true,
+  "default": "",
+  "description": "Target host name or IP address.",
+  "allowed": [],         // enumerated values, when constrained
+  "secret": false        // hide the value in logs and transcripts
+}</code></pre>
+
+        <h3>Finding</h3>
+<pre data-lang="object"><code>{ "title": "example exploit path verified", "severity": "info", "detail": "..." }</code></pre>
+
+        <h3>Artifact</h3>
+        <p>Either inline <code>data</code> or a <code>path</code> on disk.</p>
+<pre data-lang="object"><code>{ "name": "transcript.txt", "kind": "text/plain", "data": "..." }
+{ "name": "loot.bin",       "kind": "application/octet-stream", "path": "/tmp/loot.bin" }</code></pre>
+
+        <h3>SessionRef</h3>
+<pre data-lang="object"><code>{
+  "id": "run-1-session-1",
+  "runId": "run-1",
+  "moduleId": "mock-exploit-session",
+  "target": "mock://host",
+  "name": "mock shell on mock://host",
+  "kind": "shell",
+  "state": "active",                 // active | closed
+  "transport": "stdio",
+  "installedPayloadId": "installed-payload-uuid",
+  "capabilities": ["read", "write", "exec", "close"]
+}</code></pre>
+
+        <h3>Session Requests</h3>
+<pre data-lang="object"><code>{
+  "sessionId": "run-1-session-1",
+  "data": "d2hvYW1pCg=="              // session/write, base64 operator input
+}
+
+{
+  "sessionId": "run-1-session-1",
+  "timeoutMs": 1000                   // session/read; negative means block
+}
+
+{
+  "sessionId": "run-1-session-1",
+  "reason": "done"                    // session/close
+}</code></pre>
+
+        <h3>SessionReadResult</h3>
+<pre data-lang="object"><code>{
+  "sessionId": "run-1-session-1",
+  "data": "bW9jay1vcGVyYXRvcgo=",      // base64 session output
+  "closed": false
+}</code></pre>
+
+        <h3>Capability</h3>
+        <p>
+          Capabilities are typed chain state. Core capability schemas are owned by Hovel
+          and versioned; modules may add namespaced extension attributes. Capability ids
+          are readable structured identifiers with random entropy, and run/step linkage is
+          carried as fields rather than encoded as the only source of truth.
+        </p>
+<pre data-lang="object"><code>{
+  "id": "cap_payload_instance_q8m2v4",
+  "type": "PayloadInstance",
+  "schemaVersion": "v1",
+  "state": "installed",
+  "producerStepId": "squatter.install_smb",
+  "attributes": {
+    "provider": "squatter",
+    "transport": "smb-named-pipe",
+    "endpointId": "cap_endpoint_smb_pipe_c4a7nx"
+  },
+  "extensions": {
+    "squatter": {
+      "artifactSha256": "abc123",
+      "reconnectStrategy": "active_connect"
+    }
+  }
+}</code></pre>
+        <p>
+          Core capability types for the Squatter chain are
+          <code>RemoteExecutionCapability</code>, <code>CredentialCapability</code>,
+          <code>PayloadArtifact</code>, <code>PayloadInstance</code>,
+          <code>TransportEndpoint</code>, <code>SessionRef</code>, and
+          <code>CleanupHandle</code>. A step may still emit partial capabilities with
+          explicit states and warning evidence, such as an installed payload record that
+          reaches <code>unreachable</code> when reconnect fails, or a cleanup handle in
+          <code>cleanup_failed</code>.
+        </p>
+
+        <h3>InstalledPayloadDescriptor</h3>
+        <p>
+          An installed payload descriptor is an explicit module/provider claim that a
+          target-side payload instance exists and may be tracked. Hovel core validates and
+          persists it; modules and providers never write installed payload rows directly.
+        </p>
+<pre data-lang="object"><code>{
+  "provider": "squatter",
+  "payloadId": "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+  "payloadVersion": "0.1.0",
+  "target": "10.0.0.42",
+  "targetId": "t1",
+  "state": "installed",
+  "transport": "tcp-bind",
+  "endpoint": "10.0.0.42:9101",
+  "instanceKey": "provider-stable-key-or-empty",
+  "stampId": "payload-stamp-uuid",
+  "artifactIds": ["artifact-squatter-exe"],
+  "supportsReconnect": true,
+  "supportsMultipleSessions": false,
+  "reconnect": {
+    "providerId": "squatter",
+    "schema": "squatter.reconnect.tcp_bind",
+    "schemaVersion": "1",
+    "descriptor": { "host": "10.0.0.42", "port": 9101 }
+  },
+  "cleanup": {
+    "providerId": "squatter",
+    "schema": "squatter.cleanup.tcp_bind",
+    "schemaVersion": "1",
+    "descriptor": { "remotePath": "C:\\Windows\\Temp\\n4x9q2.exe" }
+  },
+  "metadata": {
+    "profile": "xp-sp3-lab"
+  }
+}</code></pre>
+        <p>
+          The accepted current states are <code>installed</code>,
+          <code>connected</code>, <code>unreachable</code>, and <code>removed</code>.
+          Failed installs are reported as step failure evidence, not installed payload
+          descriptors. When a provider can prove a repeated report is the same deployed
+          instance using <code>instanceKey</code> or <code>stampId</code>, Hovel may upsert
+          the existing record; otherwise it creates a new operator-facing handle.
+        </p>
+
+        <h3>PayloadQuery</h3>
+<pre data-lang="object"><code>{
+  "target": "10.0.0.42",
+  "kind": "pe",
+  "platform": "windows",
+  "os": "windows",
+  "arch": "x86",
+  "format": "pe-exe",
+  "tags": ["pe", "windows"],
+  "transport": "tcp-bind",
+  "config": { "lhost": "10.0.0.5" },
+  "capabilities": ["session.shell"]
+}</code></pre>
+
+        <h3>PayloadInfo</h3>
+<pre data-lang="object"><code>{
+  "id": "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+  "name": "Squatter TCP bind PE",
+  "version": "0.1.0",
+  "kind": "pe",
+  "platform": "windows",
+  "os": "windows",
+  "arch": "x86",
+  "minOS": "Windows 7",
+  "testedOS": ["Windows 7"],
+  "formats": ["pe-exe", "pe"],
+  "tags": ["pe", "windows", "agent"],
+  "capabilities": ["session.shell"],
+  "transport": {
+    "kind": "tcp-bind",
+    "encrypted": false
+  },
+  "session": {
+    "kind": "shell",
+    "acquisition": "connect",
+    "requiresPreThrowListener": false,
+    "requiresPostThrowConnect": true,
+    "owner": "provider"
+  }
+}</code></pre>
+
+        <h3>ListenerRef</h3>
+<pre data-lang="object"><code>{
+  "id": "listener-1",
+  "runId": "run-1",
+  "target": "10.0.0.42",
+  "transport": "tcp-bind",
+  "host": "10.0.0.5",
+  "port": 9101,
+  "pipe": "",
+  "state": "listening",
+  "fields": { "interface": "lab0" }
+}</code></pre>
+
+        <h3>PayloadArtifactSet</h3>
+<pre data-lang="object"><code>{
+  "primary": PayloadArtifact,
+  "artifacts": [ PayloadArtifact, ... ]
+}</code></pre>
+
+        <h3>PayloadArtifact</h3>
+<pre data-lang="object"><code>{
+  "name": "squatter.exe",
+  "role": "primary",
+  "kind": "pe",
+  "format": "pe-exe",
+  "os": "windows",
+  "arch": "x86",
+  "tags": ["pe", "windows"],
+  "encoding": "base64",
+  "bytes": "TVqQAAMAAAAEAAAA...",
+  "handle": "",
+  "size": 123456,
+  "sha256": "hex-sha256"
+}</code></pre>
+
+        <h3>PayloadProviderRecord</h3>
+<pre data-lang="object"><code>{
+  "providerId": "squatter",
+  "schema": "squatter.reconnect.tcp_bind",
+  "schemaVersion": "1",
+  "descriptor": { "host": "10.0.0.42", "port": 9101 }
+}</code></pre>
+
+        <h3>Provider Requests</h3>
+<pre data-lang="object"><code>{
+  "runId": "run-1",
+  "target": "10.0.0.42",
+  "payloadId": "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+  "config": {},
+  "listener": ListenerRef,             // generate_payload only
+  "reconnect": PayloadProviderRecord,  // connect_session only
+  "cleanup": PayloadProviderRecord,    // cleanup_payload only
+  "installedPayloadId": "installed-payload-uuid",
+  "reason": "operator cleanup"
+}</code></pre>
+
+        <h3>CleanupResult</h3>
+<pre data-lang="object"><code>{
+  "status": "ok"
+}</code></pre>
+
+        <h3>PayloadChunk</h3>
+<pre data-lang="object"><code>{
+  "handle": "provider-artifact-handle",
+  "offset": 0,
+  "data": "TVqQAAMAAAAEAAAA...",
+  "eof": false,
+  "encoding": "base64"
+}</code></pre>
+
+        <h3>CredentialCapability</h3>
+        <p>
+          Created credentials are assessment evidence. They are stored and displayed in
+          plaintext in normal operator CLI output so the operator can remediate manually
+          if automated cleanup fails. The <code>sensitive</code> marker labels the field
+          for evidence exports and downstream handling; it is not a CLI redaction request.
+        </p>
+<pre data-lang="object"><code>{
+  "id": "cap_credential_6mb8pq",
+  "type": "CredentialCapability",
+  "schemaVersion": "v1",
+  "state": "active",
+  "attributes": {
+    "protocol": "smb",
+    "principal": "local",
+    "username": "m7q4z92d",
+    "password": "plain-high-entropy-password",
+    "secretType": "password",
+    "targetScope": "10.0.0.42",
+    "sensitive": true,
+    "durability": "until_cleanup"
+  }
+}</code></pre>
+
+        <h3>Evidence</h3>
+        <p>
+          Evidence is operator and audit material, not chain input. It uses a common
+          envelope with flexible module-specific details so modules can report rich
+          diagnostics without forcing core schema churn.
+        </p>
+<pre data-lang="object"><code>{
+  "id": "ev_squatter_connect_warning_2m7kq9",
+  "level": "warn",
+  "kind": "payload.unreachable",
+  "sourceStepId": "squatter.connect_smb",
+  "message": "Squatter installed but no session was established.",
+  "details": {
+    "target": "10.0.0.42",
+    "endpoint": "\\\\10.0.0.42\\pipe\\a8kq27mf",
+    "error": "NT_STATUS_ACCESS_DENIED"
+  }
+}</code></pre>
+
+        <h2>Lifecycle summary</h2>
+        <figure class="diagram sequence-diagram" aria-label="Module lifecycle message sequence between daemon and module.">
+          <figcaption>Lifecycle Summary</figcaption>
+          <div class="sequence-actors">
+            <span class="sequence-actor">daemon</span>
+            <span class="sequence-actor">module</span>
+          </div>
+          <ol class="sequence-events">
+            <li class="sequence-event">
+              <span class="from">daemon</span>
+              <span class="direction">→</span>
+              <span class="to">module</span>
+              <span class="message"><code>handshake</code></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">module</span>
+              <span class="direction">→</span>
+              <span class="to">daemon</span>
+              <span class="message"><code>{name,type,...}</code></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">daemon</span>
+              <span class="direction">→</span>
+              <span class="to">module</span>
+              <span class="message"><code>schema</code></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">module</span>
+              <span class="direction">→</span>
+              <span class="to">daemon</span>
+              <span class="message"><code>{chainConfig,...}</code></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">daemon</span>
+              <span class="direction">→</span>
+              <span class="to">module</span>
+              <span class="message"><code>execute(target)</code></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">module</span>
+              <span class="direction">→</span>
+              <span class="to">daemon</span>
+              <span class="message"><code>module/log</code><span class="note">n times during execute</span></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">module</span>
+              <span class="direction">→</span>
+              <span class="to">daemon</span>
+              <span class="message"><code>module/session</code><span class="note">only if opened</span></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">module</span>
+              <span class="direction">→</span>
+              <span class="to">daemon</span>
+              <span class="message"><code>{status,...}</code></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">daemon</span>
+              <span class="direction">→</span>
+              <span class="to">module</span>
+              <span class="message"><code>session/read|write|close</code><span class="note">only if opened</span></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">daemon</span>
+              <span class="direction">→</span>
+              <span class="to">module</span>
+              <span class="message"><code>shutdown</code></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">module</span>
+              <span class="direction">→</span>
+              <span class="to">daemon</span>
+              <span class="message"><code>{status:ok}</code></span>
+            </li>
+            <li class="sequence-event">
+              <span class="from">module</span>
+              <span class="direction">✕</span>
+              <span class="to">exit</span>
+              <span class="message">process ends</span>
+            </li>
+          </ol>
+        </figure>
+      </article>

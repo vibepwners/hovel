@@ -1,0 +1,216 @@
+---
+interface Props {
+  root: string;
+}
+
+const { root } = Astro.props;
+---
+
+<docs-search data-index-url={`${root}search-index.json`} data-root={root}>
+  <button class="docs-search-trigger" type="button" data-search-open aria-keyshortcuts="Control+K Meta+K /">
+    <span>Search docs</span>
+    <kbd>/</kbd>
+  </button>
+  <dialog class="search-dialog" data-search-dialog aria-labelledby="search-dialog-title">
+    <div class="search-dialog-frame">
+      <header class="search-dialog-header">
+        <label id="search-dialog-title" for="docs-search-input">Search Hovel docs</label>
+        <button class="search-dialog-close" type="button" data-search-close title="Close search">
+          <span aria-hidden="true">×</span>
+          <span class="visually-hidden">Close search</span>
+        </button>
+      </header>
+      <div class="search-input-row">
+        <span aria-hidden="true">›</span>
+        <input
+          id="docs-search-input"
+          type="search"
+          data-search-input
+          placeholder="Search guides, modules, APIs…"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </div>
+      <p class="search-status" data-search-status>Type to search the documentation.</p>
+      <div class="search-results" data-search-results></div>
+      <footer class="search-dialog-footer">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+        <span><kbd>enter</kbd> open</span>
+        <span><kbd>esc</kbd> close</span>
+      </footer>
+    </div>
+  </dialog>
+</docs-search>
+
+<script>
+  interface SearchDocument {
+    description: string;
+    group: string;
+    href: string;
+    text: string;
+    title: string;
+  }
+
+  class DocsSearchElement extends HTMLElement {
+    private documents?: Promise<SearchDocument[]>;
+    private dialog!: HTMLDialogElement;
+    private input!: HTMLInputElement;
+    private results!: HTMLElement;
+    private searchGeneration = 0;
+    private status!: HTMLElement;
+
+    connectedCallback() {
+      this.dialog = this.querySelector<HTMLDialogElement>("[data-search-dialog]")!;
+      this.input = this.querySelector<HTMLInputElement>("[data-search-input]")!;
+      this.results = this.querySelector<HTMLElement>("[data-search-results]")!;
+      this.status = this.querySelector<HTMLElement>("[data-search-status]")!;
+
+      this.querySelector("[data-search-open]")?.addEventListener("click", () => this.open());
+      this.querySelector("[data-search-close]")?.addEventListener("click", () => this.dialog.close());
+      this.input.addEventListener("input", () => this.search());
+      this.input.addEventListener("keydown", (event) => this.handleInputKey(event));
+      this.results.addEventListener("keydown", (event) => this.handleResultKey(event));
+      this.dialog.addEventListener("click", (event) => {
+        if (event.target === this.dialog) this.dialog.close();
+      });
+      document.addEventListener("keydown", this.handleShortcut);
+    }
+
+    disconnectedCallback() {
+      document.removeEventListener("keydown", this.handleShortcut);
+    }
+
+    private handleShortcut = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isEditing = target?.matches("input, textarea, select, [contenteditable='true']") ?? false;
+      const isCommand = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k";
+      const isSlash = event.key === "/" && !isEditing && !event.ctrlKey && !event.metaKey && !event.altKey;
+      if (!isCommand && !isSlash) return;
+      event.preventDefault();
+      this.dialog.open ? this.dialog.close() : this.open();
+    };
+
+    private async open() {
+      if (!this.dialog.open) this.dialog.showModal();
+      this.input.focus();
+      this.input.select();
+      await this.loadDocuments();
+      if (this.input.value.trim()) this.search();
+    }
+
+    private loadDocuments(): Promise<SearchDocument[]> {
+      if (!this.documents) {
+        this.status.textContent = "Loading search index…";
+        this.documents = fetch(this.dataset.indexUrl!)
+          .then((response) => {
+            if (!response.ok) throw new Error(`search index returned ${response.status}`);
+            return response.json() as Promise<SearchDocument[]>;
+          })
+          .then((documents) => {
+            this.status.textContent = this.input.value.trim()
+              ? `${documents.length} pages indexed.`
+              : "Type to search the documentation.";
+            return documents;
+          })
+          .catch((error) => {
+            this.status.textContent = "Search index is unavailable.";
+            throw error;
+          });
+      }
+      return this.documents;
+    }
+
+    private async search() {
+      const generation = ++this.searchGeneration;
+      const query = this.input.value.trim().toLocaleLowerCase();
+      this.results.replaceChildren();
+      if (!query) {
+        this.status.textContent = "Type to search the documentation.";
+        return;
+      }
+
+      let documents: SearchDocument[];
+      try {
+        documents = await this.loadDocuments();
+      } catch {
+        return;
+      }
+      if (generation !== this.searchGeneration) return;
+      const terms = query.split(/\s+/).filter(Boolean);
+      const matches = documents
+        .map((document) => ({ document, score: this.score(document, query, terms) }))
+        .filter((match) => match.score > 0)
+        .sort((left, right) => right.score - left.score || left.document.title.localeCompare(right.document.title))
+        .slice(0, 8);
+
+      this.status.textContent = matches.length === 0
+        ? `No pages match “${this.input.value.trim()}”.`
+        : `${matches.length} result${matches.length === 1 ? "" : "s"} for “${this.input.value.trim()}”.`;
+      for (const { document } of matches) this.results.append(this.result(document, terms));
+    }
+
+    private score(document: SearchDocument, query: string, terms: string[]): number {
+      const title = document.title.toLocaleLowerCase();
+      const description = document.description.toLocaleLowerCase();
+      const group = document.group.toLocaleLowerCase();
+      const text = document.text.toLocaleLowerCase();
+      const haystack = `${title} ${description} ${group} ${text}`;
+      if (!terms.every((term) => haystack.includes(term))) return 0;
+
+      let score = title === query ? 200 : title.includes(query) ? 100 : 0;
+      for (const term of terms) {
+        if (title.includes(term)) score += 40;
+        if (group.includes(term)) score += 16;
+        if (description.includes(term)) score += 8;
+        if (text.includes(term)) score += 2;
+      }
+      return score;
+    }
+
+    private result(entry: SearchDocument, terms: string[]): HTMLAnchorElement {
+      const link = document.createElement("a");
+      link.className = "search-result";
+      link.href = `${this.dataset.root ?? ""}${entry.href}`;
+
+      const meta = document.createElement("span");
+      meta.className = "search-result-meta";
+      meta.textContent = entry.group;
+      const title = document.createElement("strong");
+      title.textContent = entry.title;
+      const excerpt = document.createElement("span");
+      excerpt.className = "search-result-excerpt";
+      excerpt.textContent = entry.description || this.excerpt(entry.text, terms);
+      link.append(meta, title, excerpt);
+      return link;
+    }
+
+    private excerpt(text: string, terms: string[]): string {
+      const lower = text.toLocaleLowerCase();
+      const position = Math.max(0, terms.map((term) => lower.indexOf(term)).find((index) => index >= 0) ?? 0);
+      const start = Math.max(0, position - 65);
+      const excerpt = text.slice(start, start + 190).trim();
+      return `${start > 0 ? "…" : ""}${excerpt}${start + 190 < text.length ? "…" : ""}`;
+    }
+
+    private handleInputKey(event: KeyboardEvent) {
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const links = [...this.results.querySelectorAll<HTMLAnchorElement>("a")];
+      if (links.length === 0) return;
+      event.preventDefault();
+      (event.key === "ArrowDown" ? links[0] : links.at(-1))?.focus();
+    }
+
+    private handleResultKey(event: KeyboardEvent) {
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const links = [...this.results.querySelectorAll<HTMLAnchorElement>("a")];
+      const current = links.indexOf(document.activeElement as HTMLAnchorElement);
+      if (current < 0) return;
+      event.preventDefault();
+      const next = current + (event.key === "ArrowDown" ? 1 : -1);
+      if (next < 0 || next >= links.length) this.input.focus();
+      else links[next].focus();
+    }
+  }
+
+  if (!customElements.get("docs-search")) customElements.define("docs-search", DocsSearchElement);
+</script>
