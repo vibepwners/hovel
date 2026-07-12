@@ -1,9 +1,13 @@
+load("@rules_go//go:def.bzl", "go_binary")
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 load(":site_rules.bzl", "sdk_docs_tree", "site_tree")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["daemon_rpc_openapi_test.py"])
+exports_files([
+    "daemon_rpc_openapi_test.py",
+    "requirements_lock.txt",
+])
 
 py_binary(
     name = "generate_sdk_api_docs",
@@ -15,6 +19,19 @@ py_binary(
     python_version = "PY3",
 )
 
+py_binary(
+    name = "sphinx_build",
+    srcs = ["sphinx_build.py"],
+    main = "sphinx_build.py",
+    python_version = "PY3",
+    deps = ["@docs_pypi//sphinx"],
+)
+
+go_binary(
+    name = "go_api_docs",
+    srcs = ["go_api_docs.go"],
+)
+
 filegroup(
     name = "python_api_sources",
     srcs = glob(["python_api/**"]),
@@ -23,20 +40,17 @@ filegroup(
 sdk_docs_tree(
     name = "sdk_site",
     generator = ":generate_sdk_api_docs",
-    go_bin = "@go_sdk//:bin/go",
+    go_doc_bin = ":go_api_docs",
     rustc_lib = "@@rules_rust++rust+rust_linux_x86_64__x86_64-unknown-linux-gnu__stable_tools//:rustc_lib",  # buildifier: disable=canonical-repository
     rustdoc_bin = "@@rules_rust++rust+rust_linux_x86_64__x86_64-unknown-linux-gnu__stable_tools//:rustdoc",  # buildifier: disable=canonical-repository
     sources = [
         ":python_api_sources",
-        "//core:go_module_files",
         "//sdk/go/hovel:sources",
         "//sdk/go/hoveltest:sources",
-        "//sdk/python:pyproject.toml",
         "//sdk/python:sources",
-        "//sdk/python:uv.lock",
         "//sdk/rust/hovel:sources",
     ],
-    uv_bin = "@uv_linux_x86_64//:uv_bin",
+    sphinx_bin = ":sphinx_build",
 )
 
 py_binary(

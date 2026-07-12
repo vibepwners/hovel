@@ -77,6 +77,14 @@ lint_pip.parse(
 )
 use_repo(lint_pip, "lint_pypi")
 
+docs_pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+docs_pip.parse(
+    hub_name = "docs_pypi",
+    python_version = "3.12",
+    requirements_lock = "//docs/tools/docs:requirements_lock.txt",
+)
+use_repo(docs_pip, "docs_pypi")
+
 picblobs_pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 picblobs_pip.parse(
     hub_name = "picblobs_pip",

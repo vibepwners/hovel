@@ -59,7 +59,7 @@ ordered slide data lives in `src/pages/index.astro`.
 | `task docs:dev` | Run Astro through Bazel on `http://localhost:4321`. |
 | `task docs:preview` | Serve the assembled `_site/` on `http://localhost:4322`. |
 | `task docs:report` | Run report-producing tests and build `_site/` with their evidence. |
-| `task docs:deps` | Refresh `pnpm-lock.yaml` with Bazel-managed pnpm. |
+| `task docs:deps` | Refresh the pnpm and hashed Sphinx locks with Bazel-managed tools. |
 
 Do not run Node, pnpm, Astro, or Bazel directly. Do not edit `_site/`.
 
@@ -78,9 +78,9 @@ test suite. A manual Pages dispatch runs `task docs:report` before upload.
 
 Astro also owns `api/sdk/index.html` and `api/sdk/go/index.html`. Their card
 metadata is centralized in `src/lib/apiReferences.ts` and shared with search.
-The SDK generator owns only the native Sphinx, pkgsite, and rustdoc interiors;
-those tools retain their purpose-built reference navigation instead of copying
-Hovel's site chrome.
+The SDK generator owns only the Sphinx, Go, and rustdoc interiors; those tools
+retain their purpose-built reference navigation instead of copying Hovel's site
+chrome.
 
 ## Hermetic boundary
 
@@ -90,6 +90,9 @@ the npm graph. Lifecycle scripts are disabled both in pnpm configuration and
 `npm_translate_lock`. The Astro action runs with declared sources, including
 root `VERSION`, and writes only its declared `dist` output directory. The final
 site assembler consumes declared TreeArtifacts and files and rejects output
-collisions. Native SDK reference generation remains an explicit local action:
-pkgsite opens a loopback server and uv uses its managed package cache. The
-published site itself does not load CDN resources.
+collisions. Native SDK reference generation is also a declared Bazel action:
+Sphinx and its hashed dependency graph come from `rules_python`, the Go
+reference renderer is a Bazel-built binary over the declared SDK sources, and
+rustdoc comes from the registered Rust toolchain. The SDK action inherits no
+host shell environment, opens no network service, and is eligible for sandboxed
+and remote execution. The published site itself does not load CDN resources.

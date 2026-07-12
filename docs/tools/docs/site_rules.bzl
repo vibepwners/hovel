@@ -12,8 +12,8 @@ def _sdk_docs_tree_impl(ctx):
     args = ctx.actions.args()
     args.add("--repo-root=.")
     args.add("--output", output.path + "/api/sdk")
-    args.add("--uv-bin", ctx.file.uv_bin)
-    args.add("--go-bin", ctx.file.go_bin)
+    args.add("--sphinx-bin", ctx.executable.sphinx_bin)
+    args.add("--go-doc-bin", ctx.executable.go_doc_bin)
     args.add("--rustdoc-bin", ctx.file.rustdoc_bin)
 
     ctx.actions.run(
@@ -23,21 +23,18 @@ def _sdk_docs_tree_impl(ctx):
         outputs = [output],
         tools = depset(
             [
-                ctx.file.go_bin,
+                ctx.executable.go_doc_bin,
                 ctx.file.rustdoc_bin,
-                ctx.file.uv_bin,
+                ctx.executable.sphinx_bin,
             ] + ctx.files.rustc_lib,
-            transitive = _runfiles(ctx.attr.generator),
+            transitive = (
+                _runfiles(ctx.attr.generator) +
+                _runfiles(ctx.attr.go_doc_bin) +
+                _runfiles(ctx.attr.sphinx_bin)
+            ),
         ),
-        execution_requirements = {
-            # pkgsite opens a loopback server and uv uses its managed package
-            # cache. Keep this native-doc generation action on the local host.
-            "no-remote": "1",
-            "no-sandbox": "1",
-        },
         mnemonic = "SdkDocs",
         progress_message = "Generating native SDK documentation %{label}",
-        use_default_shell_env = True,
     )
     return [DefaultInfo(files = depset([output]))]
 
@@ -45,11 +42,11 @@ sdk_docs_tree = rule(
     implementation = _sdk_docs_tree_impl,
     attrs = {
         "generator": attr.label(executable = True, cfg = "exec", mandatory = True),
-        "go_bin": attr.label(allow_single_file = True, cfg = "exec", mandatory = True),
+        "go_doc_bin": attr.label(executable = True, cfg = "exec", mandatory = True),
         "rustc_lib": attr.label(allow_files = True, cfg = "exec", mandatory = True),
         "rustdoc_bin": attr.label(allow_single_file = True, cfg = "exec", mandatory = True),
         "sources": attr.label_list(allow_files = True, mandatory = True),
-        "uv_bin": attr.label(allow_single_file = True, cfg = "exec", mandatory = True),
+        "sphinx_bin": attr.label(executable = True, cfg = "exec", mandatory = True),
     },
 )
 

@@ -118,8 +118,9 @@ HTML containing exactly one page-level `h1`:
   component is `src/components/DemoCarousel.astro`, while the ordered demo data
   lives in `src/pages/index.astro`.
 - Keep the build hermetic: do not add CDN assets, runtime network dependencies,
-  or host `node`, `npm`, or `pnpm` assumptions. Update dependencies with
-  `task docs:deps`, which uses Bazel-managed pnpm and the checked-in lockfile.
+  or host `node`, `npm`, `pnpm`, or Python package assumptions. Update
+  dependencies with `task docs:deps`, which uses Bazel-managed pnpm and uv to
+  refresh the checked-in JavaScript and hashed Python locks.
 - After docs changes, run `task docs:check`. Use `task docs:build` when the root
   `_site/` materialization is required.
 - Test evidence is generated after Bazel finishes. Use `task docs:report` when

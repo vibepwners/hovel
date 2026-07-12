@@ -744,11 +744,14 @@ tasks:
       - task: docs:stage
 
   docs:deps:
-    desc: Update the pinned docs JavaScript dependency lock with Bazel-managed pnpm.
+    desc: Update the pinned docs JavaScript and Python dependency locks with Bazel-managed tools.
     cmds:
       - task: bazel:run
         vars:
           CLI_ARGS: '@pnpm//:pnpm -- --dir {{.REPO_ROOT}}/docs/site install --lockfile-only'
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //repo-tools/deps:update_python_locks -- --only docs
 
   docs:dev:
     desc: Run the Bazel-managed Astro development server on port 4321.
