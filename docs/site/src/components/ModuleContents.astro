@@ -1,0 +1,57 @@
+---
+import { moduleSpaces } from "../lib/catalog";
+
+interface Props {
+  detailed?: boolean;
+  root: string;
+}
+
+const { detailed = false, root } = Astro.props;
+const modules = moduleSpaces();
+const documentCount = modules.reduce((total, module) => total + module.documents.length, 0);
+---
+
+<section class="book-toc module-directory" aria-labelledby="module-directory-title">
+  <header class="book-toc-header">
+    <div>
+      <p class="book-kicker">// {String(modules.length).padStart(2, "0")} modules · {String(documentCount).padStart(2, "0")} documents</p>
+      <h2 id="module-directory-title">Available modules</h2>
+    </div>
+    <p>{detailed ? "Every published module document, in generated reading order." : "Integrated capabilities with direct paths into operation, build, verification, and reference."}</p>
+  </header>
+
+  <div class="book-parts">
+    {modules.map((module) => (
+      <section class="book-part module-directory-entry" aria-labelledby={`module-${module.number}`}>
+        <header class="book-part-header">
+          <span class="book-part-number">Module {String(module.number).padStart(2, "0")}</span>
+          <h3 id={`module-${module.number}`}><a href={`${root}${module.overview.href}`}>{module.label}</a></h3>
+          <span class="book-part-count">{module.documents.length} document{module.documents.length === 1 ? "" : "s"}</span>
+        </header>
+        <p class="module-directory-meta"><span>{module.type}</span><span>{module.status}</span>{module.description}</p>
+        {detailed ? (
+          <ol class="book-chapter-list">
+            {module.documents.map((document) => (
+              <li>
+                <a href={`${root}${document.page.href}`}>
+                  <span class="book-chapter-number">{document.label}</span>
+                  <span class="book-chapter-copy">
+                    <strong>{document.page.navTitle ?? document.page.title}</strong>
+                    <span>{document.page.summary}</span>
+                  </span>
+                  <span class="book-chapter-arrow" aria-hidden="true">→</span>
+                </a>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <a class="module-directory-open" href={`${root}${module.overview.href}`}>
+            <span>Open module</span>
+            <strong>{String(module.documents.length).padStart(2, "0")} documents</strong>
+            <span aria-hidden="true">→</span>
+          </a>
+        )}
+      </section>
+    ))}
+  </div>
+</section>

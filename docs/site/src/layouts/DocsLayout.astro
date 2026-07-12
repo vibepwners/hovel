@@ -1,8 +1,9 @@
 ---
 import BookContents from "../components/BookContents.astro";
+import ModuleContents from "../components/ModuleContents.astro";
 import Sidebar from "../components/Sidebar.astro";
 import type { DocPage } from "../lib/catalog";
-import { bookChapter, orderedPages, rootPrefix } from "../lib/catalog";
+import { bookChapter, moduleDocument, navGroups, orderedPages, rootPrefix } from "../lib/catalog";
 import PageShell from "./PageShell.astro";
 
 interface Props {
@@ -12,14 +13,32 @@ interface Props {
 const { page } = Astro.props;
 if (page.area === "home") throw new Error("DocsLayout cannot render the home page");
 const root = rootPrefix(page.slug);
-const ordered = orderedPages(page.area);
+const moduleEntry = page.area === "modules" ? moduleDocument(page) : undefined;
+const ordered = moduleEntry
+  ? moduleEntry.module.documents.map((document) => document.page)
+  : page.area === "modules"
+    ? navGroups("modules").find((group) => group.label === "Modules")?.pages ?? []
+    : orderedPages(page.area);
 const index = ordered.findIndex((candidate) => candidate.slug === page.slug);
 const previous = index > 0 ? ordered[index - 1] : undefined;
 const next = index + 1 < ordered.length ? ordered[index + 1] : undefined;
 const current = page.area === "book" ? "Book" : "Modules";
 const chapter = page.area === "book" ? bookChapter(page) : undefined;
 const isBookContents = page.slug === "spec/index";
-const navigationNumber = (candidate: DocPage) => page.area === "book" ? (bookChapter(candidate)?.label ?? "TOC") : undefined;
+const isModuleDirectory = page.slug === "modules/index" || page.slug === "modules/catalogue";
+const navigationNumber = (candidate: DocPage) => page.area === "book"
+  ? (bookChapter(candidate)?.label ?? "TOC")
+  : moduleDocument(candidate)?.document.label;
+const shellTag = chapter
+  ? `// chapter ${chapter.label}`
+  : moduleEntry
+    ? `// module ${moduleEntry.document.label}`
+    : page.area === "book" ? "// book" : "// modules";
+const documentTitle = chapter
+  ? `Chapter ${chapter.label}: ${page.title}`
+  : moduleEntry
+    ? `Module ${moduleEntry.document.label}: ${page.title}`
+    : page.title;
 ---
 
 <PageShell
@@ -27,23 +46,41 @@ const navigationNumber = (candidate: DocPage) => page.area === "book" ? (bookCha
   current={current}
   description={page.description}
   root={root}
-  tag={chapter ? `// chapter ${chapter.label}` : page.area === "book" ? "// book" : "// modules"}
-  title={`${chapter ? `Chapter ${chapter.label}: ` : ""}${page.title} - Hovel ${page.area === "book" ? "book" : "modules"}`}
+  tag={shellTag}
+  title={`${documentTitle} - Hovel ${page.area === "book" ? "book" : "modules"}`}
 >
   <div class="layout">
     <Sidebar area={page.area} current={page} root={root} />
     <main
-      class:list={["content", page.area === "book" && "book-content", chapter && "book-chapter", isBookContents && "book-contents-page"]}
+      class:list={[
+        "content",
+        (page.area === "book" || moduleEntry || isModuleDirectory) && "structured-content",
+        page.area === "book" && "book-content",
+        page.area === "modules" && "module-content",
+        (chapter || moduleEntry) && "numbered-document",
+        chapter && "book-chapter",
+        moduleEntry && "module-document",
+        isBookContents && "book-contents-page",
+        isModuleDirectory && "module-directory-page",
+      ]}
       data-chapter-number={chapter?.label}
+      data-module-number={moduleEntry?.document.label}
     >
-      {chapter && (
-        <header class="book-chapter-header">
-          <span class="book-chapter-id">Chapter {chapter.label}</span>
-          <span class="book-chapter-part">Part {String(chapter.partNumber).padStart(2, "0")} / {chapter.partLabel}</span>
+      {(chapter || moduleEntry) && (
+        <header class:list={["document-header", chapter && "book-chapter-header", moduleEntry && "module-document-header"]}>
+          <span class="document-id">
+            {chapter ? `Chapter ${chapter.label}` : `Module ${moduleEntry!.document.label}`}
+          </span>
+          <span class="document-context">
+            {chapter
+              ? `Part ${String(chapter.partNumber).padStart(2, "0")} / ${chapter.partLabel}`
+              : `${moduleEntry!.module.type} / ${moduleEntry!.module.status}`}
+          </span>
         </header>
       )}
       <slot />
       {isBookContents && <BookContents root={root} />}
+      {isModuleDirectory && <ModuleContents detailed={page.slug === "modules/catalogue"} root={root} />}
       <nav class="page-nav" aria-label="Page navigation">
         {previous ? (
           <a class="prev" href={`${root}${previous.href}`}>

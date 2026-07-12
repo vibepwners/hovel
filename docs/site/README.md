@@ -32,6 +32,13 @@ Chapter numbers, section numbers, contents rows, sidebar labels, browser titles,
 and previous/next labels are all derived. Authors set only the part and a unique
 order within it.
 
+Module documentation uses the same generated structure. Put a module overview
+at `src/content/modules/<module>/index.html`; its metadata additionally declares
+`moduleOrder`, `moduleType`, `moduleStatus`, and `description`. Every other page
+with the same `group` joins that module's document set. Astro derives `MM.DD`
+numbers, the module directory, the cross-module switcher, the module sidebar,
+section numbering, browser titles, and previous/next navigation.
+
 Page-specific browser JavaScript can be inline in the fragment. Shared scripts,
 CSS, images, downloads, and other static files go under `public/`, preserving
 their path below the site root. Astro components are reserved for shared site

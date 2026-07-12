@@ -6,6 +6,9 @@ export interface DocMetadata {
   group: string;
   navTitle?: string;
   description?: string;
+  moduleOrder?: number;
+  moduleStatus?: string;
+  moduleType?: string;
 }
 
 export interface DocPage extends DocMetadata {
@@ -34,6 +37,24 @@ export interface BookPart {
   label: string;
   number: number;
   chapters: BookChapter[];
+}
+
+export interface ModuleDocument {
+  label: string;
+  number: number;
+  page: DocPage;
+}
+
+export interface ModuleSpace {
+  description: string;
+  documents: ModuleDocument[];
+  id: string;
+  label: string;
+  number: number;
+  order: number;
+  overview: DocPage;
+  status: string;
+  type: string;
 }
 
 const HEADER = "<!-- hovel-doc:";
@@ -119,6 +140,14 @@ function parsePage(sourcePath: string, raw: string): DocPage {
   if (candidate.description !== undefined && typeof candidate.description !== "string") {
     fail(sourcePath, "metadata.description must be a string when present");
   }
+  if (candidate.moduleOrder !== undefined && (!Number.isInteger(candidate.moduleOrder) || candidate.moduleOrder < 0)) {
+    fail(sourcePath, "metadata.moduleOrder must be a non-negative integer when present");
+  }
+  for (const field of ["moduleStatus", "moduleType"] as const) {
+    if (candidate[field] !== undefined && (typeof candidate[field] !== "string" || candidate[field].trim() === "")) {
+      fail(sourcePath, `metadata.${field} must be a non-empty string when present`);
+    }
+  }
 
   const body = source
     .slice(headerEnd + 3)
@@ -144,6 +173,9 @@ function parsePage(sourcePath: string, raw: string): DocPage {
     description: candidate.description,
     group: candidate.group,
     href: slug === "index" ? "index.html" : `${slug}.html`,
+    moduleOrder: candidate.moduleOrder,
+    moduleStatus: candidate.moduleStatus,
+    moduleType: candidate.moduleType,
     navTitle: candidate.navTitle,
     order: candidate.order as number,
     slug,
@@ -194,6 +226,7 @@ const BOOK_GROUPS = [
   "Engineering",
   "Reference",
 ];
+const MODULE_ROOT_GROUP = "Modules";
 for (const page of pages.filter((candidate) => candidate.area === "book")) {
   if (!BOOK_GROUPS.includes(page.group)) {
     throw new Error(`${page.sourcePath}: unknown book group ${page.group}`);
@@ -212,9 +245,11 @@ export function navGroups(area: Exclude<DocArea, "home">): NavGroup[] {
     if (area === "book") {
       return BOOK_GROUPS.indexOf(left) - BOOK_GROUPS.indexOf(right);
     }
-    if (left === "Modules") return -1;
-    if (right === "Modules") return 1;
-    return left.localeCompare(right);
+    if (left === MODULE_ROOT_GROUP) return -1;
+    if (right === MODULE_ROOT_GROUP) return 1;
+    const order = new Map(moduleSpaces().map((module) => [module.id, module.order]));
+    return (order.get(left) ?? Number.MAX_SAFE_INTEGER) - (order.get(right) ?? Number.MAX_SAFE_INTEGER)
+      || left.localeCompare(right);
   });
   return labels.map((label) => ({ label, pages: grouped.get(label)!.sort(comparePages) }));
 }
@@ -250,6 +285,72 @@ const chapterBySlug = new Map(bookParts().flatMap((part) => part.chapters).map((
 
 export function bookChapter(page: DocPage): BookChapter | undefined {
   return chapterBySlug.get(page.slug);
+}
+
+const moduleSpaceList = buildModuleSpaces();
+const moduleDocumentBySlug = new Map(
+  moduleSpaceList.flatMap((module) => module.documents.map((document) => [document.page.slug, { document, module }] as const)),
+);
+
+function buildModuleSpaces(): ModuleSpace[] {
+  const grouped = new Map<string, DocPage[]>();
+  for (const page of pages.filter((candidate) => candidate.area === "modules" && candidate.group !== MODULE_ROOT_GROUP)) {
+    const segments = page.slug.split("/");
+    if (segments.length < 3 || segments[0] !== "modules" || segments[1] !== page.group) {
+      fail(page.sourcePath, `module group ${page.group} must match its modules/<module>/ path`);
+    }
+    grouped.set(page.group, [...(grouped.get(page.group) ?? []), page]);
+  }
+
+  const orders = new Set<number>();
+  const modules = [...grouped.entries()].map(([id, modulePages]) => {
+    const overview = modulePages.find((page) => page.slug === `modules/${id}/index`);
+    if (!overview) throw new Error(`module ${id} is missing modules/${id}/index.html`);
+    if (overview.moduleOrder === undefined || overview.moduleType === undefined || overview.moduleStatus === undefined) {
+      fail(overview.sourcePath, "module overview metadata requires moduleOrder, moduleType, and moduleStatus");
+    }
+    if (!overview.description) {
+      fail(overview.sourcePath, "module overview metadata requires description");
+    }
+    if (orders.has(overview.moduleOrder)) {
+      fail(overview.sourcePath, `duplicate moduleOrder ${overview.moduleOrder}`);
+    }
+    orders.add(overview.moduleOrder);
+    return {
+      description: overview.description,
+      id,
+      label: overview.title,
+      order: overview.moduleOrder,
+      overview,
+      pages: modulePages.sort(comparePages),
+      status: overview.moduleStatus,
+      type: overview.moduleType,
+    };
+  }).sort((left, right) => left.order - right.order || left.label.localeCompare(right.label));
+
+  return modules.map((module, moduleIndex) => ({
+    description: module.description,
+    documents: module.pages.map((page, pageIndex) => ({
+      label: `${String(moduleIndex + 1).padStart(2, "0")}.${String(pageIndex + 1).padStart(2, "0")}`,
+      number: pageIndex + 1,
+      page,
+    })),
+    id: module.id,
+    label: module.label,
+    number: moduleIndex + 1,
+    order: module.order,
+    overview: module.overview,
+    status: module.status,
+    type: module.type,
+  }));
+}
+
+export function moduleSpaces(): ModuleSpace[] {
+  return moduleSpaceList;
+}
+
+export function moduleDocument(page: DocPage): { document: ModuleDocument; module: ModuleSpace } | undefined {
+  return moduleDocumentBySlug.get(page.slug);
 }
 
 export function rootPrefix(slug: string): string {

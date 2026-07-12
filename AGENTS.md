@@ -103,6 +103,10 @@ HTML containing exactly one page-level `h1`:
   styles, images, or other static files belong under `docs/site/public/`.
 - Global chrome lives in `src/components/` and `src/layouts/`. Change it once
   there; never copy headers, sidebars, footers, or page navigation into content.
+- Module overview pages live at `src/content/modules/<module>/index.html` and
+  additionally declare `moduleOrder`, `moduleType`, `moduleStatus`, and
+  `description`. Use the module id as `group` on every page in its document set;
+  Astro generates module/document numbering and all module navigation.
 - Search is generated automatically from page metadata and body text. Keep
   titles and optional descriptions concrete so client-side search results stay
   useful; do not hand-maintain a separate search index.

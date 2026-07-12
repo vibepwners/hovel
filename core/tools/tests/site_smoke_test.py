@@ -26,7 +26,11 @@ class PageSmokeParser(HTMLParser):
         self.has_demo_carousel = False
         self.has_book_toc = False
         self.has_book_chapter_header = False
+        self.has_module_directory = False
+        self.has_module_document_header = False
+        self.has_module_switcher = False
         self.chapter_number: str | None = None
+        self.module_number: str | None = None
         self.scripts: list[str] = []
         self.stylesheets: list[str] = []
         self.links: list[Link] = []
@@ -55,8 +59,16 @@ class PageSmokeParser(HTMLParser):
             self.has_book_toc = True
         if "book-chapter-header" in classes:
             self.has_book_chapter_header = True
+        if "module-directory" in classes:
+            self.has_module_directory = True
+        if "module-document-header" in classes:
+            self.has_module_document_header = True
+        if "module-switcher" in classes:
+            self.has_module_switcher = True
         if tag == "main" and "book-chapter" in classes:
             self.chapter_number = attributes.get("data-chapter-number")
+        if tag == "main" and "module-document" in classes:
+            self.module_number = attributes.get("data-module-number")
         if tag == "link" and "stylesheet" in (attributes.get("rel") or "").split():
             self.stylesheets.append(attributes.get("href") or "")
         if tag == "script" and attributes.get("src"):
@@ -142,6 +154,24 @@ def check_page(path: Path) -> str | None:
             return f"{path} is missing the generated chapter header"
         if parser.chapter_number is None or len(parser.chapter_number) != 2 or not parser.chapter_number.isdigit():
             return f"{path} has an invalid generated chapter number"
+    if "modules" in path.parts:
+        module_index = len(path.parts) - 1 - tuple(reversed(path.parts)).index("modules")
+        module_route = path.parts[module_index + 1 :]
+        if module_route in (("index.html",), ("catalogue.html",)):
+            if not parser.has_module_directory:
+                return f"{path} is missing the generated module directory"
+        else:
+            if not parser.has_module_document_header:
+                return f"{path} is missing the generated module document header"
+            if (
+                parser.module_number is None
+                or len(parser.module_number) != 5
+                or parser.module_number[2] != "."
+                or not parser.module_number.replace(".", "").isdigit()
+            ):
+                return f"{path} has an invalid generated module document number"
+        if not parser.has_module_switcher:
+            return f"{path} is missing module-switch navigation"
     return None
 
 
