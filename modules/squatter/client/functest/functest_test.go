@@ -20,8 +20,8 @@ import (
 
 	"github.com/bazelbuild/rules_go/go/runfiles"
 
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/wire"
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/xfer"
+	"github.com/vibepwners/hovel/payloads/squatter/client/wire"
+	"github.com/vibepwners/hovel/payloads/squatter/client/xfer"
 )
 
 var (

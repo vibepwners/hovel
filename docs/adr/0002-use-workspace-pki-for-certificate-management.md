@@ -1,6 +1,6 @@
 # Use workspace PKI for certificate management
 
-Status: proposed
+Status: accepted
 
 ## Context
 
@@ -49,6 +49,14 @@ selects consumer-safe algorithms and encodings. This distinction matters:
 choosing Mbed TLS for an implant does not require Mbed TLS to issue its
 certificate, and choosing an external issuer does not force a runtime TLS
 library on the consumer.
+
+Post-quantum key establishment and certificate authentication are separate
+capabilities. The Go 1.26 compatibility target may require hybrid ML-KEM TLS
+named groups to protect recorded sessions from later decryption while still
+using a classical X.509 identity signature. Hovel must report that distinction
+plainly and must not label a classical certificate chain as fully post-quantum.
+Future ML-DSA or other standardized signature support enters through versioned
+backend and compatibility capabilities rather than a special-case lifecycle.
 
 Backends advertise typed key, signature, certificate, extension, import,
 export, and signer-handle capabilities. The resolved backend ID, version,
@@ -131,8 +139,9 @@ Profiles supply safe defaults without reducing operator control. The default
 profile will use ECDSA P-256 with SHA-256, positive cryptographically random
 128-bit serials, a small clock-skew backdate, role-appropriate key usage and
 EKU, and bounded validity. Compatibility profiles will include RSA 2048, and
-an embedded compatibility target will be continuously tested against Mbed TLS
-and the repository's Mbed OS target. Defaults are resolved into the persisted
+optional embedded compatibility targets may be continuously tested against
+Mbed TLS, wolfSSL, or another registered consumer. Mbed OS is not a PKI
+completion criterion. Defaults are resolved into the persisted
 issuance plan before confirmation so they are reviewable and reproducible as
 recorded intent.
 
@@ -162,9 +171,14 @@ schema. Adapters must not reproduce protocol strings or lifecycle thresholds.
 
 ## Key custody
 
-Private keys will not be stored as plaintext JSON in the workspace database.
-The first implementation will use an encrypted local key store rooted in a
-workspace key obtained from an explicit secret provider. The port must also
+Private keys are not stored as plaintext JSON in the workspace database. The
+built-in local implementation uses AES-256-GCM envelopes and authenticates
+immutable generation metadata with a separately domain-separated HMAC. Both
+are rooted in a versioned workspace master key. The baseline provider stores
+those master keys in the owner-only
+`secrets/pki-master-keys.json` file; initialization and ordinary open are
+separate so a missing file after restore fails closed instead of creating an
+unrelated key. The provider port must also
 support non-exportable external signers such as an OS key store, PKCS #11,
 KMS, or an offline root workflow.
 

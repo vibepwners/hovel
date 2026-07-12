@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
-	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/adapters/storage/filesystem"
+	"github.com/vibepwners/hovel/internal/app/chainruntime"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 func TestHelpShowsCommandMenu(t *testing.T) {

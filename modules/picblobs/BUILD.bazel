@@ -6,6 +6,8 @@
 # Check codegen:       bazel test //modules/picblobs/tools:generate_check
 # Run all checks:      bazel test //modules/picblobs/tools:all --config=picblobs_lint
 
+load("@rules_python//python:defs.bzl", "py_library")
+
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
@@ -26,8 +28,15 @@ filegroup(
         "Taskfile.yml",
         "hovel-module.yaml",
         "lefthook.yml",
+        "nacl_protocol.py",
         "sourceme",
     ],
+)
+
+py_library(
+    name = "nacl_protocol",
+    srcs = ["nacl_protocol.py"],
+    imports = ["."],
 )
 
 filegroup(
@@ -50,6 +59,7 @@ filegroup(
         ".clang-tidy",
         "BUILD.bazel",
         "MODULE.bazel",
+        "nacl_protocol.py",
         "//modules/picblobs/bazel:quality_sources",
         "//modules/picblobs/kernel:quality_sources",
         "//modules/picblobs/mbed:quality_sources",
@@ -69,7 +79,7 @@ test_suite(
     tests = [
         "//modules/picblobs/mbed:compile_mbed_os_test",
         "//modules/picblobs/mbed:materialize_blobs_test",
-        "//modules/picblobs/provider:provider_test",
+        "//modules/picblobs/mbed:target_compile_test",
         "//modules/picblobs/python:pytest_suite",
         "//modules/picblobs/python:sync_test",
         "//modules/picblobs/python_cli:pytest_suite",

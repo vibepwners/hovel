@@ -6,13 +6,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	"github.com/vibepwners/hovel/internal/domain/event"
 )
 
-func TestStorePersistsOperatorSession(t *testing.T) {
+func newTestStore(t *testing.T) Store {
+	t.Helper()
 	store := NewStore(t.TempDir())
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close sqlite test store: %v", err)
+		}
+	})
+	return store
+}
+
+func TestStorePersistsOperatorSession(t *testing.T) {
+	store := newTestStore(t)
 	state := operatorsession.PersistedState{
 		ActiveOperation: "redteam-lab",
 		ActiveChain:     "alpha",
@@ -47,7 +58,7 @@ func TestStorePersistsOperatorSession(t *testing.T) {
 }
 
 func TestStoreReportsMissingOperatorSession(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := newTestStore(t)
 	_, ok, err := store.LoadOperatorSession(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +69,7 @@ func TestStoreReportsMissingOperatorSession(t *testing.T) {
 }
 
 func TestStorePersistsThrowPlans(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := newTestStore(t)
 	plan := commands.ThrowPlanRecord{
 		ID:             "plan-mock",
 		ConfirmationID: "confirmation-mock",
@@ -90,7 +101,7 @@ func TestStorePersistsThrowPlans(t *testing.T) {
 }
 
 func TestStorePersistsThrowConfirmations(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := newTestStore(t)
 	confirmation := commands.ThrowConfirmationRecord{
 		ID:          "confirmation-mock",
 		Workspace:   ".hovel",
@@ -140,7 +151,7 @@ func TestStorePersistsThrowConfirmations(t *testing.T) {
 }
 
 func TestStorePersistsThrowRecordsAndArtifactMetadata(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := newTestStore(t)
 	record := commands.ThrowRecord{
 		ID:          "throw-mock",
 		Workspace:   ".hovel",
@@ -190,7 +201,7 @@ func TestStorePersistsThrowRecordsAndArtifactMetadata(t *testing.T) {
 }
 
 func TestStorePersistsInstalledPayloadInventory(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := newTestStore(t)
 	record := installedPayloadFixture(".hovel", "192.168.122.142", "9101")
 
 	got, err := store.RecordInstalledPayload(context.Background(), record)
@@ -224,7 +235,7 @@ func TestStorePersistsInstalledPayloadInventory(t *testing.T) {
 }
 
 func TestStoreUpsertsInstalledPayloadByProviderInstance(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := newTestStore(t)
 	first := installedPayloadFixture(".hovel", "192.168.122.142", "9101")
 	recorded, err := store.RecordInstalledPayload(context.Background(), first)
 	if err != nil {
@@ -256,7 +267,7 @@ func TestStoreUpsertsInstalledPayloadByProviderInstance(t *testing.T) {
 }
 
 func TestStoreInstalledPayloadStateTransitionsAndActiveFilter(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := newTestStore(t)
 	first, err := store.RecordInstalledPayload(context.Background(), installedPayloadFixture(".hovel", "192.168.122.142", "9101"))
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +314,7 @@ func TestStoreInstalledPayloadStateTransitionsAndActiveFilter(t *testing.T) {
 }
 
 func TestStorePersistsStructuredEvents(t *testing.T) {
-	store := NewStore(t.TempDir())
+	store := newTestStore(t)
 	id, err := event.NewID("event-1")
 	if err != nil {
 		t.Fatalf("NewID returned error: %v", err)

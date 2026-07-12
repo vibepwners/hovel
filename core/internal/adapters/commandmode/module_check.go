@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
-	"github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/app/modulepackage"
+	"github.com/vibepwners/hovel/internal/moduleruntime/pythonrpc"
 )
 
 type moduleChecker struct{}

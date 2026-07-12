@@ -1,7 +1,11 @@
 package daemonrpc
 
 import (
+	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -11,14 +15,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/domain/mesh"
+	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 const (
 	defaultMeshBridgeHost = "127.0.0.1"
 	meshBridgeReadTimeout = 250 * time.Millisecond
+	meshBridgeAuthTimeout = 2 * time.Second
 	meshBridgeBufferSize  = 32 * 1024
 	maxNetworkPort        = int(^uint16(0))
 
@@ -36,7 +42,12 @@ const (
 	meshBridgeConfigProtocol     = "bridge.protocol"
 	meshBridgeConfigDatagram     = "bridge.datagram"
 	meshBridgeOwnerDaemon        = "daemon"
+	meshBridgeCapabilityBytes    = 32
 )
+
+// MeshBridgeCapability is an ephemeral bearer secret that authorizes one
+// local TCP connection or UDP peer to use a Mesh bridge.
+type MeshBridgeCapability string
 
 // MeshStreamOpener opens a provider-owned Mesh session flow. It is the narrow
 // application-service seam required by the local bridge adapter.
@@ -44,18 +55,30 @@ type MeshStreamOpener interface {
 	OpenMeshStream(context.Context, string, mesh.StreamRequest) (run.SessionRef, error)
 }
 
+type MeshCredentialStreamOpener interface {
+	OpenMeshStreamWithCredentialSelections(
+		context.Context,
+		string,
+		mesh.StreamRequest,
+		domainpki.CredentialSelections,
+		domainpki.CredentialOperationScope,
+	) (run.SessionRef, error)
+}
+
 // MeshBridgeOpenArgs gathers the collaborators needed to create a daemon-owned
 // local listener for a provider-owned Mesh session flow.
 type MeshBridgeOpenArgs struct {
-	ModuleID string
-	Request  mesh.StreamRequest
-	Host     string
-	Port     int
-	Runs     MeshStreamOpener
-	Sessions services.SessionBroker
-	Book     *MeshBook
-	Bridges  *MeshBridgeManager
-	Now      func() time.Time
+	ModuleID        string
+	Request         mesh.StreamRequest
+	Host            string
+	Port            int
+	Credentials     domainpki.CredentialSelections
+	CredentialScope domainpki.CredentialOperationScope
+	Runs            MeshStreamOpener
+	Sessions        services.SessionBroker
+	Book            *MeshBook
+	Bridges         *MeshBridgeManager
+	Now             func() time.Time
 }
 
 // MeshBridgeManager owns active daemon-local listeners that bridge local
@@ -154,6 +177,7 @@ type MeshBridge struct {
 	localHost   string
 	localPort   int
 	protocol    string
+	capability  MeshBridgeCapability
 
 	listener   net.Listener
 	packetConn net.PacketConn
@@ -212,6 +236,10 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 	}
 	listenConfig := &net.ListenConfig{}
 	localEndpoint := net.JoinHostPort(host, strconv.Itoa(port))
+	capability, err := newMeshBridgeCapability()
+	if err != nil {
+		return MeshBridgeOpenResponse{}, err
+	}
 	var listener net.Listener
 	var packetConn net.PacketConn
 	switch protocol {
@@ -229,7 +257,30 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 	request := meshBridgeRequest(args.Request, localAddress, protocol)
 	request.ModuleID = moduleID
 	operation := args.Book.StartBridge(moduleID, request, localAddress, now())
-	session, err := args.Runs.OpenMeshStream(ctx, moduleID, request)
+	var session run.SessionRef
+	if len(args.Credentials) == 0 {
+		session, err = args.Runs.OpenMeshStream(ctx, moduleID, request)
+	} else {
+		credentialOpener, ok := args.Runs.(MeshCredentialStreamOpener)
+		if !ok {
+			return MeshBridgeOpenResponse{}, failMeshBridgeOpen(
+				context.WithoutCancel(ctx),
+				args,
+				operation.ID,
+				listener,
+				packetConn,
+				"",
+				errors.New("credential-aware mesh stream opener is not configured"),
+			)
+		}
+		session, err = credentialOpener.OpenMeshStreamWithCredentialSelections(
+			ctx,
+			moduleID,
+			request,
+			args.Credentials,
+			args.CredentialScope,
+		)
+	}
 	if err != nil {
 		return MeshBridgeOpenResponse{}, failMeshBridgeOpen(
 			context.WithoutCancel(ctx),
@@ -270,6 +321,7 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 		localHost:   localHost,
 		localPort:   localPort,
 		protocol:    protocol,
+		capability:  capability,
 		listener:    listener,
 		packetConn:  packetConn,
 		sessions:    args.Sessions,
@@ -297,6 +349,7 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 		SessionID:    session.ID,
 		LocalHost:    localHost,
 		LocalPort:    localPort,
+		Capability:   capability,
 		LocalAddress: localAddress,
 	}, nil
 }
@@ -307,6 +360,7 @@ type meshBridgeConfig struct {
 	localHost   string
 	localPort   int
 	protocol    string
+	capability  MeshBridgeCapability
 	listener    net.Listener
 	packetConn  net.PacketConn
 	sessions    services.SessionBroker
@@ -326,6 +380,7 @@ func newMeshBridge(parent context.Context, config meshBridgeConfig) *MeshBridge 
 		localHost:   config.localHost,
 		localPort:   config.localPort,
 		protocol:    config.protocol,
+		capability:  config.capability,
 		listener:    config.listener,
 		packetConn:  config.packetConn,
 		sessions:    config.sessions,
@@ -365,21 +420,30 @@ func (b *MeshBridge) Serve() {
 }
 
 func (b *MeshBridge) serveStream() {
-	conn, err := b.listener.Accept()
-	if err != nil {
-		if b.isClosed() {
+	for {
+		conn, err := b.listener.Accept()
+		if err != nil {
+			if b.isClosed() {
+				return
+			}
+			b.finish(err)
 			return
 		}
-		b.finish(err)
+		if !b.setConn(conn) {
+			logDaemonRPCError("close accepted mesh bridge connection after close", conn.Close())
+			return
+		}
+		reader, authorized := b.authorizeStream(conn)
+		if !authorized {
+			b.clearConn(conn)
+			logDaemonRPCError("close unauthorized mesh bridge connection", conn.Close())
+			continue
+		}
+		listenerCloseErr := closeMeshBridgeEndpoint(b.listener, nil)
+		copyErr := b.handleConn(conn, reader)
+		b.finish(errors.Join(listenerCloseErr, copyErr))
 		return
 	}
-	if !b.setConn(conn) {
-		logDaemonRPCError("close accepted mesh bridge connection after close", conn.Close())
-		return
-	}
-	listenerCloseErr := closeMeshBridgeEndpoint(b.listener, nil)
-	copyErr := b.handleConn(conn)
-	b.finish(errors.Join(listenerCloseErr, copyErr))
 }
 
 func (b *MeshBridge) serveDatagrams() {
@@ -443,12 +507,12 @@ func (b *MeshBridge) finish(err error) {
 	logDaemonRPCError("close mesh bridge", b.close(context.WithoutCancel(b.ctx), err))
 }
 
-func (b *MeshBridge) handleConn(conn net.Conn) error {
+func (b *MeshBridge) handleConn(conn net.Conn, local io.Reader) error {
 	ctx, cancel := context.WithCancel(b.ctx)
 	defer cancel()
 	errs := make(chan error, 2)
 	go func() {
-		errs <- b.copyLocalToSession(ctx, conn)
+		errs <- b.copyLocalToSession(ctx, local)
 	}()
 	go func() {
 		errs <- b.copySessionToLocal(ctx, conn)
@@ -471,7 +535,7 @@ func (b *MeshBridge) copyDatagramsToSession(ctx context.Context) error {
 	buf := make([]byte, meshBridgeDatagramBufferSize)
 	for {
 		n, peer, err := b.packetConn.ReadFrom(buf)
-		if n > 0 && b.claimPeer(peer) {
+		if n > 0 && b.authorizeDatagramPeer(peer, buf[:n]) {
 			if n > maxMeshBridgeDatagramSize {
 				return fmt.Errorf(
 					"mesh bridge datagram is %d bytes; maximum is %d",
@@ -528,10 +592,10 @@ func (b *MeshBridge) copySessionToDatagrams(ctx context.Context) error {
 	}
 }
 
-func (b *MeshBridge) copyLocalToSession(ctx context.Context, conn net.Conn) error {
+func (b *MeshBridge) copyLocalToSession(ctx context.Context, local io.Reader) error {
 	buf := make([]byte, meshBridgeBufferSize)
 	for {
-		n, err := conn.Read(buf)
+		n, err := local.Read(buf)
 		if n > 0 {
 			data := append([]byte(nil), buf[:n]...)
 			if writeErr := b.sessions.WriteSession(ctx, b.sessionID, data); writeErr != nil {
@@ -577,23 +641,66 @@ func (b *MeshBridge) setConn(conn net.Conn) bool {
 	return true
 }
 
+func (b *MeshBridge) clearConn(conn net.Conn) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.conn == conn {
+		b.conn = nil
+	}
+}
+
 func (b *MeshBridge) currentConn() net.Conn {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.conn
 }
 
-func (b *MeshBridge) claimPeer(peer net.Addr) bool {
+func (b *MeshBridge) authorizeDatagramPeer(peer net.Addr, data []byte) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.peer == nil {
+		if !meshBridgeCapabilityMatches(data, b.capability) {
+			return false
+		}
 		b.peer = cloneMeshBridgeAddr(peer)
 		if b.peerReady != nil {
 			close(b.peerReady)
 		}
-		return true
+		return false
 	}
 	return sameMeshBridgeAddr(b.peer, peer)
+}
+
+func (b *MeshBridge) authorizeStream(conn net.Conn) (*bufio.Reader, bool) {
+	frame := meshBridgeCapabilityFrame(b.capability)
+	reader := bufio.NewReaderSize(conn, len(frame))
+	if err := conn.SetReadDeadline(time.Now().Add(meshBridgeAuthTimeout)); err != nil {
+		return reader, false
+	}
+	candidate, err := reader.ReadSlice('\n')
+	clearErr := conn.SetReadDeadline(time.Time{})
+	if err != nil || clearErr != nil {
+		return reader, false
+	}
+	return reader, meshBridgeCapabilityMatches(candidate, b.capability)
+}
+
+func newMeshBridgeCapability() (MeshBridgeCapability, error) {
+	var entropy [meshBridgeCapabilityBytes]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		return "", fmt.Errorf("generate mesh bridge capability: %w", err)
+	}
+	return MeshBridgeCapability(base64.RawURLEncoding.EncodeToString(entropy[:])), nil
+}
+
+func meshBridgeCapabilityFrame(capability MeshBridgeCapability) []byte {
+	frame := make([]byte, 0, len(capability)+1)
+	frame = append(frame, capability...)
+	return append(frame, '\n')
+}
+
+func meshBridgeCapabilityMatches(candidate []byte, capability MeshBridgeCapability) bool {
+	return subtle.ConstantTimeCompare(candidate, meshBridgeCapabilityFrame(capability)) == 1
 }
 
 func cloneMeshBridgeAddr(addr net.Addr) net.Addr {

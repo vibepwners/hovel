@@ -7,10 +7,10 @@ import (
 	"reflect"
 	"testing"
 
-	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
-	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+	sqlitestore "github.com/vibepwners/hovel/internal/adapters/storage/sqlite"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	"github.com/vibepwners/hovel/internal/domain/workspace"
 )
 
 func TestInitWorkspaceCreatesLayout(t *testing.T) {
@@ -61,6 +61,30 @@ func TestInitWorkspaceIsIdempotent(t *testing.T) {
 	}
 	if second.Workspace.ID != first.Workspace.ID {
 		t.Fatalf("workspace ID = %q, want %q", second.Workspace.ID, first.Workspace.ID)
+	}
+}
+
+func TestLoadWorkspacePreservesIdentityAfterRelocation(t *testing.T) {
+	store := NewWorkspaceStore()
+	originalPath := filepath.Join(t.TempDir(), ".hovel")
+	ws := testWorkspace(t, originalPath)
+	if _, err := store.InitWorkspace(t.Context(), ws); err != nil {
+		t.Fatal(err)
+	}
+
+	movedPath := filepath.Join(t.TempDir(), "restored-hovel")
+	if err := os.Rename(originalPath, movedPath); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.LoadWorkspace(t.Context(), movedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ID != ws.ID || loaded.Name != ws.Name {
+		t.Fatalf("loaded workspace identity = %#v, want %#v", loaded, ws)
+	}
+	if loaded.Path != movedPath {
+		t.Fatalf("loaded workspace path = %q, want %q", loaded.Path, movedPath)
 	}
 }
 

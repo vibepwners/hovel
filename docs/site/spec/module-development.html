@@ -20,7 +20,7 @@
       <a href="../modules/index.html">Modules</a>
       <a href="../api/sdk/index.html">API Docs</a>
       <a href="../reports/tests/latest/index.html">Reports</a>
-      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+      <a href="https://github.com/vibepwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
@@ -34,7 +34,8 @@
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="domain-model.html">Domain Model</a></li>
         <li><a href="modules-services.html">Modules and Services</a></li>
-        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="providers-artifacts.html">Providers, PKI, Artifacts</a></li>
+        <li><a href="providers-artifacts.html#credential-delivery">Credential Delivery</a></li>
         <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
         <li><a href="front-ends.html">Front Ends</a></li>
@@ -52,7 +53,7 @@
       <p class="sidebar-section">Module Development</p>
       <ul>
         <li><a href="module-development.html" aria-current="page">Overview</a></li>
-        <li><a href="mesh-development.html">Mesh Provider Guide</a></li>
+        <li><a href="mesh-development.html">Mesh &amp; Credential Providers</a></li>
         <li><a href="module-protocol.html">Wire Protocol</a></li>
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
@@ -79,9 +80,9 @@
           modules so you can compare them side by side.
         </p>
         <p>
-          For node-operation providers, listening posts, routed tasks, and using a Mesh
-          with an otherwise ordinary module, see the
-          <a href="mesh-development.html">Mesh Provider Development Guide</a>.
+          For node-operation providers, listening posts, routed tasks, credential
+          delivery/stamping, and using a Mesh with an otherwise ordinary module, see
+          <a href="mesh-development.html">Developing Mesh and Credential Providers</a>.
         </p>
 
         <h2>Module types</h2>
@@ -158,7 +159,7 @@
           <a class="tile" href="module-go.html">
             <span class="tile-label">SDK</span>
             <span class="tile-title">Go</span>
-            <span class="tile-desc">A single static binary, standard-library only. Compiled with Bazel and launched by path.</span>
+            <span class="tile-desc">A single static binary with a dependency-light SDK. Compiled with Bazel and launched by path.</span>
           </a>
           <a class="tile" href="module-rust.html">
             <span class="tile-label">SDK</span>
@@ -205,7 +206,7 @@
         </p>
         <ul>
           <li><strong>Stdout belongs to the protocol.</strong> Never print progress, banners, debug output, or child-process output to stdout. The daemon reads stdout as framed JSON-RPC. Use the SDK logger for operator-visible logs and stderr only for crash diagnostics.</li>
-          <li><strong>Metadata paths must be boring.</strong> Catalog loading calls <code>handshake</code>, <code>schema</code>, optional <code>step.describe</code>, and optional <code>mesh.describe</code>. Those paths must be fast, deterministic, offline, and side-effect free: no target contact, listener startup, random prepared values, payload generation, credential creation, or filesystem mutation.</li>
+          <li><strong>Metadata paths must be boring.</strong> Catalog loading calls <code>handshake</code>, <code>schema</code>, optional <code>step.describe</code>, optional <code>mesh.describe</code>, and optional <code>credential.describe</code>. Those paths must be fast, deterministic, offline, and side-effect free: no target contact, listener startup, random prepared values, payload generation, credential resolution or creation, protected-file access, or filesystem mutation.</li>
           <li><strong>Configuration is explicit.</strong> Declare every operator-controlled value as a <code>Requirement</code>. Do not read arbitrary environment variables or hidden config files for target behavior unless the value is also surfaced in the schema or returned evidence.</li>
           <li><strong>Use Hovel's log rail.</strong> Logs should be structured fields, not prose blobs. Log target host, stage, protocol, handle, and provider ids as fields so transcripts are searchable.</li>
           <li><strong>Return durable state deliberately.</strong> Facts belong in <code>outputs</code>, human/audit observations in <code>findings</code>, blobs in <code>artifacts</code>, live handles in <code>sessions</code>, and target-side payload inventory only in explicit <code>installedPayloads</code> descriptors.</li>
@@ -219,9 +220,9 @@
           <code>hovel-module.yaml</code> manifest. The manifest describes package identity,
           trusted install scripts, and how Hovel launches the module on the operator's
           host. Runtime schema still comes from <code>handshake</code>, <code>schema</code>,
-          optional <code>step.describe</code>, and optional <code>mesh.describe</code>;
-          the package manifest is install and launch metadata, not the authoritative
-          module behavior schema.
+          optional <code>step.describe</code>, optional <code>mesh.describe</code>, and
+          optional <code>credential.describe</code>; the package manifest is install and
+          launch metadata, not the authoritative module behavior schema.
         </p>
 <pre data-lang="tree"><code>my-module-0.1.0.tgz
   hovel-module.yaml
@@ -354,10 +355,11 @@ hovel module check --warnings-as-errors ./dist/modules/my-module-0.1.0.tgz
 hovel run --workspace .hovel -- module check mock-survey</code></pre>
         <p>
           Installed module references run the non-executing JSON-RPC discovery path:
-          <code>handshake</code>, <code>schema</code>, <code>step.describe</code>, and
+          <code>handshake</code>, <code>schema</code>, <code>step.describe</code>, optional
+          <code>mesh.describe</code> and <code>credential.describe</code>, then
           <code>shutdown</code>. The report then shows the validated runtime protocol,
-          parsed metadata, chain and target config schema counts, and provider step
-          contract count.
+          parsed metadata, chain and target config schema counts, provider step contract
+          count, and any advertised Mesh or credential-delivery contract.
         </p>
 <pre data-lang="text"><code>MODULE CHECK ms17-010-exploit@v1.0.0
 status  ✅ PASS
@@ -365,7 +367,7 @@ module  ms17-010-exploit@v1.0.0
 
 CHECK   NAME                         MESSAGE
 -----   ----                         -------
-✅ PASS rpc discovery                handshake, schema, step.describe, and shutdown completed
+✅ PASS rpc discovery                handshake, schema, optional provider discovery, and shutdown completed
 ✅ PASS runtime                      jsonrpc-stdio
 ✅ PASS metadata                     ms17-010-exploit@v1.0.0 exploit v1.0.0
 ✅ PASS config schema                1 chain requirements, 3 target requirements
@@ -414,6 +416,12 @@ CHECK   NAME                         MESSAGE
               <td>override <code>describe_steps</code>, <code>prepare_step</code>, <code>execute_step</code>, <code>cleanup_step</code></td>
               <td>implement <code>StepProvider</code></td>
               <td>not implemented yet; use Python or Go for provider/chain-step modules</td>
+            </tr>
+            <tr>
+              <td>credential-provider discovery and execution</td>
+              <td><code>describe_credential_delivery</code>, <code>load_runtime_credential</code>, <code>load_credential_files</code>, <code>encode_credential_material</code>, <code>stamp_credential</code></td>
+              <td><code>CredentialDescriber</code> plus only the runtime/files/encoding/stamp interfaces implemented by the module</td>
+              <td><code>Module::describe_credential_delivery</code> plus optional runtime/files/encoding/stamp methods</td>
             </tr>
             <tr>
               <td>payload-provider helper types</td>
@@ -503,6 +511,11 @@ hovel&gt; module installed</code></pre>
             <span class="tile-title">Wire Protocol</span>
             <span class="tile-desc">Framing, every method and notification, and the data shapes on the wire.</span>
           </a>
+          <a class="tile" href="mesh-development.html#credential-provider-contracts">
+            <span class="tile-label">Guide</span>
+            <span class="tile-title">Credential Providers</span>
+            <span class="tile-desc">Typed optional discovery, runtime, protected-file, encoding, and stamping hooks in Go, Python, and Rust.</span>
+          </a>
           <a class="tile" href="module-python.html">
             <span class="tile-label">Guide</span>
             <span class="tile-title">Python Modules</span>
@@ -534,7 +547,7 @@ hovel&gt; module installed</code></pre>
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/vibepwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

@@ -6,7 +6,7 @@ go_library(
         "smbadmin.go",
         "smbpipe.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe",
+    importpath = "github.com/vibepwners/hovel/payloads/squatter/client/smbpipe",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_jfjallid_go_smb//gss",

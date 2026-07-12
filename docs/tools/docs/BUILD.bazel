@@ -2,7 +2,11 @@ load("@rules_python//python:defs.bzl", "py_binary")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["daemon_rpc_openapi_test.py"])
+exports_files([
+    "daemon_rpc_openapi_test.py",
+    "provider_docs_parity_test.py",
+    "python_api/index.rst",
+])
 
 py_binary(
     name = "stage_site",

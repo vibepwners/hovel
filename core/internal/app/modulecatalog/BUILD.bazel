@@ -6,11 +6,12 @@ go_library(
         "catalog.go",
         "validation.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/app/modulecatalog",
+    importpath = "github.com/vibepwners/hovel/internal/app/modulecatalog",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/domain/mesh",
         "//internal/domain/module",
+        "//internal/domain/pki",
     ],
 )
 
@@ -19,7 +20,10 @@ go_test(
     size = "small",
     srcs = ["catalog_test.go"],
     embed = [":modulecatalog"],
-    deps = ["//internal/domain/mesh"],
+    deps = [
+        "//internal/domain/mesh",
+        "//internal/domain/pki",
+    ],
 )
 
 go_test(

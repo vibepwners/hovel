@@ -21,7 +21,7 @@ interactive CLI, one-shot saved-chain execution, and the MCP agent front end.
 
 The canonical documentation is the GitHub Pages book:
 
-## [vibe-pwners.github.io/hovel](https://vibe-pwners.github.io/hovel/index.html)
+## [vibepwners.github.io/hovel](https://vibepwners.github.io/hovel/index.html)
 
 Start with the [User Guide](docs/site/spec/user-guide.html) to run Hovel locally. Module
 authors should use [Module Development](docs/site/spec/module-development.html), then the

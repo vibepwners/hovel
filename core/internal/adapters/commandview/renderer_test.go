@@ -6,8 +6,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
 )
 
 func TestRendererUsesCharmTableForModuleInventory(t *testing.T) {

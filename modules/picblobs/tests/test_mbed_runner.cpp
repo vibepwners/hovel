@@ -51,7 +51,9 @@ int main(int argc, char *argv[])
 	eth.connect();
 
 	struct pic_platform plat;
-	mbed_platform_init(&plat, &eth);
+	if (!mbed_platform_init(&plat, &eth)) {
+		return 2;
+	}
 
 	/* Run the blob through the real platform_mbed.cpp vtable. */
 	mbed_run_blob(blob, (unsigned int)size, &plat);

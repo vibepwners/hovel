@@ -1,6 +1,13 @@
 //! The module contract: metadata, configuration schema, and the [`Module`] trait.
 
 use crate::context::Context;
+use crate::credential_delivery::CredentialDeliveryDescriptor;
+use crate::credential_provider::{
+    CredentialDeliveryReceipt, CredentialEncodingRequest, CredentialEncodingResult,
+    CredentialFilesRequest, CredentialRuntimeRequest, CredentialStampExecutionRequest,
+    CredentialStampExecutionResult, CREDENTIAL_RPC_ENCODE_METHOD, CREDENTIAL_RPC_FILES_METHOD,
+    CREDENTIAL_RPC_RUNTIME_METHOD, CREDENTIAL_RPC_STAMP_METHOD,
+};
 use crate::json::Value;
 use crate::mesh::{
     MeshBeacon, MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshListener,
@@ -168,6 +175,53 @@ pub trait Module {
     ) -> Result<SessionRef, String> {
         Err(format!(
             "module {:?} does not implement {MESH_RPC_OPEN_STREAM_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn load_runtime_credential(
+        &self,
+        _req: CredentialRuntimeRequest,
+    ) -> Result<CredentialDeliveryReceipt, String> {
+        Err(format!(
+            "module {:?} does not implement {CREDENTIAL_RPC_RUNTIME_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn describe_credential_delivery(&self) -> Result<CredentialDeliveryDescriptor, String> {
+        Err(format!(
+            "module {:?} is not a credential provider",
+            self.info().name,
+        ))
+    }
+
+    fn load_credential_files(
+        &self,
+        _req: CredentialFilesRequest,
+    ) -> Result<CredentialDeliveryReceipt, String> {
+        Err(format!(
+            "module {:?} does not implement {CREDENTIAL_RPC_FILES_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn encode_credential_material(
+        &self,
+        _req: CredentialEncodingRequest,
+    ) -> Result<CredentialEncodingResult, String> {
+        Err(format!(
+            "module {:?} does not implement {CREDENTIAL_RPC_ENCODE_METHOD}",
+            self.info().name,
+        ))
+    }
+
+    fn stamp_credential(
+        &self,
+        _req: CredentialStampExecutionRequest,
+    ) -> Result<CredentialStampExecutionResult, String> {
+        Err(format!(
+            "module {:?} does not implement {CREDENTIAL_RPC_STAMP_METHOD}",
             self.info().name,
         ))
     }

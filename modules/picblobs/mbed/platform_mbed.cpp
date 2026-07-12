@@ -23,6 +23,9 @@
 #include "TCPSocket.h"
 #include "hal/trng_api.h"
 #include "picblobs/net.h"
+#ifndef __linux__
+#include "platform/mbed_mpu_mgmt.h"
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -48,25 +51,42 @@ enum fd_type {
 struct fd_entry {
 	enum fd_type type;
 	TCPSocket *socket;
-	bool close_deletes_socket;
 	bool reuse_address;
 };
+
+static const int CONSOLE_INPUT_FD = 0;
+static const int CONSOLE_OUTPUT_FD = 1;
+static const int CONSOLE_ERROR_FD = 2;
+static const int FIRST_SOCKET_FD = CONSOLE_ERROR_FD + 1;
+static const pic_size_t SOCKADDR_IN_BYTES = 8;
+static const pic_size_t SOCKADDR_FAMILY_OFFSET = 0;
+static const pic_size_t SOCKADDR_FAMILY_HIGH_OFFSET = 1;
+static const pic_size_t SOCKADDR_PORT_OFFSET = 2;
+static const pic_size_t SOCKADDR_PORT_LOW_OFFSET = 3;
+static const pic_size_t SOCKADDR_ADDRESS_OFFSET = 4;
+static const size_t TRNG_REQUEST_BYTES = 256;
+static const int RANDOM_FAILURE_EXIT_CODE = 92;
+static const int SOCKET_OPERATION_TIMEOUT_MS = 5000;
 
 static struct fd_entry fd_table[MBED_PLAT_MAX_FDS];
 static NetworkInterface *g_net;
 static trng_t g_trng;
+static bool g_trng_initialized;
+#ifndef __linux__
+static bool g_ram_execution_enabled;
+#endif
 
 static void fd_table_init(void)
 {
 	memset(fd_table, 0, sizeof(fd_table));
-	fd_table[0].type = FD_CONSOLE_IN;
-	fd_table[1].type = FD_CONSOLE_OUT;
-	fd_table[2].type = FD_CONSOLE_OUT;
+	fd_table[CONSOLE_INPUT_FD].type = FD_CONSOLE_IN;
+	fd_table[CONSOLE_OUTPUT_FD].type = FD_CONSOLE_OUT;
+	fd_table[CONSOLE_ERROR_FD].type = FD_CONSOLE_OUT;
 }
 
 static int fd_alloc(void)
 {
-	for (int i = 3; i < MBED_PLAT_MAX_FDS; i++) {
+	for (int i = FIRST_SOCKET_FD; i < MBED_PLAT_MAX_FDS; i++) {
 		if (fd_table[i].type == FD_NONE)
 			return i;
 	}
@@ -130,7 +150,7 @@ static long plat_close(int fd)
 {
 	if (fd < 0 || fd >= MBED_PLAT_MAX_FDS)
 		return -1;
-	if (fd < 3)
+	if (fd < FIRST_SOCKET_FD)
 		return 0; /* don't close the console */
 
 	struct fd_entry *e = &fd_table[fd];
@@ -139,17 +159,13 @@ static long plat_close(int fd)
 	}
 
 	TCPSocket *socket = e->socket;
-	bool close_deletes_socket = e->close_deletes_socket;
 	e->socket = NULL;
-	e->close_deletes_socket = false;
 	e->reuse_address = false;
 	e->type = FD_NONE;
 
 	if (socket) {
 		socket->close();
-		if (!close_deletes_socket) {
-			delete socket;
-		}
+		delete socket;
 	}
 	return 0;
 }
@@ -167,14 +183,14 @@ static long plat_socket(int domain, int type, int protocol)
 		return -1;
 	fd_table[fd].type = FD_TCP_CONN;
 	fd_table[fd].socket = NULL;
-	fd_table[fd].close_deletes_socket = false;
 	fd_table[fd].reuse_address = false;
 	return fd;
 }
 
 static long plat_bind(int fd, const void *addr, pic_size_t addrlen)
 {
-	if (fd < 0 || fd >= MBED_PLAT_MAX_FDS || !addr || addrlen < 8)
+	if (fd < 0 || fd >= MBED_PLAT_MAX_FDS || !addr ||
+	    addrlen < SOCKADDR_IN_BYTES)
 		return -1;
 
 	struct fd_entry *e = &fd_table[fd];
@@ -184,10 +200,13 @@ static long plat_bind(int fd, const void *addr, pic_size_t addrlen)
 
 	/* Extract port from pic_sockaddr_in (family(2) + port(2) + addr(4)). */
 	const unsigned char *sa = (const unsigned char *)addr;
-	if (sa[0] != PIC_AF_INET || sa[1] != 0) {
+	if (sa[SOCKADDR_FAMILY_OFFSET] != PIC_AF_INET ||
+	    sa[SOCKADDR_FAMILY_HIGH_OFFSET] != 0) {
 		return -1;
 	}
-	uint16_t port = (uint16_t)((sa[2] << 8) | sa[3]); /* network byte order */
+	uint16_t port = (uint16_t)(
+		(sa[SOCKADDR_PORT_OFFSET] << 8) |
+		sa[SOCKADDR_PORT_LOW_OFFSET]); /* network byte order */
 
 	/* Convert from generic socket to server. */
 	TCPSocket *srv = new (std::nothrow) TCPSocket();
@@ -200,8 +219,12 @@ static long plat_bind(int fd, const void *addr, pic_size_t addrlen)
 	}
 	if (e->reuse_address) {
 		int one = 1;
-		(void)srv->setsockopt(
-			NSAPI_SOCKET, NSAPI_REUSEADDR, &one, sizeof(one));
+		if (srv->setsockopt(NSAPI_SOCKET, NSAPI_REUSEADDR, &one,
+				    sizeof(one)) != NSAPI_ERROR_OK) {
+			srv->close();
+			delete srv;
+			return -1;
+		}
 	}
 	if (srv->bind(port) != NSAPI_ERROR_OK) {
 		srv->close();
@@ -211,7 +234,6 @@ static long plat_bind(int fd, const void *addr, pic_size_t addrlen)
 
 	e->type = FD_TCP_LISTEN;
 	e->socket = srv;
-	e->close_deletes_socket = false;
 	return 0;
 }
 
@@ -245,21 +267,26 @@ static long plat_accept(int fd, void *addr, void *addrlen)
 
 	nsapi_error_t err = NSAPI_ERROR_OK;
 	TCPSocket *client = e->socket->accept(&err);
-	if (!client || err != NSAPI_ERROR_OK) {
+	if (!client) {
 		return -1;
 	}
+	if (err != NSAPI_ERROR_OK) {
+		client->close();
+		delete client;
+		return -1;
+	}
+	client->set_timeout(SOCKET_OPERATION_TIMEOUT_MS);
 
 	fd_table[new_fd].type = FD_TCP_CONN;
 	fd_table[new_fd].socket = client;
-	/* Mbed factory-allocated sockets delete themselves on close(). */
-	fd_table[new_fd].close_deletes_socket = true;
 	fd_table[new_fd].reuse_address = false;
 	return new_fd;
 }
 
 static long plat_connect(int fd, const void *addr, pic_size_t addrlen)
 {
-	if (fd < 0 || fd >= MBED_PLAT_MAX_FDS || !addr || addrlen < 8)
+	if (fd < 0 || fd >= MBED_PLAT_MAX_FDS || !addr ||
+	    addrlen < SOCKADDR_IN_BYTES)
 		return -1;
 
 	struct fd_entry *e = &fd_table[fd];
@@ -269,11 +296,13 @@ static long plat_connect(int fd, const void *addr, pic_size_t addrlen)
 
 	/* Extract IP and port from pic_sockaddr_in. */
 	const unsigned char *sa = (const unsigned char *)addr;
-	if (sa[0] != PIC_AF_INET || sa[1] != 0) {
+	if (sa[SOCKADDR_FAMILY_OFFSET] != PIC_AF_INET ||
+	    sa[SOCKADDR_FAMILY_HIGH_OFFSET] != 0) {
 		return -1;
 	}
-	uint16_t port = (uint16_t)((sa[2] << 8) | sa[3]);
-	SocketAddress remote(sa + 4, NSAPI_IPv4, port);
+	uint16_t port = (uint16_t)((sa[SOCKADDR_PORT_OFFSET] << 8) |
+				   sa[SOCKADDR_PORT_LOW_OFFSET]);
+	SocketAddress remote(sa + SOCKADDR_ADDRESS_OFFSET, NSAPI_IPv4, port);
 	if (!remote) {
 		return -1;
 	}
@@ -286,6 +315,7 @@ static long plat_connect(int fd, const void *addr, pic_size_t addrlen)
 		delete sock;
 		return -1;
 	}
+	sock->set_timeout(SOCKET_OPERATION_TIMEOUT_MS);
 
 	nsapi_error_t err = sock->connect(remote);
 	if (err != NSAPI_ERROR_OK) {
@@ -296,7 +326,6 @@ static long plat_connect(int fd, const void *addr, pic_size_t addrlen)
 
 	e->type = FD_TCP_CONN;
 	e->socket = sock;
-	e->close_deletes_socket = false;
 	return 0;
 }
 
@@ -321,7 +350,9 @@ static void plat_exit_group(int code);
 static int fill_random(unsigned char *buf, unsigned long long len)
 {
 	while (len > 0) {
-		size_t chunk = (len > 256) ? 256 : (size_t)len;
+		size_t chunk = (len > TRNG_REQUEST_BYTES)
+				       ? TRNG_REQUEST_BYTES
+				       : (size_t)len;
 		size_t produced = 0;
 		int err = trng_get_bytes(&g_trng, buf, chunk, &produced);
 		if (err != 0 || produced == 0 || produced > chunk) {
@@ -336,8 +367,32 @@ static int fill_random(unsigned char *buf, unsigned long long len)
 static void plat_randombytes(unsigned char *buf, unsigned long long len)
 {
 	if ((!buf && len > 0) || fill_random(buf, len) < 0) {
-		plat_exit_group(92);
+		plat_exit_group(RANDOM_FAILURE_EXIT_CODE);
 	}
+}
+
+static void platform_shutdown(void)
+{
+	for (int fd = FIRST_SOCKET_FD; fd < MBED_PLAT_MAX_FDS; fd++) {
+		if (fd_table[fd].type != FD_NONE) {
+			(void)plat_close(fd);
+		}
+	}
+	if (g_trng_initialized) {
+		trng_free(&g_trng);
+		g_trng_initialized = false;
+	}
+	g_net = NULL;
+}
+
+static void restore_ram_execution_policy(void)
+{
+#ifndef __linux__
+	if (g_ram_execution_enabled) {
+		mbed_mpu_manager_unlock_ram_execution();
+		g_ram_execution_enabled = false;
+	}
+#endif
 }
 
 static void plat_exit_group(int code)
@@ -347,6 +402,8 @@ static void plat_exit_group(int code)
 	else
 		printf("[mbed-runner] blob exited with code %d\r\n", code);
 	std::fflush(stdout);
+	platform_shutdown();
+	restore_ram_execution_policy();
 
 #ifdef __linux__
 	std::exit(code);
@@ -359,11 +416,16 @@ static void plat_exit_group(int code)
 
 /* ---- Public API ---- */
 
-void mbed_platform_init(struct pic_platform *plat, NetworkInterface *net)
+bool mbed_platform_init(struct pic_platform *plat, NetworkInterface *net)
 {
+	if (!plat || !net) {
+		return false;
+	}
+	platform_shutdown();
 	g_net = net;
 	fd_table_init();
 	trng_init(&g_trng);
+	g_trng_initialized = true;
 
 	plat->write = plat_write;
 	plat->read = plat_read;
@@ -376,6 +438,7 @@ void mbed_platform_init(struct pic_platform *plat, NetworkInterface *net)
 	plat->setsockopt = plat_setsockopt;
 	plat->randombytes = plat_randombytes;
 	plat->exit_group = plat_exit_group;
+	return true;
 }
 
 void mbed_run_blob(const unsigned char *blob, unsigned int blob_size,
@@ -389,9 +452,10 @@ void mbed_run_blob(const unsigned char *blob, unsigned int blob_size,
 	/*
 	 * Allocate executable memory for the blob.
 	 *
-	 * On bare-metal Cortex-M (real Mbed OS), all SRAM is executable
-	 * and malloc() suffices. Under Linux (mock/test), heap memory
-	 * has the NX bit set, so we need mmap with PROT_EXEC.
+	 * On the supported bare-metal target, malloc() provides SRAM and the Mbed
+	 * MPU calls below temporarily relax RAM execute-never. Under Linux
+	 * (mock/test), heap memory has the NX bit set, so the test adapter needs an
+	 * executable mmap region.
 	 */
 #ifdef __linux__
 	/* Test/mock path: mmap RWX region (matches the Linux PIC runner). */
@@ -405,7 +469,7 @@ void mbed_run_blob(const unsigned char *blob, unsigned int blob_size,
 		return;
 	}
 #else
-	/* Bare-metal path: all SRAM is executable. */
+	/* Bare-metal path: the execution lock below enables this SRAM region. */
 	unsigned char *ram = (unsigned char *)malloc(blob_size);
 	if (!ram) {
 		printf("[mbed-runner] malloc failed for blob (%u bytes)\r\n",
@@ -416,7 +480,21 @@ void mbed_run_blob(const unsigned char *blob, unsigned int blob_size,
 	memcpy(ram, blob, blob_size);
 
 #ifndef __linux__
-	/* Complete writes to SRAM before fetching copied Thumb instructions. */
+	/* Make copied instructions visible on both uncached Cortex-M4 and
+	 * cache-bearing Cortex-M targets before branching into SRAM. */
+#if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
+	const uintptr_t cache_line_mask =
+		(uintptr_t)__SCB_DCACHE_LINE_SIZE - 1U;
+	const uintptr_t cache_start = (uintptr_t)ram & ~cache_line_mask;
+	const uintptr_t cache_end =
+		((uintptr_t)ram + blob_size + cache_line_mask) &
+		~cache_line_mask;
+	SCB_CleanDCache_by_Addr((uint32_t *)cache_start,
+				   (int32_t)(cache_end - cache_start));
+#endif
+#if defined(__ICACHE_PRESENT) && (__ICACHE_PRESENT == 1U)
+	SCB_InvalidateICache();
+#endif
 	__DSB();
 	__ISB();
 #endif
@@ -433,8 +511,13 @@ void mbed_run_blob(const unsigned char *blob, unsigned int blob_size,
 
 	printf("[mbed-runner] launching blob at %p (%u bytes)\r\n",
 	       ram, blob_size);
-	mbed::ScopedRamExecutionLock make_ram_executable;
+#ifndef __linux__
+	mbed_mpu_manager_lock_ram_execution();
+	g_ram_execution_enabled = true;
+#endif
 	entry(plat);
+	platform_shutdown();
+	restore_ram_execution_policy();
 
 	/* Blob called exit_group, so we should not reach here.
 	 * If we do, clean up. */

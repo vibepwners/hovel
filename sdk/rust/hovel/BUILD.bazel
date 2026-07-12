@@ -2,6 +2,17 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
+filegroup(
+    name = "protocol_doc_sources",
+    srcs = [
+        "src/credential_delivery.rs",
+        "src/credential_provider.rs",
+        "src/mesh.rs",
+        "src/mesh_bridge.rs",
+        "src/server.rs",
+    ],
+)
+
 rust_library(
     name = "hovel",
     srcs = glob(["src/**/*.rs"]),

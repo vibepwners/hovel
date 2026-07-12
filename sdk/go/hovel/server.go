@@ -13,14 +13,19 @@ import (
 )
 
 const (
-	meshRPCDescribeMethod      = "mesh.describe"
-	meshRPCTopologyMethod      = "mesh.topology"
-	meshRPCBeaconsMethod       = "mesh.beacons"
-	meshRPCListenersMethod     = "mesh.listeners"
-	meshRPCListenerStartMethod = "mesh.listener.start"
-	meshRPCListenerStopMethod  = "mesh.listener.stop"
-	meshRPCTaskMethod          = "mesh.task"
-	meshRPCOpenStreamMethod    = "mesh.open_stream"
+	meshRPCDescribeMethod       = "mesh.describe"
+	meshRPCTopologyMethod       = "mesh.topology"
+	meshRPCBeaconsMethod        = "mesh.beacons"
+	meshRPCListenersMethod      = "mesh.listeners"
+	meshRPCListenerStartMethod  = "mesh.listener.start"
+	meshRPCListenerStopMethod   = "mesh.listener.stop"
+	meshRPCTaskMethod           = "mesh.task"
+	meshRPCOpenStreamMethod     = "mesh.open_stream"
+	credentialRPCRuntimeMethod  = "credential.runtime"
+	credentialRPCFilesMethod    = "credential.files"
+	credentialRPCEncodeMethod   = "credential.encode"
+	credentialRPCStampMethod    = "credential.stamp"
+	credentialRPCDescribeMethod = "credential.describe"
 )
 
 // logRecord is the wire shape of a "module/log" notification.
@@ -146,6 +151,16 @@ func (s *server) dispatch(method string, params json.RawMessage) (any, error) {
 		return s.runMeshTask(params)
 	case meshRPCOpenStreamMethod:
 		return s.openMeshStream(params)
+	case credentialRPCRuntimeMethod:
+		return s.loadRuntimeCredential(params)
+	case credentialRPCDescribeMethod:
+		return s.describeCredentialDelivery()
+	case credentialRPCFilesMethod:
+		return s.loadCredentialFiles(params)
+	case credentialRPCEncodeMethod:
+		return s.encodeCredentialMaterial(params)
+	case credentialRPCStampMethod:
+		return s.stampCredential(params)
 	case "step.describe":
 		return s.describeSteps()
 	case "step.prepare":
@@ -275,6 +290,14 @@ func (s *server) meshDescriber() (MeshDescriber, error) {
 	return provider, nil
 }
 
+func (s *server) credentialDescriber() (CredentialDescriber, error) {
+	provider, ok := s.module.(CredentialDescriber)
+	if !ok {
+		return nil, fmt.Errorf("module %q is not a credential provider", s.module.Info().Name)
+	}
+	return provider, nil
+}
+
 func (s *server) meshTopologyProvider() (MeshTopologyProvider, error) {
 	provider, ok := s.module.(MeshTopologyProvider)
 	if !ok {
@@ -319,6 +342,38 @@ func (s *server) meshStreamProvider() (MeshStreamProvider, error) {
 	provider, ok := s.module.(MeshStreamProvider)
 	if !ok {
 		return nil, fmt.Errorf("module %q does not implement %s", s.module.Info().Name, meshRPCOpenStreamMethod)
+	}
+	return provider, nil
+}
+
+func (s *server) credentialRuntimeProvider() (CredentialRuntimeProvider, error) {
+	provider, ok := s.module.(CredentialRuntimeProvider)
+	if !ok {
+		return nil, credentialProviderMethodUnavailable(s.module, credentialRPCRuntimeMethod)
+	}
+	return provider, nil
+}
+
+func (s *server) credentialFilesProvider() (CredentialFilesProvider, error) {
+	provider, ok := s.module.(CredentialFilesProvider)
+	if !ok {
+		return nil, credentialProviderMethodUnavailable(s.module, credentialRPCFilesMethod)
+	}
+	return provider, nil
+}
+
+func (s *server) credentialEncodingProvider() (CredentialEncodingProvider, error) {
+	provider, ok := s.module.(CredentialEncodingProvider)
+	if !ok {
+		return nil, credentialProviderMethodUnavailable(s.module, credentialRPCEncodeMethod)
+	}
+	return provider, nil
+}
+
+func (s *server) credentialStampProvider() (CredentialStampProvider, error) {
+	provider, ok := s.module.(CredentialStampProvider)
+	if !ok {
+		return nil, credentialProviderMethodUnavailable(s.module, credentialRPCStampMethod)
 	}
 	return provider, nil
 }
@@ -502,6 +557,14 @@ func (s *server) describeMesh(params json.RawMessage) (any, error) {
 	return provider.DescribeMesh(req)
 }
 
+func (s *server) describeCredentialDelivery() (any, error) {
+	provider, err := s.credentialDescriber()
+	if err != nil {
+		return nil, err
+	}
+	return provider.DescribeCredentialDelivery()
+}
+
 func (s *server) meshTopology(params json.RawMessage) (any, error) {
 	provider, err := s.meshTopologyProvider()
 	if err != nil {
@@ -606,6 +669,124 @@ func normalizeMeshListenerResult(listenerID string, listener MeshListener) (Mesh
 		)
 	}
 	return listener, nil
+}
+
+func (s *server) loadRuntimeCredential(params json.RawMessage) (any, error) {
+	provider, err := s.credentialRuntimeProvider()
+	if err != nil {
+		return nil, err
+	}
+	request, err := decodeParams[CredentialRuntimeRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCredentialProviderRequest(request.SchemaVersion, request.RequestID); err != nil {
+		return nil, err
+	}
+	receipt, err := provider.LoadRuntimeCredential(request)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeCredentialReceipt(request.RequestID, receipt)
+}
+
+func (s *server) loadCredentialFiles(params json.RawMessage) (any, error) {
+	provider, err := s.credentialFilesProvider()
+	if err != nil {
+		return nil, err
+	}
+	request, err := decodeParams[CredentialFilesRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCredentialProviderRequest(request.SchemaVersion, request.RequestID); err != nil {
+		return nil, err
+	}
+	receipt, err := provider.LoadCredentialFiles(request)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeCredentialReceipt(request.RequestID, receipt)
+}
+
+func (s *server) encodeCredentialMaterial(params json.RawMessage) (any, error) {
+	provider, err := s.credentialEncodingProvider()
+	if err != nil {
+		return nil, err
+	}
+	request, err := decodeParams[CredentialEncodingRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCredentialProviderRequest(request.SchemaVersion, request.RequestID); err != nil {
+		return nil, err
+	}
+	result, err := provider.EncodeCredentialMaterial(request)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(result.RequestID) != request.RequestID {
+		return nil, fmt.Errorf(
+			"credential encoding result requestId %q does not match requested id %q",
+			result.RequestID,
+			request.RequestID,
+		)
+	}
+	return result, nil
+}
+
+func (s *server) stampCredential(params json.RawMessage) (any, error) {
+	provider, err := s.credentialStampProvider()
+	if err != nil {
+		return nil, err
+	}
+	request, err := decodeParams[CredentialStampExecutionRequest](params)
+	if err != nil {
+		return nil, err
+	}
+	if request.SchemaVersion != CredentialProviderExecutionSchemaV1 {
+		return nil, fmt.Errorf("unsupported credential provider execution schema %q", request.SchemaVersion)
+	}
+	request.StampID = strings.TrimSpace(request.StampID)
+	if request.StampID == "" {
+		return nil, errors.New("credential stamp request stampId is required")
+	}
+	result, err := provider.StampCredential(request)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(result.StampID) != request.StampID {
+		return nil, fmt.Errorf(
+			"credential stamp result stampId %q does not match requested id %q",
+			result.StampID,
+			request.StampID,
+		)
+	}
+	return result, nil
+}
+
+func validateCredentialProviderRequest(schemaVersion, requestID string) error {
+	if schemaVersion != CredentialProviderExecutionSchemaV1 {
+		return fmt.Errorf("unsupported credential provider execution schema %q", schemaVersion)
+	}
+	if strings.TrimSpace(requestID) == "" {
+		return errors.New("credential provider requestId is required")
+	}
+	return nil
+}
+
+func normalizeCredentialReceipt(
+	requestID string,
+	receipt CredentialDeliveryReceipt,
+) (CredentialDeliveryReceipt, error) {
+	if strings.TrimSpace(receipt.RequestID) != requestID {
+		return CredentialDeliveryReceipt{}, fmt.Errorf(
+			"credential delivery receipt requestId %q does not match requested id %q",
+			receipt.RequestID,
+			requestID,
+		)
+	}
+	return receipt, nil
 }
 
 func (s *server) runMeshTask(params json.RawMessage) (any, error) {

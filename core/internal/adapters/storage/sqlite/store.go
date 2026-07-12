@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	"github.com/vibepwners/hovel/internal/domain/workspace"
 	_ "modernc.org/sqlite"
 )
 
@@ -38,6 +38,23 @@ func (s Store) Path() string {
 func (s Store) Ensure(ctx context.Context) error {
 	_, err := s.open(ctx)
 	return err
+}
+
+// Close releases this workspace's cached database handle. The caller must
+// first stop operations using the store; daemon shutdown does this after its
+// request handlers have drained. A later open creates a fresh configured pool.
+func (s Store) Close() error {
+	path := s.Path()
+	connMu.Lock()
+	db, ok := connCache[path]
+	if ok {
+		delete(connCache, path)
+	}
+	connMu.Unlock()
+	if !ok {
+		return nil
+	}
+	return db.Close()
 }
 
 func (s Store) SaveOperatorSession(ctx context.Context, state operatorsession.PersistedState) error {
@@ -230,6 +247,23 @@ func openDatabase(ctx context.Context, workspacePath, dbPath string) (*sql.DB, e
 	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
 		return nil, err
 	}
+	if err := validateDatabaseDirectorySecurity(workspacePath); err != nil {
+		return nil, err
+	}
+	anchoredFile, err := ensureOwnerOnlyDatabaseFile(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { logSQLiteError("close anchored sqlite database file", anchoredFile.Close()) }()
+	anchoredSidecars, err := prepareSQLiteSidecars(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		for _, sidecar := range anchoredSidecars {
+			logSQLiteError("close anchored sqlite sidecar", sidecar.Close())
+		}
+	}()
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
@@ -239,10 +273,19 @@ func openDatabase(ctx context.Context, workspacePath, dbPath string) (*sql.DB, e
 	// correct and avoids SQLITE_BUSY churn. WAL improves durability and read
 	// latency over the default rollback journal.
 	db.SetMaxOpenConns(1)
+	if err := db.PingContext(ctx); err != nil {
+		closeErr := db.Close()
+		return nil, errors.Join(err, closeErr)
+	}
+	if err := verifyDatabaseFileIdentity(dbPath, anchoredFile); err != nil {
+		closeErr := db.Close()
+		return nil, errors.Join(err, closeErr)
+	}
 	pragmas := []string{
 		`PRAGMA foreign_keys = ON`,
 		`PRAGMA busy_timeout = 5000`,
 		`PRAGMA journal_mode = WAL`,
+		`PRAGMA synchronous = FULL`,
 	}
 	for _, pragma := range pragmas {
 		if _, err := db.ExecContext(ctx, pragma); err != nil {
@@ -254,7 +297,109 @@ func openDatabase(ctx context.Context, workspacePath, dbPath string) (*sql.DB, e
 		closeErr := db.Close()
 		return nil, errors.Join(err, closeErr)
 	}
+	if err := verifyDatabaseFileIdentity(dbPath, anchoredFile); err != nil {
+		closeErr := db.Close()
+		return nil, errors.Join(err, closeErr)
+	}
+	if err := verifySQLiteSidecars(dbPath, anchoredSidecars); err != nil {
+		closeErr := db.Close()
+		return nil, errors.Join(err, closeErr)
+	}
 	return db, nil
+}
+
+var sqliteSidecarSuffixes = [...]string{"-wal", "-shm"}
+
+func prepareSQLiteSidecars(databasePath string) ([]*os.File, error) {
+	files := make([]*os.File, 0, len(sqliteSidecarSuffixes))
+	for _, suffix := range sqliteSidecarSuffixes {
+		file, err := openDatabaseFileNoFollow(databasePath + suffix)
+		if err != nil {
+			for _, opened := range files {
+				err = errors.Join(err, opened.Close())
+			}
+			return nil, err
+		}
+		info, err := file.Stat()
+		if err == nil && !info.Mode().IsRegular() {
+			err = errors.New("sqlite sidecar path must be a regular file")
+		}
+		if err == nil {
+			err = validateDatabaseFileSecurity(info)
+		}
+		if err == nil {
+			err = file.Chmod(0o600)
+		}
+		if err != nil {
+			err = errors.Join(err, file.Close())
+			for _, opened := range files {
+				err = errors.Join(err, opened.Close())
+			}
+			return nil, err
+		}
+		files = append(files, file)
+	}
+	return files, nil
+}
+
+func verifySQLiteSidecars(databasePath string, files []*os.File) error {
+	if len(files) != len(sqliteSidecarSuffixes) {
+		return errors.New("sqlite anchored sidecar set is incomplete")
+	}
+	var result error
+	for index, file := range files {
+		result = errors.Join(result, verifyDatabaseFileIdentity(databasePath+sqliteSidecarSuffixes[index], file), file.Chmod(0o600))
+	}
+	return result
+}
+
+func ensureOwnerOnlyDatabaseFile(path string) (*os.File, error) {
+	info, err := os.Lstat(path)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("sqlite database path must not be a symbolic link")
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	file, err := openDatabaseFileNoFollow(path)
+	if err != nil {
+		return nil, err
+	}
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	if !openedInfo.Mode().IsRegular() {
+		return nil, errors.Join(errors.New("sqlite database path must be a regular file"), file.Close())
+	}
+	if err := validateDatabaseFileSecurity(openedInfo); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	if err := file.Chmod(0o600); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	if err := verifyDatabaseFileIdentity(path, file); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return file, nil
+}
+
+func verifyDatabaseFileIdentity(path string, anchored *os.File) error {
+	if anchored == nil {
+		return errors.New("sqlite anchored database file is required")
+	}
+	anchoredInfo, err := anchored.Stat()
+	if err != nil {
+		return err
+	}
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() || !os.SameFile(anchoredInfo, pathInfo) {
+		return errors.New("sqlite database path changed while it was being opened")
+	}
+	return nil
 }
 
 func SaveOperatorSession(ctx context.Context, db *sql.DB, state operatorsession.PersistedState) error {

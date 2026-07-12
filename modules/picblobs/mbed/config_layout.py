@@ -1,0 +1,33 @@
+"""Canonical deployment-config layout for the Mbed NaCl blob pair."""
+
+from nacl_protocol import (
+    AUTH_KEY_SIZE,
+    CLIENT_CONFIG_SIZE,
+    CLIENT_CONFIG_TEMPLATE,
+    DEFAULT_PORT,
+    DEFAULT_SERVER_IPV4,
+    FRAME_LENGTH_FORMAT,
+    IPV4_SIZE,
+    MAX_PORT,
+    MIN_PORT,
+    PORT_FORMAT,
+    PORT_SIZE,
+    SERVER_CONFIG_SIZE,
+    SERVER_CONFIG_TEMPLATE,
+)
+
+__all__ = [
+    "AUTH_KEY_SIZE",
+    "CLIENT_CONFIG_SIZE",
+    "CLIENT_CONFIG_TEMPLATE",
+    "DEFAULT_PORT",
+    "DEFAULT_SERVER_IPV4",
+    "FRAME_LENGTH_FORMAT",
+    "IPV4_SIZE",
+    "MAX_PORT",
+    "MIN_PORT",
+    "PORT_FORMAT",
+    "PORT_SIZE",
+    "SERVER_CONFIG_SIZE",
+    "SERVER_CONFIG_TEMPLATE",
+]

@@ -33,16 +33,16 @@ PKGSITE_VERSION = "v0.2.0"
 PKGSITE_PACKAGES = (
     (
         "Go SDK API: hovel",
-        "github.com/Vibe-Pwners/hovel/sdk/go/hovel",
+        "github.com/vibepwners/hovel/sdk/go/hovel",
         "go/hovel/index.html",
-        "go/github.com/Vibe-Pwners/hovel/sdk/go/hovel/index.html",
+        "go/github.com/vibepwners/hovel/sdk/go/hovel/index.html",
         "pkgsite snapshot for the primary Go SDK package.",
     ),
     (
         "Go SDK API: hoveltest",
-        "github.com/Vibe-Pwners/hovel/sdk/go/hoveltest",
+        "github.com/vibepwners/hovel/sdk/go/hoveltest",
         "go/hoveltest/index.html",
-        "go/github.com/Vibe-Pwners/hovel/sdk/go/hoveltest/index.html",
+        "go/github.com/vibepwners/hovel/sdk/go/hoveltest/index.html",
         "pkgsite snapshot for Go SDK test helpers.",
     ),
 )
@@ -325,7 +325,7 @@ def pkgsite_page_output(go_output: Path, path: str) -> Path:
 
 
 def is_hovel_go_package_path(path: str) -> bool:
-    return path.startswith("/github.com/Vibe-Pwners/hovel/sdk/go/")
+    return path.startswith("/github.com/vibepwners/hovel/sdk/go/")
 
 
 def is_pkgsite_asset_path(path: str) -> bool:

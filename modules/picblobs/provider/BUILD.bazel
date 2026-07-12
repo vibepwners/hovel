@@ -9,7 +9,7 @@ filegroup(
 go_library(
     name = "provider_lib",
     srcs = ["provider.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/modules/picblobs/provider",
+    importpath = "github.com/vibepwners/hovel/modules/picblobs/provider",
     visibility = ["//visibility:private"],
     deps = ["//sdk/go/hovel"],
 )

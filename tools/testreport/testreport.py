@@ -314,7 +314,7 @@ def render_index(report: TestReport) -> str:
       <a href="../../../spec/index.html">Book</a>
       <a href="../../../api/sdk/index.html">API Docs</a>
       <a href="index.html" aria-current="page">Reports</a>
-      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+      <a href="https://github.com/vibepwners/hovel">Source</a>
     </nav>
   </header>
   <main class="report-shell">
@@ -333,7 +333,7 @@ def render_index(report: TestReport) -> str:
     </section>
   </main>
   <footer class="sitefoot">
-    <p>Hovel test report · <a href="../../../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel test report · <a href="../../../index.html">home</a> · <a href="https://github.com/vibepwners/hovel">source</a></p>
   </footer>
   <script src="assets/report.js"></script>
 </body>

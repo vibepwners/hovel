@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 
-SOURCE_URL = "https://github.com/Vibe-Pwners/hovel"
+SOURCE_URL = "https://github.com/vibepwners/hovel"
 
 BOOK_NAV = [
     (
@@ -42,6 +42,7 @@ BOOK_NAV = [
         "Module Development",
         [
             ("Overview", "module-development.html"),
+            ("Mesh & Credential Providers", "mesh-development.html"),
             ("Wire Protocol", "module-protocol.html"),
             ("Python Modules", "module-python.html"),
             ("Go Modules", "module-go.html"),
@@ -53,6 +54,7 @@ BOOK_NAV = [
 
 MODULE_ROOT_LINKS = [
     ("Overview", "index.html"),
+    ("Development", "development.html"),
     ("Catalogue", "catalogue.html"),
 ]
 

@@ -200,7 +200,7 @@ def stage_test_report(repo: Path, site: Path) -> None:
 task docs:stage</code></pre>
   </main>
   <footer class="sitefoot">
-    <p>Hovel test report · <a href="../../../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel test report · <a href="../../../index.html">home</a> · <a href="https://github.com/vibepwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

@@ -12,17 +12,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/commandmode"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
-	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
-	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
-	"github.com/Vibe-Pwners/hovel/internal/testsupport"
 	prompt "github.com/c-bata/go-prompt"
+	"github.com/vibepwners/hovel/internal/adapters/commandmode"
+	"github.com/vibepwners/hovel/internal/adapters/daemonrpc"
+	sqlitestore "github.com/vibepwners/hovel/internal/adapters/storage/sqlite"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/app/modulepackage"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	"github.com/vibepwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/infra/daemonruntime"
+	"github.com/vibepwners/hovel/internal/testsupport"
 )
 
 func TestSuggestionsComeFromCommandRegistry(t *testing.T) {

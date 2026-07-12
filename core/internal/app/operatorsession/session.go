@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
 )
 
 const DefaultOperation = "default"

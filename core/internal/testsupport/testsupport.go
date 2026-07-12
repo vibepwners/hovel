@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
+	"github.com/vibepwners/hovel/internal/adapters/daemonlocal"
+	"github.com/vibepwners/hovel/internal/adapters/storage/filesystem"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	"github.com/vibepwners/hovel/internal/infra/daemonruntime"
 )
 
 const ExampleModuleConfig = "modules/examples/python/hovel-modules.json"

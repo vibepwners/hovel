@@ -7,6 +7,22 @@ package(default_visibility = ["//visibility:public"])
 
 _CORTEX_M4 = "//modules/picblobs/platforms:cortexm4_baremetal"
 
+_MBED_BUILD_DEPS = [
+    requirement("attrs"),
+    requirement("future"),
+    requirement("intelhex"),
+    requirement("jinja2"),
+    requirement("jsonschema"),
+    requirement("jsonschema-specifications"),
+    requirement("markupsafe"),
+    requirement("prettytable"),
+    requirement("pyelftools"),
+    requirement("referencing"),
+    requirement("rpds-py"),
+    requirement("setuptools"),
+    requirement("six"),
+]
+
 exports_files([
     "platform_mbed.cpp",
     "platform_mbed.h",
@@ -23,6 +39,21 @@ platform_filegroup(
     deps = ["//modules/picblobs/src/payload:nacl_server_hosted_bin"],
 )
 
+filegroup(
+    name = "target_project_sources",
+    srcs = [
+        ".mbed",
+        ".mbedignore",
+        "main.cpp",
+        "mbed_app.json",
+        "picblobs/net.h",
+        "picblobs/platform.h",
+        "picblobs/types.h",
+        "platform_mbed.cpp",
+        "platform_mbed.h",
+    ],
+)
+
 platform_filegroup(
     name = "nacl_client_hosted_bin_cortexm4",
     platform = _CORTEX_M4,
@@ -31,7 +62,10 @@ platform_filegroup(
 
 py_binary(
     name = "materialize_blobs",
-    srcs = ["materialize_blobs.py"],
+    srcs = [
+        "config_layout.py",
+        "materialize_blobs.py",
+    ],
     args = [
         "--server-bin=$(rootpath :nacl_server_hosted_bin_cortexm4)",
         "--client-bin=$(rootpath :nacl_client_hosted_bin_cortexm4)",
@@ -40,7 +74,9 @@ py_binary(
         ":nacl_client_hosted_bin_cortexm4",
         ":nacl_server_hosted_bin_cortexm4",
     ],
+    imports = ["."],
     python_version = "PY3",
+    deps = ["//modules/picblobs:nacl_protocol"],
 )
 
 py_test(
@@ -49,33 +85,85 @@ py_test(
     srcs = [
         "compile_mbed_os.py",
         "compile_mbed_os_test.py",
+        "config_layout.py",
         "materialize_blobs.py",
     ],
     imports = ["."],
     main = "compile_mbed_os_test.py",
     python_version = "PY3",
-    deps = [picblobs_requirement("pytest")],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        "//modules/picblobs:nacl_protocol",
+        picblobs_requirement("pytest"),
+    ],
 )
 
 py_test(
     name = "materialize_blobs_test",
     size = "small",
     srcs = [
+        "config_layout.py",
         "materialize_blobs.py",
         "materialize_blobs_test.py",
     ],
     imports = ["."],
     main = "materialize_blobs_test.py",
     python_version = "PY3",
-    deps = [picblobs_requirement("pytest")],
+    deps = [
+        "//modules/picblobs:nacl_protocol",
+        picblobs_requirement("pytest"),
+    ],
+)
+
+py_test(
+    name = "target_compile_test",
+    size = "enormous",
+    timeout = "long",
+    srcs = [
+        "compile_mbed_os.py",
+        "config_layout.py",
+        "materialize_blobs.py",
+        "target_compile_test.py",
+    ],
+    args = [
+        "--client-bin=$(rootpath :nacl_client_hosted_bin_cortexm4)",
+        "--gcc=$(rootpath @mbed_arm_none_eabi//:gcc_binary)",
+        "--mbed-version-header=$(rootpath @mbed_os_5_15_9//:version_header)",
+        "--server-bin=$(rootpath :nacl_server_hosted_bin_cortexm4)",
+    ],
+    data = [
+        ":nacl_client_hosted_bin_cortexm4",
+        ":nacl_server_hosted_bin_cortexm4",
+        ":target_project_sources",
+        "//modules/picblobs/src/include/picblobs:quality_sources",
+        "@mbed_arm_none_eabi//:all_files",
+        "@mbed_arm_none_eabi//:gcc_binary",
+        "@mbed_os_5_15_9//:all_files",
+        "@mbed_os_5_15_9//:version_header",
+    ],
+    imports = ["."],
+    main = "target_compile_test.py",
+    python_version = "PY3",
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+    deps = [
+        "//modules/picblobs:nacl_protocol",
+        picblobs_requirement("pytest"),
+    ] + _MBED_BUILD_DEPS,
 )
 
 py_binary(
     name = "compile_mbed_os",
-    srcs = ["compile_mbed_os.py"],
+    srcs = [
+        "compile_mbed_os.py",
+        "config_layout.py",
+    ],
     args = [
         "--client-bin=$(rootpath :nacl_client_hosted_bin_cortexm4)",
         "--gcc=$(rootpath @mbed_arm_none_eabi//:gcc_binary)",
+        "--mbed-version-header=$(rootpath @mbed_os_5_15_9//:version_header)",
         "--server-bin=$(rootpath :nacl_server_hosted_bin_cortexm4)",
     ],
     data = [
@@ -83,23 +171,16 @@ py_binary(
         ":nacl_server_hosted_bin_cortexm4",
         "@mbed_arm_none_eabi//:all_files",
         "@mbed_arm_none_eabi//:gcc_binary",
+        "@mbed_os_5_15_9//:all_files",
+        "@mbed_os_5_15_9//:version_header",
     ],
+    imports = ["."],
     python_version = "PY3",
-    deps = [
-        requirement("attrs"),
-        requirement("future"),
-        requirement("intelhex"),
-        requirement("jinja2"),
-        requirement("jsonschema"),
-        requirement("jsonschema-specifications"),
-        requirement("markupsafe"),
-        requirement("prettytable"),
-        requirement("pyelftools"),
-        requirement("referencing"),
-        requirement("rpds-py"),
-        requirement("setuptools"),
-        requirement("six"),
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
     ],
+    deps = ["//modules/picblobs:nacl_protocol"] + _MBED_BUILD_DEPS,
 )
 
 filegroup(

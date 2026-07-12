@@ -6,7 +6,7 @@ go_library(
         "install.go",
         "transfer.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/progressview",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/progressview",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/clistyle",

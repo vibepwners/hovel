@@ -5,8 +5,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
+	"github.com/vibepwners/hovel/internal/adapters/terminallog"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
 )
 
 const defaultLogDelay = 500 * time.Millisecond

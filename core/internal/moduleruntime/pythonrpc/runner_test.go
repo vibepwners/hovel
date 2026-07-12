@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/app/chainruntime"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	"github.com/vibepwners/hovel/internal/domain/mesh"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 func TestMain(m *testing.M) {

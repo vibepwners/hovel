@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
 )
 
 const daemonStatusFile = "daemon.json"

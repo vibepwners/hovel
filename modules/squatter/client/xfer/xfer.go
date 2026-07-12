@@ -9,7 +9,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/wire"
+	"github.com/vibepwners/hovel/payloads/squatter/client/wire"
 )
 
 // Message tags carried in DATA frame payloads.

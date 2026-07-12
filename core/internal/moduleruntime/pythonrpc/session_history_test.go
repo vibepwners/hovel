@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 func TestBrokerSessionHistoryIsBounded(t *testing.T) {

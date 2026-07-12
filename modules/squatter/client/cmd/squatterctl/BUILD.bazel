@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_binary", "go_library")
 go_library(
     name = "squatterctl_lib",
     srcs = ["main.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/cmd/squatterctl",
+    importpath = "github.com/vibepwners/hovel/payloads/squatter/client/cmd/squatterctl",
     visibility = ["//visibility:private"],
     deps = [
         "//modules/squatter/client/shell",

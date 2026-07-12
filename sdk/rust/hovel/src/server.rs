@@ -4,6 +4,12 @@ use std::io::{self, BufRead, Write};
 
 use crate::base64;
 use crate::context::{Context, Emitter};
+use crate::credential_delivery::CREDENTIAL_RPC_DESCRIBE_METHOD;
+use crate::credential_provider::{
+    CredentialEncodingRequest, CredentialFilesRequest, CredentialRuntimeRequest,
+    CredentialStampExecutionRequest, CREDENTIAL_RPC_ENCODE_METHOD, CREDENTIAL_RPC_FILES_METHOD,
+    CREDENTIAL_RPC_RUNTIME_METHOD, CREDENTIAL_RPC_STAMP_METHOD,
+};
 use crate::framing::read_message;
 use crate::json::Value;
 use crate::mesh::{
@@ -110,6 +116,11 @@ fn dispatch(
         MESH_RPC_LISTENER_STOP_METHOD => mesh_listener_stop(module, params),
         MESH_RPC_TASK_METHOD => mesh_task(module, emitter, params),
         MESH_RPC_OPEN_STREAM_METHOD => mesh_open_stream(module, emitter, params),
+        CREDENTIAL_RPC_DESCRIBE_METHOD => Ok(module.describe_credential_delivery()?.to_value()),
+        CREDENTIAL_RPC_RUNTIME_METHOD => credential_runtime(module, params),
+        CREDENTIAL_RPC_FILES_METHOD => credential_files(module, params),
+        CREDENTIAL_RPC_ENCODE_METHOD => credential_encode(module, params),
+        CREDENTIAL_RPC_STAMP_METHOD => credential_stamp(module, params),
         "execute" => Ok(execute(module, emitter, params)),
         "session/write" => session_write(emitter, params),
         "session/read" => session_read(emitter, params),
@@ -257,8 +268,49 @@ fn required_mesh_listener_id(listener_id: &str) -> Result<&str, String> {
     Ok(listener_id)
 }
 
+fn credential_runtime(module: &dyn Module, params: &Value) -> Result<Value, String> {
+    let request = CredentialRuntimeRequest::from_value(params)?;
+    let request_id = request.request_id.clone();
+    let receipt = module.load_runtime_credential(request)?;
+    require_matching_credential_id(&request_id, &receipt.request_id, "receipt requestId")?;
+    Ok(receipt.to_value())
+}
+
+fn credential_files(module: &dyn Module, params: &Value) -> Result<Value, String> {
+    let request = CredentialFilesRequest::from_value(params)?;
+    let request_id = request.request_id.clone();
+    let receipt = module.load_credential_files(request)?;
+    require_matching_credential_id(&request_id, &receipt.request_id, "receipt requestId")?;
+    Ok(receipt.to_value())
+}
+
+fn credential_encode(module: &dyn Module, params: &Value) -> Result<Value, String> {
+    let request = CredentialEncodingRequest::from_value(params)?;
+    let request_id = request.request_id.clone();
+    let result = module.encode_credential_material(request)?;
+    require_matching_credential_id(&request_id, &result.request_id, "result requestId")?;
+    Ok(result.to_value())
+}
+
+fn credential_stamp(module: &dyn Module, params: &Value) -> Result<Value, String> {
+    let request = CredentialStampExecutionRequest::from_value(params)?;
+    let stamp_id = request.stamp_id.clone();
+    let result = module.stamp_credential(request)?;
+    require_matching_credential_id(&stamp_id, &result.stamp_id, "result stampId")?;
+    Ok(result.to_value())
+}
+
+fn require_matching_credential_id(expected: &str, actual: &str, label: &str) -> Result<(), String> {
+    if actual.trim() != expected {
+        return Err(format!(
+            "credential provider {label} {actual:?} does not match requested id {expected:?}"
+        ));
+    }
+    Ok(())
+}
+
 fn mesh_task(module: &dyn Module, emitter: &mut Emitter, params: &Value) -> Result<Value, String> {
-    let req = MeshTaskRequest::from_value(params);
+    let req = MeshTaskRequest::try_from_value(params)?;
     let context_params = context_params(&module_id(module), params);
     let run_id = context_params
         .get("runId")
@@ -278,7 +330,7 @@ fn mesh_open_stream(
     emitter: &mut Emitter,
     params: &Value,
 ) -> Result<Value, String> {
-    let req = MeshStreamRequest::from_value(params);
+    let req = MeshStreamRequest::try_from_value(params)?;
     let context_params = context_params(&module_id(module), params);
     let sref = {
         let mut ctx = Context::new(emitter, &module.info().name, &context_params);

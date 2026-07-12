@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "workspace",
     srcs = ["workspace.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/domain/workspace",
+    importpath = "github.com/vibepwners/hovel/internal/domain/workspace",
     visibility = ["//:__subpackages__"],
 )
 

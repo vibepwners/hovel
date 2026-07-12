@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
-	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc"
+	"github.com/vibepwners/hovel/internal/adapters/daemonrpc"
+	"github.com/vibepwners/hovel/internal/adapters/storage/filesystem"
+	sqlitestore "github.com/vibepwners/hovel/internal/adapters/storage/sqlite"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/moduleruntime/pythonrpc"
 )
 
 func TestServeWritesStatusAndClearsOnCancel(t *testing.T) {
@@ -597,6 +597,7 @@ func runtimeTestNewRPCServer(config RPCServerConfig) (http.Handler, error) {
 	}
 	return daemonrpc.NewHandler(
 		config.Runs,
+		daemonrpc.WithPrivilegedControl(config.Confidential),
 		daemonrpc.WithSession(config.Session),
 		daemonrpc.WithLogBroker(logs),
 		daemonrpc.WithSessionPersistence(config.PersistSession),

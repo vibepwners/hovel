@@ -20,7 +20,7 @@
       <a href="../../modules/index.html" aria-current="page">Modules</a>
       <a href="../../api/sdk/index.html">API Docs</a>
       <a href="../../reports/tests/latest/index.html">Reports</a>
-      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+      <a href="https://github.com/vibepwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
@@ -41,6 +41,7 @@
               <li><a href="../picblobs/building.html">Building</a></li>
               <li><a href="../picblobs/testing.html" aria-current="page">Testing</a></li>
               <li><a href="../picblobs/reference.html">Reference</a></li>
+              <li><a href="../picblobs/user-guide.html#mbed-nacl-poc">Mbed OS NaCl PoC</a></li>
               <li><a href="../picblobs/guide/index.html">Full Guide</a></li>
               <li><a href="../picblobs/guide/introduction.html">Introduction</a></li>
               <li><a href="../picblobs/guide/how-it-works.html">How It Works</a></li>
@@ -73,8 +74,15 @@
 
         <h2>Primary Checks</h2>
         <pre><code>task picblobs:generate-check
-task picblobs:bazel-test
-task picblobs:test -- -q</code></pre>
+task picblobs:test
+task picblobs:ci</code></pre>
+        <p>
+          <code>picblobs:test</code> runs the Bazel-integrated test suite;
+          <code>picblobs:ci</code> adds representative cross-platform builds.
+          Keep Bazel options after <code>--</code> when extra diagnostics are
+          needed, for example
+          <code>task picblobs:test -- --test_output=errors</code>.
+        </p>
 
         <h2>Payload Checks</h2>
         <p>
@@ -82,6 +90,86 @@ task picblobs:test -- -q</code></pre>
           <code>task picblobs:stage</code> first for the full matrix, or pass
           <code>--targets</code> and <code>--configs</code> to stage a focused
           subset during local iteration.
+        </p>
+
+        <h2 id="mbed-testing">Mbed/NaCl Checks</h2>
+        <p>Use these Task-backed commands for focused developer iteration:</p>
+        <pre><code>task bazel:test -- \
+  --config=picblobs_ci \
+  //modules/picblobs/tests:nacl_e2e_mbed
+
+task bazel:test -- \
+  --config=picblobs_ci \
+  //modules/picblobs/mbed:target_compile_test
+
+task bazel:test -- \
+  --config=picblobs_ci \
+  //modules/picblobs/mbed:compile_mbed_os_test \
+  //modules/picblobs/mbed:materialize_blobs_test</code></pre>
+        <table>
+          <thead>
+            <tr>
+              <th>Check</th>
+              <th>Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>nacl_e2e_mbed</code></td>
+              <td>Runs the actual hosted Cortex-M4 server and client blobs under QEMU through the real <code>platform_mbed.cpp</code> vtable with POSIX-backed Mbed APIs.</td>
+            </tr>
+            <tr>
+              <td>Wire capture</td>
+              <td>Requires two framed messages in each direction, four nonzero unique 24-byte nonces, the 16-byte secretbox authentication overhead, no client plaintext on the outbound wire, and no ACK plaintext on the return wire.</td>
+            </tr>
+            <tr>
+              <td>Authentication failures</td>
+              <td>Flips the client-to-server application ciphertext and the server-to-client ACK ciphertext in separate runs; each receiving side must reject the frame and must not report a secure channel.</td>
+            </tr>
+            <tr>
+              <td>Bounded I/O</td>
+              <td>Connects a silent peer and requires the server to fail closed within the 5000 ms Mbed socket timeout and the test's 12-second outer bound.</td>
+            </tr>
+            <tr>
+              <td>Materializer/compiler units</td>
+              <td>Exercise key, port, IPv4, config-template, stale-code, artifact, compiler-version, build-lock, version, and Git checkout validation.</td>
+            </tr>
+            <tr>
+              <td><code>target_compile_test</code></td>
+              <td>Builds complete server and client NUCLEO-F429ZI firmware with the pinned real Mbed OS 5.15.9 SDK and GCC ARM 9-2019-q4 declared as Bazel inputs.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2 id="mbed-ci-boundary">What CI Proves</h2>
+        <p>
+          CI proves that the real Cortex-M4 blob machine code executes the
+          symmetric encrypted exchange, authenticates and decrypts both
+          directions, rejects ciphertext modification both ways, uses unique
+          captured nonces, closes tracked sockets, and times out a silent peer.
+          It also proves that the application adapter and both complete firmware
+          roles compile against the pinned target SDK and supported compiler
+          from declared inputs.
+        </p>
+        <p>
+          CI does <strong>not</strong> prove runtime behavior of physical
+          NUCLEO-F429ZI boards. QEMU uses POSIX-backed Mbed mocks, while the real
+          firmware compile does not boot. A two-board hardware smoke test is
+          still required to validate target TRNG behavior and entropy, Ethernet
+          PHY/DHCP/LWIP operation, flash and boot, serial output, real timing,
+          and the MPU and cache-maintenance path on the installed silicon.
+        </p>
+        <ol>
+          <li>Materialize one matched key, port, and server IPv4 configuration.</li>
+          <li>Build and flash the server and client role images to separate boards.</li>
+          <li>Start the server first on an authorized isolated network.</li>
+          <li>Require both expected decrypted values and both <code>secure channel OK</code> lines on serial.</li>
+          <li>Repeat after reset to exercise fresh ephemeral keys and nonces.</li>
+        </ol>
+        <p>
+          See the <a href="user-guide.html#mbed-nacl-poc">operator workflow</a>
+          and <a href="reference.html#mbed-runtime">runtime reference</a> for
+          the configuration and memory-policy details behind these checks.
         </p>
       </article>
       <nav class="page-nav">
@@ -92,7 +180,7 @@ task picblobs:test -- -q</code></pre>
     </main>
   </div>
   <footer class="sitefoot">
-    <p>picblobs module · <a href="../../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>picblobs module · <a href="../../index.html">home</a> · <a href="https://github.com/vibepwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "clistyle",
     srcs = ["styles.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/clistyle",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/clistyle",
     visibility = ["//:__subpackages__"],
     deps = [
         "@com_github_charmbracelet_lipgloss//:lipgloss",

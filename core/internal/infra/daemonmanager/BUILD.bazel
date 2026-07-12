@@ -6,7 +6,7 @@ go_library(
         "logging.go",
         "manager.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager",
+    importpath = "github.com/vibepwners/hovel/internal/infra/daemonmanager",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/app/services",

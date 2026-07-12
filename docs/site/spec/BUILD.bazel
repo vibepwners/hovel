@@ -92,4 +92,26 @@ py_test(
         "//core/internal/adapters/daemonrpc:daemonrpc_source",
     ],
     python_version = "PY3",
+    deps = [
+        "@lint_pypi//jsonschema",
+        "@lint_pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "provider_docs_parity_test",
+    size = "small",
+    srcs = ["//docs/tools/docs:provider_docs_parity_test.py"],
+    data = [
+        ":module-protocol.html",
+        "//:sdk/go/README.md",
+        "//:sdk/rust/README.md",
+        "//docs/tools/docs:python_api/index.rst",
+        "//sdk/go/hovel:protocol_doc_sources",
+        "//sdk/python:README.md",
+        "//sdk/python:sources",
+        "//sdk/rust/hovel:protocol_doc_sources",
+    ],
+    python_version = "PY3",
+    deps = ["@lint_pypi//pytest"],
 )

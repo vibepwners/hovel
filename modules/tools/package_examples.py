@@ -4,7 +4,7 @@
 Invoked through Task. Native binaries are normally supplied as Bazel runfiles;
 direct script use can still consume binaries staged under modules/examples/bin/.
 Set HOVEL_MODULE_RELEASE_BASE_URL to produce an HTTPS bulk-install manifest for
-a release, for example https://github.com/Vibe-Pwners/hovel/releases/download/v1.2.3.
+a release, for example https://github.com/vibepwners/hovel/releases/download/v1.2.3.
 """
 
 from __future__ import annotations
@@ -155,7 +155,7 @@ def module_release_base_url() -> str:
         return base.rstrip("/")
     tag = os.environ.get("HOVEL_RELEASE_TAG", "").strip()
     if tag:
-        return f"https://github.com/Vibe-Pwners/hovel/releases/download/{tag}"
+        return f"https://github.com/vibepwners/hovel/releases/download/{tag}"
     return ""
 
 

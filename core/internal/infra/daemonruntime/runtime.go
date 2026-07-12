@@ -13,15 +13,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/hovelconfig"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
-	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+	"github.com/vibepwners/hovel/internal/app/hovelconfig"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	apppki "github.com/vibepwners/hovel/internal/app/pki"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	operatordomain "github.com/vibepwners/hovel/internal/domain/operator"
+	"github.com/vibepwners/hovel/internal/domain/workspace"
 )
+
+const daemonShutdownTimeout = 5 * time.Second
 
 type Endpoint struct {
 	Network string
@@ -70,20 +73,25 @@ type RPCServerConfig struct {
 	PersistSession  func(operatorsession.PersistedState) error
 	ModuleSessions  services.SessionBroker
 	LaunchKeyPolicy operatordomain.LaunchKeyPolicy
+	PKI             apppki.WorkspaceControl
+	Confidential    bool
 }
 
 type RPCServerFactory func(RPCServerConfig) (http.Handler, error)
 
 type ModuleRuntimeConfig struct {
-	ModuleConfig  string
-	HovelConfig   string
-	WorkspacePath string
-	Events        services.EventSink
-	IDs           services.IDGenerator
-	Clock         services.Clock
+	ModuleConfig         string
+	HovelConfig          string
+	WorkspacePath        string
+	Events               services.EventSink
+	IDs                  services.IDGenerator
+	Clock                services.Clock
+	CredentialExecutions apppki.CredentialExecutionRecorder
 }
 
 type ModuleRuntimeFactory func(ModuleRuntimeConfig) (services.ModuleRunner, services.SessionBroker)
+
+type PKIControlFactory func(context.Context, string) (apppki.WorkspaceControl, error)
 
 type Args struct {
 	WorkspacePath        string
@@ -105,6 +113,9 @@ type Args struct {
 	NewLogPublisher      LogPublisherFactory
 	NewRPCServer         RPCServerFactory
 	NewModuleRuntime     ModuleRuntimeFactory
+	NewPKIControl        PKIControlFactory
+	PKIBackends          apppki.BackendRegistry
+	PKIValidators        apppki.ValidatorRegistry
 }
 
 func Serve(ctx context.Context, args Args) error {
@@ -144,11 +155,18 @@ func Serve(ctx context.Context, args Args) error {
 		clock = systemClock{}
 	}
 	baseEvents := args.Events
+	ownsBaseEvents := false
 	if baseEvents == nil {
 		if args.NewEventSink == nil {
 			return errors.New("daemon runtime event sink factory is not configured")
 		}
 		baseEvents = args.NewEventSink(workspacePath)
+		ownsBaseEvents = true
+	}
+	if ownsBaseEvents {
+		if closer, ok := baseEvents.(interface{ Close() error }); ok {
+			defer func() { logDaemonRuntimeError("close daemon event sink", closer.Close()) }()
+		}
 	}
 	store := args.Store
 	if store == nil {
@@ -173,6 +191,14 @@ func Serve(ctx context.Context, args Args) error {
 	if err := store.EnsureWorkspaceDatabase(ctx, workspacePath); err != nil {
 		return err
 	}
+	var pkiControl apppki.WorkspaceControl
+	if args.NewPKIControl != nil {
+		pkiControl, err = args.NewPKIControl(ctx, workspacePath)
+		if err != nil {
+			return err
+		}
+		defer func() { logDaemonRuntimeError("close workspace PKI", pkiControl.Close()) }()
+	}
 	session := operatorsession.New()
 	if state, ok, err := store.LoadOperatorSession(ctx, workspacePath); err != nil {
 		return err
@@ -192,13 +218,15 @@ func Serve(ctx context.Context, args Args) error {
 		if args.NewModuleRuntime == nil {
 			return errors.New("daemon runtime module runtime factory is not configured")
 		}
+		credentialExecutions, _ := pkiControl.(apppki.CredentialExecutionRecorder)
 		runner, sessionBroker = args.NewModuleRuntime(ModuleRuntimeConfig{
-			ModuleConfig:  args.ModuleConfig,
-			HovelConfig:   args.HovelConfig,
-			WorkspacePath: workspacePath,
-			Events:        events,
-			IDs:           ids,
-			Clock:         clock,
+			ModuleConfig:         args.ModuleConfig,
+			HovelConfig:          args.HovelConfig,
+			WorkspacePath:        workspacePath,
+			Events:               events,
+			IDs:                  ids,
+			Clock:                clock,
+			CredentialExecutions: credentialExecutions,
 		})
 		if runner == nil {
 			return errors.New("daemon runtime module runner factory returned nil")
@@ -227,11 +255,22 @@ func Serve(ctx context.Context, args Args) error {
 		return err
 	}
 	if endpoint.Network == "unix" {
+		const privateSocketMode = 0o600
+		if err := os.Chmod(endpoint.Address, privateSocketMode); err != nil {
+			return errors.Join(fmt.Errorf("restrict daemon socket permissions: %w", err), listener.Close())
+		}
 		defer func() { logDaemonRuntimeError("remove daemon socket", os.Remove(endpoint.Address)) }()
 	}
 	defer func() { logDaemonRuntimeError("close daemon listener", listener.Close()) }()
 
-	runs := services.NewRunService(runner, events, ids, clock)
+	runOptions := make([]services.RunServiceOption, 0, 1)
+	if credentialResolver, ok := pkiControl.(services.CredentialOperationResolver); ok {
+		runOptions = append(
+			runOptions,
+			services.WithCredentialOperationResolver(credentialResolver),
+		)
+	}
+	runs := services.NewRunService(runner, events, ids, clock, runOptions...)
 	config, _, err := hovelconfig.Load(hovelconfig.Options{
 		Workspace:    workspacePath,
 		ExplicitPath: args.HovelConfig,
@@ -246,6 +285,8 @@ func Serve(ctx context.Context, args Args) error {
 		PersistSession:  persistSession,
 		ModuleSessions:  sessionBroker,
 		LaunchKeyPolicy: launchKeyPolicyFromConfig(config.Policy.LaunchKey),
+		PKI:             pkiControl,
+		Confidential:    endpoint.Network == "unix",
 	})
 	if err != nil {
 		return err
@@ -260,6 +301,14 @@ func Serve(ctx context.Context, args Args) error {
 
 	select {
 	case <-ctx.Done():
+		shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), daemonShutdownTimeout)
+		shutdownErr := httpServer.Shutdown(shutdownContext)
+		cancelShutdown()
+		serveErr := <-acceptErrs
+		if shutdownErr != nil || serveErr != nil {
+			clearErr := store.ClearDaemonStatus(context.Background(), workspacePath)
+			return errors.Join(shutdownErr, serveErr, clearErr)
+		}
 	case err := <-acceptErrs:
 		clearErr := store.ClearDaemonStatus(context.Background(), workspacePath)
 		if clearErr != nil {

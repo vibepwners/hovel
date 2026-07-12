@@ -41,11 +41,6 @@ _CM4 = "//modules/picblobs/platforms:cortexm4_baremetal"
 
 _QEMU_ARM_STATIC = "@qemu_user_static//:qemu-arm-static"
 
-_NACL_E2E_TAGS = [
-    "exclusive",
-    "requires-network",
-]
-
 # ---- NaCl blob artifacts (raw syscall mode, ARM Thumb) ----
 
 arm_filegroup(
@@ -133,7 +128,18 @@ arm_filegroup(
     deps = ["//modules/picblobs/tests/runners/linux:runner_hosted"],
 )
 
-# ---- E2E NaCl handshake tests (QEMU, exclusive fixed port) ----
+# ---- E2E NaCl handshake tests (QEMU, kernel-assigned loopback ports) ----
+
+py_test(
+    name = "nacl_protocol_header_check",
+    timeout = "short",
+    srcs = ["nacl_e2e_test.py"],
+    args = ["--check-protocol-header"],
+    data = ["//modules/picblobs/src/include/picblobs:quality_sources"],
+    main = "nacl_e2e_test.py",
+    python_version = "PY3",
+    deps = ["//modules/picblobs:nacl_protocol"],
+)
 
 py_test(
     name = "nacl_e2e_thumb",
@@ -153,7 +159,7 @@ py_test(
     ],
     main = "nacl_e2e_test.py",
     python_version = "PY3",
-    tags = _NACL_E2E_TAGS,
+    deps = ["//modules/picblobs:nacl_protocol"],
 )
 
 py_test(
@@ -174,7 +180,7 @@ py_test(
     ],
     main = "nacl_e2e_test.py",
     python_version = "PY3",
-    tags = _NACL_E2E_TAGS,
+    deps = ["//modules/picblobs:nacl_protocol"],
 )
 
 # E2E NaCl handshake via vtable (proves hosted abstraction works).
@@ -196,7 +202,7 @@ py_test(
     ],
     main = "nacl_e2e_test.py",
     python_version = "PY3",
-    tags = _NACL_E2E_TAGS,
+    deps = ["//modules/picblobs:nacl_protocol"],
 )
 
 # ---- PIC property tests (hermetic: toolchain readelf + Python parser) ----
@@ -349,7 +355,7 @@ py_test(
     ],
     main = "nacl_e2e_test.py",
     python_version = "PY3",
-    tags = _NACL_E2E_TAGS,
+    deps = ["//modules/picblobs:nacl_protocol"],
 )
 
 # ---- Mbed OS platform test (platform_mbed.cpp with POSIX mock) ----
@@ -476,6 +482,7 @@ py_test(
         "$(location :nacl_server_hosted_bin_cortexm4)",
         "$(location :nacl_client_hosted_bin_cortexm4)",
         "--negative",
+        "--silent-peer",
     ],
     data = [
         ":nacl_client_hosted_bin_cortexm4",
@@ -485,7 +492,7 @@ py_test(
     ],
     main = "nacl_e2e_test.py",
     python_version = "PY3",
-    tags = _NACL_E2E_TAGS,
+    deps = ["//modules/picblobs:nacl_protocol"],
 )
 
 # ---- Aggregate test suite ----
@@ -499,6 +506,7 @@ test_suite(
         ":nacl_e2e_hosted_thumb",
         ":nacl_e2e_mbed",
         ":nacl_e2e_thumb",
+        ":nacl_protocol_header_check",
         ":verify_pic_arm",
         ":verify_pic_cortexm4",
         ":verify_pic_hosted_thumb",

@@ -1,20 +1,37 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "daemonlocal",
     srcs = [
         "daemonlocal.go",
         "logging.go",
+        "pki_control.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/daemonlocal",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/daemonrpc",
         "//internal/adapters/storage/filesystem",
         "//internal/adapters/storage/sqlite",
+        "//internal/app/pki",
         "//internal/app/services",
+        "//internal/domain/pki",
+        "//internal/domain/workspace",
         "//internal/infra/daemonmanager",
         "//internal/infra/daemonruntime",
+        "//internal/infra/pki",
         "//internal/moduleruntime/pythonrpc",
+    ],
+)
+
+go_test(
+    name = "daemonlocal_test",
+    srcs = ["pki_control_test.go"],
+    embed = [":daemonlocal"],
+    deps = [
+        "//internal/app/pki",
+        "//internal/domain/pki",
+        "//internal/infra/daemonruntime",
+        "//internal/infra/pki",
     ],
 )

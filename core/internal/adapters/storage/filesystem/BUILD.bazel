@@ -10,7 +10,7 @@ go_library(
         "logging.go",
         "workspace_store.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/storage/filesystem",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/storage/sqlite",

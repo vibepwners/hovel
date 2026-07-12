@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
+	"github.com/vibepwners/hovel/internal/app/modulepackage"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
 )
 
 type OptionKind string

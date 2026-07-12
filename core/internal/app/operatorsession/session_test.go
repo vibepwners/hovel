@@ -3,7 +3,7 @@ package operatorsession
 import (
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
 )
 
 func TestSessionCreatesUsesListsAndDeletesChains(t *testing.T) {

@@ -11,9 +11,16 @@ import struct
 import tempfile
 from pathlib import Path
 
-SERVER_CONFIG_SIZE = 34
-CLIENT_CONFIG_SIZE = 38
-AUTH_KEY_SIZE = 32
+from config_layout import (
+    AUTH_KEY_SIZE,
+    CLIENT_CONFIG_TEMPLATE,
+    DEFAULT_PORT,
+    IPV4_SIZE,
+    MAX_PORT,
+    MIN_PORT,
+    PORT_FORMAT,
+    SERVER_CONFIG_TEMPLATE,
+)
 
 
 def main() -> int:
@@ -26,7 +33,7 @@ def main() -> int:
     key_group = parser.add_mutually_exclusive_group(required=True)
     key_group.add_argument("--auth-key-file")
     key_group.add_argument("--auth-key-hex")
-    parser.add_argument("--port", type=int, default=9999)
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--output-dir", default="modules/picblobs/mbed/blobs")
     args = parser.parse_args()
 
@@ -55,8 +62,8 @@ def main() -> int:
 
 
 def validate_port(port: int) -> int:
-    if port < 1 or port > 65535:
-        raise ValueError(f"port {port} is outside 1..65535")
+    if port < MIN_PORT or port > MAX_PORT:
+        raise ValueError(f"port {port} is outside {MIN_PORT}..{MAX_PORT}")
     return port
 
 
@@ -97,8 +104,8 @@ def load_auth_key(path_value: str | None, hex_value: str | None) -> bytes:
 
 
 def configure_server_blob(blob: bytes, port: int, auth_key: bytes) -> bytes:
-    config = struct.pack("<H", validate_port(port)) + checked_auth_key(auth_key)
-    return replace_config(blob, config, SERVER_CONFIG_SIZE)
+    config = struct.pack(PORT_FORMAT, validate_port(port)) + checked_auth_key(auth_key)
+    return replace_config(blob, config, SERVER_CONFIG_TEMPLATE)
 
 
 def configure_client_blob(
@@ -107,14 +114,16 @@ def configure_client_blob(
     server_ipv4: bytes,
     auth_key: bytes,
 ) -> bytes:
-    if len(server_ipv4) != 4:
-        raise ValueError("server IPv4 address must be exactly 4 bytes")
+    if len(server_ipv4) != IPV4_SIZE:
+        raise ValueError(
+            f"server IPv4 address must be exactly {IPV4_SIZE} bytes"
+        )
     config = (
-        struct.pack("<H", validate_port(port))
+        struct.pack(PORT_FORMAT, validate_port(port))
         + server_ipv4
         + checked_auth_key(auth_key)
     )
-    return replace_config(blob, config, CLIENT_CONFIG_SIZE)
+    return replace_config(blob, config, CLIENT_CONFIG_TEMPLATE)
 
 
 def checked_auth_key(auth_key: bytes) -> bytes:
@@ -123,7 +132,8 @@ def checked_auth_key(auth_key: bytes) -> bytes:
     return auth_key
 
 
-def replace_config(blob: bytes, config: bytes, expected_size: int) -> bytes:
+def replace_config(blob: bytes, config: bytes, template: bytes) -> bytes:
+    expected_size = len(template)
     if len(config) != expected_size:
         raise ValueError(
             f"config is {len(config)} bytes; expected exactly {expected_size}"
@@ -131,6 +141,10 @@ def replace_config(blob: bytes, config: bytes, expected_size: int) -> bytes:
     if len(blob) < expected_size:
         raise ValueError(
             f"blob is {len(blob)} bytes; smaller than its {expected_size}-byte config"
+        )
+    if not blob.endswith(template):
+        raise ValueError(
+            "blob does not end with the expected unconfigured .config template"
         )
     configured = bytearray(blob)
     configured[-expected_size:] = config

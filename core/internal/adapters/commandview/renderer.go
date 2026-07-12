@@ -6,10 +6,10 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/clistyle"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
 	"github.com/charmbracelet/glamour"
+	"github.com/vibepwners/hovel/internal/adapters/clistyle"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
 )
 
 type Renderer struct {

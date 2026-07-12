@@ -49,6 +49,7 @@ use_repo(
     "bootlin_sparcv8",
     "bootlin_x86_64",
     "mbed_arm_none_eabi",
+    "mbed_os_5_15_9",
     "qemu_arm_static",
     "qemu_user_static",
 )

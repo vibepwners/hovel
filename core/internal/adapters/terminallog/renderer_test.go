@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
 )
 
 func TestRendererFormatsOperatorLog(t *testing.T) {

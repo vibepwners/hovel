@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/domain/mesh"
+	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 func TestRunServiceExecutesMockExploitAndEmitsEvents(t *testing.T) {
@@ -332,6 +334,118 @@ func TestRunServiceRejectsInvalidMeshListenerResults(t *testing.T) {
 	})
 }
 
+func TestRunServiceResolvesCredentialsForMeshMutations(t *testing.T) {
+	t.Parallel()
+
+	descriptor := testCredentialDeliveryDescriptor(t)
+	runner := &fakeMeshServiceRunner{
+		module: modulecatalog.Module{
+			ID:                 "mesh-provider@1.2.3",
+			Version:            "1.2.3",
+			CredentialDelivery: &descriptor,
+		},
+		listener: mesh.Listener{ID: "listener-edge"},
+		result:   mesh.TaskResult{Status: mesh.TaskStatusSucceeded},
+		session:  run.SessionRef{ID: "session-edge"},
+	}
+	resolver := &fakeCredentialOperationResolver{}
+	service := NewRunService(
+		runner,
+		nil,
+		nil,
+		nil,
+		WithCredentialOperationResolver(resolver),
+	)
+	selection := domainpki.CredentialSelections{{
+		RequestID:    "credential-request-1",
+		AssignmentID: "assignment-edge",
+		SlotName:     "tls-server",
+		Capability:   domainpki.DeliveryCapabilityRuntime,
+		Material: domainpki.CredentialMaterialSelection{
+			Projection: domainpki.CredentialProjectionCertificateDER,
+			Form:       domainpki.CredentialMaterialPublic,
+		},
+	}}
+
+	if _, err := service.StartMeshListenerWithCredentialSelections(
+		t.Context(),
+		"mesh-provider",
+		mesh.ListenerStartRequest{ListenerID: "listener-edge"},
+		selection,
+		domainpki.CredentialOperationScope{OperationID: "mesh-operation-listener"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RunMeshTaskWithCredentialSelections(
+		t.Context(),
+		"mesh-provider",
+		mesh.TaskRequest{
+			RunID: "run-edge", ListenerID: "listener-edge", NodeID: "node-edge", Target: "target-edge",
+		},
+		selection,
+		domainpki.CredentialOperationScope{OperationID: "mesh-operation-task"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.OpenMeshStreamWithCredentialSelections(
+		t.Context(),
+		"mesh-provider",
+		mesh.StreamRequest{RunID: "run-edge", ListenerID: "listener-edge", NodeID: "node-edge"},
+		selection,
+		domainpki.CredentialOperationScope{OperationID: "mesh-operation-stream"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if resolver.calls != 3 || resolver.cleanups != 3 {
+		t.Fatalf("resolver calls/cleanups = %d/%d, want 3/3", resolver.calls, resolver.cleanups)
+	}
+	if runner.credentialCalls != 3 {
+		t.Fatalf("credential-aware runner calls = %d, want 3", runner.credentialCalls)
+	}
+	if runner.credentialModuleID != "mesh-provider@1.2.3" {
+		t.Fatalf("credential module id = %q, want exact inspected id", runner.credentialModuleID)
+	}
+	if resolver.provider.ProviderID != "mesh-provider" ||
+		resolver.provider.ProviderVersion != "1.2.3" {
+		t.Fatalf("provider target = %#v", resolver.provider)
+	}
+	if len(resolver.consumers) != 3 ||
+		resolver.consumers[0].ID != "mesh-provider" ||
+		resolver.consumers[1].ID != "mesh-provider/listener-edge" ||
+		resolver.consumers[2].ID != "mesh-provider/node-edge" {
+		t.Fatalf("operation consumers = %#v", resolver.consumers)
+	}
+	if resolver.scope.OperationID != "mesh-operation-stream" ||
+		resolver.scope.RunID != "run-edge" || resolver.scope.NodeID != "node-edge" {
+		t.Fatalf("resolved operation scope = %#v", resolver.scope)
+	}
+}
+
+func TestRunServiceRejectsCredentialSelectionsWithoutResolver(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeMeshServiceRunner{}
+	service := NewRunService(runner, nil, nil, nil)
+	_, err := service.RunMeshTaskWithCredentialSelections(
+		t.Context(),
+		"mesh-provider",
+		mesh.TaskRequest{},
+		domainpki.CredentialSelections{{
+			RequestID: "credential-request-1", AssignmentID: "assignment-edge",
+			SlotName: "tls-server", Capability: domainpki.DeliveryCapabilityRuntime,
+			Material: domainpki.CredentialMaterialSelection{
+				Projection: domainpki.CredentialProjectionCertificateDER,
+				Form:       domainpki.CredentialMaterialPublic,
+			},
+		}},
+		domainpki.CredentialOperationScope{},
+	)
+	if err == nil || err.Error() != "credential operation resolver is not configured" {
+		t.Fatalf("RunMeshTaskWithCredentialSelections() error = %v", err)
+	}
+}
+
 type fakeModuleRunner struct {
 	called  bool
 	request run.Request
@@ -345,6 +459,17 @@ type fakeMeshServiceRunner struct {
 	listeners            []mesh.Listener
 	listListenerRequest  mesh.ListenerListRequest
 	startListenerRequest mesh.ListenerStartRequest
+	module               modulecatalog.Module
+	credentialCalls      int
+	credentialModuleID   string
+}
+
+type fakeCredentialOperationResolver struct {
+	calls     int
+	cleanups  int
+	provider  domainpki.CredentialProviderTarget
+	scope     domainpki.CredentialOperationScope
+	consumers []domainpki.CredentialConsumerBinding
 }
 
 type meshRunnerWithoutListeners struct {
@@ -396,6 +521,92 @@ func (r *fakeMeshServiceRunner) RunMeshTask(context.Context, string, mesh.TaskRe
 
 func (r *fakeMeshServiceRunner) OpenMeshStream(context.Context, string, mesh.StreamRequest) (run.SessionRef, error) {
 	return r.session, nil
+}
+
+func (r *fakeMeshServiceRunner) Inspect(context.Context, string) (modulecatalog.Module, error) {
+	return r.module, nil
+}
+
+func (r *fakeMeshServiceRunner) StartMeshListenerWithCredentials(
+	_ context.Context,
+	moduleID string,
+	_ domainpki.CredentialOperationDeliveries,
+	request mesh.ListenerStartRequest,
+) (MeshListenerExecution, error) {
+	r.credentialCalls++
+	r.credentialModuleID = moduleID
+	r.startListenerRequest = request
+	return MeshListenerExecution{Listener: r.listener}, nil
+}
+
+func (r *fakeMeshServiceRunner) RunMeshTaskWithCredentials(
+	_ context.Context,
+	moduleID string,
+	_ domainpki.CredentialOperationDeliveries,
+	_ mesh.TaskRequest,
+) (MeshTaskExecution, error) {
+	r.credentialCalls++
+	r.credentialModuleID = moduleID
+	return MeshTaskExecution{Result: r.result}, nil
+}
+
+func (r *fakeMeshServiceRunner) OpenMeshStreamWithCredentials(
+	_ context.Context,
+	moduleID string,
+	_ domainpki.CredentialOperationDeliveries,
+	_ mesh.StreamRequest,
+) (MeshStreamExecution, error) {
+	r.credentialCalls++
+	r.credentialModuleID = moduleID
+	return MeshStreamExecution{Session: r.session}, nil
+}
+
+func (r *fakeCredentialOperationResolver) ResolveCredentialOperation(
+	_ context.Context,
+	provider domainpki.CredentialProviderTarget,
+	_ domainpki.CredentialDeliveryDescriptor,
+	_ domainpki.CredentialSelections,
+	scope domainpki.CredentialOperationScope,
+	consumers []domainpki.CredentialConsumerBinding,
+) (domainpki.CredentialOperationDeliveries, func(), error) {
+	r.calls++
+	r.provider = provider
+	r.scope = scope
+	r.consumers = append([]domainpki.CredentialConsumerBinding(nil), consumers...)
+	return nil, func() { r.cleanups++ }, nil
+}
+
+func testCredentialDeliveryDescriptor(t *testing.T) domainpki.CredentialDeliveryDescriptor {
+	t.Helper()
+	descriptor, err := domainpki.NewCredentialDeliveryDescriptor(
+		domainpki.CredentialDeliveryDescriptorArgs{
+			SchemaVersion: domainpki.CredentialDeliverySchemaV1,
+			Slots: []domainpki.CredentialSlot{{
+				Name: "tls-server", Purpose: domainpki.PurposeTLSServer,
+				EndpointRole:           domainpki.CredentialEndpointServer,
+				ConsumerType:           domainpki.ConsumerMeshListener,
+				AcceptedBundleVersions: []string{domainpki.BundleSchemaV1},
+				AcceptedProfiles:       []domainpki.ProfileID{domainpki.ProfileTLSServer},
+				AcceptedCompatibilityTargets: []domainpki.CompatibilityTargetID{
+					domainpki.CompatibilityPortableX509,
+				},
+				AcceptedProjections: []domainpki.CredentialProjection{
+					domainpki.CredentialProjectionCertificateDER,
+				},
+				AcceptedMaterialForms: []domainpki.CredentialMaterialForm{
+					domainpki.CredentialMaterialPublic,
+				},
+				MaximumEncodedBytes: 64 * 1024,
+				RemainderPolicy:     domainpki.StampRemainderPreserve,
+				PrivateMaterial:     domainpki.PrivateMaterialForbidden,
+			}},
+			Capabilities: []domainpki.DeliveryCapability{domainpki.DeliveryCapabilityRuntime},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return descriptor
 }
 
 func (r *fakeModuleRunner) Run(_ context.Context, request run.Request) (run.Result, error) {

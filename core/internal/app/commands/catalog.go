@@ -21,18 +21,18 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/hovelconfig"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
-	domainmodule "github.com/Vibe-Pwners/hovel/internal/domain/module"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
-	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+	"github.com/vibepwners/hovel/internal/app/hovelconfig"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/app/modulepackage"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	"github.com/vibepwners/hovel/internal/domain/mesh"
+	domainmodule "github.com/vibepwners/hovel/internal/domain/module"
+	"github.com/vibepwners/hovel/internal/domain/run"
+	workspacepath "github.com/vibepwners/hovel/internal/domain/workspace"
 )
 
 type WorkspaceInitializer interface {
@@ -635,7 +635,7 @@ type ChainFileTarget struct {
 }
 
 func HovelRegistry(runtime Runtime) Registry {
-	return MustRegistry(withCommonOptions(
+	definitions := []Definition{
 		Definition{
 			Path:    []string{"control", "init"},
 			Summary: "Initialize a local Hovel workspace.",
@@ -1493,7 +1493,9 @@ func HovelRegistry(runtime Runtime) Registry {
 			},
 			Handler: sessionCallHandler(runtime),
 		},
-	)...)
+	}
+	definitions = append(definitions, pkiDefinitions(runtime)...)
+	return MustRegistry(withCommonOptions(definitions...)...)
 }
 
 func stringOption(name, short, help string) Option {
@@ -6139,7 +6141,9 @@ func meshDescriptorPresent(descriptor mesh.Descriptor) bool {
 		len(descriptor.Capabilities) > 0 ||
 		descriptor.Topology != nil ||
 		len(descriptor.Tasks) > 0 ||
+		len(descriptor.ListenerTypes) > 0 ||
 		len(descriptor.Triggers) > 0 ||
+		descriptor.CredentialDelivery != nil ||
 		len(descriptor.Attributes) > 0
 }
 

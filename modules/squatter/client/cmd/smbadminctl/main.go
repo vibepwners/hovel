@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe"
+	"github.com/vibepwners/hovel/payloads/squatter/client/smbpipe"
 )
 
 func main() {

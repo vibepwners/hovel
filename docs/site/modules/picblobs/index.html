@@ -20,7 +20,7 @@
       <a href="../../modules/index.html" aria-current="page">Modules</a>
       <a href="../../api/sdk/index.html">API Docs</a>
       <a href="../../reports/tests/latest/index.html">Reports</a>
-      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+      <a href="https://github.com/vibepwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
@@ -41,6 +41,7 @@
               <li><a href="../picblobs/building.html">Building</a></li>
               <li><a href="../picblobs/testing.html">Testing</a></li>
               <li><a href="../picblobs/reference.html">Reference</a></li>
+              <li><a href="../picblobs/user-guide.html#mbed-nacl-poc">Mbed OS NaCl PoC</a></li>
               <li><a href="../picblobs/guide/index.html">Full Guide</a></li>
               <li><a href="../picblobs/guide/introduction.html">Introduction</a></li>
               <li><a href="../picblobs/guide/how-it-works.html">How It Works</a></li>
@@ -81,6 +82,11 @@
           CLI, Bazel build, generated blob catalogue, and cross-architecture test
           runners available inside the Hovel module tree.
         </p>
+        <p>
+          This Modules section records concrete picblobs implementation and
+          operator details. The <a href="../../spec/index.html">Book</a> remains
+          the home for Hovel-wide concepts and contracts.
+        </p>
 
         <h2>The Pitch</h2>
         <blockquote>
@@ -100,6 +106,7 @@
           <li><strong>CLI</strong> (<code>picblobs-cli</code>) for inspecting, building, running, and verifying blobs</li>
           <li><strong>Cross-architecture testing</strong> via QEMU user-mode (<code>binfmt_misc</code> or <code>qemu-*-static</code>)</li>
           <li><strong>Bazel 9</strong> build system with automatic Bootlin toolchain provisioning</li>
+          <li><strong>Mbed OS 5.15.9 NaCl PoC</strong> -- real Cortex-M4 blobs, a NUCLEO-F429ZI adapter, authenticated bidirectional encryption, and pinned target builds</li>
           <li><strong>Kernel toolkit</strong> for red-team lab exercises</li>
         </ul>
 
@@ -125,6 +132,11 @@
             <span class="tile-title">Reference</span>
             <span class="tile-desc">Important files, module manifest, preserved original docs, and source specs.</span>
           </a>
+          <a class="tile" href="user-guide.html#mbed-nacl-poc">
+            <span class="tile-label">Mbed</span>
+            <span class="tile-title">NaCl Proof of Concept</span>
+            <span class="tile-desc">Provision the key and endpoint, build both pinned firmware roles, and understand the hardware boundary.</span>
+          </a>
           <a class="tile" href="guide/index.html">
             <span class="tile-label">Guide</span>
             <span class="tile-title">Original pic Guide</span>
@@ -140,7 +152,7 @@
     </main>
   </div>
   <footer class="sitefoot">
-    <p>picblobs module · <a href="../../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>picblobs module · <a href="../../index.html">home</a> · <a href="https://github.com/vibepwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

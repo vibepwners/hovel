@@ -10,7 +10,7 @@ nogo(
 
 gazelle(
     name = "gazelle",
-    prefix = "github.com/Vibe-Pwners/hovel",
+    prefix = "github.com/vibepwners/hovel",
 )
 
 filegroup(
@@ -41,17 +41,20 @@ _COVERAGE_LAYER_TESTS = [
     "//internal/app/modulepackage:modulepackage_test",
     "//internal/app/operatorlog:operatorlog_test",
     "//internal/app/operatorsession:operatorsession_test",
+    "//internal/app/pki:pki_test",
     "//internal/app/services:services_test",
     "//internal/domain/daemon:daemon_test",
     "//internal/domain/event:event_test",
     "//internal/domain/module:module_test",
     "//internal/domain/operator:operator_test",
+    "//internal/domain/pki:pki_test",
     "//internal/domain/run:run_test",
     "//internal/domain/service:service_test",
     "//internal/domain/workspace:workspace_test",
 ]
 
 _CI_TESTS = [
+    "//internal/adapters/pki/memory:memory_test",
     "//internal/adapters/cli:cli_test",
     "//internal/adapters/commandmode:commandmode_e2e_test",
     "//internal/adapters/commandmode:commandmode_test",
@@ -64,7 +67,10 @@ _CI_TESTS = [
     "//internal/adapters/terminallog:terminallog_test",
     "//internal/adapters/uicatalog:uicatalog_test",
     "//internal/infra/daemonmanager:daemonmanager_test",
+    "//internal/infra/pki:pki_test",
+    "//internal/moduleruntime/pythonrpc:credential_provider_test",
     "//internal/moduleruntime/pythonrpc:process_lifecycle_test",
+    "//internal/moduleruntime/pythonrpc:resource_limits_test",
     "//internal/moduleruntime/pythonrpc:session_history_test",
     "//internal/testmodules/mockexploit:mockexploit_test",
     "//schemas:schema_smoke_test",
@@ -102,6 +108,8 @@ test_suite(
     tags = ["manual"],
     tests = [
         "//internal/adapters/daemonrpc:daemonrpc_race_test",
+        "//internal/adapters/pki/memory:memory_race_test",
+        "//internal/adapters/storage/sqlite:sqlite_race_test",
         "//internal/app/chainruntime:chainruntime_race_test",
         "//internal/app/commands:commands_race_test",
         "//internal/app/hovelconfig:hovelconfig_race_test",
@@ -110,6 +118,7 @@ test_suite(
         "//internal/app/modulepackage:modulepackage_race_test",
         "//internal/app/operatorlog:operatorlog_race_test",
         "//internal/app/operatorsession:operatorsession_race_test",
+        "//internal/app/pki:pki_race_test",
         "//internal/app/services:services_race_test",
         "//internal/moduleruntime/pythonrpc:session_history_race_test",
     ],

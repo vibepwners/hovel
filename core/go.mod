@@ -1,4 +1,4 @@
-module github.com/Vibe-Pwners/hovel
+module github.com/vibepwners/hovel
 
 go 1.26.0
 
@@ -12,6 +12,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/pkg/term v1.2.0-beta.2
+	golang.org/x/crypto v0.54.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/tools v0.47.0
 	gopkg.in/yaml.v3 v3.0.1

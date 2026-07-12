@@ -20,7 +20,7 @@
       <a href="../modules/index.html">Modules</a>
       <a href="../api/sdk/index.html">API Docs</a>
       <a href="../reports/tests/latest/index.html">Reports</a>
-      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+      <a href="https://github.com/vibepwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
@@ -34,7 +34,8 @@
         <li><a href="architecture.html">Architecture</a></li>
         <li><a href="domain-model.html">Domain Model</a></li>
         <li><a href="modules-services.html">Modules and Services</a></li>
-        <li><a href="providers-artifacts.html">Providers, Artifacts, Logging</a></li>
+        <li><a href="providers-artifacts.html">Providers, PKI, Artifacts</a></li>
+        <li><a href="providers-artifacts.html#credential-delivery">Credential Delivery</a></li>
         <li><a href="mesh.html">Mesh</a></li>
         <li><a href="chains-runs.html">Operations, Chains, Throws</a></li>
         <li><a href="operator-workflows.html">Operator Workflows</a></li>
@@ -54,7 +55,7 @@
       <p class="sidebar-section">Module Development</p>
       <ul>
         <li><a href="module-development.html">Overview</a></li>
-        <li><a href="mesh-development.html">Mesh Provider Guide</a></li>
+        <li><a href="mesh-development.html">Mesh &amp; Credential Providers</a></li>
         <li><a href="module-protocol.html">Wire Protocol</a></li>
         <li><a href="module-python.html">Python Modules</a></li>
         <li><a href="module-go.html">Go Modules</a></li>
@@ -105,8 +106,8 @@
           </a>
           <a class="tile" href="providers-artifacts.html">
             <span class="tile-label">06</span>
-            <span class="tile-title">Providers, Artifacts, Logging</span>
-            <span class="tile-desc">Payload providers, installed payload records, listener providers, artifact store, structured logging rail.</span>
+            <span class="tile-title">Providers, Workspace PKI, Artifacts</span>
+            <span class="tile-desc">Payload and credential providers, encrypted PKI custody, assignment-bound delivery, installed payloads, artifacts, and structured logging.</span>
           </a>
           <a class="tile" href="mesh.html">
             <span class="tile-label">Mesh</span>
@@ -172,6 +173,11 @@
             <span class="tile-title">Descriptors and Schemas</span>
             <span class="tile-desc">Config, module package, index, lock, chain, service, execute, event, and schema files.</span>
           </a>
+          <a class="tile" href="providers-artifacts.html#credential-delivery">
+            <span class="tile-label">PKI</span>
+            <span class="tile-title">Credential Delivery and Stamping</span>
+            <span class="tile-desc">Plaintext target evidence versus encrypted workspace PKI, optional provider contracts, assignment flow, and current API limits.</span>
+          </a>
           <a class="tile" href="../api/sdk/index.html">
             <span class="tile-label">Generated</span>
             <span class="tile-title">SDK API Reference</span>
@@ -193,8 +199,8 @@
           </a>
           <a class="tile" href="mesh-development.html">
             <span class="tile-label">Guide</span>
-            <span class="tile-title">Mesh Providers</span>
-            <span class="tile-desc">Build node-operation providers and listening posts, then route existing modules through local Mesh bridges.</span>
+            <span class="tile-title">Mesh and Credential Providers</span>
+            <span class="tile-desc">Build node-operation and credential providers in Go, Python, or Rust, including secret-safe receipts and same-process consumption.</span>
           </a>
           <a class="tile" href="module-protocol.html">
             <span class="tile-label">Ref</span>
@@ -232,7 +238,7 @@
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/vibepwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

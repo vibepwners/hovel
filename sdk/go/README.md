@@ -11,7 +11,7 @@ bridge—see the [Mesh Provider Development Guide](../../docs/site/spec/mesh-dev
 Import path:
 
 ```go
-import "github.com/Vibe-Pwners/hovel/sdk/go/hovel"
+import "github.com/vibepwners/hovel/sdk/go/hovel"
 ```
 
 ## Module Shape
@@ -19,7 +19,7 @@ import "github.com/Vibe-Pwners/hovel/sdk/go/hovel"
 ```go
 package main
 
-import "github.com/Vibe-Pwners/hovel/sdk/go/hovel"
+import "github.com/vibepwners/hovel/sdk/go/hovel"
 
 type MyModule struct{}
 
@@ -71,8 +71,9 @@ Rules that matter in real integrations:
 | Durable installed payload inventory | `hovel.InstalledPayloadDescriptor` and `hovel.WithInstalledPayloads`. |
 | Payload provider | Implement `hovel.PayloadProvider`. |
 | Node Mesh provider | Implement `hovel.MeshDescriber` plus the optional Mesh operation interfaces you support. Use `hovel.MeshProvider` only for a full-surface provider. |
+| Credential delivery provider | Implement `hovel.CredentialDescriber` plus only the optional runtime/files/encode/stamp interfaces you advertise. |
 | Typed chain steps | Implement `hovel.StepProvider`. |
-| Provider contract tests | `github.com/Vibe-Pwners/hovel/sdk/go/hoveltest`. |
+| Provider contract tests | `github.com/vibepwners/hovel/sdk/go/hoveltest`. |
 
 The provider methods are real RPC endpoints: `list_payloads`,
 `resolve_payload`, `prepare_listener`, `generate_payload`, `connect_session`,
@@ -106,6 +107,124 @@ for provider-native implant/component loaders. The request can carry inline
 payload bytes in `InputData`/`InputEncoding` or provider-defined artifact
 references in `Config`; the SDK does not implement the loader.
 
+Consumer modules can turn an `OpenMeshBridge` response into a normal
+authenticated connection without implementing the security preface:
+
+```go
+endpoint, err := hovel.NewMeshBridgeEndpoint(
+    bridge.LocalHost,
+    bridge.LocalPort,
+    hovel.MeshBridgeCapability(bridge.Capability),
+)
+if err != nil {
+    return err
+}
+connection, err := hovel.DialMeshBridge(ctx, hovel.MeshBridgeNetworkTCP, endpoint)
+if err != nil {
+    return err
+}
+defer connection.Close()
+```
+
+Use `MeshBridgeNetworkUDP` for a UDP association. The helper sends the bearer
+capability first and returns a socket ready for protocol bytes. Keep the
+capability in memory; never put it in logs, results, or durable configuration.
+
+## Credential Delivery Providers
+
+`CredentialDescriber` exposes `credential.describe` independently of Mesh. A
+module may be a standalone credential provider, a Mesh provider, or both. If it
+publishes the descriptor both ways, the standalone and
+`MeshDescriptor.CredentialDelivery` values must be identical.
+
+| RPC method | Go interface | Advertised contract |
+| --- | --- | --- |
+| `credential.describe` | `CredentialDescriber` | `CredentialDeliveryDescriptor` with schema `CredentialDeliverySchemaV1`. |
+| `credential.runtime` | `CredentialRuntimeProvider` | `CredentialDeliveryRuntime`; returns a correlated `CredentialDeliveryReceipt`. |
+| `credential.files` | `CredentialFilesProvider` | `CredentialDeliveryFiles`; paths are protected and invocation-scoped. |
+| `credential.encode` | `CredentialEncodingProvider` | A matching `ProviderEncodingSchemas` entry; output must honor its form, size bound, and digest. |
+| `credential.stamp` | `CredentialStampProvider` | `CredentialDeliveryStampStandard` or `CredentialDeliveryStampAdvanced`, with matching target kinds and address spaces. |
+
+Non-`none` descriptors need at least one strict `CredentialSlot`. Advertise
+only hooks the provider actually implements: Go dispatches each execution RPC
+through its separate optional interface and reports an unsupported method
+otherwise.
+
+This complete provider advertises only in-memory runtime delivery:
+
+```go
+package main
+
+import (
+	"fmt"
+
+	"github.com/vibepwners/hovel/sdk/go/hovel"
+)
+
+type RuntimeCredentialProvider struct{}
+
+func (RuntimeCredentialProvider) Info() hovel.Info {
+	return hovel.Info{
+		Name: "runtime-credential-go", Version: "v0.1.0",
+		Type: hovel.TypePayloadProvider, Summary: "Accept runtime TLS credentials.",
+	}
+}
+
+func (RuntimeCredentialProvider) Schema() hovel.Schema { return hovel.Schema{} }
+
+func (RuntimeCredentialProvider) Run(*hovel.Context) (hovel.Result, error) {
+	return hovel.Ok(nil, hovel.WithSummary("credential provider is RPC-driven")), nil
+}
+
+func (RuntimeCredentialProvider) DescribeCredentialDelivery() (hovel.CredentialDeliveryDescriptor, error) {
+	return hovel.CredentialDeliveryDescriptor{
+		SchemaVersion: hovel.CredentialDeliverySchemaV1,
+		Capabilities:  []hovel.CredentialDeliveryCapability{hovel.CredentialDeliveryRuntime},
+		Slots: []hovel.CredentialSlot{{
+			Name: "control-plane-mtls", Purpose: hovel.CredentialPurposeMTLSServer,
+			EndpointRole: hovel.CredentialEndpointServer,
+			ConsumerType: hovel.CredentialConsumerMeshListener,
+			AcceptedBundleVersions: []string{"hovel.pki.bundle/v1"},
+			AcceptedProfiles: []string{"mtls-server"},
+			AcceptedCompatibilityTargets: []string{"portable-x509"},
+			AcceptedProjections: []hovel.CredentialProjection{hovel.CredentialProjectionBundle},
+			AcceptedMaterialForms: []hovel.CredentialMaterialForm{hovel.CredentialMaterialPrivateBytes},
+			MaximumEncodedBytes: 64 << 10,
+			RemainderPolicy: hovel.CredentialStampRemainderPreserve,
+			PrivateMaterial: hovel.CredentialPrivateMaterialAllowed,
+		}},
+	}, nil
+}
+
+func (RuntimeCredentialProvider) LoadRuntimeCredential(
+	req hovel.CredentialRuntimeRequest,
+) (hovel.CredentialDeliveryReceipt, error) {
+	material, ok := req.Material.Bytes()
+	if !ok {
+		return hovel.CredentialDeliveryReceipt{}, fmt.Errorf("slot %q requires bytes", req.SlotName)
+	}
+	defer clear(material)
+	// Install material into provider-owned runtime state here. Do not log it.
+	return hovel.CredentialDeliveryReceipt{RequestID: req.RequestID}, nil
+}
+
+var _ hovel.CredentialDescriber = RuntimeCredentialProvider{}
+var _ hovel.CredentialRuntimeProvider = RuntimeCredentialProvider{}
+
+func main() { hovel.Serve(RuntimeCredentialProvider{}) }
+```
+
+`CredentialBytes`, `CredentialSecretReference`, `CredentialProtectedPath`, and
+the sealed material/artifact unions redact ordinary formatting and defensively
+copy byte slices. Redaction is not erasure: explicit accessors reveal the value
+to provider code. Keep it scoped to the call, avoid logs/errors/stdout, clear
+temporary copies when practical, and keep secret values out of Hovel's public
+execution ledger. A provider may copy material into its own protected runtime
+or installation when its advertised lifecycle requires it, but should return
+only non-secret receipts or digests. Hovel's public execution bookkeeping
+excludes credential bytes, protected paths, provider references, and deployment
+receipts.
+
 ## Test Loop
 
 Use the SDK test helpers when protocol shape matters.
@@ -120,16 +239,37 @@ func TestProviderContract(t *testing.T) {
 }
 ```
 
+For a credential provider, exercise the real Content-Length framed dispatcher:
+
+```go
+func TestCredentialProviderFramedContract(t *testing.T) {
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"credential.describe","params":{}}`)
+	var input, output bytes.Buffer
+	fmt.Fprintf(&input, "Content-Length: %d\r\n\r\n", len(body))
+	input.Write(body)
+
+	if err := hovel.ServeIO(RuntimeCredentialProvider{}, &input, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(output.Bytes(), []byte(hovel.CredentialDeliverySchemaV1)) {
+		t.Fatalf("credential descriptor missing from framed response: %q", output.Bytes())
+	}
+}
+```
+
+The test imports `bytes`, `fmt`, `testing`, and
+`github.com/vibepwners/hovel/sdk/go/hovel`.
+
 Focused checks:
 
 ```sh
 task sdk:fmt
-task check
+task sdk:ci
 ```
 
-The Go SDK and Go examples are outside the core Bazel workspace after the
-partial-checkout split. Restore slice-local test/package tasks before
-documenting focused SDK labels or staged example binary builds again.
+Use <code>task sdk:test</code> while iterating on behavior and
+<code>task sdk:build</code> for a compile-only check. The root Task wrappers
+select the integration workspace and remain the supported entry point.
 
 Copy from these examples first:
 

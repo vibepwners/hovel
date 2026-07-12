@@ -594,7 +594,7 @@ tasks:
           CLI_ARGS: --config=picblobs_cross //modules/picblobs/mbed:materialize_blobs -- {{.CLI_ARGS}}
 
   picblobs:mbed-compile:
-    desc: Compile the PoC against the checked-out Mbed OS 5.15.9 target SDK.
+    desc: Compile the PoC against the pinned Mbed OS 5.15.9 target SDK.
     cmds:
       - task: bazel:run
         vars:
@@ -626,6 +626,9 @@ tasks:
   picblobs:bazel-test:
     desc: Run picblobs Bazel tests.
     cmds:
+      - task: bazel:test
+        vars:
+          CLI_ARGS: //modules/picblobs/provider:provider_test
       - task: bazel:test
         vars:
           CLI_ARGS: --config=picblobs_ci {{.CLI_ARGS}} //modules/picblobs:bazel_test_suite

@@ -1,6 +1,6 @@
 # TLS certificate-management implementation plan
 
-Status: proposed
+Status: active
 
 Decision record:
 [`ADR-0002`](../adr/0002-use-workspace-pki-for-certificate-management.md)
@@ -25,6 +25,21 @@ The short version is: the daemon owns certificate lifecycle and bookkeeping;
 consumers bind to logical assignments; portable bundles carry material;
 providers advertise only the delivery or stamping capabilities they support;
 and every front end calls the same application use cases.
+
+### Implementation status
+
+| Area | Status on this branch |
+| --- | --- |
+| Typed templates, profiles, compatibility targets, bundles, and backend capabilities | Implemented with domain validation and defensive copies. |
+| Built-in Go X.509 root, subordinate, and leaf issuance | Implemented with independent output and key-pair validation. |
+| Hybrid ML-KEM TLS key establishment | Implemented for the pinned Go 1.26.5 target; certificate signatures remain classical. |
+| ML-DSA authentication | Contract-ready algorithm IDs only; no built-in issuer or consumer claims support. |
+| Local custody and inventory | Implemented with owner-only versioned master keys, AES-256-GCM envelopes, authenticated immutable metadata, SQLite foreign keys, and rewrap tests. |
+| Application audit | Implemented for signing authorization/use, key access, export authorization/denial, private export, issuance, renewal/rotation, revocation, assignment/trust mutation, CRL publication/recovery, authority rollover, and credential-stamp plan/success/failure/supersession. Runtime and file-delivery events remain. |
+| Daemon API and imperative CLI | Typed custody, backend/profile discovery, authority and certificate inventory, issuance/lifecycle, assignments, trust sets, revocation, phase-aware CRL publication/recovery, authority rollover, operation bookkeeping, explicit bundle export, and credential-stamp list/inspect are implemented through the daemon client. OpenAPI and command contract tests cover the registered surface. Protected CLI export and delivery execution methods remain. |
+| Assignments, trust sets, revocation, CRLs, rollover, and credential stamps | Implemented with immutable generations, optimistic revisions, idempotent mutations, assignment degradation, fresh issuer-bound CRLs, durable publication phases, renewable leases, signed checkpoints, phase-aware authority rollover, typed acknowledgements, exact validated stamp plans, atomic supersession, and externally inspectable daemon bookkeeping. |
+| Mesh credential-delivery discovery | Implemented as an optional, independently versioned descriptor with strict slots, material forms, projections, standard and advanced target kinds, and provider schemas in core plus the Go, Python, and Rust module SDKs. |
+| Provider execution, control SDKs, C/embedded adapters, workflows, and demos | Not yet implemented; the later slices below remain authoritative. |
 
 ## Goal
 
@@ -65,21 +80,33 @@ reimplementing CA workflows.
     slots and stamp targets are easy, while no-stamp, raw offset/address,
     symbol/marker, and provider-defined cases remain optional and possible.
 
-## Current-state findings
+## Current implementation findings
 
-- Hovel has no tracked certificate or CA domain today.
-- The daemon HTTP/JSON RPC and OpenAPI artifact are the stable external
-  front-end contract.
-- Go, Python, and Rust SDKs currently focus on module/provider JSON-RPC over
-  stdio; there is no public daemon control client and no C SDK.
+- The pure PKI domain now models authorities, immutable certificate and trust
+  generations, bundles, assignments, revocation, CRLs, rollover operations,
+  delivery descriptors, and credential stamps with constructor validation and
+  fail-closed JSON decoding.
+- The daemon HTTP/JSON RPC and OpenAPI artifact remain the stable external
+  front-end contract. Credential-stamp inventory is externally readable, but
+  delivery execution is not yet an operator-facing use case.
+- Go, Python, and Rust module SDKs expose strongly typed Mesh
+  credential-delivery discovery over stdio JSON-RPC. They do not yet expose
+  the secret-bearing provider execution methods, a public daemon control
+  client, or a C SDK.
 - The existing Huh form is a CLI adapter over shared configuration behavior,
-  which is the pattern the PKI wizard should follow.
-- SQLite migrations already persist workspace state, throws, artifacts,
-  events, and installed payload inventory.
-- Payload stamps already connect generated artifacts to installed inventory;
-  credential stamps should extend that provenance instead of replacing it.
-- Mesh listeners and node operations are daemon-visible and already expose
-  stable IDs suitable for PKI assignment subjects.
+  which remains the pattern for a PKI wizard rather than a second lifecycle
+  implementation.
+- SQLite stores authenticated PKI state and immutable credential-stamp plans
+  and transitions alongside workspace state, throws, artifacts, events, and
+  installed payload inventory.
+- Payload stamps and credential stamps are separate provenance records linked
+  by typed references; neither replaces the other.
+- Mesh listeners and node operations expose stable daemon-visible IDs suitable
+  for assignment subjects and future delivery correlation.
+- The Picblobs Mbed OS proof of concept compile-checks the real Mbed API
+  integration and exercises bidirectional authenticated encryption through the
+  hosted platform adapter. Physical-board Ethernet, TRNG, and executable-SRAM
+  smoke tests remain hardware validation, not claims made by CI.
 - VHS demos are Bazel-declared host-service actions, and standard demos have a
   fast non-visual verification test.
 
@@ -187,6 +214,30 @@ default pair, and operators can override either after capability validation.
 Compatibility descriptors are data contracts and may ship with core, an SDK
 adapter, or a provider package; adding a future TLS library does not require a
 new PKI lifecycle use case.
+
+Post-quantum readiness is split into two explicit dimensions rather than one
+misleading "quantum safe" switch:
+
+1. **Key establishment** protects recorded TLS traffic from later decryption.
+   The pinned Go 1.26.5 toolchain can require the Go-supported IETF-draft hybrid groups
+   `X25519MLKEM768`, `SecP256r1MLKEM768`, or `SecP384r1MLKEM1024`. Required
+   mode has no classical fallback; preferred mode does.
+2. **Authentication signatures** protect identity and issued artifacts from a
+   future signature forgery. ECDSA, RSA, and Ed25519 are still classical. The
+   key/signature tagged unions and backend capability snapshots must admit a
+   future ML-DSA-capable backend without pretending that the built-in X.509
+   backend supports it today.
+
+The `go-1.26-pq-hybrid` compatibility target records the exact Go 1.26.5
+toolchain and named-group snapshot. Together with the `pq-hybrid-*` profiles it provides
+a working first option for hybrid post-quantum TLS key establishment. Bundle
+metadata carries the required key-establishment policy so SDK consumers fail
+closed instead of silently negotiating a classical group. This mitigates
+harvest-now/decrypt-later risk; it does **not** claim post-quantum certificate
+authentication. Portable Mbed TLS and wolfSSL targets advertise hybrid groups
+only when their exact packaged version and build configuration actually enable
+them. See the [Go 1.26 TLS release notes](https://go.dev/doc/go1.26) and
+[ML-KEM package documentation](https://pkg.go.dev/crypto/mlkem).
 
 The resolved plan persists backend ID/version/digest, compatibility target
 ID/version, and the exact capability snapshot used for validation. Apply fails
@@ -451,12 +502,14 @@ Applying the plan does not silently roll new defaults.
 | `dual-role-mtls` | ECDSA P-256 | 30 days | Explicit opt-in when one identity genuinely serves both roles. |
 | `legacy-rsa-server` | RSA 2048 | 30 days | Compatibility-only server consumers. |
 | `legacy-rsa-client` | RSA 2048 | 30 days | Compatibility-only client consumers. |
+| `pq-hybrid-tls-server` | ECDSA P-256 identity + required hybrid ML-KEM key establishment | 30 days | Go 1.26 server consumers that must not fall back to classical key establishment. |
+| `pq-hybrid-tls-client` | ECDSA P-256 identity + required hybrid ML-KEM key establishment | 30 days | Go 1.26 client consumers that must not fall back to classical key establishment. |
+| `pq-hybrid-dual-role-mtls` | ECDSA P-256 identity + required hybrid ML-KEM key establishment | 30 days | Go 1.26 mutual-TLS peers; identity signatures remain classical. |
 
 Compatibility targets remain separate from role profiles. Core supplies a
-portable X.509 baseline; the repository registers a versioned Mbed TLS/Mbed OS
-5.15.9 target for its existing embedded build, and installed wolfSSL or other
-packages register targets containing their exact version and configuration
-fingerprint.
+versioned portable X.509 baseline. Installed Mbed TLS, wolfSSL, or other
+packages may register targets containing their exact version and configuration
+fingerprint; no embedded operating system is required by the core contract.
 
 Common defaults:
 
@@ -577,22 +630,37 @@ SDK helpers provide:
 
 ### Initial local implementation
 
-1. A workspace master key comes from an explicit secret provider, not the
-   SQLite database.
+1. The built-in provider is explicitly initialized at
+   `secrets/pki-master-keys.json`. The file and its parent directory are
+   owner-only. Ordinary open never generates a replacement for a missing or
+   corrupt file. Alternative providers can implement the same versioned port.
 2. Private-key envelopes use an authenticated encryption scheme with a random
-   nonce and bind workspace, key ID, algorithm, and schema version as
-   associated data.
-3. SQLite stores only the envelope, metadata, key reference, and hashes.
+   nonce and bind stable workspace ID, key ID, algorithm, master-key version,
+   and schema version as associated data. Immutable generation JSON has a
+   separately domain-separated, versioned HMAC so database edits cannot weaken
+   export policy before key access.
+3. SQLite stores only the envelope, authenticated metadata, key reference, and
+   hashes. Key envelope plus generation metadata commit in one transaction;
+   generation numbers are reserved transactionally and issuer serials are
+   unique.
 4. File materialization uses owner-only permissions and atomic rename.
 5. Root keys start locked and require an explicit, bounded unlock/sign lease;
    plaintext key material is never persisted as an unlocked state.
 6. Backup exports are separately encrypted and versioned; restore verifies
    certificate/key correspondence before committing metadata.
 
-The implementation design must choose the workspace secret provider before
-writing key-storage code. Candidate providers are OS keyring, operator-supplied
-passphrase through a memory-hard KDF, or an external key handle. Environment
-variables and plaintext workspace config are not acceptable default custody.
+Master-key rotation is ordered: create a new active version, transactionally
+rewrap every key envelope and metadata tag to that pinned version, verify the
+stored versions, and only then retire the old version. A failed rewrap rolls
+back all database updates and the provider retains the old version. Backup and
+restore must preserve `workspace.json` (the stable workspace ID), the database,
+and the master-key file under separate backup protection. Relocating the
+workspace path is supported; losing the stable ID or master-key file is not.
+The daemon never auto-regenerates missing recovery material.
+
+OS keyring, operator-passphrase with a memory-hard KDF, and external/HSM key
+handles remain valid future providers. Environment variables and plaintext
+ordinary workspace config are not acceptable default custody.
 
 ### External and offline signers
 
@@ -694,31 +762,31 @@ service:<service-id>
 separate from its provider. `listening-post` and `c2-service` cover non-Mesh
 integrations without forcing them into a Mesh implementation.
 
-Mesh descriptors may advertise credential-slot requirements without embedding
-secret config:
+Mesh descriptors may advertise a separately versioned credential-delivery
+contract without embedding secret config:
 
 ```json
 {
-  "credentialSlots": [
-    {
-      "name": "control-plane-mtls",
-      "purpose": "mtls-server",
-      "endpointRole": "server",
-      "consumerScope": "listener",
-      "acceptedBundleVersions": ["hovel.pki.bundle/v1"],
-      "acceptedProfiles": ["mtls-server"],
-      "acceptedProjections": ["bundle", "certificate-der", "private-key-pkcs8"],
-      "maximumEncodedBytes": 16384,
-      "privateMaterial": "allowed",
-      "acceptedCompatibilityTargets": [
-        {"family": "mbedtls", "requiredCapabilities": ["x509", "tls12"]},
-        {"family": "wolfssl", "requiredCapabilities": ["x509", "tls12"]}
-      ]
-    }
-  ],
-  "deliveryCapabilities": ["runtime", "files", "stamp-standard"],
-  "stampCapabilities": {
-    "targetKinds": ["named-slot", "file-offset", "virtual-address"],
+  "credentialDelivery": {
+    "schemaVersion": "hovel.pki.credential-delivery/v1",
+    "credentialSlots": [
+      {
+        "name": "control-plane-mtls",
+        "purpose": "mtls-server",
+        "endpointRole": "server",
+        "consumerType": "mesh-listener",
+        "acceptedBundleVersions": ["hovel.pki.bundle/v1"],
+        "acceptedProfiles": ["mtls-server"],
+        "acceptedCompatibilityTargets": ["portable-x509"],
+        "acceptedProjections": ["bundle", "certificate-der", "private-key-pkcs8"],
+        "acceptedMaterialForms": ["public", "private-reference", "private-bytes"],
+        "maximumEncodedBytes": 16384,
+        "remainderPolicy": "preserve",
+        "privateMaterial": "allowed"
+      }
+    ],
+    "deliveryCapabilities": ["runtime", "files", "stamp-standard"],
+    "stampTargetKinds": ["named-slot", "file-offset", "virtual-address"],
     "addressSpaces": ["file", "elf-virtual-address"],
     "providerTargetSchemas": []
   }
@@ -777,7 +845,7 @@ defaults:
   cryptoBackend:
     id: builtin-x509
   compatibilityTarget:
-    id: mbedtls/mbed-os-5.15.9
+    id: portable-x509
 authorities:
   - name: edge-root
     role: root
@@ -863,10 +931,12 @@ Add typed RPC methods and OpenAPI schemas for:
 - consumer acknowledgement and assignment activation.
 
 Each request carries workspace/client context and an idempotency key for
-mutating calls. Long-running rotations and rollovers return operation records
-that front ends can poll or stream through the existing event rail. Secret
-responses are marked in schema and are never stored in daemon operation
-records or logs.
+mutating calls. Explicit keys are actor- and operation-kind-scoped. An omitted
+key is derived from the actor, operation, correlation, and canonical request,
+so a retry preserves its correlation ID while a later independent call uses a
+new one. Long-running rotations and rollovers return operation records that
+front ends can poll or stream through the existing event rail. Secret responses
+are marked in schema and are never stored in daemon operation records or logs.
 
 Secret-bearing methods require an authenticated principal, an explicit
 authorization decision, and a confidential transport. They return no-store
@@ -929,14 +999,13 @@ Signer requests are purpose-scoped (`certificate`, `CSR`, or `CRL`) and bind
 the planned operation and expected algorithm. A generic arbitrary-data signing
 oracle is not part of the default backend contract.
 
-Mbed TLS interoperability is an explicit acceptance target for the embedded
-compatibility target. Tests must prove certificate and private-key loading,
-chain validation, full-duplex encrypted traffic, and mutual TLS with both
-client and server authentication using material issued by Hovel. At least one
-fixture must compile through the repository's checked-out Mbed OS 5.15.9
-target task; it must not assume Linux filesystems, processes, sockets, or
-environment variables. A host-side Mbed TLS harness covers runtime handshakes
-when the Mbed OS compile target cannot execute in CI.
+Mbed TLS and wolfSSL are reference compatibility adapters rather than core
+dependencies. Their contract suites must prove certificate and private-key
+loading, chain validation, full-duplex encrypted traffic, and mutual TLS with
+both client and server authentication using material issued by Hovel. Portable
+C fixtures must not assume Linux filesystems, processes, sockets, or
+environment variables. The SDK and compile/hosted-adapter contract must work
+for Mbed OS; physical-board validation remains a separate hardware gate.
 
 The C SDK accepts caller-owned input and output buffers with explicit lengths.
 An embedded consumer may use provider-generated static DER arrays and avoid
@@ -1099,9 +1168,8 @@ where applicable. Do not build the wizard first.
 - Publish the external `pki-backend` contract and reference Mbed TLS/wolfSSL
   compatibility adapters without requiring either library in core.
 - Add real-daemon contract suites for every language.
-- Add Mbed TLS server/client/mTLS interoperability and Mbed OS target
-  compilation for the registered `mbedtls/mbed-os-5.15.9` compatibility
-  target through `task picblobs:mbed-compile`.
+- Add Mbed TLS and wolfSSL server/client/mTLS interoperability through optional
+  compatibility adapters and portable C fixtures; do not require Mbed OS.
 
 ### Slice 7: Book pages and generated demos
 

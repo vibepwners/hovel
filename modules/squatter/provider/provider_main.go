@@ -2,7 +2,7 @@
 
 package main
 
-import "github.com/Vibe-Pwners/hovel/sdk/go/hovel"
+import "github.com/vibepwners/hovel/sdk/go/hovel"
 
 func main() {
 	hovel.Serve(newProvider())

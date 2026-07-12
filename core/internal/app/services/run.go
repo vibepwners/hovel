@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	"github.com/vibepwners/hovel/internal/domain/mesh"
+	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 type ModuleRunner interface {
@@ -42,6 +44,79 @@ type MeshListenerLister interface {
 type MeshListenerLifecycleRunner interface {
 	StartMeshListener(context.Context, string, mesh.ListenerStartRequest) (mesh.Listener, error)
 	StopMeshListener(context.Context, string, mesh.ListenerStopRequest) (mesh.Listener, error)
+}
+
+// CredentialMeshListenerRunner executes credential hooks and listener start in
+// the same provider process.
+type CredentialMeshListenerRunner interface {
+	StartMeshListenerWithCredentials(
+		context.Context,
+		string,
+		domainpki.CredentialOperationDeliveries,
+		mesh.ListenerStartRequest,
+	) (MeshListenerExecution, error)
+}
+
+// CredentialMeshTaskRunner executes credential hooks and a Mesh task in the
+// same provider process.
+type CredentialMeshTaskRunner interface {
+	RunMeshTaskWithCredentials(
+		context.Context,
+		string,
+		domainpki.CredentialOperationDeliveries,
+		mesh.TaskRequest,
+	) (MeshTaskExecution, error)
+}
+
+// CredentialMeshStreamRunner executes credential hooks and stream open in the
+// same provider process.
+type CredentialMeshStreamRunner interface {
+	OpenMeshStreamWithCredentials(
+		context.Context,
+		string,
+		domainpki.CredentialOperationDeliveries,
+		mesh.StreamRequest,
+	) (MeshStreamExecution, error)
+}
+
+// MeshListenerExecution contains a listener result and secret-free credential
+// receipts from the same process invocation.
+type MeshListenerExecution struct {
+	Listener           mesh.Listener
+	CredentialReceipts []domainpki.CredentialDeliveryReceipt
+}
+
+// MeshTaskExecution contains a task result and secret-free credential receipts
+// from the same process invocation.
+type MeshTaskExecution struct {
+	Result             mesh.TaskResult
+	CredentialReceipts []domainpki.CredentialDeliveryReceipt
+}
+
+// MeshStreamExecution contains a stream session and secret-free credential
+// receipts from the same process invocation.
+type MeshStreamExecution struct {
+	Session            run.SessionRef
+	CredentialReceipts []domainpki.CredentialDeliveryReceipt
+}
+
+// ModuleInspector discovers the exact installed module contract used for an
+// invocation.
+type ModuleInspector interface {
+	Inspect(context.Context, string) (modulecatalog.Module, error)
+}
+
+// CredentialOperationResolver turns non-secret selections into ephemeral
+// provider deliveries and returns their mandatory cleanup function.
+type CredentialOperationResolver interface {
+	ResolveCredentialOperation(
+		context.Context,
+		domainpki.CredentialProviderTarget,
+		domainpki.CredentialDeliveryDescriptor,
+		domainpki.CredentialSelections,
+		domainpki.CredentialOperationScope,
+		[]domainpki.CredentialConsumerBinding,
+	) (domainpki.CredentialOperationDeliveries, func(), error)
 }
 
 type SessionBroker interface {
@@ -107,19 +182,43 @@ type ExecuteMockExploitRequest struct {
 }
 
 type RunService struct {
-	runner ModuleRunner
-	events EventSink
-	ids    IDGenerator
-	clock  Clock
+	runner             ModuleRunner
+	events             EventSink
+	ids                IDGenerator
+	clock              Clock
+	credentialResolver CredentialOperationResolver
 }
 
-func NewRunService(runner ModuleRunner, events EventSink, ids IDGenerator, clock Clock) RunService {
-	return RunService{
+// RunServiceOption configures an optional RunService capability.
+type RunServiceOption func(*RunService)
+
+// WithCredentialOperationResolver enables daemon-owned credential selections
+// for Mesh mutation methods. The zero-value service remains credential-free.
+func WithCredentialOperationResolver(resolver CredentialOperationResolver) RunServiceOption {
+	return func(service *RunService) {
+		service.credentialResolver = resolver
+	}
+}
+
+func NewRunService(
+	runner ModuleRunner,
+	events EventSink,
+	ids IDGenerator,
+	clock Clock,
+	options ...RunServiceOption,
+) RunService {
+	service := RunService{
 		runner: runner,
 		events: events,
 		ids:    ids,
 		clock:  clock,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(&service)
+		}
+	}
+	return service
 }
 
 func (s RunService) ExecuteMockExploit(ctx context.Context, req ExecuteMockExploitRequest) (run.Result, error) {
@@ -233,6 +332,16 @@ func (s RunService) StartMeshListener(
 	moduleID string,
 	req mesh.ListenerStartRequest,
 ) (mesh.Listener, error) {
+	return s.StartMeshListenerWithCredentialSelections(ctx, moduleID, req, nil, domainpki.CredentialOperationScope{})
+}
+
+func (s RunService) StartMeshListenerWithCredentialSelections(
+	ctx context.Context,
+	moduleID string,
+	req mesh.ListenerStartRequest,
+	selections domainpki.CredentialSelections,
+	scope domainpki.CredentialOperationScope,
+) (mesh.Listener, error) {
 	runner, err := s.meshListenerLifecycleRunner()
 	if err != nil {
 		return mesh.Listener{}, err
@@ -241,7 +350,30 @@ func (s RunService) StartMeshListener(
 	if err != nil {
 		return mesh.Listener{}, err
 	}
-	listener, err := runner.StartMeshListener(ctx, moduleID, req)
+	var listener mesh.Listener
+	if len(selections) == 0 {
+		listener, err = runner.StartMeshListener(ctx, moduleID, req)
+	} else {
+		credentialRunner, ok := s.runner.(CredentialMeshListenerRunner)
+		if !ok {
+			return mesh.Listener{}, errors.New("credential-aware mesh runner is not configured")
+		}
+		scope.ListenerID = req.ListenerID
+		resolvedModuleID, deliveries, cleanup, resolveErr := s.resolveMeshCredentials(
+			ctx, moduleID, selections, scope, req.ListenerID, "",
+		)
+		if resolveErr != nil {
+			return mesh.Listener{}, resolveErr
+		}
+		defer cleanup()
+		execution, executeErr := credentialRunner.StartMeshListenerWithCredentials(
+			ctx, resolvedModuleID, deliveries, req,
+		)
+		if executeErr != nil {
+			return mesh.Listener{}, executeErr
+		}
+		listener = execution.Listener
+	}
 	if err != nil {
 		return mesh.Listener{}, err
 	}
@@ -386,11 +518,47 @@ func (s RunService) RunMeshTask(
 	moduleID string,
 	req mesh.TaskRequest,
 ) (mesh.TaskResult, error) {
+	return s.RunMeshTaskWithCredentialSelections(ctx, moduleID, req, nil, domainpki.CredentialOperationScope{})
+}
+
+func (s RunService) RunMeshTaskWithCredentialSelections(
+	ctx context.Context,
+	moduleID string,
+	req mesh.TaskRequest,
+	selections domainpki.CredentialSelections,
+	scope domainpki.CredentialOperationScope,
+) (mesh.TaskResult, error) {
 	runner, err := s.meshRunner()
 	if err != nil {
 		return mesh.TaskResult{}, err
 	}
-	result, err := runner.RunMeshTask(ctx, moduleID, req)
+	var result mesh.TaskResult
+	if len(selections) == 0 {
+		result, err = runner.RunMeshTask(ctx, moduleID, req)
+	} else {
+		credentialRunner, ok := s.runner.(CredentialMeshTaskRunner)
+		if !ok {
+			return mesh.TaskResult{}, errors.New("credential-aware mesh runner is not configured")
+		}
+		scope.RunID = req.RunID
+		scope.Target = req.Target
+		scope.ListenerID = req.ListenerID
+		scope.NodeID = req.NodeID
+		resolvedModuleID, deliveries, cleanup, resolveErr := s.resolveMeshCredentials(
+			ctx, moduleID, selections, scope, req.ListenerID, req.NodeID,
+		)
+		if resolveErr != nil {
+			return mesh.TaskResult{}, resolveErr
+		}
+		defer cleanup()
+		execution, executeErr := credentialRunner.RunMeshTaskWithCredentials(
+			ctx, resolvedModuleID, deliveries, req,
+		)
+		if executeErr != nil {
+			return mesh.TaskResult{}, executeErr
+		}
+		result = execution.Result
+	}
 	if err != nil {
 		return mesh.TaskResult{}, err
 	}
@@ -406,11 +574,46 @@ func (s RunService) OpenMeshStream(
 	moduleID string,
 	req mesh.StreamRequest,
 ) (run.SessionRef, error) {
+	return s.OpenMeshStreamWithCredentialSelections(ctx, moduleID, req, nil, domainpki.CredentialOperationScope{})
+}
+
+func (s RunService) OpenMeshStreamWithCredentialSelections(
+	ctx context.Context,
+	moduleID string,
+	req mesh.StreamRequest,
+	selections domainpki.CredentialSelections,
+	scope domainpki.CredentialOperationScope,
+) (run.SessionRef, error) {
 	runner, err := s.meshRunner()
 	if err != nil {
 		return run.SessionRef{}, err
 	}
-	session, err := runner.OpenMeshStream(ctx, moduleID, req)
+	var session run.SessionRef
+	if len(selections) == 0 {
+		session, err = runner.OpenMeshStream(ctx, moduleID, req)
+	} else {
+		credentialRunner, ok := s.runner.(CredentialMeshStreamRunner)
+		if !ok {
+			return run.SessionRef{}, errors.New("credential-aware mesh runner is not configured")
+		}
+		scope.RunID = req.RunID
+		scope.ListenerID = req.ListenerID
+		scope.NodeID = req.NodeID
+		resolvedModuleID, deliveries, cleanup, resolveErr := s.resolveMeshCredentials(
+			ctx, moduleID, selections, scope, req.ListenerID, req.NodeID,
+		)
+		if resolveErr != nil {
+			return run.SessionRef{}, resolveErr
+		}
+		defer cleanup()
+		execution, executeErr := credentialRunner.OpenMeshStreamWithCredentials(
+			ctx, resolvedModuleID, deliveries, req,
+		)
+		if executeErr != nil {
+			return run.SessionRef{}, executeErr
+		}
+		session = execution.Session
+	}
 	if err != nil {
 		return run.SessionRef{}, err
 	}
@@ -419,6 +622,87 @@ func (s RunService) OpenMeshStream(
 		return run.SessionRef{}, errors.New("mesh stream session id is required")
 	}
 	return session, nil
+}
+
+func (s RunService) resolveMeshCredentials(
+	ctx context.Context,
+	moduleID string,
+	selections domainpki.CredentialSelections,
+	scope domainpki.CredentialOperationScope,
+	listenerID string,
+	nodeID string,
+) (string, domainpki.CredentialOperationDeliveries, func(), error) {
+	if s.credentialResolver == nil {
+		return "", nil, func() {}, errors.New("credential operation resolver is not configured")
+	}
+	inspector, ok := s.runner.(ModuleInspector)
+	if !ok {
+		return "", nil, func() {}, errors.New("module inspector is not configured")
+	}
+	module, err := inspector.Inspect(ctx, moduleID)
+	if err != nil {
+		return "", nil, func() {}, err
+	}
+	if module.CredentialDelivery == nil {
+		return "", nil, func() {}, errors.New("mesh provider does not advertise credential delivery")
+	}
+	providerName := modulecatalog.ReferenceName(module.ID)
+	providerID, err := domainpki.NewDeliveryProviderID(providerName)
+	if err != nil {
+		return "", nil, func() {}, err
+	}
+	digest, err := module.CredentialDelivery.DigestSHA256()
+	if err != nil {
+		return "", nil, func() {}, err
+	}
+	provider := domainpki.CredentialProviderTarget{
+		ModuleID:         module.ID,
+		ProviderID:       providerID,
+		ProviderVersion:  module.Version,
+		DescriptorSHA256: digest,
+	}
+	consumers, err := meshCredentialConsumers(providerName, listenerID, nodeID)
+	if err != nil {
+		return "", nil, func() {}, err
+	}
+	deliveries, cleanup, err := s.credentialResolver.ResolveCredentialOperation(
+		ctx, provider, module.CredentialDelivery.Clone(), selections.Clone(), scope, consumers,
+	)
+	if err != nil {
+		return "", nil, func() {}, err
+	}
+	if cleanup == nil {
+		deliveries.Clear()
+		return "", nil, func() {}, errors.New("credential operation resolver returned no cleanup")
+	}
+	return module.ID, deliveries, cleanup, nil
+}
+
+func meshCredentialConsumers(
+	providerName string,
+	listenerID string,
+	nodeID string,
+) ([]domainpki.CredentialConsumerBinding, error) {
+	provider, err := domainpki.NewMeshProviderConsumer(providerName)
+	if err != nil {
+		return nil, err
+	}
+	consumers := []domainpki.CredentialConsumerBinding{provider}
+	if listenerID != "" {
+		listener, listenerErr := domainpki.NewMeshListenerConsumer(providerName, listenerID)
+		if listenerErr != nil {
+			return nil, listenerErr
+		}
+		consumers = append(consumers, listener)
+	}
+	if nodeID != "" {
+		node, nodeErr := domainpki.NewMeshNodeConsumer(providerName, nodeID)
+		if nodeErr != nil {
+			return nil, nodeErr
+		}
+		consumers = append(consumers, node)
+	}
+	return consumers, nil
 }
 
 func (s RunService) meshRunner() (MeshRunner, error) {

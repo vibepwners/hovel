@@ -183,6 +183,485 @@ CREATE INDEX installed_payload_events_payload_idx ON installed_payload_events(wo
 CREATE INDEX installed_payload_events_handle_idx ON installed_payload_events(workspace, handle, created_at);
 `,
 	},
+	{
+		Version: 6,
+		Name:    "workspace_pki",
+		SQL: `
+CREATE TABLE pki_authorities (
+	id TEXT PRIMARY KEY,
+	name TEXT NOT NULL,
+	role TEXT NOT NULL,
+	state TEXT NOT NULL,
+	parent_authority_id TEXT REFERENCES pki_authorities(id) DEFERRABLE INITIALLY DEFERRED,
+	active_generation_id TEXT NOT NULL REFERENCES pki_certificate_generations(id) DEFERRABLE INITIALLY DEFERRED,
+	authority_json TEXT NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE INDEX pki_authorities_state_idx ON pki_authorities(state);
+CREATE INDEX pki_authorities_parent_idx ON pki_authorities(parent_authority_id);
+
+CREATE TABLE pki_generation_counters (
+	certificate_id TEXT PRIMARY KEY,
+	last_generation INTEGER NOT NULL CHECK (last_generation > 0)
+);
+
+CREATE TABLE pki_certificate_generations (
+	id TEXT PRIMARY KEY,
+	certificate_id TEXT NOT NULL,
+	generation INTEGER NOT NULL CHECK (generation > 0),
+	owning_authority_id TEXT REFERENCES pki_authorities(id) DEFERRABLE INITIALLY DEFERRED,
+	issuer_authority_id TEXT REFERENCES pki_authorities(id) DEFERRABLE INITIALLY DEFERRED,
+	issuer_generation_id TEXT REFERENCES pki_certificate_generations(id) DEFERRABLE INITIALLY DEFERRED,
+	serial_scope_id TEXT NOT NULL REFERENCES pki_certificate_generations(id) DEFERRABLE INITIALLY DEFERRED,
+	serial_number TEXT NOT NULL,
+	state TEXT NOT NULL,
+	key_id TEXT NOT NULL REFERENCES pki_key_envelopes(key_id) DEFERRABLE INITIALLY DEFERRED,
+	fingerprint_sha256 TEXT NOT NULL,
+	generation_json TEXT NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL,
+	UNIQUE(certificate_id, generation),
+	UNIQUE(serial_scope_id, serial_number)
+);
+
+CREATE INDEX pki_generations_certificate_idx ON pki_certificate_generations(certificate_id, generation);
+CREATE INDEX pki_generations_authority_idx ON pki_certificate_generations(owning_authority_id);
+CREATE INDEX pki_generations_issuer_idx ON pki_certificate_generations(issuer_authority_id);
+CREATE INDEX pki_generations_state_idx ON pki_certificate_generations(state);
+
+CREATE TABLE pki_key_envelopes (
+	key_id TEXT PRIMARY KEY,
+	algorithm TEXT NOT NULL,
+	schema_version TEXT NOT NULL,
+	cipher TEXT NOT NULL,
+	key_version TEXT NOT NULL,
+	nonce BLOB NOT NULL,
+	ciphertext BLOB NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE pki_issuance_intents (
+	id TEXT PRIMARY KEY,
+	idempotency_key TEXT NOT NULL UNIQUE,
+	request_sha256 TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	authority_id TEXT,
+	certificate_id TEXT NOT NULL,
+	generation_id TEXT NOT NULL,
+	source_generation_id TEXT,
+	generation INTEGER NOT NULL CHECK (generation > 0),
+	key_id TEXT NOT NULL,
+	issuer_authority_id TEXT,
+	issuer_generation_id TEXT,
+	subject_backend_id TEXT NOT NULL,
+	subject_backend_version TEXT NOT NULL,
+	subject_package_digest TEXT NOT NULL,
+	subject_capability_hash TEXT NOT NULL,
+	signing_backend_id TEXT NOT NULL,
+	signing_backend_version TEXT NOT NULL,
+	signing_package_digest TEXT NOT NULL,
+	signing_capability_hash TEXT NOT NULL,
+	profile_id TEXT NOT NULL,
+	compatibility_target_id TEXT NOT NULL,
+	compatibility_version TEXT NOT NULL,
+	purpose TEXT NOT NULL,
+	export_policy TEXT NOT NULL,
+	key_establishment_policy TEXT NOT NULL,
+	tls_named_groups_json BLOB NOT NULL,
+	chain_generation_ids_json BLOB NOT NULL,
+	authority_plan_json BLOB NOT NULL,
+	status TEXT NOT NULL,
+	owner_token TEXT NOT NULL,
+	revision INTEGER NOT NULL CHECK (revision > 0),
+	lease_expires_at TEXT NOT NULL,
+	result_generation_id TEXT,
+	failure TEXT,
+	intent_json TEXT NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE INDEX pki_issuance_intents_status_idx ON pki_issuance_intents(status, lease_expires_at, updated_at);
+CREATE INDEX pki_issuance_intents_certificate_idx ON pki_issuance_intents(certificate_id, generation);
+
+CREATE TABLE pki_audit_events (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	event_id TEXT UNIQUE,
+	action TEXT NOT NULL,
+	outcome TEXT NOT NULL,
+	actor_id TEXT NOT NULL,
+	operation_id TEXT NOT NULL,
+	correlation_id TEXT NOT NULL,
+	resource_type TEXT NOT NULL,
+	resource_id TEXT NOT NULL,
+	details_json TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE INDEX pki_audit_events_resource_idx ON pki_audit_events(resource_type, resource_id, id);
+CREATE INDEX pki_audit_events_created_at_idx ON pki_audit_events(created_at);
+`,
+	},
+	{
+		Version: 7,
+		Name:    "workspace_pki_assignments",
+		SQL: `
+CREATE TABLE pki_trust_sets (
+	id TEXT PRIMARY KEY,
+	name TEXT NOT NULL,
+	active_generation_id TEXT REFERENCES pki_trust_set_generations(id) DEFERRABLE INITIALLY DEFERRED,
+	staged_generation_id TEXT REFERENCES pki_trust_set_generations(id) DEFERRABLE INITIALLY DEFERRED,
+	state TEXT NOT NULL,
+	revision INTEGER NOT NULL CHECK (revision > 0),
+	trust_set_json TEXT NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE INDEX pki_trust_sets_state_idx ON pki_trust_sets(state);
+
+CREATE TABLE pki_trust_set_generations (
+	id TEXT PRIMARY KEY,
+	trust_set_id TEXT NOT NULL REFERENCES pki_trust_sets(id) DEFERRABLE INITIALLY DEFERRED,
+	generation INTEGER NOT NULL CHECK (generation > 0),
+	generation_json TEXT NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL,
+	UNIQUE(trust_set_id, generation)
+);
+
+CREATE INDEX pki_trust_set_generations_set_idx ON pki_trust_set_generations(trust_set_id, generation);
+
+CREATE TABLE pki_trust_set_members (
+	trust_set_generation_id TEXT NOT NULL REFERENCES pki_trust_set_generations(id) ON DELETE RESTRICT,
+	member_type TEXT NOT NULL CHECK (member_type IN ('anchor', 'intermediate', 'crl')),
+	member_id TEXT NOT NULL,
+	position INTEGER NOT NULL CHECK (position >= 0),
+	PRIMARY KEY(trust_set_generation_id, member_type, member_id),
+	UNIQUE(trust_set_generation_id, member_type, position)
+);
+
+CREATE INDEX pki_trust_set_members_member_idx ON pki_trust_set_members(member_type, member_id);
+
+CREATE TABLE pki_assignments (
+	id TEXT PRIMARY KEY,
+	purpose TEXT NOT NULL,
+	consumer_type TEXT NOT NULL,
+	consumer_id TEXT NOT NULL,
+	profile_id TEXT NOT NULL,
+	active_generation_id TEXT REFERENCES pki_certificate_generations(id) DEFERRABLE INITIALLY DEFERRED,
+	staged_generation_id TEXT REFERENCES pki_certificate_generations(id) DEFERRABLE INITIALLY DEFERRED,
+	trust_set_id TEXT REFERENCES pki_trust_sets(id) DEFERRABLE INITIALLY DEFERRED,
+	active_trust_generation_id TEXT REFERENCES pki_trust_set_generations(id) DEFERRABLE INITIALLY DEFERRED,
+	staged_trust_generation_id TEXT REFERENCES pki_trust_set_generations(id) DEFERRABLE INITIALLY DEFERRED,
+	rotation_policy_id TEXT,
+	state TEXT NOT NULL,
+	revision INTEGER NOT NULL CHECK (revision > 0),
+	assignment_json TEXT NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE INDEX pki_assignments_consumer_idx ON pki_assignments(consumer_type, consumer_id);
+CREATE UNIQUE INDEX pki_assignments_live_consumer_purpose_idx
+	ON pki_assignments(consumer_type, consumer_id, purpose)
+	WHERE state <> 'retired';
+CREATE INDEX pki_assignments_active_generation_idx ON pki_assignments(active_generation_id);
+CREATE INDEX pki_assignments_staged_generation_idx ON pki_assignments(staged_generation_id);
+CREATE INDEX pki_assignments_trust_set_idx ON pki_assignments(trust_set_id);
+CREATE INDEX pki_assignments_state_idx ON pki_assignments(state);
+`,
+	},
+	{
+		Version: 8,
+		Name:    "workspace_pki_mutations",
+		SQL: `
+CREATE TABLE pki_mutations (
+	id TEXT PRIMARY KEY,
+	idempotency_key TEXT NOT NULL UNIQUE,
+	request_sha256 TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	resource_type TEXT NOT NULL,
+	resource_id TEXT NOT NULL,
+	result_json BLOB NOT NULL,
+	mutation_json BLOB NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL
+);
+
+CREATE INDEX pki_mutations_resource_idx ON pki_mutations(resource_type, resource_id, created_at);
+CREATE INDEX pki_mutations_kind_idx ON pki_mutations(kind, created_at);
+`,
+	},
+	{
+		Version: 9,
+		Name:    "workspace_pki_revocations",
+		SQL: `
+CREATE TABLE pki_revocations (
+	id TEXT PRIMARY KEY,
+	certificate_id TEXT NOT NULL,
+	generation_id TEXT NOT NULL UNIQUE REFERENCES pki_certificate_generations(id),
+	issuer_authority_id TEXT NOT NULL REFERENCES pki_authorities(id),
+	issuer_generation_id TEXT NOT NULL REFERENCES pki_certificate_generations(id),
+	serial_number TEXT NOT NULL,
+	reason TEXT NOT NULL,
+	previous_state TEXT NOT NULL,
+	effective_at TEXT NOT NULL,
+	recorded_at TEXT NOT NULL,
+	revocation_json BLOB NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL
+);
+
+CREATE INDEX pki_revocations_authority_idx
+	ON pki_revocations(issuer_authority_id, recorded_at, id);
+CREATE INDEX pki_revocations_issuer_generation_idx
+	ON pki_revocations(issuer_generation_id, recorded_at, id);
+	`,
+	},
+	{
+		Version: 10,
+		Name:    "workspace_pki_crls",
+		SQL: `
+CREATE TABLE pki_crl_counters (
+	authority_id TEXT PRIMARY KEY REFERENCES pki_authorities(id),
+	last_number INTEGER NOT NULL CHECK (last_number > 0)
+);
+
+CREATE TABLE pki_crl_publication_intents (
+	id TEXT PRIMARY KEY,
+	idempotency_key TEXT NOT NULL UNIQUE,
+	request_sha256 TEXT NOT NULL,
+	crl_generation_id TEXT NOT NULL UNIQUE,
+	authority_id TEXT NOT NULL REFERENCES pki_authorities(id),
+	issuer_generation_id TEXT NOT NULL REFERENCES pki_certificate_generations(id),
+	number INTEGER NOT NULL CHECK (number > 0),
+	this_update TEXT NOT NULL,
+	next_update TEXT NOT NULL,
+	signing_backend_id TEXT NOT NULL,
+	signing_backend_version TEXT NOT NULL,
+	signing_backend_package_digest TEXT NOT NULL,
+	signing_backend_capability_hash TEXT NOT NULL,
+	signature_algorithm TEXT NOT NULL,
+	status TEXT NOT NULL,
+	phase TEXT NOT NULL,
+	owner_token TEXT NOT NULL,
+	revision INTEGER NOT NULL CHECK (revision > 0),
+	lease_expires_at TEXT NOT NULL,
+	result_crl_generation_id TEXT REFERENCES pki_crl_generations(id) DEFERRABLE INITIALLY DEFERRED,
+	signed_fingerprint_sha256 TEXT,
+	signed_signature_algorithm TEXT,
+	signed_provider_operation_ref TEXT,
+	signed_crl_der BLOB,
+	signed_at TEXT,
+	failure TEXT,
+	intent_json BLOB NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	UNIQUE(authority_id, number)
+);
+
+CREATE INDEX pki_crl_publication_authority_idx
+	ON pki_crl_publication_intents(authority_id, number, id);
+CREATE INDEX pki_crl_publication_status_idx
+	ON pki_crl_publication_intents(status, lease_expires_at, id);
+
+CREATE TABLE pki_crl_generations (
+	id TEXT PRIMARY KEY,
+	authority_id TEXT NOT NULL REFERENCES pki_authorities(id),
+	issuer_generation_id TEXT NOT NULL REFERENCES pki_certificate_generations(id),
+	number INTEGER NOT NULL CHECK (number > 0),
+	this_update TEXT NOT NULL,
+	next_update TEXT NOT NULL,
+	signature_algorithm TEXT NOT NULL,
+	fingerprint_sha256 TEXT NOT NULL,
+	generation_json BLOB NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL,
+	UNIQUE(authority_id, number)
+);
+
+CREATE INDEX pki_crl_generations_authority_idx
+	ON pki_crl_generations(authority_id, number, id);
+CREATE INDEX pki_crl_generations_issuer_idx
+	ON pki_crl_generations(issuer_generation_id, number, id);
+`,
+	},
+	{
+		Version: 11,
+		Name:    "workspace_pki_operations",
+		SQL: `
+CREATE TABLE pki_operations (
+	id TEXT PRIMARY KEY,
+	kind TEXT NOT NULL,
+	status TEXT NOT NULL,
+	revision INTEGER NOT NULL CHECK (revision > 0),
+	previous_authority_id TEXT NOT NULL REFERENCES pki_authorities(id),
+	previous_authority_generation_id TEXT NOT NULL REFERENCES pki_certificate_generations(id),
+	replacement_authority_id TEXT NOT NULL REFERENCES pki_authorities(id),
+	replacement_authority_generation_id TEXT NOT NULL REFERENCES pki_certificate_generations(id),
+	trust_set_id TEXT NOT NULL REFERENCES pki_trust_sets(id),
+	overlap_trust_generation_id TEXT NOT NULL REFERENCES pki_trust_set_generations(id),
+	final_trust_generation_id TEXT REFERENCES pki_trust_set_generations(id),
+	consumer_tracking TEXT NOT NULL,
+	phase TEXT NOT NULL,
+	operation_json BLOB NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	completed_at TEXT,
+	failure TEXT
+);
+
+CREATE INDEX pki_operations_live_resources_idx
+	ON pki_operations(status, trust_set_id, previous_authority_id, replacement_authority_id)
+	WHERE kind = 'authority-rollover' AND status NOT IN ('completed', 'failed', 'canceled');
+CREATE INDEX pki_operations_status_idx ON pki_operations(status, updated_at, id);
+
+CREATE TABLE pki_operation_required_assignments (
+	operation_id TEXT NOT NULL REFERENCES pki_operations(id) ON DELETE RESTRICT,
+	assignment_id TEXT NOT NULL REFERENCES pki_assignments(id) ON DELETE RESTRICT,
+	position INTEGER NOT NULL CHECK (position >= 0),
+	PRIMARY KEY(operation_id, assignment_id),
+	UNIQUE(operation_id, position)
+);
+
+CREATE INDEX pki_operation_required_assignment_idx
+	ON pki_operation_required_assignments(assignment_id, operation_id);
+
+CREATE TABLE pki_consumer_acknowledgements (
+	id TEXT PRIMARY KEY,
+	operation_id TEXT NOT NULL REFERENCES pki_operations(id) ON DELETE RESTRICT,
+	assignment_id TEXT NOT NULL REFERENCES pki_assignments(id) ON DELETE RESTRICT,
+	consumer_type TEXT NOT NULL,
+	consumer_id TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	trust_set_generation_id TEXT NOT NULL REFERENCES pki_trust_set_generations(id),
+	evidence_ref TEXT,
+	acknowledgement_json BLOB NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	acknowledged_at TEXT NOT NULL,
+	UNIQUE(operation_id, assignment_id, kind, trust_set_generation_id)
+);
+
+CREATE INDEX pki_consumer_acknowledgements_operation_idx
+	ON pki_consumer_acknowledgements(operation_id, acknowledged_at, id);
+`,
+	},
+	{
+		Version: 12,
+		Name:    "workspace_pki_credential_stamps",
+		SQL: `
+CREATE TABLE pki_credential_stamps (
+	id TEXT PRIMARY KEY,
+	assignment_id TEXT NOT NULL REFERENCES pki_assignments(id) ON DELETE RESTRICT,
+	provider_id TEXT NOT NULL,
+	capability TEXT NOT NULL,
+	slot_name TEXT NOT NULL,
+	status TEXT NOT NULL,
+	revision INTEGER NOT NULL CHECK (revision > 0),
+	input_artifact_id TEXT NOT NULL,
+	input_sha256 TEXT NOT NULL,
+	output_artifact_id TEXT,
+	output_sha256 TEXT,
+	descriptor_sha256 TEXT NOT NULL,
+	superseded_by TEXT REFERENCES pki_credential_stamps(id) DEFERRABLE INITIALLY DEFERRED,
+	stamp_json BLOB NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	created_at_sort TEXT NOT NULL,
+	updated_at_sort TEXT NOT NULL
+);
+
+CREATE INDEX pki_credential_stamps_assignment_idx
+	ON pki_credential_stamps(assignment_id, created_at_sort, id);
+CREATE INDEX pki_credential_stamps_created_idx
+	ON pki_credential_stamps(created_at_sort, id);
+CREATE INDEX pki_credential_stamps_provider_idx
+	ON pki_credential_stamps(provider_id, status, updated_at_sort, id);
+CREATE INDEX pki_credential_stamps_output_idx
+	ON pki_credential_stamps(output_artifact_id)
+	WHERE output_artifact_id IS NOT NULL;
+`,
+	},
+	{
+		Version: 13,
+		Name:    "workspace_pki_credential_executions",
+		SQL: `
+CREATE TABLE pki_credential_executions (
+	id TEXT PRIMARY KEY,
+	kind TEXT NOT NULL,
+	provider_module_id TEXT NOT NULL,
+	provider_id TEXT NOT NULL,
+	descriptor_sha256 TEXT NOT NULL,
+	assignment_id TEXT REFERENCES pki_assignments(id) ON DELETE RESTRICT,
+	status TEXT NOT NULL,
+	revision INTEGER NOT NULL CHECK (revision > 0),
+	execution_json BLOB NOT NULL,
+	metadata_schema_version TEXT NOT NULL,
+	metadata_algorithm TEXT NOT NULL,
+	metadata_key_version TEXT NOT NULL,
+	metadata_tag BLOB NOT NULL,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	created_at_sort TEXT NOT NULL,
+	updated_at_sort TEXT NOT NULL
+);
+
+CREATE INDEX pki_credential_executions_created_idx
+	ON pki_credential_executions(created_at_sort, id);
+CREATE INDEX pki_credential_executions_provider_idx
+	ON pki_credential_executions(provider_id, status, updated_at_sort, id);
+CREATE INDEX pki_credential_executions_assignment_idx
+	ON pki_credential_executions(assignment_id, created_at_sort, id)
+	WHERE assignment_id IS NOT NULL;
+`,
+	},
 }
 
 func ApplyMigrations(ctx context.Context, db *sql.DB) error {

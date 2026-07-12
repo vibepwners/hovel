@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_binary", "go_library")
 go_library(
     name = "hovel_ui_catalog_lib",
     srcs = ["main.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/cmd/hovel-ui-catalog",
+    importpath = "github.com/vibepwners/hovel/cmd/hovel-ui-catalog",
     visibility = ["//visibility:private"],
     deps = ["//internal/adapters/uicatalog"],
 )

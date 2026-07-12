@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "commandview",
     srcs = ["renderer.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/commandview",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/commandview",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/clistyle",

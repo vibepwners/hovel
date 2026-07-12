@@ -3,7 +3,10 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "mesh",
     srcs = ["mesh.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/domain/mesh",
+    importpath = "github.com/vibepwners/hovel/internal/domain/mesh",
     visibility = ["//:__subpackages__"],
-    deps = ["//internal/domain/run"],
+    deps = [
+        "//internal/domain/pki",
+        "//internal/domain/run",
+    ],
 )

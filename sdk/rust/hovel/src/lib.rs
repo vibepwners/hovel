@@ -40,8 +40,11 @@ pub mod base64;
 pub mod json;
 
 mod context;
+mod credential_delivery;
+mod credential_provider;
 mod framing;
 mod mesh;
+mod mesh_bridge;
 mod module;
 mod result;
 mod server;
@@ -51,11 +54,30 @@ mod session;
 mod tests;
 
 pub use context::Context;
+pub use credential_delivery::{
+    CredentialConsumerType, CredentialDeliveryCapability, CredentialDeliveryDescriptor,
+    CredentialEndpointRole, CredentialMaterialForm, CredentialMaterialReference,
+    CredentialPrivateMaterialPolicy, CredentialProjection, CredentialProviderEncodingSchema,
+    CredentialProviderTargetSchema, CredentialPurpose, CredentialSlot, CredentialStampAddressSpace,
+    CredentialStampMaterial, CredentialStampPrecondition, CredentialStampRemainderPolicy,
+    CredentialStampRequest, CredentialStampTarget, CredentialStampTargetKind,
+    ResolvedCredentialMetadata, CREDENTIAL_DELIVERY_SCHEMA_V1,
+};
+pub use credential_provider::{
+    CredentialArtifactContent, CredentialArtifactInput, CredentialArtifactOutput, CredentialBytes,
+    CredentialDeliveryReceipt, CredentialDeploymentOutput, CredentialEncodingRequest,
+    CredentialEncodingResult, CredentialFile, CredentialFilesRequest, CredentialMaterialValue,
+    CredentialOperationScope, CredentialProtectedPath, CredentialProviderTarget,
+    CredentialRuntimeRequest, CredentialScopedReference, CredentialSecretReference,
+    CredentialStampExecutionRequest, CredentialStampExecutionResult, CredentialStampOutput,
+    CredentialStampTargetResolution, CredentialStampedMaterialDigest, ResolvedCredentialMaterial,
+    CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1,
+};
 pub use mesh::{
-    MeshBeacon, MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshEvent, MeshLink,
-    MeshListener, MeshListenerListRequest, MeshListenerSpec, MeshListenerStartRequest,
-    MeshListenerStopRequest, MeshNode, MeshRoute, MeshStreamRequest, MeshTaskRequest,
-    MeshTaskResult, MeshTaskSpec, MeshTopology, MeshTopologyRequest, MeshTrigger,
+    AgentContext, AgentEntity, AgentHint, MeshBeacon, MeshBeaconRequest, MeshDescribeRequest,
+    MeshDescriptor, MeshEvent, MeshLink, MeshListener, MeshListenerListRequest, MeshListenerSpec,
+    MeshListenerStartRequest, MeshListenerStopRequest, MeshNode, MeshRoute, MeshStreamRequest,
+    MeshTaskRequest, MeshTaskResult, MeshTaskSpec, MeshTopology, MeshTopologyRequest, MeshTrigger,
     MESH_LISTENER_DEPLOYMENT_EMBEDDED, MESH_LISTENER_DEPLOYMENT_SEPARATE,
     MESH_LISTENER_MANAGEMENT_EXTERNAL, MESH_LISTENER_MANAGEMENT_PROVIDER,
     MESH_LISTENER_STATE_ACTIVE, MESH_LISTENER_STATE_FAILED, MESH_LISTENER_STATE_STARTING,
@@ -63,6 +85,9 @@ pub use mesh::{
     MESH_TARGET_NODE, MESH_TARGET_ROUTE, MESH_TASK_COMMAND, MESH_TASK_EXECUTE, MESH_TASK_LOAD,
     MESH_TASK_STATUS_FAILED, MESH_TASK_STATUS_SUCCEEDED, MESH_TASK_STREAM, MESH_TASK_SURVEY,
     MESH_TASK_UPLOAD, MESH_TASK_UPLOAD_EXECUTE,
+};
+pub use mesh_bridge::{
+    connect_mesh_bridge_tcp, connect_mesh_bridge_udp, MeshBridgeCapability, MeshBridgeEndpoint,
 };
 pub use module::{Info, Module, ModuleType, Requirement, Schema};
 pub use result::{Artifact, Finding, InstalledPayloadDescriptor, Outcome, PayloadProviderRecord};

@@ -1,4 +1,4 @@
-module github.com/Vibe-Pwners/hovel/third_party/go_deps
+module github.com/vibepwners/hovel/third_party/go_deps
 
 go 1.26.0
 

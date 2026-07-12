@@ -3,8 +3,8 @@ package cli
 import (
 	"context"
 
-	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
+	sqlitestore "github.com/vibepwners/hovel/internal/adapters/storage/sqlite"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
 )
 
 func (a App) withWorkspaceSession(workspacePath string) App {

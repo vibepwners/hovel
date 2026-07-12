@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/descriptor"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/adapters/descriptor"
+	"github.com/vibepwners/hovel/internal/app/commands"
 )
 
 type chainFileDiskStore struct{}

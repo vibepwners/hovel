@@ -32,7 +32,7 @@ Current decision records are:
 - [`ADR-0001`](docs/adr/0001-use-mesh-for-node-operations.md) for Mesh
   terminology and daemon/provider ownership;
 - [`ADR-0002`](docs/adr/0002-use-workspace-pki-for-certificate-management.md)
-  for the proposed PKI architecture.
+  for the workspace PKI architecture.
 
 ### Reading paths
 
@@ -46,7 +46,7 @@ with the path that matches the work:
 | Mesh provider author | Mesh language, Mesh lifecycle, and the Mesh ADR. |
 | CLI, API, or web client author | Daemon contract, command registry, operator workflows, and external interfaces. |
 | Core maintainer | Aggregate ownership, architecture, persistence, safety, and change checklist. |
-| PKI implementer or reviewer | Proposed workspace PKI, then ADR-0002 and the detailed plan. |
+| PKI implementer or reviewer | Workspace PKI and credential delivery, then ADR-0002 and the detailed plan. |
 | Build or docs maintainer | Repository/build architecture, release model, and documentation architecture. |
 
 ### One-minute model
@@ -217,6 +217,9 @@ Implemented provider behavior is module-backed:
 - Go exposes the complete current payload-provider RPC surface;
 - Go and Python expose generic `step.*` provider contracts;
 - Go, Python, and Rust expose Mesh contracts;
+- Go, Python, and Rust expose strongly typed optional `credential.describe`,
+  `credential.runtime`, `credential.files`, `credential.encode`, and
+  `credential.stamp` contracts;
 - any base module may return explicit installed-payload descriptors.
 
 `ArtifactProvider`, `PayloadProvider`, `FactProvider`, `CredentialProvider`,
@@ -400,8 +403,14 @@ may be intentionally visible in operator output. Its `sensitive` metadata
 supports export and downstream handling; it does not silently redact operator
 workflow data.
 
-This differs from the proposed PKI private-key custody model, where Hovel owns
-key material and requires explicit secret resolution/export.
+This differs from workspace PKI. A target-created `CredentialCapability` is
+stored and displayed in plaintext by design so an operator can remediate it.
+Workspace PKI owns authorities, immutable certificate generations, trust, and
+private keys; private material is envelope-encrypted in SQLite under an
+owner-only workspace master-key file and enters provider calls only through
+explicit short-lived resolution. Never put workspace private keys in a
+`CredentialCapability`, and never describe target-account evidence as a PKI
+bundle.
 
 ### Cleanup handle
 
@@ -637,7 +646,9 @@ hovel tui                    reserved; not implemented
 The local daemon role is often called `hoveld` in prose and logs, but it is not
 a separate production binary. It owns the workspace database, module process
 lifecycle, plans, confirmations, throws, artifacts, events, installed payloads,
-sessions, Mesh operations, and client attachment state.
+sessions, Mesh operations, and client attachment state. Mesh operation records
+are currently an in-memory live-control ledger and are lost when the daemon
+restarts; provider-owned listener and node state may outlive that ledger.
 
 Managed local mode starts or attaches to the workspace daemon. A client that
 starts an owned daemon shuts it down when its interactive session ends; a
@@ -652,11 +663,26 @@ response bodies under `hovel.daemon.v1.DaemonService`. It is available over a
 local Unix socket and explicit loopback TCP for integration. Future Windows
 support should use a named pipe.
 
+The transports have intentionally different authority. The owner-controlled
+Unix socket is the privileged control plane. Loopback TCP is read-only and
+rejects execution, mutation, export, and other privileged methods with a typed
+`permission-denied` error; it is not a substitute for local-user
+authentication. Request actor identifiers provide audit attribution only and
+never grant transport authority.
+
 The machine-readable contract is
 `docs/site/spec/reference/daemon-rpc.openapi.json`. Contract tests keep method
 registration, OpenAPI, and human docs aligned. Current methods cover operator
 state, plans/approvals, throws, module execution, payloads, sessions, artifacts,
-logs/entities, and Mesh operations.
+logs/entities, Mesh operations, and workspace PKI lifecycle/control.
+
+The daemon boundary is not uniformly writable. PKI initialization, authority,
+certificate, revocation/CRL, assignment, trust-set, rollover, and bundle-export
+use cases have mutation methods. Mesh listeners, tasks, streams, and bridges
+also have mutation methods. Credential-stamp and credential-execution methods
+are currently list/inspect only; current Mesh mutation request shapes do not
+accept an assignment or delivery plan. MCP registers no PKI or credential
+delivery tools today.
 
 External web, Elixir, REST, or other clients consume this daemon contract or a
 public control SDK. They do not import `core/internal` or speak private module
@@ -692,16 +718,18 @@ Optional extensions include:
 step.describe / step.prepare / step.execute / step.cleanup
 payload-provider operations
 mesh.describe / topology / beacons / listeners / tasks / streams
+credential.describe / runtime / files / encode / stamp
 ```
 
 Stdout belongs exclusively to framed RPC. Operator-visible logs use
 `module/log`; session data uses session methods; stderr is process diagnostics.
 Unknown methods return a JSON-RPC error rather than pretending success.
 
-Metadata calls (`handshake`, `schema`, `step.describe`, `mesh.describe`) must
-be fast, deterministic, offline, and side-effect free. They must not contact a
-target, generate random prepared values, start listeners, generate payloads,
-create credentials, or mutate files.
+Metadata calls (`handshake`, `schema`, `step.describe`, `mesh.describe`,
+`credential.describe`) must be fast, deterministic, offline, and side-effect
+free. They must not contact a target, generate random prepared values, start
+listeners, generate payloads, resolve or create credentials, open protected
+files, or mutate files.
 
 ## Module package and distribution model
 
@@ -887,6 +915,7 @@ logs/
 modules/
 throws/
 services/
+secrets/pki-master-keys.json
 ```
 
 SQLite currently persists:
@@ -898,6 +927,11 @@ SQLite currently persists:
 - artifact metadata;
 - events;
 - installed payload current state and transition events.
+- PKI authorities, immutable certificate generations, generation counters,
+  encrypted key envelopes, authenticated metadata tags, and PKI audit events;
+- PKI assignments and trust sets;
+- revocations, CRL generations, and CRL publication/reconciliation state;
+- credential stamp plans/results and credential execution plans/results.
 
 Migrations are contiguous, named, checksummed, and transactional. An unknown
 version, name mismatch, checksum mismatch, or gap fails closed.
@@ -970,16 +1004,26 @@ future credential-broker secret may use explicit policy, encrypted custody, and
 audited export because the feature owns the secret lifecycle rather than merely
 transporting operator configuration.
 
-## Proposed workspace PKI
+## Workspace PKI and credential delivery
 
-**Proposed**, not implemented. See
+The typed domain, built-in Go X.509 backend, local issuance, bundle v1,
+hybrid-ML-KEM TLS policy, encrypted SQLite custody, authenticated generation
+metadata, owner-only file master-key provider, versioned rewrap, typed audit,
+daemon API, imperative commands, assignments and trust sets, renewal/rotation,
+revocation/CRLs, and phase-aware authority rollover are implemented on the
+current PKI branch. Credential delivery/stamping also has strict domain models,
+descriptor and execution validation, non-secret durable bookkeeping, SQLite
+persistence, Go/Python/Rust SDK contracts and dispatch, and provider runner
+execution. Manifests/Huh/MCP, public control SDK publication, automatic
+assignment-to-delivery orchestration, general non-Mesh consumption, and a
+production external stamp initiation path remain incomplete. See
 `docs/adr/0002-use-workspace-pki-for-certificate-management.md` and
 `docs/plans/tls-certificate-management.md`.
 
-The PKI direction makes certificate/trust management a daemon-owned workspace
+The PKI model makes certificate/trust management a daemon-owned workspace
 capability rather than a Mesh-only feature or CLI utility.
 
-Stable proposed terms:
+Stable terms:
 
 - **Authority**: logical root or subordinate CA;
 - **Certificate**: logical lineage across renew/rotate;
@@ -991,6 +1035,13 @@ Stable proposed terms:
 - **Crypto Backend**: selectable key/sign/certificate implementation;
 - **Compatibility Target**: consumer library constraints such as Mbed TLS or
   wolfSSL, independent of issuer backend;
+- **Key Establishment Policy**: the consumer's TLS negotiation requirement,
+  such as classical-compatible, hybrid post-quantum preferred, or hybrid
+  post-quantum required. It is independent of certificate signature strength;
+- **Hybrid Post-Quantum TLS**: a classical plus ML-KEM key exchange that
+  protects session secrets if either component remains secure. Hovel's Go 1.26
+  target can require it, but ECDSA/RSA/Ed25519 certificate signatures remain
+  classical until a compatible signature backend and consumer are selected;
 - **Credential Stamp**: exact credential-generation provenance for an artifact
   or deployment.
 
@@ -1015,12 +1066,41 @@ artifact hash, address space, expected existing bytes/hash, bounds, material
 projection, capability version, and output hash. Hovel never guesses an address
 or records private replacement bytes in ordinary plans/events.
 
+Execution contracts are secret-aware closed unions:
+
+- resolved material is exactly bytes or a provider-scoped reference, consistent
+  with its material form;
+- credential artifact content is exactly inline data or an invocation-scoped
+  protected path;
+- stamp output is exactly an artifact or provider-owned deployment;
+- runtime/file receipts contain only a matching request ID and optional
+  non-secret provider reference/receipt digest;
+- durable execution and stamp records keep descriptor, assignment, scope,
+  projection, form, size, digest, target, and destination evidence, not private
+  bytes, protected paths, or deployment receipts.
+
+For a credential-bearing Mesh mutation, the external request carries only
+typed assignment, slot, projection, and form selections plus an authenticated
+request context with explicit credential-use approval. The daemon derives the
+exact versioned provider target and allowed provider/listener/node consumers,
+resolves active assignment material immediately before use, starts one module
+process, revalidates that process's handshake and credential descriptor, sends
+all `credential.runtime` hooks, and then invokes the consuming listener start,
+task, or stream. Separate short-lived RPC calls cannot preserve in-memory
+credentials. The first production selector path supports direct runtime DER
+projections; protected files, provider encoding, stamping, and non-Mesh
+consumption keep their separate contracts.
+
 ## External interfaces and future front ends
 
-The daemon API is the stable external control boundary. A future web or Elixir
-application should be able to inspect and control operations, plans, throws,
-payloads, sessions, Mesh listeners, and PKI without importing module SDK
-implementations or core internals.
+The daemon API is the stable external control boundary. A web or Elixir client
+can initiate ordinary PKI lifecycle mutations and Mesh operations, select
+assignment-bound runtime credentials for active Mesh mutations, and
+list/inspect credential stamps and execution ledgers without importing module
+SDK implementations or core internals. It cannot yet initiate protected-file,
+provider-encoding, stamping, or general non-Mesh credential consumption.
+Future control surfaces should add those use cases at the application/daemon
+boundary rather than exposing module stdio RPC directly.
 
 Public control clients and provider SDKs are different roles:
 
@@ -1126,6 +1206,13 @@ Implemented:
 - Go/Python/Rust Mesh descriptors, topology, beacons, listeners, tasks, and
   streams;
 - daemon Mesh operation bookkeeping and TCP/UDP loopback bridges;
+- workspace PKI custody, Go X.509 backend, issuance, bundles, assignments,
+  trust sets, renewal/rotation, revocation/CRLs, authority rollover, daemon RPC,
+  and imperative CLI commands;
+- Go/Python/Rust credential-provider descriptors and runtime/files/encode/stamp
+  dispatch, strict execution unions, secret-free execution/stamp bookkeeping,
+  SQLite persistence, assignment-backed runtime selection for Mesh mutations,
+  and same-process provider discovery/delivery/operation enforcement;
 - Task-wired core, SDK, module, Picblobs/Mbed OS, docs, and repository gates.
 
 Direction or incomplete:
@@ -1136,13 +1223,16 @@ Direction or incomplete:
 - complete step-provider parity in Rust;
 - complete payload-provider parity in Python/Rust;
 - raw IP/ICMP/TUN/TAP local Mesh adapters;
+- external protected-file delivery, provider-encoding/stamp initiation, and
+  general non-Mesh credential consumption;
+- PKI manifests/Huh flows, PKI MCP tools, and published public control SDKs;
 - complete contract-snapshot/prepared-value drift blocking;
 - broader remote service isolation and authenticated remote control.
 
 Proposed:
 
-- workspace PKI, selectable crypto backends, Mbed TLS/wolfSSL compatibility,
-  control SDKs, C contracts, and optional credential stamping.
+- additional selectable crypto backends, broader Mbed TLS/wolfSSL compatibility,
+  C consumer/control contracts, and richer external credential orchestration.
 
 ## Naming and design constraints
 

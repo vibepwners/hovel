@@ -1,13 +1,27 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
+filegroup(
+    name = "protocol_doc_sources",
+    srcs = [
+        "credential_delivery.go",
+        "credential_provider.go",
+        "mesh.go",
+        "server.go",
+    ],
+    visibility = ["//visibility:public"],
+)
+
 go_library(
     name = "hovel",
     srcs = [
         "agent.go",
         "context.go",
+        "credential_delivery.go",
+        "credential_provider.go",
         "framing.go",
         "logging.go",
         "mesh.go",
+        "mesh_bridge.go",
         "module.go",
         "payload.go",
         "pty_linux.go",
@@ -18,7 +32,7 @@ go_library(
         "session.go",
         "step.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/sdk/go/hovel",
+    importpath = "github.com/vibepwners/hovel/sdk/go/hovel",
     visibility = ["//visibility:public"],
     deps = select({
         "@rules_go//go/platform:android": [
@@ -34,6 +48,9 @@ go_library(
 go_test(
     name = "hovel_test",
     size = "small",
-    srcs = ["sdk_test.go"],
+    srcs = [
+        "mesh_bridge_test.go",
+        "sdk_test.go",
+    ],
     embed = [":hovel"],
 )

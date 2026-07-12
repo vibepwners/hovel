@@ -7,7 +7,7 @@ go_library(
         "session_history.go",
         "step_runtime.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc",
+    importpath = "github.com/vibepwners/hovel/internal/moduleruntime/pythonrpc",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/app/chainruntime",
@@ -17,6 +17,7 @@ go_library(
         "//internal/app/services",
         "//internal/domain/event",
         "//internal/domain/mesh",
+        "//internal/domain/pki",
         "//internal/domain/run",
         "//internal/domain/workspace",
         "//internal/protocol/framing",
@@ -58,6 +59,46 @@ go_test(
     size = "small",
     srcs = ["process_lifecycle_test.go"],
     embed = [":pythonrpc"],
+)
+
+# keep: protocol resource-limit regressions run in the normal core CI suite.
+go_test(
+    name = "resource_limits_test",
+    size = "small",
+    srcs = ["resource_limits_test.go"],
+    embed = [":pythonrpc"],
+)
+
+# keep: provider execution RPC regressions use the test binary as a hermetic
+# stdio module process and run in the normal core CI suite.
+go_test(
+    name = "credential_provider_test",
+    size = "small",
+    srcs = ["credential_provider_test.go"],
+    embed = [":pythonrpc"],
+    deps = [
+        "//internal/app/modulecatalog",
+        "//internal/app/pki",
+        "//internal/domain/mesh",
+        "//internal/domain/pki",
+        "//internal/protocol/framing",
+    ],
+)
+
+go_test(
+    name = "credential_provider_race_test",
+    size = "small",
+    srcs = ["credential_provider_test.go"],
+    embed = [":pythonrpc"],
+    race = "on",
+    tags = ["manual"],
+    deps = [
+        "//internal/app/modulecatalog",
+        "//internal/app/pki",
+        "//internal/domain/mesh",
+        "//internal/domain/pki",
+        "//internal/protocol/framing",
+    ],
 )
 
 # keep: broker lifecycle concurrency regressions also run with Go's race detector.

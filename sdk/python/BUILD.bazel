@@ -3,6 +3,7 @@ load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "README.md",
     "pyproject.toml",
     "uv.lock",
 ])
@@ -35,6 +36,18 @@ py_test(
     srcs = ["hovel_sdk/sdk_test.py"],
     imports = ["."],
     main = "hovel_sdk/sdk_test.py",
+    python_version = "PY3",
+    deps = [
+        ":hovel_sdk",
+        "@lint_pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "mesh_bridge_test",
+    size = "small",
+    srcs = ["hovel_sdk/mesh_bridge_test.py"],
+    imports = ["."],
     python_version = "PY3",
     deps = [
         ":hovel_sdk",

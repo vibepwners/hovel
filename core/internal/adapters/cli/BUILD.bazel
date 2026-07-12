@@ -14,7 +14,7 @@ go_library(
         "terminal_state_posix.go",
         "terminal_state_unsupported.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/cli",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/cli",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/commandmode",

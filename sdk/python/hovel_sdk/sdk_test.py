@@ -5,12 +5,15 @@ import logging
 import tempfile
 import threading
 import unittest
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, BinaryIO, ClassVar, cast
 
 import pytest
 
 from hovel_sdk import (
+    CREDENTIAL_DELIVERY_SCHEMA_V1,
+    CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1,
     MESH_LISTENER_DEPLOYMENT_SEPARATE,
     MESH_LISTENER_MANAGEMENT_PROVIDER,
     MESH_LISTENER_STATE_ACTIVE,
@@ -25,6 +28,39 @@ from hovel_sdk import (
     AgentHint,
     Artifact,
     Context,
+    CredentialArtifactInput,
+    CredentialArtifactOutput,
+    CredentialBytePatternTarget,
+    CredentialBytes,
+    CredentialConsumerType,
+    CredentialDeliveryCapability,
+    CredentialDeliveryDescriptor,
+    CredentialDeliveryReceipt,
+    CredentialEncodingRequest,
+    CredentialEncodingResult,
+    CredentialEndpointRole,
+    CredentialFile,
+    CredentialFilesRequest,
+    CredentialMaterialForm,
+    CredentialMaterialReference,
+    CredentialNamedSlotTarget,
+    CredentialPrivateMaterialPolicy,
+    CredentialProjection,
+    CredentialProtectedPath,
+    CredentialPurpose,
+    CredentialReferencedStampMaterial,
+    CredentialRuntimeRequest,
+    CredentialScopedReference,
+    CredentialSecretReference,
+    CredentialSlot,
+    CredentialStampExecutionRequest,
+    CredentialStampExecutionResult,
+    CredentialStampPrecondition,
+    CredentialStampPreconditionKind,
+    CredentialStampRemainderPolicy,
+    CredentialStampRequest,
+    CredentialStampTargetKind,
+    CredentialStampTargetResolution,
     HovelModule,
     InstalledPayload,
     LineShellSession,
@@ -50,10 +86,13 @@ from hovel_sdk import (
     MeshTrigger,
     PayloadProviderRecord,
     Requirement,
+    ResolvedCredentialMaterial,
+    ResolvedCredentialMetadata,
     Result,
     SessionRef,
     setup_logging,
 )
+from hovel_sdk.credential_delivery import _required_int
 from hovel_sdk.framing import (
     MAX_FRAME_BYTES,
     FrameError,
@@ -65,6 +104,174 @@ from hovel_sdk.framing import (
 from hovel_sdk.server import JSONRPCServer
 from hovel_sdk.session import SessionManager, SessionOpenOptions, SessionScope
 from hovel_sdk.testing import ModuleRPC, RPCError, drive_module
+
+
+def test_advanced_credential_stamp_contract_uses_canonical_wire_types() -> None:
+    request = CredentialStampRequest(
+        assignment_id="assignment-1",
+        capability=CredentialDeliveryCapability.STAMP_ADVANCED,
+        slot_name="tls-server",
+        target=CredentialBytePatternTarget(
+            pattern=b"\xaa\xbb",
+            mask=b"\xff\x0f",
+            occurrence=1,
+            maximum_length="18446744073709551615",
+            remainder_policy=CredentialStampRemainderPolicy.ZERO_FILL,
+            precondition=CredentialStampPrecondition(
+                kind=CredentialStampPreconditionKind.SHA256,
+                sha256="0" * 64,
+                length="2",
+            ),
+        ),
+        material=CredentialReferencedStampMaterial(
+            CredentialMaterialReference(
+                projection=CredentialProjection.BUNDLE,
+                form=CredentialMaterialForm.PRIVATE_BYTES,
+                bundle_id="bundle-1",
+            )
+        ),
+        encoded_bytes=4096,
+        credential=ResolvedCredentialMetadata(
+            bundle_version="hovel.pki.bundle/v1",
+            purpose=CredentialPurpose.TLS_SERVER,
+            consumer_type=CredentialConsumerType.MESH_PROVIDER,
+            profile_id="tls-server",
+            compatibility_target_id="mbedtls-3",
+        ),
+    )
+
+    wire = request.to_rpc()
+    assert wire["target"]["bytePattern"]["maximumLength"] == "18446744073709551615"
+    assert base64.b64decode(wire["target"]["bytePattern"]["pattern"]) == b"\xaa\xbb"
+    assert wire["material"]["credential"]["bundleId"] == "bundle-1"
+    assert wire["credential"]["compatibilityTargetId"] == "mbedtls-3"
+
+
+def test_credential_provider_secrets_are_redacted_from_repr() -> None:
+    material = ResolvedCredentialMaterial(
+        projection=CredentialProjection.SIGNER_REFERENCE,
+        form=CredentialMaterialForm.PRIVATE_REFERENCE,
+        encoding="provider-reference",
+        sha256="a" * 64,
+        value=CredentialScopedReference(
+            provider_id="hsm",
+            reference=CredentialSecretReference("capability-secret"),
+        ),
+    )
+    protected_file = CredentialFile(
+        projection=CredentialProjection.PRIVATE_KEY_PKCS8,
+        form=CredentialMaterialForm.PRIVATE_BYTES,
+        media_type="application/pkcs8",
+        path="/secret/private-key.der",
+        sha256="b" * 64,
+        size=32,
+    )
+    artifact = CredentialArtifactInput(
+        artifact_id="artifact-1",
+        sha256="c" * 64,
+        encoding="raw",
+        content=CredentialProtectedPath("/secret/input.bin"),
+    )
+    diagnostic = repr((material, protected_file, artifact))
+    for secret in ("capability-secret", "/secret/private-key.der", "/secret/input.bin"):
+        assert secret not in diagnostic
+        assert secret not in repr(asdict(material))
+        assert secret not in repr(asdict(artifact))
+
+
+def test_credential_base64_rejects_noncanonical_pad_bits() -> None:
+    value = {
+        "projection": "bundle",
+        "form": "private-bytes",
+        "encoding": "raw",
+        "sha256": "0" * 64,
+        "data": "Zh==",
+    }
+
+    with pytest.raises(ValueError, match="canonical base64"):
+        ResolvedCredentialMaterial.from_rpc(value)
+
+
+def test_resolved_credential_material_rejects_invalid_union_states() -> None:
+    variants: list[dict[str, Any]] = [
+        {},
+        {
+            "data": base64.b64encode(b"private-bundle").decode("ascii"),
+            "reference": {"providerId": "hsm", "reference": "secret-reference"},
+        },
+    ]
+    for variant in variants:
+        value: dict[str, Any] = {
+            "projection": "bundle",
+            "form": "private-bytes",
+            "encoding": "hovel-bundle-json",
+            "sha256": "0" * 64,
+            **variant,
+        }
+
+        with pytest.raises(ValueError, match="exactly one data or reference"):
+            ResolvedCredentialMaterial.from_rpc(value)
+
+
+def test_resolved_credential_material_binds_form_to_variant() -> None:
+    value = {
+        "projection": "signer-reference",
+        "form": "private-reference",
+        "encoding": "provider-reference",
+        "sha256": "0" * 64,
+        "data": base64.b64encode(b"not-a-reference").decode("ascii"),
+    }
+
+    with pytest.raises(TypeError, match="requires a scoped reference"):
+        ResolvedCredentialMaterial.from_rpc(value)
+
+
+def test_credential_artifact_input_rejects_invalid_union_states() -> None:
+    variants: list[dict[str, Any]] = [
+        {},
+        {
+            "data": base64.b64encode(b"artifact").decode("ascii"),
+            "path": "/protected/artifact.bin",
+        },
+    ]
+    for variant in variants:
+        value = {
+            "id": "artifact-1",
+            "sha256": "0" * 64,
+            "encoding": "raw",
+            **variant,
+        }
+
+        with pytest.raises(ValueError, match="exactly one data or path"):
+            CredentialArtifactInput.from_rpc(value)
+
+
+def test_credential_artifact_output_serializes_exactly_one_variant() -> None:
+    data_output = CredentialArtifactOutput(
+        name="data.bin",
+        encoding="raw",
+        content=CredentialBytes(b"artifact"),
+    ).to_rpc()
+    path_output = CredentialArtifactOutput(
+        name="path.bin",
+        encoding="protected-path",
+        content=CredentialProtectedPath("/protected/artifact.bin"),
+    ).to_rpc()
+
+    assert set(data_output) == {"name", "encoding", "data"}
+    assert set(path_output) == {"name", "encoding", "path"}
+
+
+def test_credential_stamp_result_rejects_unknown_output_variant() -> None:
+    with pytest.raises(TypeError, match="artifact or deployment"):
+        CredentialStampExecutionResult(
+            stamp_id="stamp-1",
+            output=cast("Any", object()),
+            target_resolution=CredentialStampTargetResolution.UNCHANGED,
+            resolved_target=CredentialNamedSlotTarget(name="tls-server"),
+            bytes_written="1",
+            material_digests=[],
+        )
 
 
 def test_session_manager_does_not_track_failed_open() -> None:
@@ -128,22 +335,55 @@ def test_mesh_task_result_deduplicates_opened_sessions() -> None:
 
 
 def test_mesh_requests_reject_mismatched_wire_types() -> None:
+    malformed: list[dict[str, Any]] = [
+        {},
+        {"kind": False},
+        {"kind": " "},
+        {"kind": MESH_TASK_COMMAND, "runId": 7},
+        {"kind": MESH_TASK_COMMAND, "destinationPort": "445"},
+        {"kind": MESH_TASK_COMMAND, "destinationPort": 65_536},
+        {"kind": MESH_TASK_COMMAND, "args": ["whoami", 1]},
+        {"kind": MESH_TASK_COMMAND, "route": "relay-1"},
+        {"kind": MESH_TASK_COMMAND, "route": {}},
+        {"kind": MESH_TASK_COMMAND, "route": {"nodes": ["relay-1", 2]}},
+        {"kind": MESH_TASK_COMMAND, "config": []},
+    ]
+    for value in malformed:
+        with pytest.raises((TypeError, ValueError)):
+            MeshTaskRequest.from_rpc(value)
+
     request = MeshTaskRequest.from_rpc(
         {
-            "runId": 7,
-            "kind": False,
-            "destinationPort": "445",
-            "args": ["whoami", 1, True],
-            "route": {"nodes": ["relay-1", 2]},
+            "kind": MESH_TASK_COMMAND,
+            "destinationPort": 65_535,
+            "route": {"nodes": ["relay-1"], "attributes": {"extension": {"x": 1}}},
+            "config": {"extension": {"x": 1}},
         }
     )
-
-    assert request.run_id == ""
-    assert request.kind == ""
-    assert request.destination_port == 0
-    assert request.args == ["whoami"]
-    assert request.route == MeshRoute(nodes=["relay-1"])
+    assert request.destination_port == 65_535
+    assert request.config == {"extension": {"x": 1}}
+    assert request.route == MeshRoute(nodes=["relay-1"], attributes={"extension": {"x": 1}})
     assert not MeshTopologyRequest.from_rpc({"includeRoutes": "false"}).include_routes
+
+
+def test_credential_integer_contract_bounds() -> None:
+    maximum_binary_bytes = 24 << 20
+    cases = {
+        "encodedBytes": (1, maximum_binary_bytes),
+        "maximumEncodedBytes": (1, maximum_binary_bytes),
+        "size": (1, maximum_binary_bytes),
+        "occurrence": (0, (1 << 32) - 1),
+    }
+    for field_name, (minimum, maximum) in cases.items():
+        assert _required_int({field_name: minimum}, field_name) == minimum
+        assert _required_int({field_name: maximum}, field_name) == maximum
+        for invalid in (minimum - 1, maximum + 1):
+            with pytest.raises(ValueError, match=field_name):
+                _required_int({field_name: invalid}, field_name)
+        invalid_wire_values: tuple[Any, ...] = (True, 1.5, "1")
+        for invalid in invalid_wire_values:
+            with pytest.raises(TypeError, match=field_name):
+                _required_int({field_name: invalid}, field_name)
 
 
 class EchoModule(HovelModule):
@@ -288,6 +528,11 @@ class MeshModule(HovelModule):
     version = "v0.0.0-test"
     module_type = "exploit"
 
+    def describe_credential_delivery(self) -> CredentialDeliveryDescriptor:
+        descriptor = self.describe_mesh(MeshDescribeRequest()).credential_delivery
+        assert descriptor is not None
+        return descriptor
+
     def describe_mesh(self, _request: MeshDescribeRequest) -> MeshDescriptor:
         return MeshDescriptor(
             name="lab mesh",
@@ -338,6 +583,29 @@ class MeshModule(HovelModule):
                     action_kind=MESH_TASK_SURVEY,
                 )
             ],
+            credential_delivery=CredentialDeliveryDescriptor(
+                capabilities=[
+                    CredentialDeliveryCapability.RUNTIME,
+                    CredentialDeliveryCapability.STAMP_STANDARD,
+                ],
+                slots=[
+                    CredentialSlot(
+                        name="control-plane-mtls",
+                        purpose=CredentialPurpose.MTLS_SERVER,
+                        endpoint_role=CredentialEndpointRole.SERVER,
+                        consumer_type=CredentialConsumerType.MESH_LISTENER,
+                        accepted_bundle_versions=["hovel.pki.bundle/v1"],
+                        accepted_profiles=["mtls-server"],
+                        accepted_compatibility_targets=["portable-x509"],
+                        accepted_projections=[CredentialProjection.BUNDLE],
+                        accepted_material_forms=[CredentialMaterialForm.PRIVATE_BYTES],
+                        maximum_encoded_bytes=16 * 1024,
+                        remainder_policy=CredentialStampRemainderPolicy.PRESERVE,
+                        private_material=CredentialPrivateMaterialPolicy.ALLOWED,
+                    )
+                ],
+                stamp_target_kinds=[CredentialStampTargetKind.NAMED_SLOT],
+            ),
         )
 
     def mesh_topology(self, _request: MeshTopologyRequest) -> MeshTopology:
@@ -406,6 +674,35 @@ class MeshModule(HovelModule):
             state=MESH_LISTENER_STATE_STOPPED,
             deployment=MESH_LISTENER_DEPLOYMENT_SEPARATE,
             management=MESH_LISTENER_MANAGEMENT_PROVIDER,
+        )
+
+    def load_runtime_credential(self, request: CredentialRuntimeRequest) -> CredentialDeliveryReceipt:
+        return CredentialDeliveryReceipt(request_id=request.request_id, provider_reference="runtime-loaded")
+
+    def load_credential_files(self, request: CredentialFilesRequest) -> CredentialDeliveryReceipt:
+        return CredentialDeliveryReceipt(request_id=request.request_id, provider_reference="files-loaded")
+
+    def encode_credential_material(self, request: CredentialEncodingRequest) -> CredentialEncodingResult:
+        return CredentialEncodingResult(
+            request_id=request.request_id,
+            form=request.output_form,
+            encoding="provider-test",
+            sha256="1" * 64,
+            data=b"encoded",
+        )
+
+    def stamp_credential(self, request: CredentialStampExecutionRequest) -> CredentialStampExecutionResult:
+        return CredentialStampExecutionResult(
+            stamp_id=request.stamp_id,
+            output=CredentialArtifactOutput(
+                name="stamped.bin",
+                encoding="raw",
+                content=CredentialBytes(b"stamped"),
+            ),
+            target_resolution=CredentialStampTargetResolution.UNCHANGED,
+            resolved_target=request.request.target,
+            bytes_written=str(request.request.encoded_bytes),
+            material_digests=list(request.expected_digests),
         )
 
     def run_mesh_task(self, ctx: Context, request: MeshTaskRequest) -> MeshTaskResult:
@@ -759,6 +1056,10 @@ class SDKTest(unittest.TestCase):
         describe = next(message for message in messages if message.get("id") == 1)
         self.assertEqual(describe["result"]["name"], "lab mesh")
         self.assertEqual(describe["result"]["tasks"][2]["targetScopes"], [MESH_TARGET_DESTINATION])
+        self.assertEqual(
+            describe["result"]["credentialDelivery"]["deliveryCapabilities"],
+            ["runtime", "stamp-standard"],
+        )
         topology = next(message for message in messages if message.get("id") == 2)
         self.assertEqual(topology["result"]["routes"][0]["nodes"], ["controller", "relay-1", "leaf-1"])
         beacons = next(message for message in messages if message.get("id") == 3)
@@ -785,6 +1086,125 @@ class SDKTest(unittest.TestCase):
         self.assertEqual(outputs["contextRunId"], "mesh")
         self.assertEqual(outputs["contextModuleId"], "mesh-module@v0.0.0-test")
         self.assertEqual(outputs["contextTarget"], "10.10.0.99")
+
+    def test_credential_provider_methods_dispatch_over_json_rpc(self) -> None:
+        credential = {
+            "bundleVersion": "hovel.pki.bundle/v1",
+            "purpose": "mtls-server",
+            "consumerType": "mesh-listener",
+            "profileId": "mtls-server",
+            "compatibilityTargetId": "portable-x509",
+        }
+        material = {
+            "projection": "bundle",
+            "form": "private-bytes",
+            "encoding": "hovel-bundle-json",
+            "sha256": "0" * 64,
+            "data": base64.b64encode(b"private-bundle").decode(),
+        }
+        provider = {
+            "moduleId": "mesh-module",
+            "providerId": "mesh-module",
+            "providerVersion": "v1.0.0",
+            "descriptorSha256": "4" * 64,
+        }
+        with ModuleRPC(MeshModule()) as rpc:
+            descriptor = rpc.call("credential.describe")
+            runtime = rpc.call(
+                "credential.runtime",
+                {
+                    "schemaVersion": CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1,
+                    "provider": provider,
+                    "requestId": "delivery-runtime-1",
+                    "assignmentId": "assignment-1",
+                    "slotName": "control-plane-mtls",
+                    "credential": credential,
+                    "material": material,
+                    "scope": {"listenerId": "listener-primary"},
+                },
+            )
+            files = rpc.call(
+                "credential.files",
+                {
+                    "schemaVersion": CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1,
+                    "provider": provider,
+                    "requestId": "delivery-files-1",
+                    "assignmentId": "assignment-1",
+                    "slotName": "control-plane-mtls",
+                    "credential": credential,
+                    "files": [
+                        {
+                            "projection": "certificate-der",
+                            "form": "public",
+                            "mediaType": "application/pkix-cert",
+                            "path": "/provider-input/certificate.der",
+                            "sha256": "1" * 64,
+                            "size": 512,
+                        }
+                    ],
+                    "scope": {},
+                },
+            )
+            encoded = rpc.call(
+                "credential.encode",
+                {
+                    "schemaVersion": CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1,
+                    "provider": provider,
+                    "requestId": "encoding-1",
+                    "providerId": "mesh-module",
+                    "providerSchema": "v1",
+                    "outputForm": "private-bytes",
+                    "maximumEncodedBytes": 4096,
+                    "source": material,
+                    "scope": {},
+                },
+            )
+            stamped = rpc.call(
+                "credential.stamp",
+                {
+                    "schemaVersion": CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1,
+                    "provider": provider,
+                    "stampId": "credential-stamp-1",
+                    "request": {
+                        "assignmentId": "assignment-1",
+                        "capability": "stamp-standard",
+                        "slotName": "control-plane-mtls",
+                        "target": {
+                            "kind": "named-slot",
+                            "namedSlot": {"name": "control-plane-mtls"},
+                        },
+                        "material": {
+                            "projection": "bundle",
+                            "credential": {
+                                "projection": "bundle",
+                                "form": "private-bytes",
+                                "bundleId": "bundle-1",
+                            },
+                        },
+                        "encodedBytes": 14,
+                        "credential": credential,
+                    },
+                    "input": {
+                        "id": "artifact-1",
+                        "sha256": "3" * 64,
+                        "encoding": "raw",
+                        "data": base64.b64encode(b"input").decode(),
+                    },
+                    "resolvedMaterial": material,
+                    "expectedDigests": [{"projection": "bundle", "reference": "bundle-1", "sha256": "2" * 64}],
+                    "scope": {"runId": "run-1"},
+                },
+            )
+
+        self.assertEqual(descriptor["schemaVersion"], CREDENTIAL_DELIVERY_SCHEMA_V1)
+
+        self.assertEqual(runtime, {"requestId": "delivery-runtime-1", "providerReference": "runtime-loaded"})
+        self.assertNotIn("material", runtime)
+        self.assertEqual(files["providerReference"], "files-loaded")
+        self.assertEqual(base64.b64decode(encoded["data"]), b"encoded")
+        self.assertEqual(stamped["stampId"], "credential-stamp-1")
+        self.assertEqual(stamped["bytesWritten"], "14")
+        self.assertEqual(base64.b64decode(stamped["output"]["artifact"]["data"]), b"stamped")
 
     def test_mesh_listener_lifecycle_dispatches_over_json_rpc(self) -> None:
         with ModuleRPC(MeshModule()) as rpc:

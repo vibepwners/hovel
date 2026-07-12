@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "modulepackage",
     srcs = ["package.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/app/modulepackage",
+    importpath = "github.com/vibepwners/hovel/internal/app/modulepackage",
     visibility = ["//:__subpackages__"],
     deps = ["@in_gopkg_yaml_v3//:yaml_v3"],
 )

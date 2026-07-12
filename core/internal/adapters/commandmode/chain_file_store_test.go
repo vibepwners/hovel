@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/commands"
 )
 
 func TestChainFileDiskStoreRoundTripsConfiguredChain(t *testing.T) {

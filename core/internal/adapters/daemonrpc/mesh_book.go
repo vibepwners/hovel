@@ -6,11 +6,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/domain/mesh"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 const (
+	// defaultMeshBookCapacity bounds the daemon's process-local recent-operation
+	// view. Durable audit records belong in the application/storage layer; this
+	// adapter must not grow without limit while serving external list requests.
+	defaultMeshBookCapacity = 4096
+
 	// MeshOperationKindTask records a provider-owned task invocation.
 	MeshOperationKindTask MeshOperationKind = "task"
 	// MeshOperationKindStream records a provider-owned session flow.
@@ -51,9 +56,12 @@ type MeshListenerAction string
 // daemon-owned local bridges, including future "throw through a node" flows
 // that bridge an exploit to a destination reachable from a mesh node or route.
 type MeshOperation struct {
-	ID              string             `json:"id"`
-	Kind            MeshOperationKind  `json:"kind"`
-	State           MeshOperationState `json:"state"`
+	ID    string             `json:"id"`
+	Kind  MeshOperationKind  `json:"kind"`
+	State MeshOperationState `json:"state"`
+	// ProviderStatus retains the provider-defined task outcome without
+	// expanding the daemon's closed lifecycle-state vocabulary.
+	ProviderStatus  mesh.TaskStatus    `json:"providerStatus,omitempty"`
 	ModuleID        string             `json:"moduleId"`
 	RunID           string             `json:"runId,omitempty"`
 	TaskID          string             `json:"taskId,omitempty"`
@@ -87,6 +95,9 @@ type MeshOperationListRequest struct {
 	Kind       MeshOperationKind  `json:"kind,omitempty"`
 	Action     MeshListenerAction `json:"action,omitempty"`
 	State      MeshOperationState `json:"state,omitempty"`
+	// ProviderStatus filters provider-defined task outcomes independently from
+	// the daemon-owned lifecycle state.
+	ProviderStatus mesh.TaskStatus `json:"providerStatus,omitempty"`
 }
 
 // MeshOperationListResponse contains matching daemon Mesh bookkeeping records.
@@ -94,19 +105,31 @@ type MeshOperationListResponse struct {
 	Operations []MeshOperation `json:"operations"`
 }
 
-// MeshBook stores in-memory daemon bookkeeping for listener lifecycle calls,
-// mesh tasks, routed sessions, and local bridges.
+// MeshBook stores a bounded, process-local recent view of listener lifecycle
+// calls, mesh tasks, routed sessions, and local bridges. It is not a durable
+// audit ledger and its contents do not survive daemon restart.
 type MeshBook struct {
 	mu         sync.RWMutex
 	next       uint64
+	capacity   int
+	head       int
+	count      int
 	operations []MeshOperation
 	byID       map[string]int
 }
 
 // NewMeshBook creates an empty in-memory Mesh operation book.
 func NewMeshBook() *MeshBook {
+	return newMeshBook(defaultMeshBookCapacity)
+}
+
+func newMeshBook(capacity int) *MeshBook {
+	if capacity <= 0 {
+		capacity = defaultMeshBookCapacity
+	}
 	return &MeshBook{
-		operations: []MeshOperation{},
+		capacity:   capacity,
+		operations: make([]MeshOperation, capacity),
 		byID:       map[string]int{},
 	}
 }
@@ -163,12 +186,14 @@ func (b *MeshBook) StartListener(
 
 // CompleteTask records the terminal result and any sessions opened by a task.
 func (b *MeshBook) CompleteTask(id string, result mesh.TaskResult, now time.Time) {
-	state := strings.TrimSpace(string(result.Status))
-	if state == "" {
-		state = string(MeshOperationStateSucceeded)
+	providerStatus := mesh.TaskStatus(strings.TrimSpace(string(result.Status)))
+	state := MeshOperationStateSucceeded
+	if providerStatus == mesh.TaskStatusFailed {
+		state = MeshOperationStateFailed
 	}
 	b.update(id, now, func(operation *MeshOperation) {
-		operation.State = MeshOperationState(state)
+		operation.State = state
+		operation.ProviderStatus = providerStatus
 		operation.Summary = result.Summary
 		if result.TaskID != "" {
 			operation.TaskID = result.TaskID
@@ -250,8 +275,8 @@ func (b *MeshBook) CloseSession(sessionID string, now time.Time) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	updatedAt := formatMeshTime(now)
-	for i := range b.operations {
-		operation := &b.operations[i]
+	for i := 0; i < b.count; i++ {
+		operation := &b.operations[b.operationIndex(i)]
 		isClosableKind := operation.Kind == MeshOperationKindStream || operation.Kind == MeshOperationKindBridge
 		isTerminal := operation.State == MeshOperationStateClosed || operation.State == MeshOperationStateFailed
 		if !isClosableKind || operation.SessionID != sessionID || isTerminal {
@@ -267,8 +292,9 @@ func (b *MeshBook) CloseSession(sessionID string, now time.Time) {
 func (b *MeshBook) List(filter MeshOperationListRequest) []MeshOperation {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	out := make([]MeshOperation, 0, len(b.operations))
-	for _, operation := range b.operations {
+	out := make([]MeshOperation, 0, b.count)
+	for i := 0; i < b.count; i++ {
+		operation := b.operations[b.operationIndex(i)]
 		if !meshOperationMatches(operation, filter) {
 			continue
 		}
@@ -281,6 +307,7 @@ func (b *MeshBook) List(filter MeshOperationListRequest) []MeshOperation {
 func (b *MeshBook) start(operation MeshOperation, now time.Time) MeshOperation {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.initializeLocked()
 	b.next++
 	operation.ID = fmt.Sprintf("mesh-op-%d", b.next)
 	if operation.State == "" {
@@ -289,23 +316,46 @@ func (b *MeshBook) start(operation MeshOperation, now time.Time) MeshOperation {
 	timestamp := formatMeshTime(now)
 	operation.StartedAt = timestamp
 	operation.UpdatedAt = timestamp
-	b.operations = append(b.operations, operation)
 	if b.byID == nil {
 		b.byID = map[string]int{}
 	}
-	b.byID[operation.ID] = len(b.operations) - 1
+	index := b.operationIndex(b.count)
+	if b.count == b.capacity {
+		index = b.head
+		delete(b.byID, b.operations[index].ID)
+		b.head = (b.head + 1) % b.capacity
+	} else {
+		b.count++
+	}
+	b.operations[index] = operation
+	b.byID[operation.ID] = index
 	return operation
+}
+
+func (b *MeshBook) initializeLocked() {
+	if b.capacity > 0 && len(b.operations) == b.capacity {
+		return
+	}
+	b.capacity = defaultMeshBookCapacity
+	b.head = 0
+	b.count = 0
+	b.operations = make([]MeshOperation, b.capacity)
+	b.byID = map[string]int{}
 }
 
 func (b *MeshBook) update(id string, now time.Time, apply func(*MeshOperation)) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	index, ok := b.byID[id]
-	if !ok || index < 0 || index >= len(b.operations) {
+	if !ok || index < 0 || index >= len(b.operations) || b.operations[index].ID != id {
 		return
 	}
 	apply(&b.operations[index])
 	b.operations[index].UpdatedAt = formatMeshTime(now)
+}
+
+func (b *MeshBook) operationIndex(offset int) int {
+	return (b.head + offset) % b.capacity
 }
 
 func meshOperationMatches(operation MeshOperation, filter MeshOperationListRequest) bool {
@@ -333,6 +383,9 @@ func meshOperationMatches(operation MeshOperation, filter MeshOperationListReque
 		return false
 	}
 	if filter.State != "" && filter.State != operation.State {
+		return false
+	}
+	if filter.ProviderStatus != "" && filter.ProviderStatus != operation.ProviderStatus {
 		return false
 	}
 	return true

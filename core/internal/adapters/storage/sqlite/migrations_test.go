@@ -19,7 +19,7 @@ func TestApplyMigrationsCreatesSchemaAndRecordsChecksums(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, table := range []string{"schema_migrations", "operator_sessions", "throw_plans", "throw_confirmations", "throw_records", "artifacts", "events", "installed_payloads", "installed_payload_events"} {
+	for _, table := range []string{"schema_migrations", "operator_sessions", "throw_plans", "throw_confirmations", "throw_records", "artifacts", "events", "installed_payloads", "installed_payload_events", "pki_authorities", "pki_generation_counters", "pki_certificate_generations", "pki_key_envelopes", "pki_audit_events", "pki_trust_sets", "pki_trust_set_generations", "pki_trust_set_members", "pki_assignments", "pki_mutations", "pki_revocations", "pki_crl_counters", "pki_crl_publication_intents", "pki_crl_generations"} {
 		if !tableExists(t, db, table) {
 			t.Fatalf("table %s was not created", table)
 		}

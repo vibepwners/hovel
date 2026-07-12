@@ -20,7 +20,7 @@
       <a href="../modules/index.html">Modules</a>
       <a href="../api/sdk/index.html">API Docs</a>
       <a href="../reports/tests/latest/index.html">Reports</a>
-      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+      <a href="https://github.com/vibepwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
@@ -220,10 +220,10 @@ interpreters:
         <p>Modules install from disk, absolute paths, HTTPS URLs, cached packages, configured package roots, index-backed package references, configured indexes, or bulk manifests.</p>
 <pre data-lang="shell"><code>hovel module install ./ssh-memory-0.1.0.tgz
 hovel module install /opt/hovel/modules/ssh-memory-0.1.0.tgz
-hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
+hovel module install https://github.com/vibepwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
 hovel module install ssh-memory
 hovel module install squatter@{{HOVEL_VERSION}}
-hovel module bulk-install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/module-install-set.yaml
+hovel module bulk-install https://github.com/vibepwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/module-install-set.yaml
 hovel module bulk-install ./modules.yaml
 hovel module install --link /home/me/dev/my-module
 hovel module available
@@ -240,13 +240,13 @@ kind: ModuleIndex
 modules:
   - name: squatter
     version: {{HOVEL_VERSION}}
-    url: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
+    url: https://github.com/vibepwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
     sha256: ...
 </code></pre>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleInstallSet
 modules:
-  - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
+  - source: https://github.com/vibepwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
     sha256: ...
   - source: ./ms17-010-survey-1.0.0.tgz
   - source: /opt/hovel/modules/ms17-010-exploit-1.0.0.tgz</code></pre>
@@ -342,7 +342,7 @@ amberterm
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book · <a href="../index.html">home</a> · <a href="https://github.com/vibepwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

@@ -20,7 +20,7 @@
       <a href="../modules/index.html">Modules</a>
       <a href="../api/sdk/index.html">API Docs</a>
       <a href="../reports/tests/latest/index.html">Reports</a>
-      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+      <a href="https://github.com/vibepwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
@@ -78,7 +78,7 @@
           <li>Method names and JSON field names are stable within v1. Some older daemon structs intentionally expose PascalCase JSON keys such as <code>Operation</code> and <code>SessionID</code>; newer entity and payload shapes use lower-camel keys such as <code>operation</code> and <code>moduleId</code>.</li>
           <li>Additive response fields are allowed. Clients must ignore fields they do not understand.</li>
           <li>Required field removals, type changes, enum meaning changes, and path moves are breaking changes.</li>
-          <li>Plain-text error wording is diagnostic, not a stable machine-readable error schema. Stable clients should branch on method, status class, and successful response fields instead of parsing error text.</li>
+          <li>Typed application failures use the versioned <code>RPCError</code> JSON envelope. Its <code>code</code> and optional <code>rolloverReason</code> are stable within v1; <code>message</code> remains diagnostic. Invalid transport requests and unclassified internal failures remain plain text and must not be parsed.</li>
         </ol>
 
         <h2>Transport</h2>
@@ -99,13 +99,115 @@ http://127.0.0.1:9090
 Content-Type: application/json
 
 {"Operation":"redteam-lab","Chain":"mock-exploit"}</code></pre>
-        <p>Responses with status <code>200</code> are JSON. Invalid JSON returns <code>400</code> with text, non-POST requests return <code>405</code> with text, and handler failures return <code>500</code> with text. The Go client prefixes non-success errors with the method name.</p>
+        <p>Responses with status <code>200</code> are JSON. Invalid JSON returns <code>400</code> with text and non-POST requests return <code>405</code> with text. Typed not-found failures return <code>404</code>; private-key export denial returns <code>403</code>; a locked authority signer returns <code>423</code>; revision, idempotency, in-progress, duplicate-acknowledgement, and rollover-precondition failures return <code>409</code>. Those typed responses use <code>application/json</code> with stable <code>version</code>, <code>code</code>, and <code>message</code> fields, plus a required <code>rolloverReason</code> and optional exact <code>rolloverDetail</code> for rollover preconditions. Unclassified handler failures return <code>500</code> with diagnostic text. The Go client reconstructs every published PKI sentinel and rollover-precondition error so callers can use <code>errors.Is</code> and <code>errors.As</code> rather than parsing messages.</p>
         <p>The contract is unary. Logs and session output are polled through <code>PollLogs</code>, <code>ActiveLogs</code>, <code>ReadSession</code>, and <code>TailSession</code> rather than streamed over a long-lived HTTP response.</p>
 
         <h2>Daemon-Owned State</h2>
         <p><code>hoveld</code> owns operation, chain, target, config, log, session, launch-key, payload, Mesh bookkeeping, and live entity state for a workspace. Front ends may keep local active selections for ergonomics, but authoritative mutation goes through daemon methods. The default operation name is <code>default</code> when callers omit an operation where the server accepts that fallback.</p>
         <p>Mesh listener lifecycle, task, stream, and bridge calls are recorded in daemon memory with the relevant listener, route, node, destination, session, state, and timestamps. Listener lifecycle records carry the start or stop action and provider-reported state. Bridge records additionally carry the daemon-owned local address; raw task and stream requests cannot supply that audit field. Front ends can inspect the audit surface with <code>ListMeshOperations</code> instead of guessing which listening post, local bridge, or session belongs to a routed Mesh operation.</p>
         <p>Listening-post configuration is write-only. <code>StartMeshListener</code> accepts provider-specific <code>config</code>, but Hovel does not copy it into listener responses or Mesh operation records. Providers must also avoid including configuration or credentials in their own errors and logs. Callers select the stable <code>listenerId</code>, which makes lifecycle retries idempotent. Listener IDs are scoped to a provider Mesh, so external clients use <code>moduleId</code> plus <code>listenerId</code> as the durable daemon-wide correlation key.</p>
+        <p>Active Mesh mutations can carry an optional <code>credentials</code> array of non-secret assignment, slot, projection, and form selectors. When present, <code>credentialContext</code> is also required and must set <code>approveCredentialUse</code> to <code>true</code>. The daemon derives the permitted provider, listener, and node consumers; validates the active assignment and current provider descriptor; and delivers material only to the same process that performs the Mesh call. Keep the selector <code>requestId</code>, credential-context <code>operationId</code>, and operation inputs stable for retries. The current external selector path supports direct runtime certificate DER, public-key SPKI, and private-key PKCS #8 projections; it never returns resolved bytes. See <a href="mesh-development.html#using-mesh-credentials">the worked provider and front-end example</a>.</p>
+        <p>Workspace PKI follows the same rule. The daemon owns custody, certificate inventory, signing leases, and audit identity; front ends call the typed PKI methods instead of opening the SQLite database or master-key files. Mutating requests carry an explicit <code>context</code> with actor, operation, and correlation identifiers. Signing unlock and private-key export require separate approval booleans, so possession of the local API alone does not imply approval for a secret-bearing operation.</p>
+        <p>Assignments are stable consumer slots for Mesh providers, listeners, listening posts, nodes, implants, stagers, payloads, C2 services, ordinary services, and external integrations. A client binds a pending assignment, stages an immutable certificate generation, performs any required delivery outside the current lifecycle API, and then activates it. The previous active generation remains authoritative until activation. Every stage, activate, and unbind request carries <code>expectedRevision</code>; a stale revision fails instead of silently replacing another operator's rollout.</p>
+        <p>Trust sets use the same staged model. A logical trust-set id points to immutable generations containing ordered anchors, intermediates, and optional signed CRL generations. Old and new roots can overlap during CA rollover. CRLs must be fresh when a trust generation is staged or resolved, and each CRL issuer must be present in that trust generation. Assignments pin the exact trust generation staged with their certificate, so activating a newer logical trust generation changes the default for later assignment stages without silently changing existing consumers. <code>InspectPKIAssignment</code> resolves the pinned credential and trust pointers for a web, Elixir, CLI, or other front end without returning private-key material.</p>
+        <p>Every synchronous assignment and trust mutation accepts <code>idempotencyKey</code>. Explicit keys are scoped to the authenticated actor and operation kind, so two principals cannot claim each other's retries. When a key is omitted, the application derives one from the actor, operation, correlation, and canonical request digest; callers must preserve the correlation identifier when retrying the same API call. The daemon stores the public result in the same transaction as the state change and audit event. Repeating the same scoped key and request returns that recorded result; reusing the key for a different request fails.</p>
+        <p>Certificate lifecycle uses the same durable issuance journal. <code>RenewPKICertificate</code> creates the next immutable generation while reusing and independently revalidating the source key; it does not duplicate the encrypted key envelope. <code>RotatePKICertificate</code> creates the next generation with a distinct key and may select another installed backend. Both preserve the certificate lineage and current active assignments. Operators stage the returned generation on each intended assignment and activate it only after delivery succeeds, so a failed renewal or rotation cannot silently replace a served credential.</p>
+        <p><code>RevokePKICertificate</code> is a synchronous, idempotent safety transition for a non-root certificate generation. In one transaction the daemon records an immutable RFC 5280 reason, marks the generation revoked, degrades assignments actively serving it, clears it from staged-only assignments, writes the audit event, and stores the exact retry result. A self-signed root is removed through a later distrust or trust-rollover workflow rather than revoked by its own key. Use <code>InspectPKIRevocation</code> for a known revocation id, <code>InspectPKIGenerationRevocation</code> when starting from a generation id, and <code>ListPKIRevocations</code> to build an authority-scoped operator view.</p>
+<pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/RevokePKICertificate
+Content-Type: application/json
+
+{
+  "context": {
+    "actorId": "operator-7",
+    "operationId": "credential-response",
+    "correlationId": "incident-2026-0712"
+  },
+  "request": {
+    "idempotencyKey": "incident-2026-0712:revoke-listener",
+    "generationId": "certgen-listener-42",
+    "reason": "key-compromise"
+  }
+}</code></pre>
+        <p>Omit <code>effectiveAt</code> to use daemon time. If supplied, it must be an RFC 3339 timestamp no later than the recording time and no earlier than the certificate validity window. The success body contains the typed <code>revocation</code>, the resulting revoked <code>generation</code>, and every changed assignment in stable id order; callers do not need to reconstruct assignment impact from logs.</p>
+
+        <h3>Publishing and consuming CRLs</h3>
+        <p><code>PublishPKICRL</code> creates a durable publication plan before it invokes a signing provider. The plan commits the authority, exact issuer generation, monotonically reserved CRL number, effective revocation IDs, validity window, concrete signature algorithm, and backend capability identity. Its typed phase advances from <code>planned</code> to <code>signing</code> and then <code>signed</code>. The daemon renews the ownership lease during provider and validation calls. Immediately after provider success it atomically records a public signed checkpoint containing the DER, SHA-256 fingerprint, concrete algorithm, optional provider operation reference, and confirmed key-use audit. The independent validator never receives signing key material. It parses and verifies a separate DER copy, checks the strict extension set, and atomically stores the immutable generation with the publication audit. A retry with the same idempotency key returns the stored generation; a concurrent retry receives an in-progress error instead of invoking the signer twice.</p>
+<pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/PublishPKICRL
+Content-Type: application/json
+
+{
+  "context": {
+    "actorId": "operator-7",
+    "operationId": "credential-response",
+    "correlationId": "incident-2026-0712"
+  },
+  "request": {
+    "idempotencyKey": "incident-2026-0712:publish-crl",
+    "authorityId": "authority-edge-root",
+    "validitySeconds": 43200,
+    "signatureAlgorithm": "ecdsa-sha256"
+  }
+}</code></pre>
+        <p>Omit <code>signatureAlgorithm</code> to select a deterministic concrete algorithm from the issuer key. Omit <code>validitySeconds</code> for 24 hours; non-zero values must be between five minutes and seven days. The success body contains both <code>publication</code> bookkeeping and <code>generation</code>, including base64 DER, SHA-256 fingerprint, issuer generation, signature algorithm, CRL number, and exact revocation IDs.</p>
+        <p>Use <code>InspectPKICRL</code> for one immutable generation and <code>ListPKICRLs</code> for an authority-ordered generation inventory. Use <code>InspectPKICRLPublication</code> or <code>ListPKICRLPublications</code> for daemon bookkeeping, including pending, completed, and failed plans with their typed phase, owner revision, lease, and signed checkpoint when present. External web, Elixir, or other clients should retain stable publication and generation IDs rather than treating a mutable file path as identity. Trust-set generations reference CRL generation IDs and re-check freshness whenever they are resolved.</p>
+        <p>A daemon crash can leave a publication plan pending. Hovel deliberately does not repeat an ambiguous signing call. An authorized operator uses <code>ReconcilePKICRL</code>, or bounded <code>ReconcilePKICRLs</code> for a batch, after the ownership lease and requested stale age have elapsed. Reconciliation atomically claims the stale plan. A <code>signed</code> plan is independently revalidated from its durable checkpoint and completed without invoking the signer; a <code>planned</code> or ambiguous <code>signing</code> plan is failed with an audit. The request context must set <code>approveCrlPublicationReconciliation</code>; normal API access does not grant this authority.</p>
+<pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/ReconcilePKICRL
+Content-Type: application/json
+
+{
+  "context": {
+    "actorId": "operator-7",
+    "operationId": "pki-recovery",
+    "correlationId": "reconcile-2026-0712",
+    "approveCrlPublicationReconciliation": true
+  },
+  "request": {
+    "publicationId": "crl-publication-018f6e2f",
+    "staleAfterSeconds": 300
+  }
+}</code></pre>
+
+        <h3>Rolling an authority without a trust gap</h3>
+        <p>An authority rollover is a durable operation rather than a sequence a front end reconstructs locally. The operation pins <code>previousAuthorityGenerationId</code> and <code>replacementAuthorityGenerationId</code>, so changing either authority's active key invalidates the operation instead of silently changing its meaning. Root authorities must place both generations in the overlap generation's anchor list. Subordinate authorities must place both generations in the intermediate list and retain the ancestor chain needed to reach an anchor. Final trust retains only the replacement generation in the role-appropriate collection.</p>
+        <p>Choose consumer tracking when starting the operation:</p>
+        <ul>
+          <li><code>all-tracked</code> atomically snapshots every eligible active or degraded peer-trust assignment bound to the trust set.</li>
+          <li><code>explicit</code> requires a non-empty, duplicate-free <code>requiredAssignmentIds</code> list of eligible peer-trust assignments.</li>
+          <li><code>none</code> is for a trust set with no Hovel-tracked consumers and does not accept assignment acknowledgements.</li>
+        </ul>
+        <p>A live rollover durably reserves its trust set and required assignments. Ordinary trust activation, assignment binding or removal, and unrelated assignment changes fail with the typed <code>resource-reserved</code> reason. The narrow exceptions are deliberate: while the operation is awaiting leaf rotation, a required assignment may stage and activate only a leaf issued by the recorded replacement authority generation with overlap trust, and the trust set may stage only material that already satisfies the final rollover layout. The dedicated rollover methods remain the only way to activate overlap or final trust.</p>
+        <p>The lifecycle is deliberately explicit:</p>
+        <ol>
+          <li>Stage an overlap trust generation, then call <code>StartPKIAuthorityRollover</code>.</li>
+          <li>Each required consumer calls <code>AcknowledgePKIAuthorityRollover</code> for the overlap generation. Use <code>InspectPKIOperation</code> to read durable acknowledgements and <code>missingAssignmentIds</code>.</li>
+          <li>Call <code>ActivatePKIAuthorityRollover</code> with both <code>expectedRevision</code> and <code>expectedTrustSetRevision</code>. The previous authority begins retiring and overlap trust becomes active atomically.</li>
+          <li>Issue replacement-authority leaves, stage and activate them on every required assignment, and stage final trust.</li>
+          <li>Call <code>BeginPKIAuthorityRolloverFinalTrust</code> with the staged final generation and both revision fences. Consumers then acknowledge that final trust generation.</li>
+          <li>Call <code>CompletePKIAuthorityRollover</code> with fresh revisions. The final trust generation activates and the previous authority retires atomically.</li>
+        </ol>
+        <p><code>ListPKIOperations</code> is the bookkeeping surface for CLI, web, Elixir, and other front ends. Every mutation carries the normal authenticated PKI request context and accepts an <code>idempotencyKey</code>. A retry with the same scoped key and request returns the recorded inspection; a stale operation or trust-set revision is rejected instead of applying to a newer state.</p>
+        <p>Credential delivery has two separate, secret-free bookkeeping views. <code>ListPKICredentialStamps</code> and <code>InspectPKICredentialStamp</code> expose immutable stamp plans and verified terminal evidence for build-time or deployment-time mutation. <code>ListPKICredentialExecutions</code> and <code>InspectPKICredentialExecution</code> expose runtime delivery, protected-file delivery, and provider-encoding invocations. Execution records contain exact provider, assignment, slot, scope, material digest, size, encoding, schema, and output-bound metadata, but never credential bytes, protected paths, scoped secret references, encoded output bytes, or raw provider-owned references. Provider references are represented only by SHA-256 digests.</p>
+        <p>The daemon writes a pending credential execution before invoking the provider and then records a succeeded or failed terminal transition. Provider errors are returned to the caller but are not copied into durable state; the persisted failure reason is a bounded, stable category so module stderr or secret-bearing diagnostics cannot become ledger data. Terminal bookkeeping survives caller cancellation under a short independent timeout, preventing timed-out provider calls from remaining pending indefinitely.</p>
+        <p><code>CancelPKIAuthorityRollover</code> is the audited recovery path before overlap activation. It is revision-fenced and releases the operation's reservations while the previous authority and active trust remain unchanged. Once overlap activation starts retirement and changes active trust, cancellation is rejected; finish the fenced workflow rather than leaving a partially applied rollover.</p>
+<pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/StartPKIAuthorityRollover
+Content-Type: application/json
+
+{
+  "context": {
+    "actorId": "operator-7",
+    "operationId": "edge-ca-rollover",
+    "correlationId": "edge-ca-rollover-2026-07"
+  },
+  "request": {
+    "idempotencyKey": "edge-ca-rollover:start",
+    "previousAuthorityId": "authority-edge-root-v1",
+    "replacementAuthorityId": "authority-edge-root-v2",
+    "trustSetId": "trust-edge",
+    "overlapTrustGenerationId": "trustgen-edge-overlap",
+    "consumerTracking": "all-tracked"
+  }
+}</code></pre>
+        <p><code>ExportPKIBundle</code> is the only current daemon response that can contain private key bytes. The daemon refuses private export on non-confidential transports, requires <code>approvePrivateKeyExport</code>, audits the attempt, and marks both successful and rejected responses <code>Cache-Control: no-store</code>. Inventory and inspect methods never return private-key material.</p>
         <p>CLI, one-shot execution, MCP, and future front ends must not create parallel persistence or confirmation paths. A throw still needs a persisted plan and a recorded confirmation before execution, and dangerous modules still require the explicit dangerous-module allowance.</p>
 
         <h2>Front-End Use</h2>
@@ -178,6 +280,55 @@ Content-Type: application/json
             <tr><td>Mesh</td><td><code>OpenMeshBridge</code></td><td>Bind a daemon-owned loopback TCP or UDP socket and bridge one local association to a routed Mesh session flow.</td></tr>
             <tr><td>Mesh</td><td><code>CloseMeshBridge</code></td><td>Close a daemon-owned Mesh bridge by supplying exactly one operation or session id.</td></tr>
             <tr><td>Mesh</td><td><code>ListMeshOperations</code></td><td>List daemon bookkeeping records for listening-post lifecycle calls, tasks, streams, and bridges, including listener action/state, route, destination, local endpoint, session, and state.</td></tr>
+            <tr><td>PKI</td><td><code>PKIStatus</code></td><td>Report whether workspace custody is initialized and available without returning secret-provider paths or key bytes.</td></tr>
+            <tr><td>PKI</td><td><code>InitializePKI</code></td><td>Explicitly initialize workspace master-key custody after a caller confirmation.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKIBackends</code></td><td>List versioned cryptographic backend descriptors and capability commitments available to issuance plans.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKIProfiles</code></td><td>List built-in authority, TLS, mutual-TLS, legacy RSA, and post-quantum-hybrid profiles.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKIAuthorities</code></td><td>List logical root and subordinate authorities without private material.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKIAuthority</code></td><td>Return one authority and its active immutable certificate generation.</td></tr>
+            <tr><td>PKI</td><td><code>CreatePKIAuthority</code></td><td>Create an idempotent root or subordinate authority from a built-in profile or explicit typed template.</td></tr>
+            <tr><td>PKI</td><td><code>UnlockPKIAuthority</code></td><td>Grant an explicitly approved, actor-and-operation-scoped signing lease for at most fifteen minutes.</td></tr>
+            <tr><td>PKI</td><td><code>LockPKIAuthority</code></td><td>Revoke the current caller's scoped authority signing lease.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKICertificates</code></td><td>List immutable certificate generations and their backend, compatibility, and issuer provenance.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKICertificate</code></td><td>Inspect one certificate generation without exposing its private key.</td></tr>
+            <tr><td>PKI</td><td><code>IssuePKICertificate</code></td><td>Issue an idempotent leaf certificate through an unlocked authority using independently selected subject-key and signing backends.</td></tr>
+            <tr><td>PKI</td><td><code>RenewPKICertificate</code></td><td>Create the next immutable leaf generation while reusing and revalidating the existing key.</td></tr>
+            <tr><td>PKI</td><td><code>RotatePKICertificate</code></td><td>Create the next immutable leaf generation with a distinct key and optional backend selection.</td></tr>
+            <tr><td>PKI</td><td><code>RevokePKICertificate</code></td><td>Atomically revoke a non-root generation, update affected assignments, audit the transition, and preserve the retry result.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKIRevocation</code></td><td>Inspect one immutable revocation by its stable revocation id.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKIGenerationRevocation</code></td><td>Resolve the immutable revocation associated with a certificate generation.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKIRevocations</code></td><td>List one authority's revocations in stable recording order for operator or external front-end views.</td></tr>
+            <tr><td>PKI</td><td><code>PublishPKICRL</code></td><td>Publish an idempotent, independently validated full CRL from a durable issuer, number, algorithm, and revocation snapshot.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKICRLPublication</code></td><td>Inspect one durable pending, completed, or failed CRL publication plan for daemon bookkeeping.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKICRLPublications</code></td><td>List one authority's durable CRL publication plans in stable number and ID order.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKICRL</code></td><td>Inspect one immutable signed CRL generation, including provenance, fingerprint, DER, and revocation membership.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKICRLs</code></td><td>List one authority's CRL generations in stable CRL-number and ID order.</td></tr>
+            <tr><td>PKI</td><td><code>ReconcilePKICRL</code></td><td>Explicitly claim one stale publication, completing a durable signed checkpoint or failing an ambiguous unsigned phase without duplicate signing.</td></tr>
+            <tr><td>PKI</td><td><code>ReconcilePKICRLs</code></td><td>Explicitly reconcile a bounded batch of stale publication plans with the same phase-aware recovery contract.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKIOperations</code></td><td>List durable PKI operation state for operator and external front-end bookkeeping.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKIOperation</code></td><td>Inspect one typed operation with durable acknowledgements and the assignments still missing the current acknowledgement.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKICredentialStamps</code></td><td>List secret-free build-time and deployment-time credential stamp plans and lifecycle evidence.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKICredentialStamp</code></td><td>Inspect one immutable credential stamp plan and its pending, succeeded, failed, or superseded state.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKICredentialExecutions</code></td><td>List secret-free runtime, protected-file, and provider-encoding invocation records for external front-end bookkeeping.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKICredentialExecution</code></td><td>Inspect one provider invocation with exact non-secret inputs, scope, lifecycle state, and hashed terminal evidence.</td></tr>
+            <tr><td>PKI</td><td><code>StartPKIAuthorityRollover</code></td><td>Start an idempotent generation-pinned authority rollover against a staged overlap trust generation.</td></tr>
+            <tr><td>PKI</td><td><code>AcknowledgePKIAuthorityRollover</code></td><td>Record one assignment's durable acknowledgement of the phase-specific trust generation.</td></tr>
+            <tr><td>PKI</td><td><code>ActivatePKIAuthorityRollover</code></td><td>Revision-fence and atomically activate overlap trust while moving the previous authority into retirement.</td></tr>
+            <tr><td>PKI</td><td><code>BeginPKIAuthorityRolloverFinalTrust</code></td><td>Admit a staged final trust generation after every required assignment activates a replacement-issued leaf.</td></tr>
+            <tr><td>PKI</td><td><code>CompletePKIAuthorityRollover</code></td><td>Revision-fence and atomically activate final trust while retiring the previous authority.</td></tr>
+            <tr><td>PKI</td><td><code>CancelPKIAuthorityRollover</code></td><td>Revision-fence and audit pre-activation cancellation, releasing reservations without changing active trust or authority state.</td></tr>
+            <tr><td>PKI</td><td><code>ExportPKIBundle</code></td><td>Resolve a versioned DER bundle for a purpose; private material requires approval and a confidential daemon transport.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKIAssignments</code></td><td>List logical consumer credential slots, their state, revision, and active or staged generation ids.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKIAssignment</code></td><td>Resolve one assignment with its active/staged certificate and trust-set generations, without private material.</td></tr>
+            <tr><td>PKI</td><td><code>BindPKIAssignment</code></td><td>Bind a typed consumer and purpose to a profile and optional active trust set.</td></tr>
+            <tr><td>PKI</td><td><code>StagePKIAssignment</code></td><td>CAS-stage a compatible active certificate generation without changing the generation currently served.</td></tr>
+            <tr><td>PKI</td><td><code>ActivatePKIAssignment</code></td><td>CAS-promote the staged certificate and its pinned trust generation; consumer acknowledgement is a planned contract, not yet enforced.</td></tr>
+            <tr><td>PKI</td><td><code>UnbindPKIAssignment</code></td><td>Retire an assignment, clear staged work, and retain the last active generation for audit history.</td></tr>
+            <tr><td>PKI</td><td><code>ListPKITrustSets</code></td><td>List logical trust collections and their active or staged immutable generation ids.</td></tr>
+            <tr><td>PKI</td><td><code>InspectPKITrustSet</code></td><td>Resolve one trust set with its active and staged anchor, intermediate, and fresh CRL generation lists.</td></tr>
+            <tr><td>PKI</td><td><code>CreatePKITrustSet</code></td><td>Create a pending logical trust set under an authenticated audit context.</td></tr>
+            <tr><td>PKI</td><td><code>StagePKITrustSet</code></td><td>Create and CAS-stage a bounded immutable trust generation, including rollover overlap anchors.</td></tr>
+            <tr><td>PKI</td><td><code>ActivatePKITrustSet</code></td><td>Revalidate and CAS-promote staged trust material as the default for later assignment stages without changing pinned active assignments.</td></tr>
             <tr><td>Payload providers</td><td><code>GeneratePayload</code></td><td>Ask a payload-provider module to generate payload artifacts.</td></tr>
             <tr><td>Payload providers</td><td><code>ListPayloadCommands</code></td><td>List provider-owned commands for a payload provider and installed payload context.</td></tr>
             <tr><td>Payload providers</td><td><code>RunPayloadCommand</code></td><td>Run one provider-owned payload command through daemon-owned provider services.</td></tr>
@@ -185,7 +336,7 @@ Content-Type: application/json
         </table>
 
         <h2>Compatibility Checks</h2>
-        <p>The docs test suite verifies that every method registered by <code>registerUnary</code> in <code>daemonrpc.go</code> has an OpenAPI path, a JSON request body, a JSON success response, and a mention in this page. That test is a drift guard; it does not replace behavior tests for authorization, launch-key semantics, persistence, session I/O, or module execution.</p>
+        <p>The docs test suite verifies that every method registered by <code>registerUnary</code> or <code>registerNoStoreUnary</code> in <code>daemonrpc.go</code> has an OpenAPI path, a JSON request body, a JSON success response, and a mention in this page. That test is a drift guard; it does not replace behavior tests for authorization, launch-key semantics, persistence, session I/O, PKI custody, or module execution.</p>
         <p>When adding or changing daemon RPC, update the Go server and client together, update <a href="reference/daemon-rpc.openapi.json">the OpenAPI document</a>, update this page, and add behavior tests at the adapter or command layer that prove the intended front-end workflow still crosses the daemon boundary.</p>
       </article>
 
@@ -197,7 +348,7 @@ Content-Type: application/json
     </main>
   </div>
   <footer class="sitefoot">
-    <p>Hovel book &middot; <a href="../index.html">home</a> &middot; <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>Hovel book &middot; <a href="../index.html">home</a> &middot; <a href="https://github.com/vibepwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

@@ -14,22 +14,24 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/commandview"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/terminallog"
-	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
-	"github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc"
 	"github.com/akamensky/argparse"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/term"
+	"github.com/vibepwners/hovel/internal/adapters/commandview"
+	"github.com/vibepwners/hovel/internal/adapters/daemonrpc"
+	"github.com/vibepwners/hovel/internal/adapters/storage/filesystem"
+	"github.com/vibepwners/hovel/internal/adapters/terminallog"
+	"github.com/vibepwners/hovel/internal/app/chainruntime"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
+	apppki "github.com/vibepwners/hovel/internal/app/pki"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
+	"github.com/vibepwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/moduleruntime/pythonrpc"
 )
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -1130,6 +1132,156 @@ func firstNonEmpty(values ...string) string {
 type daemonRunClient struct {
 	client *daemonrpc.Client
 }
+
+func pkiRPCContext(scope commands.PKIRequestScope) daemonrpc.PKIRequestContext {
+	return daemonrpc.PKIRequestContext{
+		ActorID: scope.ActorID, OperationID: scope.OperationID, CorrelationID: scope.CorrelationID,
+		ApproveSigningLease: scope.ApproveSigningLease, ApprovePrivateKeyExport: scope.ApprovePrivateKeyExport,
+	}
+}
+
+func (c daemonRunClient) PKIStatus(ctx context.Context) (apppki.WorkspaceStatus, error) {
+	return c.client.PKIStatus(ctx)
+}
+
+func (c daemonRunClient) InitializePKI(ctx context.Context, scope commands.PKIRequestScope, confirmed bool) (apppki.WorkspaceStatus, error) {
+	return c.client.InitializePKI(ctx, daemonrpc.PKIInitializeRequest{Context: pkiRPCContext(scope), Confirmed: confirmed})
+}
+
+func (c daemonRunClient) ListPKIBackends(ctx context.Context) ([]domainpki.BackendDescriptor, error) {
+	result, err := c.client.ListPKIBackends(ctx)
+	return result.Backends, err
+}
+
+func (c daemonRunClient) ListPKIProfiles(ctx context.Context) ([]domainpki.Profile, error) {
+	result, err := c.client.ListPKIProfiles(ctx)
+	return result.Profiles, err
+}
+
+func (c daemonRunClient) ListPKIAuthorities(ctx context.Context) ([]domainpki.Authority, error) {
+	result, err := c.client.ListPKIAuthorities(ctx)
+	return result.Authorities, err
+}
+
+func (c daemonRunClient) InspectPKIAuthority(ctx context.Context, id domainpki.AuthorityID) (apppki.AuthorityInspection, error) {
+	result, err := c.client.InspectPKIAuthority(ctx, daemonrpc.PKIAuthorityRequest{ID: id})
+	return apppki.AuthorityInspection{Authority: result.Authority, ActiveGeneration: result.ActiveGeneration}, err
+}
+
+func (c daemonRunClient) CreatePKIAuthority(ctx context.Context, scope commands.PKIRequestScope, request apppki.CreateAuthorityRequest) (apppki.CreateAuthorityResult, error) {
+	return c.client.CreatePKIAuthority(ctx, daemonrpc.PKIAuthorityCreateRequest{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) UnlockPKIAuthority(ctx context.Context, scope commands.PKIRequestScope, id domainpki.AuthorityID, duration time.Duration) (apppki.SigningLease, error) {
+	value := ""
+	if duration != 0 {
+		value = duration.String()
+	}
+	return c.client.UnlockPKIAuthority(ctx, daemonrpc.PKIAuthorityLeaseRequest{Context: pkiRPCContext(scope), ID: id, Duration: value})
+}
+
+func (c daemonRunClient) LockPKIAuthority(ctx context.Context, scope commands.PKIRequestScope, id domainpki.AuthorityID) error {
+	return c.client.LockPKIAuthority(ctx, daemonrpc.PKIAuthorityLockRequest{Context: pkiRPCContext(scope), ID: id})
+}
+
+func (c daemonRunClient) ListPKICertificates(ctx context.Context) ([]domainpki.CertificateGeneration, error) {
+	result, err := c.client.ListPKICertificates(ctx)
+	return result.Certificates, err
+}
+
+func (c daemonRunClient) InspectPKICertificate(ctx context.Context, id domainpki.GenerationID) (domainpki.CertificateGeneration, error) {
+	return c.client.InspectPKICertificate(ctx, daemonrpc.PKICertificateRequest{ID: id})
+}
+
+func (c daemonRunClient) IssuePKICertificate(ctx context.Context, scope commands.PKIRequestScope, request apppki.IssueCertificateRequest) (domainpki.CertificateGeneration, error) {
+	return c.client.IssuePKICertificate(ctx, daemonrpc.PKICertificateIssueRequest{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) RenewPKICertificate(ctx context.Context, scope commands.PKIRequestScope, request apppki.RenewCertificateRequest) (apppki.CertificateLifecycleResult, error) {
+	return c.client.RenewPKICertificate(ctx, daemonrpc.PKIMutationRequest[apppki.RenewCertificateRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) RotatePKICertificate(ctx context.Context, scope commands.PKIRequestScope, request apppki.RotateCertificateRequest) (apppki.CertificateLifecycleResult, error) {
+	return c.client.RotatePKICertificate(ctx, daemonrpc.PKIMutationRequest[apppki.RotateCertificateRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) RevokePKICertificate(ctx context.Context, scope commands.PKIRequestScope, request apppki.RevokeCertificateRequest) (apppki.CertificateRevocationResult, error) {
+	return c.client.RevokePKICertificate(ctx, daemonrpc.PKIMutationRequest[apppki.RevokeCertificateRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) InspectPKIRevocation(ctx context.Context, id domainpki.RevocationID) (domainpki.Revocation, error) {
+	return c.client.InspectPKIRevocation(ctx, daemonrpc.PKIRevocationRequest{ID: id})
+}
+
+func (c daemonRunClient) InspectPKIGenerationRevocation(ctx context.Context, id domainpki.GenerationID) (domainpki.Revocation, error) {
+	return c.client.InspectPKIGenerationRevocation(ctx, daemonrpc.PKICertificateRequest{ID: id})
+}
+
+func (c daemonRunClient) ListPKIRevocations(ctx context.Context, authorityID domainpki.AuthorityID) ([]domainpki.Revocation, error) {
+	result, err := c.client.ListPKIRevocations(ctx, daemonrpc.PKIRevocationListRequest{AuthorityID: authorityID})
+	return result.Revocations, err
+}
+
+func (c daemonRunClient) PublishPKICRL(ctx context.Context, scope commands.PKIRequestScope, request apppki.PublishCRLRequest) (apppki.CRLPublicationResult, error) {
+	return c.client.PublishPKICRL(ctx, daemonrpc.PKIMutationRequest[apppki.PublishCRLRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) InspectPKICRL(ctx context.Context, id domainpki.CRLGenerationID) (domainpki.CRLGeneration, error) {
+	return c.client.InspectPKICRL(ctx, daemonrpc.PKICRLRequest{ID: id})
+}
+
+func (c daemonRunClient) ListPKICRLs(ctx context.Context, authorityID domainpki.AuthorityID) ([]domainpki.CRLGeneration, error) {
+	result, err := c.client.ListPKICRLs(ctx, daemonrpc.PKICRLListRequest{AuthorityID: authorityID})
+	return result.CRLs, err
+}
+
+func (c daemonRunClient) ListPKIAssignments(ctx context.Context) ([]domainpki.Assignment, error) {
+	result, err := c.client.ListPKIAssignments(ctx)
+	return result.Assignments, err
+}
+
+func (c daemonRunClient) InspectPKIAssignment(ctx context.Context, id domainpki.AssignmentID) (apppki.AssignmentInspection, error) {
+	return c.client.InspectPKIAssignment(ctx, daemonrpc.PKIAssignmentRequest{ID: id})
+}
+
+func (c daemonRunClient) BindPKIAssignment(ctx context.Context, scope commands.PKIRequestScope, request apppki.BindAssignmentRequest) (domainpki.Assignment, error) {
+	return c.client.BindPKIAssignment(ctx, daemonrpc.PKIMutationRequest[apppki.BindAssignmentRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) StagePKIAssignment(ctx context.Context, scope commands.PKIRequestScope, request apppki.StageAssignmentRequest) (apppki.AssignmentInspection, error) {
+	return c.client.StagePKIAssignment(ctx, daemonrpc.PKIMutationRequest[apppki.StageAssignmentRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) ActivatePKIAssignment(ctx context.Context, scope commands.PKIRequestScope, request apppki.ActivateAssignmentRequest) (apppki.AssignmentInspection, error) {
+	return c.client.ActivatePKIAssignment(ctx, daemonrpc.PKIMutationRequest[apppki.ActivateAssignmentRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) UnbindPKIAssignment(ctx context.Context, scope commands.PKIRequestScope, request apppki.UnbindAssignmentRequest) (domainpki.Assignment, error) {
+	return c.client.UnbindPKIAssignment(ctx, daemonrpc.PKIMutationRequest[apppki.UnbindAssignmentRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) ListPKITrustSets(ctx context.Context) ([]domainpki.TrustSet, error) {
+	result, err := c.client.ListPKITrustSets(ctx)
+	return result.TrustSets, err
+}
+
+func (c daemonRunClient) InspectPKITrustSet(ctx context.Context, id domainpki.TrustSetID) (apppki.TrustSetInspection, error) {
+	return c.client.InspectPKITrustSet(ctx, daemonrpc.PKITrustSetRequest{ID: id})
+}
+
+func (c daemonRunClient) CreatePKITrustSet(ctx context.Context, scope commands.PKIRequestScope, request apppki.CreateTrustSetRequest) (domainpki.TrustSet, error) {
+	return c.client.CreatePKITrustSet(ctx, daemonrpc.PKIMutationRequest[apppki.CreateTrustSetRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) StagePKITrustSet(ctx context.Context, scope commands.PKIRequestScope, request apppki.StageTrustSetRequest) (apppki.TrustSetInspection, error) {
+	return c.client.StagePKITrustSet(ctx, daemonrpc.PKIMutationRequest[apppki.StageTrustSetRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+func (c daemonRunClient) ActivatePKITrustSet(ctx context.Context, scope commands.PKIRequestScope, request apppki.ActivateTrustSetRequest) (apppki.TrustSetInspection, error) {
+	return c.client.ActivatePKITrustSet(ctx, daemonrpc.PKIMutationRequest[apppki.ActivateTrustSetRequest]{Context: pkiRPCContext(scope), Request: request})
+}
+
+var _ commands.PKIControlClient = daemonRunClient{}
 
 func (c daemonRunClient) Close() error {
 	return c.client.Close()

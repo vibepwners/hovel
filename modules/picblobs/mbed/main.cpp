@@ -39,7 +39,10 @@ int main()
 
 	/* Initialize platform vtable. */
 	struct pic_platform plat;
-	mbed_platform_init(&plat, &eth);
+	if (!mbed_platform_init(&plat, &eth)) {
+		printf("Platform initialization failed\r\n");
+		return 1;
+	}
 
 	/* Select blob based on config. */
 	const char *role = MBED_CONF_APP_BLOB_ROLE;

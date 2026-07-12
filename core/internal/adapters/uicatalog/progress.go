@@ -5,8 +5,8 @@ import (
 	"io"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/progressview"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
+	"github.com/vibepwners/hovel/internal/adapters/progressview"
+	"github.com/vibepwners/hovel/internal/app/modulepackage"
 )
 
 func downloadProgressDemo() Demo {

@@ -3,12 +3,13 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "daemonruntime",
     srcs = ["runtime.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime",
+    importpath = "github.com/vibepwners/hovel/internal/infra/daemonruntime",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/app/hovelconfig",
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
+        "//internal/app/pki",
         "//internal/app/services",
         "//internal/domain/daemon",
         "//internal/domain/event",

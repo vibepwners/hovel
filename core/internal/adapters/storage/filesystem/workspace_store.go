@@ -6,18 +6,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+	sqlitestore "github.com/vibepwners/hovel/internal/adapters/storage/sqlite"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	"github.com/vibepwners/hovel/internal/domain/workspace"
 )
 
 const workspaceConfigFile = "workspace.json"
@@ -26,6 +27,21 @@ type WorkspaceStore struct{}
 
 func NewWorkspaceStore() WorkspaceStore {
 	return WorkspaceStore{}
+}
+
+func (WorkspaceStore) LoadWorkspace(ctx context.Context, workspacePath string) (workspace.Workspace, error) {
+	if err := ctx.Err(); err != nil {
+		return workspace.Workspace{}, err
+	}
+	resolved := workspace.ResolvePath(workspacePath)
+	ws, err := readWorkspace(filepath.Join(resolved, workspaceConfigFile))
+	if err != nil {
+		return workspace.Workspace{}, fmt.Errorf("load workspace metadata: %w", err)
+	}
+	// The workspace may be restored or moved. The stable identity comes from
+	// workspace.json, while the active path is the caller-resolved location.
+	ws.Path = resolved
+	return ws, nil
 }
 
 func (s WorkspaceStore) db(workspacePath string) sqlitestore.Store {

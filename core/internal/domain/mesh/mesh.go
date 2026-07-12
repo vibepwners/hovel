@@ -1,6 +1,9 @@
 package mesh
 
-import "github.com/Vibe-Pwners/hovel/internal/domain/run"
+import (
+	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
+	"github.com/vibepwners/hovel/internal/domain/run"
+)
 
 // TaskKind names common node-mesh operations. Providers may expose
 // additional task kinds, but these constants keep core task vocabulary stable.
@@ -213,15 +216,16 @@ type Beacon struct {
 // Descriptor reports a provider's mesh capabilities without requiring
 // target contact. Dynamic details belong in Topology or ListBeacons.
 type Descriptor struct {
-	Name          string         `json:"name,omitempty"`
-	Version       string         `json:"version,omitempty"`
-	Summary       string         `json:"summary,omitempty"`
-	Capabilities  []string       `json:"capabilities,omitempty"`
-	Topology      *Topology      `json:"topology,omitempty"`
-	Tasks         []TaskSpec     `json:"tasks,omitempty"`
-	ListenerTypes []ListenerSpec `json:"listenerTypes,omitempty"`
-	Triggers      []Trigger      `json:"triggers,omitempty"`
-	Attributes    map[string]any `json:"attributes,omitempty"`
+	Name               string                                  `json:"name,omitempty"`
+	Version            string                                  `json:"version,omitempty"`
+	Summary            string                                  `json:"summary,omitempty"`
+	Capabilities       []string                                `json:"capabilities,omitempty"`
+	Topology           *Topology                               `json:"topology,omitempty"`
+	Tasks              []TaskSpec                              `json:"tasks,omitempty"`
+	ListenerTypes      []ListenerSpec                          `json:"listenerTypes,omitempty"`
+	Triggers           []Trigger                               `json:"triggers,omitempty"`
+	CredentialDelivery *domainpki.CredentialDeliveryDescriptor `json:"credentialDelivery,omitempty"`
+	Attributes         map[string]any                          `json:"attributes,omitempty"`
 }
 
 // DescribeRequest asks a provider to describe its mesh surface.

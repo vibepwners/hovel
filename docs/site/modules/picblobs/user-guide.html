@@ -20,7 +20,7 @@
       <a href="../../modules/index.html" aria-current="page">Modules</a>
       <a href="../../api/sdk/index.html">API Docs</a>
       <a href="../../reports/tests/latest/index.html">Reports</a>
-      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
+      <a href="https://github.com/vibepwners/hovel">Source</a>
     </nav>
   </header>
   <div class="layout">
@@ -41,6 +41,7 @@
               <li><a href="../picblobs/building.html">Building</a></li>
               <li><a href="../picblobs/testing.html">Testing</a></li>
               <li><a href="../picblobs/reference.html">Reference</a></li>
+              <li><a href="../picblobs/user-guide.html#mbed-nacl-poc">Mbed OS NaCl PoC</a></li>
               <li><a href="../picblobs/guide/index.html">Full Guide</a></li>
               <li><a href="../picblobs/guide/introduction.html">Introduction</a></li>
               <li><a href="../picblobs/guide/how-it-works.html">How It Works</a></li>
@@ -107,6 +108,95 @@ task picblobs:stage</code></pre>
 payload.os = linux
 payload.arch = aarch64
 payload.format = elf</code></pre>
+
+        <h2 id="mbed-nacl-poc">Mbed OS 5.15.9 NaCl Proof of Concept</h2>
+        <p>
+          The Mbed application runs the real hosted Cortex-M4
+          <code>nacl_server</code> and <code>nacl_client</code> PIC blobs from RAM
+          on two NUCLEO-F429ZI boards. Mbed supplies Ethernet, TCP sockets,
+          retargeted serial output, hardware random bytes, and the memory-policy
+          transition needed to execute the copied blob. This is a focused
+          proof of concept, not a general Mbed deployment framework.
+        </p>
+
+        <h3 id="mbed-secure-channel">Secure Channel</h3>
+        <ol>
+          <li>The client connects to the configured server IPv4 address and port.</li>
+          <li>Each peer generates a fresh ephemeral X25519 keypair.</li>
+          <li>Each ephemeral public key is encrypted and authenticated with the shared 32-byte deployment authentication key.</li>
+          <li>The peers derive the same fresh 32-byte per-session key from X25519 and wipe their ephemeral secret keys.</li>
+          <li>The client sends its message with NaCl <code>crypto_secretbox</code>; the server authenticates and decrypts it before printing it.</li>
+          <li>The server sends the distinct ACK <code>hovel-nacl-server-ack-v1</code> with the same per-session key; the client authenticates, decrypts, and verifies it before reporting success.</li>
+        </ol>
+        <p>
+          <code>crypto_secretbox</code> provides symmetric XSalsa20 encryption
+          and Poly1305 authentication in both directions. Every handshake and
+          application frame receives a random 24-byte nonce from the platform
+          TRNG. The end-to-end wire capture requires the four generated nonces
+          to be nonzero and unique. A frame is
+          <code>nonce[24] || ciphertext_length_u32_le || ciphertext</code>; the
+          ciphertext includes the 16-byte authenticator. Failed authentication,
+          an unexpected ACK, a malformed length, or incomplete I/O closes the
+          channel and exits unsuccessfully. Tests independently modify client
+          and server application ciphertext and require both directions to fail
+          closed.
+        </p>
+
+        <h3 id="mbed-materialization">Materialize Key and Endpoint Configuration</h3>
+        <p>
+          Create one random 32-byte key for an authorized lab deployment. Use
+          the same materialization command to produce the matched server and
+          client headers:
+        </p>
+        <pre><code>task picblobs:mbed-blobs -- \
+  --server-ip=192.0.2.10 \
+  --auth-key-file=/secure/path/mbed-poc.key \
+  --port=9999</code></pre>
+        <p>
+          The key file may contain exactly 32 raw bytes or 64 hexadecimal
+          characters. Wrong-sized, malformed, and all-zero keys are rejected.
+          <code>--auth-key-hex</code> exists for disposable lab use, but leaks
+          the key through command and process arguments. The materializer
+          validates the IPv4 address and port, replaces only the expected
+          trailing <code>.config</code> template, writes both headers atomically
+          with mode <code>0600</code>, and reports size and SHA-256 without
+          printing the key.
+        </p>
+        <p>
+          The generated files are
+          <code>modules/picblobs/mbed/blobs/nacl_server_blob.h</code> and
+          <code>nacl_client_blob.h</code>. The server image contains the port and
+          authentication key. The client image contains the same port and key
+          plus the server IPv4 address. These ignored generated headers and the
+          resulting firmware necessarily contain the deployment key: keep them
+          out of commits and artifacts, protect provisioning, and use a distinct
+          random key for each assessment or lab deployment. Anyone who extracts
+          that key can impersonate either peer for that deployment.
+        </p>
+
+        <h3 id="mbed-build-run">Build and Run the Pair</h3>
+        <pre><code>task picblobs:mbed-compile</code></pre>
+        <p>
+          This builds separate server and client firmware for the pinned
+          NUCLEO-F429ZI/GCC_ARM target. See
+          <a href="building.html#mbed-target-build">Building</a> for role-only
+          commands, pins, outputs, and local Mbed checkout validation. Flash the
+          corresponding image to each board using the lab's normal board
+          workflow, connect both boards to the same authorized Ethernet network,
+          and start the server before the client.
+        </p>
+        <p>Successful serial output includes:</p>
+        <pre><code>[server] decrypted: Hello from NaCl PIC blob!
+[server] secure channel OK
+
+[client] decrypted ACK: hovel-nacl-server-ack-v1
+[client] secure channel OK</code></pre>
+        <p>
+          A silent connected peer cannot block forever: accepted and connected
+          sockets use a 5000 ms operation timeout. For the exact CI evidence and
+          the checks that still require physical boards, continue to
+          <a href="testing.html#mbed-testing">Testing</a>.
+        </p>
       </article>
       <nav class="page-nav">
         <a class="prev" href="index.html">← Overview</a>
@@ -116,7 +206,7 @@ payload.format = elf</code></pre>
     </main>
   </div>
   <footer class="sitefoot">
-    <p>picblobs module · <a href="../../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
+    <p>picblobs module · <a href="../../index.html">home</a> · <a href="https://github.com/vibepwners/hovel">source</a></p>
   </footer>
 </body>
 </html>

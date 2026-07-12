@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/chainruntime"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/app/chainruntime"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 type StepRuntimeRunner struct {
