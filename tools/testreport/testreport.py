@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import html
 import json
-import os
 import re
 import shutil
 import time
@@ -215,15 +213,12 @@ def enrich_from_xml(target: TestTarget, xml_path: Path) -> None:
 def render_report(report: TestReport, *, repo: Path, output: Path) -> None:
     if output.exists():
         shutil.rmtree(output)
-    (output / "assets").mkdir(parents=True)
-    (output / "data").mkdir()
+    (output / "data").mkdir(parents=True)
     (output / "logs").mkdir()
     (output / "xml").mkdir()
 
     materialize_artifacts(report, repo, output)
-    write_assets(repo, output)
     (output / "data/report.json").write_text(json.dumps(report_to_json(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (output / "index.html").write_text(render_index(report), encoding="utf-8")
 
 
 def materialize_artifacts(report: TestReport, repo: Path, output: Path) -> None:
@@ -272,88 +267,6 @@ def recover_bytestream(uri: str, cache_roots: list[Path]) -> Path | None:
         if candidate.is_file():
             return candidate.resolve()
     return None
-
-
-def write_assets(repo: Path, output: Path) -> None:
-    site_css = repo / "docs/site/assets/site.css"
-    logo = repo / "docs/site/assets/hovel.png"
-    if site_css.is_file():
-        shutil.copy2(site_css, output / "assets/site.css")
-    if logo.is_file():
-        shutil.copy2(logo, output / "assets/hovel.png")
-    static = Path(__file__).resolve().parent / "static"
-    for name in ("report.css", "report.js"):
-        src = static / name
-        if not src.is_file():
-            src = resolve_runfile(f"tools/testreport/static/{name}")
-        shutil.copy2(src, output / "assets" / name)
-
-
-def render_index(report: TestReport) -> str:
-    title = html.escape(report.title)
-    commit_control = render_commit_control(report.commit)
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{title} - Hovel</title>
-  <link rel="icon" type="image/png" href="assets/hovel.png">
-  <link rel="stylesheet" href="assets/site.css">
-  <link rel="stylesheet" href="assets/report.css">
-</head>
-<body>
-  <header class="topbar">
-    <a class="brand" href="../../../index.html">
-      <img src="assets/hovel.png" alt="" class="brand-mark">
-      <span class="brand-name">HOVEL</span>
-      <span class="brand-tag">// test report</span>
-    </a>
-    <nav class="top-nav">
-      <a href="../../../index.html">Home</a>
-      <a href="../../../spec/index.html">Book</a>
-      <a href="../../../api/sdk/index.html">API Docs</a>
-      <a href="index.html" aria-current="page">Reports</a>
-      <a href="https://github.com/Vibe-Pwners/hovel">Source</a>
-    </nav>
-  </header>
-  <main class="report-shell">
-    <section class="report-hero">
-      <p class="hero-tag">// bazel-backed monorepo test evidence</p>
-      <h1>{title}</h1>
-      <p class="report-meta">
-        Generated <code>{html.escape(report.generated_at)}</code>
-        · workflow <code>{html.escape(report.workflow)}</code>
-        · job <code>{html.escape(report.job)}</code>
-        {commit_control}
-      </p>
-    </section>
-    <section id="report-app" class="report-app" aria-live="polite">
-      <p>Loading report data...</p>
-    </section>
-  </main>
-  <footer class="sitefoot">
-    <p>Hovel test report · <a href="../../../index.html">home</a> · <a href="https://github.com/Vibe-Pwners/hovel">source</a></p>
-  </footer>
-  <script src="assets/report.js"></script>
-</body>
-</html>
-"""
-
-
-def render_commit_control(commit: str) -> str:
-    value = commit.strip()
-    if not value:
-        return ""
-    short = value[:12]
-    return (
-        ' · commit '
-        f'<button class="commit-copy" type="button" title="{html.escape(value)}" '
-        f'data-commit="{html.escape(value)}" aria-label="Copy full commit hash {html.escape(value)}">'
-        f"<code>{html.escape(short)}</code>"
-        '<span class="commit-copy-state" aria-hidden="true">copy</span>'
-        "</button>"
-    )
 
 
 def report_to_json(report: TestReport) -> dict[str, Any]:
@@ -508,18 +421,3 @@ def slugify(value: str) -> str:
     digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:10]
     clean = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip("/"))
     return f"{clean[:90]}-{digest}"
-
-
-def resolve_runfile(path: str) -> Path:
-    for root_name in ("RUNFILES_DIR", "TEST_SRCDIR"):
-        root = os.environ.get(root_name)
-        if not root:
-            continue
-        for prefix in ("", "_main", "hovel_slices"):
-            candidate = Path(root) / prefix / path
-            if candidate.exists():
-                return candidate
-    candidate = Path.cwd() / path
-    if candidate.exists():
-        return candidate
-    raise FileNotFoundError(path)

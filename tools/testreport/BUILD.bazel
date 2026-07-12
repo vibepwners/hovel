@@ -8,10 +8,6 @@ py_binary(
         "render_report.py",
         "testreport.py",
     ],
-    data = [
-        "//docs/site/assets:site_assets",
-        "//tools/testreport/static:assets",
-    ],
     imports = ["."],
     main = "render_report.py",
     python_version = "PY3",
@@ -23,9 +19,6 @@ py_test(
     srcs = [
         "testreport.py",
         "testreport_test.py",
-    ],
-    data = [
-        "//tools/testreport/static:assets",
     ],
     imports = ["."],
     python_version = "PY3",

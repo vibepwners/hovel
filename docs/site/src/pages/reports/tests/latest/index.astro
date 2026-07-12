@@ -1,0 +1,25 @@
+---
+import PageShell from "../../../../layouts/PageShell.astro";
+---
+
+<PageShell
+  area="reports"
+  current="Reports"
+  description="Latest Bazel test evidence for Hovel."
+  root="../../../"
+  scripts={["../../../assets/report.js"]}
+  stylesheets={["../../../assets/report.css"]}
+  tag="// test report"
+  title="Test Report - Hovel"
+>
+  <main class="content report-shell">
+    <section class="report-hero">
+      <p class="hero-tag">// bazel-backed monorepo test evidence</p>
+      <h1>Hovel Test Report</h1>
+      <p id="report-meta" class="report-meta">No generated test evidence is attached to this site build.</p>
+    </section>
+    <section id="report-app" class="report-app" aria-live="polite">
+      <p class="empty-state">Run <code>task docs:report</code> to build the site with current test evidence.</p>
+    </section>
+  </main>
+</PageShell>

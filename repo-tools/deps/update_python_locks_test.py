@@ -6,7 +6,28 @@ from pathlib import Path
 
 import pytest
 
+import update_python_locks
 from update_python_locks import _replace_if_changed
+
+
+def test_compile_requirements_selects_dependency_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "pyproject.toml"
+    source.write_text("[dependency-groups]\ndocs = ['sphinx']\n", encoding="utf-8")
+    lock = update_python_locks.RequirementsLock(source, tmp_path / "docs.lock", group="docs")
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(
+        update_python_locks,
+        "_run",
+        lambda command, *, cwd: commands.append(command),
+    )
+
+    update_python_locks._compile_requirements(tmp_path / "uv", lock, tmp_path / "scratch")
+
+    assert commands[0][-2:] == ["--group", "docs"]
 
 
 def test_replace_if_changed_preserves_unchanged_file(tmp_path: Path) -> None:

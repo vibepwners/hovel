@@ -2,6 +2,7 @@
 .task/
 .local/
 _site/
+node_modules/
 dist/
 modules/examples/bin/
 lefthook-local.yml

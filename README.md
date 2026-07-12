@@ -1,6 +1,6 @@
 # Hovel
 
-![Hovel](docs/site/assets/hovel.png)
+![Hovel](docs/site/public/assets/hovel.png)
 
 Hovel is a Go-hosted framework for authorized red-team emulation, controlled
 lab exercises, defensive validation, and operator workflow automation. It is
@@ -21,15 +21,15 @@ interactive CLI, one-shot saved-chain execution, and the MCP agent front end.
 
 The canonical documentation is the GitHub Pages book:
 
-## [vibe-pwners.github.io/hovel](https://vibe-pwners.github.io/hovel/index.html)
+## [vibepwners.github.io/hovel](https://vibepwners.github.io/hovel/index.html)
 
-Start with the [User Guide](docs/site/spec/user-guide.html) to run Hovel locally. Module
-authors should use [Module Development](docs/site/spec/module-development.html), then the
-language guides for [Python](docs/site/spec/module-python.html), [Go](docs/site/spec/module-go.html),
-or [Rust](docs/site/spec/module-rust.html). Contributors should read the
-[Development Guide](docs/site/spec/development-guide.html) for Task, CI, and
+Start with the [User Guide](docs/site/src/content/spec/user-guide.html) to run Hovel locally. Module
+authors should use [Module Development](docs/site/src/content/spec/module-development.html), then the
+language guides for [Python](docs/site/src/content/spec/module-python.html), [Go](docs/site/src/content/spec/module-go.html),
+or [Rust](docs/site/src/content/spec/module-rust.html). Contributors should read the
+[Development Guide](docs/site/src/content/spec/development-guide.html) for Task, CI, and
 partial-checkout behavior. The source for the book lives under
-[`docs/site/spec/`](docs/site/spec/).
+[`docs/site/src/content/spec/`](docs/site/src/content/spec/).
 
 ## Install
 

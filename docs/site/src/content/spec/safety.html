@@ -1,0 +1,59 @@
+<!-- hovel-doc: {"title":"Safety and Scope","group":"Foundations","order":30,"navTitle":"Safety and Scope"} -->
+<article>
+        <h1>Safety and Scope</h1>
+
+        <p>Hovel is intended for authorized security testing, adversary emulation, internal lab research, CTF-style training, defensive validation, and controlled red-team development.</p>
+        <p>The framework may orchestrate dangerous primitives because realistic security tooling often requires them. Public documentation and examples should emphasize authorization, lab use, auditability, reproducibility, and operator accountability.</p>
+        <p>Public examples should prefer benign transports, local lab devices, toy payloads, and non-destructive demonstrations. The first demonstration may use authenticated SSH because it is easy to reason about, easy to log, and does not require publishing exploit code.</p>
+
+        <h2>Caller Trust Model</h2>
+        <p>Hovel does not treat human operators, AI agents, CLI clients, TUI clients, REST clients, or MCP clients as inherently trusted. Every caller uses the same application services, validation model, scope guardrails, and audit trail.</p>
+        <p>MCP should eventually be able to do everything an operator can do. Safety should come from shared guardrails, explicit confirmations, descriptor metadata, module-level validation, throw planning, and auditability, not from giving MCP a weaker private API.</p>
+        <p>Full MCP execution parity should be phased. Inspection and planning tools may ship first. Execution tools require the same plan review, explicit confirmation records, and audit events as CLI and REST.</p>
+        <p>Launch-key policy is the optional multi-entity gate for throws. In that mode, an agent can prepare a throw, but starting it requires every required operation entity to approve the exact reviewed plan hash according to daemon policy.</p>
+        <p>Third-party modules and services are explicitly supported. Installing a module is a trust decision: package scripts and module execution can run arbitrary code as the operator. Hovel provides descriptors, process supervision, scope guardrails, logs, artifacts, checksums, and replayable records so operators can make informed decisions, but it does not prove arbitrary third-party code is safe.</p>
+
+        <h2>Safety Requirements</h2>
+        <ol>
+          <li>Every throw must start from a persisted throw plan.</li>
+          <li>Starting a throw must require an explicit recorded confirmation that the plan was reviewed. In interactive flows this means the operator saw the final configuration and typed <code>yes</code>, or deliberately used <code>throw --now</code>.</li>
+          <li>Throws must record operator intent, reviewed configuration, target IDs, timestamps, resolved module package references, installed payload descriptors, materialized artifact hashes, structured events, and errors.</li>
+          <li>Public modules should avoid destructive behavior by default.</li>
+          <li>Throws block modules tagged <code>dangerous</code> unless the operator passes <code>--allow-dangerous</code> or enables the equivalent workspace policy.</li>
+          <li>Listeners binding beyond localhost should require explicit configuration.</li>
+          <li>MCP execution tools should require the same validation and audit trail as CLI and REST execution.</li>
+          <li>Artifacts should be content-addressed or hash-tracked.</li>
+          <li>Cleanup surfaces, such as installed-payload state changes and cleanup steps, must be visible and evented.</li>
+          <li>Throw plans surface the reviewed chain, target, module/step, configuration snapshot, risk labels, external binds, file writes, credential use, network reachability, and cleanup behavior before execution.</li>
+          <li>Modules should have maximum practical optionality to perform validation, survey, compatibility checks, and target-specific safety checks before performing work.</li>
+        </ol>
+        <p>
+          Core payload providers with post-exploitation capabilities, including
+          <a href="squatter-payload-provider.html">Squatter</a>, must carry the
+          <code>dangerous</code> tag when they participate in throws. The guardrail
+          enforces that tag through <code>--allow-dangerous</code> or workspace policy. Review output surfaces payload capabilities, transport, whether communication is
+          encrypted, listener or post-connect behavior, produced payload artifact
+          hashes, installed payload handles, reconnect behavior, and cleanup handles.
+        </p>
+        <p>
+          Installed payload inventory is an audit surface. Hovel must create or update it
+          only from explicit provider or module descriptors, never by inferring state from
+          terminal text or generic artifacts. Every installed payload state change must be
+          recorded as a structured event with operation, chain, target, throw, run, and
+          provider provenance when those fields are known.
+        </p>
+        <p><code>throw --now</code> is an explicit bypass of the typed confirmation prompt, not a bypass of planning, persistence, guardrails, logging, artifact handling, or audit records. The confirmation record for a <code>--now</code> throw must preserve that the bypass flag was used.</p>
+        <p>Hovel does not impose corporate secret-management behavior on chain configuration. Passwords, tokens, keys, and other sensitive values are ordinary operator-controlled configuration values. Operators are responsible for securing their machines, workspaces, and data sources. Hovel supports config value types and validation, but it must not silently redact, omit, or special-case saved configuration values in a way that degrades offensive workflow ergonomics.</p>
+
+        <h2>Code Trust Model</h2>
+        <p>Hovel assumes local single-user or trusted small-team infrastructure, but not trusted intent. The operator chooses modules and services to install and throw, while Hovel records decisions and enforces configured scope guardrails. Hovel isolates where practical, but never implies that arbitrary third-party code is safe.</p>
+        <p>Isolation levels:</p>
+<pre data-lang="levels"><code>none        local process, full user privileges
+process     separate supervised process
+venv        Python virtual environment isolation
+pbs         python-build-standalone runtime isolation
+binary      native binary process isolation
+container   future optional container isolation
+remote      future remote service isolation
+</code></pre>
+      </article>

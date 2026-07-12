@@ -1,0 +1,45 @@
+<!-- hovel-doc: {"title":"picblobs User Guide","group":"picblobs","order":10,"navTitle":"User Guide"} -->
+<article>
+        <h1>picblobs User Guide</h1>
+        <p>
+          Link or install the module package from <code>modules/picblobs</code>.
+          Its manifest is <code>modules/picblobs/hovel-module.yaml</code> and
+          declares a <code>payload_provider</code> over JSON-RPC stdio.
+        </p>
+
+        <h2>Prepare a Source Checkout</h2>
+        <pre><code>task picblobs:setup
+task picblobs:provider-stage
+task picblobs:stage</code></pre>
+        <p>
+          The provider launcher is staged at
+          <code>modules/picblobs/bin/picblobs-provider</code>. Payload bytes are
+          staged under <code>modules/picblobs/python/picblobs/blobs/</code> with
+          <code>manifest.json</code> as the runtime catalogue.
+        </p>
+
+        <h2>Operate from Hovel</h2>
+        <p>
+          Use Hovel's module package commands to link the prepared directory.
+          The provider lists staged blobs, resolves payload queries, and returns
+          base64 encoded artifacts with SHA-256 metadata. Hovel treats these as
+          native typed payloads: <code>kind: pic</code>, <code>os</code>,
+          <code>arch</code>, and tags such as <code>pic</code>, <code>flat</code>,
+          <code>linux</code>, or <code>windows</code> are part of the provider
+          response.
+        </p>
+
+        <h2>Payload Formats</h2>
+        <p>
+          Query <code>format: pic</code> or <code>format: flat-pic</code> for the
+          raw finalized blob. Linux payloads whose architecture is supported by
+          picblobs' ELF wrapper also advertise <code>format: elf</code>; Hovel
+          returns a minimal executable ELF containing the PIC bytes. The legacy
+          <code>bin</code> request remains accepted as a compatibility alias for
+          <code>pic</code>.
+        </p>
+<pre><code>payload.kind = pic
+payload.os = linux
+payload.arch = aarch64
+payload.format = elf</code></pre>
+      </article>

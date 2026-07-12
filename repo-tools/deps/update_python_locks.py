@@ -26,6 +26,7 @@ class ProjectLock:
 class RequirementsLock:
     source: Path
     output: Path
+    group: str | None = None
 
 
 def _workspace() -> Path:
@@ -88,6 +89,8 @@ def _compile_requirements(uv: Path, lock: RequirementsLock, scratch: Path) -> Pa
         "--upgrade",
         f"--output-file={output}",
     ]
+    if lock.group is not None:
+        command.extend(("--group", lock.group))
     _run(command, cwd=lock.source.parent)
     return output
 
@@ -115,8 +118,8 @@ def _replace_if_changed(source: Path, destination: Path) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def update_python_locks(uv: Path, workspace: Path) -> None:
-    projects = (
+def update_python_locks(uv: Path, workspace: Path, *, only: str = "all") -> None:
+    all_projects = (
         ProjectLock(workspace / "sdk/python"),
         ProjectLock(
             workspace / "modules/picblobs/python",
@@ -124,7 +127,7 @@ def update_python_locks(uv: Path, workspace: Path) -> None:
             extra="dev",
         ),
     )
-    requirements = (
+    all_requirements = (
         RequirementsLock(
             workspace / "core/tools/lint/requirements.in",
             workspace / "core/tools/lint/requirements_lock.txt",
@@ -133,7 +136,14 @@ def update_python_locks(uv: Path, workspace: Path) -> None:
             workspace / "modules/picblobs/mbed/requirements.in",
             workspace / "modules/picblobs/mbed/requirements.txt",
         ),
+        RequirementsLock(
+            workspace / "sdk/python/pyproject.toml",
+            workspace / "docs/tools/docs/requirements_lock.txt",
+            group="docs",
+        ),
     )
+    projects = () if only == "docs" else all_projects
+    requirements = all_requirements[-1:] if only == "docs" else all_requirements
     with tempfile.TemporaryDirectory(prefix="hovel-python-locks-") as temporary:
         scratch = Path(temporary)
         staged_projects: list[tuple[ProjectLock, ProjectLock]] = []
@@ -157,8 +167,9 @@ def update_python_locks(uv: Path, workspace: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--uv", type=Path, required=True)
+    parser.add_argument("--only", choices=("all", "docs"), default="all")
     args = parser.parse_args()
-    update_python_locks(args.uv.resolve(), _workspace())
+    update_python_locks(args.uv.resolve(), _workspace(), only=args.only)
 
 
 if __name__ == "__main__":

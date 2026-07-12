@@ -1,0 +1,277 @@
+<!-- hovel-doc: {"title":"User Guide","group":"Foundations","order":10,"navTitle":"User Guide"} -->
+<article>
+        <h1>User Guide</h1>
+
+        <p>This guide is the shortest path from a clean install to an operator-visible Hovel workflow. It covers local workspaces, config layering, module installation, the managed daemon, interactive <code>cli</code> mode, one-shot configured chain throws, validation, artifacts, payload inventory, and sessions.</p>
+        <p>Hovel is for authorized security testing and lab validation. Use the example modules for public demos and local learning; they exercise orchestration without touching a real target.</p>
+
+        <h2>Concepts</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Term</th>
+              <th>Operator meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>workspace</code></td>
+              <td>Local state directory containing daemon metadata, SQLite state, artifacts, throw records, and session history.</td>
+            </tr>
+            <tr>
+              <td><code>operation</code></td>
+              <td>Durable work context. Targets belong to the operation and can be reused by chains inside it.</td>
+            </tr>
+            <tr>
+              <td><code>chain</code></td>
+              <td>Ordered workflow inside an operation. A chain has module steps, chain config, validation state, logs, and throw history.</td>
+            </tr>
+            <tr>
+              <td><code>target</code></td>
+              <td>Operation-owned asset such as <code>mock://router-01</code>, with target-scoped configuration.</td>
+            </tr>
+            <tr>
+              <td><code>throw</code></td>
+              <td>Replayable execution of a reviewed chain against selected targets.</td>
+            </tr>
+            <tr>
+              <td><code>session</code></td>
+              <td>Live post-exploitation stream owned by the daemon and reached through <code>session</code> commands.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2>Install Hovel</h2>
+        <p>The normal operator install is through PyPI. The <code>hovel</code> wheel contains the Go binary for the current platform and does not download anything at install time or first run.</p>
+<pre data-lang="shell"><code>pipx install hovel
+hovel status
+</code></pre>
+        <p>Python module authors install the SDK separately:</p>
+<pre data-lang="shell"><code>pipx install hovel
+python -m pip install hovel-sdk</code></pre>
+        <p>The <code>hovel</code> package includes no modules. Install only modules you trust; module install scripts and module execution are arbitrary code execution by design.</p>
+
+        <h2>Configure Hovel</h2>
+        <p>Hovel config is YAML. Built-in defaults are overridden by global config, then workspace config, then a single explicit <code>--config</code> file.</p>
+<pre data-lang="text"><code>$XDG_CONFIG_HOME/hovel/config.yaml
+$HOME/.config/hovel/config.yaml
+&lt;workspace&gt;/config.yaml
+hovel --config ./lab.yaml ...
+</code></pre>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+modules:
+  searchPaths:
+    - ./modules
+    - ~/.local/share/hovel/modules
+cache:
+  enabled: true
+runtime:
+  python:
+    pythonBuildStandalone:
+      release: 20260610</code></pre>
+        <p>Hovel is offline-ready. It never contacts internet URLs during daemon startup, listing, validation, throws, or runtime execution. Network access happens only when you explicitly install from a URL, use a URL index, bulk-install a URL manifest or URL sources, or allow managed Python setup during install.</p>
+
+        <h2>Install Modules</h2>
+        <p>Modules are distributed as <code>.tgz</code> packages. Install from disk, absolute path, HTTPS URL, a local package reference, an index-backed reference, a bulk manifest, or a linked development directory.</p>
+<pre data-lang="shell"><code>hovel module install ./squatter-{{HOVEL_VERSION}}.tgz
+hovel module install /opt/hovel/modules/ms17-010-survey-1.0.0.tgz
+hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
+hovel module install ms17-010-survey
+hovel module install squatter@{{HOVEL_VERSION}}
+hovel module bulk-install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/module-install-set.yaml
+hovel module bulk-install ./lab-modules.yaml
+hovel module install --link /home/me/dev/my-module
+hovel module available
+hovel module installed</code></pre>
+        <p>For <code>module install name</code>, Hovel installs the newest matching local package before consulting configured module indexes. Local resolution checks the download cache, configured package roots and archives, and the source-tree <code>dist/modules/module-index.yaml</code> when it exists. Exact <code>name@version</code> references use the same local-first path. Use <code>--index</code> to add an index for one install when it is not already configured. The default install target is the active workspace. Use <code>--global</code> for a user-level install. Workspace modules win over global modules. Reinstalling the same <code>name@version</code> with a different SHA-256 requires <code>--replace</code>. Remote bulk-install manifests are HTTPS YAML files; relative sources inside them resolve against the manifest URL.</p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModuleInstallSet
+modules:
+  - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
+    sha256: ...
+  - source: ./ms17-010-survey-1.0.0.tgz
+  - source: ./ms17-010-exploit-1.0.0.tgz</code></pre>
+        <p>Installed packages are recorded in <code>module-lock.yaml</code> only after the install process completes. Cached downloads stay visible through <code>module available</code> for offline reinstall until explicitly cleaned; they are not installed modules.</p>
+        <figure class="demo-figure">
+          <img src="../assets/demos/module-package-install-01-link.gif" alt="Terminal demo installing a linked module package, listing the installed module, and showing module-lock.yaml.">
+          <figcaption>Linking a trusted development package records it in the workspace module lock.</figcaption>
+        </figure>
+
+        <h2>Start Hovel From Source</h2>
+        <p>All build, test, run, and docs commands go through Task. The developer workspace defaults to <code>./.hovel</code>; set <code>HOVEL_WORKSPACE</code> when you want a separate local workspace.</p>
+<pre data-lang="shell"><code># Build staged example modules and launch the interactive CLI.
+task start
+
+# Inspect daemon state for the current dev workspace.
+task status
+
+# Wipe local state and relaunch from a clean workspace.
+task reset</code></pre>
+        <p><code>task start</code> launches <code>hovel cli</code> and auto-starts or attaches to a local daemon for the workspace. The daemon owns module processes, throw plans, confirmation records, artifacts, installed payload inventory, logs, and sessions.</p>
+
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-02-session-io.gif" alt="Hovel CLI demo listing, reading, sending to, and reading from a mock shell session.">
+            <figcaption><strong>Step 1</strong> inspect and send to the session</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-03-session-connect.gif" alt="Hovel CLI demo attaching to a mock shell session, detaching, and reconnecting.">
+            <figcaption><strong>Step 2</strong> attach, detach, and reconnect</figcaption>
+          </figure>
+        </div>
+
+        <h2>Throw A Saved Chain</h2>
+        <p>One-shot mode is for scripts, CI, demos, and operators who want to execute a durable configured chain file without entering the prompt. It loads the chain file, creates the same review surface as interactive execution, records a confirmation, runs the modules, persists events, and exits.</p>
+<pre data-lang="shell"><code>task throw -- demo/chains/mock-survey-exploit.chain.yaml --now</code></pre>
+        <p><code>--now</code> skips the typed <code>yes</code> prompt, but it is still an explicit recorded confirmation bypass. It does not skip planning, validation, guardrails, event recording, artifacts, or throw records.</p>
+
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-02-throw.gif" alt="Direct terminal demo throwing a saved mock survey and exploit chain with live logs.">
+            <figcaption><strong>Step 1</strong> throw the saved chain</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-03-session-io.gif" alt="Direct terminal demo listing, reading, sending to, and reading from a mock shell session.">
+            <figcaption><strong>Step 2</strong> inspect and send to the session</figcaption>
+          </figure>
+        </div>
+
+        <h2>Build A Chain Interactively</h2>
+        <p>The interactive flow starts by selecting an operation, creating or selecting a chain, adding module steps, adding operation-owned targets, configuring required values, validating, and throwing.</p>
+<pre data-lang="cli"><code>h0v3l&gt; op use demo
+h0v3l [demo]&gt; chain create mock-survey-exploit
+h0v3l [demo/mock-survey-exploit] &gt; chain add mock-survey-go
+h0v3l [demo/mock-survey-exploit] &gt; chain add mock-exploit-session-go
+h0v3l [demo/mock-survey-exploit] &gt; target add mock://router-01
+h0v3l [demo/mock-survey-exploit] &gt; chain config list
+h0v3l [demo/mock-survey-exploit] &gt; target config list mock://router-01
+h0v3l [demo/mock-survey-exploit] &gt; target config set mock://router-01 target.host router-01
+h0v3l [demo/mock-survey-exploit] &gt; target config set mock://router-01 target.port 443
+h0v3l [demo/mock-survey-exploit] &gt; chain config set operator.confirmed_lab true
+h0v3l [demo/mock-survey-exploit] &gt; chain config list
+h0v3l [demo/mock-survey-exploit] &gt; target config list mock://router-01
+h0v3l [demo/mock-survey-exploit] &gt; chain validate</code></pre>
+        <p>Targets are operation assets. Adding a target while a chain is active also binds it to that chain; adding a target in operation context leaves it available for later binding to any chain in the operation.</p>
+
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-01-create.gif" alt="Hovel CLI demo creating a chain and adding modules and target.">
+            <figcaption><strong>Step 1</strong> create the chain</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-02-config-before.gif" alt="Hovel CLI demo listing required chain and target config before applying values.">
+            <figcaption><strong>Step 2</strong> list required config</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-03-config-apply.gif" alt="Hovel CLI demo applying chain and target config values, then listing resolved config.">
+            <figcaption><strong>Step 3</strong> apply and verify config</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-commands-04-save.gif" alt="Hovel CLI demo validating and saving a configured chain.">
+            <figcaption><strong>Step 4</strong> validate and save</figcaption>
+          </figure>
+        </div>
+
+        <h2>Review And Throw</h2>
+        <p><code>review</code>, <code>confirm</code>, and <code>throw</code> share the same planning path. <code>review</code> displays the plan and records a typed confirmation without execution. <code>confirm</code> records pre-confirmation and stops. <code>throw</code> starts execution after an existing confirmation, an inline typed <code>yes</code>, or an explicit <code>--now</code> bypass.</p>
+<pre data-lang="cli"><code>h0v3l [demo/mock-survey-exploit] &gt; review
+h0v3l [demo/mock-survey-exploit] &gt; throw</code></pre>
+        <p>A confirmation is tied to the reviewed plan. Changing steps, targets, or configuration changes the plan hash and requires another review.</p>
+
+        <h2>Inspect Results</h2>
+        <p>After a throw, inspect the durable records instead of treating terminal text as the source of truth.</p>
+<pre data-lang="cli"><code>h0v3l [demo/mock-survey-exploit] &gt; throw list
+h0v3l [demo/mock-survey-exploit] &gt; throw inspect &lt;throw-id&gt;
+h0v3l [demo/mock-survey-exploit] &gt; artifact list
+h0v3l [demo/mock-survey-exploit] &gt; artifact inspect &lt;artifact-id&gt;</code></pre>
+        <p>Use an artifact-producing mock exploit chain when demonstrating artifacts. The session-oriented mock exploit is better for session videos; the non-session mock exploit is better for findings and artifact inventory.</p>
+
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-02-throw.gif" alt="Direct terminal demo throwing a saved configured mock chain.">
+            <figcaption><strong>Step 1</strong> run the saved chain</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-03-session-io.gif" alt="Direct terminal demo inspecting and sending to the resulting mock shell session.">
+            <figcaption><strong>Step 2</strong> inspect the resulting session</figcaption>
+          </figure>
+        </div>
+
+        <h2>Operate A Session</h2>
+        <p>A session-capable exploit returns a session reference. The daemon keeps the module process alive and brokers reads, writes, tails, connects, and closes through the <code>session</code> command group.</p>
+<pre data-lang="cli"><code>h0v3l [demo/mock-survey-exploit] &gt; session list
+h0v3l [demo/mock-survey-exploit] &gt; session read latest
+h0v3l [demo/mock-survey-exploit] &gt; session send latest whoami
+h0v3l [demo/mock-survey-exploit] &gt; session read latest
+h0v3l [demo/mock-survey-exploit] &gt; session connect latest --no-history
+h0v3l [demo/mock-survey-exploit] &gt; session close latest</code></pre>
+        <p><code>session connect</code> attaches interactively inside <code>hovel cli</code> or from a direct <code>hovel session connect</code> command. Use <code>session read</code>, <code>session tail</code>, and <code>session send</code> for non-attached request/response interaction.</p>
+        <p>Provider-backed agent sessions can also expose typed commands that do not write to the interactive byte stream. Discover them with <code>session commands</code> or the <code>session capabilities</code> alias, then call one with <code>session call</code>:</p>
+<pre data-lang="cli"><code>h0v3l [demo/mock-survey-exploit] &gt; session capabilities latest
+h0v3l [demo/mock-survey-exploit] &gt; session call latest process.list
+h0v3l [demo/mock-survey-exploit] &gt; session call latest registry.query --arg HKLM --arg "SOFTWARE\Microsoft\Windows NT\CurrentVersion" --arg ProductName</code></pre>
+        <p>Typed command lists render as tables with safe/write/destructive effect labels. If a provider command returns JSON on stdout or stderr, Hovel pretty-prints that JSON in human output and still exposes the raw structured result through <code>--json</code>.</p>
+
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-02-session-io.gif" alt="Hovel CLI demo listing, reading, sending to, and reading from a mock shell session.">
+            <figcaption><strong>Step 1</strong> read and send through the CLI</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-cli-03-session-connect.gif" alt="Hovel CLI demo attaching to a mock shell session, detaching, and reconnecting.">
+            <figcaption><strong>Step 2</strong> attach, detach, and reconnect</figcaption>
+          </figure>
+        </div>
+
+        <h2>Payload Inventory</h2>
+        <p>Payload commands answer what payloads are available or installed. Session commands answer what is connected now. Installed payload records are created only from explicit provider or module descriptors, never inferred from log text.</p>
+<pre data-lang="cli"><code>h0v3l [demo/mock-survey-exploit] &gt; payloads available
+h0v3l [demo/mock-survey-exploit] &gt; payloads installed
+h0v3l [demo/mock-survey-exploit] &gt; payloads inspect p1 --events
+h0v3l [demo/mock-survey-exploit] &gt; payloads capabilities p1
+h0v3l [demo/mock-survey-exploit] &gt; payloads call p1 wininfo
+h0v3l [demo/mock-survey-exploit] &gt; payloads call p1 process.list
+h0v3l [demo/mock-survey-exploit] &gt; payloads getfile p1 C:\Windows\win.ini
+h0v3l [demo/mock-survey-exploit] &gt; payloads putfile p1 ./note.txt C:\Windows\Temp\note.txt
+h0v3l [demo/mock-survey-exploit] &gt; payloads cmd p1 whoami
+h0v3l [demo/mock-survey-exploit] &gt; payloads mark-removed p1 --reason rebuilt</code></pre>
+        <p><code>payloads capabilities</code> is an alias for <code>payloads commands</code>. <code>payloads call</code> is the provider-neutral path for typed actions; <code>payloads getfile</code>, <code>payloads putfile</code>, and <code>payloads cmd</code> are compatibility shortcuts for common Squatter commands. Use payload inventory demos only with fixtures that create deterministic installed payload records. Avoid implying that a log line, artifact name, or connection attempt creates inventory.</p>
+
+        <h2>Save And Reuse</h2>
+        <p>Once an interactive chain is configured, save it when it should be reviewed, shared, or run later from one-shot mode.</p>
+<pre data-lang="cli"><code>h0v3l [demo/mock-survey-exploit] &gt; chain save mock-survey-exploit.chain.yaml
+h0v3l [demo/mock-survey-exploit] &gt; chain load mock-survey-exploit.chain.yaml</code></pre>
+        <p>A configured chain file must contain the steps, chain-level values, targets, and per-target configuration needed to reconstruct the review surface without hidden prompt state.</p>
+
+        <div class="demo-series">
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-commands-01-create.gif" alt="Direct command demo creating a chain and adding modules and target.">
+            <figcaption><strong>Step 1</strong> create the chain from commands</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-commands-02-config-before.gif" alt="Direct command demo listing required chain and target config before applying values.">
+            <figcaption><strong>Step 2</strong> list required config</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-commands-03-config-apply.gif" alt="Direct command demo applying chain and target config values, then listing resolved config.">
+            <figcaption><strong>Step 3</strong> apply and verify config</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/mock-survey-exploit-commands-04-save.gif" alt="Direct command demo validating and saving a configured chain as YAML.">
+            <figcaption><strong>Step 4</strong> validate and save YAML</figcaption>
+          </figure>
+        </div>
+
+        <h2>Write Or Register A Module</h2>
+        <p>Module authors should start with the language-specific examples, keep metadata paths cheap and side-effect free, declare every operator-controlled value, and use the SDK logging rail instead of stdout. Package finished modules as <code>.tgz</code> archives with a <code>hovel-module.yaml</code> manifest.</p>
+<pre data-lang="shell"><code>hovel module install --link "$PWD/modules/examples/go/mock_survey"
+hovel module installed
+hovel module inspect mock-survey-go</code></pre>
+
+        <figure class="demo-figure">
+          <img src="../assets/demos/mock-survey-exploit-01-inspect.gif" alt="Direct terminal demo inspecting mock survey and exploit module metadata before running a saved chain.">
+          <figcaption>Demo: inspect mock module metadata before execution</figcaption>
+        </figure>
+
+      </article>

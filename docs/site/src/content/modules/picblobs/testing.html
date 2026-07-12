@@ -1,0 +1,21 @@
+<!-- hovel-doc: {"title":"Testing picblobs","group":"picblobs","order":30,"navTitle":"Testing"} -->
+<article>
+        <h1>Testing picblobs</h1>
+        <p>
+          The original Bazel, Python, CLI, payload, and generated-file tests are
+          available through root Task targets so they run inside the Hovel build.
+        </p>
+
+        <h2>Primary Checks</h2>
+        <pre><code>task picblobs:generate-check
+task picblobs:bazel-test
+task picblobs:test -- -q</code></pre>
+
+        <h2>Payload Checks</h2>
+        <p>
+          Payload tests require staged blobs and runners. Run
+          <code>task picblobs:stage</code> first for the full matrix, or pass
+          <code>--targets</code> and <code>--configs</code> to stage a focused
+          subset during local iteration.
+        </p>
+      </article>

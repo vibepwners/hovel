@@ -1,0 +1,123 @@
+<!-- hovel-doc: {"title":"Hovel - authorized red-team emulation framework","description":"A Go-hosted framework for authorized red-team emulation, controlled lab exercises, defensive validation, and operator workflow automation.","group":"Home","order":0} -->
+<section class="hero">
+    <div class="hero-text">
+      <p class="hero-tag">// authorized security research</p>
+      <h1>Hovel</h1>
+      <p class="hero-lede">
+        A Go-hosted framework for authorized red-team emulation, controlled lab
+        exercises, defensive validation, and operator workflow automation.
+      </p>
+      <p>
+        <a class="cta" href="spec/introduction.html">Read the book →</a>
+        <a class="cta ghost" href="spec/module-development.html">Write a module</a>
+      </p>
+    </div>
+    <img src="assets/hovel.png" alt="hovel logo" class="hero-img">
+  </section>
+
+  <div data-hovel-component="demo-carousel"></div>
+
+  <main class="content home-content">
+    <h2>The pitch</h2>
+    <blockquote>
+      <p>
+        As a red-team operator, I want one local engine to manage modules,
+        providers, throws, events, artifacts, installed payloads, and sessions.
+      </p>
+      <p>
+        As an exploit developer or module author, I want a clear descriptor
+        and testable runtime contract so third-party capabilities are easy to
+        build, inspect, and operate safely.
+      </p>
+    </blockquote>
+
+    <h2>What is here</h2>
+    <p>
+      Hovel is a platform for wrapping and operating third-party proofs of concept,
+      not a catalog of first-party exploits. The project provides the engine, SDKs,
+      descriptors, providers, guardrails, examples, installed-payload inventory,
+      and operator experience that make third-party modules acceptable to run and inspect.
+    </p>
+    <p>
+      The central runtime is a local engine, <code>hoveld</code>, which owns
+      operations, chains, throws, module processes, provider-backed payload
+      state, installed payload records, sessions, events, artifacts, and
+      workspace storage. Interactive <code>cli</code> mode, one-shot chain-file
+      execution, and the MCP agent front end are implemented clients over the
+      same application services. <code>hovel tui</code> is an explicit
+      not-implemented role; REST/OpenAPI, general managed-service processes, and
+      richer MCP resources and prompts remain future work.
+    </p>
+
+    <h2>Start here</h2>
+    <div class="tiles">
+      <a class="tile" href="spec/user-guide.html">
+        <span class="tile-label">00 // Use</span>
+        <span class="tile-title">User guide</span>
+        <span class="tile-desc">Run Hovel, throw a saved chain, build a chain interactively, inspect results, and operate sessions with generated demos.</span>
+      </a>
+      <a class="tile" href="spec/introduction.html">
+        <span class="tile-label">01 // Read</span>
+        <span class="tile-title">Introduction</span>
+        <span class="tile-desc">What Hovel is, what is implemented, and what remains future work.</span>
+      </a>
+      <a class="tile" href="spec/architecture.html">
+        <span class="tile-label">02 // Read</span>
+        <span class="tile-title">Architecture</span>
+        <span class="tile-desc">Daemon contract, application services, command registry.</span>
+      </a>
+      <a class="tile" href="spec/modules-services.html">
+        <span class="tile-label">03 // Read</span>
+        <span class="tile-title">Modules &amp; services</span>
+        <span class="tile-desc">Runtime, lifecycle, Python SDK, protocol position.</span>
+      </a>
+      <a class="tile" href="spec/testing-roadmap.html">
+        <span class="tile-label">04 // Read</span>
+        <span class="tile-title">Testing strategy</span>
+        <span class="tile-desc">Task-backed local gates, CI jobs, test layers, and coverage goals.</span>
+      </a>
+      <a class="tile" href="spec/development-guide.html">
+        <span class="tile-label">05 // Build</span>
+        <span class="tile-title">Development guide</span>
+        <span class="tile-desc">Task entry points, partial-checkout checks, slice boundaries, and development decisions.</span>
+      </a>
+      <a class="tile" href="spec/index.html">
+        <span class="tile-label">// Full</span>
+        <span class="tile-title">Book index</span>
+        <span class="tile-desc">Every chapter, in order.</span>
+      </a>
+      <a class="tile" href="spec/safety.html">
+        <span class="tile-label">// Safety</span>
+        <span class="tile-title">Scope &amp; trust</span>
+        <span class="tile-desc">What Hovel is for, and what it is not.</span>
+      </a>
+      <a class="tile" href="spec/module-development.html">
+        <span class="tile-label">// Build</span>
+        <span class="tile-title">Write a module</span>
+        <span class="tile-desc">Python, Go, and Rust SDKs over one stdio JSON-RPC protocol.</span>
+      </a>
+      <a class="tile" href="modules/index.html">
+        <span class="tile-label">// Modules</span>
+        <span class="tile-title">Module catalogue</span>
+        <span class="tile-desc">Integrated module spaces with user guides, build notes, tests, and references.</span>
+      </a>
+      <a class="tile" href="api/sdk/index.html">
+        <span class="tile-label">// API</span>
+        <span class="tile-title">SDK API Reference</span>
+        <span class="tile-desc">Generated Python, Go, and Rust SDK reference from source docs.</span>
+      </a>
+      <a class="tile" href="reports/tests/latest/index.html">
+        <span class="tile-label">// CI</span>
+        <span class="tile-title">Test Report</span>
+        <span class="tile-desc">Static Bazel test evidence with suite, target, case, log, XML, and artifact drilldown.</span>
+      </a>
+    </div>
+
+    <h2>Build it</h2>
+    <p>Everything goes through <a href="https://taskfile.dev/">Task</a> — the single entry point. Run <code>task --list</code> to see all commands.</p>
+    <pre data-lang="bash"><code>task checkout:status
+task check   # available-slice gate for partial checkouts
+task build
+task test
+task ci      # full-checkout guard plus wired core gate</code></pre>
+  </main>

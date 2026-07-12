@@ -130,14 +130,15 @@ tasks:
       - task: docs:check
 
   ci:report:
-    desc: Run the full-checkout gate, host demos, and a static HTML test report.
+    desc: Run the full-checkout gate, host demos, and the evidence-backed docs report.
     cmds:
       - task: checkout:require-full
       - task: test:report
       - task: core:ci
       - task: sdk:ci
       - task: modules:ci
-      - task: docs:ci
+      - task: docs:check
+      - task: docs:stage:report
 
   build:
     desc: Build the core Hovel binary workspace.
@@ -250,13 +251,13 @@ tasks:
       - bazel {{.BAZEL_STARTUP_ARGS}} clean --expunge
 
   report:generate:
-    desc: Generate the static HTML test report from existing BEP/testlog artifacts.
+    desc: Generate report evidence from existing BEP/testlog artifacts.
     cmds:
       - task: bazel:run
         vars:
           CLI_ARGS: >-
             //tools/testreport:render_report --
-            --output=.test-report/site
+            --output=.test-report/evidence
             --bep=.test-report/bep/core.json
             --bep=.test-report/bep/root.json
             --bep=.test-report/bep/picblobs.json
@@ -337,7 +338,7 @@ tasks:
           CLI_ARGS: //:repo_quality_test
 
   test:report:
-    desc: Run wired monorepo test suites and generate the static HTML test report.
+    desc: Run wired monorepo test suites and generate report evidence.
     cmds:
       - |
         mkdir -p .test-report/bep
@@ -738,11 +739,41 @@ tasks:
       - task: picblobs:ci
 
   docs:build:
-    desc: Build the docs site staging tool.
+    desc: Build the declared complete docs tree and materialize it into _site.
     cmds:
-      - task: bazel:build
+      - task: docs:stage
+
+  docs:deps:
+    desc: Update the pinned docs JavaScript and Python dependency locks with Bazel-managed tools.
+    cmds:
+      - task: bazel:run
         vars:
-          CLI_ARGS: //:docs_build
+          CLI_ARGS: '@pnpm//:pnpm -- --dir {{.REPO_ROOT}}/docs/site install --lockfile-only'
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //repo-tools/deps:update_python_locks -- --only docs
+
+  docs:dev:
+    desc: Run the Bazel-managed Astro development server on port 4321.
+    interactive: true
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //docs/site:dev
+
+  docs:preview:
+    desc: Serve the materialized _site on port 4322.
+    interactive: true
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //docs/tools/docs:preview_site
+
+  docs:report:
+    desc: Run report-producing tests and build _site with the latest test report.
+    cmds:
+      - task: test:report
+      - task: docs:stage:report
 
   docs:test:
     desc: Test docs helpers and standard verification flows.
@@ -773,11 +804,18 @@ tasks:
           CLI_ARGS: //docs/tools/demo:materialize_all_demo_outputs
 
   docs:stage:
-    desc: Stage the GitHub Pages site into _site.
+    desc: Materialize the deterministic base docs tree into _site.
     cmds:
       - task: bazel:run
         vars:
           CLI_ARGS: //docs/tools/docs:stage_site
+
+  docs:stage:report:
+    desc: Materialize the docs tree with explicitly generated test evidence.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //docs/tools/docs:stage_site_with_report
 
   docs:check:
     desc: Run the remote-compatible docs verification gate.
@@ -785,13 +823,12 @@ tasks:
       - task: docs:test
 
   docs:site:
-    desc: Render host-service demos and stage the complete docs site.
+    desc: Build and stage the complete declared docs site.
     cmds:
-      - task: docs:demos:all
-      - task: docs:stage
+      - task: docs:build
 
   docs:ci:
-    desc: Run remote-compatible docs checks plus host-service site rendering.
+    desc: Run docs checks and stage the deterministic base site.
     cmds:
       - task: docs:check
       - task: docs:site

@@ -9,7 +9,7 @@ import testreport
 
 
 class TestReportTest(unittest.TestCase):
-    def test_scans_testlogs_and_renders_static_report(self) -> None:
+    def test_scans_testlogs_and_renders_report_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             testlog = repo / "bazel-testlogs/sdk/rust/hovel/hovel_test"
@@ -23,8 +23,6 @@ class TestReportTest(unittest.TestCase):
 """,
                 encoding="utf-8",
             )
-            write_docs_assets(repo)
-
             report = testreport.build_report(
                 repo=repo,
                 title="Example",
@@ -36,7 +34,7 @@ class TestReportTest(unittest.TestCase):
                 commit="abc",
                 ref="main",
             )
-            out = repo / ".test-report/site"
+            out = repo / ".test-report/evidence"
             testreport.render_report(report, repo=repo, output=out)
 
             data = json.loads((out / "data/report.json").read_text(encoding="utf-8"))
@@ -47,13 +45,7 @@ class TestReportTest(unittest.TestCase):
             self.assertEqual(data["targets"][0]["status"], "PASSED")
             self.assertEqual(data["targets"][0]["cases"][0]["name"], "tests::round_trip")
             self.assertTrue((out / data["targets"][0]["log_path"]).is_file())
-            index_html = (out / "index.html").read_text(encoding="utf-8")
-            self.assertIn("report.js", index_html)
-            self.assertIn('data-commit="abc"', index_html)
-            self.assertIn("<code>abc</code>", index_html)
-            report_js = (out / "assets/report.js").read_text(encoding="utf-8")
-            self.assertIn("suite-breakdown", report_js)
-            self.assertIn("case-evidence", report_js)
+            self.assertFalse((out / "index.html").exists())
 
     def test_failed_xml_cases_preserve_messages_outputs_and_suite_totals(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -210,8 +202,6 @@ class TestReportTest(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            write_docs_assets(repo)
-
             report = testreport.build_report(
                 repo=repo,
                 title="Example",
@@ -227,13 +217,6 @@ class TestReportTest(unittest.TestCase):
             testreport.render_report(report, repo=repo, output=out)
 
             self.assertEqual((out / report.targets[0].log_path).read_text(encoding="utf-8"), "remote log\n")
-
-
-def write_docs_assets(repo: Path) -> None:
-    assets = repo / "docs/site/assets"
-    assets.mkdir(parents=True)
-    (assets / "site.css").write_text("body { color: white; }\n", encoding="utf-8")
-    (assets / "hovel.png").write_bytes(b"png")
 
 
 if __name__ == "__main__":

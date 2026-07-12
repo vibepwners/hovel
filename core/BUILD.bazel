@@ -24,6 +24,14 @@ filegroup(
 )
 
 filegroup(
+    name = "go_module_files",
+    srcs = [
+        "go.mod",
+        "go.sum",
+    ],
+)
+
+filegroup(
     name = "build",
     srcs = [
         "//cmd/hovel",

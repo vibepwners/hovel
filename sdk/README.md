@@ -53,11 +53,11 @@ The practical contract is simple:
 | [Rust](rust/README.md) | You want a small dependency-light module binary. | Core modules, line shell sessions, installed-payload records, Mesh provider RPC methods, raw optional agent context and hints. No step/payload-provider dispatch yet. |
 
 The canonical module-author guide is the static spec page at
-[`../docs/site/spec/module-development.html`](../docs/site/spec/module-development.html). The
+[`../docs/site/src/content/spec/module-development.html`](../docs/site/src/content/spec/module-development.html). The
 language-specific pages are
-[`../docs/site/spec/module-python.html`](../docs/site/spec/module-python.html),
-[`../docs/site/spec/module-go.html`](../docs/site/spec/module-go.html), and
-[`../docs/site/spec/module-rust.html`](../docs/site/spec/module-rust.html).
+[`../docs/site/src/content/spec/module-python.html`](../docs/site/src/content/spec/module-python.html),
+[`../docs/site/src/content/spec/module-go.html`](../docs/site/src/content/spec/module-go.html), and
+[`../docs/site/src/content/spec/module-rust.html`](../docs/site/src/content/spec/module-rust.html).
 
 ## Fast Feedback
 
