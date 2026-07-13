@@ -1334,10 +1334,18 @@ func TestUDPMeshBridgeClosesWhenProviderSessionEnds(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for provider-closed UDP bridge cleanup")
 	}
+	// The broker reports the provider close from inside CloseSession, before
+	// daemon-side bookkeeping and registry cleanup finish. Joining an in-flight
+	// close is therefore valid; either result establishes a cleanup barrier.
+	if _, err := client.CloseMeshBridge(context.Background(), MeshBridgeCloseRequest{
+		OperationID: bridge.OperationID,
+	}); err != nil && !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("CloseMeshBridge during provider close error = %v", err)
+	}
 	if _, err := client.CloseMeshBridge(context.Background(), MeshBridgeCloseRequest{
 		OperationID: bridge.OperationID,
 	}); err == nil || !strings.Contains(err.Error(), "does not exist") {
-		t.Fatalf("CloseMeshBridge after provider close error = %v, want missing bridge", err)
+		t.Fatalf("CloseMeshBridge after provider close cleanup error = %v, want missing bridge", err)
 	}
 	operations, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
 		Kind:  "bridge",
