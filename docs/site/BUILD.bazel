@@ -1,8 +1,138 @@
+load("@aspect_rules_js//js:defs.bzl", "js_run_binary", "js_run_devserver")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//docs/site:astro/package_json.bzl", astro = "bin")
+load("@rules_python//python:defs.bzl", "py_test")
+load("//docs/tools/docs:site_rules.bzl", "publish_file")
+load(":version.bzl", "site_version")
+
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["index.html"])
+exports_files([
+    ".npmrc",
+    ".nvmrc",
+    "package.json",
+    "pnpm-lock.yaml",
+])
+
+npm_link_all_packages()
+
+astro.astro_binary(
+    name = "astro",
+)
+
+site_version(
+    name = "version_file",
+    source = "//:VERSION",
+)
+
+publish_file(
+    name = "daemon_rpc_openapi",
+    output = "public/spec/reference/daemon-rpc.openapi.json",
+    source = "//docs/site/spec:reference/daemon-rpc.openapi.json",
+)
 
 filegroup(
-    name = "site",
-    srcs = ["index.html"],
+    name = "site_sources",
+    srcs = glob([
+        "public/**",
+        "src/**",
+    ]) + [
+        "astro.config.mjs",
+        "package.json",
+        "tsconfig.json",
+        ":daemon_rpc_openapi",
+        ":version_file",
+    ],
+)
+
+js_run_binary(
+    name = "astro_site",
+    srcs = [
+        ":node_modules/astro",
+        ":site_sources",
+    ],
+    args = ["build"],
+    chdir = package_name(),
+    env = {
+        "ASTRO_CACHE_DIR": "dist/.astro-cache",
+        "ASTRO_TELEMETRY_DISABLED": "1",
+    },
+    out_dirs = ["dist"],
+    tool = ":astro",
+)
+
+astro.astro_binary(
+    name = "astro_dev",
+    chdir = package_name(),
+    data = [
+        ":node_modules/astro",
+        ":site_sources",
+    ],
+    env = {
+        "ASTRO_CACHE_DIR": "dist/.astro-cache",
+        "ASTRO_DEV_BACKGROUND": "0",
+        "ASTRO_TELEMETRY_DISABLED": "1",
+    },
+)
+
+js_run_devserver(
+    name = "dev",
+    args = [
+        "dev",
+        "--host=0.0.0.0",
+        "--port=4321",
+    ],
+    data = [
+        ":node_modules/astro",
+        ":site_sources",
+    ],
+    tool = ":astro_dev",
+)
+
+py_test(
+    name = "site_smoke_test",
+    size = "small",
+    srcs = ["//core/tools/tests:site_smoke_test.py"],
+    args = ["$(rootpath :astro_site)"],
+    data = [":astro_site"],
+    python_version = "PY3",
+)
+
+py_test(
+    name = "daemon_rpc_openapi_test",
+    size = "small",
+    srcs = ["//docs/tools/docs:daemon_rpc_openapi_test.py"],
+    args = [
+        "$(rootpath :daemon_rpc_openapi)",
+        "$(rootpath //core/internal/adapters/daemonrpc:daemonrpc_source)",
+        "$(rootpath :src/content/spec/daemon-rpc.html)",
+    ],
+    data = [
+        "src/content/spec/daemon-rpc.html",
+        ":daemon_rpc_openapi",
+        "//core/internal/adapters/daemonrpc:daemonrpc_source",
+    ],
+    python_version = "PY3",
+    deps = [
+        "@lint_pypi//jsonschema",
+        "@lint_pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "provider_docs_parity_test",
+    size = "small",
+    srcs = ["//docs/tools/docs:provider_docs_parity_test.py"],
+    data = [
+        "src/content/spec/module-protocol.html",
+        "//:sdk/go/README.md",
+        "//:sdk/rust/README.md",
+        "//docs/tools/docs:python_api/index.rst",
+        "//sdk/go/hovel:protocol_doc_sources",
+        "//sdk/python:README.md",
+        "//sdk/python:sources",
+        "//sdk/rust/hovel:protocol_doc_sources",
+    ],
+    python_version = "PY3",
+    deps = ["@lint_pypi//pytest"],
 )

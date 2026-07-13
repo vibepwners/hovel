@@ -1,0 +1,19 @@
+<!-- hovel-doc: {"title":"Adding a New Architecture","group":"picblobs","order":140,"navTitle":"Adding an Architecture"} -->
+<article>
+<h1 id="adding-a-new-architecture">Adding a New Architecture</h1>
+<ol>
+<li>Add an <code>Architecture</code> entry to <code>tools/registry.py</code></li>
+<li>Add the architecture to each supported <code>OperatingSystem.architectures</code> list</li>
+<li>Add syscall numbers to the relevant <code>SYSCALL_NUMBERS</code> tables</li>
+<li>Create <code>src/include/picblobs/syscall/{arch}.h</code> with the inline asm primitive</li>
+<li>Create the matching runner <code>_start</code> stubs under <code>tests/runners/*/start/</code>
+   for every runner type that will execute the architecture</li>
+<li>Pin the Bootlin SHA256 on the <code>Architecture</code> entry in <code>tools/registry.py</code></li>
+<li>Run <code>python tools/generate.py</code></li>
+<li>Run <code>python -m pytest python/tests/test_sync.py -v</code> (catches anything missed)</li>
+<li>Build, stage, verify:
+   <code>bash
+   python tools/stage_blobs.py --configs linux:{arch}
+   picblobs-cli verify --os linux --arch {arch}</code></li>
+</ol>
+      </article>

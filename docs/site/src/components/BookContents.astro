@@ -1,0 +1,58 @@
+---
+import { bookParts } from "../lib/catalog";
+
+interface Props {
+  root: string;
+}
+
+const { root } = Astro.props;
+const parts = bookParts();
+const chapterCount = parts.reduce((total, part) => total + part.chapters.length, 0);
+---
+
+<section class="book-toc" aria-labelledby="book-toc-title">
+  <header class="book-toc-header">
+    <div>
+      <p class="book-kicker">// {String(parts.length).padStart(2, "0")} parts · {String(chapterCount).padStart(2, "0")} chapters</p>
+      <h2 id="book-toc-title">Contents</h2>
+    </div>
+    <p>Read front to back, or enter at the part closest to the work in front of you.</p>
+  </header>
+
+  <div class="book-parts">
+    {parts.map((part) => (
+      <section class="book-part" aria-labelledby={`book-part-${part.number}`}>
+        <header class="book-part-header">
+          <span class="book-part-number">Part {String(part.number).padStart(2, "0")}</span>
+          <h3 id={`book-part-${part.number}`}>{part.label}</h3>
+          <span class="book-part-count">{part.chapters.length} chapter{part.chapters.length === 1 ? "" : "s"}</span>
+        </header>
+        <ol class="book-chapter-list">
+          {part.chapters.map((chapter) => (
+            <li>
+              <a href={`${root}${chapter.page.href}`}>
+                <span class="book-chapter-number">{chapter.label}</span>
+                <span class="book-chapter-copy">
+                  <strong>{chapter.page.navTitle ?? chapter.page.title}</strong>
+                  <span>{chapter.page.summary}</span>
+                </span>
+                <span class="book-chapter-arrow" aria-hidden="true">→</span>
+              </a>
+            </li>
+          ))}
+        </ol>
+      </section>
+    ))}
+  </div>
+
+  <nav class="book-resources" aria-label="Related documentation">
+    <a href={`${root}api/sdk/index.html`}>
+      <span>Generated reference</span>
+      <strong>SDK API documentation</strong>
+    </a>
+    <a href={`${root}modules/index.html`}>
+      <span>Integrated capabilities</span>
+      <strong>Module catalogue</strong>
+    </a>
+  </nav>
+</section>

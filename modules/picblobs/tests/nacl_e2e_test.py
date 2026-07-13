@@ -117,8 +117,15 @@ def parse_args() -> tuple[Path, Path, Path, Path, bool, bool] | None:
         args.remove("--silent-peer")
         run_silent_peer = True
     if len(args) == 4:
-        paths = tuple(resolve_path(arg) for arg in args)
-        return (*paths, run_negative, run_silent_peer)  # type: ignore[return-value]
+        qemu_arg, runner_arg, server_arg, client_arg = args
+        return (
+            resolve_path(qemu_arg),
+            resolve_path(runner_arg),
+            resolve_path(server_arg),
+            resolve_path(client_arg),
+            run_negative,
+            run_silent_peer,
+        )
     print(
         "usage: nacl_e2e_test.py <qemu> <runner> <server.bin> <client.bin> "
         "[--negative] [--silent-peer]",

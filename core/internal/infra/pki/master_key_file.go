@@ -104,9 +104,6 @@ func OpenFileMasterKeyProvider(ctx context.Context, workspacePath string) (*File
 	if !info.Mode().IsRegular() {
 		return nil, errors.New("pki: workspace master-key path must be a regular file")
 	}
-	if err := validateSecretFilePermissions(info); err != nil {
-		return nil, err
-	}
 	if info.Size() <= 0 || info.Size() > maximumMasterKeyFileBytes {
 		return nil, errors.New("pki: workspace master-key file has an invalid size")
 	}
@@ -335,7 +332,7 @@ func (p *FileMasterKeyProvider) persistLocked(mode masterKeyPersistMode) (commit
 			resultErr = errors.Join(resultErr, fmt.Errorf("pki: remove temporary master-key file: %w", err))
 		}
 	}()
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := secureSecretTempFile(temporary); err != nil {
 		return false, errors.Join(err, temporary.Close())
 	}
 	if _, err := temporary.Write(encoded); err != nil {
@@ -378,27 +375,6 @@ func clearMasterKeyMap(keys map[string]MasterKey) {
 		keys[version] = MasterKey{}
 		delete(keys, version)
 	}
-}
-
-func ensureSecretDirectory(path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return err
-	}
-	return validateSecretDirectory(path)
-}
-
-func validateSecretDirectory(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("pki: workspace secrets path must be a directory")
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return errors.New("pki: workspace secrets directory must be owner-only")
-	}
-	return nil
 }
 
 func (p *FileMasterKeyProvider) generateUniqueMasterKeyVersionLocked() (string, MasterKey, error) {

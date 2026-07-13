@@ -29,8 +29,8 @@ HOST_ACTION_ALLOWLIST = {
     # Manual QEMU tests manage host networking and nested VM processes.
     Path("modules/picblobs/kernel/BUILD.bazel"): {'"no-sandbox"'},
 }
-REMOTE_COMPATIBLE_TASKS = ("ci", "docs:check")
-REMOTE_TASK_FORBIDDEN_DOCS = re.compile(r"\bdocs:(?:ci|site|demos(?::[A-Za-z0-9:_-]+)?)\b")
+REMOTE_COMPATIBLE_TASKS = ("ci", "docs:check", "docs:build", "docs:site", "docs:ci")
+REMOTE_TASK_FORBIDDEN_DOCS = re.compile(r"\bdocs:demos(?::[A-Za-z0-9:_-]+)?\b")
 
 
 @dataclass(frozen=True)
@@ -105,8 +105,8 @@ def check_layers(repo: Path) -> list[Violation]:
         root = repo / prefix
         if not root.exists():
             continue
-        for path in root.rglob("*.go"):
-            if excluded(repo, path) or path.name.endswith("_test.go"):
+        for path in repository_files(repo, root):
+            if path.suffix != ".go" or path.name.endswith("_test.go"):
                 continue
             for line, imported in go_imports(path):
                 for needle in forbidden:
@@ -136,8 +136,8 @@ def check_visibility(repo: Path) -> list[Violation]:
     root = repo / "core/internal"
     if not root.exists():
         return violations
-    for path in root.rglob("BUILD*"):
-        if excluded(repo, path) or not path.is_file():
+    for path in repository_files(repo, root):
+        if not path.name.startswith("BUILD"):
             continue
         for line, text in numbered_lines(path):
             if "//visibility:public" in text:
@@ -168,19 +168,21 @@ def go_imports(path: Path) -> list[tuple[int, str]]:
 
 
 def package_dirs(repo: Path) -> list[Path]:
-    packages: set[Path] = set()
-    for name in ("BUILD", "BUILD.bazel"):
-        for path in repo.rglob(name):
-            if path.is_file() and not excluded(repo, path):
-                packages.add(path.parent)
-    return sorted(packages)
+    return sorted(
+        {
+            path.parent
+            for path in repository_files(repo)
+            if path.name in {"BUILD", "BUILD.bazel"}
+        }
+    )
 
 
 def starlark_files(repo: Path) -> list[Path]:
-    files: set[Path] = set()
-    for pattern in ("*.bzl", "BUILD", "BUILD.bazel"):
-        files.update(path for path in repo.rglob(pattern) if path.is_file() and not excluded(repo, path))
-    return sorted(files)
+    return sorted(
+        path
+        for path in repository_files(repo)
+        if path.suffix == ".bzl" or path.name in {"BUILD", "BUILD.bazel"}
+    )
 
 
 def task_block(text: str, task_name: str) -> tuple[str, int]:
@@ -219,6 +221,18 @@ def excluded(repo: Path, path: Path) -> bool:
     except ValueError:
         return True
     return any(part in EXCLUDED_PARTS or part.startswith("bazel-") for part in rel.parts)
+
+
+def repository_files(repo: Path, root: Path | None = None) -> list[Path]:
+    start = root or repo
+    if excluded(repo, start):
+        return []
+    files: list[Path] = []
+    for directory, names, filenames in os.walk(start):
+        current = Path(directory)
+        names[:] = [name for name in names if not excluded(repo, current / name)]
+        files.extend(current / filename for filename in filenames)
+    return files
 
 
 def find_repo_root() -> Path:

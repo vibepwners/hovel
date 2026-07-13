@@ -1,4 +1,5 @@
-load("@rules_python//python:defs.bzl", "py_binary")
+load("@lint_pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -19,4 +20,17 @@ py_binary(
     data = BUILDIFIER_DATA,
     main = "run_buildifier_workspace.py",
     python_version = "PY3",
+)
+
+py_test(
+    name = "buildifier_test",
+    size = "small",
+    srcs = [
+        "run_buildifier_workspace.py",
+        "run_buildifier_workspace_test.py",
+    ],
+    imports = ["."],
+    main = "run_buildifier_workspace_test.py",
+    python_version = "PY3",
+    deps = [requirement("pytest")],
 )

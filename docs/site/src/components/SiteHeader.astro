@@ -1,0 +1,57 @@
+---
+import SearchDialog from "./SearchDialog.astro";
+
+interface Props {
+  current: "Home" | "Book" | "Modules" | "API Docs" | "Reports";
+  root: string;
+  tag: string;
+}
+
+const { current, root, tag } = Astro.props;
+const links = [
+  ["Home", `${root}index.html`],
+  ["Book", `${root}spec/index.html`],
+  ["Modules", `${root}modules/index.html`],
+  ["API Docs", `${root}api/sdk/index.html`],
+  ["Reports", `${root}reports/tests/latest/index.html`],
+] as const;
+---
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href={`${root}index.html`}>
+      <img src={`${root}assets/hovel.png`} alt="" class="brand-mark" />
+      <span class="brand-name">HOVEL</span>
+      <span class="brand-tag">{tag}</span>
+    </a>
+    <button class="nav-toggle" type="button" aria-controls="site-navigation" aria-expanded="false" title="Toggle navigation">
+      <span aria-hidden="true">☰</span>
+      <span class="visually-hidden">Toggle navigation</span>
+    </button>
+    <nav class="top-nav" id="site-navigation" aria-label="Primary navigation">
+      {links.map(([label, href]) => <a href={href} aria-current={label === current ? "page" : undefined}>{label}</a>)}
+      <SearchDialog root={root} />
+      <a class="source-link" href="https://github.com/vibepwners/hovel">Source <span aria-hidden="true">↗</span></a>
+    </nav>
+  </div>
+</header>
+
+<script>
+  const header = document.querySelector<HTMLElement>(".topbar");
+  const toggle = header?.querySelector<HTMLButtonElement>(".nav-toggle");
+  const navigation = header?.querySelector<HTMLElement>(".top-nav");
+
+  const setOpen = (open: boolean) => {
+    header?.classList.toggle("nav-is-open", open);
+    toggle?.setAttribute("aria-expanded", String(open));
+    if (toggle) toggle.querySelector("[aria-hidden]")!.textContent = open ? "×" : "☰";
+  };
+
+  toggle?.addEventListener("click", () => setOpen(toggle.getAttribute("aria-expanded") !== "true"));
+  navigation?.addEventListener("click", (event) => {
+    if ((event.target as HTMLElement).closest("a")) setOpen(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && toggle?.getAttribute("aria-expanded") === "true") setOpen(false);
+  });
+</script>

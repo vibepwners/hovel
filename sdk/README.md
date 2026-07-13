@@ -53,27 +53,34 @@ The practical contract is simple:
 | [Rust](rust/README.md) | You want a small dependency-light module binary. | Core modules, line shell sessions, installed-payload records, Mesh provider RPC methods, raw optional agent context and hints. No step/payload-provider dispatch yet. |
 
 The canonical module-author guide is the static spec page at
-[`../docs/site/spec/module-development.html`](../docs/site/spec/module-development.html). The
+[`../docs/site/src/content/spec/module-development.html`](../docs/site/src/content/spec/module-development.html). The
 language-specific pages are
-[`../docs/site/spec/module-python.html`](../docs/site/spec/module-python.html),
-[`../docs/site/spec/module-go.html`](../docs/site/spec/module-go.html), and
-[`../docs/site/spec/module-rust.html`](../docs/site/spec/module-rust.html).
+[`../docs/site/src/content/spec/module-python.html`](../docs/site/src/content/spec/module-python.html),
+[`../docs/site/src/content/spec/module-go.html`](../docs/site/src/content/spec/module-go.html), and
+[`../docs/site/src/content/spec/module-rust.html`](../docs/site/src/content/spec/module-rust.html).
 
 ## Fast Feedback
 
-The SDK slice has been split out of the core Bazel workspace. The root task
-dispatcher can format the Go SDK today, and it reports the SDK slice during
-partial-checkout checks. Language-specific SDK test/package tasks still need
-their own slice-local workspace before they can be restored.
+The SDK slice has its own integration workspace behind the root Task
+dispatcher. Use the root wrappers so local development and CI exercise the
+same hermetic toolchains and dependency graph.
 
 ```sh
 task sdk:fmt
-task check
+task sdk:lint
+task sdk:test
+task sdk:build
+task sdk:ci
 ```
 
-Example modules now live under `modules/examples/`. Module packaging and
-example-binary staging are part of the modules slice and are not wired into the
-root dispatcher yet.
+Use <code>task sdk:test</code> for behavior changes, <code>task sdk:build</code>
+for a compile-only pass, and <code>task sdk:ci</code> as the complete SDK gate.
+<code>task check</code> remains the checkout-aware repository gate.
+
+Example modules live under `modules/examples/`. Use
+<code>task modules:examples:ci</code> for their build-and-test gate and
+<code>task modules:ci</code> for the complete module slice, including package
+tests and Picblobs.
 
 Install or link a module package before running it:
 

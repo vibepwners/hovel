@@ -1,0 +1,41 @@
+<!-- hovel-doc: {"title":"Test Runners","group":"picblobs","order":180,"navTitle":"Test Runners"} -->
+<article>
+<h1 id="test-runners">Test Runners</h1>
+<p>Testing runs from a Linux host. The runner executes directly when the host can
+run the binary -- the runner architecture matches the host (<code>x86_64</code> on the
+usual dev/CI path), or a binfmt_misc handler (<code>qemu-user-binfmt</code>) transparently
+routes it through QEMU. Otherwise picblobs falls back to a <code>qemu-*-static</code>
+interpreter on <code>PATH</code>. Three runner types handle the three target OSes:</p>
+<table>
+<thead>
+<tr>
+<th>Runner</th>
+<th>How it works</th>
+<th>Binary type</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Linux</strong></td>
+<td>Loads blob into RWX memory, jumps to it. Blob executes real Linux syscalls, emulated by QEMU. End-to-end integration test.</td>
+<td>Freestanding Linux binary, per-arch</td>
+</tr>
+<tr>
+<td><strong>Windows</strong></td>
+<td>Constructs mock TEB/PEB/LDR structures with fake kernel32.dll export table. Blob resolves APIs via DJB2 hash, calls mock implementations (GetStdHandle -&gt; fd, WriteFile -&gt; Linux write, ExitProcess -&gt; exit_group).</td>
+<td>Freestanding Linux binary, per-arch</td>
+</tr>
+<tr>
+<td><strong>FreeBSD</strong></td>
+<td>Linux-hosted syscall shim validates FreeBSD syscall numbers and arguments.</td>
+<td>Freestanding Linux binary, per-arch</td>
+</tr>
+</tbody>
+</table>
+<h2 id="windows-runner">Windows runner</h2>
+<p>The Windows runner is <strong>hand-written</strong> (not generated) because it has complex mock logic. It supports x86_64 (gs-based TEB), i686 (fs-based TEB via set_thread_area), and aarch64 (tpidr_el0-based TEB). Build it with a Linux config since it's a Linux binary:</p>
+<pre data-lang="bash"><code>task bazel:build -- --config=linux_x86_64 //modules/picblobs/tests/runners/windows:runner
+task bazel:build -- --config=linux_i686 //modules/picblobs/tests/runners/windows:runner
+task bazel:build -- --config=linux_aarch64 //modules/picblobs/tests/runners/windows:runner
+</code></pre>
+      </article>

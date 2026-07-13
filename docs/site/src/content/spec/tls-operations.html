@@ -1,0 +1,772 @@
+<!-- hovel-doc: {"title":"TLS Operations","group":"Operator Experience","order":105,"navTitle":"TLS Operations","description":"Operator runbook for workspace PKI initialization, certificate and trust lifecycle, Mesh assignments, revocation, and recovery boundaries."} -->
+<article>
+  <h1>TLS Operations</h1>
+
+  <p>
+    This runbook covers the implemented <code>hovel pki</code> operator surface.
+    The commands talk to the daemon that owns the selected workspace; they do
+    not edit the PKI database or key files directly. Read-only commands may be
+    used interactively or with <code>--json</code>. Durable mutations that expose
+    <code>--yes</code> prompt for the literal answer <code>yes</code> when that flag
+    is omitted. Signing-lease unlock is different: it requires
+    <code>--approve</code>. The idempotent lock command requires neither prompt nor
+    confirmation flag.
+  </p>
+
+  <div class="callout warning">
+    <strong>Keep the boundary clear.</strong>
+    The CLI implements initialization, inventory, issuance, leaf lifecycle,
+    revocation, full CRL publication, trust sets, assignments, and signing
+    leases. Authority rollover exists in the daemon API but has no
+    <code>hovel pki</code> command. Recovery and master-key rotation are internal
+    infrastructure capabilities, not operator commands. Do not invent flags or
+    replace these missing front ends with direct database or secret-file edits.
+  </div>
+
+  <figure class="diagram" aria-label="Workspace TLS operations flow from preflight through signing-lease lock.">
+    <figcaption>Normal workspace PKI flow</figcaption>
+    <ol class="flow-diagram">
+      <li class="flow-step">preflight</li>
+      <li class="flow-step">initialize custody</li>
+      <li class="flow-step">create root</li>
+      <li class="flow-step warning">unlock lease</li>
+      <li class="flow-step">issue leaf</li>
+      <li class="flow-step">activate trust</li>
+      <li class="flow-step">activate assignment</li>
+      <li class="flow-step ready">inspect</li>
+      <li class="flow-step stop">lock lease</li>
+    </ol>
+  </figure>
+
+  <h2>Operator contract</h2>
+
+  <table>
+    <thead>
+      <tr><th>Surface</th><th>Implemented behavior</th><th>Operator consequence</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>hovel pki</code></td>
+        <td>Daemon-backed commands in this runbook.</td>
+        <td>Use these commands rather than internal Go packages or workspace files.</td>
+      </tr>
+      <tr>
+        <td>Daemon API</td>
+        <td>Typed PKI routes, including additional operation, rollover, bundle-export, and reconciliation methods.</td>
+        <td>An API route is not automatically a CLI command. Consult the <a href="daemon-rpc.html">daemon contract</a>.</td>
+      </tr>
+      <tr>
+        <td>Go, Python, and Rust SDKs</td>
+        <td>Optional credential-delivery descriptors and secret-aware provider calls.</td>
+        <td>The SDKs let a provider consume an active assignment; they do not administer authorities or certificates.</td>
+      </tr>
+      <tr>
+        <td>Current crypto runtime</td>
+        <td>The daemon-local factory registers <code>builtin-x509</code>.</td>
+        <td>Always check <code>pki backend list</code>. Do not assume HSM, cloud KMS, or module-provided backend support.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Preflight and initialize custody</h2>
+
+  <p>
+    Start with an existing Hovel workspace and a running daemon. Every PKI
+    command accepts <code>--workspace</code> and <code>--json</code>. If the
+    daemon is not managed by a service, <code>hovel daemon serve</code> runs it
+    in the foreground and should be supervised in a separate terminal.
+  </p>
+
+<pre data-lang="shell"><code>WORKSPACE="/absolute/path/to/hovel-workspace"
+
+hovel daemon status --workspace "$WORKSPACE" --json
+hovel pki status --workspace "$WORKSPACE" --json
+
+# Only when status reports initialized=false:
+hovel pki init --workspace "$WORKSPACE" --yes --json
+hovel pki status --workspace "$WORKSPACE" --json
+</code></pre>
+
+  <p>
+    <code>pki init</code> creates workspace master-key custody when it is absent
+    and opens existing custody when it is already present. Repeating it does not
+    request a new master-key version. Status intentionally reports only
+    <code>initialized</code>, <code>activeKeyVersion</code>, the version count,
+    and a generic availability error; it does not disclose key bytes or secret
+    paths.
+  </p>
+
+  <h2>Discover profiles and backends</h2>
+
+<pre data-lang="shell"><code>hovel pki backend list --workspace "$WORKSPACE"
+hovel pki backend list --workspace "$WORKSPACE" --json
+hovel pki profile list --workspace "$WORKSPACE"
+hovel pki profile list --workspace "$WORKSPACE" --json
+</code></pre>
+
+  <table>
+    <thead>
+      <tr><th>Profile</th><th>Purpose</th><th>Peer trust on an assignment</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>root-modern</code></td><td>Self-signed root authority</td><td>Not an assignment profile</td></tr>
+      <tr><td><code>tls-server</code></td><td>Server authentication</td><td>Not required</td></tr>
+      <tr><td><code>tls-client</code></td><td>Client authentication</td><td>Required</td></tr>
+      <tr><td><code>mtls-server</code></td><td>Mutual-TLS server authentication</td><td>Required</td></tr>
+      <tr><td><code>mtls-client</code></td><td>Mutual-TLS client authentication</td><td>Required</td></tr>
+      <tr><td><code>dual-role-mtls</code></td><td>Server and client authentication</td><td>Required</td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    Other built-in profiles are visible in <code>profile list</code>. Select
+    only a profile and backend reported by the current daemon. Omitting
+    <code>--backend</code> uses the backend fixed by the selected profile; the
+    examples name <code>builtin-x509</code> explicitly for audit clarity.
+  </p>
+
+  <h2>Create a root and capture generated identifiers</h2>
+
+  <p>
+    Authority creation accepts a stable retry key, but the current CLI has no
+    <code>--id</code>, <code>--generation-id</code>, or <code>--key-id</code>
+    option for this command. Hovel generates those identifiers. Capture the
+    JSON response instead of guessing them.
+  </p>
+
+<pre data-lang="shell"><code>ROOT_JSON="$(
+  hovel pki authority create "Mesh Lab Root" \
+    --workspace "$WORKSPACE" \
+    --role root \
+    --profile root-modern \
+    --backend builtin-x509 \
+    --idempotency-key mesh-lab-root-v1 \
+    --yes \
+    --json
+)"
+
+printf '%s\n' "$ROOT_JSON"
+ROOT_AUTHORITY_ID="$(printf '%s\n' "$ROOT_JSON" | jq -r '.authority.id')"
+ROOT_GENERATION_ID="$(printf '%s\n' "$ROOT_JSON" | jq -r '.generation.id')"
+</code></pre>
+
+  <div class="callout note">
+    <strong><code>jq</code> is optional and is not invoked by Hovel.</strong>
+    Without it, redirect <code>--json</code> to a file and copy
+    <code>authority.id</code> and <code>generation.id</code>. Keep the same
+    <code>--idempotency-key</code> for an exact retry: a completed replay returns
+    the same generated identifiers. A changed request under the same key is an
+    idempotency conflict.
+  </div>
+
+<pre data-lang="shell"><code>hovel pki authority list --workspace "$WORKSPACE"
+hovel pki authority inspect "$ROOT_AUTHORITY_ID" \
+  --workspace "$WORKSPACE" \
+  --json
+</code></pre>
+
+  <p>
+    A root is created with persistent authority state <code>locked</code>. Root
+    creation is self-signed and does not need a pre-existing lease. Subsequent
+    certificate and CRL signatures do.
+  </p>
+
+  <h2>Open and close a signing lease</h2>
+
+<pre data-lang="shell"><code>hovel pki authority unlock "$ROOT_AUTHORITY_ID" \
+  --workspace "$WORKSPACE" \
+  --duration 10m \
+  --approve \
+  --json
+</code></pre>
+
+  <p>
+    <code>--approve</code> is mandatory. The default duration is five minutes;
+    valid durations range from one second through fifteen minutes. The lease is
+    in-memory and scoped to the CLI actor <code>hovel-cli</code> and operation
+    <code>pki</code>. A fresh correlation ID distinguishes each call while that
+    stable actor/operation scope lets later PKI CLI calls use the lease. Daemon
+    restart or expiry removes the lease. Unlocking does not rewrite the
+    authority's persistent <code>locked</code> state.
+  </p>
+
+<pre data-lang="shell"><code>hovel pki authority lock "$ROOT_AUTHORITY_ID" \
+  --workspace "$WORKSPACE" \
+  --json
+</code></pre>
+
+  <p>
+    Lock as soon as the signing window is complete. Repeating lock for the same
+    caller is safe. Do not leave a long lease open merely to avoid another
+    explicit approval.
+  </p>
+
+  <h2>Issue server, client, and mutual-TLS leaves</h2>
+
+  <p>
+    Keep the authority lease open while issuing. The positional name becomes
+    the subject common name. For server, mutual-TLS server, and dual-role
+    profiles, the default template also uses that name as its DNS subject
+    alternative name. The CLI has no custom SAN, IP SAN, template,
+    certificate-ID, generation-ID, or key-ID options for initial issuance.
+  </p>
+
+<pre data-lang="shell"><code># TLS server
+hovel pki certificate issue "api.lab.example" \
+  --workspace "$WORKSPACE" --issuer "$ROOT_AUTHORITY_ID" \
+  --profile tls-server --backend builtin-x509 \
+  --idempotency-key issue-api-server-v1 --yes --json
+
+# TLS client
+hovel pki certificate issue "operator-01" \
+  --workspace "$WORKSPACE" --issuer "$ROOT_AUTHORITY_ID" \
+  --profile tls-client --backend builtin-x509 \
+  --idempotency-key issue-operator-client-v1 --yes --json
+
+# Mutual-TLS server
+hovel pki certificate issue "listener.lab.example" \
+  --workspace "$WORKSPACE" --issuer "$ROOT_AUTHORITY_ID" \
+  --profile mtls-server --backend builtin-x509 \
+  --idempotency-key issue-listener-mtls-server-v1 --yes --json
+
+# Mutual-TLS client
+hovel pki certificate issue "mesh-peer-01" \
+  --workspace "$WORKSPACE" --issuer "$ROOT_AUTHORITY_ID" \
+  --profile mtls-client --backend builtin-x509 \
+  --idempotency-key issue-peer-mtls-client-v1 --yes --json
+
+# One certificate valid for both endpoint roles, when the consumer requires it
+hovel pki certificate issue "mesh-dual-01.lab.example" \
+  --workspace "$WORKSPACE" --issuer "$ROOT_AUTHORITY_ID" \
+  --profile dual-role-mtls --backend builtin-x509 \
+  --idempotency-key issue-dual-role-mtls-v1 --yes --json
+</code></pre>
+
+  <p>
+    Initial issue returns a certificate-generation object directly. Capture
+    <code>.id</code>, <code>.certificateId</code>, and <code>.keyId</code> from
+    <code>--json</code>. List and inspect operations return certificate and
+    public-key material, provenance, compatibility, validity, and state, but no
+    private key.
+  </p>
+
+<pre data-lang="shell"><code>MTLS_SERVER_JSON="$(
+  hovel pki certificate issue "listener.lab.example" \
+    --workspace "$WORKSPACE" --issuer "$ROOT_AUTHORITY_ID" \
+    --profile mtls-server --backend builtin-x509 \
+    --idempotency-key issue-listener-mtls-server-v1 --yes --json
+)"
+MTLS_SERVER_GENERATION_ID="$(printf '%s\n' "$MTLS_SERVER_JSON" | jq -r '.id')"
+
+hovel pki certificate list --workspace "$WORKSPACE"
+hovel pki certificate inspect "$MTLS_SERVER_GENERATION_ID" \
+  --workspace "$WORKSPACE" --json
+</code></pre>
+
+  <h2>Create, stage, and activate a trust set</h2>
+
+  <p>
+    A trust set is a mutable pointer to immutable trust generations. Creation
+    starts at revision 1 in <code>pending</code>. Stage and activate each require
+    the exact current revision and increment it. At least one CA certificate
+    generation is required as an anchor.
+  </p>
+
+<pre data-lang="shell"><code>TRUST_SET_ID="trust-mesh-listener-clients"
+TRUST_GENERATION_ID="trustgen-mesh-listener-clients-v1"
+
+TRUST_JSON="$(
+  hovel pki trust create "Mesh listener client roots" \
+    --workspace "$WORKSPACE" \
+    --id "$TRUST_SET_ID" \
+    --idempotency-key create-mesh-listener-trust-v1 \
+    --yes --json
+)"
+TRUST_REVISION="$(printf '%s\n' "$TRUST_JSON" | jq -r '.revision')"
+
+TRUST_JSON="$(
+  hovel pki trust stage "$TRUST_SET_ID" \
+    --workspace "$WORKSPACE" \
+    --revision "$TRUST_REVISION" \
+    --generation-id "$TRUST_GENERATION_ID" \
+    --anchors "$ROOT_GENERATION_ID" \
+    --idempotency-key stage-mesh-listener-trust-v1 \
+    --yes --json
+)"
+TRUST_REVISION="$(printf '%s\n' "$TRUST_JSON" | jq -r '.trustSet.revision')"
+
+TRUST_JSON="$(
+  hovel pki trust activate "$TRUST_SET_ID" \
+    --workspace "$WORKSPACE" \
+    --revision "$TRUST_REVISION" \
+    --idempotency-key activate-mesh-listener-trust-v1 \
+    --yes --json
+)"
+TRUST_REVISION="$(printf '%s\n' "$TRUST_JSON" | jq -r '.trustSet.revision')"
+TRUST_GENERATION_ID="$(printf '%s\n' "$TRUST_JSON" | jq -r '.trustSet.activeGenerationId')"
+
+hovel pki trust inspect "$TRUST_SET_ID" \
+  --workspace "$WORKSPACE" --json
+</code></pre>
+
+  <p>
+    <code>--anchors</code>, <code>--intermediates</code>, and
+    <code>--crls</code> accept comma-separated generation IDs. A staged CRL must
+    be fresh and must be signed by an issuer present in that trust generation.
+    Activation changes the trust set's active generation; it does not silently
+    change assignments that already pin an older trust generation.
+  </p>
+
+  <h2>Bind, stage, and activate an assignment</h2>
+
+  <p>
+    Binding creates a revision-1 <code>pending</code> assignment. Staging checks
+    that the certificate purpose and profile match and, for a peer-trust
+    purpose, automatically pins the trust set's currently active generation.
+    There is no CLI option to choose a different trust generation. Activation
+    promotes both staged pins and normally produces revision 3 and state
+    <code>active</code>.
+  </p>
+
+<pre data-lang="shell"><code>ASSIGNMENT_ID="assignment-mesh-listener-edge"
+MESH_PROVIDER_NAME="replace-with-provider-name"
+LISTENER_ID="replace-with-listener-id"
+CONSUMER_ID="${MESH_PROVIDER_NAME}/${LISTENER_ID}"
+
+ASSIGNMENT_JSON="$(
+  hovel pki assignment bind "$CONSUMER_ID" \
+    --workspace "$WORKSPACE" \
+    --id "$ASSIGNMENT_ID" \
+    --consumer-type mesh-listener \
+    --purpose mtls-server \
+    --profile mtls-server \
+    --trust-set "$TRUST_SET_ID" \
+    --idempotency-key bind-mesh-listener-edge-v1 \
+    --yes --json
+)"
+ASSIGNMENT_REVISION="$(printf '%s\n' "$ASSIGNMENT_JSON" | jq -r '.revision')"
+
+ASSIGNMENT_JSON="$(
+  hovel pki assignment stage "$ASSIGNMENT_ID" "$MTLS_SERVER_GENERATION_ID" \
+    --workspace "$WORKSPACE" \
+    --revision "$ASSIGNMENT_REVISION" \
+    --idempotency-key stage-mesh-listener-edge-v1 \
+    --yes --json
+)"
+ASSIGNMENT_REVISION="$(printf '%s\n' "$ASSIGNMENT_JSON" | jq -r '.assignment.revision')"
+
+ASSIGNMENT_JSON="$(
+  hovel pki assignment activate "$ASSIGNMENT_ID" \
+    --workspace "$WORKSPACE" \
+    --revision "$ASSIGNMENT_REVISION" \
+    --idempotency-key activate-mesh-listener-edge-v1 \
+    --yes --json
+)"
+ASSIGNMENT_REVISION="$(printf '%s\n' "$ASSIGNMENT_JSON" | jq -r '.assignment.revision')"
+
+hovel pki assignment inspect "$ASSIGNMENT_ID" \
+  --workspace "$WORKSPACE" --json
+</code></pre>
+
+  <div class="callout warning">
+    <strong>Omit <code>--rotation-policy</code>.</strong>
+    The flag is present on <code>assignment bind</code>, but the application
+    rejects every non-empty rotation-policy ID because durable rotation-policy
+    inventory is not implemented. Rotation remains an explicit operator
+    workflow.
+  </div>
+
+  <h2>Worked example: Mesh listener PKI from start to finish</h2>
+
+  <p>
+    The following is the complete PKI side of a mutual-TLS Mesh listener. The
+    provider name is the canonical name reported by the selected Mesh provider,
+    without an installed-version suffix. The listener ID must be the same ID
+    supplied to the daemon's Mesh listener-start request. Replace the two
+    placeholder values before use.
+  </p>
+
+<pre data-lang="shell"><code>WORKSPACE="/absolute/path/to/hovel-workspace"
+MESH_PROVIDER_NAME="replace-with-provider-name"
+LISTENER_ID="replace-with-listener-id"
+CONSUMER_ID="${MESH_PROVIDER_NAME}/${LISTENER_ID}"
+
+TRUST_SET_ID="trust-${LISTENER_ID}-clients"
+TRUST_GENERATION_ID="trustgen-${LISTENER_ID}-clients-v1"
+ASSIGNMENT_ID="assignment-${LISTENER_ID}-server"
+
+# 1. Preflight and custody.
+hovel daemon status --workspace "$WORKSPACE" --json
+hovel pki init --workspace "$WORKSPACE" --yes --json
+hovel pki backend list --workspace "$WORKSPACE" --json
+hovel pki profile list --workspace "$WORKSPACE" --json
+
+# 2. Root. IDs are generated; the retry key makes an exact replay stable.
+ROOT_JSON="$(
+  hovel pki authority create "Mesh listener root" \
+    --workspace "$WORKSPACE" --role root \
+    --profile root-modern --backend builtin-x509 \
+    --idempotency-key mesh-listener-root-v1 --yes --json
+)"
+ROOT_AUTHORITY_ID="$(printf '%s\n' "$ROOT_JSON" | jq -r '.authority.id')"
+ROOT_GENERATION_ID="$(printf '%s\n' "$ROOT_JSON" | jq -r '.generation.id')"
+
+# 3. Short signing lease and listener leaf.
+hovel pki authority unlock "$ROOT_AUTHORITY_ID" \
+  --workspace "$WORKSPACE" --duration 10m --approve --json
+
+SERVER_JSON="$(
+  hovel pki certificate issue "listener.lab.example" \
+    --workspace "$WORKSPACE" --issuer "$ROOT_AUTHORITY_ID" \
+    --profile mtls-server --backend builtin-x509 \
+    --idempotency-key issue-listener-server-v1 --yes --json
+)"
+SERVER_GENERATION_ID="$(printf '%s\n' "$SERVER_JSON" | jq -r '.id')"
+
+# Optional peer certificate for a controlled lab client.
+PEER_JSON="$(
+  hovel pki certificate issue "mesh-peer-01" \
+    --workspace "$WORKSPACE" --issuer "$ROOT_AUTHORITY_ID" \
+    --profile mtls-client --backend builtin-x509 \
+    --idempotency-key issue-listener-peer-v1 --yes --json
+)"
+PEER_GENERATION_ID="$(printf '%s\n' "$PEER_JSON" | jq -r '.id')"
+
+# 4. Active trust for client certificates issued by this root.
+TRUST_JSON="$(
+  hovel pki trust create "${LISTENER_ID} client roots" \
+    --workspace "$WORKSPACE" --id "$TRUST_SET_ID" \
+    --idempotency-key create-listener-trust-v1 --yes --json
+)"
+TRUST_REVISION="$(printf '%s\n' "$TRUST_JSON" | jq -r '.revision')"
+
+TRUST_JSON="$(
+  hovel pki trust stage "$TRUST_SET_ID" \
+    --workspace "$WORKSPACE" --revision "$TRUST_REVISION" \
+    --generation-id "$TRUST_GENERATION_ID" \
+    --anchors "$ROOT_GENERATION_ID" \
+    --idempotency-key stage-listener-trust-v1 --yes --json
+)"
+TRUST_REVISION="$(printf '%s\n' "$TRUST_JSON" | jq -r '.trustSet.revision')"
+
+TRUST_JSON="$(
+  hovel pki trust activate "$TRUST_SET_ID" \
+    --workspace "$WORKSPACE" --revision "$TRUST_REVISION" \
+    --idempotency-key activate-listener-trust-v1 --yes --json
+)"
+
+# 5. Bind the exact provider/listener consumer, then promote with CAS revisions.
+ASSIGNMENT_JSON="$(
+  hovel pki assignment bind "$CONSUMER_ID" \
+    --workspace "$WORKSPACE" --id "$ASSIGNMENT_ID" \
+    --consumer-type mesh-listener --purpose mtls-server \
+    --profile mtls-server --trust-set "$TRUST_SET_ID" \
+    --idempotency-key bind-listener-server-v1 --yes --json
+)"
+ASSIGNMENT_REVISION="$(printf '%s\n' "$ASSIGNMENT_JSON" | jq -r '.revision')"
+
+ASSIGNMENT_JSON="$(
+  hovel pki assignment stage "$ASSIGNMENT_ID" "$SERVER_GENERATION_ID" \
+    --workspace "$WORKSPACE" --revision "$ASSIGNMENT_REVISION" \
+    --idempotency-key stage-listener-server-v1 --yes --json
+)"
+ASSIGNMENT_REVISION="$(printf '%s\n' "$ASSIGNMENT_JSON" | jq -r '.assignment.revision')"
+
+ASSIGNMENT_JSON="$(
+  hovel pki assignment activate "$ASSIGNMENT_ID" \
+    --workspace "$WORKSPACE" --revision "$ASSIGNMENT_REVISION" \
+    --idempotency-key activate-listener-server-v1 --yes --json
+)"
+
+# 6. Verify all immutable pins, then close the signing window.
+hovel pki authority inspect "$ROOT_AUTHORITY_ID" --workspace "$WORKSPACE" --json
+hovel pki certificate inspect "$SERVER_GENERATION_ID" --workspace "$WORKSPACE" --json
+hovel pki certificate inspect "$PEER_GENERATION_ID" --workspace "$WORKSPACE" --json
+hovel pki trust inspect "$TRUST_SET_ID" --workspace "$WORKSPACE" --json
+hovel pki assignment inspect "$ASSIGNMENT_ID" --workspace "$WORKSPACE" --json
+hovel pki authority lock "$ROOT_AUTHORITY_ID" --workspace "$WORKSPACE" --json
+</code></pre>
+
+  <p>
+    Success here means the PKI assignment is active and ready for a compatible
+    provider descriptor. It does <strong>not</strong> start a listener. When an
+    authorized daemon Mesh request supplies a credential selection for this
+    assignment, Hovel verifies that the assignment matches
+    <code>mesh-listener</code> and the exact
+    <code>&lt;provider-name&gt;/&lt;listener-id&gt;</code> consumer, resolves a supported
+    short-lived projection, and invokes credential delivery before the
+    consuming provider call in the same process. See <a href="mesh.html">Mesh</a>,
+    <a href="mesh-development.html">Mesh Development</a>, and
+    <a href="providers-artifacts.html">Providers and Artifacts</a>.
+  </p>
+
+  <h2>Inspection checklist</h2>
+
+<pre data-lang="shell"><code>hovel pki status --workspace "$WORKSPACE" --json
+
+hovel pki authority list --workspace "$WORKSPACE" --json
+hovel pki authority inspect "$ROOT_AUTHORITY_ID" --workspace "$WORKSPACE" --json
+
+hovel pki certificate list --workspace "$WORKSPACE" --json
+hovel pki certificate inspect "$SERVER_GENERATION_ID" --workspace "$WORKSPACE" --json
+
+hovel pki trust list --workspace "$WORKSPACE" --json
+hovel pki trust inspect "$TRUST_SET_ID" --workspace "$WORKSPACE" --json
+
+hovel pki assignment list --workspace "$WORKSPACE" --json
+hovel pki assignment inspect "$ASSIGNMENT_ID" --workspace "$WORKSPACE" --json
+</code></pre>
+
+  <table>
+    <thead>
+      <tr><th>Object</th><th>Verify before activation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Authority</td><td>Expected ID, role, active generation, profile, backend commitment, and validity.</td></tr>
+      <tr><td>Certificate</td><td>Expected profile and purpose, issuer IDs, DNS name where applicable, state <code>active</code>, key ID, and expiry.</td></tr>
+      <tr><td>Trust set</td><td>Expected revision, staged or active generation ID, anchors, intermediates, and fresh CRLs.</td></tr>
+      <tr><td>Assignment</td><td>Exact consumer type/ID, profile/purpose, revision, certificate pin, trust-generation pin, and state.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Renew versus rotate</h2>
+
+  <table>
+    <thead>
+      <tr><th>Operation</th><th>Key behavior</th><th>Use when</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>certificate renew</code></td>
+        <td>Creates a new immutable generation with the same key and backend; JSON reports <code>keyReused: true</code>.</td>
+        <td>The key remains trusted and only validity/serial rollover is needed.</td>
+      </tr>
+      <tr>
+        <td><code>certificate rotate</code></td>
+        <td>Creates a new immutable generation with a distinct key; JSON reports <code>keyReused: false</code>.</td>
+        <td>Routine key hygiene, backend migration, or suspected key exposure.</td>
+      </tr>
+    </tbody>
+  </table>
+
+<pre data-lang="shell"><code># Renew with a stable new generation ID.
+RENEW_JSON="$(
+  hovel pki certificate renew "$SERVER_GENERATION_ID" \
+    --workspace "$WORKSPACE" \
+    --generation-id certgen-listener-renewed-v2 \
+    --idempotency-key renew-listener-v2 \
+    --yes --json
+)"
+RENEWED_GENERATION_ID="$(printf '%s\n' "$RENEW_JSON" | jq -r '.generation.id')"
+
+# Rotate with stable generation and key IDs.
+ROTATE_JSON="$(
+  hovel pki certificate rotate "$SERVER_GENERATION_ID" \
+    --workspace "$WORKSPACE" \
+    --generation-id certgen-listener-rotated-v2 \
+    --key-id key-listener-rotated-v2 \
+    --backend builtin-x509 \
+    --idempotency-key rotate-listener-v2 \
+    --yes --json
+)"
+ROTATED_GENERATION_ID="$(printf '%s\n' "$ROTATE_JSON" | jq -r '.generation.id')"
+</code></pre>
+
+  <p>
+    Both operations require an active source leaf and an active signing lease.
+    They preserve the certificate lineage, profile, purpose, subject policy,
+    compatibility target, and issuer. They do not update an assignment. Stage
+    the selected new generation on the assignment using its current revision,
+    inspect the staged certificate and trust pins, then activate with the new
+    revision. Authority generations reject both commands and require the
+    authority-rollover workflow.
+  </p>
+
+  <h2>Revoke a generation and publish a full CRL</h2>
+
+<pre data-lang="shell"><code>REVOKE_JSON="$(
+  hovel pki certificate revoke "$SERVER_GENERATION_ID" \
+    --workspace "$WORKSPACE" \
+    --reason superseded \
+    --idempotency-key revoke-listener-v1 \
+    --yes --json
+)"
+REVOCATION_ID="$(printf '%s\n' "$REVOKE_JSON" | jq -r '.revocation.id')"
+
+hovel pki revocation inspect "$REVOCATION_ID" \
+  --workspace "$WORKSPACE" --json
+hovel pki revocation generation "$SERVER_GENERATION_ID" \
+  --workspace "$WORKSPACE" --json
+hovel pki revocation list "$ROOT_AUTHORITY_ID" \
+  --workspace "$WORKSPACE" --json
+
+# CRL publication signs, so open a lease if the earlier lease is closed or expired.
+hovel pki authority unlock "$ROOT_AUTHORITY_ID" \
+  --workspace "$WORKSPACE" --duration 5m --approve --json
+
+CRL_JSON="$(
+  hovel pki crl publish "$ROOT_AUTHORITY_ID" \
+    --workspace "$WORKSPACE" \
+    --valid-for 24h \
+    --idempotency-key publish-root-crl-v1 \
+    --yes --json
+)"
+CRL_GENERATION_ID="$(printf '%s\n' "$CRL_JSON" | jq -r '.generation.id')"
+
+hovel pki crl inspect "$CRL_GENERATION_ID" \
+  --workspace "$WORKSPACE" --json
+hovel pki crl list "$ROOT_AUTHORITY_ID" \
+  --workspace "$WORKSPACE" --json
+hovel pki authority lock "$ROOT_AUTHORITY_ID" \
+  --workspace "$WORKSPACE" --json
+</code></pre>
+
+  <p>
+    Supported reasons are <code>unspecified</code>,
+    <code>key-compromise</code>, <code>ca-compromise</code>,
+    <code>affiliation-changed</code>, <code>superseded</code>,
+    <code>cessation-of-operation</code>, <code>certificate-hold</code>,
+    <code>privilege-withdrawn</code>, and <code>aa-compromise</code>. Omitting
+    <code>--effective-at</code> uses the current time. An explicit value must be
+    RFC 3339 and cannot schedule a future revocation or predate certificate
+    validity.
+  </p>
+
+  <p>
+    Revocation atomically marks the generation revoked, degrades assignments
+    actively serving it, clears staged-only references to it, and returns the
+    complete affected-assignment set. A self-signed root cannot be revoked; it
+    must be removed from trust through a controlled rollover. CRL publication
+    creates an immutable, full CRL snapshot. It does not modify a trust set or
+    an assignment automatically.
+  </p>
+
+  <p>
+    To publish the new CRL through an existing trust set, stage another trust
+    generation with the same required anchors/intermediates plus
+    <code>--crls "$CRL_GENERATION_ID"</code>, then activate it with revision
+    fencing. Existing assignments retain their pinned trust generation. A
+    normal assignment update therefore stages a new leaf generation and pins
+    the trust set generation that is active at that moment; there is no
+    trust-only assignment command.
+  </p>
+
+  <h2>Safety table</h2>
+
+  <table>
+    <thead>
+      <tr><th>Action</th><th>Guard</th><th>Required post-check</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Initialize custody</td><td>Interactive confirmation or <code>--yes</code>.</td><td><code>pki status --json</code> reports initialized custody.</td></tr>
+      <tr><td>Create root</td><td>Confirmation, selected profile/backend, and stable retry key.</td><td>Inspect authority and root generation before distributing trust.</td></tr>
+      <tr><td>Use an authority key</td><td>Explicit <code>--approve</code> lease bounded to at most 15 minutes.</td><td>Lock after the signing window.</td></tr>
+      <tr><td>Activate trust</td><td>Immutable staged generation, material validation, confirmation, and expected revision.</td><td>Inspect active anchors, intermediates, CRLs, and revision.</td></tr>
+      <tr><td>Activate assignment</td><td>Exact consumer/profile/purpose checks, pinned trust, confirmation, and expected revision.</td><td>Inspect active certificate/trust pins and consumer identity.</td></tr>
+      <tr><td>Revoke</td><td>Typed reason, confirmation, atomic assignment impact, and durable retry result.</td><td>Inspect the revocation and every affected assignment; publish a CRL.</td></tr>
+      <tr><td>Read inventory</td><td>List/inspect responses omit private key bytes.</td><td>Do not treat public JSON as a private-key export path.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Idempotency and revision fencing</h2>
+
+  <table>
+    <thead>
+      <tr><th>Command class</th><th>Retry contract</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Status, list, inspect</td><td>Read-only; rerun without an idempotency key.</td></tr>
+      <tr><td><code>pki init</code></td><td>Converges on existing custody and has no <code>--idempotency-key</code> option.</td></tr>
+      <tr><td>Authority create, issue, renew, rotate</td><td>Use one stable key for one exact request. Completed issuance replays the same generated result.</td></tr>
+      <tr><td>Trust and assignment mutations</td><td>The state, audit event, and public result commit atomically. Replay the same key, payload, and expected revision.</td></tr>
+      <tr><td>Revoke and CRL publish</td><td>Use stable keys. Revocation preserves its affected-assignment result; CRL publication preserves its immutable generation result.</td></tr>
+      <tr><td>Unlock and lock</td><td>No idempotency-key option. Unlock replaces the time-bounded lease after explicit approval; lock removes the caller's lease.</td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    Explicit retry keys are scoped by mutation kind and authenticated actor.
+    Reusing a key with a changed request fails closed. Without an explicit key,
+    each CLI call has a fresh correlation ID, so a transport retry is a new
+    operation. Revision-fenced commands require a positive decimal revision.
+    The server rejects stale revisions without applying the requested state
+    transition.
+  </p>
+
+  <h2>Failure and retry table</h2>
+
+  <table>
+    <thead>
+      <tr><th>Failure</th><th>State assumption</th><th>Safe response</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Daemon unavailable</td><td>The CLI did not receive a result; the request may or may not have reached the daemon.</td><td>Restore the same workspace daemon, run status/inspect, then replay the exact command with the same explicit key.</td></tr>
+      <tr><td>Signing locked or lease expired</td><td>No signature was authorized for the failed attempt.</td><td>Unlock with <code>--approve</code>, then replay the exact command and key.</td></tr>
+      <tr><td>Revision conflict</td><td>Another mutation changed the object, or an earlier response was lost.</td><td>Inspect first. If replaying the exact prior request, retain its key and revision. For a newly reviewed request, use the current revision and a new key.</td></tr>
+      <tr><td>Idempotency conflict</td><td>The key already identifies a different normalized request.</td><td>Do not force reuse. Compare the prior operation with the intended one and choose a new key only for an intentionally new request.</td></tr>
+      <tr><td>Issuance already pending</td><td>A durable issuance plan owns the generated IDs and may still be reconciling.</td><td>Do not fan out retries under new keys. Preserve the key, inspect inventory and daemon audit state, and escalate if it remains pending.</td></tr>
+      <tr><td>Prior issuance failed</td><td>The durable plan preserves the failure and will not silently become a new issuance.</td><td>Inspect inventory, correct the cause, then use a new key only after confirming that no successful generation exists.</td></tr>
+      <tr><td>Trust material rejected</td><td>The staged trust mutation did not commit.</td><td>Inspect each CA/CRL generation; correct role, state, issuer membership, or freshness, then retry the same reviewed request.</td></tr>
+      <tr><td>CRL publication fails after revocation</td><td>The revocation remains committed; CRL publication is a separate operation.</td><td>Do not revoke again. Repair the lease/backend issue and retry CRL publication with its same key.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Recovery and rollover boundaries</h2>
+
+  <table>
+    <thead>
+      <tr><th>Need</th><th>Current implementation boundary</th><th>Do not substitute</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Leaf renewal or key rotation</td>
+        <td>Implemented by <code>pki certificate renew</code> and <code>pki certificate rotate</code>.</td>
+        <td>Do not use these commands for a CA generation.</td>
+      </tr>
+      <tr>
+        <td>Authority rollover</td>
+        <td>The domain, persistence, daemon RPC, and OpenAPI implement start, overlap acknowledgements, overlap activation, leaf rotation checks, final-trust acknowledgements, completion, and early cancellation.</td>
+        <td>There is no <code>hovel pki authority rollover</code> command. Do not approximate rollover with leaf rotation or manual trust edits.</td>
+      </tr>
+      <tr>
+        <td>Recovery export/restore</td>
+        <td>Passphrase-protected recovery-envelope code exists in the file master-key infrastructure.</td>
+        <td>No CLI or OpenAPI recovery route exists. Do not copy, rewrite, or merge <code>secrets/pki-master-keys.json</code> as an operator workflow.</td>
+      </tr>
+      <tr>
+        <td>Master-key rotation/rewrap</td>
+        <td>An internal coordinator can rotate and converge encrypted key records.</td>
+        <td>No operator CLI or daemon route exposes it. Do not rotate files independently of protected records.</td>
+      </tr>
+      <tr>
+        <td>Provider credential delivery</td>
+        <td>Daemon Mesh calls and the language SDKs implement typed, descriptor-checked runtime delivery for supported projections.</td>
+        <td>An active assignment is not proof that a chosen provider advertises the required slot, profile, projection, or material form.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    The rollover API is a revision-fenced state machine, not a single
+    certificate replacement. Its implemented phases are
+    <code>awaiting-overlap-acknowledgements</code>,
+    <code>awaiting-leaf-rotation</code>,
+    <code>awaiting-final-acknowledgements</code>, and <code>completed</code>.
+    Use only an authorized client generated or implemented against the
+    <a href="reference/daemon-rpc.openapi.json">current OpenAPI contract</a>;
+    do not infer request fields from this operational summary.
+  </p>
+
+  <h2>Related references</h2>
+
+  <ul>
+    <li><a href="daemon-rpc.html">Daemon RPC Contract</a> — local transport, typed errors, and PKI method inventory.</li>
+    <li><a href="reference/daemon-rpc.openapi.json">Daemon OpenAPI</a> — exact request and response schemas.</li>
+    <li><a href="providers-artifacts.html">Providers and Artifacts</a> — assignment resolution and credential delivery.</li>
+    <li><a href="mesh.html">Mesh</a> — listener, task, stream, and bridge control-plane behavior.</li>
+    <li><a href="mesh-development.html">Mesh Development</a> — provider descriptor and SDK contracts.</li>
+    <li><a href="module-protocol.html">Module Protocol</a> — module-process JSON-RPC and optional credential methods.</li>
+    <li><a href="operator-workflows.html">Operator Workflows</a> — daemon-owned operator state and JSON conventions.</li>
+    <li><a href="safety.html">Safety</a> — confirmation and audit expectations.</li>
+  </ul>
+</article>

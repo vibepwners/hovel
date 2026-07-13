@@ -49,6 +49,7 @@ mod module;
 mod result;
 mod server;
 mod session;
+mod sha256;
 
 #[cfg(test)]
 mod tests;
@@ -71,7 +72,7 @@ pub use credential_provider::{
     CredentialRuntimeRequest, CredentialScopedReference, CredentialSecretReference,
     CredentialStampExecutionRequest, CredentialStampExecutionResult, CredentialStampOutput,
     CredentialStampTargetResolution, CredentialStampedMaterialDigest, ResolvedCredentialMaterial,
-    CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1,
+    CREDENTIAL_ENCODING_RAW, CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1,
 };
 pub use mesh::{
     AgentContext, AgentEntity, AgentHint, MeshBeacon, MeshBeaconRequest, MeshDescribeRequest,
@@ -87,7 +88,8 @@ pub use mesh::{
     MESH_TASK_UPLOAD, MESH_TASK_UPLOAD_EXECUTE,
 };
 pub use mesh_bridge::{
-    connect_mesh_bridge_tcp, connect_mesh_bridge_udp, MeshBridgeCapability, MeshBridgeEndpoint,
+    connect_mesh_bridge, connect_mesh_bridge_tcp, connect_mesh_bridge_udp, MeshBridgeCapability,
+    MeshBridgeConnection, MeshBridgeEndpoint, MeshBridgeNetwork, ParseMeshBridgeNetworkError,
 };
 pub use module::{Info, Module, ModuleType, Requirement, Schema};
 pub use result::{Artifact, Finding, InstalledPayloadDescriptor, Outcome, PayloadProviderRecord};

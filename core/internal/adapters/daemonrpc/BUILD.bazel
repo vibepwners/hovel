@@ -63,5 +63,5 @@ go_test(
 filegroup(
     name = "daemonrpc_source",
     srcs = ["daemonrpc.go"],
-    visibility = ["//docs/site/spec:__pkg__"],
+    visibility = ["//docs/site:__pkg__"],
 )

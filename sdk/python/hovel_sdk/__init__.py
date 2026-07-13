@@ -35,6 +35,7 @@ from hovel_sdk.credential_delivery import (
     ResolvedCredentialMetadata,
 )
 from hovel_sdk.credential_provider import (
+    CREDENTIAL_ENCODING_RAW,
     CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1,
     CredentialArtifactInput,
     CredentialArtifactOutput,
@@ -103,6 +104,7 @@ from hovel_sdk.mesh import (
     MeshTrigger,
 )
 from hovel_sdk.mesh_bridge import (
+    MeshBridgeCapability,
     MeshBridgeEndpoint,
     MeshBridgeNetwork,
     connect_mesh_bridge,
@@ -115,6 +117,7 @@ from hovel_sdk.testing import ModuleRPC, RPCError, drive_module
 
 __all__ = [
     "CREDENTIAL_DELIVERY_SCHEMA_V1",
+    "CREDENTIAL_ENCODING_RAW",
     "CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1",
     "MESH_LISTENER_DEPLOYMENT_EMBEDDED",
     "MESH_LISTENER_DEPLOYMENT_SEPARATE",
@@ -199,6 +202,7 @@ __all__ = [
     "LineShellSession",
     "MeshBeacon",
     "MeshBeaconRequest",
+    "MeshBridgeCapability",
     "MeshBridgeEndpoint",
     "MeshBridgeNetwork",
     "MeshDescribeRequest",

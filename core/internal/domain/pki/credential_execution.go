@@ -489,7 +489,7 @@ func NewFilesCredentialExecution(
 	materials := make([]CredentialExecutionMaterial, len(request.Files))
 	for index, file := range request.Files {
 		materials[index] = CredentialExecutionMaterial{
-			Projection: file.Projection, Form: file.Form, Encoding: file.MediaType,
+			Projection: file.Projection, Form: file.Form, Encoding: file.Encoding,
 			MediaType: file.MediaType, SHA256: file.SHA256, Size: file.Size,
 		}
 	}

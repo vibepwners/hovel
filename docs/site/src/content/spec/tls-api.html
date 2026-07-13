@@ -1,0 +1,801 @@
+<!-- hovel-doc: {"title":"TLS & PKI API","group":"Reference","order":5,"navTitle":"TLS & PKI API"} -->
+<article>
+  <h1>TLS &amp; PKI API</h1>
+
+  <p>
+    This guide is for authors of CLI, local web, Elixir, and other HTTP/JSON
+    clients that control Hovel workspace PKI through <code>hoveld</code>. The
+    machine-readable source of truth is the
+    <a href="reference/daemon-rpc.openapi.json">OpenAPI 3.1 contract</a>; the
+    transport and compatibility policy is documented in the
+    <a href="daemon-rpc.html">Daemon RPC Contract</a>.
+  </p>
+
+  <div class="callout warning" role="note">
+    <strong>This is a local daemon RPC, not a public REST service.</strong>
+    Every operation is an HTTP <code>POST</code> under
+    <code>/hovel.daemon.v1.DaemonService/</code>. The current daemon has no
+    public authentication scheme or HTTPS listener. Do not expose it through a
+    reverse proxy and do not rewrite the methods as an invented
+    <code>/api/v1</code> resource API.
+  </div>
+
+  <h2>Boundary at a Glance</h2>
+
+  <figure class="diagram" aria-label="External clients cross the daemon HTTP JSON boundary while storage and provider secret handling remain daemon owned.">
+    <pre data-lang="text"><code>CLI / local web / Elixir / generated REST client
+                         |
+                         | HTTP POST + JSON
+                         v
+       owner-only Unix socket       loopback TCP
+       inventory + privileged calls status + public capabilities
+                         |
+                         v
+                  hoveld application API
+             inventory | journals | approvals
+                         |
+             +-----------+----------------+
+             |                            |
+      daemon-owned SQLite          module provider process
+      and master-key custody       framed JSON-RPC over stdio
+             |                            |
+             +----- never opened by client+
+</code></pre>
+    <figcaption>
+      External clients select and inspect resources. The daemon owns durable
+      state, key custody, audit records, and secret delivery to a consuming
+      provider process.
+    </figcaption>
+  </figure>
+
+  <p>
+    The Go client in <code>core/internal/adapters/daemonrpc</code> is an internal
+    implementation, not an importable public SDK. The checked-in Go, Python,
+    and Rust SDKs are for module processes speaking framed JSON-RPC over stdio;
+    they are not daemon HTTP clients. There is no checked-in Elixir daemon SDK.
+    External clients should generate from OpenAPI or implement the small unary
+    HTTP contract directly.
+  </p>
+
+  <div class="callout warning" role="note">
+    <strong>A browser is not a direct privileged daemon client.</strong>
+    Browsers cannot open the owner-only Unix socket, and the current daemon does
+    not implement CORS or preflight <code>OPTIONS</code> handling for cross-origin
+    loopback calls. A local web or Elixir-controlled UI therefore needs a trusted
+    same-origin backend or native sidecar that owns the Unix-socket connection,
+    authenticates its own clients, enforces CSRF and authorization policy, and
+    exposes only the operations the UI needs. Do not publish or reverse-proxy the
+    daemon listener itself.
+  </div>
+
+  <h2>Choose the Correct Transport</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Transport</th>
+        <th>Current authority</th>
+        <th>PKI behavior</th>
+        <th>Client rule</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Unix socket</td>
+        <td>Confidential, owner-only local boundary; the daemon sets mode <code>0600</code></td>
+        <td>Read methods, mutations, signing-lease control, Mesh mutations, and eligible secret responses</td>
+        <td>Use this transport for every state change or credential-bearing operation</td>
+      </tr>
+      <tr>
+        <td>Loopback TCP over HTTP</td>
+        <td>Non-sensitive reads only; only loopback hosts are accepted</td>
+        <td><code>PKIStatus</code>, backend/profile capability discovery, and other explicitly public projections; PKI inventory, assignments, trust, revocation, credential bookkeeping, and privileged calls return <code>403 permission-denied</code></td>
+        <td>Use only for public capability discovery; reconnect through the Unix socket for inventory or mutation</td>
+      </tr>
+      <tr>
+        <td>HTTPS or non-loopback TCP</td>
+        <td>Not implemented</td>
+        <td>The endpoint parser rejects it</td>
+        <td>Build a separate authenticated adapter rather than weakening this boundary</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    “Confidential” here means an owner-only local Unix socket, not TLS on the
+    daemon listener. Supplying <code>actorId</code> or an approval boolean does
+    not turn TCP into a privileged transport.
+  </p>
+
+  <h3>Wire rules</h3>
+
+  <ul>
+    <li>Use the exact RPC path and lower-camel PKI field names shown in OpenAPI.</li>
+    <li>Send one JSON value with <code>Content-Type: application/json</code>. Unknown request fields and trailing JSON are rejected.</li>
+    <li>Keep the JSON body at or below <code>64 MiB</code> (<code>67,108,864</code> bytes). The daemon applies that inclusive limit while reading rather than rejecting from <code>Content-Length</code> alone; a decode that crosses it returns plain-text <code>413</code>.</li>
+    <li>Send <code>{}</code> for an empty request. Do not omit the body.</li>
+    <li>Go <code>[]byte</code> fields such as certificate DER, CRL DER, and bundle binary data are base64 JSON strings.</li>
+    <li>Timestamps are RFC 3339 date-time strings.</li>
+    <li>IDs are canonical strings of at most 256 bytes. Domain IDs accept letters, digits, and <code>-_.:/</code>; retain returned IDs rather than reconstructing them.</li>
+    <li>Generations and revisions are positive signed-64-bit-compatible integers, up to <code>9223372036854775807</code>.</li>
+    <li>Requests are strict, but response readers should ignore additive fields they do not yet understand.</li>
+  </ul>
+
+  <div class="callout note" role="note">
+    <strong>Web clients need lossless integer handling.</strong>
+    The contract uses JSON <code>int64</code> revisions, which can exceed the
+    exact range of a JavaScript <code>Number</code>. Use a lossless decoder or
+    fail explicitly rather than silently rounding a revision and defeating a
+    concurrency fence.
+  </div>
+
+  <h2>Request Context and Explicit Approvals</h2>
+
+  <p>
+    PKI mutations carry a <code>context</code> object. Its three required IDs
+    identify who requested the call, the stable operator operation that owns
+    it, and the individual call or workflow correlation. They are audit scope,
+    not free-form authorization claims:
+  </p>
+
+  <pre data-lang="json"><code>{
+  "actorId": "operator-7",
+  "operationId": "credential-rollout-edge",
+  "correlationId": "change-1042"
+}</code></pre>
+
+  <table>
+    <thead>
+      <tr>
+        <th><code>PKIRequestContext</code> field</th>
+        <th>Currently consumed by</th>
+        <th>Meaning</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>approveSigningLease</code></td>
+        <td><code>UnlockPKIAuthority</code></td>
+        <td>Explicitly permits an actor- and operation-scoped signing lease; it does not unlock every caller</td>
+      </tr>
+      <tr>
+        <td><code>approvePrivateKeyExport</code></td>
+        <td><code>ExportPKIBundle</code> with <code>includePrivate: true</code></td>
+        <td>Approves this private export request; the certificate export policy must also allow it</td>
+      </tr>
+      <tr>
+        <td><code>approveCredentialUse</code></td>
+        <td>Credential-bearing <code>StartMeshListener</code>, direct survey <code>RunMeshTask</code>, <code>OpenMeshStream</code>, and <code>OpenMeshBridge</code></td>
+        <td>Permits assignment material to be delivered into the same provider process that performs the Mesh call; no secret is returned to the control-plane client</td>
+      </tr>
+      <tr>
+        <td><code>approveCrlPublicationReconciliation</code></td>
+        <td><code>ReconcilePKICRL</code> and <code>ReconcilePKICRLs</code></td>
+        <td>Permits conservative recovery of stale publication plans</td>
+      </tr>
+      <tr>
+        <td><code>approveIssuanceReconciliation</code></td>
+        <td>No current daemon HTTP method</td>
+        <td>An application-level extension point; do not treat the field itself as an implemented recovery endpoint</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Omit unrelated approval fields. Sending every approval as <code>true</code>
+    defeats operator review and makes audit intent ambiguous. Workspace
+    initialization has its own top-level <code>confirmed: true</code> field; it
+    is not implied by a context approval.
+  </p>
+
+  <h2>Stable Identity, Revisions, and Idempotency</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Resource</th>
+        <th>Stable identity</th>
+        <th>Concurrency or recovery state</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Authority</td>
+        <td><code>authority.id</code></td>
+        <td><code>activeGenerationId</code> identifies the exact signing certificate generation</td>
+      </tr>
+      <tr>
+        <td>Certificate</td>
+        <td><code>certificateId</code> is the lineage; <code>id</code> is one immutable generation</td>
+        <td><code>generation</code> increases without changing earlier generations</td>
+      </tr>
+      <tr>
+        <td>Assignment</td>
+        <td><code>assignment.id</code></td>
+        <td><code>revision</code> fences stage, activate, and unbind; active and staged certificate/trust IDs remain explicit</td>
+      </tr>
+      <tr>
+        <td>Trust set</td>
+        <td><code>trustSet.id</code></td>
+        <td><code>revision</code> fences mutation; immutable trust generations carry exact anchor, intermediate, and CRL generation IDs</td>
+      </tr>
+      <tr>
+        <td>CRL publication</td>
+        <td><code>publication.id</code> for the signing plan and <code>generation.id</code> for the immutable CRL</td>
+        <td>Publication <code>status</code>, <code>phase</code>, <code>revision</code>, and lease support crash recovery</td>
+      </tr>
+      <tr>
+        <td>Authority rollover</td>
+        <td><code>operation.id</code></td>
+        <td>Operation and trust-set revisions fence transitions; acknowledgement IDs and <code>missingAssignmentIds</code> are durable bookkeeping</td>
+      </tr>
+      <tr>
+        <td>Credential delivery</td>
+        <td>Selector <code>requestId</code>, credential execution ID, or stamp ID</td>
+        <td>List/inspect records expose state, hashes, and sizes without secret bytes, provider references, or protected paths</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    Most synchronous mutations and issuance operations accept
+    <code>idempotencyKey</code>. An explicit key is scoped by actor and mutation
+    kind. Reusing the same scoped key with the same normalized request returns
+    the recorded public result; reusing it with a different request returns
+    <code>idempotency-conflict</code>. If the field is omitted, Hovel derives a
+    key from actor, operation, correlation, mutation kind, and the request
+    digest. Therefore an implicit-key retry must preserve all three context IDs
+    and the exact request.
+  </p>
+
+  <div class="callout warning" role="note">
+    <strong>A changed revision is a changed request.</strong>
+    After re-inspecting a resource and deciding to act on a newer revision,
+    allocate a new explicit idempotency key. Do not reuse the key from the stale
+    request with a modified <code>expectedRevision</code>.
+  </div>
+
+  <h2>Implemented Method Families</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Purpose</th>
+        <th>Non-sensitive loopback reads</th>
+        <th>Owner Unix-socket methods</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Workspace and capabilities</td>
+        <td><code>PKIStatus</code>, <code>ListPKIBackends</code>, <code>ListPKIProfiles</code></td>
+        <td><code>InitializePKI</code></td>
+      </tr>
+      <tr>
+        <td>Authorities and certificates</td>
+        <td>None</td>
+        <td><code>ListPKIAuthorities</code>, <code>InspectPKIAuthority</code>, <code>ListPKICertificates</code>, <code>InspectPKICertificate</code>, <code>CreatePKIAuthority</code>, <code>UnlockPKIAuthority</code>, <code>LockPKIAuthority</code>, <code>IssuePKICertificate</code>, <code>RenewPKICertificate</code>, <code>RotatePKICertificate</code></td>
+      </tr>
+      <tr>
+        <td>Revocation and CRLs</td>
+        <td>None</td>
+        <td><code>InspectPKIRevocation</code>, <code>InspectPKIGenerationRevocation</code>, <code>ListPKIRevocations</code>, <code>InspectPKICRL</code>, <code>ListPKICRLs</code>, <code>InspectPKICRLPublication</code>, <code>ListPKICRLPublications</code>, <code>RevokePKICertificate</code>, <code>PublishPKICRL</code>, <code>ReconcilePKICRL</code>, <code>ReconcilePKICRLs</code></td>
+      </tr>
+      <tr>
+        <td>Assignments and trust</td>
+        <td>None</td>
+        <td><code>ListPKIAssignments</code>, <code>InspectPKIAssignment</code>, <code>ListPKITrustSets</code>, <code>InspectPKITrustSet</code>, <code>BindPKIAssignment</code>, <code>StagePKIAssignment</code>, <code>ActivatePKIAssignment</code>, <code>UnbindPKIAssignment</code>, <code>CreatePKITrustSet</code>, <code>StagePKITrustSet</code>, <code>ActivatePKITrustSet</code></td>
+      </tr>
+      <tr>
+        <td>Durable bookkeeping</td>
+        <td>None</td>
+        <td><code>ListPKIOperations</code>, <code>InspectPKIOperation</code>, <code>ListPKICredentialStamps</code>, <code>InspectPKICredentialStamp</code>, <code>ListPKICredentialExecutions</code>, <code>InspectPKICredentialExecution</code>, and the six authority-rollover transitions</td>
+      </tr>
+      <tr>
+        <td>Bundle and Mesh use</td>
+        <td><code>DescribeMesh</code></td>
+        <td><code>ExportPKIBundle</code>; Mesh topology, beacon, listener, and operation reads; and Mesh listener/task/stream/bridge mutations</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    The default daemon composition currently registers the
+    <code>builtin-x509</code> backend. Treat <code>ListPKIBackends</code> as the
+    runtime authority for algorithms and capabilities; do not hard-code a
+    hardware, cloud, or imported-key provider that is not returned there.
+  </p>
+
+  <h2>Copyable HTTP Examples</h2>
+
+  <p>
+    The examples use <code>curl</code> only to make the wire visible. They do not
+    imply any Hovel CLI flags. Set the socket and logical base URL once:
+  </p>
+
+  <pre data-lang="sh"><code>SOCKET=/absolute/path/to/hoveld.sock
+RPC=http://hoveld/hovel.daemon.v1.DaemonService
+</code></pre>
+
+  <h3>Read an assignment and retain its revision</h3>
+
+  <pre data-lang="sh"><code>curl --silent --show-error \
+  --unix-socket "$SOCKET" \
+  --header 'Content-Type: application/json' \
+  --data '{"id":"assignment-rpc"}' \
+  "$RPC/InspectPKIAssignment"
+</code></pre>
+
+  <p>A conforming response can be decoded as:</p>
+
+  <pre data-lang="http"><code>HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "assignment": {
+    "id": "assignment-rpc",
+    "purpose": "mtls-server",
+    "consumerType": "mesh-listener",
+    "consumerId": "mesh-provider/listener-rpc",
+    "profileId": "mtls-server",
+    "activeGenerationId": "generation-rpc-listener",
+    "trustSetId": "trust-rpc",
+    "activeTrustGenerationId": "trust-rpc-generation-1",
+    "state": "active",
+    "revision": 3,
+    "updatedAt": "2026-07-12T18:00:00Z"
+  }
+}</code></pre>
+
+  <p>
+    Use the returned <code>revision</code> as the next mutation fence. Do not
+    infer it from the number of list entries or from wall-clock time.
+  </p>
+
+  <h3>Activate a staged assignment generation</h3>
+
+  <pre data-lang="sh"><code>curl --silent --show-error \
+  --unix-socket "$SOCKET" \
+  --header 'Content-Type: application/json' \
+  --data-binary @- \
+  "$RPC/ActivatePKIAssignment" &lt;&lt;'JSON'
+{
+  "context": {
+    "actorId": "operator-7",
+    "operationId": "credential-rollout-edge",
+    "correlationId": "change-1042"
+  },
+  "request": {
+    "idempotencyKey": "change-1042:activate:assignment-rpc",
+    "assignmentId": "assignment-rpc",
+    "expectedRevision": 2
+  }
+}
+JSON
+</code></pre>
+
+  <p>
+    The success type is <code>PKIAssignmentInspection</code>, the same resolved
+    shape used by <code>InspectPKIAssignment</code>. Preserve the exact request
+    above for an ambiguous retry.
+  </p>
+
+  <h3>Select assignment credentials on a Mesh mutation</h3>
+
+  <pre data-lang="sh"><code>curl --silent --show-error \
+  --unix-socket "$SOCKET" \
+  --header 'Content-Type: application/json' \
+  --data-binary @- \
+  "$RPC/StartMeshListener" &lt;&lt;'JSON'
+{
+  "moduleId": "mesh-provider@v0.1.0",
+  "request": {
+    "listenerId": "listener-edge",
+    "name": "Edge listener",
+    "config": {
+      "bindHost": "127.0.0.1",
+      "bindPort": 8443
+    }
+  },
+  "credentials": [
+    {
+      "requestId": "credential-listener-edge-certificate-1",
+      "assignmentId": "assignment-rpc",
+      "slotName": "control-plane-mtls-certificate",
+      "capability": "runtime",
+      "material": {
+        "projection": "certificate-der",
+        "form": "public"
+      }
+    },
+    {
+      "requestId": "credential-listener-edge-private-key-1",
+      "assignmentId": "assignment-rpc",
+      "slotName": "control-plane-mtls-private-key",
+      "capability": "runtime",
+      "material": {
+        "projection": "private-key-pkcs8",
+        "form": "private-bytes"
+      }
+    }
+  ],
+  "credentialContext": {
+    "actorId": "operator-7",
+    "operationId": "mesh-listener-edge-start",
+    "correlationId": "change-1042",
+    "approveCredentialUse": true
+  }
+}
+JSON
+</code></pre>
+
+  <pre data-lang="http"><code>HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "operationId": "mesh-operation-listener-edge-start",
+  "listener": {
+    "id": "listener-edge",
+    "name": "Edge listener",
+    "state": "active",
+    "updatedAt": "2026-07-12T18:05:00Z"
+  }
+}</code></pre>
+
+  <p>
+    <code>credentials</code> and <code>credentialContext</code> are a pair: omit
+    both when no assignment material is needed, and send both otherwise. The
+    current external selector path implements only
+    <code>capability: runtime</code> with these projection/form pairs:
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Projection</th>
+        <th>Form</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><code>certificate-der</code></td><td><code>public</code></td></tr>
+      <tr><td><code>public-key-spki</code></td><td><code>public</code></td></tr>
+      <tr><td><code>private-key-pkcs8</code></td><td><code>private-bytes</code></td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    Each <code>requestId</code> is an at-most-once credential-delivery identity,
+    not a replay key for the enclosing Mesh call. An array cannot repeat a
+    request ID or the same assignment-and-slot pair. Reusing an ID prevents a
+    second provider delivery, but a terminal delivery cannot be replayed into a
+    fresh provider process and Hovel does not persist the enclosing Mesh result.
+    After an ambiguous timeout, inspect Mesh operations and credential-execution
+    records before deciding whether it is safe to start a new call; a deliberate
+    new attempt requires fresh request IDs. Provider descriptors must therefore
+    expose separate slots for a TLS identity's
+    <code>certificate-der</code>/<code>public</code> and
+    <code>private-key-pkcs8</code>/<code>private-bytes</code> selections; never
+    select both projections through one slot. Provider
+    configuration is write-only and credentials are resolved immediately
+    before the call; neither is echoed in the listener response or operation
+    ledger. File delivery, provider encoding, stamping, bundle projection, and
+    signer-reference contracts exist elsewhere as provider extension points,
+    but are not accepted by this Mesh HTTP selector.
+  </p>
+
+  <h3>Private bundle export is never cacheable</h3>
+
+  <pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/ExportPKIBundle HTTP/1.1
+Host: hoveld
+Content-Type: application/json
+
+{
+  "context": {
+    "actorId": "operator-7",
+    "operationId": "credential-export-edge",
+    "correlationId": "change-1042-export",
+    "approvePrivateKeyExport": true
+  },
+  "generationId": "generation-rpc-listener",
+  "purpose": "mtls-server",
+  "includePrivate": true
+}</code></pre>
+
+  <p>
+    A private response is possible only through the Unix socket, for an active
+    generation whose purpose matches and whose export policy is
+    <code>explicit-private-export</code>. The route sends
+    <code>Cache-Control: no-store</code> on success and failure, including when
+    <code>includePrivate</code> is false. A denied response has this typed shape:
+  </p>
+
+  <pre data-lang="http"><code>HTTP/1.1 403 Forbidden
+Cache-Control: no-store
+Content-Type: application/json
+
+{
+  "version": "v1",
+  "code": "private-key-export-denied",
+  "message": "pki: private key export is not allowed"
+}</code></pre>
+
+  <div class="callout warning" role="note">
+    <strong>Do not let exported bundles enter normal client state.</strong>
+    Disable HTTP caches, browser service-worker caches, persistence, telemetry,
+    crash reports, and debug logging. Keep the body in the smallest possible
+    memory scope and clear mutable buffers after the consuming operation.
+  </div>
+
+  <h2>Authority Rollover</h2>
+
+  <p>
+    Rollover is one durable daemon operation, not a sequence that a front end
+    should infer from authority states. The operation records the exact previous
+    and replacement authority generation IDs, the overlap and final trust
+    generations, required assignments, acknowledgements, phase, and revision.
+  </p>
+
+  <figure class="diagram" aria-label="Authority rollover moves from overlap trust acknowledgements through leaf rotation and final trust acknowledgements to completion.">
+    <pre data-lang="text"><code>stage overlap trust
+        |
+        v
+StartPKIAuthorityRollover
+awaiting-overlap-acknowledgements
+        |
+        | Acknowledge... for every required assignment
+        v
+ActivatePKIAuthorityRollover  [operation + trust revisions]
+awaiting-leaf-rotation
+        |
+        | issue, stage, and activate replacement leaves
+        | stage final trust
+        v
+BeginPKIAuthorityRolloverFinalTrust  [operation + trust revisions]
+awaiting-final-acknowledgements
+        |
+        | Acknowledge... for every required assignment
+        v
+CompletePKIAuthorityRollover  [operation + trust revisions]
+completed
+</code></pre>
+    <figcaption>
+      Root rollovers place both authority generations in overlap anchors;
+      subordinate rollovers place both in intermediates and retain a path to an
+      anchor. Final trust removes the previous generation.
+    </figcaption>
+  </figure>
+
+  <p>A copyable start request using explicit consumer tracking is:</p>
+
+  <pre data-lang="sh"><code>curl --silent --show-error \
+  --unix-socket "$SOCKET" \
+  --header 'Content-Type: application/json' \
+  --data-binary @- \
+  "$RPC/StartPKIAuthorityRollover" &lt;&lt;'JSON'
+{
+  "context": {
+    "actorId": "operator-7",
+    "operationId": "rollover-edge-root-2026",
+    "correlationId": "change-1042"
+  },
+  "request": {
+    "idempotencyKey": "change-1042:rollover:start",
+    "operationId": "rollover-edge-root-2026",
+    "previousAuthorityId": "authority-edge-root-old",
+    "replacementAuthorityId": "authority-edge-root-new",
+    "trustSetId": "trust-edge",
+    "overlapTrustGenerationId": "trustgen-edge-overlap",
+    "consumerTracking": "explicit",
+    "requiredAssignmentIds": [
+      "assignment-edge-listener"
+    ]
+  }
+}
+JSON
+</code></pre>
+
+  <pre data-lang="http"><code>HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "operation": {
+    "id": "rollover-edge-root-2026",
+    "kind": "authority-rollover",
+    "status": "waiting",
+    "revision": 1,
+    "authorityRollover": {
+      "previousAuthorityId": "authority-edge-root-old",
+      "previousAuthorityGenerationId": "certgen-edge-root-old",
+      "replacementAuthorityId": "authority-edge-root-new",
+      "replacementAuthorityGenerationId": "certgen-edge-root-new",
+      "trustSetId": "trust-edge",
+      "overlapTrustGenerationId": "trustgen-edge-overlap",
+      "consumerTracking": "explicit",
+      "requiredAssignmentIds": [
+        "assignment-edge-listener"
+      ],
+      "phase": "awaiting-overlap-acknowledgements"
+    },
+    "createdAt": "2026-07-12T18:10:00Z",
+    "updatedAt": "2026-07-12T18:10:00Z"
+  },
+  "acknowledgements": [],
+  "missingAssignmentIds": [
+    "assignment-edge-listener"
+  ]
+}</code></pre>
+
+  <p>
+    Persist the returned authority generation IDs and operation revision. Before
+    every transition, call <code>InspectPKIOperation</code> and
+    <code>InspectPKITrustSet</code>; submit both current revisions where the
+    request schema requires them. Use <code>missingAssignmentIds</code> rather
+    than counting acknowledgements yourself. A rollover reserves its trust set
+    and required assignments, so unrelated mutations can return the typed
+    <code>resource-reserved</code> precondition. Cancellation is implemented
+    only before overlap activation.
+  </p>
+
+  <h2>CRL Publication Recovery</h2>
+
+  <p>
+    <code>PublishPKICRL</code> persists a plan before invoking a signer. Keep the
+    returned publication ID distinct from the resulting immutable CRL
+    generation ID. Use <code>ListPKICRLPublications</code> or
+    <code>InspectPKICRLPublication</code> to observe the plan, and
+    <code>ListPKICRLs</code> or <code>InspectPKICRL</code> to observe completed
+    CRL generations.
+  </p>
+
+  <p>
+    A crash may leave a publication <code>pending</code> in phase
+    <code>planned</code>, <code>signing</code>, or <code>signed</code>. Wait until
+    both the requested stale age and the recorded ownership lease have elapsed,
+    then reconcile through the confidential transport:
+  </p>
+
+  <pre data-lang="sh"><code>curl --silent --show-error \
+  --unix-socket "$SOCKET" \
+  --header 'Content-Type: application/json' \
+  --data-binary @- \
+  "$RPC/ReconcilePKICRL" &lt;&lt;'JSON'
+{
+  "context": {
+    "actorId": "operator-7",
+    "operationId": "pki-recovery",
+    "correlationId": "reconcile-crl-2026-0712",
+    "approveCrlPublicationReconciliation": true
+  },
+  "request": {
+    "publicationId": "crl-publication-018f6e2f",
+    "staleAfterSeconds": 300
+  }
+}
+JSON
+</code></pre>
+
+  <ul>
+    <li><code>staleAfterSeconds</code> is between 60 and 86400. Batch recovery additionally requires <code>limit</code> between 1 and 100.</li>
+    <li>A durable <code>signed</code> checkpoint is independently validated and completed without calling the signer again.</li>
+    <li>An ambiguous <code>planned</code> or <code>signing</code> plan is failed rather than risking a second signing invocation.</li>
+    <li>A non-stale or still-leased plan returns <code>crl-publication-in-progress</code>; back off and inspect it again.</li>
+    <li>Reconciliation repairs publication bookkeeping. It does not make an expired CRL fresh; publish a new CRL and stage a new trust generation when freshness has elapsed.</li>
+  </ul>
+
+  <h2>Typed Errors</h2>
+
+  <p>
+    Classified application failures use the versioned
+    <code>RPCError</code> envelope. Branch on <code>version</code>,
+    <code>code</code>, and, for rollover failures,
+    <code>rolloverReason</code>. The <code>message</code> and optional
+    <code>rolloverDetail</code> are diagnostics for people, not a protocol.
+  </p>
+
+  <pre data-lang="http"><code>HTTP/1.1 409 Conflict
+Content-Type: application/json
+
+{
+  "version": "v1",
+  "code": "rollover-precondition",
+  "message": "pki: authority rollover precondition failed: assignments-not-rotated: assignment drifted after acknowledgement",
+  "rolloverReason": "assignments-not-rotated",
+  "rolloverDetail": "assignment drifted after acknowledgement"
+}</code></pre>
+
+  <table>
+    <thead>
+      <tr>
+        <th>HTTP</th>
+        <th>Stable code</th>
+        <th>Client action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>404</td><td><code>not-found</code></td><td>Refresh inventory; do not invent or parse an ID from the message</td></tr>
+      <tr><td>403</td><td><code>permission-denied</code></td><td>Reconnect through the Unix socket; repeating on TCP cannot succeed</td></tr>
+      <tr><td>403</td><td><code>private-key-export-denied</code></td><td>Stop automatic retry and require an explicit operator decision</td></tr>
+      <tr><td>403</td><td><code>authority-signing-lease-owned</code></td><td>Do not replace or revoke another actor or operation's live lease; wait for expiry or coordinate with that owner</td></tr>
+      <tr><td>423</td><td><code>authority-signing-locked</code></td><td>Acquire an explicitly approved signing lease for the same actor and operation, then retry the unchanged idempotent request</td></tr>
+      <tr><td>409</td><td><code>revision-conflict</code></td><td>Inspect, re-evaluate, and use a new idempotency key if the request changes</td></tr>
+      <tr><td>409</td><td><code>idempotency-conflict</code></td><td>Treat as a client bug or changed intent; never mutate the request under the same key</td></tr>
+      <tr><td>409</td><td><code>issuance-in-progress</code>, <code>crl-publication-in-progress</code>, or <code>mutation-exists</code></td><td>Back off, inspect bookkeeping, and retry the exact request with the same key</td></tr>
+      <tr><td>409</td><td><code>acknowledgement-exists</code></td><td>Inspect the operation and use the recorded acknowledgement</td></tr>
+      <tr><td>409</td><td><code>rollover-precondition</code></td><td>Branch on the stable reason and re-inspect the operation, assignments, authorities, and trust set</td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    Invalid JSON returns plain-text <code>400</code>, a body read that exceeds
+    <code>64 MiB</code> returns plain-text <code>413</code>, a non-POST request
+    returns plain-text <code>405</code>, and an unclassified server failure currently
+    returns plain-text <code>500</code>. The size cap is enforced while decoding,
+    not by preflighting <code>Content-Length</code>; malformed input rejected before
+    the decoder crosses the cap can therefore still produce <code>400</code>.
+    Although <code>internal</code> is a
+    reserved error code in the schema, the current handler does not promise a
+    typed envelope for unclassified failures. Treat any non-conforming error
+    body as opaque.
+  </p>
+
+  <div class="callout warning" role="note">
+    <strong>Never parse error prose.</strong>
+    Do not match substrings in <code>message</code>, plain-text bodies, or logs.
+    If a response is not a valid <code>v1</code> envelope, retain only its HTTP
+    status and an opaque diagnostic for display.
+  </div>
+
+  <h2>Minimal Client Algorithm</h2>
+
+  <pre data-lang="text"><code>call(method, request, call_class):
+  1. Choose transport:
+       public status/capability method                        -&gt; Unix socket or loopback TCP
+       inventory, bookkeeping, mutation, or secret-bearing   -&gt; owner-only Unix socket
+  2. Validate the request against OpenAPI; emit exact field names and one JSON value.
+  3. For a journaled PKI mutation, allocate an idempotency key before the first send
+     and retain method + actor + exact request + key + relevant resource revisions.
+     For credential-bearing Mesh, allocate unique request IDs, but treat them as
+     at-most-once delivery claims rather than replayable mutation keys.
+  4. POST /hovel.daemon.v1.DaemonService/{method}.
+  5. On 2xx, decode the documented response, retain returned IDs/revisions,
+     and ignore unknown additive response fields.
+  6. On a valid v1 RPCError, branch on code and rolloverReason, never message.
+  7. On timeout or opaque 5xx:
+       idempotent read        -&gt; retry with bounded backoff on its authorized transport;
+       journaled PKI mutation -&gt; inspect durable bookkeeping, then retry only the
+                                exact request with the same idempotency key;
+       Mesh mutation          -&gt; inspect Mesh operations and credential executions;
+                                do not replay automatically because the result and
+                                provider-process state are not journaled.
+  8. If a PKI inspection changes the intended request, obtain operator confirmation
+     as appropriate and allocate a new idempotency key. If a new Mesh attempt is
+     explicitly judged safe, use fresh credential request IDs for its new process.
+</code></pre>
+
+  <h2>Storage and Extension Boundaries</h2>
+
+  <div class="callout warning" role="note">
+    <strong>Never open daemon custody files from a client.</strong>
+    Do not read or write <code>&lt;workspace&gt;/workspace.db</code>, its SQLite
+    sidecars, or
+    <code>&lt;workspace&gt;/secrets/pki-master-keys.json</code>. Those files are
+    daemon-owned implementation details. Direct access bypasses request
+    approvals, revision fences, idempotency journals, audits, integrity checks,
+    and the daemon's exclusive database lifecycle.
+  </div>
+
+  <p>
+    Use list and inspect methods even for local tools. In particular, use
+    operation inspection for rollover, publication inspection for CRL recovery,
+    and credential stamp/execution inspection for provider bookkeeping. These
+    are the supported recovery surfaces; a SQLite query is not.
+  </p>
+
+  <p>
+    Provider registries, additional credential-delivery capabilities, and a
+    future authenticated public adapter are extension points, not current
+    external-interface promises. Generate clients from the current OpenAPI,
+    discover backends at runtime, and add behavior only when a method and schema
+    appear in that contract.
+  </p>
+</article>

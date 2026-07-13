@@ -14,11 +14,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vibepwners/hovel/internal/app/hovelconfig"
@@ -78,6 +80,18 @@ const (
 	credentialOperationAbortReason  = "credential operation delivery aborted"
 
 	ModuleConfigEnv = "HOVEL_MODULE_CONFIG"
+)
+
+var errCredentialProviderDiagnosticsSuppressed = errors.New(
+	"credential-bearing provider diagnostics suppressed",
+)
+
+var errCredentialExecutionRecorderRequired = errors.New(
+	"python rpc: credential execution recorder is required",
+)
+
+var errCredentialOperationResolutionRequired = errors.New(
+	"python rpc: credential operation resolution is required",
 )
 
 func logPythonRPCError(action string, err error) {
@@ -493,17 +507,20 @@ func (r Runner) StartMeshListener(
 	moduleID string,
 	request mesh.ListenerStartRequest,
 ) (mesh.Listener, error) {
-	execution, err := r.StartMeshListenerWithCredentials(ctx, moduleID, nil, request)
+	execution, err := r.callMeshListenerWithCredentials(ctx, moduleID, nil, request)
 	return execution.Listener, err
 }
 
 func (r Runner) StartMeshListenerWithCredentials(
 	ctx context.Context,
 	moduleID string,
-	deliveries domainpki.CredentialOperationDeliveries,
+	resolution *services.CredentialOperationResolution,
 	request mesh.ListenerStartRequest,
 ) (MeshListenerExecution, error) {
-	return r.callMeshListenerWithCredentials(ctx, moduleID, deliveries, request)
+	if resolution == nil {
+		return MeshListenerExecution{}, errCredentialOperationResolutionRequired
+	}
+	return r.callMeshListenerWithCredentials(ctx, moduleID, resolution, request)
 }
 
 func (r Runner) StopMeshListener(
@@ -525,8 +542,10 @@ func (r Runner) callMeshListener(
 		return mesh.Listener{}, err
 	}
 	var listener mesh.Listener
-	if err := json.Unmarshal(result, &listener); err != nil {
-		return mesh.Listener{}, services.NewModuleExecutionFailure("module returned invalid mesh listener", err)
+	decodeErr := json.Unmarshal(result, &listener)
+	clearBytes(result)
+	if decodeErr != nil {
+		return mesh.Listener{}, services.NewModuleExecutionFailure("module returned invalid mesh listener", decodeErr)
 	}
 	return listener, nil
 }
@@ -534,11 +553,13 @@ func (r Runner) callMeshListener(
 func (r Runner) callMeshListenerWithCredentials(
 	ctx context.Context,
 	moduleID string,
-	deliveries domainpki.CredentialOperationDeliveries,
+	resolution *services.CredentialOperationResolution,
 	request mesh.ListenerStartRequest,
 ) (MeshListenerExecution, error) {
 	execution := MeshListenerExecution{}
-	operationCtx, cancel, process, receipts, err := r.startCredentialOperation(ctx, moduleID, deliveries)
+	operationCtx, cancel, process, receipts, err := r.startCredentialOperation(
+		ctx, moduleID, resolution,
+	)
 	execution.CredentialReceipts = receipts
 	if err != nil {
 		return execution, err
@@ -555,8 +576,11 @@ func (r Runner) callMeshListenerWithCredentials(
 			process.stderrString(),
 		)
 	}
-	if err := json.Unmarshal(result, &execution.Listener); err != nil {
-		return execution, services.NewModuleExecutionFailure("module returned invalid mesh listener", err)
+	decodeErr := json.Unmarshal(result, &execution.Listener)
+	clearBytes(result)
+	if decodeErr != nil {
+		failed := MeshListenerExecution{CredentialReceipts: execution.CredentialReceipts}
+		return failed, process.resultFailure("module returned invalid mesh listener", decodeErr)
 	}
 	shutdownErr, waitErr := process.shutdownAndWait(operationCtx, moduleShutdownTimeout)
 	logPythonRPCError("shut down module after mesh listener start", shutdownErr)
@@ -573,7 +597,7 @@ func (r Runner) RunMeshTask(
 	moduleID string,
 	request mesh.TaskRequest,
 ) (mesh.TaskResult, error) {
-	execution, err := r.RunMeshTaskWithCredentials(ctx, moduleID, nil, request)
+	execution, err := r.callMeshTask(ctx, moduleID, nil, request)
 	if err != nil {
 		return mesh.TaskResult{}, err
 	}
@@ -583,10 +607,13 @@ func (r Runner) RunMeshTask(
 func (r Runner) RunMeshTaskWithCredentials(
 	ctx context.Context,
 	moduleID string,
-	deliveries domainpki.CredentialOperationDeliveries,
+	resolution *services.CredentialOperationResolution,
 	request mesh.TaskRequest,
 ) (MeshTaskExecution, error) {
-	return r.callMeshTask(ctx, moduleID, deliveries, request)
+	if resolution == nil {
+		return MeshTaskExecution{}, errCredentialOperationResolutionRequired
+	}
+	return r.callMeshTask(ctx, moduleID, resolution, request)
 }
 
 func (r Runner) OpenMeshStream(
@@ -594,17 +621,20 @@ func (r Runner) OpenMeshStream(
 	moduleID string,
 	request mesh.StreamRequest,
 ) (run.SessionRef, error) {
-	execution, err := r.OpenMeshStreamWithCredentials(ctx, moduleID, nil, request)
+	execution, err := r.callMeshStream(ctx, moduleID, nil, request)
 	return execution.Session, err
 }
 
 func (r Runner) OpenMeshStreamWithCredentials(
 	ctx context.Context,
 	moduleID string,
-	deliveries domainpki.CredentialOperationDeliveries,
+	resolution *services.CredentialOperationResolution,
 	request mesh.StreamRequest,
 ) (MeshStreamExecution, error) {
-	return r.callMeshStream(ctx, moduleID, deliveries, request)
+	if resolution == nil {
+		return MeshStreamExecution{}, errCredentialOperationResolutionRequired
+	}
+	return r.callMeshStream(ctx, moduleID, resolution, request)
 }
 
 func (r Runner) LoadRuntimeCredential(
@@ -631,7 +661,12 @@ func (r Runner) LoadRuntimeCredential(
 		return credentialDeliveryReplay(*pending)
 	}
 	receipt, deliveryErr := r.deliverCredential(
-		ctx, moduleID, credentialRPCRuntimeMethod, request.RequestID, request,
+		ctx,
+		moduleID,
+		credentialRPCRuntimeMethod,
+		request.RequestID,
+		request.Provider,
+		request,
 	)
 	bookkeepingErr := r.finishCredentialDeliveryExecution(
 		ctx, pending, receipt, deliveryErr, credentialRuntimeFailureReason,
@@ -663,7 +698,12 @@ func (r Runner) LoadCredentialFiles(
 		return credentialDeliveryReplay(*pending)
 	}
 	receipt, deliveryErr := r.deliverCredential(
-		ctx, moduleID, credentialRPCFilesMethod, request.RequestID, request,
+		ctx,
+		moduleID,
+		credentialRPCFilesMethod,
+		request.RequestID,
+		request.Provider,
+		request,
 	)
 	bookkeepingErr := r.finishCredentialDeliveryExecution(
 		ctx, pending, receipt, deliveryErr, credentialFilesFailureReason,
@@ -676,12 +716,14 @@ func (r Runner) deliverCredential(
 	moduleID string,
 	method string,
 	requestID domainpki.CredentialExecutionRequestID,
+	provider domainpki.CredentialProviderTarget,
 	request any,
 ) (domainpki.CredentialDeliveryReceipt, error) {
-	result, err := r.callCredentialProvider(ctx, moduleID, method, request)
+	result, err := r.callCredentialProvider(ctx, moduleID, provider, method, request)
 	if err != nil {
 		return domainpki.CredentialDeliveryReceipt{}, err
 	}
+	defer clearBytes(result)
 	return credentialDeliveryReceiptFromRPC(result, requestID)
 }
 
@@ -691,14 +733,13 @@ func credentialDeliveryReceiptFromRPC(
 ) (domainpki.CredentialDeliveryReceipt, error) {
 	var receipt domainpki.CredentialDeliveryReceipt
 	if err := json.Unmarshal(result, &receipt); err != nil {
-		return domainpki.CredentialDeliveryReceipt{}, services.NewModuleExecutionFailure(
-			"module returned invalid credential delivery receipt", err,
+		return domainpki.CredentialDeliveryReceipt{}, credentialProviderResultFailure(
+			"module returned invalid credential delivery receipt",
 		)
 	}
 	if receipt.RequestID != requestID {
-		return domainpki.CredentialDeliveryReceipt{}, services.NewModuleExecutionFailure(
+		return domainpki.CredentialDeliveryReceipt{}, credentialProviderResultFailure(
 			"module returned mismatched credential delivery receipt",
-			errors.New("credential request id does not match"),
 		)
 	}
 	return receipt, nil
@@ -727,17 +768,25 @@ func (r Runner) EncodeCredentialMaterial(
 	if pending != nil && pending.Status != domainpki.CredentialExecutionPending {
 		return domainpki.CredentialEncodingResult{}, credentialEncodingReplayError(*pending)
 	}
-	result, err := r.callCredentialProvider(ctx, moduleID, credentialRPCEncodeMethod, request)
+	result, err := r.callCredentialProvider(
+		ctx,
+		moduleID,
+		request.Provider,
+		credentialRPCEncodeMethod,
+		request,
+	)
 	if err != nil {
 		bookkeepingErr := r.finishCredentialEncodingExecution(
 			ctx, pending, domainpki.CredentialEncodingResult{}, err,
 		)
 		return domainpki.CredentialEncodingResult{}, errors.Join(err, bookkeepingErr)
 	}
+	defer clearBytes(result)
 	var decoded domainpki.CredentialEncodingResult
+	defer clearCredentialEncodingResult(&decoded)
 	if err := json.Unmarshal(result, &decoded); err != nil {
-		resultErr := services.NewModuleExecutionFailure(
-			"module returned invalid credential encoding result", err,
+		resultErr := credentialProviderResultFailure(
+			"module returned invalid credential encoding result",
 		)
 		bookkeepingErr := r.finishCredentialEncodingExecution(
 			ctx, pending, domainpki.CredentialEncodingResult{}, resultErr,
@@ -745,8 +794,8 @@ func (r Runner) EncodeCredentialMaterial(
 		return domainpki.CredentialEncodingResult{}, errors.Join(resultErr, bookkeepingErr)
 	}
 	if err := decoded.ValidateFor(request); err != nil {
-		resultErr := services.NewModuleExecutionFailure(
-			"module returned mismatched credential encoding result", err,
+		resultErr := credentialProviderResultFailure(
+			"module returned mismatched credential encoding result",
 		)
 		bookkeepingErr := r.finishCredentialEncodingExecution(ctx, pending, decoded, resultErr)
 		return domainpki.CredentialEncodingResult{}, errors.Join(resultErr, bookkeepingErr)
@@ -762,7 +811,7 @@ func (r Runner) beginCredentialExecution(
 	construct credentialExecutionConstructor,
 ) (*domainpki.CredentialExecution, error) {
 	if r.CredentialExecutions == nil {
-		return nil, nil
+		return nil, errCredentialExecutionRecorderRequired
 	}
 	if r.Clock == nil {
 		return nil, errors.New("python rpc: credential execution recorder requires a clock")
@@ -922,19 +971,27 @@ func (r Runner) StampCredential(
 	if err := validateCredentialProviderModule(moduleID, request.Provider); err != nil {
 		return domainpki.CredentialStampExecutionResult{}, err
 	}
-	result, err := r.callCredentialProvider(ctx, moduleID, credentialRPCStampMethod, request)
+	result, err := r.callCredentialProvider(
+		ctx,
+		moduleID,
+		request.Provider,
+		credentialRPCStampMethod,
+		request,
+	)
 	if err != nil {
 		return domainpki.CredentialStampExecutionResult{}, err
 	}
+	defer clearBytes(result)
 	var decoded domainpki.CredentialStampExecutionResult
+	defer clearCredentialStampExecutionResult(&decoded)
 	if err := json.Unmarshal(result, &decoded); err != nil {
-		return domainpki.CredentialStampExecutionResult{}, services.NewModuleExecutionFailure(
-			"module returned invalid credential stamp result", err,
+		return domainpki.CredentialStampExecutionResult{}, credentialProviderResultFailure(
+			"module returned invalid credential stamp result",
 		)
 	}
 	if err := decoded.ValidateFor(request); err != nil {
-		return domainpki.CredentialStampExecutionResult{}, services.NewModuleExecutionFailure(
-			"module returned mismatched credential stamp result", err,
+		return domainpki.CredentialStampExecutionResult{}, credentialProviderResultFailure(
+			"module returned mismatched credential stamp result",
 		)
 	}
 	return decoded.Clone(), nil
@@ -979,24 +1036,39 @@ func validateCredentialProviderModule(
 }
 
 func (r Runner) callMeshProvider(ctx context.Context, moduleID, method string, params any) (json.RawMessage, error) {
-	return r.callProvider(ctx, moduleID, method, params, meshProviderLabel)
+	return r.callProvider(ctx, moduleID, providerCall{
+		method: method,
+		params: params,
+		label:  meshProviderLabel,
+	})
 }
 
 func (r Runner) callCredentialProvider(
 	ctx context.Context,
 	moduleID string,
+	provider domainpki.CredentialProviderTarget,
 	method string,
 	params any,
 ) (json.RawMessage, error) {
-	return r.callProvider(ctx, moduleID, method, params, credentialProviderLabel)
+	return r.callProvider(ctx, moduleID, providerCall{
+		method:           method,
+		params:           params,
+		label:            credentialProviderLabel,
+		credentialTarget: &provider,
+	})
+}
+
+type providerCall struct {
+	method           string
+	params           any
+	label            string
+	credentialTarget *domainpki.CredentialProviderTarget
 }
 
 func (r Runner) callProvider(
 	ctx context.Context,
 	moduleID string,
-	method string,
-	params any,
-	providerLabel string,
+	call providerCall,
 ) (json.RawMessage, error) {
 	timeout := r.Timeout
 	if timeout == 0 {
@@ -1010,27 +1082,56 @@ func (r Runner) callProvider(
 		return nil, err
 	}
 	defer process.killAndWait()
-	result, err := process.client.callRaw(ctx, method, params)
+	if call.credentialTarget != nil {
+		if err := reconcileCredentialProviderTarget(ctx, process, *call.credentialTarget); err != nil {
+			return nil, err
+		}
+		process.markCredentialBearing()
+	}
+	result, err := process.client.callRaw(ctx, call.method, call.params)
 	if err != nil {
 		return nil, moduleFailure(
-			"module failed during "+providerLabel+" provider call",
-			"module "+providerLabel+" provider call failed",
+			"module failed during "+call.label+" provider call",
+			"module "+call.label+" provider call failed",
 			err,
 			process.stderrString(),
 		)
 	}
 	shutdownErr, waitErr := process.shutdownAndWait(ctx, moduleShutdownTimeout)
-	logPythonRPCError("shut down module after "+providerLabel+" provider call", shutdownErr)
+	logPythonRPCError("shut down module after "+call.label+" provider call", shutdownErr)
 	if waitErr != nil {
+		clearBytes(result)
 		return nil, moduleFailure("module exited with error", "module exited with error", waitErr, process.stderrString())
 	}
 	return result, nil
 }
 
+func reconcileCredentialProviderTarget(
+	ctx context.Context,
+	process *moduleProcess,
+	expected domainpki.CredentialProviderTarget,
+) error {
+	actual, err := credentialProviderTargetForProcess(ctx, process)
+	if err != nil {
+		return err
+	}
+	return validateCredentialProviderTarget(expected, actual)
+}
+
+func validateCredentialProviderTarget(
+	expected domainpki.CredentialProviderTarget,
+	actual domainpki.CredentialProviderTarget,
+) error {
+	if actual != expected {
+		return errors.New("credential provider target does not match the running provider")
+	}
+	return nil
+}
+
 func (r Runner) startCredentialOperation(
 	ctx context.Context,
 	moduleID string,
-	deliveries domainpki.CredentialOperationDeliveries,
+	resolution *services.CredentialOperationResolution,
 ) (
 	context.Context,
 	context.CancelFunc,
@@ -1038,10 +1139,7 @@ func (r Runner) startCredentialOperation(
 	[]domainpki.CredentialDeliveryReceipt,
 	error,
 ) {
-	if err := deliveries.ValidateForModule(moduleID); err != nil {
-		return nil, nil, nil, nil, err
-	}
-	pending, err := r.prepareCredentialOperationExecutions(ctx, deliveries)
+	pending, err := r.prepareCredentialOperationResolution(ctx, moduleID, resolution)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -1058,27 +1156,68 @@ func (r Runner) startCredentialOperation(
 		)
 		return nil, nil, nil, nil, errors.Join(err, bookkeepingErr)
 	}
-	if len(deliveries) > 0 {
+	if resolution != nil {
 		target, targetErr := credentialProviderTargetForProcess(operationCtx, process)
 		if targetErr == nil {
-			targetErr = validateCredentialOperationProviderTargets(deliveries, target)
+			targetErr = validateCredentialOperationExecutionTargets(pending, target)
 		}
 		if targetErr != nil {
+			return nil, nil, nil, nil, r.abortCredentialOperation(
+				ctx, cancel, process, pending, targetErr,
+			)
+		}
+		receipts, deliveryErr := r.deliverCredentialsToProcess(
+			operationCtx,
+			ctx,
+			process,
+			moduleID,
+			resolution,
+			pending,
+		)
+		if deliveryErr != nil {
 			cancel()
 			process.killAndWait()
-			bookkeepingErr := r.failPendingCredentialExecutions(
-				ctx, pending, 0, credentialOperationAbortReason,
-			)
-			return nil, nil, nil, nil, errors.Join(targetErr, bookkeepingErr)
+			return nil, nil, nil, receipts, deliveryErr
 		}
+		return operationCtx, cancel, process, receipts, nil
 	}
-	receipts, err := r.deliverCredentialsToProcess(operationCtx, process, deliveries, pending)
+	return operationCtx, cancel, process, nil, nil
+}
+
+func (r Runner) prepareCredentialOperationResolution(
+	ctx context.Context,
+	moduleID string,
+	resolution *services.CredentialOperationResolution,
+) ([]*domainpki.CredentialExecution, error) {
+	if resolution == nil {
+		return nil, nil
+	}
+	deliveries, err := resolution.BorrowedDeliveries()
 	if err != nil {
-		cancel()
-		process.killAndWait()
-		return nil, nil, nil, receipts, err
+		return nil, fmt.Errorf("borrow credential operation deliveries: %w", err)
 	}
-	return operationCtx, cancel, process, receipts, nil
+	if len(deliveries) == 0 {
+		return nil, errors.New("python rpc: credential operation resolution returned no deliveries")
+	}
+	if err := deliveries.ValidateForModule(moduleID); err != nil {
+		return nil, fmt.Errorf("validate credential operation deliveries: %w", err)
+	}
+	return r.prepareCredentialOperationExecutions(ctx, deliveries)
+}
+
+func (r Runner) abortCredentialOperation(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	process *moduleProcess,
+	pending []*domainpki.CredentialExecution,
+	cause error,
+) error {
+	cancel()
+	process.killAndWait()
+	bookkeepingErr := r.failPendingCredentialExecutions(
+		ctx, pending, 0, credentialOperationAbortReason,
+	)
+	return errors.Join(cause, bookkeepingErr)
 }
 
 func credentialProviderTargetForProcess(
@@ -1182,14 +1321,52 @@ func credentialProviderModuleFromRawHandshake(raw json.RawMessage) (modulecatalo
 	})
 }
 
-func validateCredentialOperationProviderTargets(
-	deliveries domainpki.CredentialOperationDeliveries,
+func validateCredentialOperationExecutionTargets(
+	pending []*domainpki.CredentialExecution,
 	target domainpki.CredentialProviderTarget,
 ) error {
-	for index, delivery := range deliveries {
-		if delivery.ProviderTarget() != target {
+	for index, execution := range pending {
+		if execution == nil {
+			return fmt.Errorf("credential operation execution %d is missing", index+1)
+		}
+		if err := validateCredentialProviderTarget(execution.Plan.Provider, target); err != nil {
 			return fmt.Errorf(
-				"credential operation delivery %d target does not match the running provider",
+				"credential operation execution %d: %w",
+				index+1,
+				err,
+			)
+		}
+	}
+	return nil
+}
+
+func validateCredentialOperationDeliveryPlans(
+	moduleID string,
+	deliveries domainpki.CredentialOperationDeliveries,
+	pending []*domainpki.CredentialExecution,
+) error {
+	if err := deliveries.ValidateForModule(moduleID); err != nil {
+		return fmt.Errorf("validate re-borrowed credential operation deliveries: %w", err)
+	}
+	if len(deliveries) != len(pending) {
+		return errors.New("python rpc: re-borrowed credential deliveries do not match execution plans")
+	}
+	for index, delivery := range deliveries {
+		if pending[index] == nil {
+			return fmt.Errorf("credential operation execution %d is missing", index+1)
+		}
+		construct, err := credentialExecutionConstructorForDelivery(delivery)
+		if err != nil {
+			return err
+		}
+		execution, err := construct(pending[index].CreatedAt)
+		if err != nil {
+			return fmt.Errorf("validate re-borrowed credential delivery %d: %w", index+1, err)
+		}
+		if execution.ID != pending[index].ID ||
+			!reflect.DeepEqual(execution.Plan, pending[index].Plan) {
+			return fmt.Errorf(
+				"credential operation delivery %d does not match its persisted execution plan",
 				index+1,
 			)
 		}
@@ -1253,15 +1430,52 @@ func credentialExecutionConstructorForDelivery(
 
 func (r Runner) deliverCredentialsToProcess(
 	ctx context.Context,
+	bookkeepingCtx context.Context,
 	process *moduleProcess,
-	deliveries domainpki.CredentialOperationDeliveries,
+	moduleID string,
+	resolution *services.CredentialOperationResolution,
 	pending []*domainpki.CredentialExecution,
 ) ([]domainpki.CredentialDeliveryReceipt, error) {
-	if len(pending) != len(deliveries) {
-		return nil, errors.New("python rpc: credential execution plans do not match deliveries")
+	if resolution == nil {
+		return nil, errors.New("python rpc: credential operation resolution is required")
 	}
-	receipts := make([]domainpki.CredentialDeliveryReceipt, 0, len(deliveries))
-	for index, delivery := range deliveries {
+	receipts := make([]domainpki.CredentialDeliveryReceipt, 0, len(pending))
+	for index := range pending {
+		if err := resolution.Revalidate(ctx); err != nil {
+			revalidationErr := fmt.Errorf("revalidate credential operation: %w", err)
+			bookkeepingErr := r.failPendingCredentialExecutions(
+				bookkeepingCtx,
+				pending,
+				index,
+				credentialOperationAbortReason,
+			)
+			return receipts, errors.Join(revalidationErr, bookkeepingErr)
+		}
+		deliveries, err := resolution.BorrowedDeliveries()
+		if err != nil {
+			borrowErr := fmt.Errorf("borrow credential operation deliveries: %w", err)
+			bookkeepingErr := r.failPendingCredentialExecutions(
+				bookkeepingCtx,
+				pending,
+				index,
+				credentialOperationAbortReason,
+			)
+			return receipts, errors.Join(borrowErr, bookkeepingErr)
+		}
+		if err := validateCredentialOperationDeliveryPlans(
+			moduleID,
+			deliveries,
+			pending,
+		); err != nil {
+			bookkeepingErr := r.failPendingCredentialExecutions(
+				bookkeepingCtx,
+				pending,
+				index,
+				credentialOperationAbortReason,
+			)
+			return receipts, errors.Join(err, bookkeepingErr)
+		}
+		delivery := deliveries[index]
 		var method string
 		var request any
 		var failureReason string
@@ -1280,6 +1494,7 @@ func (r Runner) deliverCredentialsToProcess(
 				delivery.Capability,
 			)
 		}
+		process.markCredentialBearing()
 		result, err := process.client.callRaw(ctx, method, request)
 		if err != nil {
 			deliveryErr := moduleFailure(
@@ -1296,15 +1511,16 @@ func (r Runner) deliverCredentialsToProcess(
 			)
 			return receipts, errors.Join(deliveryErr, bookkeepingErr, abortErr)
 		}
-		receipt, err := credentialDeliveryReceiptFromRPC(result, delivery.RequestID())
-		if err != nil {
+		receipt, receiptErr := credentialDeliveryReceiptFromRPC(result, delivery.RequestID())
+		clearBytes(result)
+		if receiptErr != nil {
 			bookkeepingErr := r.finishCredentialDeliveryExecution(
-				ctx, pending[index], domainpki.CredentialDeliveryReceipt{}, err, failureReason,
+				ctx, pending[index], domainpki.CredentialDeliveryReceipt{}, receiptErr, failureReason,
 			)
 			abortErr := r.failPendingCredentialExecutions(
 				ctx, pending, index+1, credentialOperationAbortReason,
 			)
-			return receipts, errors.Join(err, bookkeepingErr, abortErr)
+			return receipts, errors.Join(receiptErr, bookkeepingErr, abortErr)
 		}
 		if err := r.finishCredentialDeliveryExecution(
 			ctx, pending[index], receipt, nil, failureReason,
@@ -1338,11 +1554,13 @@ func (r Runner) failPendingCredentialExecutions(
 func (r Runner) callMeshTask(
 	ctx context.Context,
 	moduleID string,
-	deliveries domainpki.CredentialOperationDeliveries,
+	resolution *services.CredentialOperationResolution,
 	request mesh.TaskRequest,
 ) (MeshTaskExecution, error) {
 	execution := MeshTaskExecution{}
-	operationCtx, cancel, process, receipts, err := r.startCredentialOperation(ctx, moduleID, deliveries)
+	operationCtx, cancel, process, receipts, err := r.startCredentialOperation(
+		ctx, moduleID, resolution,
+	)
 	execution.CredentialReceipts = receipts
 	if err != nil {
 		return execution, err
@@ -1363,16 +1581,21 @@ func (r Runner) callMeshTask(
 			process.stderrString(),
 		)
 	}
-	if err := json.Unmarshal(result, &execution.Result); err != nil {
-		return execution, services.NewModuleExecutionFailure("module returned invalid mesh task result", err)
+	decodeErr := json.Unmarshal(result, &execution.Result)
+	clearBytes(result)
+	if decodeErr != nil {
+		failed := MeshTaskExecution{CredentialReceipts: execution.CredentialReceipts}
+		return failed, process.resultFailure("module returned invalid mesh task result", decodeErr)
 	}
 	execution.Result.Sessions, err = normalizeSessionRefs(execution.Result.Sessions)
 	if err != nil {
-		return execution, services.NewModuleExecutionFailure("module returned invalid mesh task sessions", err)
+		failed := MeshTaskExecution{CredentialReceipts: execution.CredentialReceipts}
+		return failed, process.resultFailure("module returned invalid mesh task sessions", err)
 	}
 	if len(execution.Result.Sessions) > 0 && r.Sessions != nil {
 		if err := r.Sessions.adopt(process, execution.Result.Sessions); err != nil {
-			return execution, services.NewModuleExecutionFailure("module returned invalid mesh task sessions", err)
+			failed := MeshTaskExecution{CredentialReceipts: execution.CredentialReceipts}
+			return failed, process.resultFailure("module returned invalid mesh task sessions", err)
 		}
 		keepProcess = true
 		return execution, nil
@@ -1393,11 +1616,13 @@ func (r Runner) callMeshTask(
 func (r Runner) callMeshStream(
 	ctx context.Context,
 	moduleID string,
-	deliveries domainpki.CredentialOperationDeliveries,
+	resolution *services.CredentialOperationResolution,
 	request mesh.StreamRequest,
 ) (MeshStreamExecution, error) {
 	execution := MeshStreamExecution{}
-	operationCtx, cancel, process, receipts, err := r.startCredentialOperation(ctx, moduleID, deliveries)
+	operationCtx, cancel, process, receipts, err := r.startCredentialOperation(
+		ctx, moduleID, resolution,
+	)
 	execution.CredentialReceipts = receipts
 	if err != nil {
 		return execution, err
@@ -1418,19 +1643,24 @@ func (r Runner) callMeshStream(
 			process.stderrString(),
 		)
 	}
-	if err := json.Unmarshal(result, &execution.Session); err != nil {
-		return execution, services.NewModuleExecutionFailure("module returned invalid mesh stream session", err)
+	decodeErr := json.Unmarshal(result, &execution.Session)
+	clearBytes(result)
+	if decodeErr != nil {
+		failed := MeshStreamExecution{CredentialReceipts: execution.CredentialReceipts}
+		return failed, process.resultFailure("module returned invalid mesh stream session", decodeErr)
 	}
 	execution.Session.ID = strings.TrimSpace(execution.Session.ID)
 	if execution.Session.ID == "" {
-		return execution, services.NewModuleExecutionFailure(
+		failed := MeshStreamExecution{CredentialReceipts: execution.CredentialReceipts}
+		return failed, process.resultFailure(
 			"module returned invalid mesh stream session",
 			errors.New("session id is required"),
 		)
 	}
 	if r.Sessions != nil {
 		if err := r.Sessions.adopt(process, []run.SessionRef{execution.Session}); err != nil {
-			return execution, services.NewModuleExecutionFailure("module returned invalid mesh stream session", err)
+			failed := MeshStreamExecution{CredentialReceipts: execution.CredentialReceipts}
+			return failed, process.resultFailure("module returned invalid mesh stream session", err)
 		}
 		keepProcess = true
 		return execution, nil
@@ -1643,6 +1873,42 @@ type moduleProcess struct {
 	waitErr  error
 }
 
+func credentialProviderResultFailure(summary string) error {
+	return services.NewModuleExecutionFailure(summary, errCredentialProviderDiagnosticsSuppressed)
+}
+
+func clearBytes(data []byte) {
+	clear(data)
+}
+
+func clearCredentialEncodingResult(result *domainpki.CredentialEncodingResult) {
+	if result == nil {
+		return
+	}
+	clearBytes(result.Data)
+	*result = domainpki.CredentialEncodingResult{}
+}
+
+func clearCredentialStampExecutionResult(result *domainpki.CredentialStampExecutionResult) {
+	if result == nil {
+		return
+	}
+	if result.Output.Artifact != nil {
+		clearBytes(result.Output.Artifact.Data)
+	}
+	if result.Output.Deployment != nil {
+		clearBytes(result.Output.Deployment.Receipt)
+	}
+	*result = domainpki.CredentialStampExecutionResult{}
+}
+
+func (p *moduleProcess) resultFailure(summary string, err error) error {
+	if p != nil && p.client != nil && p.client.credentialBearing.Load() {
+		err = errCredentialProviderDiagnosticsSuppressed
+	}
+	return services.NewModuleExecutionFailure(summary, err)
+}
+
 func (r Runner) start(ctx context.Context, moduleID string) (*moduleProcess, error) {
 	entrypoint, ok, err := r.moduleEntry(moduleID)
 	if err != nil {
@@ -1777,8 +2043,21 @@ func (p *moduleProcess) killAndWait() {
 	logPythonRPCError("wait for killed module process", p.wait())
 }
 
+func (p *moduleProcess) markCredentialBearing() {
+	if p == nil || p.client == nil {
+		return
+	}
+	if p.stderr != nil {
+		p.stderr.clearAndDiscard()
+	}
+	p.client.markCredentialBearing()
+}
+
 func (p *moduleProcess) stderrString() string {
 	if p == nil || p.stderr == nil {
+		return ""
+	}
+	if p.client != nil && p.client.credentialBearing.Load() {
 		return ""
 	}
 	return p.stderr.StringAfter(stderrSettleTimeout)
@@ -1788,6 +2067,7 @@ type capturedStderr struct {
 	mu      sync.Mutex
 	data    []byte
 	trimmed bool
+	discard bool
 	updated chan struct{}
 }
 
@@ -1796,16 +2076,36 @@ func newCapturedStderr() *capturedStderr {
 }
 
 func (s *capturedStderr) Write(p []byte) (int, error) {
+	retained := false
 	s.mu.Lock()
-	s.appendTail(p)
+	if !s.discard {
+		s.appendTail(p)
+		retained = len(p) > 0
+	}
 	s.mu.Unlock()
-	if len(p) > 0 {
+	if retained {
 		select {
 		case s.updated <- struct{}{}:
 		default:
 		}
 	}
 	return len(p), nil
+}
+
+func (s *capturedStderr) clearAndDiscard() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	clearBytes(s.data)
+	s.data = nil
+	s.trimmed = false
+	s.discard = true
+	s.mu.Unlock()
+	select {
+	case <-s.updated:
+	default:
+	}
 }
 
 func (s *capturedStderr) String() string {
@@ -2462,6 +2762,8 @@ type rpcClient struct {
 	decoder *frameDecoder
 	writer  io.WriteCloser
 
+	credentialBearing atomic.Bool
+
 	writeMu sync.Mutex
 
 	mu      sync.Mutex
@@ -2486,20 +2788,57 @@ func newClient(stdout io.Reader, stdin io.WriteCloser) *rpcClient {
 	return client
 }
 
+func (c *rpcClient) markCredentialBearing() {
+	if c == nil {
+		return
+	}
+	c.credentialBearing.Store(true)
+	c.mu.Lock()
+	clearRPCLogs(c.logs)
+	c.logs = nil
+	c.onLog = nil
+	c.onEvent = nil
+	c.mu.Unlock()
+}
+
 func (c *rpcClient) call(ctx context.Context, method string, params any) (map[string]any, error) {
 	message, err := c.callMessage(ctx, method, params)
 	if err != nil {
-		return nil, err
+		return nil, c.sanitizeDiagnosticError(err)
 	}
-	return rpcResult(message)
+	defer clearRPCMessage(&message)
+	result, err := rpcResult(message)
+	return result, c.sanitizeDiagnosticError(err)
 }
 
 func (c *rpcClient) callRaw(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	message, err := c.callMessage(ctx, method, params)
 	if err != nil {
-		return nil, err
+		return nil, c.sanitizeDiagnosticError(err)
 	}
-	return rpcRawResult(message)
+	result, err := rpcRawResult(&message)
+	clearRPCMessage(&message)
+	return result, c.sanitizeDiagnosticError(err)
+}
+
+func (c *rpcClient) sanitizeDiagnosticError(err error) error {
+	if err == nil || !c.credentialBearing.Load() {
+		return err
+	}
+	var callback callbackError
+	if errors.As(err, &callback) {
+		return err
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, io.EOF):
+		return io.EOF
+	default:
+		return errCredentialProviderDiagnosticsSuppressed
+	}
 }
 
 func (c *rpcClient) callMessage(ctx context.Context, method string, params any) (rpcMessage, error) {
@@ -2546,20 +2885,29 @@ func rpcResult(message rpcMessage) (map[string]any, error) {
 	if message.Error != nil {
 		return nil, errors.New(message.Error.Message)
 	}
-	if message.Result == nil {
+	if len(message.ResultRaw) == 0 {
 		return map[string]any{}, nil
 	}
-	return message.Result, nil
+	var result map[string]any
+	if err := json.Unmarshal(message.ResultRaw, &result); err != nil || result == nil {
+		return map[string]any{}, nil
+	}
+	return result, nil
 }
 
-func rpcRawResult(message rpcMessage) (json.RawMessage, error) {
+func rpcRawResult(message *rpcMessage) (json.RawMessage, error) {
+	if message == nil {
+		return nil, errors.New("python rpc: result message is nil")
+	}
 	if message.Error != nil {
 		return nil, errors.New(message.Error.Message)
 	}
 	if len(message.ResultRaw) == 0 {
 		return json.RawMessage("null"), nil
 	}
-	return append(json.RawMessage(nil), message.ResultRaw...), nil
+	result := message.ResultRaw
+	message.ResultRaw = nil
+	return result, nil
 }
 
 func (c *rpcClient) readLoop() {
@@ -2580,11 +2928,14 @@ func (c *rpcClient) readLoop() {
 		responses := c.pending[message.ID]
 		c.mu.Unlock()
 		if responses == nil {
+			clearRPCMessage(&message)
 			continue
 		}
 		select {
 		case responses <- message:
+			message.ResultRaw = nil
 		default:
+			clearRPCMessage(&message)
 		}
 	}
 }
@@ -2596,6 +2947,11 @@ func (c *rpcClient) handleNotification(message rpcMessage) error {
 			message.Log.ReceivedAt = time.Now().UTC()
 		}
 		c.mu.Lock()
+		if c.credentialBearing.Load() {
+			c.mu.Unlock()
+			clearRPCMessage(&message)
+			return nil
+		}
 		if len(c.logs) >= maxBufferedModuleLogs {
 			c.mu.Unlock()
 			return fmt.Errorf("module log notification count exceeds maximum %d", maxBufferedModuleLogs)
@@ -2603,16 +2959,21 @@ func (c *rpcClient) handleNotification(message rpcMessage) error {
 		c.logs = append(c.logs, message.Log)
 		onLog := c.onLog
 		c.mu.Unlock()
-		if onLog != nil {
+		if onLog != nil && !c.credentialBearing.Load() {
 			if err := onLog(message.Log); err != nil {
 				return callbackError{err: err}
 			}
 		}
 	case "module/session":
 		c.mu.Lock()
+		if c.credentialBearing.Load() {
+			c.mu.Unlock()
+			clearRPCMessage(&message)
+			return nil
+		}
 		onEvent := c.onEvent
 		c.mu.Unlock()
-		if onEvent != nil {
+		if onEvent != nil && !c.credentialBearing.Load() {
 			if err := onEvent(message.Session); err != nil {
 				return callbackError{err: err}
 			}
@@ -2648,19 +3009,50 @@ func (c *rpcClient) readError() error {
 func (c *rpcClient) setOnLog(fn func(rpcLog) error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.credentialBearing.Load() {
+		c.onLog = nil
+		return
+	}
 	c.onLog = fn
 }
 
 func (c *rpcClient) logsSnapshot() []rpcLog {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.credentialBearing.Load() {
+		return []rpcLog{}
+	}
 	return append([]rpcLog(nil), c.logs...)
+}
+
+func clearRPCLogs(logs []rpcLog) {
+	for index := range logs {
+		clearRPCLog(&logs[index])
+	}
+}
+
+func clearRPCLog(log *rpcLog) {
+	if log == nil {
+		return
+	}
+	clear(log.Fields)
+	*log = rpcLog{}
+}
+
+func clearRPCMessage(message *rpcMessage) {
+	if message == nil {
+		return
+	}
+	clearBytes(message.ResultRaw)
+	clearRPCLog(&message.Log)
+	clear(message.Session.Fields)
+	clear(message.Session.Session.Capabilities)
+	*message = rpcMessage{}
 }
 
 type rpcMessage struct {
 	ID        int
 	Method    string
-	Result    map[string]any
 	ResultRaw json.RawMessage
 	Log       rpcLog
 	Session   rpcSessionEvent
@@ -2732,11 +3124,7 @@ func (d *frameDecoder) read() (rpcMessage, error) {
 		)
 	}
 	if len(raw.Result) > 0 {
-		message.ResultRaw = append(json.RawMessage(nil), raw.Result...)
-		var object map[string]any
-		if err := json.Unmarshal(raw.Result, &object); err == nil {
-			message.Result = object
-		}
+		message.ResultRaw = raw.Result
 	}
 	if raw.Method == "module/log" && len(raw.Params) > 0 {
 		if err := json.Unmarshal(raw.Params, &message.Log); err != nil {
@@ -3359,14 +3747,26 @@ func (b *SessionBroker) TailSession(ctx context.Context, sessionID string, optio
 }
 
 func (b *SessionBroker) CloseSession(ctx context.Context, sessionID string) error {
-	session, processStillUsed, err := b.takeSession(sessionID)
+	session, err := b.lookup(sessionID)
 	if err != nil {
 		return err
+	}
+	session.closeMu.Lock()
+	defer session.closeMu.Unlock()
+	if !b.sessionIsTracked(sessionID, session) {
+		return nil
 	}
 	_, callErr := session.process.client.call(ctx, "session/close", map[string]any{
 		"sessionId": sessionID,
 		"reason":    "operator requested close",
 	})
+	if callErr != nil {
+		return callErr
+	}
+	processStillUsed, removed := b.removeSession(sessionID, session)
+	if !removed {
+		return nil
+	}
 	if !processStillUsed {
 		shutdownErr, waitErr := session.process.shutdownAndWait(ctx, moduleShutdownTimeout)
 		logPythonRPCError("shut down session module process", shutdownErr)
@@ -3478,15 +3878,24 @@ func (b *SessionBroker) markClosed(sessionID string) {
 	}
 }
 
-func (b *SessionBroker) takeSession(sessionID string) (*brokerSession, bool, error) {
-	if b == nil {
-		return nil, false, errors.New("session broker is not configured")
+func (b *SessionBroker) sessionIsTracked(sessionID string, expected *brokerSession) bool {
+	if b == nil || expected == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sessions[sessionID] == expected
+}
+
+func (b *SessionBroker) removeSession(sessionID string, expected *brokerSession) (bool, bool) {
+	if b == nil || expected == nil {
+		return false, false
 	}
 	b.mu.Lock()
 	session, exists := b.sessions[sessionID]
-	if !exists {
+	if !exists || session != expected {
 		b.mu.Unlock()
-		return nil, false, fmt.Errorf("session %s does not exist", sessionID)
+		return false, false
 	}
 	delete(b.sessions, sessionID)
 	processStillUsed := false
@@ -3498,7 +3907,7 @@ func (b *SessionBroker) takeSession(sessionID string) (*brokerSession, bool, err
 	}
 	b.mu.Unlock()
 	session.closeLocal()
-	return session, processStillUsed, nil
+	return processStillUsed, true
 }
 
 func (b *SessionBroker) pumpSession(sessionID string, session *brokerSession) {

@@ -78,6 +78,21 @@ func (m KeyMaterial) Clone() KeyMaterial {
 	return result
 }
 
+// Clear overwrites byte-backed key material and releases references held by m.
+// Callers must not use aliases of m after transferring ownership to Clear.
+func (m *KeyMaterial) Clear() {
+	if m == nil {
+		return
+	}
+	clear(m.PublicKeySPKI)
+	clear(m.PrivateKeyPKCS8)
+	if m.ExternalHandle != nil {
+		clear(m.ExternalHandle.Capabilities)
+		*m.ExternalHandle = ExternalKeyHandle{}
+	}
+	*m = KeyMaterial{}
+}
+
 func (m KeyMaterial) Validate() error {
 	if err := m.ID.Validate(); err != nil {
 		return err
@@ -116,14 +131,24 @@ func ValidateKeyMaterial(ctx context.Context, validator Validator, spec domainpk
 	if validator == nil {
 		return ValidatedKeyMaterial{}, errors.New("pki: key validator is required")
 	}
-	material = material.Clone()
-	if err := material.Validate(); err != nil {
+	ownedMaterial := material.Clone()
+	defer ownedMaterial.Clear()
+	if err := ownedMaterial.Validate(); err != nil {
 		return ValidatedKeyMaterial{}, err
 	}
-	if err := validator.ValidateKey(ctx, KeyValidationRequest{Spec: spec, Material: material}); err != nil {
+
+	validationMaterial := ownedMaterial.Clone()
+	defer validationMaterial.Clear()
+	if err := validator.ValidateKey(ctx, KeyValidationRequest{
+		Spec:     spec,
+		Material: validationMaterial,
+	}); err != nil {
 		return ValidatedKeyMaterial{}, fmt.Errorf("pki: key validation failed: %w", err)
 	}
-	return ValidatedKeyMaterial{material: material}, nil
+
+	validated := ValidatedKeyMaterial{material: ownedMaterial}
+	ownedMaterial = KeyMaterial{}
+	return validated, nil
 }
 
 func (m ValidatedKeyMaterial) Material() KeyMaterial {
@@ -134,9 +159,7 @@ func (m *ValidatedKeyMaterial) Clear() {
 	if m == nil {
 		return
 	}
-	clear(m.material.PublicKeySPKI)
-	clear(m.material.PrivateKeyPKCS8)
-	m.material = KeyMaterial{}
+	m.material.Clear()
 }
 
 func (m ValidatedKeyMaterial) Matches(expected KeyMaterial) bool {

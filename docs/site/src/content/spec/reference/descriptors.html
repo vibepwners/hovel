@@ -1,0 +1,419 @@
+<!-- hovel-doc: {"title":"Descriptors and Schemas","group":"Reference","order":10,"navTitle":"Descriptors & Schemas"} -->
+<article>
+        <h1>Descriptors and Schemas</h1>
+
+        <p>Descriptors are the stable boundary between authored content and the Hovel engine. They should be schema-validated and versioned from the beginning.</p>
+        <p>Product authoring uses readable YAML, especially for chain files operators will review and throw from the shell. JSON may exist as an internal canonical form for tests, generated artifacts, and tooling, but YAML is the documented human-authored format for the alpha.</p>
+        <p>Validation has two layers:</p>
+        <ol>
+          <li>Parse YAML into canonical JSON-compatible structs and validate shape with JSON Schema.</li>
+          <li>Run Go domain validation for semantic rules that JSON Schema cannot express cleanly.</li>
+        </ol>
+        <p>TOML is out of scope for the alpha and can be reconsidered after module, service, chain, event, provider, and run-plan schemas are stable.</p>
+        <p>
+          The primary human-authored descriptors are Hovel config, module packages,
+          module indexes, bulk install manifests, module locks, and chain files.
+          Runtime module schema is still reported by module RPC at catalog/inspect time.
+        </p>
+
+        <h2>Machine-Readable Contracts</h2>
+        <p>The stable daemon RPC between <code>hoveld</code> and front ends is described by <a href="daemon-rpc.openapi.json"><code>daemon-rpc.openapi.json</code></a> and explained in <a href="../daemon-rpc.html">Daemon RPC Contract</a>. It is an OpenAPI 3.1 document for the local HTTP/JSON service used by CLI, one-shot execution, MCP, and future front ends.</p>
+
+        <h2>Hovel Config</h2>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: HovelConfig
+workspace: .hovel
+modules:
+  searchPaths:
+    - ./modules
+    - ~/.local/share/hovel/modules
+    - ~/.cache/hovel/modules/downloads
+  indexes:
+    - ./module-index.yaml
+cache:
+  enabled: true
+runtime:
+  python:
+    pythonBuildStandalone:
+      release: 20260610
+logging:
+  level: info
+</code></pre>
+        <p>Config precedence is defaults, global config, workspace config, then one explicit <code>--config</code> file. Maps merge, scalars override, and lists replace.</p>
+
+        <h2>Module Package Descriptor</h2>
+        <p>
+          <code>hovel-module.yaml</code> is required at the root of every module
+          <code>.tgz</code>. It describes package identity, launchers, scripts, and
+          optional tool extensions. It does not replace runtime <code>handshake</code>,
+          <code>schema</code>, or <code>step.describe</code>.
+        </p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: ssh-memory
+  version: 0.1.0
+  moduleType: exploit
+  summary: SSH memory execution module for authorized labs.
+  tags: [ssh, lab, dangerous]
+  author: Example Labs
+  license: Apache-2.0
+  homepage: https://example.invalid/hovel/ssh-memory
+  repository: https://example.invalid/hovel/ssh-memory.git
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/linux-amd64/ssh-memory"]
+  - selector:
+      os: windows
+      arch: amd64
+    command: ["bin/windows-amd64/ssh-memory.exe"]
+  - selector: {}
+    python:
+      managed:
+        versions: ["3.10-3.14"]
+      requirements: "python/requirements.txt"
+      wheelhouse: "vendor/wheels"
+      command: ["{python}", "-m", "hovel_ssh_memory"]
+scripts:
+  postInstall:
+    command: ["{python}", "scripts/setup.py"]
+x-third-party-sdk:
+  opaque: true</code></pre>
+        <p>
+          Selectors describe the operator host. Hovel uses Go platform names such as
+          <code>linux</code>, <code>darwin</code>, <code>windows</code>,
+          <code>amd64</code>, and <code>arm64</code>. Known core fields are strict;
+          extension fields use the <code>x-*</code> prefix.
+        </p>
+
+        <h2>Module Index</h2>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModuleIndex
+modules:
+  - name: squatter
+    version: {{HOVEL_VERSION}}
+    url: https://github.com/vibepwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
+    sha256: ...
+</code></pre>
+        <p>Hovel ships with no default internet index. Indexes are used only when configured or passed explicitly, and cached indexes remain available offline.</p>
+
+        <h2>Bulk Install Manifest</h2>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModuleInstallSet
+modules:
+  - source: https://github.com/vibepwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
+    sha256: ...
+  - source: ./ms17-010-survey-1.0.0.tgz
+  - source: /opt/hovel/modules/ms17-010-exploit-1.0.0.tgz
+</code></pre>
+        <p>Bulk install accepts local YAML files and HTTPS manifest URLs. Relative sources in a remote manifest resolve against the manifest URL. The Hovel release workflow publishes <code>module-install-set.yaml</code> next to the example module packages. Bulk install runs in order, stops on first failure, and does not roll back prior successful installs.</p>
+
+        <h2>Module Lock</h2>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModuleLock
+modules:
+  - name: squatter
+    version: {{HOVEL_VERSION}}
+    sha256: ...
+    source: https://github.com/vibepwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
+    installedAt: 2026-06-22T16:20:00Z
+</code></pre>
+        <p>The lock file is generated install state, not the editable source of truth. Operators edit config files and bulk install manifests.</p>
+
+        <h2>Module Descriptor</h2>
+        <p>This shape describes runtime module metadata. Hovel obtains the authoritative version by launching the installed package and calling module RPC metadata methods.</p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: Module
+metadata:
+  name: ssh-memory
+  version: 0.1.0
+  description: Survey and execute an in-memory payload over SSH in an authorized lab.
+  source:
+    type: git
+    url: https://example.invalid/third-party/ssh-memory
+    revision: abc123
+  tags:
+    - ssh
+    - lab
+    - payload
+spec:
+  runtime:
+    type: jsonrpc-stdio
+    packaging: source
+    entrypoint: python -m hovel_ssh_memory
+  moduleType: exploit
+  inputs:
+    target:
+      type: targetRef
+      required: true
+    port:
+      type: integer
+      default: 22
+    username:
+      type: string
+      required: true
+    auth:
+      type: credentialRef
+      required: true
+    payload:
+      type: payloadRef
+      required: true
+  outputs:
+    session:
+      type: sessionRef
+    artifacts:
+      - name: command-transcript.txt
+        kind: text/plain
+        mode: inline
+        description: Captured command output.
+      - name: payload.bin
+        kind: application/octet-stream
+        mode: file
+        description: Generated payload bytes.
+    facts:
+      type: fact[]
+  requires:
+    providers:
+      - payload
+      - credential
+      - artifact
+  capabilities:
+    - survey
+    - deliver
+    - execute
+  risk:
+    network: target
+    writesDisk: false
+    bindsListener: false
+    requiresCredentials: true
+</code></pre>
+
+        <h2>Chain Descriptor</h2>
+        <p>Chains are loadable collections of modules and chain-scoped configuration. A chain definition may reference a module as <code>name@version</code>; a bare <code>name</code> asks the catalog to resolve the latest available version.</p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: Chain
+metadata:
+  name: ssh-memory-flow
+  version: "0.1.0"
+  description: Survey a target and run the SSH memory module.
+spec:
+  mode: configured
+  steps:
+    - id: survey
+      uses: module:ssh-survey
+    - id: exploit
+      uses: module:ssh-memory@0.1.0
+  config:
+    operator.confirmed_lab: "true"
+  targets:
+    - id: 10.41.32.2
+      config:
+        target.host: "10.41.32.2"
+</code></pre>
+        <p>The schema accepts metadata such as <code>version</code>, <code>description</code>, and <code>tags</code>; current command flows use <code>metadata.name</code> as the chain identity.</p>
+
+        <h2>Service Descriptor</h2>
+        <p>
+          Service descriptors are schema/domain contracts in the current tree. They are
+          not yet loaded by a general service process runtime; implemented provider
+          behavior currently runs through module RPC, especially Go payload-provider
+          modules.
+        </p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: Service
+metadata:
+  name: picblob-provider
+  version: 0.1.0
+  description: External provider adapter for PIC payload bytes.
+spec:
+  runtime:
+    type: jsonrpc-stdio
+    packaging: source
+    entrypoint: python -m hovel_picblob_service
+  serviceType: payload_provider
+  provides:
+    - provider: payload
+      kinds:
+        - pic
+  inputs:
+    arch:
+      type: string
+    os:
+      type: string
+    format:
+      type: string
+  lifecycle:
+    startMode: on_demand
+    healthCheck:
+      method: rpc
+      interval: 5s
+</code></pre>
+        <p>Listener service example:</p>
+<pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: Service
+metadata:
+  name: sshplant-lp
+  version: 0.1.0
+  description: Go listening post for sshplant sessions.
+spec:
+  runtime:
+    type: jsonrpc-stdio
+    entrypoint: ./sshplant-lp
+  serviceType: listener
+  provides:
+    - provider: listener
+    - provider: session
+  inputs:
+    bindHost:
+      type: string
+      default: 127.0.0.1
+    bindPort:
+      type: integer
+      default: 0
+  lifecycle:
+    startMode: run_scoped
+    healthCheck:
+      method: http
+      path: /healthz
+      interval: 2s
+</code></pre>
+
+        <h2>Execute Request</h2>
+<pre data-lang="yaml"><code>runId: run-uuid
+moduleId: ssh-memory@0.1.0
+target: 10.41.32.2
+inputs:
+  failure_mode: ""
+chainConfig:
+  operator.confirmed_lab: "true"
+targetConfig:
+  target.host: "10.41.32.2"
+  target.port: "22"
+</code></pre>
+
+        <h2>Execute Result</h2>
+<pre data-lang="yaml"><code>status: succeeded
+outputs:
+  facts:
+    os.name: linux
+    confidence: 0.95
+findings: []
+artifacts:
+  - name: ssh-transcript.txt
+    kind: text/plain
+    path: /tmp/ssh-transcript.txt
+sessions:
+  - id: session-ref
+</code></pre>
+
+        <h2>Installed Payload Descriptor</h2>
+        <p>
+          Modules and payload providers return this shape when they explicitly report a
+          successful target-side install. Hovel core validates the descriptor and writes
+          the installed payload record; providers never write directly to
+          <code>workspace.db</code>.
+        </p>
+<pre data-lang="yaml"><code>provider: squatter
+payloadId: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
+payloadVersion: 0.1.0
+target: 10.0.0.42
+targetId: t1
+state: installed
+transport: tcp-bind
+endpoint: 10.0.0.42:9101
+instanceKey: optional-provider-stable-key
+stampId: payload-stamp-uuid
+artifactIds:
+  - artifact-squatter-exe
+supportsReconnect: true
+supportsMultipleSessions: false
+reconnect:
+  providerId: squatter
+  schema: squatter.reconnect.tcp_bind
+  schemaVersion: "1"
+  descriptor:
+    host: 10.0.0.42
+    port: 9101
+cleanup:
+  providerId: squatter
+  schema: squatter.cleanup.tcp_bind
+  schemaVersion: "1"
+  descriptor:
+    remotePath: C:\Windows\Temp\n4x9q2.exe
+metadata:
+  profile: xp-sp3-lab
+</code></pre>
+        <p>
+          The durable installed payload row stores a normalized core plus opaque
+          provider-owned reconnect and cleanup JSON. Valid current states are
+          <code>installed</code>, <code>connected</code>, <code>unreachable</code>, and
+          <code>removed</code>. Repeated descriptors update an existing row only when
+          <code>instanceKey</code> or <code>stampId</code> proves it is the same deployed
+          instance.
+        </p>
+
+        <h2>Event Shape</h2>
+<pre data-lang="yaml"><code>id: event-uuid
+schemaVersion: hovel.event/v1alpha1
+type: hovel.module.log
+level: info
+message: detected target architecture
+timestamp: 2026-04-25T18:00:00Z
+refs:
+  runId: run-uuid
+  target: target-uuid
+  moduleId: ssh-survey@0.1.0
+fields:
+  arch: x86_64
+</code></pre>
+        <p>Service event:</p>
+<pre data-lang="yaml"><code>id: event-uuid
+schemaVersion: hovel.event/v1alpha1
+type: hovel.service.log
+level: info
+message: listener started
+timestamp: 2026-04-25T18:00:00Z
+refs:
+  runId: run-uuid
+  serviceId: service:sshplant-lp
+fields:
+  bindHost: 127.0.0.1
+  bindPort: 49152
+</code></pre>
+        <p>Artifact event:</p>
+<pre data-lang="yaml"><code>id: event-uuid
+schemaVersion: hovel.event/v1alpha1
+type: hovel.artifact.recorded
+level: info
+message: artifact recorded
+timestamp: 2026-04-25T18:00:00Z
+refs:
+  runId: run-uuid
+fields:
+  artifactId: artifact-uuid
+  name: ssh-transcript.txt
+  mediaType: text/plain
+  size: "1234"
+  sha256: abc123
+</code></pre>
+
+        <h2>Schema Files</h2>
+<pre data-lang="tree"><code>schemas/
+  hovel.config.schema.json
+  hovel.module-package.schema.json
+  hovel.module-index.schema.json
+  hovel.module-install-set.schema.json
+  hovel.module-lock.schema.json
+  hovel.module.schema.json
+  hovel.service.schema.json
+  hovel.chain.schema.json
+  hovel.throw-plan.schema.json
+  hovel.event.schema.json
+</code></pre>
+        <p>Schemas are hand-authored while the contracts are still moving. Generation from Go types can be reconsidered after the schema contracts stabilize.</p>
+        <p>Provider-facing shapes are documented in the module wire protocol and SDK APIs. The throw-plan schema covers plan identity, workspace, chain, targets, planned steps, review text, intent, and confirmation records including <code>typed_yes</code>, <code>preconfirmed</code>, <code>reviewed_yes</code>, and <code>now_bypass</code> methods.</p>
+      </article>

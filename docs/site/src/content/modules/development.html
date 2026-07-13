@@ -1,0 +1,322 @@
+<!-- hovel-doc: {"title":"Build a Module or Provider","group":"Modules","order":5,"navTitle":"Build a Module or Provider","description":"Choose the narrowest Hovel module, provider, Mesh, listening-post, and workspace-PKI integration contract, then implement and verify it in Go, Python, or Rust."} -->
+<article>
+  <p class="book-kicker">// developer entry point</p>
+  <h1>Build a Module or Provider</h1>
+  <p class="book-lede">
+    Start with an ordinary module. Add provider, Mesh, credential-delivery, or
+    listening-post hooks only when the capability owns that behavior. This page
+    maps each integration shape to the implemented daemon and SDK surfaces.
+  </p>
+
+  <div class="callout note">
+    <strong>Most modules need no provider or credential contract.</strong>
+    A survey or exploit that reads explicit configuration, contacts a target,
+    and returns outputs, findings, artifacts, or sessions implements only the
+    base module lifecycle. Using TLS inside that operation does not by itself
+    make the module a Hovel credential provider.
+  </div>
+
+  <h2>Choose the narrowest contract</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>What the capability owns</th>
+        <th>Implement now</th>
+        <th>Do not add</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A survey, exploit, or tool invocation against one target</td>
+        <td>The base Python <code>HovelModule</code>, Go <code>Module</code>, or Rust <code>Module</code> lifecycle</td>
+        <td>Mesh or credential hooks merely because the tool uses a network, TLS, or target login</td>
+      </tr>
+      <tr>
+        <td>Planner-visible capability steps</td>
+        <td>Python <code>step.*</code> overrides or Go <code>StepProvider</code></td>
+        <td>A Rust step provider: Rust does not dispatch <code>step.*</code> today</td>
+      </tr>
+      <tr>
+        <td>Payload discovery, generation, reconnect, cleanup, and chunking</td>
+        <td>Go <code>PayloadProvider</code>; any language may still return installed-payload descriptors from normal execution</td>
+        <td>A Python or Rust payload-provider RPC implementation: those SDKs do not dispatch that provider surface today</td>
+      </tr>
+      <tr>
+        <td>Provider-owned nodes, routes, beacons, tasks, streams, or listening posts</td>
+        <td><code>mesh.describe</code> plus only the optional Mesh operations actually supported</td>
+        <td>No-op topology, task, listener, or stream methods added only to mimic a full provider</td>
+      </tr>
+      <tr>
+        <td>Consumption or transformation of Hovel-managed workspace PKI material</td>
+        <td><code>credential.describe</code> plus only the advertised runtime, files, encoding, or stamping hook</td>
+        <td>A credential descriptor on an ordinary module that never receives assignment-bound material</td>
+      </tr>
+      <tr>
+        <td>An existing TCP or UDP client reused through a provider route</td>
+        <td>A daemon <code>OpenMeshBridge</code> call and the language SDK's authenticated bridge dial helper</td>
+        <td>Mesh-provider hooks in the consumer merely to understand provider topology</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <figure class="diagram" aria-label="A module starts with the base lifecycle, adds only required optional contracts, is validated by Hovel, and is then packaged and tested.">
+    <figcaption>Build from the base contract outward</figcaption>
+    <ol class="flow-diagram">
+      <li class="flow-step strong">base module</li>
+      <li class="flow-step">one required extension</li>
+      <li class="flow-step">daemon discovery and validation</li>
+      <li class="flow-step ready">package and contract tests</li>
+    </ol>
+  </figure>
+
+  <p>
+    The complete lifecycle, packaging format, test loop, and safety contract are
+    in <a href="../spec/module-development.html">Module Development</a>. The
+    method-level message shapes are in the
+    <a href="../spec/module-protocol.html">module wire protocol</a>.
+  </p>
+
+  <h2>Credentials: ordinary input versus workspace PKI</h2>
+  <p>
+    Hovel uses the word <em>credential</em> for two different domains. A target
+    account created or observed during an assessment is chain evidence represented
+    by <code>CredentialCapability</code>. Workspace PKI is daemon-owned encrypted
+    custody for certificate generations, keys, trust, revocation, assignments, and
+    short-lived provider delivery. Never copy one model into the other. See
+    <a href="../spec/providers-artifacts.html#credential-evidence">target credential evidence</a>,
+    <a href="../spec/providers-artifacts.html#workspace-pki">workspace PKI custody</a>,
+    and <a href="../spec/tls-pki.html">TLS and Workspace PKI</a>.
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>Need</th>
+        <th>Current path</th>
+        <th>Implementation status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A module authenticates to a target with explicit operator or chain input</td>
+        <td>Declare normal requirements or consume chain capabilities in the operation's own contract</td>
+        <td>No workspace-PKI provider hook is required</td>
+      </tr>
+      <tr>
+        <td>A Mesh listener, task, stream, or bridge needs an active PKI assignment</td>
+        <td>Advertise strict slots and <code>runtime</code>; the daemon resolves selectors and delivers material before the Mesh method in the same provider process</td>
+        <td>Implemented through the privileged daemon API for direct certificate DER, public-key SPKI, and private-key PKCS #8 projections</td>
+      </tr>
+      <tr>
+        <td>A provider consumes invocation-scoped protected files</td>
+        <td>Advertise <code>files</code> and implement <code>credential.files</code></td>
+        <td>The typed domain, SDK dispatch, validation, and bookkeeping exist; the current external Mesh selector does not initiate file delivery</td>
+      </tr>
+      <tr>
+        <td>A provider performs a bounded native encoding or stamps an artifact/deployment</td>
+        <td>Advertise a matching encoding schema or stamping capability and implement <code>credential.encode</code> or <code>credential.stamp</code></td>
+        <td>The contracts and provider dispatch exist; the daemon OpenAPI currently exposes list/inspect bookkeeping, not a production initiation method</td>
+      </tr>
+      <tr>
+        <td>An ordinary non-Mesh <code>execute</code> call needs automatic workspace-PKI injection</td>
+        <td>No general delivery path is wired to base module execution</td>
+        <td>Future integration point; do not document or depend on implicit injection</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    A provider advertises only slots and modes it really consumes. In Go, implement
+    <code>CredentialDescriber</code> and only the small execution interfaces needed.
+    In Python and Rust, override only the corresponding methods; unsupported defaults
+    fail explicitly. If the same descriptor appears in both
+    <code>credential.describe</code> and <code>MeshDescriptor.credentialDelivery</code>,
+    Hovel requires their canonical digests to match. Start with the
+    <a href="../spec/credential-provider-development.html">Credential Provider Development</a>
+    guide, then use the <a href="../spec/daemon-rpc.html">daemon API chapter</a>
+    for the currently callable control-plane surface.
+  </p>
+
+  <h2>Consume a Mesh bridge as local TCP or UDP</h2>
+  <p>
+    Use a bridge when a working client already speaks to a host and port and the
+    Mesh provider can preserve TCP byte-stream or UDP datagram semantics. The control
+    plane chooses the provider, route or node, destination, and provider-defined
+    remote <code>protocol</code>. The separate <code>localNetwork</code> field selects
+    the daemon's <code>tcp</code> or <code>udp</code> loopback adapter. The consumer
+    does not need provider topology types.
+  </p>
+  <p>
+    Use <code>RunMeshTask</code> instead when the provider owns a native survey,
+    command, upload-and-execute, or loader operation. Use <code>OpenMeshStream</code>
+    and session APIs for provider-defined flows that should not become a local socket.
+    ICMP, raw IP, GRE, and custom protocols have no raw local adapter today. A
+    provider may still expose one of those remote protocols through a local TCP
+    byte stream or UDP datagram association when its stream contract defines that
+    mapping.
+  </p>
+<pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/OpenMeshBridge
+Content-Type: application/json
+
+{
+  "moduleId": "lab-relay-mesh@v0.1.0",
+  "localNetwork": "tcp",
+  "request": {
+    "runId": "run-lab-1",
+    "nodeId": "relay-west",
+    "destinationHost": "192.0.2.25",
+    "destinationPort": 443,
+    "protocol": "tcp"
+  }
+}</code></pre>
+<pre data-lang="json"><code>{
+  "operationId": "mesh-op-43",
+  "sessionId": "run-lab-1-session-1",
+  "localHost": "127.0.0.1",
+  "localPort": 43117,
+  "localNetwork": "tcp",
+  "localAddress": "127.0.0.1:43117",
+  "capability": "uL8wGvVukVynTng2uR6U4oqxm8v0cMxfR7VaJkW_1eM"
+}</code></pre>
+  <div class="callout warning">
+    <strong>The bridge capability is a bearer secret.</strong>
+    Keep it in memory and out of logs, results, transcripts, and durable config.
+    The SDK helper sends it as the first newline-terminated TCP preface or first
+    complete UDP datagram, then returns a normal connection. A raw connection that
+    omits the preface is rejected.
+  </div>
+  <p>
+    Use <a href="../spec/module-go.html#mesh-bridge-client">Go's
+    <code>NewMeshBridgeEndpoint</code> and <code>DialMeshBridge</code></a>,
+    <a href="../spec/module-python.html#mesh-bridge-client">Python's
+    <code>MeshBridgeEndpoint</code> and <code>connect_mesh_bridge</code></a>, or
+    <a href="../spec/module-rust.html#mesh-bridge-client">Rust's
+    <code>MeshBridgeEndpoint</code> and TCP/UDP connect helpers</a>. Open one bridge
+    per independent TCP connection or UDP peer association and close it through
+    <code>CloseMeshBridge</code> when the consumer is finished.
+  </p>
+
+  <h2>Separate a listening post from the provider adapter</h2>
+  <p>
+    A Mesh listener is the provider-reported listening post or rendezvous resource.
+    The module process handling <code>mesh.listener.start</code> is an adapter call:
+    Hovel shuts it down after the response. Therefore a provider-managed listener
+    that must survive the call needs durable provider-owned runtime state outside
+    that short-lived adapter process.
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>Concern</th>
+        <th>Owner</th>
+        <th>Rule</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Provider control adapter</td>
+        <td>Module process</td>
+        <td>Validates and forwards list/start/stop calls; it is not automatically a long-lived listener host</td>
+      </tr>
+      <tr>
+        <td>Listening-post data plane</td>
+        <td>Provider-owned embedded deployment, separate service, or external manager</td>
+        <td>Must preserve callbacks and state for the advertised lifecycle</td>
+      </tr>
+      <tr>
+        <td>Lifecycle identity</td>
+        <td>Caller and provider</td>
+        <td>Start and stop are idempotent for the stable caller-selected <code>listenerId</code>; daemon-wide identity is module ID plus listener ID</td>
+      </tr>
+      <tr>
+        <td>Configuration and credentials</td>
+        <td>Provider operation input</td>
+        <td>Write-only: never echo them in listener read models, logs, errors, or daemon operation records</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    Choose <code>deployment: separate</code> when the listening post needs an
+    independent process, host, update cadence, failure boundary, or scale profile.
+    Choose <code>management: external</code> when Hovel should report but not control
+    its lifecycle. An <code>embedded</code> listener may share a durable provider
+    deployment, but it still cannot depend on one start-RPC subprocess remaining alive.
+    A routed stream is different: Hovel keeps the provider process while its returned
+    session is active. See <a href="../spec/mesh-development.html">Developing Mesh Providers</a>.
+  </p>
+
+  <h2>Language starting points</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Language</th>
+        <th>Base module</th>
+        <th>Provider and bridge entry points</th>
+        <th>Current boundary</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><a href="../spec/module-python.html">Python</a></td>
+        <td><code>HovelModule</code>, <code>run</code>, <code>serve</code></td>
+        <td>Override supported Mesh/credential hooks; <code>connect_mesh_bridge</code>; <a href="../api/sdk/python/index.html">API reference</a></td>
+        <td>Supports <code>step.*</code>; no payload-provider RPC dispatch</td>
+      </tr>
+      <tr>
+        <td><a href="../spec/module-go.html">Go</a></td>
+        <td><code>Module</code>, <code>Run</code>, <code>Serve</code></td>
+        <td>Small optional Mesh/credential interfaces; <code>DialMeshBridge</code>; <a href="../api/sdk/go/hovel/index.html">API reference</a></td>
+        <td>Most complete provider surface, including steps and payload providers</td>
+      </tr>
+      <tr>
+        <td><a href="../spec/module-rust.html">Rust</a></td>
+        <td><code>Module</code>, <code>run</code>, <code>serve</code></td>
+        <td>Override supported trait methods; TCP/UDP bridge helpers; <a href="../api/sdk/rust/hovel/index.html">API reference</a></td>
+        <td>Mesh and credential dispatch are implemented; no <code>step.*</code> or payload-provider RPC dispatch</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Completion checklist</h2>
+  <ul>
+    <li>The module starts with valid, stable metadata and explicit chain/target requirements.</li>
+    <li><code>handshake</code>, <code>schema</code>, and every advertised describe method are deterministic, offline, and side-effect free.</li>
+    <li>Stdout contains only framed module RPC; progress uses structured SDK logging.</li>
+    <li>Only implemented provider methods are advertised, and unsupported optional methods fail explicitly.</li>
+    <li>Workspace-PKI slots constrain purpose, consumer, profile, projection, form, size, and private-material policy; secret bytes, paths, capabilities, and references never enter logs or durable results.</li>
+    <li>Mesh bridge consumers use the authenticated SDK helper and preserve TCP stream or UDP datagram semantics.</li>
+    <li>Long-lived listening posts survive individual adapter calls; stable listener IDs make start/stop retries converge.</li>
+    <li>Outputs, findings, artifacts, sessions, capabilities, and installed-payload descriptors use their intended ownership boundaries.</li>
+    <li>Dangerous behavior is tagged and remains behind Hovel's persisted-plan, confirmation, and <code>--allow-dangerous</code> safeguards.</li>
+    <li>Direct logic tests and framed-RPC contract tests cover success, malformed input, unsupported hooks, failures, cleanup, and secret non-disclosure.</li>
+    <li>The package manifest selects a real launcher, and <code>hovel module check</code> validates discovery without executing the module.</li>
+    <li>In-repository work finishes through the strongest available Task-backed slice check.</li>
+  </ul>
+
+  <h2>Continue with the detailed guides</h2>
+  <div class="tiles">
+    <a class="tile" href="../spec/module-development.html">
+      <span class="tile-label">Build</span>
+      <span class="tile-title">Module Development</span>
+      <span class="tile-desc">Lifecycle, packaging, testing, sessions, results, and safety.</span>
+    </a>
+    <a class="tile" href="../spec/credential-provider-development.html">
+      <span class="tile-label">PKI</span>
+      <span class="tile-title">Credential Providers</span>
+      <span class="tile-desc">Strict slots, optional delivery hooks, current initiators, and secret handling.</span>
+    </a>
+    <a class="tile" href="../spec/mesh-development.html">
+      <span class="tile-label">Route</span>
+      <span class="tile-title">Mesh Providers</span>
+      <span class="tile-desc">Topology, tasks, streams, listening posts, bridges, and provider ownership.</span>
+    </a>
+    <a class="tile" href="../spec/tls-pki.html">
+      <span class="tile-label">TLS</span>
+      <span class="tile-title">TLS and Workspace PKI</span>
+      <span class="tile-desc">Authorities, profiles, assignments, trust, rotation, revocation, and delivery.</span>
+    </a>
+    <a class="tile" href="catalogue.html">
+      <span class="tile-label">Browse</span>
+      <span class="tile-title">Module Catalogue</span>
+      <span class="tile-desc">Integrated module guides, build notes, tests, and references.</span>
+    </a>
+  </div>
+</article>

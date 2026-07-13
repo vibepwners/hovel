@@ -6,7 +6,7 @@ explicit installed-payload result records, and Mesh provider hooks.
 
 For a complete Mesh development path—capability design, tasking, streams,
 listening posts, daemon calls, and routing an existing module through a local
-bridge—see the [Mesh Provider Development Guide](../../docs/site/spec/mesh-development.html).
+bridge—see the [Mesh Provider Development Guide](../../docs/site/src/content/spec/mesh-development.html).
 
 The crate name is `hovel` inside this repository.
 
@@ -94,25 +94,33 @@ Use `MESH_TASK_UPLOAD_EXECUTE` for implant copy-then-run flows and
 carry inline bytes in `input_data`/`input_encoding` or provider-defined artifact
 references in `config`.
 
-Consumer modules can authenticate an `OpenMeshBridge` response and then use a
-normal `TcpStream`:
+Consumer modules should dispatch from the required `localNetwork` field in the
+`OpenMeshBridge` response. It is the daemon-local adapter (`tcp` or `udp`), not
+the provider-defined remote `request.protocol`:
 
 ```rust,no_run
-use hovel::{MeshBridgeCapability, MeshBridgeEndpoint, connect_mesh_bridge_tcp};
+use hovel::{connect_mesh_bridge, MeshBridgeConnection, MeshBridgeEndpoint};
 use std::time::Duration;
 
-let capability = MeshBridgeCapability::new(bridge.capability)?;
-let endpoint = MeshBridgeEndpoint::new(
+let endpoint = MeshBridgeEndpoint::from_response(
     bridge.local_host,
-    bridge.local_port,
-    capability,
+    u16::try_from(bridge.local_port)?,
+    &bridge.local_network,
+    bridge.capability,
 )?;
-let stream = connect_mesh_bridge_tcp(&endpoint, Some(Duration::from_secs(5)))?;
+match connect_mesh_bridge(&endpoint, Some(Duration::from_secs(5)))? {
+    MeshBridgeConnection::Tcp(stream) => use_stream(stream)?,
+    MeshBridgeConnection::Udp(socket) => use_datagrams(socket)?,
+}
 ```
 
-Use `connect_mesh_bridge_udp` for a UDP association. Both helpers send the
-bearer capability first. Keep it in memory and out of logs, results, and
-durable configuration.
+The enum keeps the concrete `TcpStream` and `UdpSocket` types available. If the
+calling module handles only one local adapter, use `connect_mesh_bridge_tcp` or
+`connect_mesh_bridge_udp`; each rejects a response for the other adapter. All
+helpers send the bearer capability first. Endpoints accept only canonical
+numeric loopback IPs, so connecting never performs DNS resolution. Capability
+`Debug` and `Display` output is redacted; keep the value itself in memory and
+out of logs, results, and durable configuration.
 
 Rust does not currently dispatch `step.*` methods or payload-provider
 RPC methods. If you need those extension points today, use the Go SDK. Rust
@@ -176,18 +184,31 @@ impl Module for RuntimeCredentialProvider {
         Ok(CredentialDeliveryDescriptor {
             capabilities: vec![CredentialDeliveryCapability::Runtime],
             slots: vec![CredentialSlot {
-                name: "control-plane-mtls".into(),
+                name: "control-plane-mtls-certificate".into(),
                 purpose: CredentialPurpose::MtlsServer,
                 endpoint_role: CredentialEndpointRole::Server,
                 consumer_type: CredentialConsumerType::MeshListener,
                 accepted_bundle_versions: vec!["hovel.pki.bundle/v1".into()],
                 accepted_profiles: vec!["mtls-server".into()],
                 accepted_compatibility_targets: vec!["portable-x509".into()],
-                accepted_projections: vec![CredentialProjection::Bundle],
+                accepted_projections: vec![CredentialProjection::CertificateDer],
+                accepted_material_forms: vec![CredentialMaterialForm::Public],
+                maximum_encoded_bytes: 64 << 10,
+                remainder_policy: CredentialStampRemainderPolicy::Preserve,
+                private_material: CredentialPrivateMaterialPolicy::Forbidden,
+            }, CredentialSlot {
+                name: "control-plane-mtls-private-key".into(),
+                purpose: CredentialPurpose::MtlsServer,
+                endpoint_role: CredentialEndpointRole::Server,
+                consumer_type: CredentialConsumerType::MeshListener,
+                accepted_bundle_versions: vec!["hovel.pki.bundle/v1".into()],
+                accepted_profiles: vec!["mtls-server".into()],
+                accepted_compatibility_targets: vec!["portable-x509".into()],
+                accepted_projections: vec![CredentialProjection::PrivateKeyPkcs8],
                 accepted_material_forms: vec![CredentialMaterialForm::PrivateBytes],
                 maximum_encoded_bytes: 64 << 10,
                 remainder_policy: CredentialStampRemainderPolicy::Preserve,
-                private_material: CredentialPrivateMaterialPolicy::Allowed,
+                private_material: CredentialPrivateMaterialPolicy::Required,
             }],
             ..CredentialDeliveryDescriptor::default()
         })

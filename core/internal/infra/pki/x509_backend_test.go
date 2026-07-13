@@ -168,7 +168,8 @@ func TestIssueRootSubordinateAndLeaf(t *testing.T) {
 		t.Fatalf("verified chains = %#v", chains)
 	}
 
-	verifyMutualTLS(t, root, subordinate, leafIssued, leafKey)
+	verificationTime := now.Add(3 * time.Minute)
+	verifyMutualTLS(t, root, subordinate, leafIssued, leafKey, verificationTime)
 	verifyBundleCRLSemantics(t, testQuantumBundle(t, leafIssued, subordinate, root), subordinate, subordinateKey, leaf)
 }
 
@@ -480,13 +481,19 @@ func subjectAttributeTag(t *testing.T, rawSubject []byte, target asn1.ObjectIden
 	return 0
 }
 
-func verifyMutualTLS(t *testing.T, root, subordinate *x509.Certificate, leaf apppki.IssuedCertificate, key apppki.KeyMaterial) {
+func verifyMutualTLS(
+	t *testing.T,
+	root, subordinate *x509.Certificate,
+	leaf apppki.IssuedCertificate,
+	key apppki.KeyMaterial,
+	verificationTime time.Time,
+) {
 	t.Helper()
 	certificate := tls.Certificate{Certificate: [][]byte{leaf.CertificateDER, subordinate.Raw, root.Raw}, PrivateKey: parseTestPrivateKey(t, key.PrivateKeyPKCS8), Leaf: mustParseCertificate(t, leaf.CertificateDER)}
 	rootPool := x509.NewCertPool()
 	rootPool.AddCert(root)
 	bundle := testQuantumBundle(t, leaf, subordinate, root)
-	curves, err := TLSCurvePreferencesForBundle(bundle)
+	curves, err := TLSCurvePreferencesForBundleAt(bundle, verificationTime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +503,7 @@ func verifyMutualTLS(t *testing.T, root, subordinate *x509.Certificate, leaf app
 	}
 	privateBundle := bundle.Clone()
 	privateBundle.PrivateKey = &privateBinary
-	if err := VerifyBundle(privateBundle); err != nil {
+	if err := VerifyBundleAt(privateBundle, verificationTime); err != nil {
 		t.Fatal(err)
 	}
 	if err := VerifyBundleAt(privateBundle, privateBundle.NotAfter.Add(time.Second)); err == nil {
@@ -511,8 +518,8 @@ func verifyMutualTLS(t *testing.T, root, subordinate *x509.Certificate, leaf app
 	}
 	tamperedFingerprint := bundle.Clone()
 	tamperedFingerprint.Fingerprints.CertificateSHA256 = strings.Repeat("0", sha256.Size*2)
-	if err := VerifyBundle(tamperedFingerprint); err == nil {
-		t.Fatal("VerifyBundle() accepted a false certificate fingerprint")
+	if err := VerifyBundleAt(tamperedFingerprint, verificationTime); err == nil {
+		t.Fatal("VerifyBundleAt() accepted a false certificate fingerprint")
 	}
 	otherKey := generateTestKey(t, NewBackend(), "key-bundle-mismatch")
 	mismatchedPrivate, err := domainpki.NewBinary(domainpki.MediaTypePrivateKey, otherKey.PrivateKeyPKCS8)
@@ -520,11 +527,25 @@ func verifyMutualTLS(t *testing.T, root, subordinate *x509.Certificate, leaf app
 		t.Fatal(err)
 	}
 	privateBundle.PrivateKey = &mismatchedPrivate
-	if err := VerifyBundle(privateBundle); err == nil {
-		t.Fatal("VerifyBundle() accepted a mismatched private key")
+	if err := VerifyBundleAt(privateBundle, verificationTime); err == nil {
+		t.Fatal("VerifyBundleAt() accepted a mismatched private key")
 	}
-	serverConfig := &tls.Config{Certificates: []tls.Certificate{certificate}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: rootPool, MinVersion: tls.VersionTLS13, CurvePreferences: append([]tls.CurveID(nil), curves...)}
-	clientConfig := &tls.Config{Certificates: []tls.Certificate{certificate}, RootCAs: rootPool, ServerName: "listener.test", MinVersion: tls.VersionTLS13, CurvePreferences: append([]tls.CurveID(nil), curves...)}
+	serverConfig := &tls.Config{
+		Certificates:     []tls.Certificate{certificate},
+		ClientAuth:       tls.RequireAndVerifyClientCert,
+		ClientCAs:        rootPool,
+		MinVersion:       tls.VersionTLS13,
+		CurvePreferences: append([]tls.CurveID(nil), curves...),
+		Time:             func() time.Time { return verificationTime },
+	}
+	clientConfig := &tls.Config{
+		Certificates:     []tls.Certificate{certificate},
+		RootCAs:          rootPool,
+		ServerName:       "listener.test",
+		MinVersion:       tls.VersionTLS13,
+		CurvePreferences: append([]tls.CurveID(nil), curves...),
+		Time:             func() time.Time { return verificationTime },
+	}
 	serverSide, clientSide := net.Pipe()
 	defer func() {
 		if err := clientSide.Close(); err != nil {
@@ -554,7 +575,7 @@ func verifyMutualTLS(t *testing.T, root, subordinate *x509.Certificate, leaf app
 	}
 	verifyEncryptedExchange(t, server, client, []byte("server-to-client"))
 	verifyEncryptedExchange(t, client, server, []byte("client-to-server"))
-	verifyClassicalPeerRejected(t, certificate, rootPool, curves)
+	verifyClassicalPeerRejected(t, certificate, rootPool, curves, verificationTime)
 }
 
 func verifyBundleCRLSemantics(t *testing.T, bundle domainpki.Bundle, issuer *x509.Certificate, issuerKey apppki.KeyMaterial, leaf *x509.Certificate) {
@@ -675,7 +696,13 @@ func testQuantumBundle(t *testing.T, leaf apppki.IssuedCertificate, subordinate,
 	return bundle
 }
 
-func verifyClassicalPeerRejected(t *testing.T, certificate tls.Certificate, rootPool *x509.CertPool, required []tls.CurveID) {
+func verifyClassicalPeerRejected(
+	t *testing.T,
+	certificate tls.Certificate,
+	rootPool *x509.CertPool,
+	required []tls.CurveID,
+	verificationTime time.Time,
+) {
 	t.Helper()
 	serverSide, clientSide := net.Pipe()
 	defer func() {
@@ -690,12 +717,14 @@ func verifyClassicalPeerRejected(t *testing.T, certificate tls.Certificate, root
 		Certificates:     []tls.Certificate{certificate},
 		MinVersion:       tls.VersionTLS13,
 		CurvePreferences: append([]tls.CurveID(nil), required...),
+		Time:             func() time.Time { return verificationTime },
 	})
 	client := tls.Client(clientSide, &tls.Config{
 		RootCAs:          rootPool,
 		ServerName:       "listener.test",
 		MinVersion:       tls.VersionTLS13,
 		CurvePreferences: []tls.CurveID{tls.X25519},
+		Time:             func() time.Time { return verificationTime },
 	})
 	errCh := make(chan error, 2)
 	go func() { errCh <- server.HandshakeContext(t.Context()) }()

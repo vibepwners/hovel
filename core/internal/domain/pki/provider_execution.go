@@ -22,8 +22,11 @@ const (
 	MaximumCredentialPathBytes           = 4096
 	MaximumCredentialEncodingBytes       = 256
 	MaximumCredentialReceiptBytes        = 1 << 20
+	CredentialEncodingRaw                = "raw"
 	redactedCredentialSecret             = "<credential secret redacted>"
 	credentialConsumerPathSeparator      = "/"
+	credentialConsumerDigestSeparator    = "\x00"
+	credentialConsumerDigestPrefix       = "mesh-scoped:"
 )
 
 // CredentialBytes carries ephemeral secret-aware binary material. JSON uses
@@ -33,33 +36,151 @@ type CredentialBytes []byte
 
 func (CredentialBytes) String() string   { return redactedCredentialSecret }
 func (CredentialBytes) GoString() string { return redactedCredentialSecret }
+func (CredentialBytes) Format(state fmt.State, _ rune) {
+	formatCredentialSecret(state)
+}
+
+// formatCredentialSecret writes the fixed diagnostic marker. fmt.Formatter
+// cannot return write errors, so a rejected write terminates formatting.
+func formatCredentialSecret(state fmt.State) {
+	if _, err := io.WriteString(state, redactedCredentialSecret); err != nil {
+		return
+	}
+}
 
 func (b CredentialBytes) Clone() CredentialBytes {
 	return append(CredentialBytes(nil), b...)
 }
 
+type credentialSecretText struct {
+	value *string
+}
+
+func newCredentialSecretText(value string) credentialSecretText {
+	return credentialSecretText{value: &value}
+}
+
+func (s credentialSecretText) reveal() string {
+	if s.value == nil {
+		return ""
+	}
+	return *s.value
+}
+
 // CredentialSecretReference is an opaque provider-scoped capability. It is
 // secret-aware because possession may authorize use of non-exportable key
-// material.
-type CredentialSecretReference string
+// material. Its pointer-backed representation also prevents fmt's special %p
+// verb from embedding the secret in an unsupported-verb diagnostic.
+type CredentialSecretReference struct {
+	secret credentialSecretText
+}
+
+func NewCredentialSecretReference(value string) CredentialSecretReference {
+	return CredentialSecretReference{secret: newCredentialSecretText(value)}
+}
+
+func (r CredentialSecretReference) Reveal() string { return r.secret.reveal() }
 
 func (CredentialSecretReference) String() string   { return redactedCredentialSecret }
 func (CredentialSecretReference) GoString() string { return redactedCredentialSecret }
+func (CredentialSecretReference) Format(state fmt.State, _ rune) {
+	formatCredentialSecret(state)
+}
+
+func (r CredentialSecretReference) Clone() CredentialSecretReference {
+	return NewCredentialSecretReference(r.Reveal())
+}
+
+func (r *CredentialSecretReference) Clear() {
+	if r == nil {
+		return
+	}
+	if r.secret.value != nil {
+		*r.secret.value = ""
+	}
+	*r = CredentialSecretReference{}
+}
+
+func (r CredentialSecretReference) MarshalJSON() ([]byte, error) {
+	return json.Marshal(r.Reveal())
+}
+
+func (r *CredentialSecretReference) UnmarshalJSON(data []byte) error {
+	if r == nil {
+		return errors.New("pki: credential secret reference destination is nil")
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	result := NewCredentialSecretReference(value)
+	if err := result.Validate(); err != nil {
+		return err
+	}
+	*r = result
+	return nil
+}
 
 func (r CredentialSecretReference) Validate() error {
-	return validateCanonicalContractText(string(r), "credential secret reference", MaxIDLength)
+	return validateCanonicalContractText(r.Reveal(), "credential secret reference", MaxIDLength)
 }
 
 // CredentialProtectedPath is an invocation-scoped owner-protected path. It is
 // redacted from ordinary diagnostics because paths can disclose secret names
-// and workspace layout.
-type CredentialProtectedPath string
+// and workspace layout. Its pointer-backed representation keeps fmt's special
+// %p verb from embedding the path in an unsupported-verb diagnostic.
+type CredentialProtectedPath struct {
+	secret credentialSecretText
+}
+
+func NewCredentialProtectedPath(value string) CredentialProtectedPath {
+	return CredentialProtectedPath{secret: newCredentialSecretText(value)}
+}
+
+func (p CredentialProtectedPath) Reveal() string { return p.secret.reveal() }
 
 func (CredentialProtectedPath) String() string   { return redactedCredentialSecret }
 func (CredentialProtectedPath) GoString() string { return redactedCredentialSecret }
+func (CredentialProtectedPath) Format(state fmt.State, _ rune) {
+	formatCredentialSecret(state)
+}
+
+func (p CredentialProtectedPath) Clone() CredentialProtectedPath {
+	return NewCredentialProtectedPath(p.Reveal())
+}
+
+func (p *CredentialProtectedPath) Clear() {
+	if p == nil {
+		return
+	}
+	if p.secret.value != nil {
+		*p.secret.value = ""
+	}
+	*p = CredentialProtectedPath{}
+}
+
+func (p CredentialProtectedPath) MarshalJSON() ([]byte, error) {
+	return json.Marshal(p.Reveal())
+}
+
+func (p *CredentialProtectedPath) UnmarshalJSON(data []byte) error {
+	if p == nil {
+		return errors.New("pki: credential protected path destination is nil")
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	result := NewCredentialProtectedPath(value)
+	if err := result.Validate(); err != nil {
+		return err
+	}
+	*p = result
+	return nil
+}
 
 func (p CredentialProtectedPath) Validate() error {
-	return validateCanonicalContractText(string(p), "credential protected path", MaximumCredentialPathBytes)
+	return validateCanonicalContractText(p.Reveal(), "credential protected path", MaximumCredentialPathBytes)
 }
 
 // CredentialOperationScope correlates an ephemeral provider invocation with
@@ -87,47 +208,71 @@ type CredentialConsumerBinding struct {
 // Mesh provider name. Provider names do not include an installed-version
 // suffix.
 func NewMeshProviderConsumer(providerName string) (CredentialConsumerBinding, error) {
-	if _, err := NewConsumerID(providerName); err != nil {
+	providerID, err := NewConsumerID(providerName)
+	if err != nil {
 		return CredentialConsumerBinding{}, err
 	}
-	return newCredentialConsumerBinding(ConsumerMeshProvider, providerName)
+	return newCredentialConsumerBinding(ConsumerMeshProvider, providerID)
 }
 
 // NewMeshListenerConsumer binds credentials owned by one listener of the
 // selected Mesh module.
 func NewMeshListenerConsumer(providerName, listenerID string) (CredentialConsumerBinding, error) {
-	if _, err := NewConsumerID(providerName); err != nil {
+	providerID, err := NewConsumerID(providerName)
+	if err != nil {
 		return CredentialConsumerBinding{}, err
 	}
-	if _, err := NewConsumerID(listenerID); err != nil {
+	listenerConsumerID, err := NewConsumerID(listenerID)
+	if err != nil {
 		return CredentialConsumerBinding{}, err
 	}
 	return newCredentialConsumerBinding(
 		ConsumerMeshListener,
-		providerName+credentialConsumerPathSeparator+listenerID,
+		meshScopedConsumerID(providerID, listenerConsumerID),
 	)
 }
 
 // NewMeshNodeConsumer binds credentials owned by one node of the selected Mesh
 // module.
 func NewMeshNodeConsumer(providerName, nodeID string) (CredentialConsumerBinding, error) {
-	if _, err := NewConsumerID(providerName); err != nil {
+	providerID, err := NewConsumerID(providerName)
+	if err != nil {
 		return CredentialConsumerBinding{}, err
 	}
-	if _, err := NewConsumerID(nodeID); err != nil {
+	nodeConsumerID, err := NewConsumerID(nodeID)
+	if err != nil {
 		return CredentialConsumerBinding{}, err
 	}
 	return newCredentialConsumerBinding(
 		ConsumerMeshNode,
-		providerName+credentialConsumerPathSeparator+nodeID,
+		meshScopedConsumerID(providerID, nodeConsumerID),
+	)
+}
+
+// meshScopedConsumerID preserves the existing provider/subject representation
+// when neither component contains a slash. Slash-bearing components use a
+// bounded opaque digest because delimiter escaping is ambiguous when one
+// component ends with a slash and the next begins with one.
+func meshScopedConsumerID(providerID, subjectID ConsumerID) ConsumerID {
+	provider := string(providerID)
+	subject := string(subjectID)
+	if !strings.Contains(provider, credentialConsumerPathSeparator) &&
+		!strings.Contains(subject, credentialConsumerPathSeparator) {
+		return ConsumerID(provider + credentialConsumerPathSeparator + subject)
+	}
+	digest := sha256.Sum256([]byte(
+		provider + credentialConsumerDigestSeparator + subject,
+	))
+	return ConsumerID(
+		credentialConsumerDigestPrefix + hex.EncodeToString(digest[:]),
 	)
 }
 
 func newCredentialConsumerBinding(
 	consumerType ConsumerType,
-	consumerID string,
+	consumerID ConsumerID,
 ) (CredentialConsumerBinding, error) {
-	binding := CredentialConsumerBinding{Type: consumerType, ID: ConsumerID(consumerID)}
+	binding := CredentialConsumerBinding{Type: consumerType, ID: consumerID}
 	if err := binding.Validate(); err != nil {
 		return CredentialConsumerBinding{}, err
 	}
@@ -205,8 +350,18 @@ type CredentialScopedReference struct {
 
 func (r CredentialScopedReference) Clone() CredentialScopedReference {
 	result := r
+	result.Reference = r.Reference.Clone()
 	result.Capabilities = append([]string(nil), r.Capabilities...)
 	return result
+}
+
+func (r *CredentialScopedReference) Clear() {
+	if r == nil {
+		return
+	}
+	r.Reference.Clear()
+	clear(r.Capabilities)
+	*r = CredentialScopedReference{}
 }
 
 func (r CredentialScopedReference) Validate() error {
@@ -582,10 +737,17 @@ func (d CredentialDeliveryDescriptor) ValidateRuntimeRequest(
 type CredentialFile struct {
 	Projection CredentialProjection    `json:"projection"`
 	Form       CredentialMaterialForm  `json:"form"`
+	Encoding   string                  `json:"encoding"`
 	MediaType  string                  `json:"mediaType"`
 	Path       CredentialProtectedPath `json:"path"`
 	SHA256     string                  `json:"sha256"`
 	Size       uint64                  `json:"size"`
+}
+
+func (f CredentialFile) Clone() CredentialFile {
+	result := f
+	result.Path = f.Path.Clone()
+	return result
 }
 
 func (f CredentialFile) Validate() error {
@@ -596,6 +758,11 @@ func (f CredentialFile) Validate() error {
 		return err
 	}
 	if err := validateResolvedProjectionForm(f.Projection, f.Form); err != nil {
+		return err
+	}
+	if err := validateCanonicalContractText(
+		f.Encoding, "credential file encoding", MaximumCredentialEncodingBytes,
+	); err != nil {
 		return err
 	}
 	if err := validateCanonicalContractText(f.MediaType, "credential file media type", MaxIDLength); err != nil {
@@ -643,7 +810,10 @@ func (r *CredentialFilesRequest) UnmarshalJSON(data []byte) error {
 
 func (r CredentialFilesRequest) Clone() CredentialFilesRequest {
 	result := r
-	result.Files = append([]CredentialFile(nil), r.Files...)
+	result.Files = make([]CredentialFile, len(r.Files))
+	for index := range r.Files {
+		result.Files[index] = r.Files[index].Clone()
+	}
 	return result
 }
 
@@ -660,15 +830,16 @@ func (r CredentialFilesRequest) Validate() error {
 	if len(r.Files) == 0 || len(r.Files) > MaximumCredentialExecutionFiles {
 		return errors.New("pki: credential files request is empty or exceeds limits")
 	}
-	seen := make(map[CredentialProtectedPath]struct{}, len(r.Files))
+	seen := make(map[string]struct{}, len(r.Files))
 	for _, file := range r.Files {
 		if err := file.Validate(); err != nil {
 			return err
 		}
-		if _, duplicate := seen[file.Path]; duplicate {
+		path := file.Path.Reveal()
+		if _, duplicate := seen[path]; duplicate {
 			return errors.New("pki: credential files request contains a duplicate path")
 		}
-		seen[file.Path] = struct{}{}
+		seen[path] = struct{}{}
 	}
 	return nil
 }
@@ -780,12 +951,12 @@ func (deliveries CredentialOperationDeliveries) Clear() {
 		if deliveries[index].Runtime != nil {
 			clear(deliveries[index].Runtime.Material.Data)
 			if deliveries[index].Runtime.Material.Reference != nil {
-				*deliveries[index].Runtime.Material.Reference = CredentialScopedReference{}
+				deliveries[index].Runtime.Material.Reference.Clear()
 			}
 		}
 		if deliveries[index].Files != nil {
 			for fileIndex := range deliveries[index].Files.Files {
-				deliveries[index].Files.Files[fileIndex].Path = ""
+				deliveries[index].Files.Files[fileIndex].Path.Clear()
 			}
 		}
 		deliveries[index] = CredentialOperationDelivery{}
@@ -988,16 +1159,20 @@ func (r CredentialEncodingResult) ValidateFor(request CredentialEncodingRequest)
 }
 
 type CredentialArtifactInput struct {
-	ID       StampReferenceID        `json:"id"`
-	SHA256   string                  `json:"sha256"`
-	Encoding string                  `json:"encoding"`
-	Data     CredentialBytes         `json:"data,omitempty"`
-	Path     CredentialProtectedPath `json:"path,omitempty"`
+	ID       StampReferenceID         `json:"id"`
+	SHA256   string                   `json:"sha256"`
+	Encoding string                   `json:"encoding"`
+	Data     CredentialBytes          `json:"data,omitempty"`
+	Path     *CredentialProtectedPath `json:"path,omitempty"`
 }
 
 func (a CredentialArtifactInput) Clone() CredentialArtifactInput {
 	result := a
 	result.Data = a.Data.Clone()
+	if a.Path != nil {
+		path := a.Path.Clone()
+		result.Path = &path
+	}
 	return result
 }
 
@@ -1011,7 +1186,7 @@ func (a CredentialArtifactInput) Validate() error {
 	if err := validateCanonicalContractText(a.Encoding, "credential artifact encoding", MaximumCredentialEncodingBytes); err != nil {
 		return err
 	}
-	if (len(a.Data) == 0) == (a.Path == "") {
+	if (len(a.Data) == 0) == (a.Path == nil) {
 		return errors.New("pki: credential artifact input requires exactly one data or path variant")
 	}
 	if len(a.Data) > 0 {
@@ -1024,15 +1199,19 @@ func (a CredentialArtifactInput) Validate() error {
 }
 
 type CredentialArtifactOutput struct {
-	Name     string                  `json:"name"`
-	Encoding string                  `json:"encoding"`
-	Data     CredentialBytes         `json:"data,omitempty"`
-	Path     CredentialProtectedPath `json:"path,omitempty"`
+	Name     string                   `json:"name"`
+	Encoding string                   `json:"encoding"`
+	Data     CredentialBytes          `json:"data,omitempty"`
+	Path     *CredentialProtectedPath `json:"path,omitempty"`
 }
 
 func (a CredentialArtifactOutput) Clone() CredentialArtifactOutput {
 	result := a
 	result.Data = a.Data.Clone()
+	if a.Path != nil {
+		path := a.Path.Clone()
+		result.Path = &path
+	}
 	return result
 }
 
@@ -1043,13 +1222,13 @@ func (a CredentialArtifactOutput) Validate() error {
 	if err := validateCanonicalContractText(a.Encoding, "credential artifact encoding", MaximumCredentialEncodingBytes); err != nil {
 		return err
 	}
-	if (len(a.Data) == 0) == (a.Path == "") {
+	if (len(a.Data) == 0) == (a.Path == nil) {
 		return errors.New("pki: credential artifact output requires exactly one data or path variant")
 	}
 	if len(a.Data) > MaximumBundleBinaryBytes {
 		return errors.New("pki: credential artifact output exceeds limits")
 	}
-	if a.Path != "" {
+	if a.Path != nil {
 		return a.Path.Validate()
 	}
 	return nil

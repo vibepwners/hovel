@@ -65,6 +65,8 @@ go_test(
         "master_key_file_test.go",
         "master_key_rotation_test.go",
         "recovery_test.go",
+        "secret_file_unix_test.go",
+        "secret_file_windows_test.go",
         "x509_backend_test.go",
     ],
     embed = [":pki"],
@@ -72,5 +74,10 @@ go_test(
         "//internal/app/pki",
         "//internal/domain/pki",
         "//internal/domain/workspace",
-    ],
+    ] + select({
+        "@rules_go//go/platform:windows": [
+            "@org_golang_x_sys//windows",
+        ],
+        "//conditions:default": [],
+    }),
 )

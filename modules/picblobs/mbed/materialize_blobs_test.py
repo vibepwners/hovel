@@ -79,4 +79,4 @@ def test_writes_self_contained_header(tmp_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__]))
+    raise SystemExit(pytest.main([__file__, "-p", "no:cacheprovider"]))

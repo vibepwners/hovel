@@ -1,0 +1,55 @@
+<!-- hovel-doc: {"title":"Writing a Blob","group":"picblobs","order":120,"navTitle":"Writing a Blob"} -->
+<article>
+<h1 id="writing-a-blob">Writing a Blob</h1>
+<p>A blob is a freestanding C program that runs at any address. Include the
+target OS header first, then the syscall wrappers you need.</p>
+<h2 id="linux-blob">Linux blob</h2>
+<pre data-lang="c"><code>#include &quot;picblobs/os/linux.h&quot;
+#include &quot;picblobs/section.h&quot;
+#include &quot;picblobs/reloc.h&quot;
+#include &quot;picblobs/sys/write.h&quot;
+#include &quot;picblobs/sys/exit_group.h&quot;
+
+PIC_RODATA
+static const char msg[] = &quot;Hello, world!\n&quot;;
+
+PIC_ENTRY
+void _start(void)
+{
+    PIC_SELF_RELOCATE();
+    pic_write(1, msg, sizeof(msg) - 1);
+    pic_exit_group(0);
+}
+</code></pre>
+<h2 id="windows-blob">Windows blob</h2>
+<pre data-lang="c"><code>#include &quot;picblobs/os/windows.h&quot;
+#include &quot;picblobs/section.h&quot;
+#include &quot;picblobs/reloc.h&quot;
+#include &quot;picblobs/win/resolve.h&quot;
+
+/* DJB2 hashes of API function names */
+#define HASH_KERNEL32       0x7040EE75
+#define HASH_GetStdHandle   0xF178843C
+#define HASH_WriteFile      0x663CECB0
+#define HASH_ExitProcess    0xB769339E
+
+PIC_RODATA
+static const char msg[] = &quot;Hello, world!\n&quot;;
+
+PIC_ENTRY
+void _start(void)
+{
+    PIC_SELF_RELOCATE();
+    void *k32 = pic_resolve_module(HASH_KERNEL32);
+    void *(*GetStdHandle)(unsigned long) = pic_resolve_export(k32, HASH_GetStdHandle);
+    // ... resolve and call APIs
+}
+</code></pre>
+<h2 id="key-conventions">Key conventions</h2>
+<ul>
+<li>Each <code>sys/*.h</code> header is a self-contained module with syscall numbers for every OS/architecture combination, constants, and wrapper function.</li>
+<li>Use <code>PIC_RODATA</code> for read-only data (ensures correct section placement in freestanding PIC).</li>
+<li>Use <code>PIC_ENTRY</code> for the entry point and <code>PIC_SELF_RELOCATE()</code> at the top for MIPS GOT relocation.</li>
+<li>Drop a <code>.c</code> file into <code>src/payload/</code>, run <code>python tools/generate.py</code>, and it will be picked up automatically.</li>
+</ul>
+      </article>

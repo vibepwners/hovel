@@ -3,6 +3,7 @@ package pki
 import (
 	"crypto/tls"
 	"fmt"
+	"time"
 
 	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
 )
@@ -26,7 +27,14 @@ func TLSCurvePreferences(policy domainpki.KeyEstablishmentPolicy, groups []domai
 }
 
 func TLSCurvePreferencesForBundle(bundle domainpki.Bundle) ([]tls.CurveID, error) {
-	if err := VerifyBundle(bundle); err != nil {
+	return TLSCurvePreferencesForBundleAt(bundle, time.Now().UTC())
+}
+
+func TLSCurvePreferencesForBundleAt(
+	bundle domainpki.Bundle,
+	currentTime time.Time,
+) ([]tls.CurveID, error) {
+	if err := VerifyBundleAt(bundle, currentTime); err != nil {
 		return nil, fmt.Errorf("pki: validate tls credential bundle: %w", err)
 	}
 	return TLSCurvePreferences(bundle.KeyEstablishmentPolicy, bundle.TLSNamedGroups)

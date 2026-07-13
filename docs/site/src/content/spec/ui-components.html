@@ -1,0 +1,43 @@
+<!-- hovel-doc: {"title":"UI Components","group":"Operator Experience","order":120,"navTitle":"UI Components"} -->
+<article>
+        <h1>UI Components</h1>
+        <p>The UI catalog captures terminal components that are shared by command output, demo tapes, and future richer front ends. Each component is rendered from the same Go code used by the development catalog binary.</p>
+
+        <h2>Catalog</h2>
+        <div class="demo-series component-gallery">
+          <figure class="demo-figure">
+            <img src="../assets/demos/ui-command-table.gif" alt="Terminal command table component showing module IDs, types, scope, source, and summaries.">
+            <figcaption><strong>Command table</strong> dense module discovery rows with wrapping summaries</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/ui-module-card.gif" alt="Terminal module card component showing metadata, tags, config requirements, steps, and next command.">
+            <figcaption><strong>Module card</strong> inspection panel for module metadata and contracts</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/ui-logs.gif" alt="Terminal log rail component showing staged run events and artifact output.">
+            <figcaption><strong>Log rail</strong> structured run events with elapsed time and labels</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/ui-status-panel.gif" alt="Terminal status panel component showing workspace, daemon, modules, session, and component readiness.">
+            <figcaption><strong>Status panel</strong> compact overview for workspace and component state</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/ui-download-progress.gif" alt="Terminal download progress component showing package transfer, verification, and install completion.">
+            <figcaption><strong>Download progress</strong> transfer lifecycle for module package installs</figcaption>
+          </figure>
+          <figure class="demo-figure">
+            <img src="../assets/demos/ui-upload-progress.gif" alt="Terminal upload progress component showing artifact transfer start and completion.">
+            <figcaption><strong>Upload progress</strong> transfer lifecycle for artifact publication</figcaption>
+          </figure>
+        </div>
+
+        <h2>Regenerating</h2>
+        <p>The checked-in GIFs are refreshed through VHS and Bazel so the published page stays tied to the component renderer without making normal docs builds depend on host Chrome or tmux.</p>
+<pre data-lang="bash"><code>task docs:demos
+task docs:check
+</code></pre>
+        <p>For local terminal inspection without generating GIFs, run:</p>
+<pre data-lang="bash"><code>task ui:demo
+</code></pre>
+
+      </article>

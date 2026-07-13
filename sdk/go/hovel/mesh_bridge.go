@@ -6,14 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	meshBridgeCapabilityBytes = 32
-	meshBridgeMaximumPort     = 1<<16 - 1
+	meshBridgeCapabilityBytes    = 32
+	meshBridgeMaximumPort        = 1<<16 - 1
+	redactedMeshBridgeCapability = "<mesh bridge capability redacted>"
 
 	// MeshBridgeNetworkTCP selects a connected TCP stream.
 	MeshBridgeNetworkTCP MeshBridgeNetwork = "tcp"
@@ -28,28 +30,75 @@ const (
 type MeshBridgeNetwork string
 
 // MeshBridgeCapability is the ephemeral bearer secret returned by
-// OpenMeshBridge. Keep it in memory and never log or persist it.
-type MeshBridgeCapability string
+// OpenMeshBridge. Keep it in memory and never log or persist it. The value is
+// pointer-boxed so even unsupported fmt verbs cannot embed the secret in a
+// formatting diagnostic.
+type MeshBridgeCapability struct {
+	value *string
+}
+
+func (MeshBridgeCapability) String() string { return redactedMeshBridgeCapability }
+
+func (MeshBridgeCapability) GoString() string { return redactedMeshBridgeCapability }
+
+// Format redacts the capability for fmt value-formatting verbs, including
+// verbs that do not use String or GoString.
+func (MeshBridgeCapability) Format(state fmt.State, _ rune) {
+	formatRedacted(state, redactedMeshBridgeCapability)
+}
+
+// NewMeshBridgeCapability validates and wraps a bearer capability.
+func NewMeshBridgeCapability(value string) (MeshBridgeCapability, error) {
+	if strings.TrimSpace(value) != value {
+		return MeshBridgeCapability{}, errors.New(
+			"hovel: mesh bridge capability must be canonical",
+		)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(decoded) != meshBridgeCapabilityBytes ||
+		base64.RawURLEncoding.EncodeToString(decoded) != value {
+		return MeshBridgeCapability{}, errors.New(
+			"hovel: mesh bridge capability must be canonical 256-bit base64url",
+		)
+	}
+	return MeshBridgeCapability{value: &value}, nil
+}
+
+// Reveal returns the bearer capability for an explicit authentication
+// boundary. Ordinary formatting remains redacted.
+func (c MeshBridgeCapability) Reveal() string {
+	if c.value == nil {
+		return ""
+	}
+	return *c.value
+}
 
 // MeshBridgeEndpoint is the authenticated loopback endpoint returned by the
 // daemon control API. It lets consumer modules use a Mesh route without
 // understanding provider-specific topology or routing contracts.
 type MeshBridgeEndpoint struct {
-	LocalHost  string
-	LocalPort  int
-	Capability MeshBridgeCapability
+	LocalHost    string
+	LocalPort    int
+	LocalNetwork MeshBridgeNetwork
+	Capability   MeshBridgeCapability
 }
 
 // NewMeshBridgeEndpoint validates an OpenMeshBridge response before use.
 func NewMeshBridgeEndpoint(
 	localHost string,
 	localPort int,
-	capability MeshBridgeCapability,
+	localNetwork MeshBridgeNetwork,
+	capability string,
 ) (MeshBridgeEndpoint, error) {
+	parsedCapability, err := NewMeshBridgeCapability(capability)
+	if err != nil {
+		return MeshBridgeEndpoint{}, err
+	}
 	endpoint := MeshBridgeEndpoint{
-		LocalHost:  localHost,
-		LocalPort:  localPort,
-		Capability: capability,
+		LocalHost:    localHost,
+		LocalPort:    localPort,
+		LocalNetwork: localNetwork,
+		Capability:   parsedCapability,
 	}
 	if err := endpoint.Validate(); err != nil {
 		return MeshBridgeEndpoint{}, err
@@ -68,14 +117,17 @@ func (e MeshBridgeEndpoint) Validate() error {
 	if e.LocalPort < 1 || e.LocalPort > meshBridgeMaximumPort {
 		return errors.New("hovel: mesh bridge port is outside the valid range")
 	}
-	encoded := strings.TrimSpace(string(e.Capability))
-	if encoded != string(e.Capability) {
-		return errors.New("hovel: mesh bridge capability must be canonical")
+	switch e.LocalNetwork {
+	case MeshBridgeNetworkTCP, MeshBridgeNetworkUDP:
+	default:
+		return fmt.Errorf(
+			"hovel: unsupported local mesh bridge network %q",
+			e.LocalNetwork,
+		)
 	}
-	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil || len(decoded) != meshBridgeCapabilityBytes ||
-		base64.RawURLEncoding.EncodeToString(decoded) != encoded {
-		return errors.New("hovel: mesh bridge capability must be canonical 256-bit base64url")
+	encoded := e.Capability.Reveal()
+	if _, err := NewMeshBridgeCapability(encoded); err != nil {
+		return err
 	}
 	return nil
 }
@@ -94,22 +146,20 @@ func (e MeshBridgeEndpoint) Address() (string, error) {
 // the provider-owned Mesh stream.
 func DialMeshBridge(
 	ctx context.Context,
-	network MeshBridgeNetwork,
 	endpoint MeshBridgeEndpoint,
 ) (net.Conn, error) {
 	if ctx == nil {
 		return nil, errors.New("hovel: mesh bridge dial context is required")
 	}
-	switch network {
-	case MeshBridgeNetworkTCP, MeshBridgeNetworkUDP:
-	default:
-		return nil, fmt.Errorf("hovel: unsupported local mesh bridge network %q", network)
-	}
 	address, err := endpoint.Address()
 	if err != nil {
 		return nil, err
 	}
-	connection, err := (&net.Dialer{}).DialContext(ctx, string(network), address)
+	connection, err := (&net.Dialer{}).DialContext(
+		ctx,
+		string(endpoint.LocalNetwork),
+		address,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("hovel: dial local mesh bridge: %w", err)
 	}
@@ -118,9 +168,9 @@ func DialMeshBridge(
 			return nil, errors.Join(err, connection.Close())
 		}
 	}
-	preface := []byte(endpoint.Capability)
+	preface := []byte(endpoint.Capability.Reveal())
 	var authenticateErr error
-	if network == MeshBridgeNetworkTCP {
+	if endpoint.LocalNetwork == MeshBridgeNetworkTCP {
 		authenticateErr = writeMeshBridgePreface(connection, append(preface, '\n'))
 	} else {
 		written, err := connection.Write(preface)
@@ -157,10 +207,7 @@ func writeMeshBridgePreface(connection net.Conn, preface []byte) error {
 }
 
 func isMeshBridgeLoopback(host string) bool {
-	host = strings.TrimSpace(host)
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.Zone() == "" && !ip.Is4In6() &&
+		ip.IsLoopback() && ip.String() == host
 }

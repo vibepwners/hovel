@@ -1,6 +1,12 @@
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 filegroup(
+    name = "sources",
+    srcs = glob(["*.go"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
     name = "protocol_doc_sources",
     srcs = [
         "credential_delivery.go",

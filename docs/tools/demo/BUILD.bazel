@@ -1,4 +1,4 @@
-load("@rules_python//python:defs.bzl", "py_binary")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,6 +12,17 @@ py_binary(
     name = "render_vhs_demo",
     srcs = ["render_vhs_demo.py"],
     python_version = "PY3",
+)
+
+py_test(
+    name = "materialize_demo_outputs_test",
+    srcs = [
+        "materialize_demo_outputs.py",
+        "materialize_demo_outputs_test.py",
+    ],
+    main = "materialize_demo_outputs_test.py",
+    python_version = "PY3",
+    deps = ["@lint_pypi//pytest"],
 )
 
 py_binary(

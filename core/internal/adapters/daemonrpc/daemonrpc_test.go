@@ -151,6 +151,10 @@ func TestTCPDaemonRPCIsLoopbackReadOnly(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "privileged daemon control") {
 		t.Fatalf("RunMockExploit error = %v, want privileged transport rejection", err)
 	}
+	_, err = client.ListMeshOperations(context.Background(), MeshOperationListRequest{})
+	if err == nil || !strings.Contains(err.Error(), "privileged daemon control") {
+		t.Fatalf("ListMeshOperations error = %v, want confidential read rejection", err)
+	}
 }
 
 func TestDaemonRPCTCPRejectsNonLoopbackBind(t *testing.T) {
@@ -583,6 +587,11 @@ func TestDaemonRPCRoundTripsTypedPKIErrors(t *testing.T) {
 			want: apppki.ErrAuthoritySigningLocked,
 		},
 		{
+			name: "authority signing lease owned",
+			err:  apppki.ErrAuthoritySigningLeaseOwned,
+			want: apppki.ErrAuthoritySigningLeaseOwned,
+		},
+		{
 			name: "rollover precondition",
 			err: apppki.NewRolloverPreconditionError(
 				apppki.RolloverPreconditionAssignmentsNotRotated, "assignment drifted after acknowledgement",
@@ -645,6 +654,48 @@ func TestDaemonRPCRoundTripsTypedPKIErrors(t *testing.T) {
 	}
 }
 
+func TestDaemonRPCRejectsUnplannedExecutionCapableMeshTask(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 11, 30, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs)
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	_, err = client.RunMeshTask(context.Background(), MeshTaskRunRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.TaskRequest{
+			TaskID: "unplanned-command",
+			Kind:   mesh.TaskCommand,
+			NodeID: "relay-1",
+		},
+	})
+	if !errors.Is(err, errPrivilegedControlUnavailable) ||
+		!strings.Contains(err.Error(), "persisted throw plan") {
+		t.Fatalf("unplanned RunMeshTask error = %v, want permission denial", err)
+	}
+
+	operations, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		Kind: MeshOperationKindTask,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations.Operations) != 1 ||
+		operations.Operations[0].State != MeshOperationStateFailed ||
+		!strings.Contains(operations.Operations[0].Error, "persisted throw plan") {
+		t.Fatalf("rejected task bookkeeping = %#v", operations.Operations)
+	}
+}
+
 func TestDaemonRPCTracksMeshTaskAndStreamOperations(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
 	runs := services.NewRunService(
@@ -665,8 +716,8 @@ func TestDaemonRPCTracksMeshTaskAndStreamOperations(t *testing.T) {
 		ModuleID: "mesh-provider@v0.1.0",
 		Request: mesh.TaskRequest{
 			RunID:           "run-mesh-1",
-			TaskID:          "deliver-exploit",
-			Kind:            mesh.TaskUploadExecute,
+			TaskID:          "survey-destination",
+			Kind:            mesh.TaskSurvey,
 			NodeID:          "relay-1",
 			Target:          "dc-1",
 			DestinationHost: "10.10.10.10",
@@ -713,7 +764,7 @@ func TestDaemonRPCTracksMeshTaskAndStreamOperations(t *testing.T) {
 	taskOperation := operations.Operations[0]
 	if taskOperation.Kind != "task" ||
 		taskOperation.State != "succeeded" ||
-		taskOperation.TaskKind != "upload_execute" ||
+		taskOperation.TaskKind != "survey" ||
 		taskOperation.SessionID != "mesh-task-session-1" ||
 		taskOperation.DestinationHost != "10.10.10.10" ||
 		taskOperation.DestinationPort != 445 ||
@@ -883,8 +934,9 @@ func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	defer closeTestClient(t, client)
 
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID:  "mesh-provider@v0.1.0",
-		LocalHost: "127.0.0.1",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalHost:    "127.0.0.1",
+		LocalNetwork: MeshBridgeNetworkTCP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-bridge",
 			NodeID:          "relay-1",
@@ -903,7 +955,10 @@ func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	if bridge.LocalHost != "127.0.0.1" || bridge.LocalPort == 0 || bridge.LocalAddress == "" {
 		t.Fatalf("mesh bridge endpoint = %#v, want local loopback address", bridge)
 	}
-	if bridge.Capability == "" {
+	if bridge.LocalNetwork != MeshBridgeNetworkTCP {
+		t.Fatalf("mesh bridge local network = %q, want tcp", bridge.LocalNetwork)
+	}
+	if bridge.Capability.reveal() == "" {
 		t.Fatal("mesh bridge capability is empty")
 	}
 
@@ -969,10 +1024,14 @@ func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	}
 	if len(operations.Operations) != 1 ||
 		operations.Operations[0].ID != bridge.OperationID ||
+		operations.Operations[0].LocalNetwork != MeshBridgeNetworkTCP ||
 		operations.Operations[0].LocalAddress != bridge.LocalAddress {
 		t.Fatalf("closed bridge operations = %#v", operations.Operations)
 	}
-	if strings.Contains(fmt.Sprintf("%#v", operations.Operations), string(bridge.Capability)) {
+	if strings.Contains(
+		fmt.Sprintf("%#v", operations.Operations),
+		bridge.Capability.reveal(),
+	) {
 		t.Fatal("ephemeral Mesh bridge capability leaked into operation bookkeeping")
 	}
 }
@@ -996,7 +1055,7 @@ func TestMeshBridgeOpenResponseDisablesCaching(t *testing.T) {
 		t.Context(),
 		http.MethodPost,
 		client.baseURL+serviceURLPrefix+rpcMethodOpenMeshBridge,
-		strings.NewReader(`{"moduleId":"mesh-provider@v0.1.0","request":{"runId":"run-no-store","destinationHost":"10.10.10.10","destinationPort":445,"protocol":"tcp"}}`),
+		strings.NewReader(`{"moduleId":"mesh-provider@v0.1.0","localNetwork":"tcp","request":{"runId":"run-no-store","destinationHost":"10.10.10.10","destinationPort":445,"protocol":"tcp"}}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1021,7 +1080,7 @@ func TestMeshBridgeOpenResponseDisablesCaching(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&bridge); err != nil {
 		t.Fatal(err)
 	}
-	if bridge.Capability == "" {
+	if bridge.Capability.reveal() == "" {
 		t.Fatal("Mesh bridge response capability is empty")
 	}
 	if _, err := client.CloseMeshBridge(t.Context(), MeshBridgeCloseRequest{
@@ -1049,8 +1108,9 @@ func TestClientOpensUDPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	defer closeTestClient(t, client)
 
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID:  "mesh-provider@v0.1.0",
-		LocalHost: "127.0.0.1",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalHost:    "127.0.0.1",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-bridge",
 			NodeID:          "relay-1",
@@ -1069,8 +1129,11 @@ func TestClientOpensUDPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	if bridge.LocalHost != "127.0.0.1" || bridge.LocalPort == 0 || bridge.LocalAddress == "" {
 		t.Fatalf("mesh bridge endpoint = %#v, want local loopback address", bridge)
 	}
-	if bridge.Capability == "" {
+	if bridge.Capability.reveal() == "" {
 		t.Fatal("mesh bridge capability is empty")
+	}
+	if bridge.LocalNetwork != MeshBridgeNetworkUDP {
+		t.Fatalf("mesh bridge local network = %q, want udp", bridge.LocalNetwork)
 	}
 
 	remote, err := net.ResolveUDPAddr("udp", bridge.LocalAddress)
@@ -1086,7 +1149,7 @@ func TestClientOpensUDPMeshBridgeAsLocalEndpoint(t *testing.T) {
 			t.Fatalf("close udp bridge connection: %v", err)
 		}
 	}()
-	authenticateMeshBridge(t, conn, bridge.Capability)
+	authenticateUDPMeshBridge(t, conn, bridge.Capability)
 
 	if _, err := conn.Write([]byte("dns?")); err != nil {
 		t.Fatal(err)
@@ -1139,6 +1202,7 @@ func TestClientOpensUDPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	}
 	if len(operations.Operations) != 1 ||
 		operations.Operations[0].Protocol != "udp" ||
+		operations.Operations[0].LocalNetwork != MeshBridgeNetworkUDP ||
 		operations.Operations[0].LocalAddress != bridge.LocalAddress {
 		t.Fatalf("udp bridge operations = %#v", operations.Operations)
 	}
@@ -1161,7 +1225,8 @@ func TestUDPMeshBridgePreservesProviderDatagramUntilLocalPeerArrives(t *testing.
 	}
 	defer closeTestClient(t, client)
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-early-reply",
 			DestinationHost: "10.10.10.53",
@@ -1205,7 +1270,7 @@ func TestUDPMeshBridgePreservesProviderDatagramUntilLocalPeerArrives(t *testing.
 			t.Errorf("close UDP peer: %v", err)
 		}
 	}()
-	authenticateMeshBridge(t, conn, bridge.Capability)
+	authenticateUDPMeshBridge(t, conn, bridge.Capability)
 	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -1247,7 +1312,8 @@ func TestUDPMeshBridgeClosesWhenProviderSessionEnds(t *testing.T) {
 	}
 	defer closeTestClient(t, client)
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-close",
 			DestinationHost: "10.10.10.53",
@@ -1290,7 +1356,8 @@ func TestUDPMeshBridgeRequiresDatagramSessionCapability(t *testing.T) {
 	manager := NewMeshBridgeManager()
 	sessions := newBridgeSessionBroker()
 	_, err := OpenMeshBridge(context.Background(), MeshBridgeOpenArgs{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-capability",
 			DestinationHost: "10.10.10.53",
@@ -1344,7 +1411,8 @@ func TestUDPMeshBridgeKeepsFirstLocalPeer(t *testing.T) {
 	}
 	defer closeTestClient(t, client)
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-peer",
 			DestinationHost: "10.10.10.53",
@@ -1387,7 +1455,7 @@ func TestUDPMeshBridgeKeepsFirstLocalPeer(t *testing.T) {
 		}
 	}()
 
-	authenticateMeshBridge(t, first, bridge.Capability)
+	authenticateUDPMeshBridge(t, first, bridge.Capability)
 	if _, err := first.Write([]byte("first")); err != nil {
 		t.Fatal(err)
 	}
@@ -1445,31 +1513,34 @@ func TestTCPMeshBridgeRejectsMissingAndWrongCapabilities(t *testing.T) {
 	}
 	defer closeTestClient(t, client)
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkTCP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-tcp-auth",
 			DestinationHost: "10.10.10.10",
 			DestinationPort: 445,
-			Protocol:        meshBridgeProtocolTCP,
+			Protocol:        "provider-stream",
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	missing, err := net.DialTimeout(meshBridgeProtocolTCP, bridge.LocalAddress, time.Second)
+	stalling, err := net.DialTimeout(string(MeshBridgeNetworkTCP), bridge.LocalAddress, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := missing.Close(); err != nil {
-		t.Fatal(err)
-	}
+	defer func() {
+		if err := stalling.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close stalling TCP bridge peer: %v", err)
+		}
+	}()
 
-	wrong, err := net.DialTimeout(meshBridgeProtocolTCP, bridge.LocalAddress, time.Second)
+	wrong, err := net.DialTimeout(string(MeshBridgeNetworkTCP), bridge.LocalAddress, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	authenticateMeshBridge(t, wrong, MeshBridgeCapability("wrong-capability"))
+	authenticateMeshBridge(t, wrong, meshBridgeCapabilityValue("wrong-capability"))
 	if err := wrong.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -1481,7 +1552,7 @@ func TestTCPMeshBridgeRejectsMissingAndWrongCapabilities(t *testing.T) {
 	}
 	assertNoMeshBridgeWrite(t, sessions)
 
-	authorized, err := net.DialTimeout(meshBridgeProtocolTCP, bridge.LocalAddress, time.Second)
+	authorized, err := net.DialTimeout(string(MeshBridgeNetworkTCP), bridge.LocalAddress, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1521,12 +1592,13 @@ func TestUDPMeshBridgeRejectsMissingAndWrongCapabilities(t *testing.T) {
 	}
 	defer closeTestClient(t, client)
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-auth",
 			DestinationHost: "10.10.10.53",
 			DestinationPort: 53,
-			Protocol:        meshBridgeProtocolUDP,
+			Protocol:        "provider-datagram",
 		},
 	})
 	if err != nil {
@@ -1541,11 +1613,11 @@ func TestUDPMeshBridgeRejectsMissingAndWrongCapabilities(t *testing.T) {
 			t.Errorf("close UDP bridge: %v", closeErr)
 		}
 	}()
-	remote, err := net.ResolveUDPAddr(meshBridgeProtocolUDP, bridge.LocalAddress)
+	remote, err := net.ResolveUDPAddr(string(MeshBridgeNetworkUDP), bridge.LocalAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	attacker, err := net.DialUDP(meshBridgeProtocolUDP, nil, remote)
+	attacker, err := net.DialUDP(string(MeshBridgeNetworkUDP), nil, remote)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1557,10 +1629,10 @@ func TestUDPMeshBridgeRejectsMissingAndWrongCapabilities(t *testing.T) {
 	if _, err := attacker.Write([]byte("missing-capability")); err != nil {
 		t.Fatal(err)
 	}
-	authenticateMeshBridge(t, attacker, MeshBridgeCapability("wrong-capability"))
+	authenticateUDPMeshBridge(t, attacker, meshBridgeCapabilityValue("wrong-capability"))
 	assertNoMeshBridgeWrite(t, sessions)
 
-	authorized, err := net.DialUDP(meshBridgeProtocolUDP, nil, remote)
+	authorized, err := net.DialUDP(string(MeshBridgeNetworkUDP), nil, remote)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1569,7 +1641,7 @@ func TestUDPMeshBridgeRejectsMissingAndWrongCapabilities(t *testing.T) {
 			t.Errorf("close authorized UDP peer: %v", err)
 		}
 	}()
-	authenticateMeshBridge(t, authorized, bridge.Capability)
+	authenticateUDPMeshBridge(t, authorized, bridge.Capability)
 	if _, err := authorized.Write([]byte("authorized")); err != nil {
 		t.Fatal(err)
 	}
@@ -1632,10 +1704,11 @@ func TestMeshBridgeRejectsNonLoopbackLocalHost(t *testing.T) {
 	}
 }
 
-func TestMeshBridgeRejectsRawProtocolLocalEndpoint(t *testing.T) {
+func TestMeshBridgePreservesProviderDefinedProtocol(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
+	streamRequests := make(chan mesh.StreamRequest, 1)
 	runs := services.NewRunService(
-		fakeMeshRunner{},
+		fakeMeshRunner{streamRequests: streamRequests},
 		discardEvents{},
 		&sequenceIDs{values: []string{"run-unused"}},
 		fixedClock{now: time.Date(2026, 7, 9, 13, 45, 0, 0, time.UTC)},
@@ -1648,9 +1721,10 @@ func TestMeshBridgeRejectsRawProtocolLocalEndpoint(t *testing.T) {
 	}
 	defer closeTestClient(t, client)
 
-	_, err = client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID:  "mesh-provider@v0.1.0",
-		LocalHost: "127.0.0.1",
+	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalHost:    "127.0.0.1",
+		LocalNetwork: MeshBridgeNetworkTCP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-bridge",
 			NodeID:          "relay-1",
@@ -1658,8 +1732,49 @@ func TestMeshBridgeRejectsRawProtocolLocalEndpoint(t *testing.T) {
 			Protocol:        "icmp",
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "local socket bridges currently support tcp or udp") {
-		t.Fatalf("OpenMeshBridge error = %v, want local socket protocol rejection", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bridge.LocalNetwork != MeshBridgeNetworkTCP {
+		t.Fatalf("mesh bridge local network = %q, want tcp", bridge.LocalNetwork)
+	}
+	select {
+	case request := <-streamRequests:
+		if request.Protocol != "icmp" {
+			t.Fatalf("provider protocol = %q, want icmp", request.Protocol)
+		}
+		if request.Config[meshBridgeConfigLocalNetwork] != MeshBridgeNetworkTCP {
+			t.Fatalf("provider bridge config = %#v, want local tcp network", request.Config)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for provider stream request")
+	}
+	if _, err := client.CloseMeshBridge(t.Context(), MeshBridgeCloseRequest{
+		OperationID: bridge.OperationID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMeshBridgeRejectsUnsupportedLocalNetwork(t *testing.T) {
+	t.Parallel()
+
+	for _, network := range []MeshBridgeNetwork{"raw", "TCP", " tcp"} {
+		t.Run(string(network), func(t *testing.T) {
+			t.Parallel()
+
+			_, err := OpenMeshBridge(t.Context(), MeshBridgeOpenArgs{
+				ModuleID:     "mesh-provider@v0.1.0",
+				LocalNetwork: network,
+				Runs:         fakeMeshRunner{},
+				Sessions:     newBridgeSessionBroker(),
+				Book:         NewMeshBook(),
+				Bridges:      NewMeshBridgeManager(),
+			})
+			if err == nil || !strings.Contains(err.Error(), "local network") {
+				t.Fatalf("OpenMeshBridge error = %v, want local network rejection", err)
+			}
+		})
 	}
 }
 
@@ -1703,6 +1818,12 @@ func TestOpenMeshBridgePassesCredentialSelectionsWithOperationScope(t *testing.T
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if response.LocalNetwork != MeshBridgeNetworkTCP {
+		t.Fatalf(
+			"default local Mesh bridge network = %q, want tcp",
+			response.LocalNetwork,
+		)
 	}
 	bridge, ok := manager.Find(response.OperationID, "")
 	if !ok {
@@ -1767,12 +1888,13 @@ func TestOpenMeshBridgeDoesNotAssociateRejectedDuplicateSession(t *testing.T) {
 	manager := NewMeshBridgeManager()
 	sessions := newBridgeSessionBroker()
 	args := MeshBridgeOpenArgs{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkTCP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-duplicate",
 			DestinationHost: "10.10.10.10",
 			DestinationPort: 445,
-			Protocol:        meshBridgeProtocolTCP,
+			Protocol:        "provider-stream",
 		},
 		Runs: services.NewRunService(
 			fakeMeshRunner{},
@@ -1814,38 +1936,44 @@ func TestOpenMeshBridgeDoesNotAssociateRejectedDuplicateSession(t *testing.T) {
 func TestMeshBridgeRequestOwnsReservedConfig(t *testing.T) {
 	tests := []struct {
 		name             string
-		protocol         string
+		providerProtocol string
+		localNetwork     MeshBridgeNetwork
 		forgedDatagram   bool
 		expectedDatagram bool
 	}{
 		{
 			name:             "udp owns datagram mode",
-			protocol:         meshBridgeProtocolUDP,
+			providerProtocol: "dns",
+			localNetwork:     MeshBridgeNetworkUDP,
 			forgedDatagram:   false,
 			expectedDatagram: true,
 		},
 		{
 			name:             "tcp clears forged datagram mode",
-			protocol:         meshBridgeProtocolTCP,
+			providerProtocol: "icmp",
+			localNetwork:     MeshBridgeNetworkTCP,
 			forgedDatagram:   true,
 			expectedDatagram: false,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := meshBridgeRequest(mesh.StreamRequest{Config: map[string]any{
-				"provider.option":            "preserved",
-				meshBridgeConfigLocalAddress: "forged",
-				meshBridgeConfigOwner:        "caller",
-				meshBridgeConfigProtocol:     "forged",
-				meshBridgeConfigDatagram:     test.forgedDatagram,
-			}}, "127.0.0.1:1445", test.protocol)
+			request := meshBridgeRequest(mesh.StreamRequest{
+				Protocol: test.providerProtocol,
+				Config: map[string]any{
+					"provider.option":            "preserved",
+					meshBridgeConfigLocalAddress: "forged",
+					meshBridgeConfigOwner:        "caller",
+					meshBridgeConfigLocalNetwork: "forged",
+					meshBridgeConfigDatagram:     test.forgedDatagram,
+				}}, "127.0.0.1:1445", test.localNetwork)
 
 			if request.Config["provider.option"] != "preserved" ||
 				request.Config[meshBridgeConfigLocalAddress] != "127.0.0.1:1445" ||
 				request.Config[meshBridgeConfigOwner] != meshBridgeOwnerDaemon ||
-				request.Config[meshBridgeConfigProtocol] != test.protocol ||
-				request.Config[meshBridgeConfigDatagram] != test.expectedDatagram {
+				request.Config[meshBridgeConfigLocalNetwork] != test.localNetwork ||
+				request.Config[meshBridgeConfigDatagram] != test.expectedDatagram ||
+				request.Protocol != test.providerProtocol {
 				t.Fatalf("mesh bridge config = %#v", request.Config)
 			}
 		})
@@ -1931,7 +2059,7 @@ func TestMeshBridgeWritesEntireSessionChunkToLocalStream(t *testing.T) {
 	}
 }
 
-func TestMeshBridgeCloseReturnsStableErrorAndFailsBookkeeping(t *testing.T) {
+func TestMeshBridgeCloseRetainsProviderSessionForRetry(t *testing.T) {
 	closeFailure := errors.New("provider close failed")
 	book := NewMeshBook()
 	manager := NewMeshBridgeManager()
@@ -1965,15 +2093,24 @@ func TestMeshBridgeCloseReturnsStableErrorAndFailsBookkeeping(t *testing.T) {
 	if err := bridge.Close(context.Background()); !errors.Is(err, closeFailure) {
 		t.Fatalf("first Close error = %v, want provider failure", err)
 	}
-	if err := bridge.Close(context.Background()); !errors.Is(err, closeFailure) {
-		t.Fatalf("second Close error = %v, want stable provider failure", err)
+	if _, ok := manager.Find(response.OperationID, ""); !ok {
+		t.Fatal("failed-close bridge was removed before provider cleanup could be retried")
+	}
+	failed := book.List(MeshOperationListRequest{Kind: "bridge", State: "failed"})
+	if len(failed) != 1 || !strings.Contains(failed[0].Error, closeFailure.Error()) {
+		t.Fatalf("failed-close bridge operations = %#v", failed)
+	}
+
+	sessions.closeErr = nil
+	if err := bridge.Close(context.Background()); err != nil {
+		t.Fatalf("retry Close error = %v, want success", err)
 	}
 	if _, ok := manager.Find(response.OperationID, ""); ok {
-		t.Fatal("failed-close bridge remains tracked")
+		t.Fatal("successfully closed bridge remains tracked")
 	}
-	operations := book.List(MeshOperationListRequest{Kind: "bridge", State: "failed"})
-	if len(operations) != 1 || !strings.Contains(operations[0].Error, closeFailure.Error()) {
-		t.Fatalf("failed-close bridge operations = %#v", operations)
+	closed := book.List(MeshOperationListRequest{Kind: "bridge", State: "closed"})
+	if len(closed) != 1 || closed[0].ID != response.OperationID {
+		t.Fatalf("closed bridge operations = %#v", closed)
 	}
 }
 
@@ -2016,6 +2153,16 @@ func TestMeshBridgeFinishRetainsTransferAndCleanupErrors(t *testing.T) {
 		!strings.Contains(operations[0].Error, transferFailure.Error()) ||
 		!strings.Contains(operations[0].Error, closeFailure.Error()) {
 		t.Fatalf("failed bridge operations = %#v, want transfer and cleanup errors", operations)
+	}
+	if _, ok := manager.Find(response.OperationID, ""); !ok {
+		t.Fatal("bridge with failed provider cleanup is not available for retry")
+	}
+	sessions.closeErr = nil
+	if err := bridge.Close(context.Background()); !errors.Is(err, transferFailure) {
+		t.Fatalf("retry Close error = %v, want retained transfer failure", err)
+	}
+	if _, ok := manager.Find(response.OperationID, ""); ok {
+		t.Fatal("bridge remains tracked after provider cleanup succeeds")
 	}
 }
 
@@ -2067,8 +2214,8 @@ func TestMeshBookBoundsRecentOperationsAndKeepsRingIndexesCurrent(t *testing.T) 
 	book.CompleteTask(first.ID, mesh.TaskResult{Status: "evicted"}, now.Add(3*time.Second))
 	book.CompleteTask(second.ID, mesh.TaskResult{Status: "partial"}, now.Add(4*time.Second))
 	listed = book.List(MeshOperationListRequest{})
-	if listed[0].ProviderStatus != "partial" || listed[0].State != MeshOperationStateSucceeded {
-		t.Fatalf("retained ring operation = %#v, want provider status and daemon success", listed[0])
+	if listed[0].ProviderStatus != "partial" || listed[0].State != MeshOperationStateFailed {
+		t.Fatalf("retained ring operation = %#v, want provider status and fail-closed daemon state", listed[0])
 	}
 }
 
@@ -2079,7 +2226,7 @@ func TestMeshBookSeparatesProviderTaskStatusFromDaemonLifecycle(t *testing.T) {
 		providerState mesh.TaskStatus
 		daemonState   MeshOperationState
 	}{
-		{name: "provider-defined success detail", providerState: "partial", daemonState: MeshOperationStateSucceeded},
+		{name: "unknown provider status fails closed", providerState: "partial", daemonState: MeshOperationStateFailed},
 		{name: "provider failure", providerState: mesh.TaskStatusFailed, daemonState: MeshOperationStateFailed},
 	}
 	for _, test := range tests {
@@ -2121,6 +2268,18 @@ func authenticateMeshBridge(t *testing.T, writer io.Writer, capability MeshBridg
 	}
 }
 
+func authenticateUDPMeshBridge(t *testing.T, writer io.Writer, capability MeshBridgeCapability) {
+	t.Helper()
+	frame := []byte(capability.reveal())
+	n, err := writer.Write(frame)
+	if err != nil {
+		t.Fatalf("write UDP Mesh bridge capability: %v", err)
+	}
+	if n != len(frame) {
+		t.Fatalf("write UDP Mesh bridge capability = %d bytes, want %d", n, len(frame))
+	}
+}
+
 func assertNoMeshBridgeWrite(t *testing.T, sessions *bridgeSessionBroker) {
 	t.Helper()
 	select {
@@ -2146,15 +2305,40 @@ func TestMeshBridgeCapabilityUsesFullRandomEntropy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := base64.RawURLEncoding.DecodeString(string(first))
+	decoded, err := base64.RawURLEncoding.DecodeString(first.reveal())
 	if err != nil {
 		t.Fatalf("decode capability: %v", err)
 	}
 	if len(decoded) != meshBridgeCapabilityBytes {
 		t.Fatalf("capability entropy = %d bytes, want %d", len(decoded), meshBridgeCapabilityBytes)
 	}
-	if first == second {
+	if first.reveal() == second.reveal() {
 		t.Fatal("independent Mesh bridges received the same capability")
+	}
+}
+
+func TestMeshBridgeCapabilityIsRedactedInDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	const secret = "mesh-bridge-secret"
+	capability := meshBridgeCapabilityValue(secret)
+	for _, format := range []string{
+		"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%c", "%p",
+	} {
+		formatted := fmt.Sprintf(format, capability)
+		if strings.Contains(formatted, secret) {
+			t.Fatalf("format %q exposed Mesh bridge capability: %s", format, formatted)
+		}
+		if format != "%p" && !strings.Contains(formatted, redactedMeshBridgeCapability) {
+			t.Fatalf("format %q omitted redaction marker: %s", format, formatted)
+		}
+	}
+
+	response := MeshBridgeOpenResponse{Capability: capability}
+	formatted := fmt.Sprintf("%#v", response)
+	if strings.Contains(formatted, secret) ||
+		!strings.Contains(formatted, redactedMeshBridgeCapability) {
+		t.Fatalf("response diagnostics did not redact Mesh bridge capability: %s", formatted)
 	}
 }
 
@@ -3084,6 +3268,7 @@ func contextOrMissing(ctx context.Context) error {
 
 type fakeMeshRunner struct {
 	omitDatagramCapability bool
+	streamRequests         chan<- mesh.StreamRequest
 }
 
 type credentialBridgeOpener struct {
@@ -3236,6 +3421,9 @@ func (r fakeMeshRunner) OpenMeshStream(
 	moduleID string,
 	req mesh.StreamRequest,
 ) (run.SessionRef, error) {
+	if r.streamRequests != nil {
+		r.streamRequests <- req
+	}
 	session := run.SessionRef{
 		ID:        "mesh-session-1",
 		RunID:     req.RunID,
@@ -3246,7 +3434,8 @@ func (r fakeMeshRunner) OpenMeshStream(
 		State:     "active",
 		Transport: "mesh-route",
 	}
-	if req.Protocol == "udp" && !r.omitDatagramCapability {
+	datagramBridge, _ := req.Config[meshBridgeConfigDatagram].(bool)
+	if (datagramBridge || req.Protocol == "udp") && !r.omitDatagramCapability {
 		session.Capabilities = []string{run.SessionCapabilityDatagram}
 	}
 	return session, nil

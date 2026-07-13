@@ -11,6 +11,7 @@ import (
 	"github.com/vibepwners/hovel/internal/adapters/storage/filesystem"
 	sqlitestore "github.com/vibepwners/hovel/internal/adapters/storage/sqlite"
 	apppki "github.com/vibepwners/hovel/internal/app/pki"
+	"github.com/vibepwners/hovel/internal/app/services"
 	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
 	"github.com/vibepwners/hovel/internal/domain/workspace"
 	infrapki "github.com/vibepwners/hovel/internal/infra/pki"
@@ -226,12 +227,12 @@ func (c *workspacePKIControl) ResolveCredentialOperation(
 	selections domainpki.CredentialSelections,
 	scope domainpki.CredentialOperationScope,
 	consumers []domainpki.CredentialConsumerBinding,
-) (domainpki.CredentialOperationDeliveries, func(), error) {
+) (*services.CredentialOperationResolution, error) {
 	service, release, err := c.serviceFor(ctx)
 	if err != nil {
-		return nil, func() {}, err
+		return nil, err
 	}
-	deliveries, clearDeliveries, err := service.ResolveCredentialOperation(
+	lease, err := service.ResolveCredentialOperationLease(
 		ctx,
 		provider,
 		descriptor,
@@ -241,16 +242,76 @@ func (c *workspacePKIControl) ResolveCredentialOperation(
 	)
 	if err != nil {
 		release()
-		return nil, func() {}, err
+		return nil, err
 	}
-	var once sync.Once
-	cleanup := func() {
-		once.Do(func() {
-			clearDeliveries()
-			release()
-		})
+	workspaceLease, err := newWorkspaceCredentialOperationLease(lease, release)
+	if err != nil {
+		lease.Close()
+		release()
+		return nil, err
 	}
-	return deliveries, cleanup, nil
+	resolution, err := services.NewCredentialOperationResolution(workspaceLease)
+	if err != nil {
+		workspaceLease.Close()
+		return nil, err
+	}
+	return resolution, nil
+}
+
+type credentialOperationLease interface {
+	BorrowedDeliveries() (domainpki.CredentialOperationDeliveries, error)
+	Revalidate(context.Context) error
+	Close()
+}
+
+type workspaceCredentialOperationLease struct {
+	lease   credentialOperationLease
+	release func()
+	once    sync.Once
+}
+
+func newWorkspaceCredentialOperationLease(
+	lease credentialOperationLease,
+	release func(),
+) (*workspaceCredentialOperationLease, error) {
+	if lease == nil {
+		return nil, errors.New("workspace PKI credential operation lease is required")
+	}
+	if release == nil {
+		return nil, errors.New("workspace PKI credential operation release is required")
+	}
+	return &workspaceCredentialOperationLease{lease: lease, release: release}, nil
+}
+
+func (l *workspaceCredentialOperationLease) BorrowedDeliveries() (
+	domainpki.CredentialOperationDeliveries,
+	error,
+) {
+	if l == nil || l.lease == nil {
+		return nil, errors.New("workspace PKI credential operation lease is required")
+	}
+	return l.lease.BorrowedDeliveries()
+}
+
+func (l *workspaceCredentialOperationLease) Revalidate(ctx context.Context) error {
+	if l == nil || l.lease == nil {
+		return errors.New("workspace PKI credential operation lease is required")
+	}
+	return l.lease.Revalidate(ctx)
+}
+
+func (l *workspaceCredentialOperationLease) Close() {
+	if l == nil {
+		return
+	}
+	l.once.Do(func() {
+		if l.lease != nil {
+			l.lease.Close()
+		}
+		if l.release != nil {
+			l.release()
+		}
+	})
 }
 
 func (c *workspacePKIControl) ListOperations(ctx context.Context) ([]domainpki.Operation, error) {

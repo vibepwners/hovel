@@ -3,6 +3,11 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
+    name = "sources",
+    srcs = glob(["src/**/*.rs"]),
+)
+
+filegroup(
     name = "protocol_doc_sources",
     srcs = [
         "src/credential_delivery.rs",

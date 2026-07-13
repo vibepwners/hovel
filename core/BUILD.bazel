@@ -24,6 +24,14 @@ filegroup(
 )
 
 filegroup(
+    name = "go_module_files",
+    srcs = [
+        "go.mod",
+        "go.sum",
+    ],
+)
+
+filegroup(
     name = "build",
     srcs = [
         "//cmd/hovel",
@@ -45,6 +53,7 @@ _COVERAGE_LAYER_TESTS = [
     "//internal/app/services:services_test",
     "//internal/domain/daemon:daemon_test",
     "//internal/domain/event:event_test",
+    "//internal/domain/mesh:mesh_test",
     "//internal/domain/module:module_test",
     "//internal/domain/operator:operator_test",
     "//internal/domain/pki:pki_test",

@@ -1,0 +1,362 @@
+<!-- hovel-doc: {"title":"Domain Model","group":"Foundations","order":50,"navTitle":"Domain Model"} -->
+<article>
+        <h1>Domain Model</h1>
+        <p>Hovel revolves around these concepts:</p>
+<pre data-lang="concepts"><code>Workspace
+Operation
+Target
+Fact
+Provider
+Mesh
+MeshNode
+MeshLink
+MeshRoute
+MeshDestination
+MeshTask
+MeshListener
+Beacon
+Trigger
+Service
+Module
+Payload
+PayloadStamp
+InstalledPayload
+Artifact
+Chain
+Phase
+Step
+Throw
+Run
+Job
+Event
+Finding
+Transport
+Session
+Listener
+Credential
+Capability
+CleanupHandle
+</code></pre>
+
+        <h2>Workspace</h2>
+        <p>A workspace is the local project/database context for operations, targets, throws, modules, services, structured events, artifacts, installed payload inventory, and provider state.</p>
+        <p>Current workspace storage is SQLite plus workspace-owned files for artifacts, logs, modules, throws, services, and provider-owned state.</p>
+        <p>Workspace data:</p>
+        <ol>
+          <li>Configuration.</li>
+          <li>Registry metadata.</li>
+          <li>Throw history.</li>
+          <li>Target inventory.</li>
+          <li>Facts.</li>
+          <li>Artifacts.</li>
+          <li>Installed payload records and state-change history.</li>
+          <li>Structured events.</li>
+          <li>Provider cache.</li>
+          <li>Logs rendered from structured events.</li>
+          <li>Listener and session state.</li>
+        </ol>
+
+        <h2>Operation</h2>
+        <p>An operation is the top-level operator context. It is the thing a red teamer picks up, puts down, and comes back to later. Operations own chains, chain log topics, target inventory, target sets/groups, throws, artifacts, and the operator-facing transcript rendered from structured events.</p>
+        <p><code>op</code> is the primary command spelling. <code>operation</code> may remain as a readable alias, but product copy and examples should prefer <code>op</code>.</p>
+        <p>Operation responsibilities:</p>
+        <ol>
+          <li>Name and describe the active work context.</li>
+          <li>Own one or more chains.</li>
+          <li>Own target inventory, per-target configuration, and target sets/groups shared by those chains.</li>
+          <li>Keep each client attachment's active chain separate from the shared chain state.</li>
+          <li>Preserve chain logs and throw records by operation.</li>
+          <li>Keep findings, artifacts, and structured events tied to the operation that produced them.</li>
+        </ol>
+        <p>An attached client can work inside one operation at a time. The operation state is daemon-owned shared state; the active chain selected by the implemented CLI or by future TUI, REST, or MCP clients is client-local attachment state.</p>
+
+        <h2>Target</h2>
+        <p>A target represents something the operator is authorized to test.</p>
+<pre data-lang="yaml"><code>id: target-uuid
+name: router-01
+addresses:
+  - 10.41.32.2
+ports:
+  - 22/tcp
+labels:
+  env: lab
+  owner: will
+facts: []
+</code></pre>
+
+        <h2>Fact</h2>
+        <p>Facts are typed observations about a target.</p>
+<pre data-lang="yaml"><code>type: os.name
+value: linux
+source: ssh-survey
+confidence: 0.95
+</code></pre>
+        <p>Facts must be mergeable, source-attributed, and queryable.</p>
+
+        <h2>Module</h2>
+        <p>A module is a typed user-facing unit of bounded functionality.</p>
+        <p>Initial module types:</p>
+<pre data-lang="types"><code>survey
+exploit
+payload_provider
+</code></pre>
+        <p>The type set must remain expandable after the first mocked UI stage.</p>
+        <p>A module may live in-tree or out-of-tree, but production execution should still go through ordinary module descriptors, planning, validation, logging, event, artifact, and runtime contracts. A reusable composition of modules is a chain, not another module type.</p>
+        <p>Every module may declare required and optional typed configuration keys. Configuration scopes are <code>chain</code> for global chain configuration and <code>target</code> for per-target configuration.</p>
+
+        <h2>Service</h2>
+        <p>A service is a long-lived or reusable capability managed by Hovel.</p>
+        <p>
+          Current source has service descriptor value objects and validation, but not a
+          general service discovery, launch, health-check, or stop runtime. Implemented
+          provider behavior is module-backed today; the service model below is the
+          target shape for longer-lived capabilities.
+        </p>
+        <p>Service examples:</p>
+        <ol>
+          <li>Payload build service.</li>
+          <li>PIC blob generation service.</li>
+          <li>Listening post.</li>
+          <li>Session broker.</li>
+          <li>Credential broker.</li>
+          <li>Artifact HTTP server.</li>
+          <li>Callback listener.</li>
+          <li>Target inventory sync service.</li>
+        </ol>
+        <p>The key distinction:</p>
+<pre data-lang="distinction"><code>Module: run this bounded operation.
+Service: start this capability, keep it alive, expose typed operations, manage lifecycle.
+</code></pre>
+
+        <h2>Provider</h2>
+        <p>A provider supplies typed resources to modules, chains, and services.</p>
+        <p>Provider types in the product model:</p>
+<pre data-lang="providers"><code>PayloadProvider
+ArtifactProvider
+FactProvider
+CredentialProvider
+ListenerProvider
+SessionProvider
+MeshProvider
+</code></pre>
+        <p>The first general provider implementation should only require <code>PayloadProvider</code> and <code>ArtifactProvider</code>. Mesh providers are SDK-level contracts for node operations and may be module-backed before a general service lifecycle exists. A <code>MeshListener</code> is a Mesh-specific listening-post resource and does not introduce the broader <code>ListenerProvider</code> abstraction shown above. Facts may be plain module outputs at first, and general credential, listener, and session providers should wait until service lifecycle, policy review, and artifact/event capture are stable.</p>
+        <p>Future providers may include build, encoder, shellcode, stager, and implant providers.</p>
+        <p>Payload generation is outside the Hovel core. Hovel resolves payload bytes through provider interfaces, tags them with declared metadata, records hashes and artifacts, then passes the bytes to the next module in the chain. When a payload provider or installing module reports a successful install, Hovel core validates the explicit install descriptor and persists the installed payload record in the workspace database.</p>
+
+        <h2>Mesh</h2>
+        <p>A Mesh is a provider-owned node operations plane that can be one node, a chain, or a routed tree/graph of nodes.</p>
+        <p>Mesh vocabulary:</p>
+<pre data-lang="mesh"><code>MeshNode   addressable participant such as controller, relay, agent, or implant
+MeshLink   communication edge between nodes
+MeshRoute  ordered path across nodes and links
+MeshDestination host or service reachable through a node or route
+MeshTask   node, route, or destination operation such as survey, upload, execute, command, load, or stream
+MeshListener provider-reported listening post, separate from provider control and daemon local bridges
+Beacon       node liveness or status signal
+Trigger      provider-declared condition that can cause mesh work or state changes
+</code></pre>
+        <p>Transport endpoints and tunnels are narrower byte-movement concepts. A Mesh may expose a stream that Hovel bridges to a local IP and port, but the Mesh also owns listening posts, tasking, surveys, triggers, and beacons. A Mesh Listener may be embedded or separately deployed and provider- or externally managed; stable caller-selected ids and daemon lifecycle methods let future external control planes manage it without speaking the module protocol. Destination-scoped Mesh requests identify the pivot with <code>nodeId</code> or <code>route</code> and the reached service with <code>destinationHost</code>, <code>destinationPort</code>, and <code>protocol</code>.</p>
+
+        <h2>Payload</h2>
+        <p>A payload is provider-described capability that can produce tagged bytes. In the target provider model, available payloads are discovered live from provider contracts rather than cached as durable workspace state. In the current operator command path, <code>payloads available</code> lists configured payload-provider modules; Go provider modules already expose the richer <code>list_payloads</code> RPC method for provider integrations and contract tests.</p>
+        <p>Initial payload kinds:</p>
+<pre data-lang="kinds"><code>shell
+shellcode
+library
+executable
+</code></pre>
+
+        <p>Payload metadata:</p>
+<pre data-lang="yaml"><code>id: payload-uuid
+name: sshplant-x86_64-linux
+kind: elf
+arch: x86_64
+os: linux
+format: bytes
+entrypoint: default
+size: 123456
+sha256: abc123
+capabilities:
+  - interactive_session
+  - stdio_transport
+constraints:
+  requiresExec: true
+  writesDisk: false
+requiresPython: false
+</code></pre>
+        <p>
+          Generated payload bytes become stamped payload artifacts. A stamp is Hovel's
+          durable handle for a generated artifact set: it links provider identity, payload
+          metadata, generation inputs, target, transport, artifact hashes, and later
+          install records. A stamped artifact is not an installed payload until a provider
+          or installing module explicitly reports a successful target-side install.
+        </p>
+
+        <h2>Installed Payload</h2>
+        <p>
+          An installed payload is a durable workspace record for one target-side deployed
+          payload agent, executable, service, or listener-capable instance. It is the
+          object operators inspect, reconnect to, refresh, clean up, or manually mark
+          removed. It is distinct from generated payload artifacts and from live sessions.
+        </p>
+<pre data-lang="yaml"><code>handle: p1
+id: installed-payload-uuid
+provider: squatter
+payloadId: squatter/windows/x86/xp-sp3/tcp-bind/pe-exe
+payloadVersion: 0.1.0
+state: installed
+target: 10.0.0.42
+targetId: t1
+transport: tcp-bind
+endpoint: 10.0.0.42:9101
+stampId: payload-stamp-uuid
+provenance:
+  operationId: op-uuid
+  chainId: c1
+  targetId: t1
+  throwId: throw-uuid
+  runId: run-uuid
+  artifactIds: [artifact-uuid]
+reconnect:
+  providerId: squatter
+  schema: squatter.reconnect.tcp_bind
+  schemaVersion: "1"
+  descriptor: { "host": "10.0.0.42", "port": 9101 }
+</code></pre>
+        <p>
+          Operator-facing handles use short names such as <code>p1</code> and
+          <code>p2</code>, backed by stable internal identifiers. Records are global
+          workspace inventory with operation, chain, target, throw, run, and artifact
+          provenance. They remain discoverable after switching chains or restarting
+          Hovel.
+        </p>
+        <p>Installed payload states for v1:</p>
+        <figure class="diagram" aria-label="Installed payload states include installed, connected, unreachable, and removed.">
+          <figcaption>Installed Payload States</figcaption>
+          <ul class="state-set">
+            <li class="state-pill">installed</li>
+            <li class="state-pill ready">connected</li>
+            <li class="state-pill warn">unreachable</li>
+            <li class="state-pill stop">removed</li>
+          </ul>
+        </figure>
+        <p>
+          Listing installed payloads reads last-known state from SQLite and does not probe
+          targets by default. Reconnect or refresh actions ask the current provider to
+          validate the stored reconnect descriptor and may update state. If the provider is
+          missing or rejects the descriptor version, the record remains visible with
+          reconnect marked unavailable.
+        </p>
+
+        <h2>Capability</h2>
+        <p>
+          A capability is typed, durable chain state that one step produces and later
+          steps may consume. Hovel owns the core capability schemas and validates module
+          outputs against them. Module contracts match by concrete type, required
+          attributes, and allowed states.
+        </p>
+<pre data-lang="types"><code>RemoteExecutionCapability
+CredentialCapability
+PayloadArtifact
+PayloadInstance
+TransportEndpoint
+SessionRef
+CleanupHandle</code></pre>
+        <p>
+          Capabilities have stable ids, schema versions, producer step ids, current
+          state, attributes, optional namespaced extensions, and append-only event
+          history. Evidence remains separate from capability state.
+        </p>
+
+        <h2>Payload Instance Capability</h2>
+        <p>
+          A <code>PayloadInstance</code> capability is runtime chain state produced by an
+          install step. When it contains an explicit installed-payload descriptor, Hovel
+          may persist or update an <code>InstalledPayload</code> inventory record. The
+          capability itself is still scoped to the throw and capability graph; the
+          installed payload record is the durable cross-chain inventory object.
+        </p>
+<pre data-lang="yaml"><code>id: cap_payload_instance_q8m2v4
+provider: squatter
+target: 10.0.0.42
+transport: smb-named-pipe
+endpoint: cap_endpoint_smb_pipe_c4a7nx
+state: installed
+installedPayload: p1
+cleanupHandles:
+  - cap_cleanup_74m2wq
+</code></pre>
+
+        <h2>Cleanup Handle</h2>
+        <p>
+          A cleanup handle is a first-class capability for target or provider-side state
+          that can be removed or verified later. It records the owner module, cleanup
+          step id, required inputs, current cleanup state, and evidence for each attempt.
+          Cleanup is retriable until it reaches <code>removed</code>,
+          <code>cleanup_verified</code>, or the operator marks it
+          <code>abandoned</code>.
+        </p>
+
+        <h2>Listener</h2>
+        <p>A listener or listening post is a managed service that receives callbacks, brokers sessions, serves staged payloads, or controls post-execution sessions.</p>
+        <p>Lifecycle states:</p>
+        <figure class="diagram" aria-label="Listener lifecycle states include registered, starting, listening, healthy, degraded, stopping, stopped, and failed.">
+          <figcaption>Listener States</figcaption>
+          <ul class="state-set">
+            <li class="state-pill">registered</li>
+            <li class="state-pill">starting</li>
+            <li class="state-pill ready">listening</li>
+            <li class="state-pill ready">healthy</li>
+            <li class="state-pill warn">degraded</li>
+            <li class="state-pill">stopping</li>
+            <li class="state-pill">stopped</li>
+            <li class="state-pill stop">failed</li>
+          </ul>
+        </figure>
+
+        <h2>Chain</h2>
+        <p>A chain is an operation-owned workflow record with ordered steps. Product docs may group those steps into conceptual phases, but the current stored chain model is step-based. Chains are CRUD resources: operators can create, select, rename, inspect, list, and delete them through shared application services.</p>
+        <p>Chain definitions should be modular and loadable. They are collections of module references and chain-scoped configuration, not modules themselves.</p>
+        <p>Chains do not own target records. Targets are operation-owned assets, while chain records keep target bindings by target ID for default planning. A throw selects targets from <code>--target</code>, <code>--target-set</code>/<code>--target-group</code>, or the active chain's bindings. Chain records own ordered steps, chain-scoped configuration, target bindings, and logs; target config follows the target across chains in the same operation.</p>
+        <p>Chains also own their logging topic. The canonical topic shape is <code>operation/&lt;operation&gt;/chain/&lt;chain&gt;/logs</code>. A front end only renders logs for the chain selected by its attachment, while daemon-side storage and the structured logging rail keep those logs available for other clients attached to the same operation and chain.</p>
+        <p>Conceptual workflow phases:</p>
+        <figure class="diagram" aria-label="Conceptual workflow phases from service preparation through service cleanup.">
+          <figcaption>Conceptual Workflow Phases</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">service_prepare</li>
+            <li class="flow-step">survey</li>
+            <li class="flow-step">prepare</li>
+            <li class="flow-step">access</li>
+            <li class="flow-step">deliver</li>
+            <li class="flow-step strong">execute</li>
+            <li class="flow-step">post</li>
+            <li class="flow-step">collect</li>
+            <li class="flow-step">cleanup</li>
+            <li class="flow-step">service_cleanup</li>
+          </ol>
+        </figure>
+
+        <h2>Throw</h2>
+        <p>A throw is the operator-facing execution record for a chain or module against one or more targets. <code>throw</code> is both the verb and the singular command root used for listing and inspection.</p>
+        <p>Throw states:</p>
+        <figure class="diagram" aria-label="Throw states include created, planning, ready, throwing, paused, succeeded, failed, cancelled, partial, and cleaning up.">
+          <figcaption>Throw States</figcaption>
+          <ul class="state-set">
+            <li class="state-pill">created</li>
+            <li class="state-pill">planning</li>
+            <li class="state-pill ready">ready</li>
+            <li class="state-pill strong">throwing</li>
+            <li class="state-pill warn">paused</li>
+            <li class="state-pill ready">succeeded</li>
+            <li class="state-pill stop">failed</li>
+            <li class="state-pill stop">cancelled</li>
+            <li class="state-pill warn">partial</li>
+            <li class="state-pill">cleaning_up</li>
+          </ul>
+        </figure>
+        <p>Throws must keep the reviewed intent, inputs, targets, chain version, module versions, artifacts, structured event records, transcript rendering inputs, errors, and final result.</p>
+
+        <h2>Run</h2>
+        <p>A run is an internal runtime execution detail. Operator-facing commands, transcripts, records, and docs should say throw unless the code is describing a low-level module runtime API.</p>
+        <p>Runtime internals may reuse the throw state machine, but the durable product language remains operation, chain, step, throw, structured event, artifact, and finding.</p>
+      </article>

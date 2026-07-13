@@ -1,12 +1,23 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "mesh",
-    srcs = ["mesh.go"],
+    srcs = [
+        "clone.go",
+        "mesh.go",
+        "validation.go",
+    ],
     importpath = "github.com/vibepwners/hovel/internal/domain/mesh",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/domain/pki",
         "//internal/domain/run",
     ],
+)
+
+go_test(
+    name = "mesh_test",
+    srcs = ["validation_test.go"],
+    embed = [":mesh"],
+    deps = ["//internal/domain/run"],
 )

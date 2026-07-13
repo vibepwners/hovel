@@ -22,7 +22,7 @@ guardrails, explicit confirmations, descriptor metadata, module-level
 validation, throw planning, and an auditable record, not from giving any
 front end a weaker private API.
 
-Key safety properties (see `docs/site/spec/safety.html` for the full model):
+Key safety properties (see `docs/site/src/content/spec/safety.html` for the full model):
 
 - Every throw starts from a persisted throw plan.
 - Starting a throw requires a recorded confirmation that the plan was reviewed

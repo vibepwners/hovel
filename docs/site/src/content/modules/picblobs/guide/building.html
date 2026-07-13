@@ -1,0 +1,81 @@
+<!-- hovel-doc: {"title":"Building","group":"picblobs","order":90,"navTitle":"Building Blobs"} -->
+<article>
+  <h1 id="building">Building</h1>
+  <p>
+    Task is the public build interface. Its Bazel-backed targets use bzlmod and
+    fetch pinned Bootlin cross-compilation toolchains on first use. Run every
+    command below from the repository root.
+  </p>
+  <p>Targets describe <strong>what</strong> to build. Configs describe <strong>how</strong> to build it.</p>
+
+  <h2 id="build-a-single-platform">Build a single platform</h2>
+  <pre data-lang="bash"><code>task bazel:build -- --config=linux_x86_64 //modules/picblobs/release:full
+task bazel:build -- --config=linux_x86_64 --config=debug //modules/picblobs/release:full
+</code></pre>
+
+  <h2 id="build-a-single-blob">Build a single blob</h2>
+  <pre data-lang="bash"><code>task bazel:build -- --config=linux_aarch64 //modules/picblobs/src/payload:hello
+task bazel:build -- --config=windows_x86_64 //modules/picblobs/src/payload:hello_windows
+</code></pre>
+
+  <h2 id="build-and-stage-all-platforms">Build and stage all platforms</h2>
+  <pre data-lang="bash"><code>task picblobs:stage
+</code></pre>
+  <p>
+    The Task invokes the declared Bazel materializer, which builds all supported
+    blobs, FreeBSD and Windows runners, and Linux <code>ul_exec</code> verifier
+    fixtures. It then stages only declared outputs into the package trees and
+    regenerates the runtime sidecar catalogue:
+  </p>
+  <pre data-lang="text"><code>modules/picblobs/python/picblobs/_blobs/{os}/{arch}/{name}.so
+modules/picblobs/python/picblobs/blobs/{name}.{os}.{arch}.{bin,json}
+modules/picblobs/python/picblobs/manifest.json
+modules/picblobs/python_cli/picblobs_cli/_runners/{freebsd,windows}/{arch}/runner
+modules/picblobs/python_cli/picblobs_cli/_test_binaries/ul_exec/linux/{arch}/hello_et_exec
+</code></pre>
+  <p>Build specific targets or platforms:</p>
+  <pre data-lang="bash"><code>task picblobs:stage -- --targets hello --configs linux:x86_64
+task picblobs:stage -- --configs windows:x86_64 windows:i686 windows:aarch64
+</code></pre>
+
+  <h2 id="available-platform-configs">Available platform configs</h2>
+  <p>
+    <code>modules/picblobs/tools/generate.py</code> derives these configs from the
+    typed registry. Use <code>task picblobs:generate-check</code> to verify that the
+    generated declarations are current.
+  </p>
+  <pre data-lang="text"><code>linux_x86_64  linux_i686  linux_aarch64  linux_armv5_arm  linux_armv5_thumb
+linux_armv7_thumb  linux_s390x  linux_mipsel32  linux_mipsbe32
+linux_sparcv8  linux_powerpc  linux_ppc64le  linux_riscv64
+
+freebsd_x86_64  freebsd_i686  freebsd_aarch64  freebsd_armv5_arm
+freebsd_armv5_thumb  freebsd_armv7_thumb  freebsd_mipsel32  freebsd_mipsbe32
+
+windows_x86_64  windows_i686  windows_aarch64
+</code></pre>
+
+  <h2 id="build-mode-configs">Build mode configs</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Config</th>
+        <th>Effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><em>(default)</em></td>
+        <td>Optimized (<code>-Os</code> from the selected toolchain)</td>
+      </tr>
+      <tr>
+        <td><code>--config=debug</code></td>
+        <td>Adds debug symbols and <code>-DPIC_LOG_ENABLE</code>; disables stripping</td>
+      </tr>
+      <tr>
+        <td><code>--config=release</code></td>
+        <td>Explicitly strips release outputs</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Platform and build mode are orthogonal: <code>--config=linux_x86_64 --config=debug</code>.</p>
+</article>

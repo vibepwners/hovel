@@ -462,7 +462,11 @@ stream setup. Providers may define more.
 
 Task descriptors advertise target scopes, configuration schema, whether work is
 read-only/destructive, and whether it opens a stream. Providers implement only
-the surfaces they support.
+the surfaces they support. The SDK contract intentionally models every kind,
+but the current direct daemon `RunMeshTask` route dispatches only `survey`.
+Command, upload, execute, upload-execute, load, stream-setup, and
+provider-defined kinds fail before provider invocation until that route is
+bound to the persisted throw plan, confirmation, and dangerous-module policy.
 
 ### Mesh Bridge
 
@@ -481,7 +485,10 @@ adapter.
 
 A bridge is not a Mesh Listener and does not make the provider own local socket
 lifecycle. The loopback socket is a local-user trust boundary, not an
-authentication mechanism.
+authentication mechanism. Closing a bridge closes its local endpoint first. If
+provider-session cleanup fails, the daemon retains the operation/session
+selector as a retryable cleanup handle; a successful retry removes the handle
+and moves bookkeeping to `closed` without reopening the endpoint.
 
 ### Mesh Listener
 
@@ -664,15 +671,21 @@ local Unix socket and explicit loopback TCP for integration. Future Windows
 support should use a named pipe.
 
 The transports have intentionally different authority. The owner-controlled
-Unix socket is the privileged control plane. Loopback TCP is read-only and
-rejects execution, mutation, export, and other privileged methods with a typed
-`permission-denied` error; it is not a substitute for local-user
-authentication. Request actor identifiers provide audit attribution only and
-never grant transport authority.
+Unix socket is the privileged control plane. Loopback TCP exposes only an
+explicit set of non-sensitive read projections and rejects every privileged
+method with typed `permission-denied`; it is not a substitute for local-user
+authentication. Sensitive Mesh topology, beacon, listener, and operation
+bookkeeping reads and PKI inventory, assignment, trust, revocation, and
+credential-execution reads are privileged despite being non-mutating. Request
+actor identifiers provide audit attribution only and never grant transport
+authority. A web, Elixir, REST, or remote control surface must use an
+authenticated owner-side proxy rather than exposing loopback TCP directly.
 
 The machine-readable contract is
-`docs/site/spec/reference/daemon-rpc.openapi.json`. Contract tests keep method
-registration, OpenAPI, and human docs aligned. Current methods cover operator
+`docs/site/spec/reference/daemon-rpc.openapi.json`. It is the single canonical
+source; a Bazel action publishes the Astro static artifact at
+`spec/reference/daemon-rpc.openapi.json` in the built site. Contract tests keep
+method registration, OpenAPI, and human docs aligned. Current methods cover operator
 state, plans/approvals, throws, module execution, payloads, sessions, artifacts,
 logs/entities, Mesh operations, and workspace PKI lifecycle/control.
 
@@ -680,9 +693,10 @@ The daemon boundary is not uniformly writable. PKI initialization, authority,
 certificate, revocation/CRL, assignment, trust-set, rollover, and bundle-export
 use cases have mutation methods. Mesh listeners, tasks, streams, and bridges
 also have mutation methods. Credential-stamp and credential-execution methods
-are currently list/inspect only; current Mesh mutation request shapes do not
-accept an assignment or delivery plan. MCP registers no PKI or credential
-delivery tools today.
+are currently list/inspect only. Credential-aware Mesh requests accept
+non-secret assignment selectors plus an approved credential context, but no
+direct Mesh task request carries a persisted throw-plan/confirmation handle.
+MCP registers no PKI or credential delivery tools today.
 
 External web, Elixir, REST, or other clients consume this daemon contract or a
 public control SDK. They do not import `core/internal` or speak private module
@@ -873,7 +887,8 @@ read/write or typed command semantics.
 1. Describe static optional capabilities without side effects.
 2. List dynamic topology, listeners, beacons, and triggers separately.
 3. Start/stop provider listeners idempotently with stable caller IDs.
-4. Run node/route/destination tasks through typed requests.
+4. Run read-only survey tasks directly; route execution-capable typed tasks
+   through persisted planning and confirmation once that binding exists.
 5. Open provider-owned streams for arbitrary protocols.
 6. Optionally expose TCP/UDP through a daemon loopback Mesh Bridge.
 7. Record daemon Mesh operations for external control and audit.

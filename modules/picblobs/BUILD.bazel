@@ -87,9 +87,11 @@ test_suite(
         "//modules/picblobs/tests/runners/freebsd:runner_cppcheck",
         "//modules/picblobs/tests/runners/linux:runner_cppcheck",
         "//modules/picblobs/tests/runners/windows:runner_cppcheck",
+        "//modules/picblobs/tools:artifact_arch_test",
         "//modules/picblobs/tools:format_check",
         "//modules/picblobs/tools:generate_check",
         "//modules/picblobs/tools:lint_check",
+        "//modules/picblobs/tools:stage_blobs_from_runfiles_test",
     ],
 )
 

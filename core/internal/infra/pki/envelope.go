@@ -32,6 +32,15 @@ func NewMasterKey(value []byte) (MasterKey, error) {
 	return result, nil
 }
 
+// Clear overwrites this owned master-key value. Because MasterKey is an array,
+// callers must clear every value copy they create.
+func (k *MasterKey) Clear() {
+	if k == nil {
+		return
+	}
+	clear(k[:])
+}
+
 type MasterKeyProvider interface {
 	ActiveMasterKey(context.Context) (string, MasterKey, error)
 	MasterKey(context.Context, string) (MasterKey, error)
@@ -82,7 +91,7 @@ func (p EnvelopeProtector) WithStableKeyEpoch(ctx context.Context, operation fun
 
 func (p EnvelopeProtector) ActiveKeyVersion(ctx context.Context) (string, error) {
 	version, key, err := p.provider.ActiveMasterKey(ctx)
-	clear(key[:])
+	defer key.Clear()
 	if err != nil {
 		return "", fmt.Errorf("pki: load active workspace master key: %w", err)
 	}
@@ -100,10 +109,10 @@ func (p EnvelopeProtector) Seal(ctx context.Context, material apppki.KeyMaterial
 		return apppki.ProtectedKeyMaterial{}, err
 	}
 	keyVersion, key, err := p.provider.ActiveMasterKey(ctx)
+	defer key.Clear()
 	if err != nil {
 		return apppki.ProtectedKeyMaterial{}, fmt.Errorf("pki: load active workspace master key: %w", err)
 	}
-	defer clear(key[:])
 	return p.sealWithKey(material, keyVersion, key)
 }
 
@@ -118,15 +127,15 @@ func (p EnvelopeProtector) SealWithVersion(ctx context.Context, material apppki.
 		return apppki.ProtectedKeyMaterial{}, err
 	}
 	key, err := p.provider.MasterKey(ctx, keyVersion)
+	defer key.Clear()
 	if err != nil {
 		return apppki.ProtectedKeyMaterial{}, fmt.Errorf("pki: load workspace master key version %q: %w", keyVersion, err)
 	}
-	defer clear(key[:])
 	return p.sealWithKey(material, keyVersion, key)
 }
 
 func (p EnvelopeProtector) sealWithKey(material apppki.KeyMaterial, keyVersion string, key MasterKey) (apppki.ProtectedKeyMaterial, error) {
-	defer clear(key[:])
+	defer key.Clear()
 	if err := apppki.ValidateKeyVersion(keyVersion); err != nil {
 		return apppki.ProtectedKeyMaterial{}, err
 	}
@@ -171,10 +180,10 @@ func (p EnvelopeProtector) Open(ctx context.Context, protected apppki.ProtectedK
 		return apppki.KeyMaterial{}, err
 	}
 	key, err := p.provider.MasterKey(ctx, protected.KeyVersion)
+	defer key.Clear()
 	if err != nil {
 		return apppki.KeyMaterial{}, fmt.Errorf("pki: load workspace master key version %q: %w", protected.KeyVersion, err)
 	}
-	defer clear(key[:])
 	block, err := aes.NewCipher(key[:])
 	if err != nil {
 		return apppki.KeyMaterial{}, fmt.Errorf("pki: create key-envelope block cipher: %w", err)
@@ -192,6 +201,7 @@ func (p EnvelopeProtector) Open(ctx context.Context, protected apppki.ProtectedK
 	}
 	defer clear(plaintext)
 	var material apppki.KeyMaterial
+	defer material.Clear()
 	if err := json.Unmarshal(plaintext, &material); err != nil {
 		return apppki.KeyMaterial{}, fmt.Errorf("pki: decode key material: %w", err)
 	}
@@ -201,9 +211,7 @@ func (p EnvelopeProtector) Open(ctx context.Context, protected apppki.ProtectedK
 	if material.ID != protected.KeyID || material.Algorithm != protected.Algorithm {
 		return apppki.KeyMaterial{}, errors.New("pki: decrypted key material does not match envelope metadata")
 	}
-	result := material.Clone()
-	clear(material.PrivateKeyPKCS8)
-	return result, nil
+	return material.Clone(), nil
 }
 
 func (p EnvelopeProtector) AuthenticateMetadata(ctx context.Context, data []byte) (apppki.ProtectedMetadata, error) {
@@ -212,9 +220,10 @@ func (p EnvelopeProtector) AuthenticateMetadata(ctx context.Context, data []byte
 	}
 	version, key, err := p.provider.ActiveMasterKey(ctx)
 	if err != nil {
+		key.Clear()
 		return apppki.ProtectedMetadata{}, fmt.Errorf("pki: load active workspace master key: %w", err)
 	}
-	return p.authenticateMetadataWithKey(data, version, key)
+	return p.authenticateMetadataWithOwnedKey(data, version, &key)
 }
 
 func (p EnvelopeProtector) AuthenticateMetadataWithVersion(ctx context.Context, data []byte, version string) (apppki.ProtectedMetadata, error) {
@@ -226,10 +235,10 @@ func (p EnvelopeProtector) AuthenticateMetadataWithVersion(ctx context.Context, 
 	}
 	key, err := p.provider.MasterKey(ctx, version)
 	if err != nil {
+		key.Clear()
 		return apppki.ProtectedMetadata{}, fmt.Errorf("pki: load workspace master key version %q: %w", version, err)
 	}
-	defer clear(key[:])
-	return p.authenticateMetadataWithKey(data, version, key)
+	return p.authenticateMetadataWithOwnedKey(data, version, &key)
 }
 
 func (p EnvelopeProtector) VerifyMetadata(ctx context.Context, data []byte, protected apppki.ProtectedMetadata) error {
@@ -241,10 +250,10 @@ func (p EnvelopeProtector) VerifyMetadata(ctx context.Context, data []byte, prot
 	}
 	key, err := p.provider.MasterKey(ctx, protected.KeyVersion)
 	if err != nil {
+		key.Clear()
 		return fmt.Errorf("pki: load workspace master key version %q: %w", protected.KeyVersion, err)
 	}
-	defer clear(key[:])
-	expected, err := p.authenticateMetadataWithKey(data, protected.KeyVersion, key)
+	expected, err := p.authenticateMetadataWithOwnedKey(data, protected.KeyVersion, &key)
 	if err != nil {
 		return err
 	}
@@ -255,8 +264,17 @@ func (p EnvelopeProtector) VerifyMetadata(ctx context.Context, data []byte, prot
 	return nil
 }
 
-func (p EnvelopeProtector) authenticateMetadataWithKey(data []byte, version string, key MasterKey) (apppki.ProtectedMetadata, error) {
-	defer clear(key[:])
+// authenticateMetadataWithOwnedKey consumes key and clears the caller-owned
+// value before returning on every path.
+func (p EnvelopeProtector) authenticateMetadataWithOwnedKey(
+	data []byte,
+	version string,
+	key *MasterKey,
+) (apppki.ProtectedMetadata, error) {
+	if key == nil {
+		return apppki.ProtectedMetadata{}, errors.New("pki: metadata authentication master key is required")
+	}
+	defer key.Clear()
 	if len(data) == 0 {
 		return apppki.ProtectedMetadata{}, errors.New("pki: metadata authentication input is required")
 	}

@@ -1,0 +1,315 @@
+<!-- hovel-doc: {"title":"Rust Modules","group":"Module Development","order":40,"navTitle":"Rust Modules"} -->
+<article>
+        <h1>Rust Modules</h1>
+        <p>
+          A Rust module compiles to a single binary that the daemon launches by path. The SDK
+          lives at <code>sdk/rust/hovel</code> and is <strong>dependency-free</strong>: it
+          hand-rolls a tiny JSON layer and base64 codec rather than pulling in
+          <code>serde_json</code>, so the whole crate builds with nothing but the standard
+          library. Real modules are free to add whatever crates they like. The worked examples
+          are under <code>modules/examples/rust/</code>. The generated source reference is published at
+          <a href="../api/sdk/rust/hovel/index.html">Rust SDK API</a>.
+        </p>
+        <blockquote>
+          Rust's standard library already defines <code>Result</code>, so this SDK names the
+          module return type <code>Outcome</code>. It is the exact equivalent of the
+          Python/Go <code>Result</code>.
+        </blockquote>
+
+        <h2>The Module trait</h2>
+<pre data-lang="rust"><code>pub trait Module {
+    fn info(&amp;self) -&gt; Info;                       // → handshake
+    fn schema(&amp;self) -&gt; Schema;                   // → schema
+    fn run(&amp;self, ctx: &amp;mut Context) -&gt; Outcome;  // → execute
+}
+
+fn main() { hovel::serve(MyModule); }</code></pre>
+        <p>
+          <code>info</code> and <code>schema</code> are catalog-inspection paths. Keep
+          them fast, deterministic, offline, and side-effect free. Put target I/O,
+          payload building, random target-side names, and listener startup in
+          <code>run</code> or in a Go/Python step provider, not in Rust module metadata.
+        </p>
+        <p>
+          Stdout is reserved for the SDK's framed JSON-RPC stream. Use
+          <code>ctx.info</code> and <code>ctx.error</code> for structured logs, artifacts
+          for captured output, and sessions for interactive streams. Use stderr only for
+          process-level diagnostics.
+        </p>
+
+        <h2>Current SDK boundary</h2>
+        <p>
+          The Rust SDK currently implements the base module lifecycle, structured logs,
+          artifacts, interactive sessions, installed-payload result descriptors, all
+          optional Mesh methods, all five typed credential-provider methods, and
+          authenticated TCP/UDP Mesh bridge clients. It does not dispatch the generic
+          <code>step.*</code> methods or the full payload-provider RPC surface available
+          in Go.
+        </p>
+        <p>
+          Use Rust today for standalone survey or exploit modules where a compiled,
+          dependency-free SDK binary is valuable, including Mesh and credential-aware
+          providers and modules that return installed-payload descriptors from
+          <code>run</code>. Use Go for payload-provider discovery, generation,
+          reconnect, and cleanup RPC. Use Go or Python for capability-native
+          <code>step.*</code> providers.
+        </p>
+
+        <h2>TLS, workspace PKI, and Mesh bridges</h2>
+        <p>
+          A normal Rust module can use its chosen TLS crate inside <code>run</code>
+          without overriding credential methods. Override them only when the module
+          consumes or transforms assignment-bound workspace-PKI material. The base
+          <code>execute</code> path does not automatically receive a resolved PKI bundle.
+        </p>
+        <table>
+          <thead><tr><th>Provider need</th><th><code>Module</code> method</th></tr></thead>
+          <tbody>
+            <tr><td>Describe strict slots and capabilities</td><td><code>describe_credential_delivery</code></td></tr>
+            <tr><td>Consume in-memory bytes or a scoped reference</td><td><code>load_runtime_credential</code></td></tr>
+            <tr><td>Consume invocation-scoped protected files</td><td><code>load_credential_files</code></td></tr>
+            <tr><td>Produce one bounded provider-native encoding</td><td><code>encode_credential_material</code></td></tr>
+            <tr><td>Stamp an artifact or provider-owned deployment</td><td><code>stamp_credential</code></td></tr>
+          </tbody>
+        </table>
+        <p>
+          Override only the methods advertised by <code>CredentialDeliveryDescriptor</code>;
+          every other default returns an explicit unsupported error. Secret wrappers redact
+          <code>Debug</code>, but accessors still expose values to provider code. Keep them
+          scoped to the call and out of logs, errors, outcomes, and durable config. The
+          current external path initiates direct runtime certificate DER, public-key SPKI,
+          and private-key PKCS #8 delivery before Mesh operations. General non-Mesh
+          delivery and external encoding/stamping initiation remain extension points.
+          See <a href="tls-pki.html">TLS and Workspace PKI</a>,
+          <a href="credential-provider-development.html">Credential Provider Development</a>,
+          and the generated <a href="../api/sdk/rust/hovel/index.html">Rust SDK API</a>.
+        </p>
+
+        <h3 id="mesh-bridge-client">Connect to an authenticated Mesh bridge</h3>
+<pre data-lang="rust"><code>use hovel::{
+    connect_mesh_bridge, MeshBridgeConnection, MeshBridgeEndpoint,
+};
+use std::time::Duration;
+
+let endpoint = MeshBridgeEndpoint::from_response(
+    bridge.local_host,
+    u16::try_from(bridge.local_port)?,
+    &amp;bridge.local_network,
+    bridge.capability,
+)?;
+match connect_mesh_bridge(&amp;endpoint, Some(Duration::from_secs(5)))? {
+    MeshBridgeConnection::Tcp(stream) =&gt; use_tcp(stream)?,
+    MeshBridgeConnection::Udp(socket) =&gt; use_udp(socket)?,
+}</code></pre>
+        <p>
+          <code>from_response</code> strictly parses the response's
+          <code>localNetwork</code>, not the provider-defined
+          <code>request.protocol</code>. The generic connector preserves the concrete TCP
+          or UDP socket in an enum; specialized helpers are also available and reject a
+          mismatched endpoint. All helpers validate a canonical numeric loopback address
+          and send the ephemeral bearer capability before application data. Never log or
+          persist it. Use a provider task or session when the protocol cannot preserve TCP
+          stream or UDP datagram semantics. The complete decision map is
+          <a href="../modules/development.html">Build a Module or Provider</a>.
+        </p>
+
+        <h2>A survey module</h2>
+<pre data-lang="modules/examples/rust/mock_survey/src/main.rs"><code>use hovel::json::Value;
+use hovel::{Context, Info, Module, ModuleType, Outcome, Requirement, Schema};
+
+struct MockSurvey;
+
+impl Module for MockSurvey {
+    fn info(&amp;self) -&gt; Info {
+        Info {
+            name: "mock-survey-rust".into(),
+            version: "v0.0.0-example".into(),
+            module_type: ModuleType::Survey,
+            summary: "Collect example target facts.".into(),
+            description: String::new(),
+            tags: vec!["example".into(), "survey".into(), "rust".into()],
+            discovery_context: Vec::new(),
+        }
+    }
+
+    fn schema(&amp;self) -&gt; Schema {
+        Schema {
+            target_config: vec![
+                Requirement::new("target.host", "host", "Target host name or IP address."),
+                Requirement::new("target.port", "port", "Target TCP port."),
+            ],
+            ..Schema::default()
+        }
+    }
+
+    fn run(&amp;self, ctx: &amp;mut Context) -&gt; Outcome {
+        let host = ctx.input_str("target.host", &amp;ctx.target);
+        let port = ctx.input_str("target.port", "unknown");
+        ctx.info("connecting to target",
+            &amp;[("host", Value::from(host.as_str())), ("port", Value::from(port.as_str()))]);
+        let facts = Value::object(vec![
+            ("host", Value::from(host.as_str())),
+            ("port", Value::from(port.as_str())),
+            ("reachable", Value::from(true)),
+        ]);
+        Outcome::ok(vec![("facts".into(), facts)])
+            .with_summary(&amp;format!("example survey reached {host}:{port}"))
+    }
+}
+
+fn main() { hovel::serve(MockSurvey); }</code></pre>
+        <p>
+          <code>ctx.input_str(key, default)</code> resolves a config value as a string.
+          <code>ctx.info(message, fields)</code> emits a <code>module/log</code> notification;
+          fields are <code>(&amp;str, Value)</code> pairs built with the <code>Value::from</code>
+          conversions.
+        </p>
+
+        <h2>Findings and artifacts</h2>
+        <p>The <code>Outcome</code> builder chains with <code>with_*</code> methods.</p>
+<pre data-lang="rust"><code>fn run(&amp;self, ctx: &amp;mut Context) -&gt; Outcome {
+    if ctx.input_str("failure_mode", "") == "execution" {
+        return Outcome::failed("example exploit failed during execution");
+    }
+    Outcome::ok(vec![("target".into(), Value::from(ctx.target.as_str()))])
+        .with_summary("example exploit completed without target interaction")
+        .with_finding(Finding::new(
+            "example exploit path verified", "info",
+            "exercised orchestration without touching a real target",
+        ))
+        .with_artifact(Artifact::inline(
+            "mock-exploit-rust-transcript.txt", "text/plain",
+            "example module invoked through daemon RPC",
+        ))
+}</code></pre>
+        <p>
+          Prefer <code>Outcome::failed</code> for expected operator-facing failures such
+          as "not vulnerable" or "missing confirmation". Reserve panics and process
+          exits for bugs or unrecoverable local failures; otherwise the daemon sees a
+          broken module rather than a useful exploit result.
+        </p>
+
+        <h2>Installed payload records</h2>
+        <p>
+          A Rust exploit that installs or observes a durable target-side payload can
+          return an explicit <code>InstalledPayloadDescriptor</code>. Hovel validates the
+          descriptor, assigns the operator-facing handle, and persists it as installed
+          payload inventory. The Rust module still does not own workspace writes.
+        </p>
+<pre data-lang="rust"><code>use hovel::{InstalledPayloadDescriptor, PayloadProviderRecord};
+
+let payload = InstalledPayloadDescriptor::new(
+    "squatter",
+    "squatter/windows/x86/xp-sp3/tcp-bind/pe-exe",
+    ctx.target.as_str(),
+)
+.with_payload_version("0.1.0")
+.with_transport("tcp-bind")
+.with_endpoint("10.0.0.42:9101")
+.with_supports_reconnect(true)
+.with_reconnect(
+    PayloadProviderRecord::new(
+        "squatter.reconnect.tcp_bind",
+        vec![
+            ("host".into(), Value::from("10.0.0.42")),
+            ("port".into(), Value::from(9101_i64)),
+        ],
+    )
+    .with_schema_version("1"),
+)
+.with_cleanup(PayloadProviderRecord::new(
+    "squatter.cleanup.tcp_bind",
+    vec![("remotePath".into(), Value::from(r"C:\Windows\Temp\n4x9q2.exe"))],
+));
+
+Outcome::ok(vec![("target".into(), Value::from(ctx.target.as_str()))])
+    .with_summary("payload installed and recorded")
+    .with_installed_payload(payload)</code></pre>
+
+        <h2>Interactive sessions</h2>
+        <p>
+          <code>LineShellSession::new</code> takes a prompt, an echo flag, and a command
+          handler closure. <code>ctx.open_session</code> registers it; the session outlives
+          <code>run</code>.
+        </p>
+<pre data-lang="rust"><code>fn run(&amp;self, ctx: &amp;mut Context) -&gt; Outcome {
+    let target = ctx.target.clone();
+    let shell = LineShellSession::new("mock$ ", true, move |command| match command {
+        "whoami" =&gt; "mock-operator".to_string(),
+        other =&gt; format!("mock-shell: command not found: {other}"),
+    });
+    let sref = match ctx.open_session(
+        Box::new(shell),
+        SessionOptions::default()
+            .with_name(&amp;format!("mock shell on {target}"))
+            .with_capabilities(&amp;["read", "write", "exec", "close"]),
+    ) {
+        Ok(sref) =&gt; sref,
+        Err(err) =&gt; return Outcome::failed(&amp;format!("failed to open session: {err}")),
+    };
+    Outcome::ok(vec![("sessionId".into(), Value::from(sref.id.as_str()))])
+        .with_summary("mock exploit opened an interactive shell session")
+}</code></pre>
+
+        <h2>Test without the daemon</h2>
+        <p>
+          Keep pure module behavior testable through ordinary Rust tests. For protocol
+          coverage, use the SDK's <code>serve_with</code> helper with an in-memory reader
+          and writer; that exercises the same <code>Content-Length</code> framing the
+          daemon uses.
+        </p>
+<pre data-lang="rust"><code>#[test]
+fn info_is_a_rust_exploit() {
+    let info = MockExploit.info();
+    assert_eq!(info.name, "mock-exploit-rust");
+    assert_eq!(info.module_type, ModuleType::Exploit);
+}</code></pre>
+<p>
+          The Rust SDK and in-repo Rust examples now live outside the core Bazel
+          workspace. Validate them through <code>task sdk:test</code>,
+          <code>task sdk:ci</code>, <code>task modules:examples:test</code>, and
+          <code>task modules:examples:ci</code>; the Task-backed targets remain hermetic.
+        </p>
+        <p>
+          For real exploit work, keep parsers, packet builders, state machines, and
+          result construction behind testable functions. Reserve live target execution
+          for an authorized lab; CI should stay offline and deterministic.
+        </p>
+
+        <h2>Build, package, and run</h2>
+        <p>
+          Rust examples are part of the <code>modules/</code> slice after the
+          partial-checkout split. Use <code>task modules:examples:ci</code> for the
+          language examples, <code>task modules:ci</code> for the full module slice,
+          and <code>task release:modules-package</code> for installable archives. These
+          remain separate from the core-only <code>task build</code> gate while
+          <code>task ci</code> composes them in a full checkout.
+        </p>
+<pre data-lang="modules/examples/rust/mock_survey/BUILD.bazel"><code>rust_binary(
+    name = "mock-survey-rust",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = ["//sdk/rust/hovel"],
+)</code></pre>
+<pre data-lang="hovel-module.yaml"><code>apiVersion: hovel.dev/v1alpha1
+kind: ModulePackage
+metadata:
+  name: mock-survey-rust
+  version: 0.1.0
+  moduleType: survey
+runtime:
+  protocol: jsonrpc-stdio
+launch:
+  - selector:
+      os: linux
+      arch: amd64
+    command: ["bin/linux-amd64/mock-survey-rust"]</code></pre>
+<pre data-lang="shell"><code>hovel module install --link "$PWD/modules/examples/rust/mock_survey"
+task start
+hovel&gt; module installed   # ... mock-survey-rust, mock-exploit-rust, mock-exploit-session-rust</code></pre>
+        <p>
+          That completes the trio: the same three modules in
+          <a href="module-python.html">Python</a>, <a href="module-go.html">Go</a>, and Rust,
+          all speaking the one <a href="module-protocol.html">wire protocol</a>.
+        </p>
+      </article>

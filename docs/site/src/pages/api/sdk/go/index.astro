@@ -1,0 +1,13 @@
+---
+import ApiLanding from "../../../../components/ApiLanding.astro";
+import { apiReferences } from "../../../../lib/apiReferences";
+
+const goReferences = apiReferences.filter((reference) => reference.language === "Go");
+---
+
+<ApiLanding
+  description="Static source reference for the Hovel Go SDK and its test helpers."
+  references={goReferences}
+  root="../../../"
+  title="Go SDK API"
+/>

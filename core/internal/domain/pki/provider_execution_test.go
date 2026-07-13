@@ -43,8 +43,9 @@ func TestCredentialProviderExecutionJSONIsStrictAndRoundTrips(t *testing.T) {
 				Files: []CredentialFile{{
 					Projection: CredentialProjectionCertificateDER,
 					Form:       CredentialMaterialPublic,
+					Encoding:   CredentialEncodingRaw,
 					MediaType:  "application/pkix-cert",
-					Path:       "/protected/certificate.der",
+					Path:       NewCredentialProtectedPath("/protected/certificate.der"),
 					SHA256:     strings.Repeat("a", 64),
 					Size:       128,
 				}},
@@ -194,6 +195,97 @@ func TestCredentialConsumerBindingConstructors(t *testing.T) {
 	}
 	if _, err := NewMeshListenerConsumer("mesh", ""); err == nil {
 		t.Fatal("NewMeshListenerConsumer() accepted an empty listener id")
+	}
+}
+
+func TestCredentialConsumerBindingCanonicalizesScopedIDComponents(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		new          func(string, string) (CredentialConsumerBinding, error)
+		consumerType ConsumerType
+	}{
+		{
+			name:         "listener",
+			new:          NewMeshListenerConsumer,
+			consumerType: ConsumerMeshListener,
+		},
+		{
+			name:         "node",
+			new:          NewMeshNodeConsumer,
+			consumerType: ConsumerMeshNode,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			providerWithSlash, err := test.new("a/b", "c")
+			if err != nil {
+				t.Fatal(err)
+			}
+			subjectWithSlash, err := test.new("a", "b/c")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if providerWithSlash.ID == subjectWithSlash.ID {
+				t.Fatalf("ambiguous scoped bindings both encoded as %q", providerWithSlash.ID)
+			}
+			if !strings.HasPrefix(
+				string(providerWithSlash.ID),
+				credentialConsumerDigestPrefix,
+			) {
+				t.Fatalf("provider-scoped binding id = %q, want opaque digest", providerWithSlash.ID)
+			}
+			if !strings.HasPrefix(
+				string(subjectWithSlash.ID),
+				credentialConsumerDigestPrefix,
+			) {
+				t.Fatalf("subject-scoped binding id = %q, want opaque digest", subjectWithSlash.ID)
+			}
+
+			providerBoundarySlash, err := test.new("a/", "b")
+			if err != nil {
+				t.Fatal(err)
+			}
+			subjectBoundarySlash, err := test.new("a", "/b")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if providerBoundarySlash.ID == subjectBoundarySlash.ID {
+				t.Fatalf(
+					"boundary-slash scoped bindings both encoded as %q",
+					providerBoundarySlash.ID,
+				)
+			}
+			repeated, err := test.new("a/b", "c")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if repeated.ID != providerWithSlash.ID {
+				t.Fatalf(
+					"scoped binding id is not deterministic: %q then %q",
+					providerWithSlash.ID,
+					repeated.ID,
+				)
+			}
+
+			providerAssignment := Assignment{
+				ConsumerType: test.consumerType,
+				ConsumerID:   providerWithSlash.ID,
+			}
+			subjectAssignment := Assignment{
+				ConsumerType: test.consumerType,
+				ConsumerID:   subjectWithSlash.ID,
+			}
+			if !providerWithSlash.Matches(providerAssignment) ||
+				!subjectWithSlash.Matches(subjectAssignment) {
+				t.Fatal("canonical scoped binding did not match its assignment")
+			}
+			if providerWithSlash.Matches(subjectAssignment) ||
+				subjectWithSlash.Matches(providerAssignment) {
+				t.Fatal("distinct scoped bindings matched each other's assignment")
+			}
+		})
 	}
 }
 
@@ -517,18 +609,24 @@ func TestCredentialSecretsAreRedactedAndCloned(t *testing.T) {
 	if material.Data[0] == clone.Data[0] {
 		t.Fatal("ResolvedCredentialMaterial.Clone() aliased secret bytes")
 	}
-	for _, formatted := range []string{
-		fmt.Sprint(material.Data),
-		fmt.Sprintf("%#v", material.Data),
-		fmt.Sprint(CredentialSecretReference("provider-secret")),
-		fmt.Sprintf("%#v", CredentialProtectedPath("/secret/path")),
-	} {
-		if formatted != redactedCredentialSecret {
-			t.Fatalf("secret formatting = %q, want redaction", formatted)
+	reference := NewCredentialSecretReference("provider-secret")
+	path := NewCredentialProtectedPath("/secret/path")
+	for _, value := range []any{material.Data, &material.Data, reference, &reference, path, &path} {
+		for _, format := range []string{"%s", "%q", "%x", "%v", "%+v", "%#v"} {
+			formatted := fmt.Sprintf(format, value)
+			if formatted != redactedCredentialSecret {
+				t.Fatalf("secret formatting %s = %q, want redaction", format, formatted)
+			}
+		}
+		formattedPointer := fmt.Sprintf("%p", value)
+		for _, secret := range []string{"provider-secret", "/secret/path"} {
+			if strings.Contains(formattedPointer, secret) {
+				t.Fatalf("secret pointer formatting leaked %q: %s", secret, formattedPointer)
+			}
 		}
 	}
 
-	encoded, err := json.Marshal(CredentialSecretReference("provider-secret"))
+	encoded, err := json.Marshal(reference)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,8 +735,9 @@ func TestCredentialFilesRequestRejectsDuplicatePath(t *testing.T) {
 	file := CredentialFile{
 		Projection: CredentialProjectionCertificateDER,
 		Form:       CredentialMaterialPublic,
+		Encoding:   CredentialEncodingRaw,
 		MediaType:  "application/pkix-cert",
-		Path:       "/protected/certificate.der",
+		Path:       NewCredentialProtectedPath("/protected/certificate.der"),
 		SHA256:     strings.Repeat("a", 64),
 		Size:       128,
 	}
@@ -653,6 +752,11 @@ func TestCredentialFilesRequestRejectsDuplicatePath(t *testing.T) {
 	}
 	if err := request.Validate(); err == nil {
 		t.Fatal("Validate() accepted duplicate credential file paths")
+	}
+	request.Files = []CredentialFile{file}
+	request.Files[0].Encoding = ""
+	if err := request.Validate(); err == nil {
+		t.Fatal("Validate() accepted a credential file without an encoding")
 	}
 }
 
@@ -784,8 +888,9 @@ func validCredentialFilesRequest() CredentialFilesRequest {
 		Files: []CredentialFile{{
 			Projection: CredentialProjectionCertificateDER,
 			Form:       CredentialMaterialPublic,
+			Encoding:   CredentialEncodingRaw,
 			MediaType:  "application/pkix-cert",
-			Path:       "/protected/certificate.der",
+			Path:       NewCredentialProtectedPath("/protected/certificate.der"),
 			SHA256:     strings.Repeat("a", 64),
 			Size:       128,
 		}},

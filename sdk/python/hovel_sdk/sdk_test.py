@@ -1,11 +1,13 @@
 import asyncio
 import base64
+import hashlib
 import io
 import logging
 import tempfile
 import threading
 import unittest
-from dataclasses import asdict
+from collections.abc import Callable
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, BinaryIO, ClassVar, cast
 
@@ -13,6 +15,7 @@ import pytest
 
 from hovel_sdk import (
     CREDENTIAL_DELIVERY_SCHEMA_V1,
+    CREDENTIAL_ENCODING_RAW,
     CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1,
     MESH_LISTENER_DEPLOYMENT_SEPARATE,
     MESH_LISTENER_MANAGEMENT_PROVIDER,
@@ -44,15 +47,18 @@ from hovel_sdk import (
     CredentialMaterialForm,
     CredentialMaterialReference,
     CredentialNamedSlotTarget,
+    CredentialOperationScope,
     CredentialPrivateMaterialPolicy,
     CredentialProjection,
     CredentialProtectedPath,
+    CredentialProviderTarget,
     CredentialPurpose,
     CredentialReferencedStampMaterial,
     CredentialRuntimeRequest,
     CredentialScopedReference,
     CredentialSecretReference,
     CredentialSlot,
+    CredentialStampedMaterialDigest,
     CredentialStampExecutionRequest,
     CredentialStampExecutionResult,
     CredentialStampPrecondition,
@@ -92,7 +98,13 @@ from hovel_sdk import (
     SessionRef,
     setup_logging,
 )
-from hovel_sdk.credential_delivery import _required_int
+from hovel_sdk.credential_delivery import (
+    _credential_material_reference_from_rpc,
+    _credential_precondition_from_rpc,
+    _credential_stamp_material_from_rpc,
+    _credential_stamp_target_from_rpc,
+    _required_int,
+)
 from hovel_sdk.framing import (
     MAX_FRAME_BYTES,
     FrameError,
@@ -107,6 +119,7 @@ from hovel_sdk.testing import ModuleRPC, RPCError, drive_module
 
 
 def test_advanced_credential_stamp_contract_uses_canonical_wire_types() -> None:
+    maximum_binary_bytes = 24 << 20
     request = CredentialStampRequest(
         assignment_id="assignment-1",
         capability=CredentialDeliveryCapability.STAMP_ADVANCED,
@@ -115,7 +128,7 @@ def test_advanced_credential_stamp_contract_uses_canonical_wire_types() -> None:
             pattern=b"\xaa\xbb",
             mask=b"\xff\x0f",
             occurrence=1,
-            maximum_length="18446744073709551615",
+            maximum_length=str(maximum_binary_bytes),
             remainder_policy=CredentialStampRemainderPolicy.ZERO_FILL,
             precondition=CredentialStampPrecondition(
                 kind=CredentialStampPreconditionKind.SHA256,
@@ -141,7 +154,7 @@ def test_advanced_credential_stamp_contract_uses_canonical_wire_types() -> None:
     )
 
     wire = request.to_rpc()
-    assert wire["target"]["bytePattern"]["maximumLength"] == "18446744073709551615"
+    assert wire["target"]["bytePattern"]["maximumLength"] == str(maximum_binary_bytes)
     assert base64.b64decode(wire["target"]["bytePattern"]["pattern"]) == b"\xaa\xbb"
     assert wire["material"]["credential"]["bundleId"] == "bundle-1"
     assert wire["credential"]["compatibilityTargetId"] == "mbedtls-3"
@@ -161,8 +174,9 @@ def test_credential_provider_secrets_are_redacted_from_repr() -> None:
     protected_file = CredentialFile(
         projection=CredentialProjection.PRIVATE_KEY_PKCS8,
         form=CredentialMaterialForm.PRIVATE_BYTES,
+        encoding=CREDENTIAL_ENCODING_RAW,
         media_type="application/pkcs8",
-        path="/secret/private-key.der",
+        path=CredentialProtectedPath("/secret/private-key.der"),
         sha256="b" * 64,
         size=32,
     )
@@ -177,6 +191,12 @@ def test_credential_provider_secrets_are_redacted_from_repr() -> None:
         assert secret not in diagnostic
         assert secret not in repr(asdict(material))
         assert secret not in repr(asdict(artifact))
+    assert protected_file.path.value == "/secret/private-key.der"
+    assert protected_file.path.reveal() == "/secret/private-key.der"
+    assert "/secret/private-key.der" not in str(protected_file.path)
+    assert "/secret/private-key.der" not in repr(asdict(protected_file))
+    with pytest.raises(TypeError, match="protected path must be a string"):
+        CredentialProtectedPath(1)  # type: ignore[arg-type]
 
 
 def test_credential_base64_rejects_noncanonical_pad_bits() -> None:
@@ -384,6 +404,171 @@ def test_credential_integer_contract_bounds() -> None:
         for invalid in invalid_wire_values:
             with pytest.raises(TypeError, match=field_name):
                 _required_int({field_name: invalid}, field_name)
+
+
+def test_credential_tagged_unions_reject_inactive_fields() -> None:
+    cases: tuple[tuple[Callable[[dict[str, Any]], object], dict[str, Any]], ...] = (
+        (
+            _credential_precondition_from_rpc,
+            {"kind": "none", "bytes": base64.b64encode(b"inactive").decode("ascii")},
+        ),
+        (
+            _credential_stamp_target_from_rpc,
+            {
+                "kind": "named-slot",
+                "namedSlot": {"name": "tls-server"},
+                "marker": {
+                    "marker": base64.b64encode(b"inactive").decode("ascii"),
+                    "occurrence": 0,
+                    "maximumLength": "8",
+                    "remainderPolicy": "preserve",
+                    "precondition": {"kind": "none"},
+                },
+            },
+        ),
+        (
+            _credential_material_reference_from_rpc,
+            {
+                "projection": "bundle",
+                "form": "private-bytes",
+                "bundleId": "bundle-1",
+                "generationId": "inactive-generation",
+            },
+        ),
+        (
+            _credential_stamp_material_from_rpc,
+            {
+                "projection": "bundle",
+                "credential": {
+                    "projection": "bundle",
+                    "form": "private-bytes",
+                    "bundleId": "bundle-1",
+                },
+                "literalReference": {
+                    "reference": "inactive-reference",
+                    "sha256": "0" * 64,
+                    "form": "private-bytes",
+                },
+            },
+        ),
+    )
+    for parser, value in cases:
+        with pytest.raises(ValueError, match="inactive variant field"):
+            parser(value)
+
+
+def test_credential_provider_results_validate_against_requests() -> None:
+    source_data = b"source-material"
+    source = ResolvedCredentialMaterial(
+        projection=CredentialProjection.BUNDLE,
+        form=CredentialMaterialForm.PRIVATE_BYTES,
+        encoding="raw",
+        sha256=hashlib.sha256(source_data).hexdigest(),
+        value=CredentialBytes(source_data),
+    )
+    provider = CredentialProviderTarget(
+        module_id="provider-module",
+        provider_id="provider-1",
+        provider_version="v1",
+        descriptor_sha256="0" * 64,
+    )
+    encoding_request = CredentialEncodingRequest(
+        request_id="encoding-1",
+        provider=provider,
+        provider_id=provider.provider_id,
+        provider_schema="v1",
+        output_form=CredentialMaterialForm.PRIVATE_BYTES,
+        maximum_encoded_bytes=8,
+        source=source,
+        scope=CredentialOperationScope(),
+    )
+    encoded_data = b"encoded"
+    encoding_result = CredentialEncodingResult(
+        request_id=encoding_request.request_id,
+        form=encoding_request.output_form,
+        encoding="provider-test",
+        sha256=hashlib.sha256(encoded_data).hexdigest(),
+        data=encoded_data,
+    )
+    encoding_result.validate_for(encoding_request)
+
+    with pytest.raises(ValueError, match="sha256 does not match"):
+        replace(encoding_result, sha256="1" * 64).validate_for(encoding_request)
+    with pytest.raises(ValueError, match="does not match its request"):
+        replace(encoding_result, form=CredentialMaterialForm.PUBLIC).validate_for(encoding_request)
+    with pytest.raises(ValueError, match="does not match its request"):
+        encoding_result.validate_for(replace(encoding_request, maximum_encoded_bytes=1))
+
+    metadata = ResolvedCredentialMetadata(
+        bundle_version="hovel.pki.bundle/v1",
+        purpose=CredentialPurpose.TLS_SERVER,
+        consumer_type=CredentialConsumerType.MESH_LISTENER,
+        profile_id="tls-server",
+        compatibility_target_id="portable-x509",
+    )
+    target = CredentialNamedSlotTarget(name="tls-server")
+    stamp_request = CredentialStampExecutionRequest(
+        stamp_id="stamp-1",
+        provider=provider,
+        request=CredentialStampRequest(
+            assignment_id="assignment-1",
+            capability=CredentialDeliveryCapability.STAMP_STANDARD,
+            slot_name="tls-server",
+            target=target,
+            material=CredentialReferencedStampMaterial(
+                CredentialMaterialReference(
+                    projection=CredentialProjection.BUNDLE,
+                    form=CredentialMaterialForm.PRIVATE_BYTES,
+                    bundle_id="bundle-1",
+                )
+            ),
+            encoded_bytes=7,
+            credential=metadata,
+        ),
+        input=CredentialArtifactInput(
+            artifact_id="artifact-1",
+            sha256=hashlib.sha256(b"input").hexdigest(),
+            encoding="raw",
+            content=CredentialBytes(b"input"),
+        ),
+        material=source,
+        expected_digests=[
+            CredentialStampedMaterialDigest(
+                projection=CredentialProjection.BUNDLE,
+                reference="bundle-1",
+                sha256="2" * 64,
+            )
+        ],
+        scope=CredentialOperationScope(),
+    )
+    stamp_result = CredentialStampExecutionResult(
+        stamp_id=stamp_request.stamp_id,
+        output=CredentialArtifactOutput(
+            name="stamped.bin",
+            encoding="raw",
+            content=CredentialBytes(b"stamped"),
+        ),
+        target_resolution=CredentialStampTargetResolution.UNCHANGED,
+        resolved_target=target,
+        bytes_written="7",
+        material_digests=list(stamp_request.expected_digests),
+    )
+    stamp_result.validate_for(stamp_request)
+
+    with pytest.raises(ValueError, match="byte count"):
+        replace(stamp_result, bytes_written="6").validate_for(stamp_request)
+    with pytest.raises(ValueError, match="unchanged credential stamp target"):
+        replace(stamp_result, resolved_target=CredentialNamedSlotTarget(name="other-slot")).validate_for(stamp_request)
+    with pytest.raises(ValueError, match="material digests"):
+        replace(
+            stamp_result,
+            material_digests=[replace(stamp_request.expected_digests[0], sha256="3" * 64)],
+        ).validate_for(stamp_request)
+
+    receipt = CredentialDeliveryReceipt(request_id="request-1", provider_reference="accepted")
+    receipt.validate_for("request-1")
+    with pytest.raises(ValueError, match="does not match its request"):
+        receipt.validate_for("other-request")
 
 
 class EchoModule(HovelModule):
@@ -683,12 +868,13 @@ class MeshModule(HovelModule):
         return CredentialDeliveryReceipt(request_id=request.request_id, provider_reference="files-loaded")
 
     def encode_credential_material(self, request: CredentialEncodingRequest) -> CredentialEncodingResult:
+        encoded = b"encoded"
         return CredentialEncodingResult(
             request_id=request.request_id,
             form=request.output_form,
             encoding="provider-test",
-            sha256="1" * 64,
-            data=b"encoded",
+            sha256=hashlib.sha256(encoded).hexdigest(),
+            data=encoded,
         )
 
     def stamp_credential(self, request: CredentialStampExecutionRequest) -> CredentialStampExecutionResult:
@@ -1099,7 +1285,7 @@ class SDKTest(unittest.TestCase):
             "projection": "bundle",
             "form": "private-bytes",
             "encoding": "hovel-bundle-json",
-            "sha256": "0" * 64,
+            "sha256": hashlib.sha256(b"private-bundle").hexdigest(),
             "data": base64.b64encode(b"private-bundle").decode(),
         }
         provider = {
@@ -1136,6 +1322,7 @@ class SDKTest(unittest.TestCase):
                         {
                             "projection": "certificate-der",
                             "form": "public",
+                            "encoding": CREDENTIAL_ENCODING_RAW,
                             "mediaType": "application/pkix-cert",
                             "path": "/provider-input/certificate.der",
                             "sha256": "1" * 64,
@@ -1186,7 +1373,7 @@ class SDKTest(unittest.TestCase):
                     },
                     "input": {
                         "id": "artifact-1",
-                        "sha256": "3" * 64,
+                        "sha256": hashlib.sha256(b"input").hexdigest(),
                         "encoding": "raw",
                         "data": base64.b64encode(b"input").decode(),
                     },
@@ -1524,4 +1711,4 @@ class SDKTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__]))
+    raise SystemExit(pytest.main([__file__, "-p", "no:cacheprovider"]))

@@ -6,7 +6,7 @@ payload-provider modules, and Mesh providers.
 
 For a complete Mesh development path—capability design, tasking, streams,
 listening posts, daemon calls, and routing an existing module through a local
-bridge—see the [Mesh Provider Development Guide](../../docs/site/spec/mesh-development.html).
+bridge—see the [Mesh Provider Development Guide](../../docs/site/src/content/spec/mesh-development.html).
 
 Import path:
 
@@ -114,20 +114,22 @@ authenticated connection without implementing the security preface:
 endpoint, err := hovel.NewMeshBridgeEndpoint(
     bridge.LocalHost,
     bridge.LocalPort,
-    hovel.MeshBridgeCapability(bridge.Capability),
+    hovel.MeshBridgeNetwork(bridge.LocalNetwork),
+    bridge.Capability,
 )
 if err != nil {
     return err
 }
-connection, err := hovel.DialMeshBridge(ctx, hovel.MeshBridgeNetworkTCP, endpoint)
+connection, err := hovel.DialMeshBridge(ctx, endpoint)
 if err != nil {
     return err
 }
 defer connection.Close()
 ```
 
-Use `MeshBridgeNetworkUDP` for a UDP association. The helper sends the bearer
-capability first and returns a socket ready for protocol bytes. Keep the
+The endpoint retains the response's `localNetwork`, so callers cannot
+accidentally dial a UDP bridge as TCP or vice versa. The helper sends the bearer
+capability first and returns a connection ready for protocol bytes. Keep the
 capability in memory; never put it in logs, results, or durable configuration.
 
 ## Credential Delivery Providers
@@ -181,17 +183,29 @@ func (RuntimeCredentialProvider) DescribeCredentialDelivery() (hovel.CredentialD
 		SchemaVersion: hovel.CredentialDeliverySchemaV1,
 		Capabilities:  []hovel.CredentialDeliveryCapability{hovel.CredentialDeliveryRuntime},
 		Slots: []hovel.CredentialSlot{{
-			Name: "control-plane-mtls", Purpose: hovel.CredentialPurposeMTLSServer,
+			Name: "control-plane-mtls-certificate", Purpose: hovel.CredentialPurposeMTLSServer,
 			EndpointRole: hovel.CredentialEndpointServer,
 			ConsumerType: hovel.CredentialConsumerMeshListener,
 			AcceptedBundleVersions: []string{"hovel.pki.bundle/v1"},
 			AcceptedProfiles: []string{"mtls-server"},
 			AcceptedCompatibilityTargets: []string{"portable-x509"},
-			AcceptedProjections: []hovel.CredentialProjection{hovel.CredentialProjectionBundle},
+			AcceptedProjections: []hovel.CredentialProjection{hovel.CredentialProjectionCertificateDER},
+			AcceptedMaterialForms: []hovel.CredentialMaterialForm{hovel.CredentialMaterialPublic},
+			MaximumEncodedBytes: 64 << 10,
+			RemainderPolicy: hovel.CredentialStampRemainderPreserve,
+			PrivateMaterial: hovel.CredentialPrivateMaterialForbidden,
+		}, {
+			Name: "control-plane-mtls-private-key", Purpose: hovel.CredentialPurposeMTLSServer,
+			EndpointRole: hovel.CredentialEndpointServer,
+			ConsumerType: hovel.CredentialConsumerMeshListener,
+			AcceptedBundleVersions: []string{"hovel.pki.bundle/v1"},
+			AcceptedProfiles: []string{"mtls-server"},
+			AcceptedCompatibilityTargets: []string{"portable-x509"},
+			AcceptedProjections: []hovel.CredentialProjection{hovel.CredentialProjectionPrivateKeyPKCS8},
 			AcceptedMaterialForms: []hovel.CredentialMaterialForm{hovel.CredentialMaterialPrivateBytes},
 			MaximumEncodedBytes: 64 << 10,
 			RemainderPolicy: hovel.CredentialStampRemainderPreserve,
-			PrivateMaterial: hovel.CredentialPrivateMaterialAllowed,
+			PrivateMaterial: hovel.CredentialPrivateMaterialRequired,
 		}},
 	}, nil
 }

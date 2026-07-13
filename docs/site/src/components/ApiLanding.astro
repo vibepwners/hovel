@@ -1,0 +1,40 @@
+---
+import type { ApiReference } from "../lib/apiReferences";
+import PageShell from "../layouts/PageShell.astro";
+
+interface Props {
+  description: string;
+  references: ApiReference[];
+  root: string;
+  title: string;
+}
+
+const { description, references, root, title } = Astro.props;
+---
+
+<PageShell
+  area="api"
+  current="API Docs"
+  description={description}
+  root={root}
+  tag="// api"
+  title={`${title} - Hovel`}
+>
+  <main class="content api-landing">
+    <h1>{title}</h1>
+    <p>{description}</p>
+    <div class="tiles api-reference-grid">
+      {references.map((reference) => (
+        <a class="tile" href={`${root}${reference.href}`}>
+          <span class="tile-label">{reference.language}</span>
+          <span class="tile-title">{reference.title}</span>
+          <code class="api-reference-name">{reference.subtitle}</code>
+          <span class="tile-desc">{reference.description}</span>
+        </a>
+      ))}
+    </div>
+    <p class="api-native-note">
+      Each link opens the native documentation interface for that language. Return here for the shared Hovel documentation navigation and search.
+    </p>
+  </main>
+</PageShell>

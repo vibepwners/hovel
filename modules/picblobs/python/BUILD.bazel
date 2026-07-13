@@ -17,6 +17,11 @@ filegroup(
 )
 
 filegroup(
+    name = "source_package_files",
+    srcs = glob(["picblobs/**/*.py"]),
+)
+
+filegroup(
     name = "quality_sources",
     srcs = glob(
         [
@@ -52,7 +57,7 @@ platform_filegroup(
 
 py_test(
     name = "sync_test",
-    size = "small",
+    size = "medium",
     srcs = [
         "tests/_test_env.py",
         "tests/bazel_pytest.py",
@@ -87,7 +92,7 @@ py_test(
 
 py_test(
     name = "pytest_suite",
-    size = "small",
+    size = "medium",
     srcs = glob(["tests/**/*.py"]),
     args = [
         "--clang-format=$(rootpath //core/tools/lint:clang_format)",

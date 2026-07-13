@@ -55,7 +55,9 @@ go_test(
     name = "pki_race_test",
     srcs = [
         "credential_execution_service_test.go",
+        "credential_resolution_test.go",
         "service_test.go",
+        "stamp_service_test.go",
     ],
     race = "on",
     tags = ["manual"],

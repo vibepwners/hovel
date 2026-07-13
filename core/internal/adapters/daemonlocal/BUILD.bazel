@@ -30,6 +30,7 @@ go_test(
     embed = [":daemonlocal"],
     deps = [
         "//internal/app/pki",
+        "//internal/app/services",
         "//internal/domain/pki",
         "//internal/infra/daemonruntime",
         "//internal/infra/pki",

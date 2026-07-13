@@ -76,10 +76,16 @@ tasks:
     cmds:
       - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:module-lock
 
+  module:lock:check:
+    desc: "Verify the standalone Bazel module lock is fresh"
+    cmds:
+      - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:module-lock-check
+
   # -------------------------------------------------------------- check ---
   check:
-    desc: "Run every non-mutating check: codegen freshness, format, lint, C lint"
+    desc: "Run every non-mutating check: module lock, codegen, format, lint, C lint"
     cmds:
+      - task: module:lock:check
       - task: generate:check
       - task: fmt:check
       - task: lint:check
@@ -124,7 +130,7 @@ tasks:
       - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:mbed-blobs -- {{.CLI_ARGS}}
 
   mbed:compile:
-    desc: "Compile the PoC against the checked-out Mbed OS 5.15.9 target SDK"
+    desc: "Compile the PoC against the pinned Bazel-managed Mbed OS 5.15.9 SDK"
     cmds:
       - task -t "{{.REPO_ROOT}}/Taskfile.yml" picblobs:mbed-compile -- {{.CLI_ARGS}}
 

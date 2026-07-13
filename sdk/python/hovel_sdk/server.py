@@ -199,7 +199,7 @@ class JSONRPCServer:
                 "CredentialDeliveryReceipt",
                 await _resolve(self._module.load_runtime_credential(runtime_request)),
             )
-            _require_matching_credential_id(runtime_request.request_id, receipt.request_id, "receipt requestId")
+            receipt.validate_for(runtime_request.request_id)
             return receipt.to_rpc()
         if method == _CREDENTIAL_RPC_FILES_METHOD:
             files_request = CredentialFilesRequest.from_rpc(params)
@@ -207,11 +207,7 @@ class JSONRPCServer:
                 "CredentialDeliveryReceipt",
                 await _resolve(self._module.load_credential_files(files_request)),
             )
-            _require_matching_credential_id(
-                files_request.request_id,
-                files_receipt.request_id,
-                "receipt requestId",
-            )
+            files_receipt.validate_for(files_request.request_id)
             return files_receipt.to_rpc()
         if method == _CREDENTIAL_RPC_ENCODE_METHOD:
             encoding_request = CredentialEncodingRequest.from_rpc(params)
@@ -219,11 +215,7 @@ class JSONRPCServer:
                 "CredentialEncodingResult",
                 await _resolve(self._module.encode_credential_material(encoding_request)),
             )
-            _require_matching_credential_id(
-                encoding_request.request_id,
-                encoding_result.request_id,
-                "result requestId",
-            )
+            encoding_result.validate_for(encoding_request)
             return encoding_result.to_rpc()
         if method == _CREDENTIAL_RPC_STAMP_METHOD:
             stamp_request = CredentialStampExecutionRequest.from_rpc(params)
@@ -231,7 +223,7 @@ class JSONRPCServer:
                 "CredentialStampExecutionResult",
                 await _resolve(self._module.stamp_credential(stamp_request)),
             )
-            _require_matching_credential_id(stamp_request.stamp_id, stamp_result.stamp_id, "result stampId")
+            stamp_result.validate_for(stamp_request)
             return stamp_result.to_rpc()
         raise ValueError(f"unknown method {method!r}")
 
@@ -361,11 +353,6 @@ def _required_mesh_listener_id(listener_id: str) -> str:
     if not listener_id:
         raise ValueError("mesh listener listenerId is required")
     return listener_id
-
-
-def _require_matching_credential_id(expected: str, actual: str, label: str) -> None:
-    if actual.strip() != expected:
-        raise ValueError(f"credential provider {label} {actual!r} does not match requested id {expected!r}")
 
 
 def _required_handshake_string(info: dict[str, Any], key: str) -> str:

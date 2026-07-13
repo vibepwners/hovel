@@ -445,7 +445,8 @@ func (s Service) StageAssignment(ctx context.Context, request StageAssignmentReq
 	if err != nil {
 		return AssignmentInspection{}, err
 	}
-	if err := validateAssignmentGeneration(assignment, generation); err != nil {
+	now := s.clock.Now().UTC()
+	if err := validateAssignmentGenerationAt(assignment, generation, now); err != nil {
 		return AssignmentInspection{}, err
 	}
 	trustGenerationID, err := s.resolveAssignmentTrustGeneration(ctx, assignment.Purpose, assignment.TrustSetID)
@@ -459,7 +460,7 @@ func (s Service) StageAssignment(ctx context.Context, request StageAssignmentReq
 	if err != nil {
 		return AssignmentInspection{}, err
 	}
-	updated.UpdatedAt = s.clock.Now().UTC()
+	updated.UpdatedAt = now
 	if err := updated.Validate(); err != nil {
 		return AssignmentInspection{}, err
 	}
@@ -511,7 +512,8 @@ func (s Service) ActivateAssignment(ctx context.Context, request ActivateAssignm
 	if err != nil {
 		return AssignmentInspection{}, err
 	}
-	if err := validateAssignmentGeneration(assignment, generation); err != nil {
+	now := s.clock.Now().UTC()
+	if err := validateAssignmentGenerationAt(assignment, generation, now); err != nil {
 		return AssignmentInspection{}, err
 	}
 	if assignment.Purpose.RequiresPeerTrust() && assignment.StagedTrustGenerationID == "" {
@@ -535,7 +537,7 @@ func (s Service) ActivateAssignment(ctx context.Context, request ActivateAssignm
 	if err != nil {
 		return AssignmentInspection{}, err
 	}
-	updated.UpdatedAt = s.clock.Now().UTC()
+	updated.UpdatedAt = now
 	if err := updated.Validate(); err != nil {
 		return AssignmentInspection{}, err
 	}
@@ -742,6 +744,23 @@ func validateAssignmentGeneration(assignment domainpki.Assignment, generation do
 	}
 	if generation.State != domainpki.CertificateStateActive {
 		return errors.New("pki: assignment certificate generation is not active")
+	}
+	return nil
+}
+
+func validateAssignmentGenerationAt(
+	assignment domainpki.Assignment,
+	generation domainpki.CertificateGeneration,
+	now time.Time,
+) error {
+	if err := validateAssignmentGeneration(assignment, generation); err != nil {
+		return err
+	}
+	if now.Before(generation.Template.NotBefore) || !now.Before(generation.Template.NotAfter) {
+		return fmt.Errorf(
+			"pki: assignment certificate generation %q is not currently valid",
+			generation.ID,
+		)
 	}
 	return nil
 }

@@ -1,0 +1,23 @@
+---
+interface Props {
+  area: "api" | "book" | "home" | "modules" | "reports";
+  root: string;
+}
+
+const { area, root } = Astro.props;
+const labels = {
+  api: "Hovel SDK API",
+  book: "Hovel book",
+  home: "Hovel",
+  modules: "Hovel modules",
+  reports: "Hovel reports",
+};
+const label = labels[area];
+---
+
+<footer class="sitefoot">
+  <p>
+    {label} · authorized security research · <a href={`${root}LICENSE`}>LICENSE</a> ·
+    <a href="https://github.com/vibepwners/hovel">github.com/vibepwners/hovel</a>
+  </p>
+</footer>

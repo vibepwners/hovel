@@ -1,0 +1,78 @@
+<!-- hovel-doc: {"title":"Formatting and Linting","group":"picblobs","order":160,"navTitle":"Formatting"} -->
+<article>
+  <h1 id="formatting-and-linting">Formatting and Linting</h1>
+  <p>
+    Run quality workflows through Task from the repository root. The underlying
+    formatters, linters, Python runtime, and C toolchain are pinned Bazel inputs;
+    no Picblobs virtual environment or host linter installation is required.
+  </p>
+  <pre data-lang="bash"><code># Apply formatting
+task picblobs:fmt
+
+# Read-only formatting and Python/Bazel lint checks
+task picblobs:fmt-check
+task picblobs:lint-check
+
+# Full Picblobs CI gate
+task picblobs:ci
+
+# Optional C static analysis target
+task --dir modules/picblobs lint:c
+</code></pre>
+  <p>
+    Optional repository hooks can be installed with
+    <code>task hooks:install</code>. They call Task-backed checks rather than
+    exposing the underlying tool commands.
+  </p>
+
+  <h2 id="formatters-and-linters">Formatters and linters</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Language</th>
+        <th>Tool</th>
+        <th>Configuration</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>C/H files</td>
+        <td>clang-format</td>
+        <td><code>modules/picblobs/.clang-format</code></td>
+      </tr>
+      <tr>
+        <td>C/H files</td>
+        <td>clang-tidy</td>
+        <td><code>modules/picblobs/.clang-tidy</code> and Bazel lint aspects</td>
+      </tr>
+      <tr>
+        <td>Python</td>
+        <td>Ruff formatter and linter</td>
+        <td><code>modules/picblobs/ruff.toml</code></td>
+      </tr>
+      <tr>
+        <td>C and Python</td>
+        <td>Lizard complexity checks</td>
+        <td>
+          <code>modules/picblobs/tools/lint.py</code> and
+          <code>modules/picblobs/tools/lizard_baseline.txt</code>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="complexity">Complexity</h2>
+  <pre data-lang="bash"><code># Check the complete declared source set
+task picblobs:lint-check
+
+# Run the lint materializer and forward an explicit source selection
+task picblobs:lint -- src/payload/hello.c python/tests/test_python_api.py
+</code></pre>
+  <p>
+    The Bazel-managed lint target runs Lizard with a maximum cyclomatic
+    complexity number (CCN) of <code>10</code>. Its declared input set excludes
+    build artifacts, virtual environments, and generated output trees. Explicit
+    Picblobs-relative paths forwarded after <code>--</code> narrow the
+    materializer to those sources without bypassing the Task/Bazel toolchain.
+  </p>
+</article>

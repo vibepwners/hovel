@@ -1,0 +1,138 @@
+---
+export interface DemoSlide {
+  alt: string;
+  eyebrow: string;
+  src: string;
+  title: string;
+}
+
+interface Props {
+  id?: string;
+  slides: DemoSlide[];
+}
+
+const { id = "demo-carousel", slides } = Astro.props;
+if (slides.length === 0) throw new Error("DemoCarousel requires at least one slide");
+const serializedSlides = JSON.stringify(slides).replaceAll("<", "\\u003c");
+const first = slides[0];
+---
+
+<demo-carousel class="demo-carousel" data-carousel-id={id} role="region" aria-roledescription="carousel" aria-label="Hovel operator workflow demos">
+  <section class="demo-carousel-panel" aria-labelledby={`${id}-title`}>
+    <header class="demo-carousel-header">
+      <div>
+        <p class="demo-carousel-kicker">// operator workflow</p>
+        <h2 id={`${id}-title`}>From chain to session</h2>
+      </div>
+      <p class="demo-carousel-count" aria-live="polite">
+        <span data-carousel-current>01</span>
+        <span aria-hidden="true"> / </span>
+        <span class="visually-hidden">of</span>
+        <span>{String(slides.length).padStart(2, "0")}</span>
+      </p>
+    </header>
+
+    <div class="demo-carousel-stage">
+      <button class="demo-carousel-arrow previous" type="button" data-carousel-previous title="Previous demo">
+        <span aria-hidden="true">←</span>
+        <span class="visually-hidden">Previous demo</span>
+      </button>
+
+      <figure class="demo-carousel-figure">
+        <div class="demo-carousel-media">
+          <img
+            src={first.src}
+            alt={first.alt}
+            data-carousel-image
+            decoding="async"
+            fetchpriority="high"
+          />
+        </div>
+        <figcaption aria-live="polite">
+          <strong data-carousel-eyebrow>{first.eyebrow}</strong>
+          <span data-carousel-title>{first.title}</span>
+        </figcaption>
+      </figure>
+
+      <button class="demo-carousel-arrow next" type="button" data-carousel-next title="Next demo">
+        <span aria-hidden="true">→</span>
+        <span class="visually-hidden">Next demo</span>
+      </button>
+    </div>
+
+    <div class="demo-carousel-rail" role="group" aria-label="Choose a demo">
+      {slides.map((slide, index) => (
+        <button
+          type="button"
+          class="demo-carousel-dot"
+          data-carousel-index={index}
+          aria-label={`Show ${slide.eyebrow}: ${slide.title}`}
+          aria-current={index === 0 ? "true" : undefined}
+          title={`${slide.eyebrow}: ${slide.title}`}
+        >
+          <span>{String(index + 1).padStart(2, "0")}</span>
+        </button>
+      ))}
+    </div>
+  </section>
+  <script type="application/json" data-carousel-slides set:html={serializedSlides}></script>
+</demo-carousel>
+
+<script>
+  interface CarouselSlide {
+    alt: string;
+    eyebrow: string;
+    src: string;
+    title: string;
+  }
+
+  class DemoCarouselElement extends HTMLElement {
+    private current = 0;
+    private slides: CarouselSlide[] = [];
+
+    connectedCallback() {
+      const data = this.querySelector<HTMLScriptElement>("[data-carousel-slides]");
+      this.slides = JSON.parse(data?.textContent ?? "[]") as CarouselSlide[];
+      if (this.slides.length === 0) return;
+
+      this.querySelector("[data-carousel-previous]")?.addEventListener("click", () => this.show(this.current - 1));
+      this.querySelector("[data-carousel-next]")?.addEventListener("click", () => this.show(this.current + 1));
+      this.querySelectorAll<HTMLButtonElement>("[data-carousel-index]").forEach((button) => {
+        button.addEventListener("click", () => this.show(Number(button.dataset.carouselIndex)));
+      });
+      this.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        this.show(this.current + (event.key === "ArrowLeft" ? -1 : 1));
+      });
+    }
+
+    private show(requested: number) {
+      const next = (requested + this.slides.length) % this.slides.length;
+      if (next === this.current) return;
+      this.current = next;
+      const slide = this.slides[next];
+      const image = this.querySelector<HTMLImageElement>("[data-carousel-image]");
+      const eyebrow = this.querySelector<HTMLElement>("[data-carousel-eyebrow]");
+      const title = this.querySelector<HTMLElement>("[data-carousel-title]");
+      const counter = this.querySelector<HTMLElement>("[data-carousel-current]");
+
+      if (image) {
+        image.classList.add("is-changing");
+        image.addEventListener("load", () => image.classList.remove("is-changing"), { once: true });
+        image.src = slide.src;
+        image.alt = slide.alt;
+      }
+      if (eyebrow) eyebrow.textContent = slide.eyebrow;
+      if (title) title.textContent = slide.title;
+      if (counter) counter.textContent = String(next + 1).padStart(2, "0");
+
+      this.querySelectorAll<HTMLButtonElement>("[data-carousel-index]").forEach((button, index) => {
+        if (index === next) button.setAttribute("aria-current", "true");
+        else button.removeAttribute("aria-current");
+      });
+    }
+  }
+
+  if (!customElements.get("demo-carousel")) customElements.define("demo-carousel", DemoCarouselElement);
+</script>

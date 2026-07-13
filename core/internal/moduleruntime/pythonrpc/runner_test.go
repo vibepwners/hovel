@@ -1804,6 +1804,7 @@ import base64
 listener_ready = False
 session_open = False
 reads = 0
+close_attempts = 0
 
 while True:
     body = read()
@@ -1867,8 +1868,12 @@ while True:
         request = params.get("request", {})
         send({"jsonrpc": "2.0", "id": rid, "result": {"command": request.get("command", ""), "summary": "session command completed", "stdout": "[]"}})
     elif method == "session/close":
-        session_open = False
-        send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
+        close_attempts += 1
+        if close_attempts == 1:
+            send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "temporary close failure"}})
+        else:
+            session_open = False
+            send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
     elif method == "shutdown":
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
         break
@@ -1927,8 +1932,18 @@ while True:
 	if commandResult.Command != "process.list" || commandResult.Stdout != "[]" {
 		t.Fatalf("session command result = %#v", commandResult)
 	}
-	if err := sessions.CloseSession(context.Background(), "session-1"); err != nil {
+	if err := sessions.CloseSession(context.Background(), "session-1"); err == nil {
+		t.Fatal("first CloseSession() succeeded, want temporary provider failure")
+	}
+	tracked, err := sessions.ListSessions(context.Background())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(tracked) != 1 || tracked[0].ID != "session-1" {
+		t.Fatalf("sessions after failed close = %#v, want retryable session", tracked)
+	}
+	if err := sessions.CloseSession(context.Background(), "session-1"); err != nil {
+		t.Fatalf("retry CloseSession(): %v", err)
 	}
 }
 

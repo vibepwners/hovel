@@ -1,0 +1,67 @@
+---
+import { getPage } from "../lib/catalog";
+import DemoCarousel, { type DemoSlide } from "../components/DemoCarousel.astro";
+import PageShell from "../layouts/PageShell.astro";
+
+const page = getPage("index");
+const marker = '<div data-hovel-component="demo-carousel"></div>';
+const sections = page.body.split(marker);
+if (sections.length !== 2) throw new Error("home content must contain exactly one demo-carousel component marker");
+const slides: DemoSlide[] = [
+  {
+    src: "assets/demos/mock-survey-exploit-cli-commands-01-create.gif",
+    alt: "Hovel CLI demo creating a mock survey and exploit chain.",
+    eyebrow: "Step 1",
+    title: "Create the operation chain",
+  },
+  {
+    src: "assets/demos/mock-survey-exploit-cli-commands-02-config-before.gif",
+    alt: "Hovel CLI demo listing required chain and target config before changes.",
+    eyebrow: "Step 2",
+    title: "Inspect required config",
+  },
+  {
+    src: "assets/demos/mock-survey-exploit-cli-commands-03-config-apply.gif",
+    alt: "Hovel CLI demo applying chain and target config values.",
+    eyebrow: "Step 3",
+    title: "Apply and verify config",
+  },
+  {
+    src: "assets/demos/mock-survey-exploit-cli-commands-04-save.gif",
+    alt: "Hovel CLI demo validating and saving the configured chain.",
+    eyebrow: "Step 4",
+    title: "Validate and save",
+  },
+  {
+    src: "assets/demos/mock-survey-exploit-02-throw.gif",
+    alt: "Hovel terminal demo throwing the saved mock survey and exploit chain with live logs.",
+    eyebrow: "Step 5",
+    title: "Throw with live logs",
+  },
+  {
+    src: "assets/demos/mock-survey-exploit-cli-02-session-io.gif",
+    alt: "Hovel CLI demo listing, reading, sending to, and reading from a mock shell session.",
+    eyebrow: "Step 6",
+    title: "Read and send session data",
+  },
+  {
+    src: "assets/demos/mock-survey-exploit-cli-03-session-connect.gif",
+    alt: "Hovel CLI demo attaching to a mock shell session, detaching, and reconnecting.",
+    eyebrow: "Step 7",
+    title: "Attach, detach, and reconnect",
+  },
+];
+---
+
+<PageShell
+  area="home"
+  current="Home"
+  description={page.description}
+  root=""
+  tag={`// v${__HOVEL_VERSION__}`}
+  title={page.title}
+>
+  <Fragment set:html={sections[0]} />
+  <DemoCarousel id="home-demo" slides={slides} />
+  <Fragment set:html={sections[1]} />
+</PageShell>

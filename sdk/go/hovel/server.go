@@ -680,7 +680,7 @@ func (s *server) loadRuntimeCredential(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCredentialProviderRequest(request.SchemaVersion, request.RequestID); err != nil {
+	if err := request.Validate(); err != nil {
 		return nil, err
 	}
 	receipt, err := provider.LoadRuntimeCredential(request)
@@ -699,7 +699,7 @@ func (s *server) loadCredentialFiles(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCredentialProviderRequest(request.SchemaVersion, request.RequestID); err != nil {
+	if err := request.Validate(); err != nil {
 		return nil, err
 	}
 	receipt, err := provider.LoadCredentialFiles(request)
@@ -718,19 +718,15 @@ func (s *server) encodeCredentialMaterial(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCredentialProviderRequest(request.SchemaVersion, request.RequestID); err != nil {
+	if err := request.Validate(); err != nil {
 		return nil, err
 	}
 	result, err := provider.EncodeCredentialMaterial(request)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(result.RequestID) != request.RequestID {
-		return nil, fmt.Errorf(
-			"credential encoding result requestId %q does not match requested id %q",
-			result.RequestID,
-			request.RequestID,
-		)
+	if err := result.ValidateFor(request); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -744,42 +740,27 @@ func (s *server) stampCredential(params json.RawMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if request.SchemaVersion != CredentialProviderExecutionSchemaV1 {
-		return nil, fmt.Errorf("unsupported credential provider execution schema %q", request.SchemaVersion)
-	}
-	request.StampID = strings.TrimSpace(request.StampID)
-	if request.StampID == "" {
-		return nil, errors.New("credential stamp request stampId is required")
+	if err := request.Validate(); err != nil {
+		return nil, err
 	}
 	result, err := provider.StampCredential(request)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(result.StampID) != request.StampID {
-		return nil, fmt.Errorf(
-			"credential stamp result stampId %q does not match requested id %q",
-			result.StampID,
-			request.StampID,
-		)
+	if err := result.ValidateFor(request); err != nil {
+		return nil, err
 	}
 	return result, nil
-}
-
-func validateCredentialProviderRequest(schemaVersion, requestID string) error {
-	if schemaVersion != CredentialProviderExecutionSchemaV1 {
-		return fmt.Errorf("unsupported credential provider execution schema %q", schemaVersion)
-	}
-	if strings.TrimSpace(requestID) == "" {
-		return errors.New("credential provider requestId is required")
-	}
-	return nil
 }
 
 func normalizeCredentialReceipt(
 	requestID string,
 	receipt CredentialDeliveryReceipt,
 ) (CredentialDeliveryReceipt, error) {
-	if strings.TrimSpace(receipt.RequestID) != requestID {
+	if err := receipt.Validate(); err != nil {
+		return CredentialDeliveryReceipt{}, err
+	}
+	if receipt.RequestID != requestID {
 		return CredentialDeliveryReceipt{}, fmt.Errorf(
 			"credential delivery receipt requestId %q does not match requested id %q",
 			receipt.RequestID,

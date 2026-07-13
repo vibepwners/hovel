@@ -81,7 +81,7 @@ py_binary(
 
 py_test(
     name = "compile_mbed_os_test",
-    size = "small",
+    size = "medium",
     srcs = [
         "compile_mbed_os.py",
         "compile_mbed_os_test.py",
@@ -100,7 +100,7 @@ py_test(
 
 py_test(
     name = "materialize_blobs_test",
-    size = "small",
+    size = "medium",
     srcs = [
         "config_layout.py",
         "materialize_blobs.py",
@@ -118,7 +118,6 @@ py_test(
 py_test(
     name = "target_compile_test",
     size = "enormous",
-    timeout = "long",
     srcs = [
         "compile_mbed_os.py",
         "config_layout.py",
@@ -193,6 +192,12 @@ filegroup(
             "**/*.txt",
         ],
         allow_empty = True,
+        exclude = [
+            ".build/**",
+            "BUILD/**",
+            "blobs/**",
+            "mbed-os/**",
+        ],
     ) + [
         ".mbed",
         ".mbedignore",

@@ -135,4 +135,4 @@ def test_real_mbed_os_server_and_client_compile(tmp_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__]))
+    raise SystemExit(pytest.main([__file__, "-p", "no:cacheprovider"]))

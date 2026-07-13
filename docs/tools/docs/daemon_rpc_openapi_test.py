@@ -15,7 +15,7 @@ os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
 
 
 REGISTER_RE = re.compile(
-    r"register(?:Privileged)?(?:NoStore)?Unary\[[^\n]+\]\(mux,\s*"
+    r"register(?P<privileged>Privileged)?(?:NoStore)?Unary\[[^\n]+\]\(mux,\s*"
     r"(?P<method>\"[^\"]+\"|[A-Za-z_]\w*)\s*,"
 )
 STRING_CONST_RE = re.compile(
@@ -46,13 +46,15 @@ def daemon_rpc_contract(request: pytest.FixtureRequest) -> None:
 @pytest.mark.usefixtures("daemon_rpc_contract")
 class TestDaemonRPCOpenAPI:
 
-    def registered_methods(self) -> list[str]:
+    def registered_methods(self, *, privileged_only: bool = False) -> list[str]:
         string_constants = {
             match.group("name"): match.group("value")
             for match in STRING_CONST_RE.finditer(self.daemonrpc_source)
         }
         methods = []
         for match in REGISTER_RE.finditer(self.daemonrpc_source):
+            if privileged_only and match.group("privileged") is None:
+                continue
             token = match.group("method")
             if token.startswith('"'):
                 methods.append(json.loads(token))
@@ -79,6 +81,54 @@ class TestDaemonRPCOpenAPI:
             assert "200" in operation["responses"]
             success = self.resolve_ref(operation["responses"]["200"])
             assert "application/json" in success["content"]
+
+    def test_transport_error_responses_match_shared_handler(self) -> None:
+        assert re.search(
+            r"maximumRPCRequestBytes\s*=\s*64\s*\*\s*1024\s*\*\s*1024",
+            self.daemonrpc_source,
+        )
+        assert (
+            "http.MaxBytesReader(w, r.Body, maximumRPCRequestBytes)"
+            in self.daemonrpc_source
+        )
+        assert "status = http.StatusRequestEntityTooLarge" in self.daemonrpc_source
+
+        registered = set(self.registered_methods())
+        privileged = set(self.registered_methods(privileged_only=True))
+        assert privileged
+        assert privileged < registered
+
+        request_too_large = self.openapi["components"]["responses"][
+            "RequestTooLargeError"
+        ]
+        assert "64 MiB" in request_too_large["description"]
+        assert "67,108,864" in request_too_large["description"]
+        assert "Content-Length" in request_too_large["description"]
+        assert request_too_large["content"]["text/plain"]["schema"] == {
+            "type": "string"
+        }
+
+        for method in registered:
+            responses = self.openapi["paths"][SERVICE_PREFIX + method]["post"][
+                "responses"
+            ]
+            request_too_large_response = "RequestTooLargeError"
+            rpc_error_response = "RPCError"
+            if method in {"ExportPKIBundle", "OpenMeshBridge"}:
+                request_too_large_response = "NoStoreRequestTooLargeError"
+                rpc_error_response = "NoStoreRPCError"
+            assert responses["413"] == {
+                "$ref": f"#/components/responses/{request_too_large_response}"
+            }
+            if method in privileged:
+                assert responses["403"] == {
+                    "$ref": f"#/components/responses/{rpc_error_response}"
+                }
+            else:
+                assert "403" not in responses
+
+        for phrase in ("64 MiB", "67,108,864", "Content-Length", "413"):
+            assert phrase in self.doc_html
 
     def test_contract_declares_stability_and_standard_shape(self) -> None:
         assert self.openapi["openapi"] == "3.1.0"
@@ -196,9 +246,46 @@ class TestDaemonRPCOpenAPI:
             "items"
         ] == {"$ref": "#/components/schemas/AgentHint"}
 
+    def test_direct_mesh_task_contract_is_survey_only(self) -> None:
+        schemas = self.openapi["components"]["schemas"]
+        assert schemas["MeshTaskRunRequest"]["properties"]["request"] == {
+            "$ref": "#/components/schemas/MeshDirectTaskRequest"
+        }
+        direct_task = schemas["MeshDirectTaskRequest"]
+        assert direct_task["allOf"][0] == {
+            "$ref": "#/components/schemas/MeshTaskRequest"
+        }
+        assert direct_task["allOf"][1]["properties"]["kind"] == {
+            "const": "survey"
+        }
+        self.validate_component("MeshDirectTaskRequest", {"kind": "survey"})
+        with pytest.raises(ValidationError):
+            self.validate_component("MeshDirectTaskRequest", {"kind": "execute"})
+
     def test_mesh_bridge_capability_is_required_and_never_cacheable(self) -> None:
-        bridge = self.openapi["components"]["schemas"]["MeshBridgeOpenResponse"]
+        schemas = self.openapi["components"]["schemas"]
+        bridge_request = schemas["MeshBridgeOpenRequest"]
+        assert bridge_request["properties"]["localNetwork"] == {
+            "type": "string",
+            "enum": ["tcp", "udp"],
+            "default": "tcp",
+            "description": (
+                "Daemon-local socket adapter. This does not constrain "
+                "request.protocol, which remains provider-defined."
+            ),
+        }
+        assert "provider-defined" in schemas["MeshStreamRequest"]["properties"][
+            "protocol"
+        ]["description"].lower()
+        assert schemas["MeshOperation"]["properties"]["localNetwork"]["enum"] == [
+            "tcp",
+            "udp",
+        ]
+
+        bridge = schemas["MeshBridgeOpenResponse"]
         assert "capability" in bridge["required"]
+        assert "localNetwork" in bridge["required"]
+        assert bridge["properties"]["localNetwork"]["enum"] == ["tcp", "udp"]
         assert bridge["properties"]["capability"]["pattern"] == (
             "^[A-Za-z0-9_-]{43}$"
         )
@@ -213,6 +300,23 @@ class TestDaemonRPCOpenAPI:
         assert success["headers"]["Cache-Control"]["schema"] == {
             "const": "no-store"
         }
+        for status, response_name in {
+            "400": "NoStoreTextError",
+            "403": "NoStoreRPCError",
+            "405": "NoStoreTextError",
+            "413": "NoStoreRequestTooLargeError",
+            "500": "NoStoreTextError",
+        }.items():
+            response_ref = self.openapi["paths"][
+                SERVICE_PREFIX + "OpenMeshBridge"
+            ]["post"]["responses"][status]
+            assert response_ref == {
+                "$ref": f"#/components/responses/{response_name}"
+            }
+            response = self.resolve_ref(response_ref)
+            assert response["headers"]["Cache-Control"]["schema"] == {
+                "const": "no-store"
+            }
 
     def test_mesh_credential_selection_is_typed_secret_free_and_approved(
         self,
@@ -791,6 +895,63 @@ class TestDaemonRPCOpenAPI:
             "maximum": 100,
         }
 
+    def test_pki_certificate_and_crl_typed_error_status_matrix(self) -> None:
+        expected_statuses = {
+            "InspectPKICertificate": {"404"},
+            "IssuePKICertificate": {"404", "409", "423"},
+            "RenewPKICertificate": {"404", "409", "423"},
+            "RotatePKICertificate": {"404", "409", "423"},
+            "PublishPKICRL": {"404", "409", "423"},
+            "InspectPKICRL": {"404"},
+            "InspectPKICRLPublication": {"404"},
+            "ListPKICRLPublications": {"404"},
+            "ListPKICRLs": {"404"},
+            "ReconcilePKICRL": {"404", "409"},
+            "ReconcilePKICRLs": set(),
+        }
+        endpoint_specific_statuses = {"404", "409", "423"}
+        rpc_error_ref = {"$ref": "#/components/responses/RPCError"}
+
+        for method, expected in expected_statuses.items():
+            responses = self.openapi["paths"][SERVICE_PREFIX + method]["post"][
+                "responses"
+            ]
+            actual = endpoint_specific_statuses.intersection(responses)
+            assert actual == expected, method
+            for status in expected:
+                assert responses[status] == rpc_error_ref
+
+    def test_export_pki_bundle_is_sensitive_and_never_cacheable(self) -> None:
+        assert (
+            "registerPrivilegedNoStoreUnary[PKIBundleExportRequest"
+            in self.daemonrpc_source
+        )
+        expected_responses = {
+            "200": "PKIBundle",
+            "400": "NoStoreTextError",
+            "403": "NoStoreRPCError",
+            "404": "NoStoreRPCError",
+            "405": "NoStoreTextError",
+            "413": "NoStoreRequestTooLargeError",
+            "500": "NoStoreTextError",
+        }
+        responses = self.openapi["paths"][
+            SERVICE_PREFIX + "ExportPKIBundle"
+        ]["post"]["responses"]
+        assert set(responses) == set(expected_responses)
+        for status, component in expected_responses.items():
+            response_ref = {"$ref": f"#/components/responses/{component}"}
+            assert responses[status] == response_ref
+            response = self.resolve_ref(response_ref)
+            assert response["headers"]["Cache-Control"]["schema"] == {
+                "const": "no-store"
+            }
+
+        private_key = self.openapi["components"]["schemas"][
+            "PKIPrivateKeyBinary"
+        ]
+        assert private_key["x-sensitive"] is True
+
     def test_pki_certificate_and_bundle_contracts_are_strongly_typed(self) -> None:
         schemas = self.openapi["components"]["schemas"]
         template_ref = "#/components/schemas/PKICertificateTemplate"
@@ -929,6 +1090,7 @@ class TestDaemonRPCOpenAPI:
             "crl-publication-in-progress",
             "private-key-export-denied",
             "authority-signing-locked",
+            "authority-signing-lease-owned",
             "permission-denied",
         ):
             assert code in rpc_error["properties"]["code"]["enum"]

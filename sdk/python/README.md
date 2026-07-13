@@ -8,7 +8,7 @@ hooks.
 
 For a complete Mesh development path—capability design, tasking, streams,
 listening posts, daemon calls, and routing an existing module through a local
-bridge—see the [Mesh Provider Development Guide](../../docs/site/spec/mesh-development.html).
+bridge—see the [Mesh Provider Development Guide](../../docs/site/src/content/spec/mesh-development.html).
 
 ## Module Shape
 
@@ -89,18 +89,21 @@ normal socket:
 ```python
 from hovel_sdk import MeshBridgeEndpoint, MeshBridgeNetwork, connect_mesh_bridge
 
-endpoint = MeshBridgeEndpoint(
-    local_host=bridge["localHost"],
-    local_port=bridge["localPort"],
-    capability=bridge["capability"],
-)
-with connect_mesh_bridge(endpoint, MeshBridgeNetwork.TCP, timeout=5.0) as connection:
-    connection.sendall(request_bytes)
+endpoint = MeshBridgeEndpoint.from_rpc(bridge)
+with connect_mesh_bridge(endpoint, timeout=5.0) as connection:
+    if endpoint.local_network is MeshBridgeNetwork.UDP:
+        connection.send(request_bytes)
+    else:
+        connection.sendall(request_bytes)
 ```
 
-Use `MeshBridgeNetwork.UDP` for a UDP association. The helper sends the bearer
+`MeshBridgeEndpoint.from_rpc()` validates and retains the daemon response's
+`localNetwork`, preventing a TCP/UDP mismatch. The helper sends the bearer
 capability first. Keep it in memory and out of logs, results, and durable
-configuration.
+configuration. Bridge helpers accept canonical numeric loopback addresses only;
+they never resolve hostnames such as `localhost`. Use
+`endpoint.capability.reveal()` only at an explicit protocol boundary; ordinary
+string, repr, dataclass, and container formatting stays redacted.
 
 Python does not currently dispatch payload-provider RPC methods such as
 `list_payloads` or `generate_payload`. Use Go for provider modules today, or
@@ -163,19 +166,33 @@ class RuntimeCredentialProvider(HovelModule):
             capabilities=[CredentialDeliveryCapability.RUNTIME],
             slots=[
                 CredentialSlot(
-                    name="control-plane-mtls",
+                    name="control-plane-mtls-certificate",
                     purpose=CredentialPurpose.MTLS_SERVER,
                     endpoint_role=CredentialEndpointRole.SERVER,
                     consumer_type=CredentialConsumerType.MESH_LISTENER,
                     accepted_bundle_versions=["hovel.pki.bundle/v1"],
                     accepted_profiles=["mtls-server"],
                     accepted_compatibility_targets=["portable-x509"],
-                    accepted_projections=[CredentialProjection.BUNDLE],
+                    accepted_projections=[CredentialProjection.CERTIFICATE_DER],
+                    accepted_material_forms=[CredentialMaterialForm.PUBLIC],
+                    maximum_encoded_bytes=64 << 10,
+                    remainder_policy=CredentialStampRemainderPolicy.PRESERVE,
+                    private_material=CredentialPrivateMaterialPolicy.FORBIDDEN,
+                ),
+                CredentialSlot(
+                    name="control-plane-mtls-private-key",
+                    purpose=CredentialPurpose.MTLS_SERVER,
+                    endpoint_role=CredentialEndpointRole.SERVER,
+                    consumer_type=CredentialConsumerType.MESH_LISTENER,
+                    accepted_bundle_versions=["hovel.pki.bundle/v1"],
+                    accepted_profiles=["mtls-server"],
+                    accepted_compatibility_targets=["portable-x509"],
+                    accepted_projections=[CredentialProjection.PRIVATE_KEY_PKCS8],
                     accepted_material_forms=[CredentialMaterialForm.PRIVATE_BYTES],
                     maximum_encoded_bytes=64 << 10,
                     remainder_policy=CredentialStampRemainderPolicy.PRESERVE,
-                    private_material=CredentialPrivateMaterialPolicy.ALLOWED,
-                )
+                    private_material=CredentialPrivateMaterialPolicy.REQUIRED,
+                ),
             ],
         )
 
@@ -192,9 +209,10 @@ if __name__ == "__main__":
 ```
 
 `CredentialBytes`, `CredentialSecretReference`, and
-`CredentialProtectedPath` redact `repr`; secret-bearing dataclass fields also
-use redaction or `repr=False`. Explicit `.value` access still reveals the
-secret. Python cannot reliably erase immutable `bytes` or `str` objects, and a
+`CredentialProtectedPath` redacts both `str` and `repr`; `CredentialFile.path`
+uses that wrapper rather than a raw string. Secret-bearing dataclass fields also
+use redaction or `repr=False`. Explicit `.value` or `.reveal()` access still
+reveals the secret. Python cannot reliably erase immutable `bytes` or `str` objects, and a
 frozen dataclass does not make contained lists immutable. Keep values local to
 the hook, avoid logs/exceptions/stdout, and keep secret values out of Hovel's
 public execution ledger. A provider may copy material into its own protected

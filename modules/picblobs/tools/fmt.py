@@ -65,6 +65,7 @@ EXCLUDE = {
     "node_modules",
 }
 CLANG_FORMAT_STYLE = f"file:{PROJECT_ROOT / '.clang-format'}"
+RUFF_IMPORT_RULES = "I"
 
 
 def _run_formatter(
@@ -166,8 +167,14 @@ def _format_c_files(files: list[Path], *, check: bool) -> bool:
 def _format_python_files(files: list[Path], *, check: bool) -> bool:
     if not files:
         return True
-    cmd = ["ruff", "format", "--check"] if check else ["ruff", "format"]
-    return _run_formatter("ruff", cmd, files, check)
+
+    import_cmd = ["ruff", "check", "--select", RUFF_IMPORT_RULES]
+    if not check:
+        import_cmd.append("--fix")
+    imports_ok = _run_formatter("ruff imports", import_cmd, files, check)
+
+    format_cmd = ["ruff", "format", "--check"] if check else ["ruff", "format"]
+    return _run_formatter("ruff format", format_cmd, files, check) and imports_ok
 
 
 def _format_bazel_files(files: list[Path], *, check: bool) -> bool:

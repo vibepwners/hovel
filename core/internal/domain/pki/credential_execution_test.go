@@ -31,10 +31,14 @@ func TestCredentialExecutionsStripSecretsAndComplete(t *testing.T) {
 	}
 
 	filesRequest := validCredentialFilesRequest()
-	filesRequest.Files[0].Path = "/protected/private-key-secret.der"
+	filesRequest.Files[0].Path = NewCredentialProtectedPath("/protected/private-key-secret.der")
 	files, err := NewFilesCredentialExecution(filesRequest, createdAt)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := files.Plan.Materials[0]; got.Encoding != CredentialEncodingRaw ||
+		got.MediaType != "application/pkix-cert" {
+		t.Fatalf("file execution material = %#v, want distinct raw encoding and media type", got)
 	}
 
 	encodingRequest := validCredentialEncodingRequest()

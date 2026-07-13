@@ -87,6 +87,8 @@ class JobSummaryTest(unittest.TestCase):
 
         self.assertIn("| HTML pages | 1 |", rendered)
         self.assertIn("| Total size | 16 B |", rendered)
+        self.assertIn("`actions/download-artifact docs-site`", rendered)
+        self.assertIn("`task docs:report (manual dispatch only)`", rendered)
 
     def test_main_appends_to_github_step_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

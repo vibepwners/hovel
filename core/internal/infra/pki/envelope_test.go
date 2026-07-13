@@ -110,6 +110,42 @@ func TestNewMasterKeyRequiresAES256Key(t *testing.T) {
 	}
 }
 
+func TestAuthenticateMetadataWithOwnedKeyClearsCallerValue(t *testing.T) {
+	t.Parallel()
+
+	workspaceID, err := workspace.NewID("workspace-key-cleanup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	protector, err := NewEnvelopeProtector(workspaceID, fixedMasterKeyProvider{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		data    []byte
+		wantErr bool
+	}{
+		{name: "success", data: []byte("authenticated metadata")},
+		{name: "validation failure", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			key, err := NewMasterKey(bytes.Repeat([]byte{0x42}, MasterKeySize))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = protector.authenticateMetadataWithOwnedKey(test.data, "test-v1", &key)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("authenticateMetadataWithOwnedKey() error = %v, wantErr %t", err, test.wantErr)
+			}
+			if !masterKeyIsZero(key) {
+				t.Fatal("authenticateMetadataWithOwnedKey() retained caller-owned master-key bytes")
+			}
+		})
+	}
+}
+
 func TestProtectedKeyMaterialRejectsInvalidEnvelopeSizes(t *testing.T) {
 	t.Parallel()
 
@@ -140,4 +176,13 @@ func TestProtectedKeyMaterialRejectsInvalidEnvelopeSizes(t *testing.T) {
 	if err := oversized.Validate(); err == nil {
 		t.Fatal("ProtectedKeyMaterial.Validate() accepted oversized ciphertext")
 	}
+}
+
+func masterKeyIsZero(key MasterKey) bool {
+	for _, value := range key {
+		if value != 0 {
+			return false
+		}
+	}
+	return true
 }

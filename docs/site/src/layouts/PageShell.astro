@@ -1,0 +1,37 @@
+---
+import SiteFooter from "../components/SiteFooter.astro";
+import SiteHeader from "../components/SiteHeader.astro";
+import type { DocArea } from "../lib/catalog";
+
+interface Props {
+  area: DocArea | "api" | "reports";
+  current: "Home" | "Book" | "Modules" | "API Docs" | "Reports";
+  description?: string;
+  scripts?: string[];
+  stylesheets?: string[];
+  root: string;
+  tag: string;
+  title: string;
+}
+
+const { area, current, description, root, scripts = [], stylesheets = [], tag, title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    {description && <meta name="description" content={description} />}
+    <link rel="icon" type="image/png" href={`${root}assets/hovel.png`} />
+    <link rel="stylesheet" href={`${root}assets/site.css`} />
+    {stylesheets.map((href) => <link rel="stylesheet" href={href} />)}
+  </head>
+  <body>
+    <SiteHeader current={current} root={root} tag={tag} />
+    <slot />
+    <SiteFooter area={area} root={root} />
+    {scripts.map((src) => <script is:inline src={src}></script>)}
+  </body>
+</html>

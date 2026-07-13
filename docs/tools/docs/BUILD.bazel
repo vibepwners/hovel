@@ -1,4 +1,6 @@
-load("@rules_python//python:defs.bzl", "py_binary")
+load("@rules_go//go:def.bzl", "go_binary")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load(":site_rules.bzl", "sdk_docs_tree", "site_tree")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -6,30 +8,118 @@ exports_files([
     "daemon_rpc_openapi_test.py",
     "provider_docs_parity_test.py",
     "python_api/index.rst",
+    "requirements_lock.txt",
 ])
 
 py_binary(
-    name = "stage_site",
+    name = "generate_sdk_api_docs",
     srcs = [
-        "check_site_links.py",
         "generate_sdk_api_docs.py",
-        "site_chrome.py",
-        "stage_site.py",
     ],
+    imports = ["."],
+    main = "generate_sdk_api_docs.py",
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "sphinx_build",
+    srcs = ["sphinx_build.py"],
+    main = "sphinx_build.py",
+    python_version = "PY3",
+    deps = ["@docs_pypi//sphinx"],
+)
+
+go_binary(
+    name = "go_api_docs",
+    srcs = ["go_api_docs.go"],
+)
+
+filegroup(
+    name = "python_api_sources",
+    srcs = glob(["python_api/**"]),
+)
+
+sdk_docs_tree(
+    name = "sdk_site",
+    generator = ":generate_sdk_api_docs",
+    go_doc_bin = ":go_api_docs",
+    rustc_lib = "@@rules_rust++rust+rust_linux_x86_64__x86_64-unknown-linux-gnu__stable_tools//:rustc_lib",  # buildifier: disable=canonical-repository
+    rustdoc_bin = "@@rules_rust++rust+rust_linux_x86_64__x86_64-unknown-linux-gnu__stable_tools//:rustdoc",  # buildifier: disable=canonical-repository
+    sources = [
+        ":python_api_sources",
+        "//sdk/go/hovel:sources",
+        "//sdk/go/hoveltest:sources",
+        "//sdk/python:sources",
+        "//sdk/rust/hovel:sources",
+    ],
+    sphinx_bin = ":sphinx_build",
+)
+
+py_binary(
+    name = "assemble_site",
+    srcs = [
+        "assemble_site.py",
+        "check_site_links.py",
+    ],
+    imports = ["."],
+    main = "assemble_site.py",
+    python_version = "PY3",
+)
+
+site_tree(
+    name = "site",
+    assembler = ":assemble_site",
+    astro_site = "//docs/site:astro_site",
+    license = "//:LICENSE",
+    sdk_site = ":sdk_site",
+)
+
+py_binary(
+    name = "stage_site",
+    srcs = ["materialize_site.py"],
     args = [
-        "--uv-bin=$(rootpath @uv_linux_x86_64//:uv_bin)",
-        "--go-bin=$(rootpath @go_sdk//:bin/go)",
-        # rules_rust exposes generated tool repositories only by canonical
-        # extension names; rootpath and data must use the matching label.
-        "--rustdoc-bin=$(rootpath @@rules_rust++rust+rust_linux_x86_64__x86_64-unknown-linux-gnu__stable_tools//:rustdoc)",  # buildifier: disable=canonical-repository
+        "--site=$(rootpath :site)",
+    ],
+    data = [":site"],
+    main = "materialize_site.py",
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "stage_site_with_report",
+    srcs = ["materialize_site.py"],
+    args = [
+        "--site=$(rootpath :site)",
+        "--report-dir=.test-report/evidence",
+    ],
+    data = [":site"],
+    main = "materialize_site.py",
+    python_version = "PY3",
+)
+
+py_binary(
+    name = "preview_site",
+    srcs = ["serve_site.py"],
+    args = [
+        "--host=127.0.0.1",
+        "--port=4322",
+        "--site=_site",
+    ],
+    main = "serve_site.py",
+    python_version = "PY3",
+)
+
+py_test(
+    name = "pages_workflow_test",
+    srcs = ["pages_workflow_test.py"],
+    args = [
+        "$(rootpath //:.github/workflows/ci.yml)",
+        "$(rootpath //:.github/workflows/pages.yml)",
     ],
     data = [
-        "//docs/demo:all_gif_manifest",
-        "@@rules_rust++rust+rust_linux_x86_64__x86_64-unknown-linux-gnu__stable_tools//:rustc_lib",  # buildifier: disable=canonical-repository
-        "@@rules_rust++rust+rust_linux_x86_64__x86_64-unknown-linux-gnu__stable_tools//:rustdoc",  # buildifier: disable=canonical-repository
-        "@go_sdk//:bin/go",
-        "@uv_linux_x86_64//:uv_bin",
+        "//:.github/workflows/ci.yml",
+        "//:.github/workflows/pages.yml",
     ],
-    main = "stage_site.py",
+    main = "pages_workflow_test.py",
     python_version = "PY3",
 )

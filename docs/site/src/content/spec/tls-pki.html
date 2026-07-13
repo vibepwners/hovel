@@ -1,0 +1,660 @@
+<!-- hovel-doc: {"title":"TLS and Workspace PKI","group":"Runtime Platform","order":65,"navTitle":"TLS & PKI","description":"How Hovel owns TLS certificate custody, trust, assignment, revocation, provider delivery, and hybrid post-quantum key establishment."} -->
+<article>
+  <h1>TLS and Workspace PKI</h1>
+
+  <p>
+    Hovel's workspace PKI gives one daemon-owned lifecycle to the X.509 credentials used
+    by Mesh providers, listening posts, implants, stagers, services, payloads, and external
+    integrations. It replaces copied PEM strings and provider-specific certificate state
+    with immutable generations, explicit trust, staged assignment changes, revocation,
+    bounded signing authority, and auditable secret use.
+  </p>
+  <p>
+    This is workspace infrastructure, not a public Web PKI and not a general secret
+    manager. The daemon owns certificate lifecycle and custody; a provider advertises how
+    it can consume selected material; the consuming TLS stack owns the live handshake.
+  </p>
+
+  <div class="callout note">
+    <strong>Current-behavior guide.</strong> The implementation boundary below follows the
+    current Go domain and daemon code plus the
+    <a href="reference/daemon-rpc.openapi.json">OpenAPI contract</a>. Sections explicitly
+    marked as extension points are not claims about available commands, providers, or API
+    fields.
+  </div>
+
+  <h2 id="problem">What problem it solves</h2>
+  <p>A workspace certificate is more than a key and a PEM file. Hovel must also know:</p>
+  <ul>
+    <li>which authority and exact authority generation issued it;</li>
+    <li>which profile, crypto backend, compatibility target, and TLS groups were resolved at issuance;</li>
+    <li>which logical consumer is serving it and which trust generation that consumer uses;</li>
+    <li>whether a new credential is merely staged or has become active;</li>
+    <li>whether a generation was revoked and which fresh CRL communicates that fact;</li>
+    <li>when a signing key or private-key projection was authorized and used; and</li>
+    <li>how a provider received material without copying secrets into durable operation records.</li>
+  </ul>
+  <p>
+    The workspace PKI makes those relationships explicit. A failed issue, delivery, or
+    rollout cannot silently replace a consumer's active credential, and changing a trust
+    set's default does not silently move assignments already pinned to an older immutable
+    trust generation.
+  </p>
+
+  <h2 id="custody-versus-evidence">Custody is not target-created credential evidence</h2>
+  <p>
+    Hovel uses the word <em>credential</em> for two deliberately different things. Keep
+    their storage and display policies separate.
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>Resource</th>
+        <th>Why it exists</th>
+        <th>Custody and visibility</th>
+        <th>Do not do this</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>CredentialCapability</code></td>
+        <td>A target-created account or access secret recorded as chain state and remediation evidence.</td>
+        <td>Stored and shown to the operator in plaintext by design. <code>sensitive</code> guides export and downstream handling; it is not a CLI-redaction switch.</td>
+        <td>Do not treat it as a daemon-held PKI key or assume the operator can recover it after redaction.</td>
+      </tr>
+      <tr>
+        <td>Workspace PKI key and certificate generation</td>
+        <td>A daemon-owned identity with issuance, assignment, trust, revocation, and audit history.</td>
+        <td>Certificate DER, public-key SPKI, fingerprints, and metadata are inspectable. Local private material is envelope-encrypted and is absent from normal list and inspect responses.</td>
+        <td>Do not copy private-key bytes into a capability, provider config, log, error, or artifact metadata field.</td>
+      </tr>
+      <tr>
+        <td>Provider delivery</td>
+        <td>A short-lived projection of one active assignment for one declared provider slot and operation scope.</td>
+        <td>Bytes, protected paths, and scoped references are transient. Durable execution records retain provider identity, scope, digests, sizes, and non-secret receipts.</td>
+        <td>Do not return resolved bytes to the external caller or persist provider-owned references verbatim.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Never move material between these rails for convenience.</strong> Target-created
+    evidence must remain available for remediation. Workspace private keys must remain in
+    custody unless a separately authorized export or provider delivery resolves them.
+  </div>
+
+  <h2 id="model">The model</h2>
+  <figure class="diagram" aria-label="Workspace PKI relationships from authorities and certificate generations through trust sets and assignments to consumers.">
+    <figcaption>Logical names point to immutable material</figcaption>
+    <ol class="flow-diagram">
+      <li class="flow-step strong">Authority</li>
+      <li class="flow-step">active CA generation</li>
+      <li class="flow-step">certificate lineage</li>
+      <li class="flow-step ready">immutable leaf generation</li>
+      <li class="flow-step">Assignment</li>
+      <li class="flow-step ready">consumer</li>
+    </ol>
+    <ol class="flow-diagram">
+      <li class="flow-step strong">Trust set</li>
+      <li class="flow-step">active / staged trust generation</li>
+      <li class="flow-step">anchors + intermediates + CRLs</li>
+      <li class="flow-step ready">assignment-pinned peer trust</li>
+    </ol>
+  </figure>
+
+  <table>
+    <thead>
+      <tr><th>Model</th><th>Identity and contents</th><th>Lifecycle rule</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Authority</strong></td>
+        <td>A logical root or subordinate CA. It records role, origin, signer mode, profile, export policy, lifecycle state, signer reference, and one active CA generation.</td>
+        <td>The logical authority survives inspection and rollover bookkeeping. Root creation starts in <code>locked</code>; subordinate creation starts in <code>active</code>. Actual signing still requires a scoped lease.</td>
+      </tr>
+      <tr>
+        <td><strong>Certificate</strong></td>
+        <td>A logical lineage represented by a stable <code>certificateId</code> shared by its generations. There is no mutable certificate blob that is overwritten in place.</td>
+        <td>Renewal and rotation append generations to the lineage; assignment activation decides which one a consumer serves.</td>
+      </tr>
+      <tr>
+        <td><strong>Certificate generation</strong></td>
+        <td>Immutable certificate DER, public-key SPKI, fully resolved template, key ID, issuer IDs, generation number, fingerprints, purpose, backend commitments, compatibility snapshot, key-establishment policy, and TLS named groups.</td>
+        <td>Current issuance creates an <code>active</code> inventory generation. Revocation changes that generation to <code>revoked</code>; it never edits its issued bytes.</td>
+      </tr>
+      <tr>
+        <td><strong>Trust set</strong></td>
+        <td>A logical trust name with active and staged generation pointers, state, and optimistic-concurrency revision.</td>
+        <td>A trust-set default may move, but existing assignments remain pinned to their exact active trust generation until explicitly restaged and activated.</td>
+      </tr>
+      <tr>
+        <td><strong>Trust-set generation</strong></td>
+        <td>An immutable ordered set of anchor generation IDs, intermediate generation IDs, and optional CRL generation IDs.</td>
+        <td>It must contain at least one anchor. Certificates must be usable CAs; every CRL must be fresh and its issuer generation must be present in the same trust generation.</td>
+      </tr>
+      <tr>
+        <td><strong>Assignment</strong></td>
+        <td>A stable binding from a purpose and profile to a typed consumer such as a Mesh listener, node, implant, payload, service, or external integration. It holds active/staged certificate and trust generation pointers.</td>
+        <td>Stage first, deliver or validate outside the mutation, then activate with the expected revision. Peer-verifying purposes pin the current active trust generation at stage time.</td>
+      </tr>
+      <tr>
+        <td><strong>Signing lease</strong></td>
+        <td>A transient grant for one authority, actor, and operation, with grant and expiry times.</td>
+        <td>Explicit approval is required. The default is five minutes, the maximum is fifteen minutes, and another actor or operation cannot use or revoke the lease.</td>
+      </tr>
+      <tr>
+        <td><strong>Revocation</strong></td>
+        <td>An immutable RFC 5280 reason, effective time, original generation state, serial, and exact issuer identity for one certificate generation.</td>
+        <td>Revoking an actively served generation degrades affected assignments; a staged-only reference is cleared. A self-signed root is distrusted through trust change or rollover, not revoked by itself.</td>
+      </tr>
+      <tr>
+        <td><strong>CRL generation</strong></td>
+        <td>One immutable full CRL: authority and issuer generation, monotonically reserved number, sorted revocation IDs, validity window, backend commitment, concrete signature algorithm, fingerprint, and DER.</td>
+        <td>The current model accepts a five-minute to seven-day window, defaults publication to 24 hours, and caps a full CRL at 100,000 revocations.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout note">
+    <strong>Typed states are not all public transitions.</strong> The domain includes
+    additional states such as <code>pending</code>, <code>superseded</code>,
+    <code>expired</code>, <code>invalid</code>, <code>disabled</code>,
+    <code>compromised</code>, and <code>destroyed</code>. Their presence in an enum does not
+    imply that a current CLI or daemon method can enter every state.
+  </div>
+
+  <h2 id="leaf-lifecycle">Leaf lifecycle: issue, stage, activate</h2>
+  <figure class="diagram" aria-label="Leaf certificate lifecycle from an immutable issuance plan through assignment activation and later revocation.">
+    <figcaption>Changing inventory is not the same as changing a consumer</figcaption>
+    <ol class="flow-diagram">
+      <li class="flow-step">persist issuance plan</li>
+      <li class="flow-step">generate or reuse key</li>
+      <li class="flow-step">sign + independently validate</li>
+      <li class="flow-step ready">store immutable generation</li>
+      <li class="flow-step warning">stage assignment</li>
+      <li class="flow-step">deliver / test</li>
+      <li class="flow-step ready">activate assignment</li>
+    </ol>
+  </figure>
+  <p>
+    Issuance persists an idempotent intent before a backend can create a key or sign. The
+    intent commits the exact backends, capability hashes, compatibility target, resolved
+    TLS groups, template, issuer generation, key identity, and generation identity. A
+    retry cannot silently switch to a different backend or policy snapshot.
+  </p>
+  <p>
+    A newly renewed or rotated generation is active in certificate inventory, but it does
+    <strong>not</strong> replace an assignment automatically. Stage it on each intended
+    assignment, perform the provider or deployment work, and activate only after that work
+    succeeds. The assignment's previous active pointers remain authoritative until the
+    revision-fenced activation commits.
+  </p>
+
+  <table>
+    <thead>
+      <tr><th>Action</th><th>What changes</th><th>What does not change automatically</th><th>Use it when</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Renew</strong></td>
+        <td>Creates a later generation in the same certificate lineage with the same key ID and public key.</td>
+        <td>No assignment moves to it.</td>
+        <td>A constrained consumer requires key reuse.</td>
+      </tr>
+      <tr>
+        <td><strong>Rotate</strong></td>
+        <td>Creates a later generation in the same lineage with a distinct key ID and public key; a registered backend may be selected.</td>
+        <td>No assignment moves to it, and the authority is not rolled over.</td>
+        <td>The normal leaf lifecycle or a key must be replaced.</td>
+      </tr>
+      <tr>
+        <td><strong>Revoke</strong></td>
+        <td>Invalidates one non-root generation, records the reason, degrades active assignments, and clears staged-only use in one transaction.</td>
+        <td>It does not publish or activate a CRL by itself.</td>
+        <td>A generation must no longer be trusted.</td>
+      </tr>
+      <tr>
+        <td><strong>Roll over</strong></td>
+        <td>Replaces an authority through overlap trust, consumer acknowledgements, leaf rotation, final trust, and retirement.</td>
+        <td>It is not a leaf rotation and cannot be represented as one atomic certificate swap.</td>
+        <td>A root or subordinate CA identity must change without a trust gap.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="trust-and-crls">Trust, revocation, and CRL publication</h2>
+  <p>
+    Revocation recording and CRL publication are separate on purpose. Revocation first
+    changes workspace truth synchronously. Publication then builds a durable signing plan
+    from the authority's effective revocation snapshot.
+  </p>
+  <figure class="diagram" aria-label="Certificate revocation and CRL publication sequence through trust-set activation.">
+    <figcaption>Revocation reaches consumers through an explicit trust generation</figcaption>
+    <ol class="flow-diagram">
+      <li class="flow-step stop">revoke generation</li>
+      <li class="flow-step warning">degrade / clear assignments</li>
+      <li class="flow-step">plan CRL + reserve number</li>
+      <li class="flow-step">sign + checkpoint</li>
+      <li class="flow-step ready">validate immutable CRL</li>
+      <li class="flow-step">stage trust generation</li>
+      <li class="flow-step ready">activate trust set</li>
+    </ol>
+  </figure>
+  <p>
+    CRL publication advances through <code>planned</code>, <code>signing</code>, and
+    <code>signed</code> phases before a completed immutable CRL generation is stored. An
+    ownership lease fences concurrent workers; a signed checkpoint lets authorized crash
+    reconciliation validate and finish without invoking an ambiguous signer twice. These
+    worker leases are concurrency controls, not signing authorization.
+  </p>
+  <p>
+    Trust resolution rechecks certificate validity and CRL freshness. An expired CRL makes
+    that trust generation unusable even though the immutable historical record remains
+    inspectable. Automatic CRL refresh scheduling is not implemented, so publication and
+    subsequent trust staging remain explicit operations.
+  </p>
+
+  <h2 id="authority-rollover">Authority rollover without a trust gap</h2>
+  <p>
+    The daemon API implements rollover as one durable, revision-fenced operation. Root
+    rollover places old and replacement CA generations in the overlap generation's anchor
+    list. Subordinate rollover places them in the intermediate list and preserves the
+    ancestor chain to an anchor.
+  </p>
+  <figure class="diagram" aria-label="Authority rollover phases from overlap trust acknowledgements through final trust and retirement.">
+    <figcaption>Durable authority rollover state machine</figcaption>
+    <ol class="flow-diagram vertical">
+      <li class="flow-step">stage overlap trust; start operation</li>
+      <li class="flow-step warning"><code>awaiting-overlap-acknowledgements</code></li>
+      <li class="flow-step">activate overlap; previous authority becomes <code>retiring</code></li>
+      <li class="flow-step warning"><code>awaiting-leaf-rotation</code></li>
+      <li class="flow-step">rotate required leaves; stage final trust</li>
+      <li class="flow-step warning"><code>awaiting-final-acknowledgements</code></li>
+      <li class="flow-step ready">activate final trust; previous authority becomes <code>retired</code></li>
+    </ol>
+  </figure>
+  <p>
+    The operation can track all eligible peer-trust assignments, an explicit set, or no
+    Hovel-tracked consumers. Live rollovers reserve the trust set and required assignments
+    so unrelated mutations cannot invalidate the proof. Cancellation is available only
+    before overlap activation; once active trust changes, operators must complete the
+    fenced workflow.
+  </p>
+  <p>
+    Rollover methods, acknowledgement inspection, and reservation errors are implemented
+    in the daemon RPC and OpenAPI contract. There are no matching imperative
+    <code>hovel pki</code> rollover commands today.
+  </p>
+
+  <h2 id="signing-leases">Signing leases are authority, not authority state</h2>
+  <p>
+    Authority lifecycle state and permission to use its signing key are independent. An
+    unlock request grants an in-memory <code>SigningLease</code> scoped to the authenticated
+    actor and operation. The lease expires automatically, disappears on daemon restart,
+    and does not rewrite the authority or its CA generation.
+  </p>
+  <ul>
+    <li>Unlock requires the request's explicit signing-lease approval.</li>
+    <li>Every signing use rechecks authority state, lease scope, expiry, CA constraints, generation ownership, validity, and key binding.</li>
+    <li>Lock removes only the matching actor and operation's lease; another scope cannot revoke it.</li>
+    <li>Key access and signing authorization produce audit events without recording private bytes.</li>
+  </ul>
+
+  <h2 id="encryption">Encryption at rest and secret boundaries</h2>
+  <figure class="diagram layer-diagram" aria-label="Owner-only master keys protect encrypted SQLite key envelopes, which are opened briefly by the daemon for authorized export or same-process provider delivery.">
+    <figcaption>Local custody boundary</figcaption>
+    <div class="layer-path">
+      <div class="diagram-node storage"><strong>Owner-only file</strong><span><code>secrets/pki-master-keys.json</code></span></div>
+      <div class="diagram-arrow">→</div>
+      <div class="diagram-node"><strong>AES-256-GCM</strong><span>workspace-bound key envelope</span></div>
+      <div class="diagram-arrow">→</div>
+      <div class="diagram-node storage"><strong>SQLite</strong><span>ciphertext + authenticated metadata</span></div>
+    </div>
+    <div class="layer-path">
+      <div class="diagram-node storage"><strong>SQLite</strong><span>selected active generation</span></div>
+      <div class="diagram-arrow">→</div>
+      <div class="diagram-node primary"><strong>hoveld</strong><span>policy + audit + short-lived resolution</span></div>
+      <div class="diagram-arrow">→</div>
+      <div class="diagram-node core"><strong>Approved sink</strong><span>export response or same provider process</span></div>
+    </div>
+  </figure>
+
+  <ul>
+    <li>Local key material is serialized into a versioned AES-256-GCM envelope. Associated data binds schema, cipher, master-key version, workspace identity, key ID, and algorithm.</li>
+    <li>Authority, generation, and issuance JSON remains inspectable metadata; HMAC-SHA-256 tags detect tampering with authenticated persisted records. Encryption is for private key material, not for public certificate inventory.</li>
+    <li>The master-key file is the local root of trust. Its keys are base64-encoded, not encrypted by Hovel, so owner, permission, regular-file, symlink/reparse-point, and link-count checks matter.</li>
+    <li>Initialization and open are separate. If an initialized workspace loses its master-key file, ordinary open fails closed rather than creating an unrelated key.</li>
+    <li>The envelope code supports versioned master-key rotation and rewrap, but no current CLI or daemon RPC method exposes that maintenance operation.</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Encryption at rest is not a provider sandbox.</strong> A process that receives an
+    approved private projection can misuse or log it, and compromise of both the workspace
+    database and master-key file defeats local envelope custody. Providers must use the SDK
+    secret wrappers, keep material in memory only as long as needed, and return non-secret
+    receipts.
+  </div>
+
+  <p>
+    Normal list and inspect methods never return private-key material. The daemon's
+    <code>ExportPKIBundle</code> response is the one external control response that can:
+    private export must match the generation's <code>explicit-private-export</code> policy,
+    carry <code>approvePrivateKeyExport</code>, use the privileged local transport, and is
+    audited and marked <code>Cache-Control: no-store</code>. For an externally held key, a
+    bundle carries a provider reference rather than private bytes.
+  </p>
+
+  <h2 id="backends-and-providers">Crypto backends, compatibility targets, and credential providers</h2>
+  <p>These three extension points answer different questions:</p>
+  <table>
+    <thead>
+      <tr><th>Boundary</th><th>Question it answers</th><th>Current implementation</th><th>Extension status</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Crypto backend</strong></td>
+        <td>How are keys generated and certificates or CRLs signed?</td>
+        <td>The default daemon registers only <code>builtin-x509</code> version 1: ECDSA, RSA, and Ed25519 keys/signatures, full CRLs, private export, and custom extensions. It does not advertise import or CSR support.</td>
+        <td>The application has typed backend and independent-validator registries, capability hashes, package digests, and external-key handles. There is no backend installation API or bundled HSM/KMS/PKCS #11 backend.</td>
+      </tr>
+      <tr>
+        <td><strong>Compatibility target</strong></td>
+        <td>Which certificate algorithms, encodings, and TLS groups can the consumer use?</td>
+        <td><code>portable-x509</code> and <code>go-1.26-pq-hybrid</code> are built in. The selected version and resolved group list are persisted on every generation.</td>
+        <td>Mbed TLS, wolfSSL, platform-specific, and other targets can be added as versioned contracts; none is registered today.</td>
+      </tr>
+      <tr>
+        <td><strong>Credential provider</strong></td>
+        <td>How does one module process consume an already issued assignment?</td>
+        <td>Go, Python, and Rust SDKs implement optional <code>credential.describe</code>, runtime, protected-file, provider-encoding, and standard/advanced stamping contracts.</td>
+        <td>No bundled production module currently advertises the credential-provider surface. A provider implements only the capabilities and slots it actually supports.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    A crypto backend is privileged daemon infrastructure; a credential provider is a
+    module-side consumer. Selecting a runtime TLS library does not select the issuer, and
+    selecting an issuer does not force a TLS library on the consumer. See
+    <a href="providers-artifacts.html#credential-delivery">credential delivery and stamping</a>
+    and the <a href="mesh-development.html">provider development guide</a> for the plugin
+    boundary.
+  </p>
+
+  <h2 id="profiles">Classical and post-quantum-hybrid profiles</h2>
+  <table>
+    <thead>
+      <tr><th>Use case</th><th>Built-in profile</th><th>X.509 identity</th><th>TLS key establishment</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Root or subordinate CA</td>
+        <td><code>root-modern</code>, <code>subordinate-modern</code></td>
+        <td>ECDSA P-256 with a classical ECDSA signature.</td>
+        <td><code>not-applicable</code>; CA certificates do not negotiate TLS groups.</td>
+      </tr>
+      <tr>
+        <td>TLS, mTLS, or dual-role mTLS</td>
+        <td><code>tls-server</code>, <code>tls-client</code>, <code>mtls-server</code>, <code>mtls-client</code>, <code>dual-role-mtls</code></td>
+        <td>ECDSA P-256 with a classical ECDSA signature.</td>
+        <td><code>classical-compatible</code> using the portable target's classical groups.</td>
+      </tr>
+      <tr>
+        <td>Legacy RSA endpoint</td>
+        <td><code>legacy-rsa-server</code>, <code>legacy-rsa-client</code></td>
+        <td>RSA 2048 with a classical RSA signature.</td>
+        <td><code>classical-compatible</code>.</td>
+      </tr>
+      <tr>
+        <td>Hybrid-protected TLS, mTLS, or dual-role mTLS</td>
+        <td><code>pq-hybrid-tls-server</code>, <code>pq-hybrid-tls-client</code>, <code>pq-hybrid-dual-role-mtls</code></td>
+        <td><strong>Still ECDSA P-256 with a classical ECDSA identity signature.</strong></td>
+        <td><code>hybrid-pq-required</code> with <code>x25519-mlkem768</code>, <code>secp256r1-mlkem768</code>, and <code>secp384r1-mlkem1024</code> under the Go 1.26 compatibility target.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warning">
+    <strong>Hybrid does not mean a post-quantum certificate.</strong> In the implemented
+    profiles, ML-KEM contributes to TLS session key establishment. X.509 authentication
+    remains classical ECDSA, so a future cryptographically relevant quantum computer could
+    still threaten identity signatures even when recorded session traffic received hybrid
+    key-establishment protection. Hovel must not label that chain “fully post-quantum.”
+  </div>
+  <p>
+    The domain reserves ML-DSA key and signature identifiers and a
+    <code>hybrid-pq-preferred</code> policy for future capability negotiation. The default
+    backend and current compatibility targets do not advertise ML-DSA, and no built-in
+    profile selects the preferred-with-classical-fallback policy. Those are extension
+    points, not current provider support.
+  </p>
+
+  <h2 id="operator-workflow">A minimal operator workflow</h2>
+  <p>
+    The imperative CLI is daemon-backed. The following uses only current commands. Replace
+    angle-bracket values with IDs returned by the preceding JSON/list operations; keep
+    idempotency keys stable only when retrying the same request.
+  </p>
+<pre data-lang="shell"><code># Discover or initialize local custody.
+hovel pki status --workspace .hovel --json
+hovel pki init --workspace .hovel --yes
+hovel pki backend list --workspace .hovel
+hovel pki profile list --workspace .hovel
+
+# Create a lab root, then read its generated authority ID.
+hovel pki authority create "Lab Root" \
+  --workspace .hovel \
+  --role root \
+  --profile root-modern \
+  --idempotency-key lab-root-v1 \
+  --yes
+hovel pki authority list --workspace .hovel --json
+
+# Grant this CLI actor/operation a short signing lease and issue one leaf.
+hovel pki authority unlock &lt;authority-id&gt; \
+  --workspace .hovel \
+  --duration 5m \
+  --approve
+hovel pki certificate issue listener.internal \
+  --workspace .hovel \
+  --issuer &lt;authority-id&gt; \
+  --profile tls-server \
+  --idempotency-key listener-cert-v1 \
+  --yes
+hovel pki certificate list --workspace .hovel --json
+
+# Bind a stable consumer slot, then stage and activate the returned generation.
+hovel pki assignment bind mesh-provider/listener-west \
+  --workspace .hovel \
+  --id assignment-listener-west \
+  --consumer-type mesh-listener \
+  --purpose tls-server \
+  --profile tls-server \
+  --idempotency-key listener-assignment-v1 \
+  --yes
+hovel pki assignment stage assignment-listener-west &lt;generation-id&gt; \
+  --workspace .hovel \
+  --revision 1 \
+  --idempotency-key listener-stage-v1 \
+  --yes
+hovel pki assignment inspect assignment-listener-west --workspace .hovel --json
+hovel pki assignment activate assignment-listener-west \
+  --workspace .hovel \
+  --revision 2 \
+  --idempotency-key listener-activate-v1 \
+  --yes
+hovel pki authority lock &lt;authority-id&gt; --workspace .hovel</code></pre>
+  <p>
+    Revision values above match a new assignment's first stage and activation only. In
+    automation, inspect immediately before each mutation and send the observed revision;
+    stale revisions must fail. A plain <code>tls-server</code> assignment does not verify a
+    peer and may omit trust. TLS-client and mTLS purposes require an active trust set, and
+    staging pins its exact active trust generation alongside the certificate generation.
+  </p>
+
+  <h2 id="mesh-delivery">Assignment-backed delivery into Mesh</h2>
+  <p>
+    The current external delivery path is deliberately narrow and implemented on
+    <code>StartMeshListener</code>, <code>RunMeshTask</code>,
+    <code>OpenMeshStream</code>, and <code>OpenMeshBridge</code>. The caller sends non-secret
+    assignment, slot, projection, and form selectors plus a credential request context
+    with <code>approveCredentialUse: true</code>. The daemon derives the allowed provider,
+    listener, and node consumer bindings; verifies the active assignment and the provider's
+    exact descriptor; resolves material; and invokes delivery and the consuming Mesh method
+    in the same provider process.
+  </p>
+<pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/StartMeshListener
+Content-Type: application/json
+
+{
+  "moduleId": "lab-relay-mesh@v1.0.0",
+  "request": {
+    "listenerId": "listener-west",
+    "name": "west TLS listener",
+    "kind": "https-beacon",
+    "deployment": "separate",
+    "management": "provider",
+    "config": { "bind": "127.0.0.1:8443" }
+  },
+  "credentials": [
+    {
+      "requestId": "listener-west-cert-v1",
+      "assignmentId": "assignment-listener-west",
+      "slotName": "listener-certificate",
+      "capability": "runtime",
+      "material": {
+        "projection": "certificate-der",
+        "form": "public"
+      }
+    },
+    {
+      "requestId": "listener-west-private-key-v1",
+      "assignmentId": "assignment-listener-west",
+      "slotName": "listener-private-key",
+      "capability": "runtime",
+      "material": {
+        "projection": "private-key-pkcs8",
+        "form": "private-bytes"
+      }
+    }
+  ],
+  "credentialContext": {
+    "actorId": "operator-web",
+    "operationId": "start-listener-west-v1",
+    "correlationId": "change-listener-west-v1",
+    "approveCredentialUse": true
+  }
+}</code></pre>
+  <p>
+    This request is valid only if the provider advertises the exact runtime slot and the
+    active assignment is bound to the listener operation. The production selector accepts
+    only runtime <code>certificate-der</code>/<code>public</code>,
+    <code>public-key-spki</code>/<code>public</code>, and
+    <code>private-key-pkcs8</code>/<code>private-bytes</code> combinations. It never returns
+    resolved material to the HTTP caller. One assignment-and-slot pair may appear only once
+    in a request, so a TLS identity must use distinct certificate and private-key slots for
+    its <code>certificate-der</code>/<code>public</code> and
+    <code>private-key-pkcs8</code>/<code>private-bytes</code> selections.
+  </p>
+
+  <h2 id="implementation-status">What is implemented, and what is not</h2>
+  <table>
+    <thead>
+      <tr><th>Area</th><th>Implemented now</th><th>Not implemented or not externally initiable</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Custody and issuance</td>
+        <td>Workspace initialization; owner-only file master keys; AES-256-GCM key envelopes; authenticated metadata; built-in X.509 generation and independent validation; durable idempotent issuance.</td>
+        <td>PKI import, CSR workflows, public master-key maintenance commands, and backend installation.</td>
+      </tr>
+      <tr>
+        <td>Lifecycle</td>
+        <td>Authority create/list/inspect; scoped unlock/lock; leaf issue/renew/rotate/revoke; assignment and trust-set create/stage/activate; CRL publish/list/inspect.</td>
+        <td>Automatic renewal/rotation/CRL scheduling. A non-empty assignment <code>rotationPolicyId</code> is currently rejected.</td>
+      </tr>
+      <tr>
+        <td>Daemon-only control</td>
+        <td>Bundle export, issuance and CRL reconciliation, authority rollover and acknowledgements, operation inspection, plus credential stamp/execution list and inspect.</td>
+        <td>Equivalent imperative CLI commands for export, reconciliation, rollover, stamp initiation, or credential-execution initiation.</td>
+      </tr>
+      <tr>
+        <td>Mesh credential use</td>
+        <td>Approved assignment-backed runtime selection for listener start, task, stream, and bridge operations; same-process delivery; non-secret execution bookkeeping.</td>
+        <td>External selection of bundles, chains, trust, CRLs, signer references, protected files, or provider encodings; general non-Mesh consumption.</td>
+      </tr>
+      <tr>
+        <td>Provider SDK</td>
+        <td>Go, Python, and Rust descriptor, runtime, protected-file, encoding, and standard/advanced stamp contracts and dispatch; secret-redacting wrappers; provider runner execution.</td>
+        <td>A production external endpoint that drives the complete stamp plan → resolve → provider → ingest → terminal transition flow, and a bundled production credential-provider module.</td>
+      </tr>
+      <tr>
+        <td>Automation clients</td>
+        <td>Stable local daemon HTTP/JSON RPC and source-backed OpenAPI; the in-tree Go daemon client used by front ends.</td>
+        <td>PKI manifests, <code>pki plan</code>/<code>pki apply</code>, a PKI wizard, MCP PKI tools, and published daemon-control SDKs. The generated Go/Python/Rust SDK references document module/provider SDKs, not a public PKI control client.</td>
+      </tr>
+      <tr>
+        <td>Post-quantum scope</td>
+        <td>Go TLS group mapping and hybrid-required built-in endpoint profiles using ML-KEM key establishment with classical X.509 identities.</td>
+        <td>ML-DSA identity issuance, a fully post-quantum certificate chain, or registered Mbed TLS/wolfSSL hybrid compatibility targets.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="decision-guide">Decision guide</h2>
+  <table>
+    <thead>
+      <tr><th>If you need to...</th><th>Use...</th><th>Because...</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Record a target account for cleanup</td><td><code>CredentialCapability</code></td><td>It is operator-visible evidence, not daemon PKI custody.</td></tr>
+      <tr><td>Give a stable service or Mesh resource an identity</td><td>Certificate generation + assignment</td><td>The assignment stages and activates exact immutable generations without hiding rollout state.</td></tr>
+      <tr><td>Change certificate validity while preserving a constrained key</td><td>Renew</td><td>The new generation reuses the key but still requires explicit assignment activation.</td></tr>
+      <tr><td>Replace a leaf key</td><td>Rotate</td><td>It guarantees a distinct key and public key in the same certificate lineage.</td></tr>
+      <tr><td>Replace a root or subordinate CA</td><td>Authority rollover</td><td>Overlap and final trust plus acknowledgements avoid an atomic-swap trust gap.</td></tr>
+      <tr><td>Protect TLS session key establishment against harvest-now/decrypt-later risk</td><td>A <code>pq-hybrid-*</code> profile on compatible Go endpoints</td><td>Hybrid ML-KEM groups protect key establishment, while the documentation remains honest about classical identity.</td></tr>
+      <tr><td>Support a constrained TLS library</td><td>A versioned compatibility target</td><td>Consumer constraints remain independent from the daemon's signing backend.</td></tr>
+      <tr><td>Keep a key in an HSM or platform store</td><td>A future registered crypto backend with an external handle</td><td>The typed port exists, but the default daemon does not ship or install that backend today.</td></tr>
+      <tr><td>Deliver an active assignment into a Mesh provider now</td><td>Approved runtime credential selectors on a Mesh mutation</td><td>The daemon validates consumer binding and runs delivery and consumption in one provider process.</td></tr>
+      <tr><td>Patch a generated artifact with credential material</td><td>Credential stamp contracts for provider development and tests</td><td>The model and provider execution exist, but production external initiation is not yet available.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="related-documentation">Related documentation</h2>
+  <div class="tiles">
+    <a class="tile" href="operator-workflows.html">
+      <span class="tile-label">Operate</span>
+      <span class="tile-title">Operator Workflows</span>
+      <span class="tile-desc">How daemon-backed commands, confirmation, artifacts, and sessions fit into an assessment.</span>
+    </a>
+    <a class="tile" href="daemon-rpc.html">
+      <span class="tile-label">Daemon</span>
+      <span class="tile-title">Daemon RPC Contract</span>
+      <span class="tile-desc">Transport authority, PKI method groups, typed failures, CRL recovery, rollover, and bundle export.</span>
+    </a>
+    <a class="tile" href="reference/daemon-rpc.openapi.json">
+      <span class="tile-label">API</span>
+      <span class="tile-title">OpenAPI</span>
+      <span class="tile-desc">The source-backed request, response, enum, and status-code contract for external clients.</span>
+    </a>
+    <a class="tile" href="providers-artifacts.html">
+      <span class="tile-label">Providers</span>
+      <span class="tile-title">Providers and Artifacts</span>
+      <span class="tile-desc">Credential evidence, delivery, stamping, artifact custody, and durable non-secret receipts.</span>
+    </a>
+    <a class="tile" href="mesh.html">
+      <span class="tile-label">Runtime</span>
+      <span class="tile-title">Mesh</span>
+      <span class="tile-desc">The topology, listener, task, stream, bridge, and consumer model that can use PKI assignments.</span>
+    </a>
+    <a class="tile" href="mesh-development.html">
+      <span class="tile-label">Develop</span>
+      <span class="tile-title">Provider Development</span>
+      <span class="tile-desc">How optional Mesh and credential-provider methods are advertised and tested.</span>
+    </a>
+    <a class="tile" href="../api/sdk/index.html">
+      <span class="tile-label">SDK</span>
+      <span class="tile-title">Generated SDK API</span>
+      <span class="tile-desc">Source-derived Go, Python, and Rust module/provider SDK references.</span>
+    </a>
+  </div>
+</article>

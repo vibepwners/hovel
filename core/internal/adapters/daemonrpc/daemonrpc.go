@@ -98,21 +98,27 @@ const (
 type RPCErrorCode string
 
 const (
-	RPCErrorCodeInternal                 RPCErrorCode = "internal"
-	RPCErrorCodeNotFound                 RPCErrorCode = "not-found"
-	RPCErrorCodeRevisionConflict         RPCErrorCode = "revision-conflict"
-	RPCErrorCodeAcknowledgementExists    RPCErrorCode = "acknowledgement-exists"
-	RPCErrorCodeRolloverPrecondition     RPCErrorCode = "rollover-precondition"
-	RPCErrorCodeIdempotencyConflict      RPCErrorCode = "idempotency-conflict"
-	RPCErrorCodeMutationExists           RPCErrorCode = "mutation-exists"
-	RPCErrorCodeIssuanceInProgress       RPCErrorCode = "issuance-in-progress"
-	RPCErrorCodeCRLPublicationInProgress RPCErrorCode = "crl-publication-in-progress"
-	RPCErrorCodePrivateKeyExportDenied   RPCErrorCode = "private-key-export-denied"
-	RPCErrorCodeAuthoritySigningLocked   RPCErrorCode = "authority-signing-locked"
-	RPCErrorCodePermissionDenied         RPCErrorCode = "permission-denied"
+	RPCErrorCodeInternal                   RPCErrorCode = "internal"
+	RPCErrorCodeNotFound                   RPCErrorCode = "not-found"
+	RPCErrorCodeRevisionConflict           RPCErrorCode = "revision-conflict"
+	RPCErrorCodeAcknowledgementExists      RPCErrorCode = "acknowledgement-exists"
+	RPCErrorCodeRolloverPrecondition       RPCErrorCode = "rollover-precondition"
+	RPCErrorCodeIdempotencyConflict        RPCErrorCode = "idempotency-conflict"
+	RPCErrorCodeMutationExists             RPCErrorCode = "mutation-exists"
+	RPCErrorCodeIssuanceInProgress         RPCErrorCode = "issuance-in-progress"
+	RPCErrorCodeCRLPublicationInProgress   RPCErrorCode = "crl-publication-in-progress"
+	RPCErrorCodePrivateKeyExportDenied     RPCErrorCode = "private-key-export-denied"
+	RPCErrorCodeAuthoritySigningLocked     RPCErrorCode = "authority-signing-locked"
+	RPCErrorCodeAuthoritySigningLeaseOwned RPCErrorCode = "authority-signing-lease-owned"
+	RPCErrorCodePermissionDenied           RPCErrorCode = "permission-denied"
 )
 
-var errPrivilegedControlUnavailable = errors.New("privileged daemon control is unavailable on this transport")
+var (
+	errPrivilegedControlUnavailable = errors.New("privileged daemon control is unavailable on this transport")
+	errMeshTaskPlanRequired         = errors.New(
+		"mesh task requires a persisted throw plan and recorded confirmation",
+	)
+)
 
 func (c RPCErrorCode) Validate() error {
 	switch c {
@@ -121,6 +127,7 @@ func (c RPCErrorCode) Validate() error {
 		RPCErrorCodeIdempotencyConflict, RPCErrorCodeMutationExists,
 		RPCErrorCodeIssuanceInProgress, RPCErrorCodeCRLPublicationInProgress,
 		RPCErrorCodePrivateKeyExportDenied, RPCErrorCodeAuthoritySigningLocked,
+		RPCErrorCodeAuthoritySigningLeaseOwned,
 		RPCErrorCodePermissionDenied:
 		return nil
 	default:
@@ -499,15 +506,17 @@ type MeshBridgeOpenRequest struct {
 	Request           mesh.StreamRequest             `json:"request"`
 	LocalHost         string                         `json:"localHost,omitempty"`
 	LocalPort         int                            `json:"localPort,omitempty"`
+	LocalNetwork      MeshBridgeNetwork              `json:"localNetwork,omitempty"`
 	Credentials       domainpki.CredentialSelections `json:"credentials,omitempty"`
 	CredentialContext *PKIRequestContext             `json:"credentialContext,omitempty"`
 }
 
 type MeshBridgeOpenResponse struct {
-	OperationID string `json:"operationId"`
-	SessionID   string `json:"sessionId"`
-	LocalHost   string `json:"localHost"`
-	LocalPort   int    `json:"localPort"`
+	OperationID  string            `json:"operationId"`
+	SessionID    string            `json:"sessionId"`
+	LocalHost    string            `json:"localHost"`
+	LocalPort    int               `json:"localPort"`
+	LocalNetwork MeshBridgeNetwork `json:"localNetwork"`
 	// Capability is an ephemeral bearer secret for the local endpoint. Send
 	// capability + "\n" as the first TCP bytes or the first complete UDP
 	// datagram. The handshake frame is consumed and is never sent to the Mesh
@@ -783,47 +792,47 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerUnary[PayloadCommandListRequest, PayloadCommandListResponse](mux, "ListPayloadCommands", rpcServer.listPayloadCommandsRPC)
 	registerPrivilegedUnary[PayloadCommandRunRequest, PayloadCommandRunResponse](mux, "RunPayloadCommand", rpcServer.privileged, rpcServer.runPayloadCommandRPC)
 	registerUnary[MeshDescribeRequest, MeshDescribeResponse](mux, rpcMethodDescribeMesh, rpcServer.describeMeshRPC)
-	registerUnary[MeshTopologyRequest, MeshTopologyResponse](mux, rpcMethodMeshTopology, rpcServer.meshTopologyRPC)
-	registerUnary[MeshBeaconListRequest, MeshBeaconListResponse](mux, rpcMethodListMeshBeacons, rpcServer.listMeshBeaconsRPC)
-	registerUnary[MeshListenerListRequest, MeshListenerListResponse](mux, rpcMethodListMeshListeners, rpcServer.listMeshListenersRPC)
+	registerPrivilegedUnary[MeshTopologyRequest, MeshTopologyResponse](mux, rpcMethodMeshTopology, rpcServer.privileged, rpcServer.meshTopologyRPC)
+	registerPrivilegedUnary[MeshBeaconListRequest, MeshBeaconListResponse](mux, rpcMethodListMeshBeacons, rpcServer.privileged, rpcServer.listMeshBeaconsRPC)
+	registerPrivilegedUnary[MeshListenerListRequest, MeshListenerListResponse](mux, rpcMethodListMeshListeners, rpcServer.privileged, rpcServer.listMeshListenersRPC)
 	registerPrivilegedUnary[MeshListenerStartRequest, MeshListenerStartResponse](mux, rpcMethodStartMeshListener, rpcServer.privileged, rpcServer.startMeshListenerRPC)
 	registerPrivilegedUnary[MeshListenerStopRequest, MeshListenerStopResponse](mux, rpcMethodStopMeshListener, rpcServer.privileged, rpcServer.stopMeshListenerRPC)
 	registerPrivilegedUnary[MeshTaskRunRequest, MeshTaskRunResponse](mux, rpcMethodRunMeshTask, rpcServer.privileged, rpcServer.runMeshTaskRPC)
 	registerPrivilegedUnary[MeshStreamOpenRequest, MeshStreamOpenResponse](mux, rpcMethodOpenMeshStream, rpcServer.privileged, rpcServer.openMeshStreamRPC)
 	registerPrivilegedNoStoreUnary[MeshBridgeOpenRequest, MeshBridgeOpenResponse](mux, rpcMethodOpenMeshBridge, rpcServer.privileged, rpcServer.openMeshBridgeRPC)
 	registerPrivilegedUnary[MeshBridgeCloseRequest, MeshBridgeCloseResponse](mux, rpcMethodCloseMeshBridge, rpcServer.privileged, rpcServer.closeMeshBridgeRPC)
-	registerUnary[MeshOperationListRequest, MeshOperationListResponse](mux, rpcMethodListMeshOperations, rpcServer.listMeshOperationsRPC)
+	registerPrivilegedUnary[MeshOperationListRequest, MeshOperationListResponse](mux, rpcMethodListMeshOperations, rpcServer.privileged, rpcServer.listMeshOperationsRPC)
 	registerUnary[EmptyRequest, apppki.WorkspaceStatus](mux, rpcMethodPKIStatus, rpcServer.pkiStatusRPC)
 	registerPrivilegedUnary[PKIInitializeRequest, apppki.WorkspaceStatus](mux, rpcMethodInitializePKI, rpcServer.privileged, rpcServer.initializePKIRPC)
 	registerUnary[EmptyRequest, PKIBackendListResponse](mux, rpcMethodListPKIBackends, rpcServer.listPKIBackendsRPC)
 	registerUnary[EmptyRequest, PKIProfileListResponse](mux, rpcMethodListPKIProfiles, rpcServer.listPKIProfilesRPC)
-	registerUnary[EmptyRequest, PKIAuthorityListResponse](mux, rpcMethodListAuthorities, rpcServer.listPKIAuthoritiesRPC)
-	registerUnary[PKIAuthorityRequest, PKIAuthorityInspectResponse](mux, rpcMethodInspectAuthority, rpcServer.inspectPKIAuthorityRPC)
+	registerPrivilegedUnary[EmptyRequest, PKIAuthorityListResponse](mux, rpcMethodListAuthorities, rpcServer.privileged, rpcServer.listPKIAuthoritiesRPC)
+	registerPrivilegedUnary[PKIAuthorityRequest, PKIAuthorityInspectResponse](mux, rpcMethodInspectAuthority, rpcServer.privileged, rpcServer.inspectPKIAuthorityRPC)
 	registerPrivilegedUnary[PKIAuthorityCreateRequest, apppki.CreateAuthorityResult](mux, rpcMethodCreateAuthority, rpcServer.privileged, rpcServer.createPKIAuthorityRPC)
 	registerPrivilegedUnary[PKIAuthorityLeaseRequest, apppki.SigningLease](mux, rpcMethodUnlockAuthority, rpcServer.privileged, rpcServer.unlockPKIAuthorityRPC)
 	registerPrivilegedUnary[PKIAuthorityLockRequest, EmptyResponse](mux, rpcMethodLockAuthority, rpcServer.privileged, rpcServer.lockPKIAuthorityRPC)
-	registerUnary[EmptyRequest, PKICertificateListResponse](mux, rpcMethodListCertificates, rpcServer.listPKICertificatesRPC)
-	registerUnary[PKICertificateRequest, domainpki.CertificateGeneration](mux, rpcMethodInspectCertificate, rpcServer.inspectPKICertificateRPC)
+	registerPrivilegedUnary[EmptyRequest, PKICertificateListResponse](mux, rpcMethodListCertificates, rpcServer.privileged, rpcServer.listPKICertificatesRPC)
+	registerPrivilegedUnary[PKICertificateRequest, domainpki.CertificateGeneration](mux, rpcMethodInspectCertificate, rpcServer.privileged, rpcServer.inspectPKICertificateRPC)
 	registerPrivilegedUnary[PKICertificateIssueRequest, domainpki.CertificateGeneration](mux, rpcMethodIssueCertificate, rpcServer.privileged, rpcServer.issuePKICertificateRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.RenewCertificateRequest], apppki.CertificateLifecycleResult](mux, rpcMethodRenewCertificate, rpcServer.privileged, rpcServer.renewPKICertificateRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.RotateCertificateRequest], apppki.CertificateLifecycleResult](mux, rpcMethodRotateCertificate, rpcServer.privileged, rpcServer.rotatePKICertificateRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.RevokeCertificateRequest], apppki.CertificateRevocationResult](mux, rpcMethodRevokeCertificate, rpcServer.privileged, rpcServer.revokePKICertificateRPC)
-	registerUnary[PKIRevocationRequest, domainpki.Revocation](mux, rpcMethodInspectRevocation, rpcServer.inspectPKIRevocationRPC)
-	registerUnary[PKICertificateRequest, domainpki.Revocation](mux, rpcMethodGenerationRevocation, rpcServer.inspectPKIGenerationRevocationRPC)
-	registerUnary[PKIRevocationListRequest, PKIRevocationListResponse](mux, rpcMethodListRevocations, rpcServer.listPKIRevocationsRPC)
+	registerPrivilegedUnary[PKIRevocationRequest, domainpki.Revocation](mux, rpcMethodInspectRevocation, rpcServer.privileged, rpcServer.inspectPKIRevocationRPC)
+	registerPrivilegedUnary[PKICertificateRequest, domainpki.Revocation](mux, rpcMethodGenerationRevocation, rpcServer.privileged, rpcServer.inspectPKIGenerationRevocationRPC)
+	registerPrivilegedUnary[PKIRevocationListRequest, PKIRevocationListResponse](mux, rpcMethodListRevocations, rpcServer.privileged, rpcServer.listPKIRevocationsRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.PublishCRLRequest], apppki.CRLPublicationResult](mux, rpcMethodPublishCRL, rpcServer.privileged, rpcServer.publishPKICRLRPC)
-	registerUnary[PKICRLPublicationRequest, apppki.CRLPublicationIntent](mux, rpcMethodInspectCRLPublication, rpcServer.inspectPKICRLPublicationRPC)
-	registerUnary[PKICRLListRequest, PKICRLPublicationListResponse](mux, rpcMethodListCRLPublications, rpcServer.listPKICRLPublicationsRPC)
-	registerUnary[PKICRLRequest, domainpki.CRLGeneration](mux, rpcMethodInspectCRL, rpcServer.inspectPKICRLRPC)
-	registerUnary[PKICRLListRequest, PKICRLListResponse](mux, rpcMethodListCRLs, rpcServer.listPKICRLsRPC)
+	registerPrivilegedUnary[PKICRLPublicationRequest, apppki.CRLPublicationIntent](mux, rpcMethodInspectCRLPublication, rpcServer.privileged, rpcServer.inspectPKICRLPublicationRPC)
+	registerPrivilegedUnary[PKICRLListRequest, PKICRLPublicationListResponse](mux, rpcMethodListCRLPublications, rpcServer.privileged, rpcServer.listPKICRLPublicationsRPC)
+	registerPrivilegedUnary[PKICRLRequest, domainpki.CRLGeneration](mux, rpcMethodInspectCRL, rpcServer.privileged, rpcServer.inspectPKICRLRPC)
+	registerPrivilegedUnary[PKICRLListRequest, PKICRLListResponse](mux, rpcMethodListCRLs, rpcServer.privileged, rpcServer.listPKICRLsRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.ReconcileCRLPublicationRequest], apppki.CRLPublicationIntent](mux, rpcMethodReconcileCRL, rpcServer.privileged, rpcServer.reconcilePKICRLRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.ReconcileCRLPublicationsRequest], PKICRLPublicationListResponse](mux, rpcMethodReconcileCRLs, rpcServer.privileged, rpcServer.reconcilePKICRLsRPC)
-	registerUnary[EmptyRequest, PKIOperationListResponse](mux, rpcMethodListPKIOperations, rpcServer.listPKIOperationsRPC)
-	registerUnary[PKIOperationRequest, apppki.OperationInspection](mux, rpcMethodInspectPKIOperation, rpcServer.inspectPKIOperationRPC)
-	registerUnary[EmptyRequest, PKICredentialStampListResponse](mux, rpcMethodListCredentialStamps, rpcServer.listPKICredentialStampsRPC)
-	registerUnary[PKICredentialStampRequest, domainpki.CredentialStamp](mux, rpcMethodInspectCredentialStamp, rpcServer.inspectPKICredentialStampRPC)
-	registerUnary[EmptyRequest, PKICredentialExecutionListResponse](mux, rpcMethodListCredentialExecutions, rpcServer.listPKICredentialExecutionsRPC)
-	registerUnary[PKICredentialExecutionRequest, domainpki.CredentialExecution](mux, rpcMethodInspectCredentialExecution, rpcServer.inspectPKICredentialExecutionRPC)
+	registerPrivilegedUnary[EmptyRequest, PKIOperationListResponse](mux, rpcMethodListPKIOperations, rpcServer.privileged, rpcServer.listPKIOperationsRPC)
+	registerPrivilegedUnary[PKIOperationRequest, apppki.OperationInspection](mux, rpcMethodInspectPKIOperation, rpcServer.privileged, rpcServer.inspectPKIOperationRPC)
+	registerPrivilegedUnary[EmptyRequest, PKICredentialStampListResponse](mux, rpcMethodListCredentialStamps, rpcServer.privileged, rpcServer.listPKICredentialStampsRPC)
+	registerPrivilegedUnary[PKICredentialStampRequest, domainpki.CredentialStamp](mux, rpcMethodInspectCredentialStamp, rpcServer.privileged, rpcServer.inspectPKICredentialStampRPC)
+	registerPrivilegedUnary[EmptyRequest, PKICredentialExecutionListResponse](mux, rpcMethodListCredentialExecutions, rpcServer.privileged, rpcServer.listPKICredentialExecutionsRPC)
+	registerPrivilegedUnary[PKICredentialExecutionRequest, domainpki.CredentialExecution](mux, rpcMethodInspectCredentialExecution, rpcServer.privileged, rpcServer.inspectPKICredentialExecutionRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.StartAuthorityRolloverRequest], apppki.OperationInspection](mux, rpcMethodStartRollover, rpcServer.privileged, rpcServer.startPKIAuthorityRolloverRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.AcknowledgeAuthorityRolloverRequest], apppki.OperationInspection](mux, rpcMethodAcknowledgeRollover, rpcServer.privileged, rpcServer.acknowledgePKIAuthorityRolloverRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.ActivateAuthorityRolloverRequest], apppki.OperationInspection](mux, rpcMethodActivateRollover, rpcServer.privileged, rpcServer.activatePKIAuthorityRolloverRPC)
@@ -831,14 +840,14 @@ func Register(mux *http.ServeMux, runs services.RunService, options ...ServerOpt
 	registerPrivilegedUnary[PKIMutationRequest[apppki.CompleteAuthorityRolloverRequest], apppki.OperationInspection](mux, rpcMethodCompleteRollover, rpcServer.privileged, rpcServer.completePKIAuthorityRolloverRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.CancelAuthorityRolloverRequest], apppki.OperationInspection](mux, rpcMethodCancelRollover, rpcServer.privileged, rpcServer.cancelPKIAuthorityRolloverRPC)
 	registerPrivilegedNoStoreUnary[PKIBundleExportRequest, domainpki.Bundle](mux, rpcMethodExportBundle, rpcServer.privileged, rpcServer.exportPKIBundleRPC)
-	registerUnary[EmptyRequest, PKIAssignmentListResponse](mux, rpcMethodListAssignments, rpcServer.listPKIAssignmentsRPC)
-	registerUnary[PKIAssignmentRequest, apppki.AssignmentInspection](mux, rpcMethodInspectAssignment, rpcServer.inspectPKIAssignmentRPC)
+	registerPrivilegedUnary[EmptyRequest, PKIAssignmentListResponse](mux, rpcMethodListAssignments, rpcServer.privileged, rpcServer.listPKIAssignmentsRPC)
+	registerPrivilegedUnary[PKIAssignmentRequest, apppki.AssignmentInspection](mux, rpcMethodInspectAssignment, rpcServer.privileged, rpcServer.inspectPKIAssignmentRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.BindAssignmentRequest], domainpki.Assignment](mux, rpcMethodBindAssignment, rpcServer.privileged, rpcServer.bindPKIAssignmentRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.StageAssignmentRequest], apppki.AssignmentInspection](mux, rpcMethodStageAssignment, rpcServer.privileged, rpcServer.stagePKIAssignmentRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.ActivateAssignmentRequest], apppki.AssignmentInspection](mux, rpcMethodActivateAssignment, rpcServer.privileged, rpcServer.activatePKIAssignmentRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.UnbindAssignmentRequest], domainpki.Assignment](mux, rpcMethodUnbindAssignment, rpcServer.privileged, rpcServer.unbindPKIAssignmentRPC)
-	registerUnary[EmptyRequest, PKITrustSetListResponse](mux, rpcMethodListTrustSets, rpcServer.listPKITrustSetsRPC)
-	registerUnary[PKITrustSetRequest, apppki.TrustSetInspection](mux, rpcMethodInspectTrustSet, rpcServer.inspectPKITrustSetRPC)
+	registerPrivilegedUnary[EmptyRequest, PKITrustSetListResponse](mux, rpcMethodListTrustSets, rpcServer.privileged, rpcServer.listPKITrustSetsRPC)
+	registerPrivilegedUnary[PKITrustSetRequest, apppki.TrustSetInspection](mux, rpcMethodInspectTrustSet, rpcServer.privileged, rpcServer.inspectPKITrustSetRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.CreateTrustSetRequest], domainpki.TrustSet](mux, rpcMethodCreateTrustSet, rpcServer.privileged, rpcServer.createPKITrustSetRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.StageTrustSetRequest], apppki.TrustSetInspection](mux, rpcMethodStageTrustSet, rpcServer.privileged, rpcServer.stagePKITrustSetRPC)
 	registerPrivilegedUnary[PKIMutationRequest[apppki.ActivateTrustSetRequest], apppki.TrustSetInspection](mux, rpcMethodActivateTrustSet, rpcServer.privileged, rpcServer.activatePKITrustSetRPC)
@@ -976,10 +985,16 @@ func classifyRPCError(err error) (int, RPCErrorEnvelope) {
 	case errors.Is(err, apppki.ErrPrivateKeyExportDenied):
 		envelope.Code = RPCErrorCodePrivateKeyExportDenied
 		return http.StatusForbidden, envelope
+	case errors.Is(err, apppki.ErrAuthoritySigningLeaseOwned):
+		envelope.Code = RPCErrorCodeAuthoritySigningLeaseOwned
+		return http.StatusForbidden, envelope
 	case errors.Is(err, apppki.ErrAuthoritySigningLocked):
 		envelope.Code = RPCErrorCodeAuthoritySigningLocked
 		return http.StatusLocked, envelope
 	case errors.Is(err, errPrivilegedControlUnavailable):
+		envelope.Code = RPCErrorCodePermissionDenied
+		return http.StatusForbidden, envelope
+	case errors.Is(err, errMeshTaskPlanRequired):
 		envelope.Code = RPCErrorCodePermissionDenied
 		return http.StatusForbidden, envelope
 	case errors.Is(err, apppki.ErrNotFound):
@@ -1261,6 +1276,10 @@ func (s *Server) stopMeshListenerRPC(
 
 func (s *Server) runMeshTaskRPC(ctx context.Context, req MeshTaskRunRequest) (MeshTaskRunResponse, error) {
 	operation := s.meshBook().StartTask(req.ModuleID, req.Request, s.now())
+	if err := authorizeDirectMeshTask(req.Request.Kind); err != nil {
+		s.meshBook().Fail(operation.ID, err, s.now())
+		return MeshTaskRunResponse{}, err
+	}
 	ctx, err := bindMeshCredentialContext(ctx, req.Credentials, req.CredentialContext)
 	if err != nil {
 		s.meshBook().Fail(operation.ID, err, s.now())
@@ -1279,6 +1298,14 @@ func (s *Server) runMeshTaskRPC(ctx context.Context, req MeshTaskRunRequest) (Me
 	}
 	s.meshBook().CompleteTask(operation.ID, result, s.now())
 	return result, nil
+}
+
+func authorizeDirectMeshTask(kind mesh.TaskKind) error {
+	kind = mesh.TaskKind(strings.TrimSpace(string(kind)))
+	if kind == "" || kind == mesh.TaskSurvey {
+		return nil
+	}
+	return fmt.Errorf("%w: %q", errMeshTaskPlanRequired, kind)
 }
 
 func (s *Server) openMeshStreamRPC(
@@ -1324,6 +1351,7 @@ func (s *Server) openMeshBridgeRPC(
 			Request:         req.Request,
 			Host:            req.LocalHost,
 			Port:            req.LocalPort,
+			LocalNetwork:    req.LocalNetwork,
 			Credentials:     req.Credentials,
 			CredentialScope: meshCredentialOperationScope(req.CredentialContext),
 			Runs:            s.runs,
@@ -3917,6 +3945,8 @@ func decodeRPCError(method string, statusCode int, envelope RPCErrorEnvelope) er
 		return fmt.Errorf("%s: %s: %w", method, envelope.Message, apppki.ErrPrivateKeyExportDenied)
 	case RPCErrorCodeAuthoritySigningLocked:
 		return fmt.Errorf("%s: %s: %w", method, envelope.Message, apppki.ErrAuthoritySigningLocked)
+	case RPCErrorCodeAuthoritySigningLeaseOwned:
+		return fmt.Errorf("%s: %s: %w", method, envelope.Message, apppki.ErrAuthoritySigningLeaseOwned)
 	case RPCErrorCodePermissionDenied:
 		return fmt.Errorf("%s: %s: %w", method, envelope.Message, errPrivilegedControlUnavailable)
 	case RPCErrorCodeNotFound:

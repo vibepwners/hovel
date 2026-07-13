@@ -1,0 +1,74 @@
+<!-- hovel-doc: {"title":"Squatter Reference","group":"squatter","order":40,"navTitle":"Reference"} -->
+<article>
+        <h1>Squatter Reference</h1>
+
+        <h2>Important Paths</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Path</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>modules/squatter/README.md</code></td><td>Short source-level overview.</td></tr>
+            <tr><td><code>modules/squatter/provider/</code></td><td>Go payload-provider implementation and step dispatcher.</td></tr>
+            <tr><td><code>modules/squatter/windows/src/</code></td><td>Windows payload source, no-CRT runtime, modules, wire protocol, and logging.</td></tr>
+            <tr><td><code>modules/squatter/client/cmd/squatterctl/</code></td><td>Operator-side client shell for direct Squatter sessions.</td></tr>
+            <tr><td><code>modules/squatter/client/smbpipe/</code></td><td>SMB named-pipe connector and admin helper code.</td></tr>
+            <tr><td><code>modules/squatter/client/wire/</code></td><td>Go framing implementation for the Squatter mux protocol.</td></tr>
+            <tr><td><code>modules/squatter/tests/</code></td><td>Wine-backed C/C++ integration tests.</td></tr>
+            <tr><td><code>modules/squatter/bazel/</code></td><td>MinGW toolchain and Windows transition helpers.</td></tr>
+            <tr><td><code>modules/tools/package_examples.py</code></td><td>Release package manifest source for Squatter and example modules.</td></tr>
+            <tr><td><code>docs/site/src/content/spec/squatter-payload-provider.html</code></td><td>Full architecture and provider contract chapter.</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Step IDs</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th>Role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>squatter.generate</code></td><td>Generate a target-specific PE payload artifact.</td></tr>
+            <tr><td><code>squatter.install_smb</code></td><td>Upload and start the payload over SMB with explicit credentials.</td></tr>
+            <tr><td><code>squatter.connect_smb</code></td><td>Connect to a named-pipe Squatter session through SMB.</td></tr>
+            <tr><td><code>squatter.connect_tcp_bind</code></td><td>Connect to a target-side TCP listener.</td></tr>
+            <tr><td><code>squatter.listen_tcp_callback</code></td><td>Start a provider listener for callback sessions.</td></tr>
+            <tr><td><code>squatter.connect_tcp_callback</code></td><td>Adopt an accepted callback connection as a Hovel session.</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Payload Metadata</h2>
+<pre data-lang="metadata"><code>name: squatter
+version: v0.1.0
+type: payload_provider
+kind: pe
+platform: windows
+arch: x86
+minOS: windows-7
+formats: pe-exe, pe
+transports: smb-named-pipe, tcp-bind, tcp-callback
+tags: payload_provider, squatter, windows, lab, dangerous</code></pre>
+
+        <h2>Command Surface</h2>
+<pre data-lang="commands"><code>wininfo
+process.list
+process.run
+process.run_as_user
+process.kill
+payload.status
+payload.cleanup
+file.stat
+registry.query
+eventlog.query
+drive.list
+share.list
+acl.stat
+getfile
+putfile
+cmd</code></pre>
+      </article>

@@ -2,6 +2,7 @@ package pki
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -227,6 +228,7 @@ func TestBundleJSONAndDefensiveCopies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer bundle.Clear()
 	privateKey.Data[0] = 0
 	if bundle.PrivateKey == nil || bundle.PrivateKey.Data[0] != 7 {
 		t.Fatal("bundle retained caller-owned private key bytes")
@@ -242,6 +244,7 @@ func TestBundleJSONAndDefensiveCopies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer decoded.Clear()
 	if err := decoded.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -257,12 +260,30 @@ func TestBundleJSONAndDefensiveCopies(t *testing.T) {
 		t.Fatal("DecodeBundleJSON() accepted trailing json")
 	}
 	public := bundle.Public()
+	defer public.Clear()
 	if public.PrivateKey != nil || public.PrivateKeyRef != nil {
 		t.Fatal("Bundle.Public() retained private material")
 	}
 	public.Certificate.Data[0] = 0
 	if bundle.Certificate.Data[0] != 1 {
 		t.Fatal("Bundle.Public() aliased certificate bytes")
+	}
+	owned := bundle.Clone()
+	privateAlias := owned.PrivateKey.Data
+	certificateAlias := owned.Certificate.Data
+	owned.Clear()
+	if !reflect.DeepEqual(owned, Bundle{}) {
+		t.Fatalf("Bundle.Clear() left state behind: %#v", owned)
+	}
+	for _, data := range [][]byte{privateAlias, certificateAlias} {
+		for _, value := range data {
+			if value != 0 {
+				t.Fatalf("Bundle.Clear() left byte-backed material: %v", data)
+			}
+		}
+	}
+	if bundle.PrivateKey == nil || bundle.PrivateKey.Data[0] != 7 || bundle.Certificate.Data[0] != 1 {
+		t.Fatal("Bundle.Clear() modified independently owned source material")
 	}
 
 	keyRef := KeyReference{KeyID: "key-1", ProviderID: "keystore", Capabilities: []string{"sign-certificate"}}

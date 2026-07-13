@@ -63,8 +63,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -91,6 +97,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -115,6 +124,9 @@
           },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -141,6 +153,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -163,8 +178,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -188,8 +209,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -216,6 +243,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -238,8 +268,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -263,8 +299,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -288,8 +330,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -313,8 +361,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -338,8 +392,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -363,8 +423,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -388,8 +454,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -413,8 +485,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -438,8 +516,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -463,8 +547,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -488,8 +578,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -513,8 +609,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -538,8 +640,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -563,8 +671,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -588,8 +702,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -613,8 +733,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -638,8 +764,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -663,8 +795,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -688,8 +826,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -716,6 +860,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -741,6 +888,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -763,8 +913,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -791,6 +947,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -813,8 +972,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -838,8 +1003,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -863,8 +1034,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -891,6 +1068,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -913,8 +1093,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -938,8 +1124,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -963,8 +1155,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -988,8 +1186,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1016,6 +1220,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -1038,8 +1245,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1063,8 +1276,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1091,6 +1310,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -1113,8 +1335,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1141,6 +1369,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -1163,8 +1394,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1188,8 +1425,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1213,8 +1456,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1238,8 +1487,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1261,13 +1516,19 @@
             "$ref": "#/components/responses/MeshBridgeOpenResponse"
           },
           "400": {
-            "$ref": "#/components/responses/TextError"
+            "$ref": "#/components/responses/NoStoreTextError"
+          },
+          "403": {
+            "$ref": "#/components/responses/NoStoreRPCError"
           },
           "405": {
-            "$ref": "#/components/responses/TextError"
+            "$ref": "#/components/responses/NoStoreTextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/NoStoreRequestTooLargeError"
           },
           "500": {
-            "$ref": "#/components/responses/TextError"
+            "$ref": "#/components/responses/NoStoreTextError"
           }
         }
       }
@@ -1288,8 +1549,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1313,8 +1580,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1338,8 +1611,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1363,8 +1642,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1388,8 +1673,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1416,6 +1707,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -1438,8 +1732,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1466,6 +1766,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -1491,6 +1794,9 @@
           "405": {
             "$ref": "#/components/responses/TextError"
           },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
           "500": {
             "$ref": "#/components/responses/TextError"
           }
@@ -1513,8 +1819,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1538,8 +1850,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1563,8 +1881,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1588,8 +1912,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1613,8 +1943,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1638,8 +1974,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1663,8 +2005,17 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
+          "404": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1688,8 +2039,23 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
+          "404": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "409": {
+            "$ref": "#/components/responses/RPCError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
+          "423": {
+            "$ref": "#/components/responses/RPCError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1713,8 +2079,23 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
+          "404": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "409": {
+            "$ref": "#/components/responses/RPCError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
+          "423": {
+            "$ref": "#/components/responses/RPCError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1738,8 +2119,23 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
+          "404": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "409": {
+            "$ref": "#/components/responses/RPCError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
+          },
+          "423": {
+            "$ref": "#/components/responses/RPCError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1763,8 +2159,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1788,8 +2190,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1813,8 +2221,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1838,8 +2252,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -1855,7 +2275,12 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICRLPublicationResult"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
+          "404": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "409": {"$ref": "#/components/responses/RPCError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
+          "423": {"$ref": "#/components/responses/RPCError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -1868,7 +2293,10 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICRLGeneration"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
+          "404": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -1881,7 +2309,10 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICRLPublicationIntent"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
+          "404": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -1894,7 +2325,10 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICRLPublicationListResponse"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
+          "404": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -1907,7 +2341,10 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICRLListResponse"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
+          "404": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -1920,7 +2357,11 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICRLPublicationIntent"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
+          "404": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "409": {"$ref": "#/components/responses/RPCError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -1933,7 +2374,9 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICRLPublicationListResponse"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -1952,13 +2395,22 @@
             "$ref": "#/components/responses/PKIBundle"
           },
           "400": {
-            "$ref": "#/components/responses/TextError"
+            "$ref": "#/components/responses/NoStoreTextError"
+          },
+          "403": {
+            "$ref": "#/components/responses/NoStoreRPCError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NoStoreRPCError"
           },
           "405": {
-            "$ref": "#/components/responses/TextError"
+            "$ref": "#/components/responses/NoStoreTextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/NoStoreRequestTooLargeError"
           },
           "500": {
-            "$ref": "#/components/responses/TextError"
+            "$ref": "#/components/responses/NoStoreTextError"
           }
         }
       }
@@ -1979,8 +2431,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2004,11 +2462,17 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "404": {
             "$ref": "#/components/responses/RPCError"
           },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2035,11 +2499,17 @@
           "404": {
             "$ref": "#/components/responses/RPCError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
           },
           "409": {
             "$ref": "#/components/responses/RPCError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2066,11 +2536,17 @@
           "404": {
             "$ref": "#/components/responses/RPCError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
           },
           "409": {
             "$ref": "#/components/responses/RPCError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2097,11 +2573,17 @@
           "404": {
             "$ref": "#/components/responses/RPCError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
           },
           "409": {
             "$ref": "#/components/responses/RPCError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2128,11 +2610,17 @@
           "404": {
             "$ref": "#/components/responses/RPCError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
           },
           "409": {
             "$ref": "#/components/responses/RPCError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2156,8 +2644,14 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2181,11 +2675,17 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "404": {
             "$ref": "#/components/responses/RPCError"
           },
           "405": {
             "$ref": "#/components/responses/TextError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2209,11 +2709,17 @@
           "400": {
             "$ref": "#/components/responses/TextError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
           },
           "409": {
             "$ref": "#/components/responses/RPCError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2240,11 +2746,17 @@
           "404": {
             "$ref": "#/components/responses/RPCError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
           },
           "409": {
             "$ref": "#/components/responses/RPCError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2271,11 +2783,17 @@
           "404": {
             "$ref": "#/components/responses/RPCError"
           },
+          "403": {
+            "$ref": "#/components/responses/RPCError"
+          },
           "405": {
             "$ref": "#/components/responses/TextError"
           },
           "409": {
             "$ref": "#/components/responses/RPCError"
+          },
+          "413": {
+            "$ref": "#/components/responses/RequestTooLargeError"
           },
           "500": {
             "$ref": "#/components/responses/TextError"
@@ -2291,7 +2809,9 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKIOperationListResponse"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2304,8 +2824,10 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKIOperationInspection"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "404": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2318,7 +2840,9 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICredentialStampListResponse"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2331,8 +2855,10 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICredentialStamp"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "404": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2345,7 +2871,9 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICredentialExecutionListResponse"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2358,8 +2886,10 @@
         "responses": {
           "200": {"$ref": "#/components/responses/PKICredentialExecution"},
           "400": {"$ref": "#/components/responses/TextError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "404": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2373,8 +2903,10 @@
           "200": {"$ref": "#/components/responses/PKIOperationInspection"},
           "400": {"$ref": "#/components/responses/TextError"},
           "404": {"$ref": "#/components/responses/RPCError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
           "409": {"$ref": "#/components/responses/RPCError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2388,8 +2920,10 @@
           "200": {"$ref": "#/components/responses/PKIOperationInspection"},
           "400": {"$ref": "#/components/responses/TextError"},
           "404": {"$ref": "#/components/responses/RPCError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
           "409": {"$ref": "#/components/responses/RPCError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2403,8 +2937,10 @@
           "200": {"$ref": "#/components/responses/PKIOperationInspection"},
           "400": {"$ref": "#/components/responses/TextError"},
           "404": {"$ref": "#/components/responses/RPCError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
           "409": {"$ref": "#/components/responses/RPCError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2418,8 +2954,10 @@
           "200": {"$ref": "#/components/responses/PKIOperationInspection"},
           "400": {"$ref": "#/components/responses/TextError"},
           "404": {"$ref": "#/components/responses/RPCError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
           "409": {"$ref": "#/components/responses/RPCError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2433,8 +2971,10 @@
           "200": {"$ref": "#/components/responses/PKIOperationInspection"},
           "400": {"$ref": "#/components/responses/TextError"},
           "404": {"$ref": "#/components/responses/RPCError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
           "409": {"$ref": "#/components/responses/RPCError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -2448,8 +2988,10 @@
           "200": {"$ref": "#/components/responses/PKIOperationInspection"},
           "400": {"$ref": "#/components/responses/TextError"},
           "404": {"$ref": "#/components/responses/RPCError"},
+          "403": {"$ref": "#/components/responses/RPCError"},
           "405": {"$ref": "#/components/responses/TextError"},
           "409": {"$ref": "#/components/responses/RPCError"},
+          "413": {"$ref": "#/components/responses/RequestTooLargeError"},
           "500": {"$ref": "#/components/responses/TextError"}
         }
       }
@@ -3213,6 +3755,70 @@
           }
         }
       },
+      "RequestTooLargeError": {
+        "description": "Plain-text error returned when JSON decoding attempts to read more than the 64 MiB (67,108,864-byte) request-body limit; the daemon does not preflight Content-Length.",
+        "content": {
+          "text/plain": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "NoStoreTextError": {
+        "description": "Plain-text error from a secret-bearing operation. Every response is non-cacheable.",
+        "headers": {
+          "Cache-Control": {
+            "description": "Secret-bearing operation responses must not be cached.",
+            "schema": {
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "text/plain": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "NoStoreRequestTooLargeError": {
+        "description": "Non-cacheable plain-text error from a secret-bearing operation when JSON decoding attempts to read more than the 64 MiB (67,108,864-byte) request-body limit; the daemon does not preflight Content-Length.",
+        "headers": {
+          "Cache-Control": {
+            "description": "Secret-bearing operation responses must not be cached.",
+            "schema": {
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "text/plain": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "NoStoreRPCError": {
+        "description": "Versioned machine-readable error from a secret-bearing operation. Every response is non-cacheable.",
+        "headers": {
+          "Cache-Control": {
+            "description": "Secret-bearing operation responses must not be cached.",
+            "schema": {
+              "const": "no-store"
+            }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/RPCError"
+            }
+          }
+        }
+      },
       "RPCError": {
         "description": "Versioned machine-readable daemon error.",
         "content": {
@@ -3644,6 +4250,7 @@
       },
       "PKIBundle": {
         "description": "Successful response.",
+        "headers": {"Cache-Control": {"description": "Bundle export responses must not be cached.","schema": {"const": "no-store"}}},
         "content": {
           "application/json": {
             "schema": {
@@ -4578,6 +5185,7 @@
                   "crl-publication-in-progress",
                   "private-key-export-denied",
                   "authority-signing-locked",
+                  "authority-signing-lease-owned",
                   "permission-denied"
                 ]
               }
@@ -4605,6 +5213,7 @@
               "crl-publication-in-progress",
               "private-key-export-denied",
               "authority-signing-locked",
+              "authority-signing-lease-owned",
               "permission-denied"
             ]
           },
@@ -6217,7 +6826,7 @@
             "type": "string", "minLength": 1, "maxLength": 256
           },
           "request": {
-            "$ref": "#/components/schemas/MeshTaskRequest"
+            "$ref": "#/components/schemas/MeshDirectTaskRequest"
           },
           "credentials": {
             "$ref": "#/components/schemas/MeshCredentialSelections"
@@ -6358,7 +6967,16 @@
             "type": "integer", "minimum": 0, "maximum": 65535
           },
           "protocol": {
-            "type": "string"
+            "type": "string",
+            "description": "Provider-defined remote flow protocol; independent of a bridge's daemon-local socket network."
+          },
+          "localNetwork": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ],
+            "description": "Daemon-local socket network for bridge operations."
           },
           "localAddress": {
             "type": "string"
@@ -6757,6 +7375,22 @@
           }
         }
       },
+      "MeshDirectTaskRequest": {
+        "description": "Direct daemon task execution is limited to non-executing survey requests. Other provider-advertised task kinds require the persisted throw-plan and confirmation workflow.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/MeshTaskRequest"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "survey"
+              }
+            }
+          }
+        ]
+      },
       "MeshTaskResult": {
         "type": "object",
         "additionalProperties": false,
@@ -6885,7 +7519,8 @@
             "type": "integer", "minimum": 0, "maximum": 65535
           },
           "protocol": {
-            "type": "string"
+            "type": "string",
+            "description": "Provider-defined remote flow protocol. OpenMeshBridge does not reinterpret this field as its local socket network."
           },
           "config": {
             "$ref": "#/components/schemas/AnyObject"
@@ -6925,6 +7560,15 @@
             "minimum": 0,
             "maximum": 65535
           },
+          "localNetwork": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ],
+            "default": "tcp",
+            "description": "Daemon-local socket adapter. This does not constrain request.protocol, which remains provider-defined."
+          },
           "credentials": {
             "$ref": "#/components/schemas/MeshCredentialSelections"
           },
@@ -6941,6 +7585,7 @@
           "sessionId",
           "localHost",
           "localPort",
+          "localNetwork",
           "capability",
           "localAddress"
         ],
@@ -6958,6 +7603,13 @@
           },
           "localPort": {
             "type": "integer"
+          },
+          "localNetwork": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ]
           },
           "capability": {
             "type": "string",
@@ -9649,6 +10301,7 @@
         ]
       },
       "PKIPrivateKeyBinary": {
+        "x-sensitive": true,
         "allOf": [
           {
             "$ref": "#/components/schemas/PKIBinary"

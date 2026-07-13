@@ -5,6 +5,19 @@ use crate::json::Value;
 
 pub const CREDENTIAL_DELIVERY_SCHEMA_V1: &str = "hovel.pki.credential-delivery/v1";
 pub(crate) const CREDENTIAL_RPC_DESCRIBE_METHOD: &str = "credential.describe";
+pub(crate) const MAXIMUM_CREDENTIAL_BINARY_BYTES: usize = 24 << 20;
+pub(crate) const MAXIMUM_CREDENTIAL_EXECUTION_FILES: usize = 64;
+pub(crate) const MAXIMUM_CREDENTIAL_REFERENCE_CAPABILITIES: usize = 64;
+pub(crate) const MAXIMUM_CREDENTIAL_STAMP_DIGESTS: usize = 128;
+pub(crate) const MAXIMUM_CREDENTIAL_STAMP_PRECONDITION_BYTES: usize = 1 << 20;
+pub(crate) const MAXIMUM_CREDENTIAL_RECEIPT_BYTES: usize =
+    MAXIMUM_CREDENTIAL_STAMP_PRECONDITION_BYTES;
+const MAXIMUM_CREDENTIAL_PROVIDER_TARGET_BYTES: usize = 1 << 20;
+pub(crate) const MAXIMUM_CREDENTIAL_ID_BYTES: usize = 256;
+pub(crate) const MAXIMUM_CREDENTIAL_NAME_BYTES: usize = 512;
+pub(crate) const MAXIMUM_CREDENTIAL_PATH_BYTES: usize = 4096;
+pub(crate) const MAXIMUM_CREDENTIAL_ENCODING_BYTES: usize = 256;
+const MAXIMUM_CREDENTIAL_REFERENCE_LIST: usize = 32;
 
 macro_rules! string_enum {
     ($name:ident { $($variant:ident => $value:literal),+ $(,)? }) => {
@@ -111,7 +124,7 @@ string_enum!(CredentialStampAddressSpace {
     MachOVmAddress => "macho-vm-address",
 });
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CredentialStampPrecondition {
     None,
     Bytes(Vec<u8>),
@@ -119,6 +132,26 @@ pub enum CredentialStampPrecondition {
 }
 
 impl CredentialStampPrecondition {
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::None => Ok(()),
+            Self::Bytes(bytes)
+                if (1..=MAXIMUM_CREDENTIAL_STAMP_PRECONDITION_BYTES).contains(&bytes.len()) =>
+            {
+                Ok(())
+            }
+            Self::Bytes(_) => Err("credential byte stamp precondition is invalid".to_string()),
+            Self::Sha256 { sha256, length } => {
+                validate_sha256(sha256, "credential stamp precondition")?;
+                let length = parse_canonical_u64(length, "credential stamp precondition length")?;
+                if length == 0 || length > MAXIMUM_CREDENTIAL_BINARY_BYTES as u64 {
+                    return Err("credential stamp precondition hash length is invalid".to_string());
+                }
+                Ok(())
+            }
+        }
+    }
+
     pub fn to_value(&self) -> Value {
         match self {
             Self::None => Value::object(vec![("kind", Value::from("none"))]),
@@ -135,7 +168,7 @@ impl CredentialStampPrecondition {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CredentialStampTarget {
     NamedSlot {
         name: String,
@@ -186,6 +219,10 @@ pub enum CredentialStampTarget {
 }
 
 impl CredentialStampTarget {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_credential_stamp_target(self)
+    }
+
     pub fn to_value(&self) -> Value {
         match self {
             Self::NamedSlot { name } => tagged_target(
@@ -317,7 +354,7 @@ impl CredentialStampTarget {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CredentialMaterialReference {
     pub projection: CredentialProjection,
     pub form: CredentialMaterialForm,
@@ -329,6 +366,10 @@ pub struct CredentialMaterialReference {
 }
 
 impl CredentialMaterialReference {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_credential_material_reference(self)
+    }
+
     pub fn to_value(&self) -> Value {
         let mut members = vec![
             ("projection".into(), Value::from(self.projection.as_str())),
@@ -359,7 +400,7 @@ impl CredentialMaterialReference {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CredentialStampMaterial {
     Credential(CredentialMaterialReference),
     ProviderEncoding {
@@ -376,6 +417,51 @@ pub enum CredentialStampMaterial {
 }
 
 impl CredentialStampMaterial {
+    pub fn validate(&self) -> Result<(), String> {
+        match self {
+            Self::Credential(reference) => reference.validate(),
+            Self::ProviderEncoding {
+                provider_id,
+                schema_version,
+                source,
+                ..
+            } => {
+                validate_canonical_text(
+                    provider_id,
+                    "credential provider-encoding provider id",
+                    MAXIMUM_CREDENTIAL_ID_BYTES,
+                )?;
+                validate_canonical_text(
+                    schema_version,
+                    "credential provider-encoding schema version",
+                    MAXIMUM_CREDENTIAL_ID_BYTES,
+                )?;
+                source.validate()
+            }
+            Self::LiteralReference {
+                reference, sha256, ..
+            } => {
+                validate_canonical_text(
+                    reference,
+                    "credential literal material reference",
+                    MAXIMUM_CREDENTIAL_ID_BYTES,
+                )?;
+                validate_sha256(sha256, "credential literal material")
+            }
+        }
+    }
+
+    pub(crate) fn projection_and_form(
+        &self,
+    ) -> Result<(CredentialProjection, CredentialMaterialForm), String> {
+        self.validate()?;
+        Ok(match self {
+            Self::Credential(reference) => (reference.projection, reference.form),
+            Self::ProviderEncoding { form, .. } => (CredentialProjection::ProviderEncoding, *form),
+            Self::LiteralReference { form, .. } => (CredentialProjection::LiteralReference, *form),
+        })
+    }
+
     pub fn to_value(&self) -> Value {
         match self {
             Self::Credential(reference) => Value::object(vec![
@@ -424,7 +510,7 @@ impl CredentialStampMaterial {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedCredentialMetadata {
     pub bundle_version: String,
     pub purpose: CredentialPurpose,
@@ -434,6 +520,24 @@ pub struct ResolvedCredentialMetadata {
 }
 
 impl ResolvedCredentialMetadata {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_canonical_text(
+            &self.bundle_version,
+            "resolved credential bundle version",
+            MAXIMUM_CREDENTIAL_ID_BYTES,
+        )?;
+        validate_canonical_text(
+            &self.profile_id,
+            "resolved credential profile id",
+            MAXIMUM_CREDENTIAL_ID_BYTES,
+        )?;
+        validate_canonical_text(
+            &self.compatibility_target_id,
+            "resolved credential compatibility target id",
+            MAXIMUM_CREDENTIAL_ID_BYTES,
+        )
+    }
+
     pub fn to_value(&self) -> Value {
         Value::object(vec![
             ("bundleVersion", Value::from(self.bundle_version.as_str())),
@@ -448,7 +552,7 @@ impl ResolvedCredentialMetadata {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CredentialStampRequest {
     pub assignment_id: String,
     pub capability: CredentialDeliveryCapability,
@@ -460,6 +564,25 @@ pub struct CredentialStampRequest {
 }
 
 impl CredentialStampRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_canonical_text(
+            &self.assignment_id,
+            "credential stamp assignment id",
+            MAXIMUM_CREDENTIAL_ID_BYTES,
+        )?;
+        validate_canonical_text(
+            &self.slot_name,
+            "credential stamp slot name",
+            MAXIMUM_CREDENTIAL_ID_BYTES,
+        )?;
+        self.target.validate()?;
+        self.material.validate()?;
+        if !(1..=MAXIMUM_CREDENTIAL_BINARY_BYTES as i64).contains(&self.encoded_bytes) {
+            return Err("credential stamp encoded byte count is invalid".to_string());
+        }
+        self.credential.validate()
+    }
+
     pub fn to_value(&self) -> Value {
         Value::object(vec![
             ("assignmentId", Value::from(self.assignment_id.as_str())),
@@ -473,7 +596,7 @@ impl CredentialStampRequest {
     }
 
     pub(crate) fn from_value(value: &Value) -> Result<Self, String> {
-        Ok(Self {
+        let request = Self {
             assignment_id: required_string(value, "assignmentId")?,
             capability: CredentialDeliveryCapability::parse(&required_string(
                 value,
@@ -487,38 +610,81 @@ impl CredentialStampRequest {
                 value,
                 "credential",
             )?)?,
-        })
+        };
+        request.validate()?;
+        Ok(request)
     }
 }
 
 impl CredentialStampPrecondition {
-    fn from_value(value: &Value) -> Result<Self, String> {
-        match required_string(value, "kind")?.as_str() {
-            "none" => Ok(Self::None),
-            "bytes" => Ok(Self::Bytes(required_bytes(value, "bytes")?)),
-            "sha256" => Ok(Self::Sha256 {
+    pub(crate) fn from_value(value: &Value) -> Result<Self, String> {
+        let kind = required_string(value, "kind")?;
+        let allowed = match kind.as_str() {
+            "none" => &[][..],
+            "bytes" => &["bytes"][..],
+            "sha256" => &["sha256", "length"][..],
+            other => {
+                return Err(format!(
+                    "unsupported credential stamp precondition {other:?}"
+                ))
+            }
+        };
+        reject_inactive_fields(
+            value,
+            allowed,
+            &["bytes", "sha256", "length"],
+            "credential stamp precondition",
+        )?;
+        let precondition = match kind.as_str() {
+            "none" => Self::None,
+            "bytes" => Self::Bytes(required_bytes(value, "bytes")?),
+            "sha256" => Self::Sha256 {
                 sha256: required_string(value, "sha256")?,
                 length: required_string(value, "length")?,
-            }),
-            other => Err(format!(
-                "unsupported credential stamp precondition {other:?}"
-            )),
-        }
+            },
+            _ => unreachable!("precondition kind was checked above"),
+        };
+        precondition.validate()?;
+        Ok(precondition)
     }
 }
 
 impl CredentialStampTarget {
-    fn from_value(value: &Value) -> Result<Self, String> {
-        match CredentialStampTargetKind::parse(&required_string(value, "kind")?)? {
+    pub(crate) fn from_value(value: &Value) -> Result<Self, String> {
+        let kind = CredentialStampTargetKind::parse(&required_string(value, "kind")?)?;
+        let active = match kind {
+            CredentialStampTargetKind::NamedSlot => "namedSlot",
+            CredentialStampTargetKind::FileOffset => "fileOffset",
+            CredentialStampTargetKind::VirtualAddress => "virtualAddress",
+            CredentialStampTargetKind::Symbol => "symbol",
+            CredentialStampTargetKind::Marker => "marker",
+            CredentialStampTargetKind::BytePattern => "bytePattern",
+            CredentialStampTargetKind::ProviderDefined => "providerDefined",
+        };
+        reject_inactive_fields(
+            value,
+            &[active],
+            &[
+                "namedSlot",
+                "fileOffset",
+                "virtualAddress",
+                "symbol",
+                "marker",
+                "bytePattern",
+                "providerDefined",
+            ],
+            "credential stamp target",
+        )?;
+        let target = match kind {
             CredentialStampTargetKind::NamedSlot => {
                 let target = required_value(value, "namedSlot")?;
-                Ok(Self::NamedSlot {
+                Self::NamedSlot {
                     name: required_string(target, "name")?,
-                })
+                }
             }
             CredentialStampTargetKind::FileOffset => {
                 let target = required_value(value, "fileOffset")?;
-                Ok(Self::FileOffset {
+                Self::FileOffset {
                     offset: required_string(target, "offset")?,
                     maximum_length: required_string(target, "maximumLength")?,
                     alignment: required_string(target, "alignment")?,
@@ -530,11 +696,11 @@ impl CredentialStampTarget {
                         target,
                         "precondition",
                     )?)?,
-                })
+                }
             }
             CredentialStampTargetKind::VirtualAddress => {
                 let target = required_value(value, "virtualAddress")?;
-                Ok(Self::VirtualAddress {
+                Self::VirtualAddress {
                     address: required_string(target, "address")?,
                     address_space: CredentialStampAddressSpace::parse(&required_string(
                         target,
@@ -551,11 +717,11 @@ impl CredentialStampTarget {
                         target,
                         "precondition",
                     )?)?,
-                })
+                }
             }
             CredentialStampTargetKind::Symbol => {
                 let target = required_value(value, "symbol")?;
-                Ok(Self::Symbol {
+                Self::Symbol {
                     name: required_string(target, "name")?,
                     section: optional_string(target, "section")?,
                     maximum_length: required_string(target, "maximumLength")?,
@@ -567,11 +733,11 @@ impl CredentialStampTarget {
                         target,
                         "precondition",
                     )?)?,
-                })
+                }
             }
             CredentialStampTargetKind::Marker => {
                 let target = required_value(value, "marker")?;
-                Ok(Self::Marker {
+                Self::Marker {
                     marker: required_bytes(target, "marker")?,
                     occurrence: required_u32(target, "occurrence")?,
                     maximum_length: required_string(target, "maximumLength")?,
@@ -583,11 +749,11 @@ impl CredentialStampTarget {
                         target,
                         "precondition",
                     )?)?,
-                })
+                }
             }
             CredentialStampTargetKind::BytePattern => {
                 let target = required_value(value, "bytePattern")?;
-                Ok(Self::BytePattern {
+                Self::BytePattern {
                     pattern: required_bytes(target, "pattern")?,
                     mask: required_bytes(target, "mask")?,
                     occurrence: required_u32(target, "occurrence")?,
@@ -600,56 +766,100 @@ impl CredentialStampTarget {
                         target,
                         "precondition",
                     )?)?,
-                })
+                }
             }
             CredentialStampTargetKind::ProviderDefined => {
                 let target = required_value(value, "providerDefined")?;
-                Ok(Self::ProviderDefined {
+                Self::ProviderDefined {
                     provider_id: required_string(target, "providerId")?,
                     schema_version: required_string(target, "schemaVersion")?,
                     value: required_value(target, "value")?.clone(),
-                })
+                }
             }
-        }
+        };
+        target.validate()?;
+        Ok(target)
     }
 }
 
 impl CredentialMaterialReference {
-    fn from_value(value: &Value) -> Result<Self, String> {
-        Ok(Self {
-            projection: CredentialProjection::parse(&required_string(value, "projection")?)?,
+    pub(crate) fn from_value(value: &Value) -> Result<Self, String> {
+        let projection = CredentialProjection::parse(&required_string(value, "projection")?)?;
+        let active = match projection {
+            CredentialProjection::Bundle => "bundleId",
+            CredentialProjection::CertificateDer
+            | CredentialProjection::PrivateKeyPkcs8
+            | CredentialProjection::PublicKeySpki
+            | CredentialProjection::SignerReference => "generationId",
+            CredentialProjection::ChainDer => "generationIds",
+            CredentialProjection::TrustDer => "trustSetGenerationId",
+            CredentialProjection::CrlDer => "crlGenerationIds",
+            CredentialProjection::ProviderEncoding | CredentialProjection::LiteralReference => {
+                return Err(
+                    "credential material reference cannot contain provider or literal material"
+                        .to_string(),
+                )
+            }
+        };
+        reject_inactive_fields(
+            value,
+            &[active],
+            &[
+                "bundleId",
+                "generationId",
+                "generationIds",
+                "trustSetGenerationId",
+                "crlGenerationIds",
+            ],
+            "credential material reference",
+        )?;
+        let reference = Self {
+            projection,
             form: CredentialMaterialForm::parse(&required_string(value, "form")?)?,
             bundle_id: optional_string(value, "bundleId")?,
             generation_id: optional_string(value, "generationId")?,
             generation_ids: optional_string_array(value, "generationIds")?,
             trust_set_generation_id: optional_string(value, "trustSetGenerationId")?,
             crl_generation_ids: optional_string_array(value, "crlGenerationIds")?,
-        })
+        };
+        reference.validate()?;
+        Ok(reference)
     }
 }
 
 impl CredentialStampMaterial {
-    fn from_value(value: &Value) -> Result<Self, String> {
+    pub(crate) fn from_value(value: &Value) -> Result<Self, String> {
         let projection = CredentialProjection::parse(&required_string(value, "projection")?)?;
-        match projection {
+        let active = match projection {
+            CredentialProjection::ProviderEncoding => "providerEncoding",
+            CredentialProjection::LiteralReference => "literalReference",
+            _ => "credential",
+        };
+        reject_inactive_fields(
+            value,
+            &[active],
+            &["credential", "providerEncoding", "literalReference"],
+            "credential stamp material",
+        )?;
+        let material = match projection {
             CredentialProjection::ProviderEncoding => {
                 let material = required_value(value, "providerEncoding")?;
-                Ok(Self::ProviderEncoding {
+                Self::ProviderEncoding {
                     provider_id: required_string(material, "providerId")?,
                     schema_version: required_string(material, "schemaVersion")?,
                     form: CredentialMaterialForm::parse(&required_string(material, "form")?)?,
                     source: CredentialMaterialReference::from_value(required_value(
                         material, "source",
                     )?)?,
-                })
+                }
             }
             CredentialProjection::LiteralReference => {
                 let material = required_value(value, "literalReference")?;
-                Ok(Self::LiteralReference {
+                Self::LiteralReference {
                     reference: required_string(material, "reference")?,
                     sha256: required_string(material, "sha256")?,
                     form: CredentialMaterialForm::parse(&required_string(material, "form")?)?,
-                })
+                }
             }
             _ => {
                 let reference =
@@ -659,21 +869,25 @@ impl CredentialStampMaterial {
                         "credential material projection does not match its reference".into(),
                     );
                 }
-                Ok(Self::Credential(reference))
+                Self::Credential(reference)
             }
-        }
+        };
+        material.validate()?;
+        Ok(material)
     }
 }
 
 impl ResolvedCredentialMetadata {
     pub(crate) fn from_value(value: &Value) -> Result<Self, String> {
-        Ok(Self {
+        let metadata = Self {
             bundle_version: required_string(value, "bundleVersion")?,
             purpose: CredentialPurpose::parse(&required_string(value, "purpose")?)?,
             consumer_type: CredentialConsumerType::parse(&required_string(value, "consumerType")?)?,
             profile_id: required_string(value, "profileId")?,
             compatibility_target_id: required_string(value, "compatibilityTargetId")?,
-        })
+        };
+        metadata.validate()?;
+        Ok(metadata)
     }
 }
 
@@ -851,6 +1065,355 @@ impl CredentialDeliveryDescriptor {
     }
 }
 
+fn validate_credential_stamp_target(target: &CredentialStampTarget) -> Result<(), String> {
+    match target {
+        CredentialStampTarget::NamedSlot { name } => validate_canonical_text(
+            name,
+            "credential stamp slot name",
+            MAXIMUM_CREDENTIAL_ID_BYTES,
+        ),
+        CredentialStampTarget::FileOffset {
+            offset,
+            maximum_length,
+            alignment,
+            remainder_policy,
+            precondition,
+        } => validate_credential_position_target(
+            offset,
+            None,
+            maximum_length,
+            alignment,
+            *remainder_policy,
+            precondition,
+            CredentialStampAddressSpace::File,
+        ),
+        CredentialStampTarget::VirtualAddress {
+            address,
+            address_space,
+            image_base,
+            maximum_length,
+            alignment,
+            remainder_policy,
+            precondition,
+        } => {
+            if *address_space == CredentialStampAddressSpace::File {
+                return Err(
+                    "credential virtual-address target cannot use file address space".to_string(),
+                );
+            }
+            validate_credential_position_target(
+                address,
+                image_base.as_deref(),
+                maximum_length,
+                alignment,
+                *remainder_policy,
+                precondition,
+                *address_space,
+            )
+        }
+        CredentialStampTarget::Symbol {
+            name,
+            section,
+            maximum_length,
+            remainder_policy,
+            precondition,
+        } => {
+            validate_canonical_text(
+                name,
+                "credential stamp symbol name",
+                MAXIMUM_CREDENTIAL_NAME_BYTES,
+            )?;
+            if let Some(section) = section {
+                validate_canonical_text(
+                    section,
+                    "credential stamp symbol section",
+                    MAXIMUM_CREDENTIAL_NAME_BYTES,
+                )?;
+            }
+            validate_credential_bounded_target(maximum_length, *remainder_policy, precondition)?;
+            Ok(())
+        }
+        CredentialStampTarget::Marker {
+            marker,
+            maximum_length,
+            remainder_policy,
+            precondition,
+            ..
+        } => {
+            if !(1..=MAXIMUM_CREDENTIAL_STAMP_PRECONDITION_BYTES).contains(&marker.len()) {
+                return Err("credential marker stamp target is invalid".to_string());
+            }
+            validate_credential_bounded_target(maximum_length, *remainder_policy, precondition)?;
+            Ok(())
+        }
+        CredentialStampTarget::BytePattern {
+            pattern,
+            mask,
+            maximum_length,
+            remainder_policy,
+            precondition,
+            ..
+        } => {
+            if pattern.is_empty()
+                || pattern.len() != mask.len()
+                || pattern.len() > MAXIMUM_CREDENTIAL_STAMP_PRECONDITION_BYTES
+                || mask.iter().all(|byte| *byte == 0)
+            {
+                return Err("credential byte-pattern stamp target is invalid".to_string());
+            }
+            validate_credential_bounded_target(maximum_length, *remainder_policy, precondition)?;
+            Ok(())
+        }
+        CredentialStampTarget::ProviderDefined {
+            provider_id,
+            schema_version,
+            value,
+        } => {
+            validate_canonical_text(
+                provider_id,
+                "credential provider-defined target provider id",
+                MAXIMUM_CREDENTIAL_ID_BYTES,
+            )?;
+            validate_canonical_text(
+                schema_version,
+                "credential provider-defined target schema version",
+                MAXIMUM_CREDENTIAL_ID_BYTES,
+            )?;
+            if matches!(value, Value::Null)
+                || value.to_string().len() > MAXIMUM_CREDENTIAL_PROVIDER_TARGET_BYTES
+            {
+                return Err("credential provider-defined target value is invalid".to_string());
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_credential_position_target(
+    position: &str,
+    image_base: Option<&str>,
+    maximum_length: &str,
+    alignment: &str,
+    remainder_policy: CredentialStampRemainderPolicy,
+    precondition: &CredentialStampPrecondition,
+    address_space: CredentialStampAddressSpace,
+) -> Result<(), String> {
+    let position = parse_canonical_u64(position, "credential stamp target position")?;
+    let image_base = image_base
+        .map(|value| parse_canonical_u64(value, "credential stamp target image base"))
+        .transpose()?;
+    let alignment = parse_canonical_u64(alignment, "credential stamp target alignment")?;
+    if alignment == 0 || !alignment.is_power_of_two() {
+        return Err("credential stamp target alignment must be a nonzero power of two".to_string());
+    }
+    if position % alignment != 0 {
+        return Err("credential stamp target position does not satisfy its alignment".to_string());
+    }
+    let maximum =
+        validate_credential_bounded_target(maximum_length, remainder_policy, precondition)?;
+    position.checked_add(maximum).ok_or_else(|| {
+        "credential stamp target position and maximum length overflow uint64".to_string()
+    })?;
+    if let Some(image_base) = image_base {
+        match address_space {
+            CredentialStampAddressSpace::PeRva => {
+                image_base
+                    .checked_add(position)
+                    .and_then(|value| value.checked_add(maximum))
+                    .ok_or_else(|| {
+                        "credential stamp image base, address, and length overflow uint64"
+                            .to_string()
+                    })?;
+            }
+            CredentialStampAddressSpace::ElfVirtualAddress
+            | CredentialStampAddressSpace::MachOVmAddress
+                if position < image_base =>
+            {
+                return Err("credential virtual address precedes its image base".to_string());
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_credential_bounded_target(
+    maximum_length: &str,
+    _remainder_policy: CredentialStampRemainderPolicy,
+    precondition: &CredentialStampPrecondition,
+) -> Result<u64, String> {
+    let maximum = parse_canonical_u64(maximum_length, "credential stamp target maximum length")?;
+    if maximum == 0 || maximum > MAXIMUM_CREDENTIAL_BINARY_BYTES as u64 {
+        return Err("credential stamp target maximum length is invalid".to_string());
+    }
+    precondition.validate()?;
+    match precondition {
+        CredentialStampPrecondition::Bytes(bytes) if bytes.len() as u64 > maximum => {
+            return Err("credential stamp precondition exceeds target maximum length".to_string());
+        }
+        CredentialStampPrecondition::Sha256 { length, .. }
+            if parse_canonical_u64(length, "credential stamp precondition length")? > maximum =>
+        {
+            return Err(
+                "credential stamp hash precondition exceeds target maximum length".to_string(),
+            );
+        }
+        _ => {}
+    }
+    Ok(maximum)
+}
+
+fn validate_credential_material_reference(
+    reference: &CredentialMaterialReference,
+) -> Result<(), String> {
+    validate_projection_form(reference.projection, reference.form)?;
+    let variant_count = usize::from(
+        reference
+            .bundle_id
+            .as_deref()
+            .is_some_and(|value| !value.is_empty()),
+    ) + usize::from(
+        reference
+            .generation_id
+            .as_deref()
+            .is_some_and(|value| !value.is_empty()),
+    ) + usize::from(!reference.generation_ids.is_empty())
+        + usize::from(
+            reference
+                .trust_set_generation_id
+                .as_deref()
+                .is_some_and(|value| !value.is_empty()),
+        )
+        + usize::from(!reference.crl_generation_ids.is_empty());
+    if variant_count != 1 {
+        return Err("credential material must contain exactly one tagged reference".to_string());
+    }
+    match reference.projection {
+        CredentialProjection::Bundle => validate_canonical_text(
+            reference.bundle_id.as_deref().unwrap_or_default(),
+            "credential bundle id",
+            MAXIMUM_CREDENTIAL_ID_BYTES,
+        ),
+        CredentialProjection::CertificateDer
+        | CredentialProjection::PrivateKeyPkcs8
+        | CredentialProjection::PublicKeySpki
+        | CredentialProjection::SignerReference => validate_canonical_text(
+            reference.generation_id.as_deref().unwrap_or_default(),
+            "credential generation id",
+            MAXIMUM_CREDENTIAL_ID_BYTES,
+        ),
+        CredentialProjection::ChainDer => {
+            validate_reference_list(&reference.generation_ids, "credential chain generation ids")
+        }
+        CredentialProjection::TrustDer => validate_canonical_text(
+            reference
+                .trust_set_generation_id
+                .as_deref()
+                .unwrap_or_default(),
+            "credential trust-set generation id",
+            MAXIMUM_CREDENTIAL_ID_BYTES,
+        ),
+        CredentialProjection::CrlDer => validate_reference_list(
+            &reference.crl_generation_ids,
+            "credential CRL generation ids",
+        ),
+        CredentialProjection::ProviderEncoding | CredentialProjection::LiteralReference => Err(
+            "credential material reference cannot contain provider or literal material".to_string(),
+        ),
+    }
+}
+
+pub(crate) fn validate_projection_form(
+    projection: CredentialProjection,
+    form: CredentialMaterialForm,
+) -> Result<(), String> {
+    match projection {
+        CredentialProjection::CertificateDer
+        | CredentialProjection::PublicKeySpki
+        | CredentialProjection::ChainDer
+        | CredentialProjection::TrustDer
+        | CredentialProjection::CrlDer
+            if form != CredentialMaterialForm::Public =>
+        {
+            Err("public credential projection requires public material".to_string())
+        }
+        CredentialProjection::PrivateKeyPkcs8 if form != CredentialMaterialForm::PrivateBytes => {
+            Err("private-key projection requires private bytes".to_string())
+        }
+        CredentialProjection::SignerReference
+            if form != CredentialMaterialForm::PrivateReference =>
+        {
+            Err("signer projection requires a private reference".to_string())
+        }
+        _ => Ok(()),
+    }
+}
+
+pub(crate) fn validate_canonical_text(
+    value: &str,
+    label: &str,
+    maximum_bytes: usize,
+) -> Result<(), String> {
+    if value.trim().is_empty()
+        || value != value.trim()
+        || value.len() > maximum_bytes
+        || value.chars().any(char::is_control)
+    {
+        return Err(format!("{label} is invalid or noncanonical"));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_sha256(value: &str, label: &str) -> Result<(), String> {
+    if value.len() != 64
+        || value.bytes().any(|byte| !byte.is_ascii_hexdigit())
+        || value.bytes().any(|byte| byte.is_ascii_uppercase())
+    {
+        return Err(format!("{label} sha256 is invalid or noncanonical"));
+    }
+    Ok(())
+}
+
+pub(crate) fn parse_canonical_u64(value: &str, label: &str) -> Result<u64, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| format!("{label} is not a canonical uint64"))?;
+    if parsed.to_string() != value {
+        return Err(format!("{label} is not a canonical uint64"));
+    }
+    Ok(parsed)
+}
+
+fn validate_reference_list(values: &[String], label: &str) -> Result<(), String> {
+    if !(1..=MAXIMUM_CREDENTIAL_REFERENCE_LIST).contains(&values.len()) {
+        return Err(format!("{label} is empty or exceeds limits"));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for value in values {
+        validate_canonical_text(value, label, MAXIMUM_CREDENTIAL_ID_BYTES)?;
+        if !seen.insert(value) {
+            return Err(format!("{label} contains a duplicate"));
+        }
+    }
+    Ok(())
+}
+
+fn reject_inactive_fields(
+    value: &Value,
+    allowed: &[&str],
+    variants: &[&str],
+    label: &str,
+) -> Result<(), String> {
+    for variant in variants {
+        if value.get(variant).is_some() && !allowed.contains(variant) {
+            return Err(format!(
+                "{label} contains inactive variant field {variant:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn strings(values: &[String]) -> Value {
     Value::Array(
         values
@@ -919,7 +1482,15 @@ pub(crate) fn required_i64(value: &Value, name: &str) -> Result<i64, String> {
             "credential contract field {name:?} must be a non-negative integer"
         ));
     }
-    Ok(number as i64)
+    let number = number as i64;
+    if matches!(name, "encodedBytes" | "maximumEncodedBytes" | "size")
+        && !(1..=MAXIMUM_CREDENTIAL_BINARY_BYTES as i64).contains(&number)
+    {
+        return Err(format!(
+            "credential contract field {name:?} must be between 1 and {MAXIMUM_CREDENTIAL_BINARY_BYTES} bytes"
+        ));
+    }
+    Ok(number)
 }
 
 fn required_u32(value: &Value, name: &str) -> Result<u32, String> {
@@ -930,9 +1501,9 @@ fn required_u32(value: &Value, name: &str) -> Result<u32, String> {
 pub(crate) fn required_bytes(value: &Value, name: &str) -> Result<Vec<u8>, String> {
     let encoded = required_string(value, name)?;
     let decoded = base64::decode(&encoded)?;
-    if decoded.is_empty() {
+    if decoded.is_empty() || decoded.len() > MAXIMUM_CREDENTIAL_BINARY_BYTES {
         return Err(format!(
-            "credential contract field {name:?} must not be empty"
+            "credential contract field {name:?} must be non-empty and bounded"
         ));
     }
     Ok(decoded)

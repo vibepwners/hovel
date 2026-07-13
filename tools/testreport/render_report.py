@@ -10,9 +10,9 @@ import testreport
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Render the Hovel static test report.")
+    parser = argparse.ArgumentParser(description="Render Hovel test-report evidence for the Astro report application.")
     parser.add_argument("--repo-root", type=Path, default=None)
-    parser.add_argument("--output", type=Path, default=Path(".test-report/site"))
+    parser.add_argument("--output", type=Path, default=Path(".test-report/evidence"))
     parser.add_argument("--title", default="Hovel Test Report")
     parser.add_argument("--bep", action="append", default=[], help="Bazel BEP JSON file to ingest.")
     parser.add_argument(

@@ -189,6 +189,7 @@ py_binary(
 py_binary(
     name = "stage_blobs_release",
     srcs = [
+        "artifact_arch.py",
         "extract_release.py",
         "registry.py",
         "stage_blobs_from_runfiles.py",
@@ -197,6 +198,7 @@ py_binary(
     data = STAGE_RELEASE_ARTIFACTS.data + [
         "//modules/picblobs/python:package_dir",
     ],
+    imports = ["."],
     main = "stage_blobs_from_runfiles.py",
     python_version = "PY3",
     deps = [requirement("pyelftools")],
@@ -205,6 +207,7 @@ py_binary(
 py_binary(
     name = "stage_blobs_smoke",
     srcs = [
+        "artifact_arch.py",
         "extract_release.py",
         "registry.py",
         "stage_blobs_from_runfiles.py",
@@ -215,6 +218,7 @@ py_binary(
         "--no-extract",
     ],
     data = [":stage_smoke_blob__linux__x86_64__hello"],
+    imports = ["."],
     main = "stage_blobs_from_runfiles.py",
     python_version = "PY3",
     deps = [requirement("pyelftools")],
@@ -223,6 +227,7 @@ py_binary(
 py_binary(
     name = "stage_blobs",
     srcs = [
+        "artifact_arch.py",
         "extract_release.py",
         "registry.py",
         "stage_blobs_from_runfiles.py",
@@ -231,6 +236,7 @@ py_binary(
     data = STAGE_ALL_ARTIFACTS.data + [
         "//modules/picblobs/python:package_dir",
     ],
+    imports = ["."],
     main = "stage_blobs_from_runfiles.py",
     python_version = "PY3",
     deps = [requirement("pyelftools")],
@@ -263,8 +269,39 @@ py_console_script_binary(
 )
 
 py_test(
+    name = "artifact_arch_test",
+    size = "small",
+    srcs = [
+        "artifact_arch.py",
+        "artifact_arch_test.py",
+    ],
+    imports = ["."],
+    deps = [
+        "//modules/picblobs/python:picblobs",
+        requirement("pyelftools"),
+        requirement("pytest"),
+    ],
+)
+
+py_test(
+    name = "stage_blobs_from_runfiles_test",
+    size = "small",
+    srcs = [
+        "artifact_arch.py",
+        "stage_blobs_from_runfiles.py",
+        "stage_blobs_from_runfiles_test.py",
+    ],
+    imports = ["."],
+    deps = [
+        "//modules/picblobs/python:picblobs",
+        requirement("pyelftools"),
+        requirement("pytest"),
+    ],
+)
+
+py_test(
     name = "format_check",
-    timeout = "short",
+    size = "medium",
     srcs = ["quality_check.py"],
     args = ["--mode=fmt"] + QUALITY_TOOL_ARGS,
     data = QUALITY_TOOL_DATA,
@@ -275,7 +312,7 @@ py_test(
 
 py_test(
     name = "generate_check",
-    timeout = "short",
+    size = "medium",
     srcs = ["quality_check.py"],
     args = ["--mode=generate"] + QUALITY_TOOL_ARGS,
     data = QUALITY_TOOL_DATA,
@@ -286,7 +323,7 @@ py_test(
 
 py_test(
     name = "lint_check",
-    timeout = "short",
+    size = "medium",
     srcs = ["quality_check.py"],
     args = ["--mode=lint"] + QUALITY_TOOL_ARGS,
     data = QUALITY_TOOL_DATA,

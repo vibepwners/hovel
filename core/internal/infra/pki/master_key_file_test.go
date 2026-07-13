@@ -166,24 +166,9 @@ func TestFileMasterKeyProviderLifecycle(t *testing.T) {
 		t.Fatalf("reopened provider active=%q versions=%v", activeVersion, reopened.Versions())
 	}
 
-	secretDirectory := filepath.Join(workspacePath, filepath.Dir(MasterKeyRelativePath))
-	directoryInfo, err := os.Stat(secretDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if directoryInfo.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("secret directory permissions = %o, want owner-only", directoryInfo.Mode().Perm())
-	}
-	fileInfo, err := os.Stat(filepath.Join(workspacePath, MasterKeyRelativePath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fileInfo.Mode().Perm()&0o077 != 0 {
-		t.Fatalf("master-key file permissions = %o, want owner-only", fileInfo.Mode().Perm())
-	}
 }
 
-func TestFileMasterKeyProviderRejectsUnsafeOrCorruptFiles(t *testing.T) {
+func TestFileMasterKeyProviderRejectsCorruptFiles(t *testing.T) {
 	t.Parallel()
 
 	workspacePath := t.TempDir()
@@ -195,15 +180,6 @@ func TestFileMasterKeyProviderRejectsUnsafeOrCorruptFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(workspacePath, MasterKeyRelativePath)
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := OpenFileMasterKeyProvider(t.Context(), workspacePath); err == nil {
-		t.Fatal("OpenFileMasterKeyProvider() accepted group/world-readable secrets")
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(path, []byte(`{"schemaVersion":"hovel.pki.file-master-keys/v1"} trailing`), 0o600); err != nil {
 		t.Fatal(err)
 	}

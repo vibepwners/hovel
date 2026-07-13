@@ -8,6 +8,10 @@ nogo(
 )
 
 exports_files([
+    ".github/workflows/ci.yml",
+    ".github/workflows/pages.yml",
+    "LICENSE",
+    "VERSION",
     "go.work.bazel",
     "scripts/demo-mcp-agent-tmux.sh",
     "scripts/demo-step-setup.sh",
@@ -38,6 +42,7 @@ test_suite(
     tests = [
         "//repo-tools/deps:update_python_locks_test",
         "//repo-tools/tasks:checkout_test",
+        "//tools/bazel/buildifier:buildifier_test",
         "//tools/bazel/policy:repo_policy_test",
     ],
 )
@@ -149,6 +154,8 @@ test_suite(
 filegroup(
     name = "docs_build",
     srcs = [
+        "//docs/site:astro_site",
+        "//docs/tools/docs:site",
         "//docs/tools/docs:stage_site",
     ],
 )
@@ -157,10 +164,12 @@ test_suite(
     name = "docs_test",
     tests = [
         "//docs/demo:standard_verification_test",
-        "//docs/site/spec:daemon_rpc_openapi_test",
-        "//docs/site/spec:provider_docs_parity_test",
-        "//docs/site/spec:site_smoke_test",
+        "//docs/site:daemon_rpc_openapi_test",
+        "//docs/site:provider_docs_parity_test",
+        "//docs/site:site_smoke_test",
+        "//docs/tools/demo:materialize_demo_outputs_test",
         "//docs/tools/demo/mcpagent:mcpagent_test",
+        "//docs/tools/docs:pages_workflow_test",
         "//tools/testreport:testreport_test",
     ],
 )

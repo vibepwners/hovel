@@ -1,17 +1,95 @@
 package pki
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 
 	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
 )
 
 const credentialRuntimeAccessPurpose = "credential-runtime-delivery"
+
+var ErrCredentialOperationLeaseClosed = errors.New("pki: credential operation lease is closed")
+
+type credentialAssignmentSnapshot struct {
+	assignment domainpki.Assignment
+	generation domainpki.CertificateGeneration
+}
+
+// CredentialOperationLease owns ephemeral credential deliveries resolved from
+// one checked assignment snapshot. BorrowedDeliveries returns the lease-owned
+// slice without copying secret material; callers must not retain or mutate it
+// and must close the lease after the provider operation finishes.
+type CredentialOperationLease struct {
+	mu         sync.Mutex
+	service    Service
+	deliveries domainpki.CredentialOperationDeliveries
+	snapshots  []*credentialAssignmentSnapshot
+	consumers  []domainpki.CredentialConsumerBinding
+	closed     bool
+}
+
+// BorrowedDeliveries returns the lease-owned deliveries without copying their
+// secret material. The returned data remains valid only until Close or Clear.
+func (l *CredentialOperationLease) BorrowedDeliveries() (
+	domainpki.CredentialOperationDeliveries,
+	error,
+) {
+	if l == nil {
+		return nil, errors.New("pki: credential operation lease is required")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil, ErrCredentialOperationLeaseClosed
+	}
+	return l.deliveries, nil
+}
+
+// Revalidate confirms that every assignment still has the exact authorized
+// revision, state, active generation, and certificate validity captured during
+// resolution. Call this immediately before credential delivery.
+func (l *CredentialOperationLease) Revalidate(ctx context.Context) error {
+	if l == nil {
+		return errors.New("pki: credential operation lease is required")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return ErrCredentialOperationLeaseClosed
+	}
+	return l.service.revalidateCredentialOperation(ctx, l.snapshots, l.consumers)
+}
+
+// Close clears all lease-owned secret material. It is safe to call repeatedly.
+func (l *CredentialOperationLease) Close() {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return
+	}
+	l.deliveries.Clear()
+	l.deliveries = nil
+	clear(l.snapshots)
+	l.snapshots = nil
+	l.consumers = nil
+	l.service = Service{}
+	l.closed = true
+}
+
+// Clear is an alias for Close for code that treats the lease as secret data.
+func (l *CredentialOperationLease) Clear() {
+	l.Close()
+}
 
 // ResolveCredentialOperation resolves non-secret assignment selections into
 // ephemeral runtime deliveries for one exact provider process. Callers must
@@ -24,51 +102,75 @@ func (s Service) ResolveCredentialOperation(
 	scope domainpki.CredentialOperationScope,
 	consumers []domainpki.CredentialConsumerBinding,
 ) (domainpki.CredentialOperationDeliveries, func(), error) {
-	cleanup := func() {}
-	if ctx == nil {
-		return nil, cleanup, errors.New("pki: credential operation context is required")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, cleanup, err
-	}
-	if s.credentialUse == nil {
-		return nil, cleanup, errors.New("pki: credential use authorizer is not configured")
-	}
-	if err := provider.Validate(); err != nil {
-		return nil, cleanup, err
-	}
-	if err := descriptor.Validate(); err != nil {
-		return nil, cleanup, err
-	}
-	descriptorDigest, err := descriptor.DigestSHA256()
+	lease, err := s.ResolveCredentialOperationLease(
+		ctx,
+		provider,
+		descriptor,
+		selections,
+		scope,
+		consumers,
+	)
 	if err != nil {
-		return nil, cleanup, err
+		return nil, func() {}, err
 	}
-	if descriptorDigest != provider.DescriptorSHA256 {
-		return nil, cleanup, errors.New(
-			"pki: credential provider target does not match its delivery descriptor",
-		)
+	deliveries, err := lease.BorrowedDeliveries()
+	if err != nil {
+		lease.Close()
+		return nil, func() {}, err
 	}
-	if err := selections.Validate(); err != nil {
-		return nil, cleanup, err
-	}
-	if err := scope.Validate(); err != nil {
-		return nil, cleanup, err
-	}
-	if len(selections) == 0 {
-		return nil, cleanup, nil
-	}
-	if len(consumers) == 0 {
-		return nil, cleanup, errors.New("pki: credential operation has no allowed consumers")
-	}
-	for _, consumer := range consumers {
-		if err := consumer.Validate(); err != nil {
-			return nil, cleanup, err
-		}
+	return deliveries, lease.Close, nil
+}
+
+// ResolveCredentialOperationLease resolves every unique assignment once,
+// materializes all requested slots from those snapshots, and returns the
+// lease that must be revalidated immediately before provider delivery.
+func (s Service) ResolveCredentialOperationLease(
+	ctx context.Context,
+	provider domainpki.CredentialProviderTarget,
+	descriptor domainpki.CredentialDeliveryDescriptor,
+	selections domainpki.CredentialSelections,
+	scope domainpki.CredentialOperationScope,
+	consumers []domainpki.CredentialConsumerBinding,
+) (*CredentialOperationLease, error) {
+	if err := s.validateCredentialOperationRequest(
+		ctx,
+		provider,
+		descriptor,
+		selections,
+		scope,
+		consumers,
+	); err != nil {
+		return nil, err
 	}
 
-	deliveries := make(domainpki.CredentialOperationDeliveries, 0, len(selections))
-	cleanup = func() { deliveries.Clear() }
+	lease := &CredentialOperationLease{
+		service:    s,
+		deliveries: make(domainpki.CredentialOperationDeliveries, 0, len(selections)),
+		snapshots:  make([]*credentialAssignmentSnapshot, 0, len(selections)),
+		consumers:  append([]domainpki.CredentialConsumerBinding(nil), consumers...),
+	}
+	if len(selections) == 0 {
+		return lease, nil
+	}
+
+	snapshots := make(map[domainpki.AssignmentID]*credentialAssignmentSnapshot, len(selections))
+	for _, selection := range selections {
+		if _, exists := snapshots[selection.AssignmentID]; exists {
+			continue
+		}
+		snapshot, err := s.resolveCredentialAssignmentSnapshot(
+			ctx,
+			selection.AssignmentID,
+			consumers,
+		)
+		if err != nil {
+			lease.Close()
+			return nil, err
+		}
+		snapshots[selection.AssignmentID] = snapshot
+		lease.snapshots = append(lease.snapshots, snapshot)
+	}
+
 	for _, selection := range selections {
 		delivery, err := s.resolveCredentialSelection(
 			ctx,
@@ -76,19 +178,142 @@ func (s Service) ResolveCredentialOperation(
 			descriptor,
 			selection,
 			scope,
-			consumers,
+			snapshots[selection.AssignmentID],
 		)
 		if err != nil {
-			cleanup()
-			return nil, func() {}, err
+			lease.Close()
+			return nil, err
 		}
-		deliveries = append(deliveries, delivery)
+		lease.deliveries = append(lease.deliveries, delivery)
 	}
-	if err := deliveries.ValidateForModule(provider.ModuleID); err != nil {
-		cleanup()
-		return nil, func() {}, err
+	if err := lease.deliveries.ValidateForModule(provider.ModuleID); err != nil {
+		lease.Close()
+		return nil, err
 	}
-	return deliveries, cleanup, nil
+	if err := lease.Revalidate(ctx); err != nil {
+		lease.Close()
+		return nil, err
+	}
+	return lease, nil
+}
+
+func (s Service) validateCredentialOperationRequest(
+	ctx context.Context,
+	provider domainpki.CredentialProviderTarget,
+	descriptor domainpki.CredentialDeliveryDescriptor,
+	selections domainpki.CredentialSelections,
+	scope domainpki.CredentialOperationScope,
+	consumers []domainpki.CredentialConsumerBinding,
+) error {
+	if ctx == nil {
+		return errors.New("pki: credential operation context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.credentialUse == nil {
+		return errors.New("pki: credential use authorizer is not configured")
+	}
+	if s.clock == nil {
+		return errors.New("pki: credential operation clock is not configured")
+	}
+	if err := provider.Validate(); err != nil {
+		return err
+	}
+	if err := descriptor.Validate(); err != nil {
+		return err
+	}
+	descriptorDigest, err := descriptor.DigestSHA256()
+	if err != nil {
+		return err
+	}
+	if descriptorDigest != provider.DescriptorSHA256 {
+		return errors.New(
+			"pki: credential provider target does not match its delivery descriptor",
+		)
+	}
+	if err := selections.Validate(); err != nil {
+		return err
+	}
+	if err := scope.Validate(); err != nil {
+		return err
+	}
+	if len(selections) == 0 {
+		return nil
+	}
+	if len(consumers) == 0 {
+		return errors.New("pki: credential operation has no allowed consumers")
+	}
+	for _, consumer := range consumers {
+		if err := consumer.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s Service) resolveCredentialAssignmentSnapshot(
+	ctx context.Context,
+	assignmentID domainpki.AssignmentID,
+	consumers []domainpki.CredentialConsumerBinding,
+) (*credentialAssignmentSnapshot, error) {
+	if err := s.credentialUse.AuthorizeCredentialUse(ctx, assignmentID); err != nil {
+		return nil, fmt.Errorf(
+			"pki: authorize credential use: %w",
+			err,
+		)
+	}
+	inspection, err := s.InspectAssignment(ctx, assignmentID)
+	if err != nil {
+		return nil, err
+	}
+	assignment := inspection.Assignment
+	if !slices.ContainsFunc(consumers, func(binding domainpki.CredentialConsumerBinding) bool {
+		return binding.Matches(assignment)
+	}) {
+		return nil, errors.New(
+			"pki: credential assignment is not bound to this operation",
+		)
+	}
+	if err := validateCredentialAssignmentState(assignment); err != nil {
+		return nil, err
+	}
+	if inspection.ActiveGeneration == nil {
+		return nil, errors.New(
+			"pki: credential assignment has no active certificate generation",
+		)
+	}
+	generation := inspection.ActiveGeneration.Clone()
+	if assignment.ActiveGenerationID != generation.ID {
+		return nil, errors.New(
+			"pki: credential assignment active generation does not match its inventory",
+		)
+	}
+	if err := validateAssignmentGenerationAt(assignment, generation, s.clock.Now().UTC()); err != nil {
+		return nil, err
+	}
+	return &credentialAssignmentSnapshot{
+		assignment: assignment,
+		generation: generation,
+	}, nil
+}
+
+func validateCredentialAssignmentState(assignment domainpki.Assignment) error {
+	switch assignment.State {
+	case domainpki.AssignmentStateActive, domainpki.AssignmentStateDegraded:
+	case domainpki.AssignmentStatePending, domainpki.AssignmentStateDisabled,
+		domainpki.AssignmentStateRetired:
+		return fmt.Errorf(
+			"pki: credential assignment is not usable while %s",
+			assignment.State,
+		)
+	default:
+		return fmt.Errorf(
+			"pki: credential assignment has unsupported state %q",
+			assignment.State,
+		)
+	}
+	return nil
 }
 
 func (s Service) resolveCredentialSelection(
@@ -97,54 +322,15 @@ func (s Service) resolveCredentialSelection(
 	descriptor domainpki.CredentialDeliveryDescriptor,
 	selection domainpki.CredentialSelection,
 	scope domainpki.CredentialOperationScope,
-	consumers []domainpki.CredentialConsumerBinding,
+	snapshot *credentialAssignmentSnapshot,
 ) (domainpki.CredentialOperationDelivery, error) {
-	if err := s.credentialUse.AuthorizeCredentialUse(ctx, selection.AssignmentID); err != nil {
-		return domainpki.CredentialOperationDelivery{}, fmt.Errorf(
-			"pki: authorize credential use: %w",
-			err,
-		)
-	}
-	inspection, err := s.InspectAssignment(ctx, selection.AssignmentID)
-	if err != nil {
-		return domainpki.CredentialOperationDelivery{}, err
-	}
-	assignment := inspection.Assignment
-	if !slices.ContainsFunc(consumers, func(binding domainpki.CredentialConsumerBinding) bool {
-		return binding.Matches(assignment)
-	}) {
+	if snapshot == nil {
 		return domainpki.CredentialOperationDelivery{}, errors.New(
-			"pki: credential assignment is not bound to this operation",
+			"pki: credential assignment snapshot is required",
 		)
 	}
-	switch assignment.State {
-	case domainpki.AssignmentStateActive, domainpki.AssignmentStateDegraded:
-	case domainpki.AssignmentStatePending, domainpki.AssignmentStateDisabled,
-		domainpki.AssignmentStateRetired:
-		return domainpki.CredentialOperationDelivery{}, fmt.Errorf(
-			"pki: credential assignment is not usable while %s",
-			assignment.State,
-		)
-	default:
-		return domainpki.CredentialOperationDelivery{}, fmt.Errorf(
-			"pki: credential assignment has unsupported state %q",
-			assignment.State,
-		)
-	}
-	if inspection.ActiveGeneration == nil {
-		return domainpki.CredentialOperationDelivery{}, errors.New(
-			"pki: credential assignment has no active certificate generation",
-		)
-	}
-	generation := inspection.ActiveGeneration.Clone()
-	if assignment.ActiveGenerationID != generation.ID {
-		return domainpki.CredentialOperationDelivery{}, errors.New(
-			"pki: credential assignment active generation does not match its inventory",
-		)
-	}
-	if err := validateAssignmentGeneration(assignment, generation); err != nil {
-		return domainpki.CredentialOperationDelivery{}, err
-	}
+	assignment := snapshot.assignment
+	generation := snapshot.generation
 
 	metadata := domainpki.ResolvedCredentialMetadata{
 		BundleVersion:         domainpki.BundleSchemaV1,
@@ -175,6 +361,87 @@ func (s Service) resolveCredentialSelection(
 		Capability: domainpki.DeliveryCapabilityRuntime,
 		Runtime:    &request,
 	}, nil
+}
+
+func (s Service) revalidateCredentialOperation(
+	ctx context.Context,
+	snapshots []*credentialAssignmentSnapshot,
+	consumers []domainpki.CredentialConsumerBinding,
+) error {
+	if ctx == nil {
+		return errors.New("pki: credential operation context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.credentialUse == nil {
+		return errors.New("pki: credential use authorizer is not configured")
+	}
+	if s.clock == nil {
+		return errors.New("pki: credential operation clock is not configured")
+	}
+	now := s.clock.Now().UTC()
+	for _, snapshot := range snapshots {
+		if snapshot == nil {
+			return errors.New("pki: credential assignment snapshot is required")
+		}
+		assignmentID := snapshot.assignment.ID
+		if err := s.credentialUse.AuthorizeCredentialUse(ctx, assignmentID); err != nil {
+			return fmt.Errorf("pki: reauthorize credential use: %w", err)
+		}
+		inspection, err := s.InspectAssignment(ctx, assignmentID)
+		if err != nil {
+			return fmt.Errorf("pki: revalidate credential assignment: %w", err)
+		}
+		assignment := inspection.Assignment
+		if assignment != snapshot.assignment {
+			return fmt.Errorf(
+				"pki: credential assignment %q changed after resolution",
+				assignmentID,
+			)
+		}
+		if err := validateCredentialAssignmentState(assignment); err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(consumers, func(binding domainpki.CredentialConsumerBinding) bool {
+			return binding.Matches(assignment)
+		}) {
+			return errors.New("pki: credential assignment authorization changed after resolution")
+		}
+		if inspection.ActiveGeneration == nil {
+			return errors.New("pki: credential assignment lost its active certificate generation")
+		}
+		generation := *inspection.ActiveGeneration
+		if assignment.ActiveGenerationID != snapshot.generation.ID ||
+			!sameCredentialGenerationSnapshot(generation, snapshot.generation) {
+			return fmt.Errorf(
+				"pki: credential assignment %q active generation changed after resolution",
+				assignmentID,
+			)
+		}
+		if err := validateAssignmentGenerationAt(assignment, generation, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sameCredentialGenerationSnapshot(
+	current domainpki.CertificateGeneration,
+	snapshot domainpki.CertificateGeneration,
+) bool {
+	return current.ID == snapshot.ID &&
+		current.CertificateID == snapshot.CertificateID &&
+		current.Generation == snapshot.Generation &&
+		current.KeyID == snapshot.KeyID &&
+		current.ProfileID == snapshot.ProfileID &&
+		current.Purpose == snapshot.Purpose &&
+		current.State == snapshot.State &&
+		current.FingerprintSHA256 == snapshot.FingerprintSHA256 &&
+		current.Template.NotBefore.Equal(snapshot.Template.NotBefore) &&
+		current.Template.NotAfter.Equal(snapshot.Template.NotAfter) &&
+		bytes.Equal(current.CertificateDER, snapshot.CertificateDER) &&
+		bytes.Equal(current.PublicKeySPKI, snapshot.PublicKeySPKI)
 }
 
 func (s Service) resolveCredentialSelectionMaterial(

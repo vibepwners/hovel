@@ -49,6 +49,7 @@ func NewBinary(mediaType string, data []byte) (Binary, error) {
 	}
 	result := Binary{MediaType: mediaType, Encoding: EncodingBase64DER, Data: append([]byte(nil), data...)}
 	if err := validateBinary(result, mediaType, "binary data"); err != nil {
+		clear(result.Data)
 		return Binary{}, err
 	}
 	return result, nil
@@ -131,7 +132,7 @@ type bundleWire Bundle
 // intentionally equivalent to construction so consumers cannot bypass domain
 // invariants by populating exported wire fields directly.
 func (b Bundle) Validate() error {
-	_, err := NewBundle(bundleArgs(b))
+	_, err := validateBundleArgs(bundleArgs(b))
 	return err
 }
 
@@ -146,6 +147,10 @@ func (b *Bundle) UnmarshalJSON(data []byte) error {
 		return errors.New("pki: bundle json has an invalid size")
 	}
 	var wire bundleWire
+	defer func() {
+		owned := Bundle(wire)
+		owned.Clear()
+	}()
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return fmt.Errorf("pki: decode bundle: %w", err)
 	}
@@ -153,6 +158,7 @@ func (b *Bundle) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
+	b.Clear()
 	*b = validated
 	return nil
 }
@@ -166,6 +172,10 @@ func DecodeBundleJSON(data []byte) (Bundle, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var wire bundleWire
+	defer func() {
+		owned := Bundle(wire)
+		owned.Clear()
+	}()
 	if err := decoder.Decode(&wire); err != nil {
 		return Bundle{}, fmt.Errorf("pki: decode bundle: %w", err)
 	}
@@ -179,108 +189,17 @@ func DecodeBundleJSON(data []byte) (Bundle, error) {
 	return bundle, nil
 }
 
+type validatedBundleMetadata struct {
+	compatibilityVersion   string
+	certificateFingerprint string
+	publicKeyFingerprint   string
+}
+
+// NewBundle defensively copies all inputs. Callers own the returned bundle and
+// must call Clear when private material is no longer needed.
 func NewBundle(args BundleArgs) (Bundle, error) {
-	if err := validateSchemaVersion(args.SchemaVersion, BundleSchemaV1); err != nil {
-		return Bundle{}, err
-	}
-	if err := args.ID.Validate(); err != nil {
-		return Bundle{}, err
-	}
-	if args.AssignmentID != "" {
-		if err := args.AssignmentID.Validate(); err != nil {
-			return Bundle{}, err
-		}
-	}
-	if err := args.CertificateID.Validate(); err != nil {
-		return Bundle{}, err
-	}
-	if err := args.CertificateGenerationID.Validate(); err != nil {
-		return Bundle{}, err
-	}
-	if args.Generation == 0 {
-		return Bundle{}, errors.New("pki: bundle generation must be positive")
-	}
-	if err := args.Purpose.Validate(); err != nil {
-		return Bundle{}, err
-	}
-	if err := args.CompatibilityTargetID.Validate(); err != nil {
-		return Bundle{}, err
-	}
-	compatibilityVersion := strings.TrimSpace(args.CompatibilityVersion)
-	if compatibilityVersion == "" {
-		return Bundle{}, errors.New("pki: compatibility version is required")
-	}
-	if err := ValidateKeyEstablishment(args.KeyEstablishmentPolicy, args.TLSNamedGroups); err != nil {
-		return Bundle{}, err
-	}
-	if target, ok := BuiltInCompatibilityTarget(args.CompatibilityTargetID); ok {
-		if compatibilityVersion != target.Version {
-			return Bundle{}, fmt.Errorf("pki: compatibility target %q version %q does not match built-in version %q", target.ID, compatibilityVersion, target.Version)
-		}
-		expectedGroups, err := ResolveTLSNamedGroups(target, args.KeyEstablishmentPolicy)
-		if err != nil {
-			return Bundle{}, err
-		}
-		if !slices.Equal(expectedGroups, args.TLSNamedGroups) {
-			return Bundle{}, errors.New("pki: bundle tls named groups do not match the compatibility target and policy")
-		}
-	}
-	if err := validateBinary(args.Certificate, MediaTypeCertificate, "certificate"); err != nil {
-		return Bundle{}, err
-	}
-	if err := validateBinary(args.PublicKey, MediaTypePublicKey, "public key"); err != nil {
-		return Bundle{}, err
-	}
-	if args.PrivateKey != nil && args.PrivateKeyRef != nil {
-		return Bundle{}, errors.New("pki: private key and private key reference are mutually exclusive")
-	}
-	if args.PrivateKey != nil {
-		if err := validateBinary(*args.PrivateKey, MediaTypePrivateKey, "private key"); err != nil {
-			return Bundle{}, err
-		}
-	}
-	if args.PrivateKeyRef != nil {
-		if err := args.PrivateKeyRef.KeyID.Validate(); err != nil {
-			return Bundle{}, err
-		}
-		if strings.TrimSpace(args.PrivateKeyRef.ProviderID) == "" {
-			return Bundle{}, errors.New("pki: private key reference provider id is required")
-		}
-		if len(args.PrivateKeyRef.ProviderID) > MaxIDLength || strings.ContainsAny(args.PrivateKeyRef.ProviderID, "\x00\r\n") {
-			return Bundle{}, errors.New("pki: private key reference provider id is not canonical")
-		}
-		if len(args.PrivateKeyRef.Capabilities) > MaximumKeyCapabilities {
-			return Bundle{}, fmt.Errorf("pki: private key reference capabilities exceed %d entries", MaximumKeyCapabilities)
-		}
-		seenCapabilities := make(map[string]struct{}, len(args.PrivateKeyRef.Capabilities))
-		for _, capability := range args.PrivateKeyRef.Capabilities {
-			if capability == "" || capability != strings.TrimSpace(capability) || len(capability) > MaximumCapabilityBytes || strings.ContainsAny(capability, "\x00\r\n") {
-				return Bundle{}, errors.New("pki: private key reference capability is not canonical")
-			}
-			if _, exists := seenCapabilities[capability]; exists {
-				return Bundle{}, fmt.Errorf("pki: duplicate private key reference capability %q", capability)
-			}
-			seenCapabilities[capability] = struct{}{}
-		}
-	}
-	certificateFingerprint, err := normalizeSHA256Fingerprint(args.Fingerprints.CertificateSHA256, "certificate fingerprint")
+	metadata, err := validateBundleArgs(args)
 	if err != nil {
-		return Bundle{}, err
-	}
-	publicKeyFingerprint, err := normalizeSHA256Fingerprint(args.Fingerprints.PublicKeySHA256, "public key fingerprint")
-	if err != nil {
-		return Bundle{}, err
-	}
-	if args.NotBefore.IsZero() || args.NotAfter.IsZero() || !args.NotAfter.After(args.NotBefore) {
-		return Bundle{}, errors.New("pki: valid bundle time bounds are required")
-	}
-	if err := validateCertificateMembers(args.Chain, args.TrustAnchors, args.CertificateGenerationID); err != nil {
-		return Bundle{}, err
-	}
-	if err := validateCRLMembers(args.CertificateRevocationLists); err != nil {
-		return Bundle{}, err
-	}
-	if err := validateBundleAggregateSize(args); err != nil {
 		return Bundle{}, err
 	}
 	result := Bundle{
@@ -292,7 +211,7 @@ func NewBundle(args BundleArgs) (Bundle, error) {
 		Generation:                 args.Generation,
 		Purpose:                    args.Purpose,
 		CompatibilityTargetID:      args.CompatibilityTargetID,
-		CompatibilityVersion:       compatibilityVersion,
+		CompatibilityVersion:       metadata.compatibilityVersion,
 		KeyEstablishmentPolicy:     args.KeyEstablishmentPolicy,
 		TLSNamedGroups:             append([]TLSNamedGroup(nil), args.TLSNamedGroups...),
 		Certificate:                cloneBinary(args.Certificate),
@@ -303,8 +222,8 @@ func NewBundle(args BundleArgs) (Bundle, error) {
 		TrustAnchors:               cloneCertificateMembers(args.TrustAnchors),
 		CertificateRevocationLists: cloneCRLMembers(args.CertificateRevocationLists),
 		Fingerprints: Fingerprints{
-			CertificateSHA256: certificateFingerprint,
-			PublicKeySHA256:   publicKeyFingerprint,
+			CertificateSHA256: metadata.certificateFingerprint,
+			PublicKeySHA256:   metadata.publicKeyFingerprint,
 		},
 		NotBefore: args.NotBefore.UTC(),
 		NotAfter:  args.NotAfter.UTC(),
@@ -312,14 +231,131 @@ func NewBundle(args BundleArgs) (Bundle, error) {
 	return result, nil
 }
 
+func validateBundleArgs(args BundleArgs) (validatedBundleMetadata, error) {
+	if err := validateSchemaVersion(args.SchemaVersion, BundleSchemaV1); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if err := args.ID.Validate(); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if args.AssignmentID != "" {
+		if err := args.AssignmentID.Validate(); err != nil {
+			return validatedBundleMetadata{}, err
+		}
+	}
+	if err := args.CertificateID.Validate(); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if err := args.CertificateGenerationID.Validate(); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if args.Generation == 0 {
+		return validatedBundleMetadata{}, errors.New("pki: bundle generation must be positive")
+	}
+	if err := args.Purpose.Validate(); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if err := args.CompatibilityTargetID.Validate(); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	compatibilityVersion := strings.TrimSpace(args.CompatibilityVersion)
+	if compatibilityVersion == "" {
+		return validatedBundleMetadata{}, errors.New("pki: compatibility version is required")
+	}
+	if err := ValidateKeyEstablishment(args.KeyEstablishmentPolicy, args.TLSNamedGroups); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if target, ok := BuiltInCompatibilityTarget(args.CompatibilityTargetID); ok {
+		if compatibilityVersion != target.Version {
+			return validatedBundleMetadata{}, fmt.Errorf("pki: compatibility target %q version %q does not match built-in version %q", target.ID, compatibilityVersion, target.Version)
+		}
+		expectedGroups, err := ResolveTLSNamedGroups(target, args.KeyEstablishmentPolicy)
+		if err != nil {
+			return validatedBundleMetadata{}, err
+		}
+		if !slices.Equal(expectedGroups, args.TLSNamedGroups) {
+			return validatedBundleMetadata{}, errors.New("pki: bundle tls named groups do not match the compatibility target and policy")
+		}
+	}
+	if err := validateBinary(args.Certificate, MediaTypeCertificate, "certificate"); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if err := validateBinary(args.PublicKey, MediaTypePublicKey, "public key"); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if args.PrivateKey != nil && args.PrivateKeyRef != nil {
+		return validatedBundleMetadata{}, errors.New("pki: private key and private key reference are mutually exclusive")
+	}
+	if args.PrivateKey != nil {
+		if err := validateBinary(*args.PrivateKey, MediaTypePrivateKey, "private key"); err != nil {
+			return validatedBundleMetadata{}, err
+		}
+	}
+	if args.PrivateKeyRef != nil {
+		if err := args.PrivateKeyRef.KeyID.Validate(); err != nil {
+			return validatedBundleMetadata{}, err
+		}
+		if strings.TrimSpace(args.PrivateKeyRef.ProviderID) == "" {
+			return validatedBundleMetadata{}, errors.New("pki: private key reference provider id is required")
+		}
+		if len(args.PrivateKeyRef.ProviderID) > MaxIDLength || strings.ContainsAny(args.PrivateKeyRef.ProviderID, "\x00\r\n") {
+			return validatedBundleMetadata{}, errors.New("pki: private key reference provider id is not canonical")
+		}
+		if len(args.PrivateKeyRef.Capabilities) > MaximumKeyCapabilities {
+			return validatedBundleMetadata{}, fmt.Errorf("pki: private key reference capabilities exceed %d entries", MaximumKeyCapabilities)
+		}
+		seenCapabilities := make(map[string]struct{}, len(args.PrivateKeyRef.Capabilities))
+		for _, capability := range args.PrivateKeyRef.Capabilities {
+			if capability == "" || capability != strings.TrimSpace(capability) || len(capability) > MaximumCapabilityBytes || strings.ContainsAny(capability, "\x00\r\n") {
+				return validatedBundleMetadata{}, errors.New("pki: private key reference capability is not canonical")
+			}
+			if _, exists := seenCapabilities[capability]; exists {
+				return validatedBundleMetadata{}, fmt.Errorf("pki: duplicate private key reference capability %q", capability)
+			}
+			seenCapabilities[capability] = struct{}{}
+		}
+	}
+	certificateFingerprint, err := normalizeSHA256Fingerprint(args.Fingerprints.CertificateSHA256, "certificate fingerprint")
+	if err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	publicKeyFingerprint, err := normalizeSHA256Fingerprint(args.Fingerprints.PublicKeySHA256, "public key fingerprint")
+	if err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if args.NotBefore.IsZero() || args.NotAfter.IsZero() || !args.NotAfter.After(args.NotBefore) {
+		return validatedBundleMetadata{}, errors.New("pki: valid bundle time bounds are required")
+	}
+	if err := validateCertificateMembers(args.Chain, args.TrustAnchors, args.CertificateGenerationID); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if err := validateCRLMembers(args.CertificateRevocationLists); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	if err := validateBundleAggregateSize(args); err != nil {
+		return validatedBundleMetadata{}, err
+	}
+	return validatedBundleMetadata{
+		compatibilityVersion:   compatibilityVersion,
+		certificateFingerprint: certificateFingerprint,
+		publicKeyFingerprint:   publicKeyFingerprint,
+	}, nil
+}
+
 func bundleArgs(bundle Bundle) BundleArgs {
 	return BundleArgs(bundle)
 }
 
 func (b Bundle) Public() Bundle {
-	result := b.Clone()
+	result := b
+	result.TLSNamedGroups = append([]TLSNamedGroup(nil), b.TLSNamedGroups...)
+	result.Certificate = cloneBinary(b.Certificate)
+	result.PublicKey = cloneBinary(b.PublicKey)
 	result.PrivateKey = nil
 	result.PrivateKeyRef = nil
+	result.Chain = cloneCertificateMembers(b.Chain)
+	result.TrustAnchors = cloneCertificateMembers(b.TrustAnchors)
+	result.CertificateRevocationLists = cloneCRLMembers(b.CertificateRevocationLists)
 	return result
 }
 
@@ -334,6 +370,39 @@ func (b Bundle) Clone() Bundle {
 	result.CertificateRevocationLists = cloneCRLMembers(b.CertificateRevocationLists)
 	result.TLSNamedGroups = append([]TLSNamedGroup(nil), b.TLSNamedGroups...)
 	return result
+}
+
+// Clear overwrites all byte-backed material owned by b and releases its
+// references. A Bundle returned by NewBundle, DecodeBundleJSON, Clone, or an
+// application service owns its byte slices and may be cleared independently.
+// Callers must not use aliases after transferring ownership to Clear.
+func (b *Bundle) Clear() {
+	if b == nil {
+		return
+	}
+	clearBinary(&b.Certificate)
+	clearBinary(&b.PublicKey)
+	if b.PrivateKey != nil {
+		clearBinary(b.PrivateKey)
+	}
+	if b.PrivateKeyRef != nil {
+		clear(b.PrivateKeyRef.Capabilities)
+		*b.PrivateKeyRef = KeyReference{}
+	}
+	for index := range b.Chain {
+		clearBinary(&b.Chain[index].Binary)
+	}
+	for index := range b.TrustAnchors {
+		clearBinary(&b.TrustAnchors[index].Binary)
+	}
+	for index := range b.CertificateRevocationLists {
+		clearBinary(&b.CertificateRevocationLists[index].Binary)
+	}
+	clear(b.TLSNamedGroups)
+	clear(b.Chain)
+	clear(b.TrustAnchors)
+	clear(b.CertificateRevocationLists)
+	*b = Bundle{}
 }
 
 func validateBinary(binary Binary, mediaType, field string) error {
@@ -452,6 +521,14 @@ func cloneBinary(binary Binary) Binary {
 	result := binary
 	result.Data = append([]byte(nil), binary.Data...)
 	return result
+}
+
+func clearBinary(binary *Binary) {
+	if binary == nil {
+		return
+	}
+	clear(binary.Data)
+	*binary = Binary{}
 }
 
 func cloneBinaryPointer(binary *Binary) *Binary {

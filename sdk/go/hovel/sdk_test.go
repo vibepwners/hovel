@@ -3,7 +3,9 @@ package hovel
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,7 +33,7 @@ func TestAdvancedCredentialStampContractUsesCanonicalWireTypes(t *testing.T) {
 				Pattern:         []byte{0xaa, 0xbb},
 				Mask:            []byte{0xff, 0x0f},
 				Occurrence:      1,
-				MaximumLength:   CredentialCanonicalUint64("18446744073709551615"),
+				MaximumLength:   CredentialCanonicalUint64("4096"),
 				RemainderPolicy: CredentialStampRemainderZeroFill,
 				Precondition: CredentialStampPrecondition{
 					Kind:   CredentialStampPreconditionSHA256,
@@ -68,7 +70,7 @@ func TestAdvancedCredentialStampContractUsesCanonicalWireTypes(t *testing.T) {
 	}
 	target := wire["target"].(map[string]any)
 	pattern := target["bytePattern"].(map[string]any)
-	if pattern["maximumLength"] != "18446744073709551615" ||
+	if pattern["maximumLength"] != "4096" ||
 		pattern["pattern"] != base64.StdEncoding.EncodeToString([]byte{0xaa, 0xbb}) {
 		t.Fatalf("advanced stamp target = %#v", pattern)
 	}
@@ -565,12 +567,13 @@ func (fakeMeshModule) LoadCredentialFiles(
 func (fakeMeshModule) EncodeCredentialMaterial(
 	req CredentialEncodingRequest,
 ) (CredentialEncodingResult, error) {
+	encoded := []byte("encoded")
 	return CredentialEncodingResult{
 		RequestID: req.RequestID,
 		Form:      req.OutputForm,
 		Encoding:  "provider-test",
-		SHA256:    strings.Repeat("1", 64),
-		Data:      CredentialBytes("encoded"),
+		SHA256:    credentialTestSHA256(encoded),
+		Data:      CredentialBytes(encoded),
 	}, nil
 }
 
@@ -595,6 +598,89 @@ func (fakeMeshModule) StampCredential(
 		BytesWritten:     CredentialCanonicalUint64(strconv.FormatUint(req.Request.EncodedBytes, 10)),
 		MaterialDigests:  append([]CredentialStampedMaterialDigest(nil), req.ExpectedDigests...),
 	}, nil
+}
+
+type trackingCredentialProvider struct {
+	fakeMeshModule
+	calls int
+}
+
+type invalidCredentialResultProvider struct {
+	fakeMeshModule
+	method string
+	calls  int
+}
+
+func (m *invalidCredentialResultProvider) LoadRuntimeCredential(
+	req CredentialRuntimeRequest,
+) (CredentialDeliveryReceipt, error) {
+	m.calls++
+	receipt, err := m.fakeMeshModule.LoadRuntimeCredential(req)
+	if m.method == credentialRPCRuntimeMethod {
+		receipt.ProviderReference = " invalid"
+	}
+	return receipt, err
+}
+
+func (m *invalidCredentialResultProvider) LoadCredentialFiles(
+	req CredentialFilesRequest,
+) (CredentialDeliveryReceipt, error) {
+	m.calls++
+	receipt, err := m.fakeMeshModule.LoadCredentialFiles(req)
+	if m.method == credentialRPCFilesMethod {
+		receipt.ReceiptSHA256 = "invalid"
+	}
+	return receipt, err
+}
+
+func (m *invalidCredentialResultProvider) EncodeCredentialMaterial(
+	req CredentialEncodingRequest,
+) (CredentialEncodingResult, error) {
+	m.calls++
+	result, err := m.fakeMeshModule.EncodeCredentialMaterial(req)
+	if m.method == credentialRPCEncodeMethod {
+		result.SHA256 = strings.Repeat("0", 64)
+	}
+	return result, err
+}
+
+func (m *invalidCredentialResultProvider) StampCredential(
+	req CredentialStampExecutionRequest,
+) (CredentialStampExecutionResult, error) {
+	m.calls++
+	result, err := m.fakeMeshModule.StampCredential(req)
+	if m.method == credentialRPCStampMethod {
+		result.BytesWritten = "0"
+	}
+	return result, err
+}
+
+func (m *trackingCredentialProvider) LoadRuntimeCredential(
+	req CredentialRuntimeRequest,
+) (CredentialDeliveryReceipt, error) {
+	m.calls++
+	return m.fakeMeshModule.LoadRuntimeCredential(req)
+}
+
+func (m *trackingCredentialProvider) LoadCredentialFiles(
+	req CredentialFilesRequest,
+) (CredentialDeliveryReceipt, error) {
+	m.calls++
+	return m.fakeMeshModule.LoadCredentialFiles(req)
+}
+
+func (m *trackingCredentialProvider) EncodeCredentialMaterial(
+	req CredentialEncodingRequest,
+) (CredentialEncodingResult, error) {
+	m.calls++
+	return m.fakeMeshModule.EncodeCredentialMaterial(req)
+}
+
+func (m *trackingCredentialProvider) StampCredential(
+	req CredentialStampExecutionRequest,
+) (CredentialStampExecutionResult, error) {
+	m.calls++
+	return m.fakeMeshModule.StampCredential(req)
 }
 
 func (fakeMeshModule) RunMeshTask(ctx *MeshContext, req MeshTaskRequest) (MeshTaskResult, error) {
@@ -931,6 +1017,120 @@ func TestServeMeshProviderMethods(t *testing.T) {
 	}
 }
 
+func credentialTestSHA256(data []byte) string {
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
+}
+
+func validCredentialProviderParams(method string) map[string]any {
+	materialData := []byte("private-bundle")
+	credential := map[string]any{
+		"bundleVersion":         "hovel.pki.bundle/v1",
+		"purpose":               "mtls-server",
+		"consumerType":          "mesh-listener",
+		"profileId":             "mtls-server",
+		"compatibilityTargetId": "portable-x509",
+	}
+	material := map[string]any{
+		"projection": "bundle",
+		"form":       "private-bytes",
+		"encoding":   "hovel-bundle-json",
+		"sha256":     credentialTestSHA256(materialData),
+		"data":       base64.StdEncoding.EncodeToString(materialData),
+	}
+	provider := map[string]any{
+		"moduleId":         "fake-mesh",
+		"providerId":       "fake-mesh",
+		"providerVersion":  "v1.0.0",
+		"descriptorSha256": strings.Repeat("4", 64),
+	}
+	switch method {
+	case credentialRPCRuntimeMethod:
+		return map[string]any{
+			"schemaVersion": CredentialProviderExecutionSchemaV1,
+			"provider":      provider,
+			"requestId":     "delivery-runtime-1",
+			"assignmentId":  "assignment-1",
+			"slotName":      "control-plane-mtls",
+			"credential":    credential,
+			"material":      material,
+			"scope":         map[string]any{"listenerId": "listener-primary"},
+		}
+	case credentialRPCFilesMethod:
+		return map[string]any{
+			"schemaVersion": CredentialProviderExecutionSchemaV1,
+			"provider":      provider,
+			"requestId":     "delivery-files-1",
+			"assignmentId":  "assignment-1",
+			"slotName":      "control-plane-mtls",
+			"credential":    credential,
+			"files": []any{map[string]any{
+				"projection": "certificate-der",
+				"form":       "public",
+				"encoding":   CredentialEncodingRaw,
+				"mediaType":  "application/pkix-cert",
+				"path":       "/provider-input/certificate.der",
+				"sha256":     strings.Repeat("1", 64),
+				"size":       512,
+			}},
+			"scope": map[string]any{},
+		}
+	case credentialRPCEncodeMethod:
+		return map[string]any{
+			"schemaVersion":       CredentialProviderExecutionSchemaV1,
+			"provider":            provider,
+			"requestId":           "encoding-1",
+			"providerId":          "fake-mesh",
+			"providerSchema":      "v1",
+			"outputForm":          "private-bytes",
+			"maximumEncodedBytes": 4096,
+			"source":              material,
+			"scope":               map[string]any{},
+		}
+	case credentialRPCStampMethod:
+		inputData := []byte("input")
+		return map[string]any{
+			"schemaVersion": CredentialProviderExecutionSchemaV1,
+			"provider":      provider,
+			"stampId":       "credential-stamp-1",
+			"request": map[string]any{
+				"assignmentId": "assignment-1",
+				"capability":   "stamp-standard",
+				"slotName":     "control-plane-mtls",
+				"target": map[string]any{
+					"kind":      "named-slot",
+					"namedSlot": map[string]any{"name": "control-plane-mtls"},
+				},
+				"material": map[string]any{
+					"projection": "bundle",
+					"credential": map[string]any{
+						"projection": "bundle",
+						"form":       "private-bytes",
+						"bundleId":   "bundle-1",
+					},
+				},
+				"encodedBytes": len(materialData),
+				"credential":   credential,
+			},
+			"input": map[string]any{
+				"id":       "artifact-1",
+				"sha256":   credentialTestSHA256(inputData),
+				"encoding": "raw",
+				"data":     base64.StdEncoding.EncodeToString(inputData),
+			},
+			"resolvedMaterial": material,
+			"expectedDigests": []map[string]any{{
+				"projection": "bundle",
+				"reference":  "bundle-1",
+				"sha256":     strings.Repeat("2", 64),
+			}},
+			"scope": map[string]any{"runId": "run-1"},
+		}
+	default:
+		panic("unsupported credential RPC method " + method)
+	}
+}
+
 func TestServeCredentialProviderMethods(t *testing.T) {
 	conn := newRPCConn(t, fakeMeshModule{})
 	defer conn.close()
@@ -947,12 +1147,13 @@ func TestServeCredentialProviderMethods(t *testing.T) {
 		"profileId":             "mtls-server",
 		"compatibilityTargetId": "portable-x509",
 	}
+	materialData := []byte("private-bundle")
 	material := map[string]any{
 		"projection": "bundle",
 		"form":       "private-bytes",
 		"encoding":   "hovel-bundle-json",
-		"sha256":     strings.Repeat("0", 64),
-		"data":       base64.StdEncoding.EncodeToString([]byte("private-bundle")),
+		"sha256":     credentialTestSHA256(materialData),
+		"data":       base64.StdEncoding.EncodeToString(materialData),
 	}
 	provider := map[string]any{
 		"moduleId":         "fake-mesh",
@@ -987,6 +1188,7 @@ func TestServeCredentialProviderMethods(t *testing.T) {
 		"files": []any{map[string]any{
 			"projection": "certificate-der",
 			"form":       "public",
+			"encoding":   CredentialEncodingRaw,
 			"mediaType":  "application/pkix-cert",
 			"path":       "/provider-input/certificate.der",
 			"sha256":     strings.Repeat("1", 64),
@@ -1032,6 +1234,7 @@ func TestServeCredentialProviderMethods(t *testing.T) {
 		"encodedBytes": 14,
 		"credential":   credential,
 	}
+	inputData := []byte("input")
 	stamped := conn.call(credentialRPCStampMethod, map[string]any{
 		"schemaVersion": CredentialProviderExecutionSchemaV1,
 		"provider":      provider,
@@ -1039,9 +1242,9 @@ func TestServeCredentialProviderMethods(t *testing.T) {
 		"request":       stampRequest,
 		"input": map[string]any{
 			"id":       "artifact-1",
-			"sha256":   strings.Repeat("3", 64),
+			"sha256":   credentialTestSHA256(inputData),
 			"encoding": "raw",
-			"data":     base64.StdEncoding.EncodeToString([]byte("input")),
+			"data":     base64.StdEncoding.EncodeToString(inputData),
 		},
 		"resolvedMaterial": material,
 		"expectedDigests": []map[string]any{{
@@ -1062,11 +1265,205 @@ func TestServeCredentialProviderMethods(t *testing.T) {
 	}
 }
 
-func TestCredentialProviderSecretsAreRedactedInDiagnostics(t *testing.T) {
+func TestCredentialProviderRejectsInvalidRequestsBeforeHooks(t *testing.T) {
 	t.Parallel()
 
+	tests := []struct {
+		name   string
+		method string
+		mutate func(map[string]any)
+	}{
+		{
+			name:   "runtime invalid projection",
+			method: credentialRPCRuntimeMethod,
+			mutate: func(params map[string]any) {
+				params["material"].(map[string]any)["projection"] = "unknown"
+			},
+		},
+		{
+			name:   "files zero size",
+			method: credentialRPCFilesMethod,
+			mutate: func(params map[string]any) {
+				params["files"].([]any)[0].(map[string]any)["size"] = 0
+			},
+		},
+		{
+			name:   "files size above 24 MiB",
+			method: credentialRPCFilesMethod,
+			mutate: func(params map[string]any) {
+				params["files"].([]any)[0].(map[string]any)["size"] = maximumCredentialBinaryBytes + 1
+			},
+		},
+		{
+			name:   "runtime noncanonical request id",
+			method: credentialRPCRuntimeMethod,
+			mutate: func(params map[string]any) {
+				params["requestId"] = " delivery-runtime-1"
+			},
+		},
+		{
+			name:   "runtime invalid provider descriptor digest",
+			method: credentialRPCRuntimeMethod,
+			mutate: func(params map[string]any) {
+				params["provider"].(map[string]any)["descriptorSha256"] = "invalid"
+			},
+		},
+		{
+			name:   "runtime invalid credential purpose",
+			method: credentialRPCRuntimeMethod,
+			mutate: func(params map[string]any) {
+				params["credential"].(map[string]any)["purpose"] = "unknown"
+			},
+		},
+		{
+			name:   "runtime noncanonical scope",
+			method: credentialRPCRuntimeMethod,
+			mutate: func(params map[string]any) {
+				params["scope"].(map[string]any)["listenerId"] = "listener\nprimary"
+			},
+		},
+		{
+			name:   "runtime material digest mismatch",
+			method: credentialRPCRuntimeMethod,
+			mutate: func(params map[string]any) {
+				params["material"].(map[string]any)["sha256"] = strings.Repeat("0", 64)
+			},
+		},
+		{
+			name:   "files duplicate path",
+			method: credentialRPCFilesMethod,
+			mutate: func(params map[string]any) {
+				files := params["files"].([]any)
+				params["files"] = append(files, files[0])
+			},
+		},
+		{
+			name:   "encoding zero output bound",
+			method: credentialRPCEncodeMethod,
+			mutate: func(params map[string]any) {
+				params["maximumEncodedBytes"] = 0
+			},
+		},
+		{
+			name:   "encoding output bound above 24 MiB",
+			method: credentialRPCEncodeMethod,
+			mutate: func(params map[string]any) {
+				params["maximumEncodedBytes"] = maximumCredentialBinaryBytes + 1
+			},
+		},
+		{
+			name:   "encoding provider mismatch",
+			method: credentialRPCEncodeMethod,
+			mutate: func(params map[string]any) {
+				params["providerId"] = "different-provider"
+			},
+		},
+		{
+			name:   "stamp encoded bytes above 24 MiB",
+			method: credentialRPCStampMethod,
+			mutate: func(params map[string]any) {
+				params["request"].(map[string]any)["encodedBytes"] = maximumCredentialBinaryBytes + 1
+			},
+		},
+		{
+			name:   "stamp resolved material form mismatch",
+			method: credentialRPCStampMethod,
+			mutate: func(params map[string]any) {
+				params["resolvedMaterial"].(map[string]any)["form"] = "public"
+			},
+		},
+		{
+			name:   "stamp empty expected digests",
+			method: credentialRPCStampMethod,
+			mutate: func(params map[string]any) {
+				params["expectedDigests"] = []map[string]any{}
+			},
+		},
+		{
+			name:   "stamp invalid expected digest",
+			method: credentialRPCStampMethod,
+			mutate: func(params map[string]any) {
+				params["expectedDigests"].([]map[string]any)[0]["sha256"] = "invalid"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			params := validCredentialProviderParams(test.method)
+			test.mutate(params)
+			data, err := json.Marshal(params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			module := &trackingCredentialProvider{}
+			server := server{module: module}
+			switch test.method {
+			case credentialRPCRuntimeMethod:
+				_, err = server.loadRuntimeCredential(data)
+			case credentialRPCFilesMethod:
+				_, err = server.loadCredentialFiles(data)
+			case credentialRPCEncodeMethod:
+				_, err = server.encodeCredentialMaterial(data)
+			case credentialRPCStampMethod:
+				_, err = server.stampCredential(data)
+			default:
+				t.Fatalf("unsupported method %q", test.method)
+			}
+			if err == nil {
+				t.Fatalf("%s accepted invalid request", test.method)
+			}
+			if module.calls != 0 {
+				t.Fatalf("%s invoked provider %d times", test.method, module.calls)
+			}
+		})
+	}
+}
+
+func TestCredentialProviderRejectsInvalidResults(t *testing.T) {
+	t.Parallel()
+
+	for _, method := range []string{
+		credentialRPCRuntimeMethod,
+		credentialRPCFilesMethod,
+		credentialRPCEncodeMethod,
+		credentialRPCStampMethod,
+	} {
+		t.Run(method, func(t *testing.T) {
+			data, err := json.Marshal(validCredentialProviderParams(method))
+			if err != nil {
+				t.Fatal(err)
+			}
+			module := &invalidCredentialResultProvider{method: method}
+			server := server{module: module}
+			switch method {
+			case credentialRPCRuntimeMethod:
+				_, err = server.loadRuntimeCredential(data)
+			case credentialRPCFilesMethod:
+				_, err = server.loadCredentialFiles(data)
+			case credentialRPCEncodeMethod:
+				_, err = server.encodeCredentialMaterial(data)
+			case credentialRPCStampMethod:
+				_, err = server.stampCredential(data)
+			}
+			if err == nil {
+				t.Fatalf("%s accepted an invalid provider result", method)
+			}
+			if module.calls != 1 {
+				t.Fatalf("%s provider calls = %d, want 1", method, module.calls)
+			}
+		})
+	}
+}
+
+func TestCredentialStructuredLogFieldsRecursivelyRedactSecrets(t *testing.T) {
+	t.Parallel()
+
+	secretBytes := CredentialBytes("diagnostic-private-bytes")
+	reference := NewCredentialSecretReference("diagnostic-reference")
+	path := NewCredentialProtectedPath("/diagnostic/private-key.pem")
 	value, err := NewCredentialMaterialReference(CredentialScopedReference{
-		ProviderID: "hsm", Reference: CredentialSecretReference("capability-secret"),
+		ProviderID: "hsm",
+		Reference:  reference,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1081,15 +1478,201 @@ func TestCredentialProviderSecretsAreRedactedInDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	file := CredentialFile{Path: CredentialProtectedPath("/secret/private-key.der")}
-	for _, formatted := range []string{
+	var interfaced any = &material
+	fields := fieldsFromArgs([]any{
+		"nested",
+		map[string]any{
+			"slice": []any{
+				&secretBytes,
+				map[string]any{
+					"reference": &reference,
+					"path":      path,
+					"material":  interfaced,
+				},
+			},
+		},
+	})
+	diagnostic, err := json.Marshal(logRecord{Fields: fields})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{
+		base64.StdEncoding.EncodeToString(secretBytes),
+		"diagnostic-reference",
+		"/diagnostic/private-key.pem",
+	} {
+		if bytes.Contains(diagnostic, []byte(secret)) {
+			t.Fatalf("structured log leaked %q: %s", secret, diagnostic)
+		}
+	}
+	if !bytes.Contains(diagnostic, []byte("redacted")) {
+		t.Fatalf("structured log omitted redaction markers: %s", diagnostic)
+	}
+
+	explicit, err := json.Marshal(struct {
+		Bytes     CredentialBytes            `json:"bytes"`
+		Reference CredentialSecretReference  `json:"reference"`
+		Path      CredentialProtectedPath    `json:"path"`
+		Material  ResolvedCredentialMaterial `json:"material"`
+	}{
+		Bytes:     secretBytes,
+		Reference: reference,
+		Path:      path,
+		Material:  material,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		base64.StdEncoding.EncodeToString(secretBytes),
+		"diagnostic-reference",
+		"/diagnostic/private-key.pem",
+	} {
+		if !bytes.Contains(explicit, []byte(expected)) {
+			t.Fatalf("explicit RPC serialization omitted %q: %s", expected, explicit)
+		}
+	}
+}
+
+func TestCredentialStampUnionsRejectContradictorySerialization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{
+			name: "precondition",
+			value: CredentialStampPrecondition{
+				Kind:  CredentialStampPreconditionNone,
+				Bytes: []byte("unexpected"),
+			},
+		},
+		{
+			name: "target",
+			value: CredentialStampTarget{
+				Kind:      CredentialStampTargetNamedSlot,
+				NamedSlot: &CredentialNamedSlotTarget{Name: "slot-1"},
+				Symbol: &CredentialSymbolTarget{
+					Name:            "symbol",
+					MaximumLength:   "16",
+					RemainderPolicy: CredentialStampRemainderPreserve,
+					Precondition:    CredentialStampPrecondition{Kind: CredentialStampPreconditionNone},
+				},
+			},
+		},
+		{
+			name: "material",
+			value: CredentialStampMaterial{
+				Projection: CredentialProjectionBundle,
+				Credential: &CredentialMaterialReference{
+					Projection: CredentialProjectionBundle,
+					Form:       CredentialMaterialPrivateBytes,
+					BundleID:   "bundle-1",
+				},
+				LiteralReference: &CredentialLiteralMaterialReference{
+					Reference: "literal-1",
+					SHA256:    strings.Repeat("1", 64),
+					Form:      CredentialMaterialPublic,
+				},
+			},
+		},
+		{
+			name: "material reference",
+			value: CredentialMaterialReference{
+				Projection:   CredentialProjectionBundle,
+				Form:         CredentialMaterialPrivateBytes,
+				BundleID:     "bundle-1",
+				GenerationID: "generation-1",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if data, err := json.Marshal(test.value); err == nil {
+				t.Fatalf("json.Marshal() accepted contradictory union: %s", data)
+			}
+		})
+	}
+}
+
+func TestCredentialStampUnionsRejectInactiveWireFields(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		data        string
+		destination any
+	}{
+		{
+			name:        "precondition",
+			data:        `{"kind":"none","sha256":""}`,
+			destination: &CredentialStampPrecondition{},
+		},
+		{
+			name: "target",
+			data: `{"kind":"named-slot","namedSlot":{"name":"slot-1"},` +
+				`"symbol":null}`,
+			destination: &CredentialStampTarget{},
+		},
+		{
+			name: "material",
+			data: `{"projection":"bundle","credential":{` +
+				`"projection":"bundle","form":"private-bytes","bundleId":"bundle-1"},` +
+				`"literalReference":null}`,
+			destination: &CredentialStampMaterial{},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := json.Unmarshal([]byte(test.data), test.destination); err == nil {
+				t.Fatalf("json.Unmarshal() accepted inactive union field: %s", test.data)
+			}
+		})
+	}
+}
+
+func TestCredentialProviderSecretsAreRedactedInDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	value, err := NewCredentialMaterialReference(CredentialScopedReference{
+		ProviderID: "hsm", Reference: NewCredentialSecretReference("capability-secret"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err := NewResolvedCredentialMaterial(
+		CredentialProjectionSignerReference,
+		CredentialMaterialPrivateReference,
+		"provider-reference",
+		strings.Repeat("a", 64),
+		value,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := CredentialFile{Path: NewCredentialProtectedPath("/secret/private-key.der")}
+	formatted := []string{
 		fmt.Sprintf("%#v", material),
 		fmt.Sprintf("%#v", file),
 		fmt.Sprintf("%#v", CredentialBytes("private-bytes")),
+	}
+	for _, value := range []any{
+		NewCredentialProtectedPath("/secret/private-key.der"),
+		NewCredentialSecretReference("capability-secret"),
+		CredentialBytes("private-bytes"),
+		material.value,
+		material,
+		file,
 	} {
+		for _, format := range diagnosticFormats {
+			formatted = append(formatted, fmt.Sprintf(format, value))
+		}
+	}
+	for _, diagnostic := range formatted {
 		for _, secret := range []string{"capability-secret", "/secret/private-key.der", "private-bytes"} {
-			if strings.Contains(formatted, secret) {
-				t.Fatalf("credential diagnostic leaked %q: %s", secret, formatted)
+			if strings.Contains(diagnostic, secret) {
+				t.Fatalf("credential diagnostic leaked %q: %s", secret, diagnostic)
 			}
 		}
 	}
@@ -1255,6 +1838,99 @@ func TestCredentialStampOutputRejectsUnsetVariant(t *testing.T) {
 	_, err := json.Marshal(CredentialStampOutput{})
 	if !errors.Is(err, ErrCredentialStampOutputVariant) {
 		t.Fatalf("json.Marshal() error = %v, want %v", err, ErrCredentialStampOutputVariant)
+	}
+}
+
+func TestCredentialProviderUnmarshalJSONRejectsNilReceivers(t *testing.T) {
+	t.Parallel()
+
+	materialBytes := []byte("material")
+	materialValue, err := NewCredentialMaterialBytes(materialBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialDigest := sha256.Sum256(materialBytes)
+	material, err := NewResolvedCredentialMaterial(
+		CredentialProjectionBundle,
+		CredentialMaterialPrivateBytes,
+		CredentialEncodingRaw,
+		hex.EncodeToString(materialDigest[:]),
+		materialValue,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	artifactBytes := []byte("artifact")
+	artifactContent, err := NewCredentialArtifactData(artifactBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactDigest := sha256.Sum256(artifactBytes)
+	artifactInput := CredentialArtifactInput{
+		ID:       "artifact-1",
+		SHA256:   hex.EncodeToString(artifactDigest[:]),
+		Encoding: CredentialEncodingRaw,
+		Content:  artifactContent,
+	}
+	artifactOutput := CredentialArtifactOutput{
+		Name:     "artifact.bin",
+		Encoding: CredentialEncodingRaw,
+		Content:  artifactContent,
+	}
+	stampOutput, err := NewCredentialStampArtifactOutput(artifactOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		value  any
+		decode func([]byte) error
+	}{
+		{
+			name:  "resolved material",
+			value: material,
+			decode: func(data []byte) error {
+				var destination *ResolvedCredentialMaterial
+				return destination.UnmarshalJSON(data)
+			},
+		},
+		{
+			name:  "artifact input",
+			value: artifactInput,
+			decode: func(data []byte) error {
+				var destination *CredentialArtifactInput
+				return destination.UnmarshalJSON(data)
+			},
+		},
+		{
+			name:  "artifact output",
+			value: artifactOutput,
+			decode: func(data []byte) error {
+				var destination *CredentialArtifactOutput
+				return destination.UnmarshalJSON(data)
+			},
+		},
+		{
+			name:  "stamp output",
+			value: stampOutput,
+			decode: func(data []byte) error {
+				var destination *CredentialStampOutput
+				return destination.UnmarshalJSON(data)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			data, err := json.Marshal(test.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := test.decode(data); err == nil {
+				t.Fatal("UnmarshalJSON() accepted a nil destination")
+			}
+		})
 	}
 }
 

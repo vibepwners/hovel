@@ -1,0 +1,62 @@
+<!-- hovel-doc: {"title":"Getting Started","group":"picblobs","order":80,"navTitle":"Getting Started"} -->
+<article>
+  <h1 id="getting-started">Getting Started</h1>
+  <p>
+    Run the commands on this page from the Hovel repository root. Task is the
+    public build interface; it selects the pinned Bazel, Python, Rust, C, and
+    cross-compilation inputs used by both local development and CI.
+  </p>
+
+  <h2 id="prerequisites">Prerequisites</h2>
+  <ul>
+    <li><a href="https://taskfile.dev/">Task</a>, the repository entry point</li>
+    <li>Bazelisk, which honors the checked-in Bazel version</li>
+    <li>
+      <a href="https://www.qemu.org/">QEMU user mode</a> only when executing
+      non-native Linux runners: binfmt_misc handlers are preferred, with
+      <code>qemu-*-static</code> as the fallback
+    </li>
+    <li>Docker or Podman only when using the optional development container</li>
+  </ul>
+  <p>
+    Do not install or invoke host <code>bazel</code>, <code>uv</code>,
+    <code>ruff</code>, <code>clang-format</code>, or <code>clang-tidy</code> for
+    repository workflows. Task invokes hermetic Bazel targets that provide those
+    tools. Pinned Bootlin archives supply Linux cross-compilers for x86, ARM,
+    AArch64, MIPS, s390x, SPARC, PowerPC, ppc64le, and RISC-V.
+  </p>
+
+  <h2 id="quick-start">Quick start</h2>
+  <pre data-lang="bash"><code># Verify generated sources and the declared toolchain graph
+task picblobs:setup
+
+# Build the representative platform matrix
+task picblobs:bazel-build
+
+# Build and stage all blobs, runners, and verifier fixtures
+task picblobs:stage
+
+# Execute the staged catalogue through the Bazel-managed CLI
+task bazel:run -- //modules/picblobs/python_cli:picblobs-cli -- verify
+
+# Run the Picblobs test suite
+task picblobs:test
+</code></pre>
+  <p>
+    Use <code>task hooks:install</code> if you want the optional repository Git
+    hooks. The hooks call Task-backed checks; contributors should not invoke
+    Lefthook directly.
+  </p>
+
+  <h2 id="docker-podman-no-local-setup">Docker / Podman (no local setup)</h2>
+  <p>
+    The optional Picblobs development container is also exposed through its
+    module Taskfile:
+  </p>
+  <pre data-lang="bash"><code># Interactive container shell
+task --dir modules/picblobs dev
+
+# Run a Task-backed command in the container and exit
+task --dir modules/picblobs dev -- 'task verify'
+</code></pre>
+</article>

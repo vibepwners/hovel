@@ -272,7 +272,7 @@ fn credential_runtime(module: &dyn Module, params: &Value) -> Result<Value, Stri
     let request = CredentialRuntimeRequest::from_value(params)?;
     let request_id = request.request_id.clone();
     let receipt = module.load_runtime_credential(request)?;
-    require_matching_credential_id(&request_id, &receipt.request_id, "receipt requestId")?;
+    receipt.validate_for(&request_id)?;
     Ok(receipt.to_value())
 }
 
@@ -280,33 +280,29 @@ fn credential_files(module: &dyn Module, params: &Value) -> Result<Value, String
     let request = CredentialFilesRequest::from_value(params)?;
     let request_id = request.request_id.clone();
     let receipt = module.load_credential_files(request)?;
-    require_matching_credential_id(&request_id, &receipt.request_id, "receipt requestId")?;
+    receipt.validate_for(&request_id)?;
     Ok(receipt.to_value())
 }
 
 fn credential_encode(module: &dyn Module, params: &Value) -> Result<Value, String> {
     let request = CredentialEncodingRequest::from_value(params)?;
     let request_id = request.request_id.clone();
+    let output_form = request.output_form;
+    let maximum_encoded_bytes = request.maximum_encoded_bytes;
     let result = module.encode_credential_material(request)?;
-    require_matching_credential_id(&request_id, &result.request_id, "result requestId")?;
+    result.validate_for_parts(&request_id, output_form, maximum_encoded_bytes)?;
     Ok(result.to_value())
 }
 
 fn credential_stamp(module: &dyn Module, params: &Value) -> Result<Value, String> {
     let request = CredentialStampExecutionRequest::from_value(params)?;
     let stamp_id = request.stamp_id.clone();
+    let target = request.request.target.clone();
+    let encoded_bytes = request.request.encoded_bytes;
+    let expected_digests = request.expected_digests.clone();
     let result = module.stamp_credential(request)?;
-    require_matching_credential_id(&stamp_id, &result.stamp_id, "result stampId")?;
+    result.validate_for_parts(&stamp_id, &target, encoded_bytes, &expected_digests)?;
     Ok(result.to_value())
-}
-
-fn require_matching_credential_id(expected: &str, actual: &str, label: &str) -> Result<(), String> {
-    if actual.trim() != expected {
-        return Err(format!(
-            "credential provider {label} {actual:?} does not match requested id {expected:?}"
-        ));
-    }
-    Ok(())
 }
 
 fn mesh_task(module: &dyn Module, emitter: &mut Emitter, params: &Value) -> Result<Value, String> {

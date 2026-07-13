@@ -21,6 +21,7 @@ type brokerSession struct {
 	datagram bool
 	ctx      context.Context
 	cancel   context.CancelFunc
+	closeMu  sync.Mutex
 
 	mu                   sync.Mutex
 	history              []byte

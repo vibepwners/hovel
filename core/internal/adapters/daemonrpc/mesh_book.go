@@ -77,6 +77,7 @@ type MeshOperation struct {
 	DestinationHost string             `json:"destinationHost,omitempty"`
 	DestinationPort int                `json:"destinationPort,omitempty"`
 	Protocol        string             `json:"protocol,omitempty"`
+	LocalNetwork    MeshBridgeNetwork  `json:"localNetwork,omitempty"`
 	LocalAddress    string             `json:"localAddress,omitempty"`
 	Summary         string             `json:"summary,omitempty"`
 	Error           string             `json:"error,omitempty"`
@@ -162,10 +163,13 @@ func (b *MeshBook) StartStream(moduleID string, request mesh.StreamRequest, now 
 func (b *MeshBook) StartBridge(
 	moduleID string,
 	request mesh.StreamRequest,
+	localNetwork MeshBridgeNetwork,
 	localAddress string,
 	now time.Time,
 ) MeshOperation {
-	return b.start(meshStreamOperation(MeshOperationKindBridge, moduleID, request, localAddress), now)
+	operation := meshStreamOperation(MeshOperationKindBridge, moduleID, request, localAddress)
+	operation.LocalNetwork = localNetwork
+	return b.start(operation, now)
 }
 
 // StartListener records a provider listening-post lifecycle call before it is invoked.
@@ -187,9 +191,9 @@ func (b *MeshBook) StartListener(
 // CompleteTask records the terminal result and any sessions opened by a task.
 func (b *MeshBook) CompleteTask(id string, result mesh.TaskResult, now time.Time) {
 	providerStatus := mesh.TaskStatus(strings.TrimSpace(string(result.Status)))
-	state := MeshOperationStateSucceeded
-	if providerStatus == mesh.TaskStatusFailed {
-		state = MeshOperationStateFailed
+	state := MeshOperationStateFailed
+	if providerStatus == mesh.TaskStatusSucceeded {
+		state = MeshOperationStateSucceeded
 	}
 	b.update(id, now, func(operation *MeshOperation) {
 		operation.State = state
@@ -278,7 +282,7 @@ func (b *MeshBook) CloseSession(sessionID string, now time.Time) {
 	for i := 0; i < b.count; i++ {
 		operation := &b.operations[b.operationIndex(i)]
 		isClosableKind := operation.Kind == MeshOperationKindStream || operation.Kind == MeshOperationKindBridge
-		isTerminal := operation.State == MeshOperationStateClosed || operation.State == MeshOperationStateFailed
+		isTerminal := operation.State == MeshOperationStateClosed
 		if !isClosableKind || operation.SessionID != sessionID || isTerminal {
 			continue
 		}

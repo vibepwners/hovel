@@ -15,7 +15,10 @@ const (
 	MaximumSigningLeaseDuration = 15 * time.Minute
 )
 
-var ErrAuthoritySigningLocked = errors.New("pki: authority signing is locked")
+var (
+	ErrAuthoritySigningLocked     = errors.New("pki: authority signing is locked")
+	ErrAuthoritySigningLeaseOwned = errors.New("pki: authority signing lease belongs to another actor or operation")
+)
 
 type SigningLeaseApprover interface {
 	AuthorizeSigningLease(context.Context, domainpki.AuthorityID, time.Duration, AuditContext) error
@@ -88,8 +91,14 @@ func (m *SigningLeaseManager) UnlockSigning(ctx context.Context, id domainpki.Au
 	if duration < time.Second || duration > MaximumSigningLeaseDuration {
 		return SigningLease{}, fmt.Errorf("pki: signing lease duration must be between %s and %s", time.Second, MaximumSigningLeaseDuration)
 	}
+	if m.liveLeaseOwnedByOther(id, scope, m.clock.Now().UTC()) {
+		return SigningLease{}, ErrAuthoritySigningLeaseOwned
+	}
 	if err := m.approver.AuthorizeSigningLease(ctx, id, duration, scope); err != nil {
 		return SigningLease{}, fmt.Errorf("pki: authorize signing lease: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return SigningLease{}, err
 	}
 	now := m.clock.Now().UTC()
 	lease := SigningLease{AuthorityID: id, GrantedAt: now, ExpiresAt: now.Add(duration), ActorID: scope.ActorID, OperationID: scope.OperationID}
@@ -97,9 +106,31 @@ func (m *SigningLeaseManager) UnlockSigning(ctx context.Context, id domainpki.Au
 		return SigningLease{}, err
 	}
 	m.mu.Lock()
+	if existing, ok := m.leases[id]; ok && now.Before(existing.ExpiresAt) && !existing.matches(scope) {
+		m.mu.Unlock()
+		return SigningLease{}, ErrAuthoritySigningLeaseOwned
+	}
 	m.leases[id] = lease
 	m.mu.Unlock()
 	return lease, nil
+}
+
+func (m *SigningLeaseManager) liveLeaseOwnedByOther(
+	id domainpki.AuthorityID,
+	scope AuditContext,
+	now time.Time,
+) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	lease, ok := m.leases[id]
+	if !ok {
+		return false
+	}
+	if !now.Before(lease.ExpiresAt) {
+		delete(m.leases, id)
+		return false
+	}
+	return !lease.matches(scope)
 }
 
 func (m *SigningLeaseManager) LockSigning(ctx context.Context, id domainpki.AuthorityID, scope AuditContext) error {
@@ -116,7 +147,7 @@ func (m *SigningLeaseManager) LockSigning(ctx context.Context, id domainpki.Auth
 	lease, ok := m.leases[id]
 	if ok && !lease.matches(scope) {
 		m.mu.Unlock()
-		return errors.New("pki: signing lease belongs to another actor or operation")
+		return ErrAuthoritySigningLeaseOwned
 	}
 	delete(m.leases, id)
 	m.mu.Unlock()

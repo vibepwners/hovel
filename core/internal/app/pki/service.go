@@ -1181,7 +1181,12 @@ func (s Service) issueCertificate(ctx context.Context, req IssueCertificateReque
 	return generation.Clone(), nil
 }
 
-func (s Service) ExportBundle(ctx context.Context, generationID domainpki.GenerationID, purpose domainpki.Purpose, includePrivate bool) (_ domainpki.Bundle, resultErr error) {
+func (s Service) ExportBundle(ctx context.Context, generationID domainpki.GenerationID, purpose domainpki.Purpose, includePrivate bool) (result domainpki.Bundle, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			result.Clear()
+		}
+	}()
 	if err := generationID.Validate(); err != nil {
 		return domainpki.Bundle{}, err
 	}
@@ -1224,18 +1229,18 @@ func (s Service) ExportBundle(ctx context.Context, generationID domainpki.Genera
 		}
 		defer validated.Clear()
 		key := validated.Material()
-		defer clear(key.PrivateKeyPKCS8)
+		defer key.Clear()
 		if key.ExternalHandle != nil {
 			privateKeyRef = &domainpki.KeyReference{
 				KeyID: generation.KeyID, ProviderID: string(key.ExternalHandle.BackendID),
-				Capabilities: append([]string(nil), key.ExternalHandle.Capabilities...),
+				Capabilities: key.ExternalHandle.Capabilities,
 			}
 		} else {
-			binary, binaryErr := domainpki.NewBinary(domainpki.MediaTypePrivateKey, key.PrivateKeyPKCS8)
-			if binaryErr != nil {
-				return domainpki.Bundle{}, binaryErr
+			privateKey = &domainpki.Binary{
+				MediaType: domainpki.MediaTypePrivateKey,
+				Encoding:  domainpki.EncodingBase64DER,
+				Data:      key.PrivateKeyPKCS8,
 			}
-			privateKey = &binary
 		}
 	}
 	chain, trust, err := s.bundleChain(ctx, generation)
@@ -1247,7 +1252,7 @@ func (s Service) ExportBundle(ctx context.Context, generationID domainpki.Genera
 	if err != nil {
 		return domainpki.Bundle{}, err
 	}
-	bundle, err := domainpki.NewBundle(domainpki.BundleArgs{
+	result, err = domainpki.NewBundle(domainpki.BundleArgs{
 		SchemaVersion:           domainpki.BundleSchemaV1,
 		ID:                      bundleID,
 		CertificateID:           generation.CertificateID,
@@ -1276,17 +1281,17 @@ func (s Service) ExportBundle(ctx context.Context, generationID domainpki.Genera
 	}
 	validator, err := s.validators.ResolveValidator(ctx, generation.BackendID)
 	if err != nil {
-		return domainpki.Bundle{}, err
+		return result, err
 	}
-	if err := validator.ValidateBundle(ctx, bundle, s.clock.Now().UTC()); err != nil {
-		return domainpki.Bundle{}, fmt.Errorf("pki: verify exported credential bundle: %w", err)
+	if err := validator.ValidateBundle(ctx, result, s.clock.Now().UTC()); err != nil {
+		return result, fmt.Errorf("pki: verify exported credential bundle: %w", err)
 	}
 	if includePrivate {
 		if err := s.appendAudit(ctx, AuditActionPrivateExport, AuditOutcomeSucceeded, auditResourceGeneration, string(generation.ID), map[string]string{"purpose": string(purpose)}); err != nil {
-			return domainpki.Bundle{}, err
+			return result, err
 		}
 	}
-	return bundle, nil
+	return result, nil
 }
 
 func (s Service) authorizePrivateExport(ctx context.Context, generation domainpki.CertificateGeneration) error {

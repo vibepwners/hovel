@@ -190,6 +190,22 @@ type transientCRLValidator struct {
 	remaining int
 }
 
+type rejectingBundleValidator struct {
+	apppki.Validator
+	privateKeyAlias []byte
+}
+
+func (v *rejectingBundleValidator) ValidateBundle(
+	_ context.Context,
+	bundle domainpki.Bundle,
+	_ time.Time,
+) error {
+	if bundle.PrivateKey != nil {
+		v.privateKeyAlias = bundle.PrivateKey.Data
+	}
+	return errors.New("test bundle validation failed")
+}
+
 type crashAfterCRLCheckpointPersistence struct {
 	apppki.Persistence
 }
@@ -1640,6 +1656,7 @@ func TestServiceIssuesHierarchyAndExportsBundles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer privateBundle.Clear()
 	if privateBundle.PrivateKey == nil || len(privateBundle.Chain) != 1 || len(privateBundle.TrustAnchors) != 1 {
 		t.Fatalf("private bundle = %#v", privateBundle)
 	}
@@ -1661,6 +1678,7 @@ func TestServiceIssuesHierarchyAndExportsBundles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer publicBundle.Clear()
 	if publicBundle.PrivateKey != nil || publicBundle.PrivateKeyRef != nil {
 		t.Fatal("public bundle includes private material")
 	}
@@ -1697,6 +1715,50 @@ func TestServiceIssuesHierarchyAndExportsBundles(t *testing.T) {
 	store.AllowPrivateExport(root.Generation.ID)
 	if _, err := service.ExportBundle(t.Context(), root.Generation.ID, domainpki.PurposeCustom, true); !errors.Is(err, apppki.ErrPrivateKeyExportDenied) {
 		t.Fatalf("root private export policy error = %v", err)
+	}
+}
+
+func TestExportBundleClearsPrivateMaterialAfterValidationFailure(t *testing.T) {
+	t.Parallel()
+
+	store := pkimemory.NewStore()
+	validator := &rejectingBundleValidator{Validator: infrapki.NewValidator()}
+	service := newTestServiceWithCrypto(
+		t,
+		store,
+		infrapki.NewBackend(),
+		validator,
+		fixedClock{now: fixedTestTime},
+	)
+	root, err := service.CreateAuthority(t.Context(), apppki.CreateAuthorityRequest{
+		Name: "bundle cleanup root",
+		Role: domainpki.AuthorityRoleRoot,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlockTestAuthority(t, service, root.Authority.ID)
+	leaf, err := service.IssueCertificate(t.Context(), apppki.IssueCertificateRequest{
+		IssuerAuthorityID: root.Authority.ID,
+		Name:              "bundle-cleanup.test",
+		ProfileID:         domainpki.ProfilePQHybridMutual,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.AllowPrivateExport(leaf.ID)
+	if _, err := service.ExportBundle(
+		t.Context(), leaf.ID, leaf.Purpose, true,
+	); err == nil || !strings.Contains(err.Error(), "test bundle validation failed") {
+		t.Fatalf("ExportBundle() error = %v, want validator failure", err)
+	}
+	if len(validator.privateKeyAlias) == 0 {
+		t.Fatal("validator did not observe private bundle material")
+	}
+	for _, value := range validator.privateKeyAlias {
+		if value != 0 {
+			t.Fatalf("failed bundle retained private material: %v", validator.privateKeyAlias)
+		}
 	}
 }
 
@@ -2716,7 +2778,17 @@ func TestServiceUsesBoundedRevocableSigningLeases(t *testing.T) {
 	if lease.ExpiresAt.Sub(lease.GrantedAt) != time.Minute {
 		t.Fatalf("signing lease duration = %s, want 1m", lease.ExpiresAt.Sub(lease.GrantedAt))
 	}
+	renewedLease, err := service.UnlockAuthoritySigning(t.Context(), root.Authority.ID, 2*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewedLease.ExpiresAt.Sub(renewedLease.GrantedAt) != 2*time.Minute {
+		t.Fatalf("renewed signing lease duration = %s, want 2m", renewedLease.ExpiresAt.Sub(renewedLease.GrantedAt))
+	}
 	otherScope := apppki.AuditContext{ActorID: "other-operator", OperationID: "test-operation", CorrelationID: "other-correlation"}
+	if _, err := leases.UnlockSigning(t.Context(), root.Authority.ID, time.Minute, otherScope); !errors.Is(err, apppki.ErrAuthoritySigningLeaseOwned) {
+		t.Fatalf("other actor UnlockSigning() error = %v, want ErrAuthoritySigningLeaseOwned", err)
+	}
 	if _, active, err := leases.SigningLease(t.Context(), root.Authority.ID, otherScope); err != nil || active {
 		t.Fatalf("other actor SigningLease() active=%t err=%v", active, err)
 	}
@@ -2726,12 +2798,18 @@ func TestServiceUsesBoundedRevocableSigningLeases(t *testing.T) {
 	if err := issue("unlocked.test"); err != nil {
 		t.Fatal(err)
 	}
-	clock.Add(2 * time.Minute)
+	clock.Add(3 * time.Minute)
+	if _, err := leases.UnlockSigning(t.Context(), root.Authority.ID, time.Minute, otherScope); err != nil {
+		t.Fatalf("other actor could not replace expired signing lease: %v", err)
+	}
 	if _, active, err := service.AuthoritySigningLease(t.Context(), root.Authority.ID); err != nil || active {
 		t.Fatalf("expired AuthoritySigningLease() active=%t err=%v", active, err)
 	}
 	if err := issue("expired.test"); !errors.Is(err, apppki.ErrAuthoritySigningLocked) {
 		t.Fatalf("expired issue error = %v, want ErrAuthoritySigningLocked", err)
+	}
+	if err := leases.LockSigning(t.Context(), root.Authority.ID, otherScope); err != nil {
+		t.Fatalf("other actor could not release its replacement lease: %v", err)
 	}
 	if _, err := service.UnlockAuthoritySigning(t.Context(), root.Authority.ID, 0); err != nil {
 		t.Fatal(err)

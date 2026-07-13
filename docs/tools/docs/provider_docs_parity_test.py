@@ -36,6 +36,27 @@ PYTHON_API_TYPES = (
     "MeshStreamRequest",
 )
 
+WIRED_RUNTIME_SLOT_MARKERS = {
+    "sdk/go/README.md": (
+        "CredentialProjectionCertificateDER",
+        "CredentialMaterialPublic",
+        "CredentialProjectionPrivateKeyPKCS8",
+        "CredentialMaterialPrivateBytes",
+    ),
+    "sdk/python/README.md": (
+        "CredentialProjection.CERTIFICATE_DER",
+        "CredentialMaterialForm.PUBLIC",
+        "CredentialProjection.PRIVATE_KEY_PKCS8",
+        "CredentialMaterialForm.PRIVATE_BYTES",
+    ),
+    "sdk/rust/README.md": (
+        "CredentialProjection::CertificateDer",
+        "CredentialMaterialForm::Public",
+        "CredentialProjection::PrivateKeyPkcs8",
+        "CredentialMaterialForm::PrivateBytes",
+    ),
+}
+
 
 def runfile(relative: str) -> Path:
     root = Path(os.environ["TEST_SRCDIR"])
@@ -52,7 +73,7 @@ def read(relative: str) -> str:
 
 @pytest.mark.parametrize("method", CREDENTIAL_METHODS + MESH_METHODS)
 def test_module_protocol_names_every_provider_method(method: str) -> None:
-    assert method in read("docs/site/spec/module-protocol.html")
+    assert method in read("docs/site/src/content/spec/module-protocol.html")
 
 
 @pytest.mark.parametrize("method", CREDENTIAL_METHODS + MESH_METHODS)
@@ -88,6 +109,21 @@ def test_sdk_readmes_document_credential_methods(readme: str, method: str) -> No
     assert method in read(readme)
 
 
+@pytest.mark.parametrize(("readme", "markers"), WIRED_RUNTIME_SLOT_MARKERS.items())
+def test_sdk_runtime_examples_use_wired_mesh_selectors(readme: str, markers: tuple[str, ...]) -> None:
+    source = read(readme)
+    assert "control-plane-mtls-certificate" in source
+    assert "control-plane-mtls-private-key" in source
+    for marker in markers:
+        assert marker in source, f"{readme} omits {marker}"
+
+
+def test_protected_file_example_names_encoding_and_media_type() -> None:
+    protocol = read("docs/site/src/content/spec/module-protocol.html")
+    assert '"encoding": "raw"' in protocol
+    assert '"mediaType": "application/pkix-cert"' in protocol
+
+
 @pytest.mark.parametrize("symbol", PYTHON_API_TYPES)
 def test_python_exports_and_api_inventory_include_provider_types(symbol: str) -> None:
     assert f'"{symbol}"' in read("sdk/python/hovel_sdk/__init__.py")
@@ -95,4 +131,4 @@ def test_python_exports_and_api_inventory_include_provider_types(symbol: str) ->
 
 
 if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__]))
+    raise SystemExit(pytest.main([__file__, "-p", "no:cacheprovider"]))
