@@ -432,16 +432,16 @@ capabilities        host.info, file.get, file.put, file.stat, registry.query,
         <h2>Build Contract</h2>
         <p>
           Squatter now lives in the <code>modules/</code> slice, outside the core
-          Hovel framework workspace. The previous root Bazel labels and
-          aggregate tasks for Squatter are not wired into the current root
-          dispatcher. Restore a module-slice build workspace before documenting
-          <code>//modules/squatter:...</code> labels or Wine-backed Squatter CI
-          tasks again.
+          Hovel framework workspace. Use <code>task modules:ci</code> for the hermetic
+          module gate, <code>task modules:wine-test</code> for the host Wine boundary,
+          and <code>task release:modules-package</code> for installable archives. Keep
+          Squatter labels and host dependencies behind those Task contracts rather than
+          calling Bazel or Wine directly.
         </p>
         <p>
           The Windows payload uses repo-local Bazel rules over a pinned MinGW archive:
         </p>
-<pre data-lang="starlark"><code>url = "https://github.com/Vibe-Pwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64.tar.xz"
+<pre data-lang="starlark"><code>url = "https://github.com/vibepwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64.tar.xz"
 sha256 = "&lt;recorded checksum&gt;"
 </code></pre>
         <p>

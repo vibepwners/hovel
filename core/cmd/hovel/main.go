@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/rootcli"
+	"github.com/vibepwners/hovel/internal/adapters/rootcli"
 )
 
 func main() {

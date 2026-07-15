@@ -6,7 +6,7 @@ go_library(
         "chain.go",
         "validator.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/descriptor",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/descriptor",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/app/commands",

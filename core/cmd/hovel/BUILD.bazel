@@ -4,7 +4,7 @@ load("@rules_python//python:defs.bzl", "py_test")
 go_library(
     name = "hovel_lib",
     srcs = ["main.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/cmd/hovel",
+    importpath = "github.com/vibepwners/hovel/cmd/hovel",
     visibility = ["//visibility:private"],
     deps = ["//internal/adapters/rootcli"],
 )

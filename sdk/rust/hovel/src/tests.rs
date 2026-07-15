@@ -5,14 +5,32 @@ use std::cell::RefCell;
 use std::io::Cursor;
 use std::rc::Rc;
 
+use crate::credential_provider::{
+    CREDENTIAL_RPC_ENCODE_METHOD, CREDENTIAL_RPC_FILES_METHOD, CREDENTIAL_RPC_RUNTIME_METHOD,
+    CREDENTIAL_RPC_STAMP_METHOD,
+};
 use crate::json::{self, Value};
 use crate::{
-    base64, serve_with, Context, Info, InstalledPayloadDescriptor, LineShellSession, MeshBeacon,
-    MeshBeaconRequest, MeshDescribeRequest, MeshDescriptor, MeshLink, MeshListener,
-    MeshListenerListRequest, MeshListenerSpec, MeshListenerStartRequest, MeshListenerStopRequest,
-    MeshNode, MeshRoute, MeshStreamRequest, MeshTaskRequest, MeshTaskResult, MeshTaskSpec,
-    MeshTopology, MeshTopologyRequest, MeshTrigger, Module, ModuleType, Outcome,
-    PayloadProviderRecord, Schema, Session, SessionOptions, MESH_LISTENER_DEPLOYMENT_SEPARATE,
+    base64, serve_with, Context, CredentialArtifactContent, CredentialArtifactInput,
+    CredentialArtifactOutput, CredentialBytes, CredentialConsumerType,
+    CredentialDeliveryCapability, CredentialDeliveryDescriptor, CredentialDeliveryReceipt,
+    CredentialEncodingRequest, CredentialEncodingResult, CredentialEndpointRole,
+    CredentialFilesRequest, CredentialMaterialForm, CredentialMaterialReference,
+    CredentialMaterialValue, CredentialOperationScope, CredentialPrivateMaterialPolicy,
+    CredentialProjection, CredentialProtectedPath, CredentialProviderTarget, CredentialPurpose,
+    CredentialRuntimeRequest, CredentialSecretReference, CredentialSlot,
+    CredentialStampExecutionRequest, CredentialStampExecutionResult, CredentialStampMaterial,
+    CredentialStampOutput, CredentialStampPrecondition, CredentialStampRemainderPolicy,
+    CredentialStampRequest, CredentialStampTarget, CredentialStampTargetKind,
+    CredentialStampTargetResolution, CredentialStampedMaterialDigest, Info,
+    InstalledPayloadDescriptor, LineShellSession, MeshBeacon, MeshBeaconRequest,
+    MeshDescribeRequest, MeshDescriptor, MeshLink, MeshListener, MeshListenerListRequest,
+    MeshListenerSpec, MeshListenerStartRequest, MeshListenerStopRequest, MeshNode, MeshRoute,
+    MeshStreamRequest, MeshTaskRequest, MeshTaskResult, MeshTaskSpec, MeshTopology,
+    MeshTopologyRequest, MeshTrigger, Module, ModuleType, Outcome, PayloadProviderRecord,
+    ResolvedCredentialMaterial, ResolvedCredentialMetadata, Schema, Session, SessionOptions,
+    CREDENTIAL_DELIVERY_SCHEMA_V1, CREDENTIAL_ENCODING_RAW,
+    CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1, MESH_LISTENER_DEPLOYMENT_SEPARATE,
     MESH_LISTENER_MANAGEMENT_PROVIDER, MESH_LISTENER_STATE_ACTIVE, MESH_LISTENER_STATE_STOPPED,
     MESH_TARGET_DESTINATION, MESH_TARGET_NODE, MESH_TASK_COMMAND, MESH_TASK_SURVEY,
     MESH_TASK_UPLOAD_EXECUTE,
@@ -33,6 +51,459 @@ fn base64_round_trips() {
         let decoded = base64::decode(&encoded).expect("decode");
         assert_eq!(decoded, sample.as_bytes());
     }
+}
+
+#[test]
+fn base64_rejects_noncanonical_wire_values() {
+    let cases = [
+        ("missing padding", "Zg"),
+        ("whitespace", "Zg==\n"),
+        ("padding before final quartet", "Zg==AAAA"),
+        ("single-byte non-zero pad bits", "Zh=="),
+        ("two-byte non-zero pad bits", "Zm9="),
+        ("padding in first position", "=m9v"),
+        ("incomplete padding", "Zg=A"),
+        ("invalid alphabet", "Zm?="),
+    ];
+    for (name, value) in cases {
+        assert!(base64::decode(value).is_err(), "accepted {name}: {value:?}");
+    }
+}
+
+#[test]
+fn sha256_matches_fips_vectors() {
+    const MULTI_BLOCK_INPUT: &[u8] = b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+    const MULTI_BLOCK_DIGEST: &str =
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1";
+
+    assert_eq!(
+        crate::sha256::hex_digest(b""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    assert_eq!(
+        crate::sha256::hex_digest(b"abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_eq!(
+        crate::sha256::hex_digest(MULTI_BLOCK_INPUT),
+        MULTI_BLOCK_DIGEST
+    );
+}
+
+#[test]
+fn credential_tagged_unions_reject_inactive_fields() {
+    let inactive_error = |result: Result<(), String>| {
+        let error = result.expect_err("inactive credential union field should be rejected");
+        assert!(
+            error.contains("inactive variant field"),
+            "unexpected error: {error}"
+        );
+    };
+
+    inactive_error(
+        CredentialStampPrecondition::from_value(&Value::object(vec![
+            ("kind", Value::from("none")),
+            ("bytes", Value::from(base64::encode(b"inactive").as_str())),
+        ]))
+        .map(|_| ()),
+    );
+    inactive_error(
+        CredentialStampTarget::from_value(&Value::object(vec![
+            ("kind", Value::from("named-slot")),
+            (
+                "namedSlot",
+                Value::object(vec![("name", Value::from("tls-server"))]),
+            ),
+            ("marker", Value::Object(Vec::new())),
+        ]))
+        .map(|_| ()),
+    );
+    inactive_error(
+        CredentialMaterialReference::from_value(&Value::object(vec![
+            ("projection", Value::from("bundle")),
+            ("form", Value::from("private-bytes")),
+            ("bundleId", Value::from("bundle-1")),
+            ("generationId", Value::from("inactive-generation")),
+        ]))
+        .map(|_| ()),
+    );
+    inactive_error(
+        CredentialStampMaterial::from_value(&Value::object(vec![
+            ("projection", Value::from("bundle")),
+            (
+                "credential",
+                Value::object(vec![
+                    ("projection", Value::from("bundle")),
+                    ("form", Value::from("private-bytes")),
+                    ("bundleId", Value::from("bundle-1")),
+                ]),
+            ),
+            ("literalReference", Value::Object(Vec::new())),
+        ]))
+        .map(|_| ()),
+    );
+}
+
+#[test]
+fn advanced_credential_stamp_contract_uses_canonical_wire_types() {
+    const MAXIMUM_CREDENTIAL_BINARY_BYTES: usize = 24 << 20;
+    let maximum_length = MAXIMUM_CREDENTIAL_BINARY_BYTES.to_string();
+    let request = CredentialStampRequest {
+        assignment_id: "assignment-1".into(),
+        capability: CredentialDeliveryCapability::StampAdvanced,
+        slot_name: "tls-server".into(),
+        target: CredentialStampTarget::BytePattern {
+            pattern: vec![0xaa, 0xbb],
+            mask: vec![0xff, 0x0f],
+            occurrence: 1,
+            maximum_length: maximum_length.clone(),
+            remainder_policy: CredentialStampRemainderPolicy::ZeroFill,
+            precondition: CredentialStampPrecondition::Sha256 {
+                sha256: "0".repeat(64),
+                length: "2".into(),
+            },
+        },
+        material: CredentialStampMaterial::Credential(CredentialMaterialReference {
+            projection: CredentialProjection::Bundle,
+            form: CredentialMaterialForm::PrivateBytes,
+            bundle_id: Some("bundle-1".into()),
+            generation_id: None,
+            generation_ids: Vec::new(),
+            trust_set_generation_id: None,
+            crl_generation_ids: Vec::new(),
+        }),
+        encoded_bytes: 4096,
+        credential: ResolvedCredentialMetadata {
+            bundle_version: "hovel.pki.bundle/v1".into(),
+            purpose: CredentialPurpose::TlsServer,
+            consumer_type: CredentialConsumerType::MeshProvider,
+            profile_id: "tls-server".into(),
+            compatibility_target_id: "mbedtls-3".into(),
+        },
+    };
+
+    request.validate().unwrap();
+    let wire = request.to_value();
+    let pattern = wire
+        .get("target")
+        .and_then(|target| target.get("bytePattern"))
+        .expect("byte-pattern target");
+    assert_eq!(
+        pattern.get("maximumLength").and_then(Value::as_str),
+        Some(maximum_length.as_str())
+    );
+    assert_eq!(
+        pattern.get("pattern").and_then(Value::as_str),
+        Some(base64::encode(&[0xaa, 0xbb]).as_str())
+    );
+    assert_eq!(
+        wire.get("material")
+            .and_then(|material| material.get("credential"))
+            .and_then(|credential| credential.get("bundleId"))
+            .and_then(Value::as_str),
+        Some("bundle-1")
+    );
+}
+
+#[test]
+fn credential_provider_secrets_are_redacted_from_debug() {
+    let secret = CredentialSecretReference::new("capability-secret").unwrap();
+    let path = CredentialProtectedPath::new("/secret/private-key.der").unwrap();
+    let byte_artifact = CredentialArtifactOutput {
+        name: "stamped.bin".into(),
+        encoding: "raw".into(),
+        content: CredentialArtifactContent::Data(
+            CredentialBytes::new(b"private-bytes".to_vec()).unwrap(),
+        ),
+    };
+    let path_artifact = CredentialArtifactOutput {
+        name: "stamped-path.bin".into(),
+        encoding: "raw".into(),
+        content: CredentialArtifactContent::Path(path.clone()),
+    };
+    let diagnostic = format!("{secret:?} {path:?} {byte_artifact:?} {path_artifact:?}");
+    for value in [
+        "capability-secret",
+        "/secret/private-key.der",
+        "private-bytes",
+    ] {
+        assert!(!diagnostic.contains(value), "debug leaked {value:?}");
+    }
+}
+
+#[test]
+fn credential_provider_secret_wrappers_and_material_reject_invalid_states() {
+    assert!(CredentialBytes::new(Vec::new()).is_err());
+    assert!(CredentialSecretReference::new("  ").is_err());
+    assert!(CredentialProtectedPath::new("").is_err());
+
+    let bytes = CredentialMaterialValue::Bytes(CredentialBytes::new(vec![1]).unwrap());
+    assert!(ResolvedCredentialMaterial::new(
+        CredentialProjection::Bundle,
+        CredentialMaterialForm::PrivateReference,
+        "raw",
+        "0".repeat(64),
+        bytes,
+    )
+    .is_err());
+}
+
+#[test]
+fn credential_material_parser_rejects_invalid_union_states() {
+    let bytes = Value::from(base64::encode(b"secret").as_str());
+    let reference = Value::object(vec![
+        ("providerId", Value::from("provider-1")),
+        ("reference", Value::from("reference-1")),
+    ]);
+    let cases = [
+        (
+            "both variants",
+            Value::object(vec![
+                ("projection", Value::from("bundle")),
+                ("form", Value::from("private-bytes")),
+                ("encoding", Value::from("raw")),
+                ("sha256", Value::from("0".repeat(64).as_str())),
+                ("data", bytes.clone()),
+                ("reference", reference.clone()),
+            ]),
+        ),
+        (
+            "missing variant",
+            Value::object(vec![
+                ("projection", Value::from("bundle")),
+                ("form", Value::from("private-bytes")),
+                ("encoding", Value::from("raw")),
+                ("sha256", Value::from("0".repeat(64).as_str())),
+            ]),
+        ),
+        (
+            "reference form with bytes",
+            Value::object(vec![
+                ("projection", Value::from("bundle")),
+                ("form", Value::from("private-reference")),
+                ("encoding", Value::from("raw")),
+                ("sha256", Value::from("0".repeat(64).as_str())),
+                ("data", bytes),
+            ]),
+        ),
+        (
+            "byte form with reference",
+            Value::object(vec![
+                ("projection", Value::from("bundle")),
+                ("form", Value::from("private-bytes")),
+                ("encoding", Value::from("raw")),
+                ("sha256", Value::from("0".repeat(64).as_str())),
+                ("reference", reference),
+            ]),
+        ),
+    ];
+    for (name, material) in cases {
+        let request = credential_runtime_request_value(material);
+        assert!(
+            CredentialRuntimeRequest::from_value(&request).is_err(),
+            "accepted {name}"
+        );
+    }
+}
+
+#[test]
+fn credential_binary_size_parser_enforces_contract_bounds() {
+    const MAXIMUM_CREDENTIAL_BINARY_BYTES: i64 = 24 << 20;
+
+    for field_name in ["encodedBytes", "maximumEncodedBytes", "size"] {
+        for valid in [1, MAXIMUM_CREDENTIAL_BINARY_BYTES] {
+            let value = Value::object(vec![(field_name, Value::from(valid))]);
+            assert_eq!(
+                crate::credential_delivery::required_i64(&value, field_name),
+                Ok(valid)
+            );
+        }
+        for invalid in [0, MAXIMUM_CREDENTIAL_BINARY_BYTES + 1] {
+            let value = Value::object(vec![(field_name, Value::from(invalid))]);
+            let error = crate::credential_delivery::required_i64(&value, field_name)
+                .expect_err("credential binary size should be rejected");
+            assert!(error.contains(field_name), "unexpected error: {error}");
+        }
+    }
+}
+
+#[test]
+fn credential_provider_results_validate_against_requests() {
+    let source_bytes = b"source-material".to_vec();
+    let source = ResolvedCredentialMaterial::new(
+        CredentialProjection::Bundle,
+        CredentialMaterialForm::PrivateBytes,
+        "raw",
+        crate::sha256::hex_digest(&source_bytes),
+        CredentialMaterialValue::Bytes(CredentialBytes::new(source_bytes).unwrap()),
+    )
+    .unwrap();
+    let provider = CredentialProviderTarget {
+        module_id: "provider-module".into(),
+        provider_id: "provider-1".into(),
+        provider_version: "v1".into(),
+        descriptor_sha256: "0".repeat(64),
+    };
+    let encoding_request = CredentialEncodingRequest {
+        request_id: "encoding-1".into(),
+        provider: provider.clone(),
+        provider_id: provider.provider_id.clone(),
+        provider_schema: "v1".into(),
+        output_form: CredentialMaterialForm::PrivateBytes,
+        maximum_encoded_bytes: 8,
+        source: source.clone(),
+        scope: CredentialOperationScope::default(),
+    };
+    let encoded = b"encoded".to_vec();
+    let encoding_result = CredentialEncodingResult {
+        request_id: encoding_request.request_id.clone(),
+        form: encoding_request.output_form,
+        encoding: "provider-test".into(),
+        sha256: crate::sha256::hex_digest(&encoded),
+        data: CredentialBytes::new(encoded).unwrap(),
+    };
+    encoding_result.validate_for(&encoding_request).unwrap();
+
+    let mut invalid_encoding = encoding_result.clone();
+    invalid_encoding.sha256 = "1".repeat(64);
+    assert!(invalid_encoding
+        .validate_for(&encoding_request)
+        .expect_err("mismatched encoding digest should fail")
+        .contains("sha256 does not match"));
+    let mut invalid_encoding = encoding_result.clone();
+    invalid_encoding.form = CredentialMaterialForm::Public;
+    assert!(invalid_encoding
+        .validate_for(&encoding_request)
+        .expect_err("mismatched encoding form should fail")
+        .contains("does not match its request"));
+
+    let metadata = ResolvedCredentialMetadata {
+        bundle_version: "hovel.pki.bundle/v1".into(),
+        purpose: CredentialPurpose::TlsServer,
+        consumer_type: CredentialConsumerType::MeshListener,
+        profile_id: "tls-server".into(),
+        compatibility_target_id: "portable-x509".into(),
+    };
+    let target = CredentialStampTarget::NamedSlot {
+        name: "tls-server".into(),
+    };
+    let expected_digest = CredentialStampedMaterialDigest {
+        projection: CredentialProjection::Bundle,
+        reference: "bundle-1".into(),
+        sha256: "2".repeat(64),
+    };
+    let stamp_request = CredentialStampExecutionRequest {
+        stamp_id: "stamp-1".into(),
+        provider,
+        request: CredentialStampRequest {
+            assignment_id: "assignment-1".into(),
+            capability: CredentialDeliveryCapability::StampStandard,
+            slot_name: "tls-server".into(),
+            target: target.clone(),
+            material: CredentialStampMaterial::Credential(CredentialMaterialReference {
+                projection: CredentialProjection::Bundle,
+                form: CredentialMaterialForm::PrivateBytes,
+                bundle_id: Some("bundle-1".into()),
+                generation_id: None,
+                generation_ids: Vec::new(),
+                trust_set_generation_id: None,
+                crl_generation_ids: Vec::new(),
+            }),
+            encoded_bytes: 7,
+            credential: metadata,
+        },
+        input: CredentialArtifactInput {
+            artifact_id: "artifact-1".into(),
+            sha256: crate::sha256::hex_digest(b"input"),
+            encoding: "raw".into(),
+            content: CredentialArtifactContent::Data(
+                CredentialBytes::new(b"input".to_vec()).unwrap(),
+            ),
+        },
+        material: source,
+        expected_digests: vec![expected_digest],
+        scope: CredentialOperationScope::default(),
+    };
+    let stamp_result = CredentialStampExecutionResult {
+        stamp_id: stamp_request.stamp_id.clone(),
+        output: CredentialStampOutput::Artifact(CredentialArtifactOutput {
+            name: "stamped.bin".into(),
+            encoding: "raw".into(),
+            content: CredentialArtifactContent::Data(
+                CredentialBytes::new(b"stamped".to_vec()).unwrap(),
+            ),
+        }),
+        target_resolution: CredentialStampTargetResolution::Unchanged,
+        resolved_target: target,
+        bytes_written: "7".into(),
+        material_digests: stamp_request.expected_digests.clone(),
+    };
+    stamp_result.validate_for(&stamp_request).unwrap();
+
+    let mut invalid_stamp = stamp_result.clone();
+    invalid_stamp.bytes_written = "6".into();
+    assert!(invalid_stamp
+        .validate_for(&stamp_request)
+        .expect_err("mismatched stamp byte count should fail")
+        .contains("byte count"));
+    let mut invalid_stamp = stamp_result.clone();
+    invalid_stamp.resolved_target = CredentialStampTarget::NamedSlot {
+        name: "other-slot".into(),
+    };
+    assert!(invalid_stamp
+        .validate_for(&stamp_request)
+        .expect_err("mismatched unchanged target should fail")
+        .contains("unchanged credential stamp target"));
+    let mut invalid_stamp = stamp_result;
+    invalid_stamp.material_digests[0].sha256 = "3".repeat(64);
+    assert!(invalid_stamp
+        .validate_for(&stamp_request)
+        .expect_err("mismatched stamp digest should fail")
+        .contains("material digests"));
+
+    let receipt = CredentialDeliveryReceipt {
+        request_id: "request-1".into(),
+        provider_reference: Some("accepted".into()),
+        receipt_sha256: None,
+    };
+    receipt.validate_for("request-1").unwrap();
+    assert!(receipt
+        .validate_for("other-request")
+        .expect_err("mismatched receipt should fail")
+        .contains("does not match its request"));
+}
+
+fn credential_runtime_request_value(material: Value) -> Value {
+    Value::object(vec![
+        (
+            "schemaVersion",
+            Value::from(CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1),
+        ),
+        (
+            "provider",
+            Value::object(vec![
+                ("moduleId", Value::from("provider-1")),
+                ("providerId", Value::from("provider-1")),
+                ("providerVersion", Value::from("v1")),
+                ("descriptorSha256", Value::from("0".repeat(64).as_str())),
+            ]),
+        ),
+        ("requestId", Value::from("request-1")),
+        ("assignmentId", Value::from("assignment-1")),
+        ("slotName", Value::from("tls-server")),
+        (
+            "credential",
+            Value::object(vec![
+                ("bundleVersion", Value::from("hovel.pki.bundle/v1")),
+                ("purpose", Value::from("tls-server")),
+                ("consumerType", Value::from("mesh-listener")),
+                ("profileId", Value::from("tls-server")),
+                ("compatibilityTargetId", Value::from("portable-x509")),
+            ]),
+        ),
+        ("material", material),
+        ("scope", Value::Object(Vec::new())),
+    ])
 }
 
 #[test]
@@ -249,6 +720,31 @@ impl Module for AgentAwareModule {
 
 struct FakeMeshModule;
 
+fn fake_credential_delivery_descriptor() -> CredentialDeliveryDescriptor {
+    CredentialDeliveryDescriptor {
+        capabilities: vec![
+            CredentialDeliveryCapability::Runtime,
+            CredentialDeliveryCapability::StampStandard,
+        ],
+        slots: vec![CredentialSlot {
+            name: "control-plane-mtls".into(),
+            purpose: CredentialPurpose::MtlsServer,
+            endpoint_role: CredentialEndpointRole::Server,
+            consumer_type: CredentialConsumerType::MeshListener,
+            accepted_bundle_versions: vec!["hovel.pki.bundle/v1".into()],
+            accepted_profiles: vec!["mtls-server".into()],
+            accepted_compatibility_targets: vec!["portable-x509".into()],
+            accepted_projections: vec![CredentialProjection::Bundle],
+            accepted_material_forms: vec![CredentialMaterialForm::PrivateBytes],
+            maximum_encoded_bytes: 16 * 1024,
+            remainder_policy: CredentialStampRemainderPolicy::Preserve,
+            private_material: CredentialPrivateMaterialPolicy::Allowed,
+        }],
+        stamp_target_kinds: vec![CredentialStampTargetKind::NamedSlot],
+        ..CredentialDeliveryDescriptor::default()
+    }
+}
+
 impl Module for FakeMeshModule {
     fn info(&self) -> Info {
         Info {
@@ -268,6 +764,10 @@ impl Module for FakeMeshModule {
 
     fn run(&self, _ctx: &mut Context) -> Outcome {
         Outcome::ok(Vec::new()).with_summary("mesh provider execute placeholder")
+    }
+
+    fn describe_credential_delivery(&self) -> Result<CredentialDeliveryDescriptor, String> {
+        Ok(fake_credential_delivery_descriptor())
     }
 
     fn describe_mesh(&self, _req: MeshDescribeRequest) -> Result<MeshDescriptor, String> {
@@ -321,6 +821,7 @@ impl Module for FakeMeshModule {
                 action_kind: MESH_TASK_COMMAND.into(),
                 ..MeshTrigger::default()
             }],
+            credential_delivery: Some(fake_credential_delivery_descriptor()),
             attributes: Vec::new(),
         })
     }
@@ -390,6 +891,63 @@ impl Module for FakeMeshModule {
             deployment: MESH_LISTENER_DEPLOYMENT_SEPARATE.into(),
             management: MESH_LISTENER_MANAGEMENT_PROVIDER.into(),
             ..MeshListener::default()
+        })
+    }
+
+    fn load_runtime_credential(
+        &self,
+        req: CredentialRuntimeRequest,
+    ) -> Result<CredentialDeliveryReceipt, String> {
+        Ok(CredentialDeliveryReceipt {
+            request_id: req.request_id,
+            provider_reference: Some("runtime-loaded".into()),
+            receipt_sha256: None,
+        })
+    }
+
+    fn load_credential_files(
+        &self,
+        req: CredentialFilesRequest,
+    ) -> Result<CredentialDeliveryReceipt, String> {
+        Ok(CredentialDeliveryReceipt {
+            request_id: req.request_id,
+            provider_reference: Some("files-loaded".into()),
+            receipt_sha256: None,
+        })
+    }
+
+    fn encode_credential_material(
+        &self,
+        req: CredentialEncodingRequest,
+    ) -> Result<CredentialEncodingResult, String> {
+        let encoded = b"encoded".to_vec();
+        Ok(CredentialEncodingResult {
+            request_id: req.request_id,
+            form: req.output_form,
+            encoding: "provider-test".into(),
+            sha256: crate::sha256::hex_digest(&encoded),
+            data: CredentialBytes::new(encoded).unwrap(),
+        })
+    }
+
+    fn stamp_credential(
+        &self,
+        req: CredentialStampExecutionRequest,
+    ) -> Result<CredentialStampExecutionResult, String> {
+        let expected_digests = req.expected_digests;
+        Ok(CredentialStampExecutionResult {
+            stamp_id: req.stamp_id,
+            output: CredentialStampOutput::Artifact(CredentialArtifactOutput {
+                name: "stamped.bin".into(),
+                encoding: "raw".into(),
+                content: CredentialArtifactContent::Data(
+                    CredentialBytes::new(b"stamped".to_vec()).unwrap(),
+                ),
+            }),
+            target_resolution: CredentialStampTargetResolution::Unchanged,
+            resolved_target: req.request.target,
+            bytes_written: req.request.encoded_bytes.to_string(),
+            material_digests: expected_digests,
         })
     }
 
@@ -756,6 +1314,16 @@ fn serve_mesh_provider_methods() {
         Some(Value::Array(items)) => assert_eq!(items.len(), 1),
         other => panic!("missing mesh triggers: {other:?}"),
     }
+    let credential_delivery = describe
+        .get("credentialDelivery")
+        .expect("mesh credential delivery descriptor");
+    match credential_delivery.get("deliveryCapabilities") {
+        Some(Value::Array(items)) => {
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[1].as_str(), Some("stamp-standard"));
+        }
+        other => panic!("missing credential delivery capabilities: {other:?}"),
+    }
 
     let topology = responses[1].get("result").unwrap();
     match topology.get("nodes") {
@@ -808,6 +1376,213 @@ fn serve_mesh_provider_methods() {
     assert_eq!(
         outputs.get("contextTarget").and_then(Value::as_str),
         Some("10.10.0.99")
+    );
+}
+
+#[test]
+fn serve_credential_provider_methods() {
+    let credential = Value::object(vec![
+        ("bundleVersion", Value::from("hovel.pki.bundle/v1")),
+        ("purpose", Value::from("mtls-server")),
+        ("consumerType", Value::from("mesh-listener")),
+        ("profileId", Value::from("mtls-server")),
+        ("compatibilityTargetId", Value::from("portable-x509")),
+    ]);
+    let material = Value::object(vec![
+        ("projection", Value::from("bundle")),
+        ("form", Value::from("private-bytes")),
+        ("encoding", Value::from("hovel-bundle-json")),
+        (
+            "sha256",
+            Value::from(crate::sha256::hex_digest(b"private-bundle").as_str()),
+        ),
+        (
+            "data",
+            Value::from(base64::encode(b"private-bundle").as_str()),
+        ),
+    ]);
+    let provider = Value::object(vec![
+        ("moduleId", Value::from("fake-mesh-rust")),
+        ("providerId", Value::from("fake-mesh-rust")),
+        ("providerVersion", Value::from("v1.0.0")),
+        ("descriptorSha256", Value::from("4".repeat(64).as_str())),
+    ]);
+    let mut input = Vec::new();
+    input.extend(frame(request(
+        1,
+        CREDENTIAL_RPC_RUNTIME_METHOD,
+        Value::object(vec![
+            (
+                "schemaVersion",
+                Value::from(CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1),
+            ),
+            ("provider", provider.clone()),
+            ("requestId", Value::from("delivery-runtime-1")),
+            ("assignmentId", Value::from("assignment-1")),
+            ("slotName", Value::from("control-plane-mtls")),
+            ("credential", credential.clone()),
+            ("material", material.clone()),
+            (
+                "scope",
+                Value::object(vec![("listenerId", Value::from("listener-primary"))]),
+            ),
+        ]),
+    )));
+    input.extend(frame(request(
+        2,
+        CREDENTIAL_RPC_FILES_METHOD,
+        Value::object(vec![
+            (
+                "schemaVersion",
+                Value::from(CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1),
+            ),
+            ("provider", provider.clone()),
+            ("requestId", Value::from("delivery-files-1")),
+            ("assignmentId", Value::from("assignment-1")),
+            ("slotName", Value::from("control-plane-mtls")),
+            ("credential", credential.clone()),
+            (
+                "files",
+                Value::Array(vec![Value::object(vec![
+                    ("projection", Value::from("certificate-der")),
+                    ("form", Value::from("public")),
+                    ("encoding", Value::from(CREDENTIAL_ENCODING_RAW)),
+                    ("mediaType", Value::from("application/pkix-cert")),
+                    ("path", Value::from("/provider-input/certificate.der")),
+                    ("sha256", Value::from("1".repeat(64).as_str())),
+                    ("size", Value::from(512_i64)),
+                ])]),
+            ),
+            ("scope", Value::Object(Vec::new())),
+        ]),
+    )));
+    input.extend(frame(request(
+        3,
+        CREDENTIAL_RPC_ENCODE_METHOD,
+        Value::object(vec![
+            (
+                "schemaVersion",
+                Value::from(CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1),
+            ),
+            ("provider", provider.clone()),
+            ("requestId", Value::from("encoding-1")),
+            ("providerId", Value::from("fake-mesh-rust")),
+            ("providerSchema", Value::from("v1")),
+            ("outputForm", Value::from("private-bytes")),
+            ("maximumEncodedBytes", Value::from(4096_i64)),
+            ("source", material.clone()),
+            ("scope", Value::Object(Vec::new())),
+        ]),
+    )));
+    input.extend(frame(request(
+        4,
+        CREDENTIAL_RPC_STAMP_METHOD,
+        Value::object(vec![
+            (
+                "schemaVersion",
+                Value::from(CREDENTIAL_PROVIDER_EXECUTION_SCHEMA_V1),
+            ),
+            ("provider", provider),
+            ("stampId", Value::from("credential-stamp-1")),
+            (
+                "request",
+                Value::object(vec![
+                    ("assignmentId", Value::from("assignment-1")),
+                    ("capability", Value::from("stamp-standard")),
+                    ("slotName", Value::from("control-plane-mtls")),
+                    (
+                        "target",
+                        Value::object(vec![
+                            ("kind", Value::from("named-slot")),
+                            (
+                                "namedSlot",
+                                Value::object(vec![("name", Value::from("control-plane-mtls"))]),
+                            ),
+                        ]),
+                    ),
+                    (
+                        "material",
+                        Value::object(vec![
+                            ("projection", Value::from("bundle")),
+                            (
+                                "credential",
+                                Value::object(vec![
+                                    ("projection", Value::from("bundle")),
+                                    ("form", Value::from("private-bytes")),
+                                    ("bundleId", Value::from("bundle-1")),
+                                ]),
+                            ),
+                        ]),
+                    ),
+                    ("encodedBytes", Value::from(14_i64)),
+                    ("credential", credential),
+                ]),
+            ),
+            (
+                "input",
+                Value::object(vec![
+                    ("id", Value::from("artifact-1")),
+                    (
+                        "sha256",
+                        Value::from(crate::sha256::hex_digest(b"input").as_str()),
+                    ),
+                    ("encoding", Value::from("raw")),
+                    ("data", Value::from(base64::encode(b"input").as_str())),
+                ]),
+            ),
+            ("resolvedMaterial", material),
+            (
+                "expectedDigests",
+                Value::Array(vec![Value::object(vec![
+                    ("projection", Value::from("bundle")),
+                    ("reference", Value::from("bundle-1")),
+                    ("sha256", Value::from("2".repeat(64).as_str())),
+                ])]),
+            ),
+            (
+                "scope",
+                Value::object(vec![("runId", Value::from("run-1"))]),
+            ),
+        ]),
+    )));
+    input.extend(frame(request(
+        5,
+        "credential.describe",
+        Value::Object(Vec::new()),
+    )));
+    input.extend(frame(request(6, "shutdown", Value::Object(Vec::new()))));
+
+    let messages = run_session(input, FakeMeshModule);
+    let responses = responses(&messages);
+    let runtime = responses[0].get("result").expect("runtime result");
+    assert_eq!(
+        runtime.get("providerReference").and_then(Value::as_str),
+        Some("runtime-loaded")
+    );
+    assert!(runtime.get("material").is_none());
+    let files = responses[1].get("result").expect("files result");
+    assert_eq!(
+        files.get("providerReference").and_then(Value::as_str),
+        Some("files-loaded")
+    );
+    let encoded = responses[2].get("result").expect("encoding result");
+    assert_eq!(
+        encoded.get("data").and_then(Value::as_str),
+        Some(base64::encode(b"encoded").as_str())
+    );
+    let stamped = responses[3].get("result").expect("stamp result");
+    assert_eq!(
+        stamped.get("stampId").and_then(Value::as_str),
+        Some("credential-stamp-1")
+    );
+    assert_eq!(
+        stamped.get("bytesWritten").and_then(Value::as_str),
+        Some("14")
+    );
+    let descriptor = responses[4].get("result").expect("credential descriptor");
+    assert_eq!(
+        descriptor.get("schemaVersion").and_then(Value::as_str),
+        Some(CREDENTIAL_DELIVERY_SCHEMA_V1)
     );
 }
 

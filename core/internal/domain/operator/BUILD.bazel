@@ -3,7 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "operator",
     srcs = ["operator.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/domain/operator",
+    importpath = "github.com/vibepwners/hovel/internal/domain/operator",
     visibility = ["//:__subpackages__"],
 )
 

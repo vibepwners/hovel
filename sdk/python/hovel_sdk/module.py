@@ -6,6 +6,12 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from hovel_sdk.config import Requirement
 from hovel_sdk.context import Context
+from hovel_sdk.credential_provider import (
+    _CREDENTIAL_RPC_ENCODE_METHOD,
+    _CREDENTIAL_RPC_FILES_METHOD,
+    _CREDENTIAL_RPC_RUNTIME_METHOD,
+    _CREDENTIAL_RPC_STAMP_METHOD,
+)
 from hovel_sdk.mesh import (
     _MESH_RPC_BEACONS_METHOD,
     _MESH_RPC_LISTENER_START_METHOD,
@@ -18,6 +24,16 @@ from hovel_sdk.mesh import (
 from hovel_sdk.result import Result
 
 if TYPE_CHECKING:
+    from hovel_sdk.credential_delivery import CredentialDeliveryDescriptor
+    from hovel_sdk.credential_provider import (
+        CredentialDeliveryReceipt,
+        CredentialEncodingRequest,
+        CredentialEncodingResult,
+        CredentialFilesRequest,
+        CredentialRuntimeRequest,
+        CredentialStampExecutionRequest,
+        CredentialStampExecutionResult,
+    )
     from hovel_sdk.mesh import (
         MeshBeacon,
         MeshBeaconRequest,
@@ -135,6 +151,43 @@ class HovelModule(ABC):
     ) -> SessionRef | Awaitable[SessionRef]:
         raise NotImplementedError(
             f"{self.name or self.__class__.__name__} does not implement {_MESH_RPC_OPEN_STREAM_METHOD}"
+        )
+
+    def load_runtime_credential(
+        self,
+        _request: CredentialRuntimeRequest,
+    ) -> CredentialDeliveryReceipt | Awaitable[CredentialDeliveryReceipt]:
+        raise NotImplementedError(
+            f"{self.name or self.__class__.__name__} does not implement {_CREDENTIAL_RPC_RUNTIME_METHOD}"
+        )
+
+    def describe_credential_delivery(
+        self,
+    ) -> CredentialDeliveryDescriptor | Awaitable[CredentialDeliveryDescriptor]:
+        raise NotImplementedError(f"{self.name or self.__class__.__name__} is not a credential provider")
+
+    def load_credential_files(
+        self,
+        _request: CredentialFilesRequest,
+    ) -> CredentialDeliveryReceipt | Awaitable[CredentialDeliveryReceipt]:
+        raise NotImplementedError(
+            f"{self.name or self.__class__.__name__} does not implement {_CREDENTIAL_RPC_FILES_METHOD}"
+        )
+
+    def encode_credential_material(
+        self,
+        _request: CredentialEncodingRequest,
+    ) -> CredentialEncodingResult | Awaitable[CredentialEncodingResult]:
+        raise NotImplementedError(
+            f"{self.name or self.__class__.__name__} does not implement {_CREDENTIAL_RPC_ENCODE_METHOD}"
+        )
+
+    def stamp_credential(
+        self,
+        _request: CredentialStampExecutionRequest,
+    ) -> CredentialStampExecutionResult | Awaitable[CredentialStampExecutionResult]:
+        raise NotImplementedError(
+            f"{self.name or self.__class__.__name__} does not implement {_CREDENTIAL_RPC_STAMP_METHOD}"
         )
 
     @abstractmethod

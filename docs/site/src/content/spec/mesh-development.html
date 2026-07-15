@@ -1,4 +1,4 @@
-<!-- hovel-doc: {"title":"Developing Mesh Providers","group":"Module Development","order":5,"navTitle":"Mesh Development"} -->
+<!-- hovel-doc: {"title":"Developing Mesh Providers","group":"Module Development","order":5,"navTitle":"Mesh Development","description":"Implement Mesh providers, listening posts, routed sessions, bridges, and assignment-bound TLS credential delivery."} -->
 <article>
         <h1>Developing Mesh Providers</h1>
         <p>
@@ -7,15 +7,29 @@
           SDK defines contracts and dispatch; your provider owns its node protocol,
           routing, task execution, listener runtime, and durable state.
         </p>
+        <p>
+          For the platform model, start with <a href="mesh.html">Mesh</a>. For
+          certificate custody and assignment concepts, read
+          <a href="tls-pki.html">TLS and Workspace PKI</a>; for issue, stage,
+          activate, rotate, and recovery procedures, use
+          <a href="tls-operations.html">TLS Operations</a>. This page covers only
+          the Mesh integration seam. The complete runtime, protected-file, encoding,
+          and stamping implementation guide is
+          <a href="credential-provider-development.html">Developing Credential Providers</a>,
+          while <a href="daemon-rpc.html">Daemon RPC</a> and the
+          <a href="reference/daemon-rpc.openapi.json">OpenAPI document</a> are the
+          external API references.
+        </p>
 
         <h2>Start with the boundary</h2>
         <table>
           <thead><tr><th>Component</th><th>Owns</th><th>Does not own</th></tr></thead>
           <tbody>
-            <tr><td>Mesh provider module</td><td>Topology, routes, provider protocol, tasks, streams, beacons, triggers, and optional listener control.</td><td>Operator planning, confirmation, dangerous-module policy, or daemon audit storage.</td></tr>
+            <tr><td>Mesh provider module</td><td>Topology, routes, provider protocol, tasks, streams, beacons, triggers, optional listener control, and any TLS handshakes it explicitly implements.</td><td>Operator planning, confirmation, dangerous-module policy, workspace PKI custody, or daemon audit storage.</td></tr>
             <tr><td>Mesh Listener</td><td>A provider-reported listening post or rendezvous resource. It may be embedded in the provider deployment or run separately.</td><td>The provider adapter process. A listener must not rely on one short-lived RPC subprocess remaining alive.</td></tr>
-            <tr><td>Mesh Bridge</td><td>A daemon-owned loopback TCP or UDP endpoint backed by one Mesh session flow.</td><td>The remote route or protocol. The provider still owns those.</td></tr>
-            <tr><td>Consumer module</td><td>Its normal survey, exploit, or payload behavior against a host and port.</td><td>Mesh internals when it can use a daemon-provided local bridge endpoint.</td></tr>
+            <tr><td>Workspace PKI</td><td>Authorities, immutable certificate generations, trust generations, assignments, approvals, and audited resolution.</td><td>Starting TLS, choosing provider protocols, or hot-reloading a provider-owned listener.</td></tr>
+            <tr><td>Mesh Bridge</td><td>A daemon-owned, bearer-authenticated loopback TCP or UDP endpoint backed by one Mesh session flow.</td><td>TLS encryption or termination, remote peer authentication, trust injection, or the provider's route.</td></tr>
+            <tr><td>Consumer module</td><td>Its normal survey, exploit, or payload behavior and any end-to-end TLS it implements.</td><td>Mesh internals when it uses an SDK-authenticated local bridge connection.</td></tr>
           </tbody>
         </table>
 
@@ -34,16 +48,25 @@
           Do not implement no-op methods to satisfy a large interface. In Go, implement
           <code>MeshDescriber</code> and only the optional provider interfaces you need.
           In Python and Rust, override only the Mesh hooks you support; defaults fail
-          explicitly. Advertise the same surface in <code>mesh.describe</code>.
+          explicitly. Describe task kinds, listener types, topology, triggers, and
+          credential slots in their structured fields. Treat the optional top-level
+          <code>capabilities</code> list as provider-defined vocabulary, not as a switch
+          that makes an unimplemented hook available.
         </p>
 
-        <h2>1. Describe capabilities without side effects</h2>
+<h2>Describe capabilities without side effects</h2>
         <p>
           <code>mesh.describe</code> is catalog metadata. It must be cheap, deterministic,
           offline, and side-effect free. Put dynamic node state in topology, beacon, or
           listener calls instead. A provider supporting routed streams, destination
           tasking, and an HTTPS listening post might return:
         </p>
+        <div class="callout note" role="note">
+          <strong>Descriptor strings do not register methods.</strong> Implement the
+          optional SDK hook first, publish the matching structured task or listener
+          contract where one exists, and use <code>capabilities</code> only for additional
+          semantics understood by your provider and its callers.
+        </div>
 <pre data-lang="json"><code>{
   "name": "lab relay mesh",
   "version": "v0.1.0",
@@ -73,15 +96,85 @@
       "configSchema": {
         "type": "object",
         "properties": {
-          "bind": { "type": "string" },
-          "credentialRef": { "type": "string" }
+          "bind": { "type": "string" }
         }
       }
     }
-  ]
+  ],
+  "credentialDelivery": {
+    "schemaVersion": "hovel.pki.credential-delivery/v1",
+    "deliveryCapabilities": ["runtime"],
+    "credentialSlots": [
+      {
+        "name": "listener-certificate",
+        "purpose": "tls-server",
+        "endpointRole": "server",
+        "consumerType": "mesh-listener",
+        "acceptedBundleVersions": ["hovel.pki.bundle/v1"],
+        "acceptedProfiles": ["tls-server"],
+        "acceptedCompatibilityTargets": ["portable-x509"],
+        "acceptedProjections": ["certificate-der"],
+        "acceptedMaterialForms": ["public"],
+        "maximumEncodedBytes": 65536,
+        "remainderPolicy": "preserve",
+        "privateMaterial": "forbidden"
+      },
+      {
+        "name": "listener-private-key",
+        "purpose": "tls-server",
+        "endpointRole": "server",
+        "consumerType": "mesh-listener",
+        "acceptedBundleVersions": ["hovel.pki.bundle/v1"],
+        "acceptedProfiles": ["tls-server"],
+        "acceptedCompatibilityTargets": ["portable-x509"],
+        "acceptedProjections": ["private-key-pkcs8"],
+        "acceptedMaterialForms": ["private-bytes"],
+        "maximumEncodedBytes": 65536,
+        "remainderPolicy": "preserve",
+        "privateMaterial": "required"
+      },
+      {
+        "name": "node-client-certificate",
+        "purpose": "tls-client",
+        "endpointRole": "client",
+        "consumerType": "mesh-node",
+        "acceptedBundleVersions": ["hovel.pki.bundle/v1"],
+        "acceptedProfiles": ["tls-client"],
+        "acceptedCompatibilityTargets": ["portable-x509"],
+        "acceptedProjections": ["certificate-der"],
+        "acceptedMaterialForms": ["public"],
+        "maximumEncodedBytes": 65536,
+        "remainderPolicy": "preserve",
+        "privateMaterial": "forbidden"
+      },
+      {
+        "name": "node-client-private-key",
+        "purpose": "tls-client",
+        "endpointRole": "client",
+        "consumerType": "mesh-node",
+        "acceptedBundleVersions": ["hovel.pki.bundle/v1"],
+        "acceptedProfiles": ["tls-client"],
+        "acceptedCompatibilityTargets": ["portable-x509"],
+        "acceptedProjections": ["private-key-pkcs8"],
+        "acceptedMaterialForms": ["private-bytes"],
+        "maximumEncodedBytes": 65536,
+        "remainderPolicy": "preserve",
+        "privateMaterial": "required"
+      }
+    ]
+  }
 }</code></pre>
+        <p>
+          This fictional provider advertises exactly four runtime slots. Certificate
+          and private-key projections are deliberately separate, and listener/server
+          metadata is not interchangeable with node/client metadata. Publishing a
+          slot does not implement TLS: the provider must still consume the matching
+          values in its TLS stack. If the provider also implements
+          <code>credential.describe</code>, its standalone descriptor must be identical
+          to the nested <code>credentialDelivery</code> value.
+        </p>
 
-        <h2>2. Report topology, beacons, and triggers</h2>
+<h2>Report topology, beacons, and triggers</h2>
         <p>
           Nodes are operator-addressable Mesh participants. Destinations are ordinary
           hosts or services reachable through a node or route. Do not invent a node for
@@ -113,7 +206,7 @@
           confirmation path.
         </p>
 
-        <h2>3. Implement tasking</h2>
+<h2>Implement tasking</h2>
         <p>
           Validate the task kind and required target scope before contacting the target.
           Echo correlation and routing fields in the result when they are known. For a
@@ -133,13 +226,26 @@
   "inputData": "base64-encoded-artifact",
   "inputEncoding": "base64"
 }</code></pre>
+        <blockquote>
+          <p>
+            <strong>Provider contract versus current daemon dispatch:</strong>
+            implement and advertise every task kind your provider truly supports, including
+            command, upload, execute, <code>upload_execute</code>, load, and provider-defined
+            kinds. The current direct <code>RunMeshTask</code> daemon route dispatches only
+            <code>survey</code>. It rejects every other kind before invoking the provider
+            because that route is not yet bound to a persisted throw plan, recorded
+            confirmation, and dangerous-module allowance. Do not weaken the SDK descriptor
+            to match this temporary orchestration limit, and do not add a provider-side
+            bypass.
+          </p>
+        </blockquote>
         <p>
           Provider-native command, survey, and delivery tasks belong here. If an
           existing module can already operate through a TCP or UDP endpoint, prefer the
           bridge workflow below instead of duplicating that module inside the provider.
         </p>
 
-        <h2>4. Implement routed streams</h2>
+<h2>Implement routed streams</h2>
         <p>
           <code>mesh.open_stream</code> returns a normal <code>SessionRef</code>. The
           provider implements session read, write, and close against its own route. The
@@ -153,7 +259,7 @@
           <li>Return an error for unsupported protocols; do not silently reinterpret them as TCP.</li>
         </ul>
 
-        <h2>5. Add listening-post lifecycle only when needed</h2>
+<h2>Add listening-post lifecycle only when needed</h2>
         <p>
           Listener listing is read-only. Start and stop are idempotent mutations using a
           caller-selected stable ID. IDs are unique only inside one provider Mesh;
@@ -171,9 +277,30 @@ Content-Type: application/json
     "deployment": "separate",
     "management": "provider",
     "config": {
-      "bind": "127.0.0.1:8443",
-      "credentialRef": "vault://listener-west"
+      "bind": "127.0.0.1:8443"
     }
+  },
+  "credentials": [
+    {
+      "requestId": "credential-start-west-certificate-01",
+      "assignmentId": "assignment-listener-west",
+      "slotName": "listener-certificate",
+      "capability": "runtime",
+      "material": { "projection": "certificate-der", "form": "public" }
+    },
+    {
+      "requestId": "credential-start-west-private-key-01",
+      "assignmentId": "assignment-listener-west",
+      "slotName": "listener-private-key",
+      "capability": "runtime",
+      "material": { "projection": "private-key-pkcs8", "form": "private-bytes" }
+    }
+  ],
+  "credentialContext": {
+    "actorId": "operator-alice",
+    "operationId": "credential-operation-start-listener-west-01",
+    "correlationId": "mesh-listener-start-west-01",
+    "approveCredentialUse": true
   }
 }</code></pre>
 <pre data-lang="json"><code>{
@@ -190,24 +317,243 @@ Content-Type: application/json
         <p>
           The result deliberately has no <code>config</code>. Treat start configuration
           as write-only, keep it out of listener read models, errors, and logs, and never
-          store credentials directly in daemon bookkeeping. Prefer references to a
-          provider-owned secret store. A provider-managed listener must survive the
-          short-lived module RPC invocation; use a separate service, supervisor, or
-          another durable provider-owned runtime.
+          store credentials directly in daemon bookkeeping. The top-level selections are
+          non-secret; Hovel resolves the assignment's active generation only after explicit
+          approval. A provider-managed listener must survive the short-lived module RPC
+          invocation; use a separate service, supervisor, or another durable
+          provider-owned runtime, and make any handoff from the adapter process to that
+          runtime explicit and protected.
+        </p>
+
+        <h2 id="using-mesh-credentials">Wire assignment-bound TLS into consuming calls</h2>
+        <p>
+          The daemon API does not accept certificate bytes. A front end sends one or
+          more non-secret assignment/slot selections beside the Mesh request. Hovel
+          derives the consumers permitted by that operation, inspects the exact
+          installed provider and descriptor digest, authorizes use, resolves the active
+          assignment generation, and sends each resolved projection through
+          <code>credential.runtime</code> immediately before the Mesh method.
+        </p>
+        <table>
+          <thead><tr><th>Resource</th><th>Assignment consumer</th><th>Canonical consumer ID</th><th>When the daemon derives it</th></tr></thead>
+          <tbody>
+            <tr><td>Provider control plane</td><td><code>mesh-provider</code></td><td><code>lab-relay-mesh</code></td><td>Every credential-aware listener-start, task, stream, or bridge-open call.</td></tr>
+            <tr><td>Listener / listening post</td><td><code>mesh-listener</code></td><td><code>lab-relay-mesh/listener-west</code></td><td>The request explicitly carries <code>listenerId: listener-west</code>.</td></tr>
+            <tr><td>Node</td><td><code>mesh-node</code></td><td><code>lab-relay-mesh/relay-west</code></td><td>The request explicitly carries <code>nodeId: relay-west</code>.</td></tr>
+            <tr><td>Standalone listening post</td><td><code>listening-post</code></td><td>Operator-selected stable ID.</td><td>Not derived by the current Mesh resolver; this is a broader assignment extension point.</td></tr>
+            <tr><td>Implant or stager</td><td><code>implant</code> or <code>stager</code></td><td>Operator-selected stable ID.</td><td>Not derived by current Mesh calls. Use <code>mesh-node</code> only when that resource is actually exposed as the selected Mesh Node.</td></tr>
+          </tbody>
+        </table>
+        <p>
+          These examples have no slash inside either component. If a provider,
+          listener, or node component contains a slash, Hovel uses the bounded
+          <code>mesh-scoped:&lt;sha256&gt;</code> form: lowercase SHA-256 over the
+          canonical UTF-8 provider name, one NUL byte, and the canonical UTF-8
+          listener or node ID. Retain the typed constructor's result rather than
+          reconstructing the assignment consumer ID in a client.
+        </p>
+        <p>
+          Use the canonical provider name in assignment consumer IDs, without an
+          <code>@version</code> suffix. The daemon still binds delivery to the exact
+          installed module, such as <code>lab-relay-mesh@v0.1.0</code>, its version,
+          provider ID, and descriptor SHA-256. A route does not implicitly authorize
+          every node it contains; include the intended <code>nodeId</code> explicitly.
+        </p>
+        <figure class="diagram" aria-label="Same-process credential delivery sequence before a consuming Mesh operation.">
+          <figcaption>Same-process runtime delivery</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">inspect exact installed module</li>
+            <li class="flow-step">start one provider process</li>
+            <li class="flow-step">reconcile <code>credential.describe</code> and <code>mesh.describe</code></li>
+            <li class="flow-step ready"><code>credential.runtime</code> for certificate slot</li>
+            <li class="flow-step ready"><code>credential.runtime</code> for private-key slot</li>
+            <li class="flow-step strong"><code>mesh.listener.start</code>, <code>mesh.task</code>, or <code>mesh.open_stream</code></li>
+            <li class="flow-step">clear daemon copies and persist secret-free receipts</li>
+          </ol>
+        </figure>
+        <p>
+          In provider code, keep pending material keyed by the correlated operation and
+          slot, require the complete pair before constructing a TLS configuration, and
+          clear temporary copies after the consuming hook takes ownership. Return only
+          a <code>CredentialDeliveryReceipt</code> with the matching request ID and
+          optional non-secret reference or digest. Never put certificate-key bytes,
+          protected paths, or bearer references in logs, errors, listener results, task
+          outputs, or session metadata.
+        </p>
+        <blockquote>
+          <p>
+            The current external Mesh selector supports only
+            <code>runtime</code> delivery of
+            <code>certificate-der</code>/<code>public</code>,
+            <code>public-key-spki</code>/<code>public</code>, and
+            <code>private-key-pkcs8</code>/<code>private-bytes</code>. It does not
+            deliver a bundle, chain, trust set, CRL, signer reference, protected file,
+            provider encoding, or stamp target. A TLS-client or mTLS assignment can pin
+            trust lifecycle state, but its trust bytes are not projected through this
+            API today; the provider must obtain peer trust through an explicit
+            provider-owned deployment path until that extension is implemented.
+          </p>
+        </blockquote>
+
+        <h3>Credential-bearing <code>RunMeshTask</code></h3>
+<pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/RunMeshTask
+Content-Type: application/json
+
+{
+  "moduleId": "lab-relay-mesh@v0.1.0",
+  "request": {
+    "runId": "run-lab-1",
+    "taskId": "task-survey-west-1",
+    "kind": "survey",
+    "nodeId": "relay-west"
+  },
+  "credentials": [
+    {
+      "requestId": "credential-task-west-certificate-01",
+      "assignmentId": "assignment-node-relay-west",
+      "slotName": "node-client-certificate",
+      "capability": "runtime",
+      "material": { "projection": "certificate-der", "form": "public" }
+    },
+    {
+      "requestId": "credential-task-west-private-key-01",
+      "assignmentId": "assignment-node-relay-west",
+      "slotName": "node-client-private-key",
+      "capability": "runtime",
+      "material": { "projection": "private-key-pkcs8", "form": "private-bytes" }
+    }
+  ],
+  "credentialContext": {
+    "actorId": "operator-alice",
+    "operationId": "credential-operation-task-west-01",
+    "correlationId": "mesh-task-west-01",
+    "approveCredentialUse": true
+  }
+}</code></pre>
+
+        <h3>Credential-bearing <code>OpenMeshStream</code></h3>
+<pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/OpenMeshStream
+Content-Type: application/json
+
+{
+  "moduleId": "lab-relay-mesh@v0.1.0",
+  "request": {
+    "runId": "run-lab-1",
+    "nodeId": "relay-west",
+    "destinationHost": "192.0.2.25",
+    "destinationPort": 443,
+    "protocol": "tcp"
+  },
+  "credentials": [
+    {
+      "requestId": "credential-stream-west-certificate-01",
+      "assignmentId": "assignment-node-relay-west",
+      "slotName": "node-client-certificate",
+      "capability": "runtime",
+      "material": { "projection": "certificate-der", "form": "public" }
+    },
+    {
+      "requestId": "credential-stream-west-private-key-01",
+      "assignmentId": "assignment-node-relay-west",
+      "slotName": "node-client-private-key",
+      "capability": "runtime",
+      "material": { "projection": "private-key-pkcs8", "form": "private-bytes" }
+    }
+  ],
+  "credentialContext": {
+    "actorId": "operator-alice",
+    "operationId": "credential-operation-stream-west-01",
+    "correlationId": "mesh-stream-west-01",
+    "approveCredentialUse": true
+  }
+}</code></pre>
+        <p>
+          <code>protocol: tcp</code> describes the provider request; it does not force
+          the provider to perform TLS. The provider must deliberately use the selected
+          certificate and key in its TLS client stack. A direct stream may use another
+          provider-defined protocol, including a non-socket protocol, when the provider
+          advertises and implements it.
+        </p>
+
+        <h3>Credential-bearing <code>OpenMeshBridge</code></h3>
+<pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/OpenMeshBridge
+Content-Type: application/json
+
+{
+  "moduleId": "lab-relay-mesh@v0.1.0",
+  "localNetwork": "tcp",
+  "request": {
+    "runId": "run-lab-1",
+    "nodeId": "relay-west",
+    "destinationHost": "192.0.2.25",
+    "destinationPort": 443,
+    "protocol": "tcp"
+  },
+  "localHost": "127.0.0.1",
+  "localPort": 0,
+  "credentials": [
+    {
+      "requestId": "credential-bridge-west-certificate-01",
+      "assignmentId": "assignment-node-relay-west",
+      "slotName": "node-client-certificate",
+      "capability": "runtime",
+      "material": { "projection": "certificate-der", "form": "public" }
+    },
+    {
+      "requestId": "credential-bridge-west-private-key-01",
+      "assignmentId": "assignment-node-relay-west",
+      "slotName": "node-client-private-key",
+      "capability": "runtime",
+      "material": { "projection": "private-key-pkcs8", "form": "private-bytes" }
+    }
+  ],
+  "credentialContext": {
+    "actorId": "operator-alice",
+    "operationId": "credential-operation-bridge-west-01",
+    "correlationId": "mesh-bridge-west-01",
+    "approveCredentialUse": true
+  }
+}</code></pre>
+        <p>
+          This calls the credential-aware stream opener before creating the live bridge.
+          The certificate and key go to the provider process, not to the daemon's local
+          socket adapter and not to the eventual local client. Every request ID in one
+          array must be unique, and an assignment/slot pair may appear only once. These
+          IDs claim credential delivery at most once; they do not make bridge creation
+          replayable. A terminal delivery cannot be reused in a new provider process,
+          so a deliberate replacement bridge must use fresh request IDs and a new
+          credential operation ID.
+        </p>
+
+        <h3>Rotate without silently changing a live consumer</h3>
+        <ol>
+          <li>Renew or rotate to create a new immutable certificate generation. Rotation creates a new key; renewal reuses and revalidates the source key.</li>
+          <li>Stage that generation on the assignment with its current <code>expectedRevision</code>. The old active generation continues to resolve for Mesh calls.</li>
+          <li>Prepare or test the consumer cutover through its explicit deployment path. The current Mesh selector cannot request the staged generation.</li>
+          <li>Activate with the assignment's new revision only when cutover is ready. The next credential-bearing Mesh invocation resolves the newly active generation.</li>
+          <li>Reload, restart, or reopen the provider-owned listener or session as required, verify PKI and Mesh operation records, then retire old material.</li>
+        </ol>
+        <p>
+          Assignment activation does not currently wait for a generic consumer
+          acknowledgement and does not hot-reload an existing listener or stream.
+          Document provider-specific overlap and rollback behavior, and use the
+          <a href="tls-operations.html">operator runbook</a> for revision fences,
+          trust changes, revocation, and recovery.
         </p>
 
         <h2>Using a Mesh with another module</h2>
         <p>
-          The clean integration is endpoint substitution: the front end asks the daemon
-          for a bridge, then gives the returned loopback host and port to an ordinary
-          module. The consumer module does not import Mesh SDK types or understand the
-          route.
+          The clean integration is authenticated endpoint substitution: the front end
+          asks the daemon for a bridge, then a small SDK-aware boundary authenticates
+          the returned loopback endpoint before handing a normal connection to consumer
+          protocol code. The consumer does not need to understand Mesh topology or the
+          provider's route.
         </p>
         <ol>
           <li>Inspect the Mesh and choose a node or route.</li>
-          <li>Call <code>OpenMeshBridge</code> with the remote destination and protocol.</li>
-          <li>Use the returned <code>localHost</code>/<code>localPort</code> as the consumer module's target endpoint.</li>
-          <li>Run the module through the normal persisted-plan and confirmation path.</li>
+          <li>Call <code>OpenMeshBridge</code> with the remote destination and provider-defined <code>protocol</code>, plus an independent <code>localNetwork</code> of <code>tcp</code> or <code>udp</code>.</li>
+          <li>Keep the returned <code>capability</code> in memory and use an SDK bridge helper to authenticate the local TCP connection or UDP peer.</li>
+          <li>Give the resulting connection to the consumer protocol code, then run the module through the normal persisted-plan and confirmation path.</li>
           <li>Close the bridge and inspect <code>ListMeshOperations</code>.</li>
         </ol>
 <pre data-lang="http"><code>POST /hovel.daemon.v1.DaemonService/OpenMeshBridge
@@ -215,6 +561,7 @@ Content-Type: application/json
 
 {
   "moduleId": "lab-relay-mesh@v0.1.0",
+  "localNetwork": "tcp",
   "request": {
     "runId": "run-lab-1",
     "nodeId": "relay-west",
@@ -229,18 +576,72 @@ Content-Type: application/json
   "sessionId": "run-lab-1-session-1",
   "localHost": "127.0.0.1",
   "localPort": 43117,
+  "localNetwork": "tcp",
+  "capability": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   "localAddress": "127.0.0.1:43117"
 }</code></pre>
         <p>
-          A web, Elixir, CLI, or other control plane can now configure an existing
-          module with <code>target.host=127.0.0.1</code> and
-          <code>target.port=43117</code>. The daemon bridge moves bytes; the Mesh
-          provider owns the remote route; the consumer module remains a normal module.
-          Open one bridge per independent TCP connection or UDP peer association.
+          The shown capability is an example value. A real response carries a fresh,
+          sensitive 256-bit bearer capability. Send the capability plus LF as the first
+          TCP bytes, or as the first complete UDP datagram; Hovel consumes the preface
+          instead of forwarding it. Go provides <code>DialMeshBridge</code>, Python
+          provides <code>connect_mesh_bridge</code>, and Rust provides the generic
+          <code>connect_mesh_bridge</code> helper plus
+          <code>connect_mesh_bridge_tcp</code> and <code>connect_mesh_bridge_udp</code>
+          for callers that handle only one local adapter. Keep the capability out of
+          logs, results, caches, and durable configuration.
         </p>
+        <p>
+          <code>request.protocol</code> is delivered to the provider unchanged and may
+          name TCP, UDP, ICMP, GRE, raw IP, or a custom flow. It does not select the
+          daemon socket. <code>localNetwork</code> selects only the loopback TCP stream
+          or UDP datagram adapter and is returned in the response and Mesh operation
+          bookkeeping.
+        </p>
+        <div class="callout warning" role="note">
+          <strong>A lost bridge-open response is not replayable.</strong>
+          The bearer capability is returned once and is not retained in
+          <code>ListMeshOperations</code>, so it cannot be recovered or guessed. The
+          original bridge may nevertheless be active. List active
+          <code>bridge</code> operations using the known module and run filters, match
+          the route, destination, session, and local endpoint, and close the orphan with
+          <code>CloseMeshBridge</code> by operation or session ID. Only after the old
+          bridge is closed or confirmed absent should an operator-approved replacement
+          call be made. When credentials are selected, that new call must use fresh
+          credential request IDs plus a new credential operation and correlation ID; it
+          returns a new capability.
+        </div>
+        <div class="callout" role="note">
+          <strong>Bridge close is retryable.</strong>
+          <code>CloseMeshBridge</code> closes the local TCP or UDP endpoint first, then
+          asks the provider to close its session. If provider cleanup times out or
+          fails, the operation is recorded as failed but the daemon retains the bridge
+          selector as a cleanup handle. Retry the same operation ID or session ID; do
+          not open a replacement merely because the first close returned an error. A
+          successful retry removes the handle and transitions the bookkeeping record
+          to <code>closed</code>. The closed local endpoint never reopens during a retry.
+        </div>
+        <p>
+          The daemon bridge moves bytes or datagrams; the Mesh provider owns the remote
+          route; the consumer protocol remains ordinary after the helper authenticates.
+          Open one bridge per independent TCP connection or UDP peer association. A raw
+          third-party tool that cannot send the capability preface needs a small local
+          adapter rather than being pointed directly at the returned port.
+        </p>
+        <blockquote>
+          <p>
+            A bridge does not add TLS, terminate TLS, validate certificates, inject
+            trust, or turn UDP into DTLS or QUIC. Its bearer preface authenticates the
+            local peer but does not encrypt traffic. End-to-end TLS bytes from a local
+            client pass through unchanged; provider-terminated TLS is the provider's
+            responsibility.
+          </p>
+        </blockquote>
         <p>
           Use <code>RunMeshTask</code> instead when the provider itself owns the operation
           (for example, provider-native survey, command, upload-and-execute, or load).
+          Today only survey is directly dispatchable through the daemon RPC;
+          execution-capable kinds require the planned-task orchestration described above.
           Use a bridge when reusing a protocol client or module that already knows how
           to talk to a host and port. These approaches can coexist in one provider.
         </p>
@@ -256,23 +657,30 @@ Content-Type: application/json
             <tr><td><code>mesh.listener.start/stop</code></td><td><code>MeshListenerLifecycleProvider</code></td><td><code>start_mesh_listener</code>/<code>stop_mesh_listener</code></td><td><code>Module::start_mesh_listener</code>/<code>stop_mesh_listener</code></td></tr>
             <tr><td><code>mesh.task</code></td><td><code>MeshTaskProvider.RunMeshTask</code></td><td><code>run_mesh_task</code></td><td><code>Module::run_mesh_task</code></td></tr>
             <tr><td><code>mesh.open_stream</code></td><td><code>MeshStreamProvider.OpenMeshStream</code></td><td><code>open_mesh_stream</code></td><td><code>Module::open_mesh_stream</code></td></tr>
+            <tr><td><code>credential.describe</code></td><td><code>CredentialDescriber.DescribeCredentialDelivery</code></td><td><code>describe_credential_delivery</code></td><td><code>Module::describe_credential_delivery</code></td></tr>
+            <tr><td><code>credential.runtime</code></td><td><code>CredentialRuntimeProvider.LoadRuntimeCredential</code></td><td><code>load_runtime_credential</code></td><td><code>Module::load_runtime_credential</code></td></tr>
           </tbody>
         </table>
         <p>
           See the repository SDK guides for language-specific starter code:
-          <a href="https://github.com/Vibe-Pwners/hovel/tree/main/sdk/go">Go</a>,
-          <a href="https://github.com/Vibe-Pwners/hovel/tree/main/sdk/python">Python</a>, and
-          <a href="https://github.com/Vibe-Pwners/hovel/tree/main/sdk/rust">Rust</a>.
+          <a href="https://github.com/vibepwners/hovel/tree/main/sdk/go">Go</a>,
+          <a href="https://github.com/vibepwners/hovel/tree/main/sdk/python">Python</a>, and
+          <a href="https://github.com/vibepwners/hovel/tree/main/sdk/rust">Rust</a>.
           The <a href="module-protocol.html">wire protocol</a> contains request and
-          response examples for every Mesh method.
+          response examples for every Mesh method. Use the
+          <a href="credential-provider-development.html">credential-provider guide</a>
+          for complete provider implementations; the two credential rows above are the
+          only ones required by the current external Mesh selector path.
         </p>
 
         <h2>SDK starters</h2>
         <p>
           These excerpts show the optional-interface pattern. They intentionally do not
-          open a real listener or contact a target. Replace the returned sample state
-          with calls into your durable provider runtime, and implement only the methods
-          you advertise.
+          open a real listener, contact a target, or advertise credential delivery.
+          Replace the returned sample state with calls into your durable provider
+          runtime, implement only the methods you advertise, and add the separate
+          credential interfaces or hooks before using the credential-bearing requests
+          above.
         </p>
 
         <h3>Go: compose optional interfaces</h3>
@@ -409,7 +817,7 @@ fn start_mesh_listener(&amp;self, req: MeshListenerStartRequest) -&gt; Result&lt
             "kind": "https-beacon",
             "deployment": "separate",
             "management": "provider",
-            "config": {"credentialRef": "test-secret-reference"},
+            "config": {"bind": "127.0.0.1:8443"},
         })
 
     assert started["id"] == "listener-west"
@@ -420,13 +828,19 @@ fn start_mesh_listener(&amp;self, req: MeshListenerStartRequest) -&gt; Result&lt
         <ul>
           <li>Descriptor calls are deterministic and perform no target or listener I/O.</li>
           <li>Every advertised task kind and target scope has a success and rejection test.</li>
+          <li>Daemon integration tests prove that direct <code>survey</code> dispatch works and every execution-capable task kind is rejected before its provider hook until persisted-plan orchestration is present.</li>
           <li>Unsupported optional methods fail explicitly.</li>
           <li>Topology IDs are stable; routes reference existing nodes and links.</li>
           <li>Listener start/stop reject blank IDs before provider side effects and return the exact requested ID.</li>
           <li>Repeated listener start/stop calls are safe and converge on the same state.</li>
           <li>Listener configuration and credentials never appear in results, errors, logs, or daemon operation records.</li>
+          <li>Credential descriptors use separate certificate and private-key slots with exact purpose, endpoint role, consumer type, profile, compatibility, projection, form, size, and private-material policies.</li>
+          <li>Credential tests send <code>credential.runtime</code> calls and the consuming Mesh method through one framed RPC process, reject wrong consumer IDs and descriptor drift, and clear provider-owned temporary material.</li>
+          <li>Assignment tests prove that staging leaves the old active generation in use and activation changes the next resolved invocation without claiming to hot-reload a live resource.</li>
           <li>Stream tests cover read, write, close, cancellation, and datagram boundaries when applicable.</li>
-          <li>Bridge tests bind only loopback and close sessions on failure.</li>
+          <li>Bridge tests bind only loopback, prove a stalling unauthenticated TCP client cannot block a valid client, reject missing or wrong capabilities, preserve TCP bytes or UDP datagram boundaries after authentication, and close sessions on failure.</li>
+          <li>A failed provider-session close retains the operation/session selector; retry succeeds without reopening the local endpoint and moves bookkeeping from failed to closed.</li>
+          <li>Bridge documentation and tests never imply that the local adapter adds TLS, trust validation, DTLS, or QUIC.</li>
           <li>Task, stream, listener, and bridge calls appear in <code>ListMeshOperations</code> with provider and listener provenance.</li>
         </ul>
 <pre data-lang="sh"><code>task fmt

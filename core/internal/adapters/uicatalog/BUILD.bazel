@@ -9,7 +9,7 @@ go_library(
         "logging_helpers.go",
         "progress.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/uicatalog",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/uicatalog",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/clistyle",

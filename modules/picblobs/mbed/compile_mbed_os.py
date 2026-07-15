@@ -4,24 +4,32 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
-from pathlib import Path
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
+
+from config_layout import AUTH_KEY_SIZE, CLIENT_CONFIG_SIZE, SERVER_CONFIG_SIZE
 
 EXPECTED_MBED_VERSION = (5, 15, 9)
 EXPECTED_MBED_COMMIT = "dfcb61e052d1192d99a07dca6fb4970281afc8e4"
-SERVER_CONFIG_SIZE = 34
-CLIENT_CONFIG_SIZE = 38
-AUTH_KEY_SIZE = 32
 VERSION_MACROS = (
     "MBED_MAJOR_VERSION",
     "MBED_MINOR_VERSION",
     "MBED_PATCH_VERSION",
 )
+ELF_MAGIC = b"\x7fELF"
+MINIMUM_FIRMWARE_BYTES = 1024
+GIT_DIRECTORY_PREFIX = "gitdir: "
+GIT_REFERENCE_PREFIX = "ref: "
+GIT_REFERENCE_ROOT = "refs"
+GIT_OBJECT_ID_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 def main() -> int:
@@ -42,7 +50,14 @@ def main() -> int:
         help="firmware role to build; repeat to build both (default: both)",
     )
     parser.add_argument("--source-root", default="modules/picblobs/mbed")
-    parser.add_argument("--mbed-os", default="modules/picblobs/mbed/mbed-os")
+    parser.add_argument(
+        "--mbed-os",
+        help="optional Mbed OS source override for local SDK validation",
+    )
+    parser.add_argument(
+        "--mbed-version-header",
+        help="Bazel runfile used to locate the pinned Mbed OS source tree",
+    )
     parser.add_argument(
         "--build-dir",
         default=".local/picblobs/mbed/NUCLEO_F429ZI/GCC_ARM",
@@ -53,7 +68,11 @@ def main() -> int:
         os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path.cwd())
     ).resolve()
     source_root = resolve_workspace_path(workspace, args.source_root)
-    mbed_os = resolve_workspace_path(workspace, args.mbed_os)
+    mbed_os = resolve_mbed_os(
+        workspace,
+        source_override=args.mbed_os,
+        version_header=args.mbed_version_header,
+    )
     build_dir = resolve_workspace_path(workspace, args.build_dir)
     gcc = resolve_runfile(args.gcc)
     server_bin = resolve_runfile(args.server_bin)
@@ -63,6 +82,7 @@ def main() -> int:
     validate_mbed_os(mbed_os)
     validate_compiler(gcc)
     validate_build_root(source_root, build_dir)
+    validate_build_root(mbed_os, build_dir)
 
     previous_umask = os.umask(0o077)
     try:
@@ -94,6 +114,26 @@ def build_role(
     role: str,
     jobs: int,
 ) -> int:
+    with build_lock(build_root):
+        return _build_role_locked(
+            source_root=source_root,
+            mbed_os=mbed_os,
+            build_root=build_root,
+            gcc=gcc,
+            role=role,
+            jobs=jobs,
+        )
+
+
+def _build_role_locked(
+    *,
+    source_root: Path,
+    mbed_os: Path,
+    build_root: Path,
+    gcc: Path,
+    role: str,
+    jobs: int,
+) -> int:
     role_build_dir = build_root / role
     role_config = build_root / f"mbed_app.{role}.json"
     write_role_config(source_root / "mbed_app.json", role_config, role)
@@ -117,6 +157,8 @@ def build_role(
         "GCC_ARM",
         "--source",
         str(source_root),
+        "--source",
+        str(mbed_os),
         "--build",
         str(role_build_dir),
         "--app-config",
@@ -145,13 +187,45 @@ def build_role(
 
     firmware = role_build_dir / f"{artifact_name}.bin"
     executable = role_build_dir / f"{artifact_name}.elf"
-    if not firmware.is_file() or not executable.is_file():
-        raise FileNotFoundError(
-            "Mbed build succeeded without producing the expected .bin and .elf"
-        )
+    validate_artifact(firmware, "firmware", minimum_size=MINIMUM_FIRMWARE_BYTES)
+    validate_artifact(executable, "ELF", magic=ELF_MAGIC)
     print_artifact(firmware)
     print_artifact(executable)
     return 0
+
+
+@contextmanager
+def build_lock(build_root: Path) -> Iterator[None]:
+    build_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    lock_path = build_root / ".compile.lock"
+    with lock_path.open("a+b") as lock_file:
+        lock_path.chmod(0o600)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def validate_artifact(
+    path: Path,
+    kind: str,
+    *,
+    minimum_size: int = 1,
+    magic: bytes | None = None,
+) -> None:
+    if not path.is_file():
+        raise FileNotFoundError(f"Mbed build did not produce the expected {kind}: {path}")
+    size = path.stat().st_size
+    if size < minimum_size:
+        raise ValueError(
+            f"Mbed build produced an invalid {kind} ({size} bytes): {path}"
+        )
+    if magic is not None:
+        with path.open("rb") as artifact:
+            header = artifact.read(len(magic))
+        if header != magic:
+            raise ValueError(f"Mbed build produced an invalid {kind} header: {path}")
 
 
 def write_role_config(source: Path, destination: Path, role: str) -> None:
@@ -174,6 +248,24 @@ def resolve_workspace_path(workspace: Path, value: str) -> Path:
     if not path.is_absolute():
         path = workspace / path
     return path.resolve()
+
+
+def resolve_mbed_os(
+    workspace: Path,
+    *,
+    source_override: str | None,
+    version_header: str | None,
+) -> Path:
+    if source_override:
+        return resolve_workspace_path(workspace, source_override)
+    if not version_header:
+        raise ValueError(
+            "Mbed OS source is required; use the Bazel target or pass --mbed-os"
+        )
+    header = resolve_runfile(version_header)
+    if header.name != "mbed_version.h" or header.parent.name != "platform":
+        raise ValueError(f"invalid Mbed version header runfile: {header}")
+    return header.parent.parent
 
 
 def validate_build_root(source_root: Path, build_root: Path) -> None:
@@ -279,16 +371,10 @@ def validate_mbed_os(mbed_os: Path) -> None:
     version_header = mbed_os / "platform" / "mbed_version.h"
     if not make_py.is_file() or not version_header.is_file():
         raise FileNotFoundError(
-            f"missing Mbed OS checkout at {mbed_os}; deploy mbed-os.lib first"
+            f"missing Mbed OS 5.15.9 source tree at {mbed_os}; "
+            "use the Task-backed Bazel target or pass --mbed-os"
         )
-    head_file = mbed_os / ".git" / "HEAD"
-    if not head_file.is_file():
-        raise FileNotFoundError(f"Mbed OS checkout has no Git HEAD at {head_file}")
-    commit = head_file.read_text(encoding="ascii").strip()
-    if commit != EXPECTED_MBED_COMMIT:
-        raise ValueError(
-            f"Mbed OS checkout is commit {commit}; expected {EXPECTED_MBED_COMMIT}"
-        )
+    validate_checkout_commit(mbed_os)
     version_text = version_header.read_text(encoding="utf-8")
     found = tuple(read_version_macro(version_text, macro) for macro in VERSION_MACROS)
     if found != EXPECTED_MBED_VERSION:
@@ -296,6 +382,112 @@ def validate_mbed_os(mbed_os: Path) -> None:
         raise ValueError(
             f"Mbed OS checkout is {rendered}; expected exactly 5.15.9"
         )
+
+
+def validate_checkout_commit(mbed_os: Path) -> None:
+    """Validate a developer checkout when Git metadata is available.
+
+    Bazel-managed source archives have no ``.git`` directory; their commit and
+    digest are enforced by the repository rule before this program can run.
+    """
+    git_directory = resolve_git_directory(mbed_os)
+    if git_directory is None:
+        return
+    commit = read_git_head(git_directory)
+    if commit != EXPECTED_MBED_COMMIT:
+        raise ValueError(
+            f"Mbed OS checkout is commit {commit}; expected {EXPECTED_MBED_COMMIT}"
+        )
+
+
+def resolve_git_directory(work_tree: Path) -> Path | None:
+    metadata = work_tree / ".git"
+    if metadata.is_dir():
+        return metadata.resolve()
+    if not metadata.exists():
+        return None
+    if not metadata.is_file():
+        raise ValueError(f"invalid Git metadata path: {metadata}")
+
+    declaration = metadata.read_text(encoding="utf-8").strip()
+    if not declaration.startswith(GIT_DIRECTORY_PREFIX):
+        raise ValueError(f"invalid Git metadata file: {metadata}")
+    value = declaration.removeprefix(GIT_DIRECTORY_PREFIX).strip()
+    if not value:
+        raise ValueError(f"Git metadata file has no directory: {metadata}")
+    git_directory = Path(value)
+    if not git_directory.is_absolute():
+        git_directory = metadata.parent / git_directory
+    git_directory = git_directory.resolve()
+    if not git_directory.is_dir():
+        raise FileNotFoundError(f"missing Git metadata directory: {git_directory}")
+    return git_directory
+
+
+def read_git_head(git_directory: Path) -> str:
+    head_file = git_directory / "HEAD"
+    if not head_file.is_file():
+        raise FileNotFoundError(f"missing Git HEAD: {head_file}")
+    head = head_file.read_text(encoding="ascii").strip()
+    if GIT_OBJECT_ID_PATTERN.fullmatch(head):
+        return head
+    if not head.startswith(GIT_REFERENCE_PREFIX):
+        raise ValueError(f"invalid Git HEAD: {head_file}")
+
+    reference = head.removeprefix(GIT_REFERENCE_PREFIX).strip()
+    reference_path = PurePosixPath(reference)
+    if (
+        not reference_path.parts
+        or reference_path.parts[0] != GIT_REFERENCE_ROOT
+        or any(part in ("", ".", "..") for part in reference_path.parts)
+    ):
+        raise ValueError(f"invalid Git HEAD reference: {reference}")
+
+    common_directory = resolve_git_common_directory(git_directory)
+    for root in (git_directory, common_directory):
+        object_id = read_git_object_id(root.joinpath(*reference_path.parts))
+        if object_id is not None:
+            return object_id
+
+    packed_references = common_directory / "packed-refs"
+    if packed_references.is_file():
+        for line in packed_references.read_text(encoding="ascii").splitlines():
+            if not line or line.startswith(("#", "^")):
+                continue
+            fields = line.split(" ", maxsplit=1)
+            if len(fields) == 2 and fields[1] == reference:
+                object_id = fields[0]
+                if GIT_OBJECT_ID_PATTERN.fullmatch(object_id):
+                    return object_id
+                raise ValueError(f"invalid packed Git object ID for {reference}")
+    raise ValueError(f"Git HEAD reference does not resolve: {reference}")
+
+
+def resolve_git_common_directory(git_directory: Path) -> Path:
+    declaration = git_directory / "commondir"
+    if not declaration.is_file():
+        return git_directory
+    value = declaration.read_text(encoding="utf-8").strip()
+    if not value:
+        raise ValueError(f"Git common directory file is empty: {declaration}")
+    common_directory = Path(value)
+    if not common_directory.is_absolute():
+        common_directory = git_directory / common_directory
+    common_directory = common_directory.resolve()
+    if not common_directory.is_dir():
+        raise FileNotFoundError(
+            f"missing Git common metadata directory: {common_directory}"
+        )
+    return common_directory
+
+
+def read_git_object_id(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    object_id = path.read_text(encoding="ascii").strip()
+    if not GIT_OBJECT_ID_PATTERN.fullmatch(object_id):
+        raise ValueError(f"invalid Git object ID: {path}")
+    return object_id
 
 
 def read_version_macro(text: str, macro: str) -> int:

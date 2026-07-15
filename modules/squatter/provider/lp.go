@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe"
-	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
+	"github.com/vibepwners/hovel/payloads/squatter/client/smbpipe"
+	"github.com/vibepwners/hovel/sdk/go/hovel"
 )
 
 type placeholderLP struct {

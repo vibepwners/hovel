@@ -10,15 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonlocal"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
-	"github.com/Vibe-Pwners/hovel/internal/testsupport"
-	"github.com/Vibe-Pwners/hovel/internal/version"
+	"github.com/vibepwners/hovel/internal/adapters/daemonlocal"
+	"github.com/vibepwners/hovel/internal/adapters/daemonrpc"
+	"github.com/vibepwners/hovel/internal/adapters/storage/filesystem"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/infra/daemonruntime"
+	"github.com/vibepwners/hovel/internal/testsupport"
+	"github.com/vibepwners/hovel/internal/version"
 )
 
 func TestExecuteLineBuildsChainTargetsThenThrows(t *testing.T) {

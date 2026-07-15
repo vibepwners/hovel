@@ -63,6 +63,22 @@ impl Value {
         }
     }
 
+    /// Returns the array contents, if this is an array.
+    pub fn as_array(&self) -> Option<&[Value]> {
+        match self {
+            Value::Array(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    /// Returns the object members, if this is an object.
+    pub fn as_object(&self) -> Option<&[(String, Value)]> {
+        match self {
+            Value::Object(members) => Some(members),
+            _ => None,
+        }
+    }
+
     fn encode(&self, out: &mut String) {
         match self {
             Value::Null => out.push_str("null"),

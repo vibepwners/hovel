@@ -4,7 +4,7 @@ load("@rules_python//python:defs.bzl", "py_test")
 go_library(
     name = "event",
     srcs = ["event.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/domain/event",
+    importpath = "github.com/vibepwners/hovel/internal/domain/event",
     visibility = ["//:__subpackages__"],
 )
 

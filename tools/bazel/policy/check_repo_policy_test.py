@@ -62,16 +62,27 @@ def test_hermeticity_ignores_local_tool_cache(tmp_path: Path) -> None:
     assert check_repo_policy.check_hermeticity(tmp_path) == []
 
 
+def test_repository_walk_prunes_local_tool_cache(tmp_path: Path) -> None:
+    source = tmp_path / "core" / "source.go"
+    cached = tmp_path / ".local" / "bazel" / "embedded_tools" / "source.go"
+    source.parent.mkdir(parents=True)
+    cached.parent.mkdir(parents=True)
+    source.write_text("", encoding="utf-8")
+    cached.write_text("", encoding="utf-8")
+
+    assert check_repo_policy.repository_files(tmp_path) == [source]
+
+
 def test_hermeticity_rejects_host_docs_from_remote_gate(tmp_path: Path) -> None:
-    write_taskfile(tmp_path, "      - task: docs:site")
+    write_taskfile(tmp_path, "      - task: docs:demos")
 
     violations = check_repo_policy.check_hermeticity(tmp_path)
 
     assert len(violations) == 1
     taskfile = tmp_path / "Taskfile.yml"
     assert violations[0].path == taskfile
-    assert violations[0].line == line_of(taskfile, "      - task: docs:site")
-    assert "host-service task 'docs:site'" in violations[0].message
+    assert violations[0].line == line_of(taskfile, "      - task: docs:demos")
+    assert "host-service task 'docs:demos'" in violations[0].message
 
 
 def test_hermeticity_rejects_host_docs_from_docs_check(tmp_path: Path) -> None:

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
 )
 
 func TestDaemonStatusMissingFileIsNotRunning(t *testing.T) {

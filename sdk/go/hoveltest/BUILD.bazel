@@ -9,7 +9,7 @@ filegroup(
 go_library(
     name = "hoveltest",
     srcs = ["payload_provider.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/sdk/go/hoveltest",
+    importpath = "github.com/vibepwners/hovel/sdk/go/hoveltest",
     visibility = ["//visibility:public"],
     deps = ["//sdk/go/hovel"],
 )

@@ -11,7 +11,7 @@ go_library(
         "write_retry_posix.go",
         "write_retry_windows.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell",
+    importpath = "github.com/vibepwners/hovel/payloads/squatter/client/shell",
     visibility = ["//visibility:public"],
     deps = [
         "//modules/squatter/client/wire",

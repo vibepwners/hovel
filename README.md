@@ -10,7 +10,8 @@ automation.
 The local daemon role (`hovel daemon serve`, often called `hoveld` in docs and
 logs) owns the workspace database, module process lifecycle, persisted throw
 plans, confirmation records, installed payload inventory, artifacts, sessions,
-and structured events. Operators use the same application services through the
+Mesh listener/task/stream bookkeeping, encrypted workspace PKI custody, and
+structured events. Operators use the same application services through the
 interactive CLI, one-shot saved-chain execution, and the MCP agent front end.
 
 > **Authorized red-team emulation only.** Use Hovel only in environments you own
@@ -26,10 +27,15 @@ The canonical documentation is the GitHub Pages book:
 Start with the [User Guide](docs/site/src/content/spec/user-guide.html) to run Hovel locally. Module
 authors should use [Module Development](docs/site/src/content/spec/module-development.html), then the
 language guides for [Python](docs/site/src/content/spec/module-python.html), [Go](docs/site/src/content/spec/module-go.html),
-or [Rust](docs/site/src/content/spec/module-rust.html). Contributors should read the
+or [Rust](docs/site/src/content/spec/module-rust.html). For the trust system, read
+[TLS and Workspace PKI](docs/site/src/content/spec/tls-pki.html) and the
+[TLS Operations runbook](docs/site/src/content/spec/tls-operations.html). Mesh and
+provider authors should continue with [Mesh Development](docs/site/src/content/spec/mesh-development.html)
+and [Credential Provider Development](docs/site/src/content/spec/credential-provider-development.html).
+Contributors should read the
 [Development Guide](docs/site/src/content/spec/development-guide.html) for Task, CI, and
 partial-checkout behavior. The source for the book lives under
-[`docs/site/src/content/spec/`](docs/site/src/content/spec/).
+[`docs/site/src/content/`](docs/site/src/content/).
 
 ## Install
 
@@ -88,6 +94,8 @@ Useful tasks:
 | `task fmt` | Format wired slices: core Go/Gazelle plus Go SDK sources. |
 | `task coverage` | Run core domain and application coverage ratchets. |
 | `task ci` | Require a full checkout, then run the core, SDK, modules, and docs gates. |
+| `task docs:check` | Build and validate the hermetic Astro documentation site. |
+| `task docs:build` | Materialize the complete documentation site under `_site/`. |
 
 ## Repository layout
 

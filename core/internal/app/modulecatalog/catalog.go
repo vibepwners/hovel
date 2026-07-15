@@ -12,8 +12,9 @@ import (
 	"strings"
 	"time"
 
-	domainmesh "github.com/Vibe-Pwners/hovel/internal/domain/mesh"
-	domainmodule "github.com/Vibe-Pwners/hovel/internal/domain/module"
+	domainmesh "github.com/vibepwners/hovel/internal/domain/mesh"
+	domainmodule "github.com/vibepwners/hovel/internal/domain/module"
+	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
 )
 
 type ModuleType = domainmodule.Type
@@ -65,22 +66,23 @@ type Requirement struct {
 }
 
 type Module struct {
-	ID            string
-	Name          string
-	Type          ModuleType
-	Version       string
-	Summary       string
-	Description   string
-	Tags          []string
-	RuntimeKind   string
-	Author        string
-	Enabled       bool
-	ChainConfig   []Requirement
-	TargetConfig  []Requirement
-	Discovery     Context
-	Planning      Context
-	StepContracts StepContractSet
-	Mesh          domainmesh.Descriptor
+	ID                 string
+	Name               string
+	Type               ModuleType
+	Version            string
+	Summary            string
+	Description        string
+	Tags               []string
+	RuntimeKind        string
+	Author             string
+	Enabled            bool
+	ChainConfig        []Requirement
+	TargetConfig       []Requirement
+	Discovery          Context
+	Planning           Context
+	StepContracts      StepContractSet
+	Mesh               domainmesh.Descriptor
+	CredentialDelivery *domainpki.CredentialDeliveryDescriptor
 }
 
 type Context struct {
@@ -328,6 +330,7 @@ func (c Catalog) Search(query string) []Module {
 			contextSearchText(module.Discovery),
 			contextSearchText(module.Planning),
 			meshSearchText(module.Mesh),
+			credentialDeliveryPointerSearchText(module.CredentialDelivery),
 		}, " "))
 		if strings.Contains(haystack, query) {
 			modules = append(modules, module)
@@ -433,6 +436,10 @@ func normalizeModule(module Module) Module {
 	module.Planning = cloneContext(module.Planning)
 	module.StepContracts = cloneStepContractSet(module.StepContracts)
 	module.Mesh = cloneMeshDescriptor(module.Mesh)
+	if module.CredentialDelivery != nil {
+		descriptor := module.CredentialDelivery.Clone()
+		module.CredentialDelivery = &descriptor
+	}
 	return module
 }
 
@@ -744,6 +751,10 @@ func cloneModule(module Module) Module {
 	module.Planning = cloneContext(module.Planning)
 	module.StepContracts = cloneStepContractSet(module.StepContracts)
 	module.Mesh = cloneMeshDescriptor(module.Mesh)
+	if module.CredentialDelivery != nil {
+		descriptor := module.CredentialDelivery.Clone()
+		module.CredentialDelivery = &descriptor
+	}
 	return module
 }
 
@@ -791,6 +802,10 @@ func cloneMeshDescriptor(descriptor domainmesh.Descriptor) domainmesh.Descriptor
 	descriptor.Tasks = cloneMeshTaskSpecs(descriptor.Tasks)
 	descriptor.ListenerTypes = cloneMeshListenerSpecs(descriptor.ListenerTypes)
 	descriptor.Triggers = cloneMeshTriggers(descriptor.Triggers)
+	if descriptor.CredentialDelivery != nil {
+		credentialDelivery := descriptor.CredentialDelivery.Clone()
+		descriptor.CredentialDelivery = &credentialDelivery
+	}
 	descriptor.Attributes = cloneAnyMap(descriptor.Attributes)
 	return descriptor
 }
@@ -965,6 +980,9 @@ func meshSearchText(descriptor domainmesh.Descriptor) string {
 			parts = append(parts, string(management))
 		}
 	}
+	if descriptor.CredentialDelivery != nil {
+		parts = append(parts, credentialDeliverySearchText(*descriptor.CredentialDelivery))
+	}
 	for _, trigger := range descriptor.Triggers {
 		parts = append(parts, trigger.Kind, string(trigger.ActionKind), trigger.NodeID, trigger.ListenerID)
 	}
@@ -979,6 +997,27 @@ func meshSearchText(descriptor domainmesh.Descriptor) string {
 				strings.Join(node.Capabilities, " "),
 			)
 		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func credentialDeliveryPointerSearchText(descriptor *domainpki.CredentialDeliveryDescriptor) string {
+	if descriptor == nil {
+		return ""
+	}
+	return credentialDeliverySearchText(*descriptor)
+}
+
+func credentialDeliverySearchText(descriptor domainpki.CredentialDeliveryDescriptor) string {
+	parts := make([]string, 0, len(descriptor.Slots)*4+len(descriptor.Capabilities))
+	for _, slot := range descriptor.Slots {
+		parts = append(
+			parts, string(slot.Name), string(slot.Purpose),
+			string(slot.EndpointRole), string(slot.ConsumerType),
+		)
+	}
+	for _, capability := range descriptor.Capabilities {
+		parts = append(parts, string(capability))
 	}
 	return strings.Join(parts, " ")
 }

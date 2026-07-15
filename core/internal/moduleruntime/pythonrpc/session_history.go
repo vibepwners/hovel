@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 const (
@@ -21,6 +21,7 @@ type brokerSession struct {
 	datagram bool
 	ctx      context.Context
 	cancel   context.CancelFunc
+	closeMu  sync.Mutex
 
 	mu                   sync.Mutex
 	history              []byte

@@ -1,5 +1,22 @@
 """Rules for producing the complete documentation site as declared trees."""
 
+def _publish_file_impl(ctx):
+    output = ctx.actions.declare_file(ctx.attr.output)
+    ctx.actions.expand_template(
+        template = ctx.file.source,
+        output = output,
+        substitutions = {},
+    )
+    return [DefaultInfo(files = depset([output]))]
+
+publish_file = rule(
+    implementation = _publish_file_impl,
+    attrs = {
+        "output": attr.string(mandatory = True),
+        "source": attr.label(allow_single_file = True, mandatory = True),
+    },
+)
+
 def _runfiles(target):
     info = target[DefaultInfo]
     return [
@@ -57,8 +74,6 @@ def _site_tree_impl(ctx):
     args.add("--astro-site", ctx.file.astro_site.path)
     args.add("--sdk-site", ctx.file.sdk_site.path)
     args.add("--license", ctx.file.license)
-    for demo in ctx.files.demos:
-        args.add("--demo", demo.path + "=assets/demos/" + demo.basename)
 
     ctx.actions.run(
         executable = ctx.executable.assembler,
@@ -68,7 +83,7 @@ def _site_tree_impl(ctx):
                 ctx.file.astro_site,
                 ctx.file.license,
                 ctx.file.sdk_site,
-            ] + ctx.files.demos,
+            ],
         ),
         outputs = [output],
         tools = depset(transitive = _runfiles(ctx.attr.assembler)),
@@ -82,7 +97,6 @@ site_tree = rule(
     attrs = {
         "assembler": attr.label(executable = True, cfg = "exec", mandatory = True),
         "astro_site": attr.label(allow_single_file = True, mandatory = True),
-        "demos": attr.label_list(allow_files = True, mandatory = True),
         "license": attr.label(allow_single_file = True, mandatory = True),
         "sdk_site": attr.label(allow_single_file = True, mandatory = True),
     },

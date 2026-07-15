@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
+	"github.com/vibepwners/hovel/sdk/go/hovel"
 )
 
 const providerVersion = "0.1.7"

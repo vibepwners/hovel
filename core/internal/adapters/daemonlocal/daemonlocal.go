@@ -5,13 +5,14 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/storage/filesystem"
-	sqlitestore "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite"
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/infra/daemonmanager"
-	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
-	"github.com/Vibe-Pwners/hovel/internal/moduleruntime/pythonrpc"
+	"github.com/vibepwners/hovel/internal/adapters/daemonrpc"
+	"github.com/vibepwners/hovel/internal/adapters/storage/filesystem"
+	sqlitestore "github.com/vibepwners/hovel/internal/adapters/storage/sqlite"
+	apppki "github.com/vibepwners/hovel/internal/app/pki"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/infra/daemonmanager"
+	"github.com/vibepwners/hovel/internal/infra/daemonruntime"
+	"github.com/vibepwners/hovel/internal/moduleruntime/pythonrpc"
 )
 
 func NewManager() daemonmanager.Manager {
@@ -50,6 +51,19 @@ func WithDefaults(args daemonruntime.Args) daemonruntime.Args {
 	}
 	if args.NewModuleRuntime == nil {
 		args.NewModuleRuntime = NewModuleRuntime
+	}
+	if args.NewPKIControl == nil {
+		if args.PKIBackends == nil && args.PKIValidators == nil {
+			args.NewPKIControl = newWorkspacePKIControl
+		} else {
+			backends := args.PKIBackends
+			validators := args.PKIValidators
+			args.NewPKIControl = func(ctx context.Context, workspacePath string) (apppki.WorkspaceControl, error) {
+				return newWorkspacePKIControlWithRegistries(
+					ctx, workspacePath, backends, validators,
+				)
+			}
+		}
 	}
 	return args
 }
@@ -96,18 +110,22 @@ func NewRPCServer(config daemonruntime.RPCServerConfig) (http.Handler, error) {
 		daemonrpc.WithSessionPersistence(config.PersistSession),
 		daemonrpc.WithModuleSessions(config.ModuleSessions),
 		daemonrpc.WithLaunchKeyPolicy(config.LaunchKeyPolicy),
+		daemonrpc.WithPKIControl(config.PKI),
+		daemonrpc.WithPKISecretResponses(config.Confidential),
+		daemonrpc.WithPrivilegedControl(config.Confidential),
 	)
 }
 
 func NewModuleRuntime(config daemonruntime.ModuleRuntimeConfig) (services.ModuleRunner, services.SessionBroker) {
 	sessions := pythonrpc.NewSessionBroker()
 	return pythonrpc.Runner{
-		ConfigPath:    config.ModuleConfig,
-		HovelConfig:   config.HovelConfig,
-		WorkspacePath: config.WorkspacePath,
-		Events:        config.Events,
-		IDs:           config.IDs,
-		Clock:         config.Clock,
-		Sessions:      sessions,
+		ConfigPath:           config.ModuleConfig,
+		HovelConfig:          config.HovelConfig,
+		WorkspacePath:        config.WorkspacePath,
+		Events:               config.Events,
+		IDs:                  config.IDs,
+		Clock:                config.Clock,
+		Sessions:             sessions,
+		CredentialExecutions: config.CredentialExecutions,
 	}, sessions
 }

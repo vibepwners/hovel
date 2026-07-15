@@ -41,7 +41,7 @@ Key safety properties (see `docs/site/src/content/spec/safety.html` for the full
 If you discover a security vulnerability in Hovel itself, please report it
 privately rather than opening a public issue.
 
-- Preferred: open a [GitHub security advisory](https://github.com/Vibe-Pwners/hovel/security/advisories/new)
+- Preferred: open a [GitHub security advisory](https://github.com/vibepwners/hovel/security/advisories/new)
   for the repository.
 - Please include a description, affected versions/commits, reproduction steps,
   and any suggested remediation.

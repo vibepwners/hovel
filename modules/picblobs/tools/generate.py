@@ -834,6 +834,12 @@ _MBED_ARM_NONE_EABI_TOOLCHAIN = {
     "url": "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu-rm/9-2019q4/gcc-arm-none-eabi-9-2019-q4-major-x86_64-linux.tar.bz2",
 }
 
+_MBED_OS_SOURCE = {
+    "commit": "dfcb61e052d1192d99a07dca6fb4970281afc8e4",
+    "sha256": "9bdcfd5f65542988461c6c33a1ae376e6fd1cb4c1f2786a4f6cd63522b843c14",
+    "url": "https://github.com/ARMmbed/mbed-os/archive/dfcb61e052d1192d99a07dca6fb4970281afc8e4.tar.gz",
+}
+
 
 def _bootlin_toolchain_name(arch_name: str) -> str:
     if arch_name.startswith("armv5_"):
@@ -913,6 +919,7 @@ def _gen_toolchain_repositories_bzl() -> str:
         load(":arm_none_eabi.bzl", "arm_none_eabi_repo")
         load(":bootlin.bzl", "bootlin_toolchain_repo")
         load(":qemu.bzl", "qemu_arm_repo", "qemu_user_static_repo")
+        load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
         _ARM_NONE_EABI_TOOLCHAIN = struct(
         """),
@@ -926,6 +933,11 @@ def _gen_toolchain_repositories_bzl() -> str:
         f"    sha256 = {_starlark_string(_MBED_ARM_NONE_EABI_TOOLCHAIN['sha256'])},\n",
         f"    strip_prefix = {_starlark_string(_MBED_ARM_NONE_EABI_TOOLCHAIN['strip_prefix'])},\n",
         f"    url = {_starlark_string(_MBED_ARM_NONE_EABI_TOOLCHAIN['url'])},\n",
+        ")\n\n",
+        "_MBED_OS_SOURCE = struct(\n",
+        f"    commit = {_starlark_string(_MBED_OS_SOURCE['commit'])},\n",
+        f"    sha256 = {_starlark_string(_MBED_OS_SOURCE['sha256'])},\n",
+        f"    url = {_starlark_string(_MBED_OS_SOURCE['url'])},\n",
         ")\n\n",
         "_BOOTLIN_TOOLCHAINS = [\n",
     ]
@@ -971,6 +983,26 @@ def _gen_toolchain_repositories_bzl() -> str:
                     sha256 = _MBED_ARM_NONE_EABI_TOOLCHAIN.sha256,
                     strip_prefix = _MBED_ARM_NONE_EABI_TOOLCHAIN.strip_prefix,
                     url = _MBED_ARM_NONE_EABI_TOOLCHAIN.url,
+                )
+                http_archive(
+                    name = "mbed_os_5_15_9",
+                    build_file_content = "\\n".join([
+                        "package(default_visibility = [\\\"//visibility:public\\\"])",
+                        "",
+                        "filegroup(",
+                        "    name = \\\"all_files\\\",",
+                        "    srcs = glob([\\\"**\\\"]),",
+                        ")",
+                        "",
+                        "filegroup(",
+                        "    name = \\\"version_header\\\",",
+                        "    srcs = [\\\"platform/mbed_version.h\\\"],",
+                        ")",
+                        "",
+                    ]),
+                    sha256 = _MBED_OS_SOURCE.sha256,
+                    strip_prefix = "mbed-os-{}".format(_MBED_OS_SOURCE.commit),
+                    urls = [_MBED_OS_SOURCE.url],
                 )
                 for toolchain in _BOOTLIN_TOOLCHAINS:
                     repo_name = "bootlin_{}".format(toolchain.name)

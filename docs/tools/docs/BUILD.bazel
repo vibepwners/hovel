@@ -6,6 +6,8 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "daemon_rpc_openapi_test.py",
+    "provider_docs_parity_test.py",
+    "python_api/index.rst",
     "requirements_lock.txt",
 ])
 
@@ -68,7 +70,6 @@ site_tree(
     name = "site",
     assembler = ":assemble_site",
     astro_site = "//docs/site:astro_site",
-    demos = ["//docs/demo:all_gifs"],
     license = "//:LICENSE",
     sdk_site = ":sdk_site",
 )

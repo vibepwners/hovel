@@ -54,6 +54,12 @@ tasks:
     cmds:
       - python3 repo-tools/tasks/checkout.py require
 
+  hooks:install:
+    desc: Install the optional repository Git hooks through the core Task contract.
+    dir: core
+    cmds:
+      - task hooks:install
+
   config-local:
     desc: Use the shared local on-disk Bazel cache for local task builds.
     silent: true
@@ -587,6 +593,12 @@ tasks:
     cmds:
       - bazel {{.BAZEL_STARTUP_ARGS}} mod deps
 
+  picblobs:module-lock-check:
+    desc: Verify the standalone picblobs Bazel module lock is fresh.
+    dir: '{{.REPO_ROOT}}/modules/picblobs'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} mod deps --lockfile_mode=error
+
   picblobs:mbed-blobs:
     desc: Materialize configured Cortex-M4 NaCl blob headers for the Mbed OS PoC.
     cmds:
@@ -595,7 +607,7 @@ tasks:
           CLI_ARGS: --config=picblobs_cross //modules/picblobs/mbed:materialize_blobs -- {{.CLI_ARGS}}
 
   picblobs:mbed-compile:
-    desc: Compile the PoC against the checked-out Mbed OS 5.15.9 target SDK.
+    desc: Compile the PoC against the pinned Mbed OS 5.15.9 target SDK.
     cmds:
       - task: bazel:run
         vars:
@@ -627,6 +639,9 @@ tasks:
   picblobs:bazel-test:
     desc: Run picblobs Bazel tests.
     cmds:
+      - task: bazel:test
+        vars:
+          CLI_ARGS: //modules/picblobs/provider:provider_test
       - task: bazel:test
         vars:
           CLI_ARGS: --config=picblobs_ci {{.CLI_ARGS}} //modules/picblobs:bazel_test_suite
@@ -694,6 +709,7 @@ tasks:
   picblobs:ci:
     desc: Run the picblobs module CI gate.
     cmds:
+      - task: picblobs:module-lock-check
       - task: picblobs:bazel-build
       - task: picblobs:bazel-test
 
@@ -739,7 +755,7 @@ tasks:
       - task: picblobs:ci
 
   docs:build:
-    desc: Build the declared complete docs tree and materialize it into _site.
+    desc: Build the declared complete docs tree from checked-in assets and materialize it into _site.
     cmds:
       - task: docs:stage
 
@@ -783,21 +799,21 @@ tasks:
           CLI_ARGS: //:docs_test
 
   docs:demos:
-    desc: Render and materialize docs demo GIFs.
+    desc: 'Host-only: regenerate standard and UI demos and refresh checked-in GIF assets.'
     cmds:
       - task: bazel:run
         vars:
           CLI_ARGS: //docs/tools/demo:materialize_docs_demo_outputs
 
   docs:demos:wine:
-    desc: Render and materialize the Squatter Wine docs demo GIF.
+    desc: 'Host-only: regenerate the Squatter Wine demo and refresh its checked-in GIF asset.'
     cmds:
       - task: bazel:run
         vars:
           CLI_ARGS: //docs/tools/demo:materialize_squatter_wine_demo_outputs
 
   docs:demos:all:
-    desc: Render and materialize all docs demo GIFs, including host-service demos.
+    desc: 'Host-only: regenerate every docs demo and refresh all checked-in GIF assets.'
     cmds:
       - task: bazel:run
         vars:
@@ -818,9 +834,12 @@ tasks:
           CLI_ARGS: //docs/tools/docs:stage_site_with_report
 
   docs:check:
-    desc: Run the remote-compatible docs verification gate.
+    desc: Assemble, link-check, and test the docs through the remote-compatible gate.
     cmds:
       - task: docs:test
+      - task: bazel:build
+        vars:
+          CLI_ARGS: //docs/tools/docs:site
 
   docs:site:
     desc: Build and stage the complete declared docs site.

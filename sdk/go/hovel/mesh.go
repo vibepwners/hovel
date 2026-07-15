@@ -288,15 +288,16 @@ type MeshBeacon struct {
 // MeshDescriptor reports a provider's mesh capabilities without requiring
 // target contact. Dynamic details belong in MeshTopology or ListMeshBeacons.
 type MeshDescriptor struct {
-	Name          string             `json:"name,omitempty"`
-	Version       string             `json:"version,omitempty"`
-	Summary       string             `json:"summary,omitempty"`
-	Capabilities  []string           `json:"capabilities,omitempty"`
-	Topology      *MeshTopology      `json:"topology,omitempty"`
-	Tasks         []MeshTaskSpec     `json:"tasks,omitempty"`
-	ListenerTypes []MeshListenerSpec `json:"listenerTypes,omitempty"`
-	Triggers      []MeshTrigger      `json:"triggers,omitempty"`
-	Attributes    map[string]any     `json:"attributes,omitempty"`
+	Name               string                        `json:"name,omitempty"`
+	Version            string                        `json:"version,omitempty"`
+	Summary            string                        `json:"summary,omitempty"`
+	Capabilities       []string                      `json:"capabilities,omitempty"`
+	Topology           *MeshTopology                 `json:"topology,omitempty"`
+	Tasks              []MeshTaskSpec                `json:"tasks,omitempty"`
+	ListenerTypes      []MeshListenerSpec            `json:"listenerTypes,omitempty"`
+	Triggers           []MeshTrigger                 `json:"triggers,omitempty"`
+	CredentialDelivery *CredentialDeliveryDescriptor `json:"credentialDelivery,omitempty"`
+	Attributes         map[string]any                `json:"attributes,omitempty"`
 }
 
 type MeshDescribeRequest struct {

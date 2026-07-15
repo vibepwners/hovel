@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/uicatalog"
+	"github.com/vibepwners/hovel/internal/adapters/uicatalog"
 )
 
 func main() {

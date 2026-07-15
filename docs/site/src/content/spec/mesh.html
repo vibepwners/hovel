@@ -1,195 +1,359 @@
-<!-- hovel-doc: {"title":"Mesh","group":"Runtime Platform","order":80,"navTitle":"Mesh"} -->
+<!-- hovel-doc: {"title":"Mesh","group":"Runtime Platform","order":80,"navTitle":"Mesh","description":"Provider-owned node operations, listening posts, routed streams, local bridges, and assignment-bound TLS credentials."} -->
 <article>
-        <h1>Mesh</h1>
-        <p>
-          A <strong>Mesh</strong> is a provider-owned node operations plane. It may be a
-          single node, a pair of nodes, a chain such as node 1 ↔ node 2 ↔ node 3,
-          or a routed tree/graph. The name is intentionally broader than
-          <em>transport</em> or <em>tunnel</em>: byte streams and datagrams are Mesh
-          operations, but the same Mesh can survey devices, upload and execute files,
-          run commands, load provider-defined components, publish triggers, and report beacons.
-        </p>
-        <p>
-          Building a provider or connecting an existing module through one? Start with
-          the <a href="mesh-development.html"><strong>Mesh Provider Development Guide</strong></a>.
-          It includes capability design, SDK method mapping, listening-post lifecycle,
-          routed task and stream examples, daemon API calls, and the bridge workflow
-          that lets an ordinary module connect to a Mesh through a local endpoint.
-        </p>
+  <h1>Mesh</h1>
+  <p>
+    A <strong>Mesh</strong> is a provider-owned node operations plane. It may be a
+    single node, a pair of nodes, a chain such as node 1 ↔ node 2 ↔ node 3,
+    or a routed tree or graph. The name is intentionally broader than
+    <em>transport</em> or <em>tunnel</em>: byte streams and datagrams are Mesh
+    operations, but the same Mesh can survey devices, upload and execute files,
+    run commands, load provider-defined components, publish triggers, and report
+    beacons.
+  </p>
 
-        <h2>Why not transport or tunnel?</h2>
-        <p>
-          <code>TransportEndpoint</code> remains the narrow chain capability for byte
-          movement. A tunnel is an operator workflow that bridges a stream to a
-          local IP and port so ordinary tools can connect without knowing how the
-          route works. Mesh is the umbrella for the whole node operations plane.
-        </p>
+  <h2 id="choose-your-path">Choose your path</h2>
+  <div class="tiles">
+    <a class="tile" href="mesh-development.html">
+      <span class="tile-label">Build</span>
+      <span class="tile-title">Develop a Mesh provider</span>
+      <span class="tile-desc">Design capabilities, listeners, tasks, sessions, credential slots, and bridge clients.</span>
+    </a>
+    <a class="tile" href="tls-pki.html">
+      <span class="tile-label">Understand</span>
+      <span class="tile-title">TLS and Workspace PKI</span>
+      <span class="tile-desc">Learn custody, profiles, assignments, trust sets, and what Hovel does not encrypt for you.</span>
+    </a>
+    <a class="tile" href="tls-operations.html">
+      <span class="tile-label">Operate</span>
+      <span class="tile-title">TLS operations</span>
+      <span class="tile-desc">Issue, bind, stage, activate, rotate, revoke, inspect, and recover credentials safely.</span>
+    </a>
+    <a class="tile" href="credential-provider-development.html">
+      <span class="tile-label">Extend</span>
+      <span class="tile-title">Develop a credential provider</span>
+      <span class="tile-desc">Implement runtime, protected-file, encoding, or stamping hooks without leaking material.</span>
+    </a>
+    <a class="tile" href="daemon-rpc.html">
+      <span class="tile-label">Integrate</span>
+      <span class="tile-title">Use the daemon API</span>
+      <span class="tile-desc">Call typed Mesh and PKI methods from a CLI, web UI, Elixir service, or another front end.</span>
+    </a>
+  </div>
+  <p>
+    The machine-readable companion to the API guide is the
+    <a href="reference/daemon-rpc.openapi.json">daemon OpenAPI document</a>.
+  </p>
 
-        <h2>Mesh model</h2>
-        <ul>
-          <li><strong>Mesh Node</strong> — an addressable participant such as the controller, a relay, a target-side agent, or a managed implant.</li>
-          <li><strong>Mesh Link</strong> — a communication edge between two nodes.</li>
-          <li><strong>Mesh Route</strong> — an ordered path across nodes and links used for a task or stream.</li>
-          <li><strong>Mesh Destination</strong> — a host or service reachable through a node or route but not modeled as a Mesh Node.</li>
-          <li><strong>Mesh Task</strong> — a node, route, or destination operation such as survey, upload, execute, upload_execute, command, load, or stream.</li>
-          <li><strong>Mesh Listener</strong> — a provider-reported listening post or data-plane rendezvous resource, distinct from both the provider control-plane adapter and a daemon-owned Mesh Bridge.</li>
-          <li><strong>Mesh Bridge</strong> — a daemon-owned loopback socket endpoint that forwards ordinary local TCP or UDP client traffic to one provider-owned Mesh session flow.</li>
-          <li><strong>Trigger</strong> — a provider-declared condition that can cause Mesh work or state changes.</li>
-          <li><strong>Beacon</strong> — a time-stamped liveness or status signal from one node.</li>
-        </ul>
+  <h2>Why not transport or tunnel?</h2>
+  <p>
+    <code>TransportEndpoint</code> remains the narrow chain capability for byte
+    movement. A tunnel is an operator workflow that bridges a stream to a local
+    IP address and port so a compatible client can connect without knowing how
+    the route works. Mesh is the umbrella for the whole node operations plane.
+  </p>
 
-        <h2>SDK contract</h2>
-        <p>
-          Mesh providers are module processes. They still use the same framed JSON-RPC
-          runtime, structured log rail, session broker, guardrails, and explicit result
-          records as other modules. Python modules override Mesh hook methods,
-          Go exposes typed optional Mesh interfaces, and Rust exposes Mesh hook methods
-          on the <code>Module</code> trait.
-        </p>
-        <p>
-          Mesh is capability-advertised, not all-or-nothing. A minimal provider may
-          implement only <code>mesh.describe</code> and <code>mesh.open_stream</code> for
-          a single stream-style Mesh. A deep implant or stager provider may also expose
-          topology, routes, beacons, triggers, <code>upload_execute</code>, native
-          <code>load</code>, command, and survey tasks. The descriptor must tell callers
-          which operations are supported; unsupported methods should fail explicitly.
-        </p>
-        <p>
-          Listening-post support is optional too. Providers advertise supported
-          kinds through <code>listenerTypes</code>, and providers that own listener
-          lifecycle implement list, start, and stop independently of task and stream
-          support. A listener may be deployment-coupled to the provider
-          (<code>embedded</code>) or deployed separately, and its lifecycle may be
-          provider-managed or externally managed. Those labels describe ownership
-          and deployment, not an assumption that the module subprocess itself stays
-          alive between RPC calls.
-        </p>
-        <table>
-          <thead>
-            <tr><th>Method</th><th>Purpose</th><th>Python</th><th>Go</th><th>Rust</th></tr>
-          </thead>
-          <tbody>
-            <tr><td><code>mesh.describe</code></td><td>Report static Mesh capabilities, task specs, declared triggers, and cheap topology.</td><td>yes</td><td>yes</td><td>yes</td></tr>
-            <tr><td><code>mesh.topology</code></td><td>Return current nodes, links, and optional routes.</td><td>yes</td><td>yes</td><td>yes</td></tr>
-            <tr><td><code>mesh.beacons</code></td><td>Return recent beacon records for one node or the mesh.</td><td>yes</td><td>yes</td><td>yes</td></tr>
-            <tr><td><code>mesh.listeners</code></td><td>List provider-reported listening posts without returning their configuration or credentials.</td><td>yes</td><td>yes</td><td>yes</td></tr>
-            <tr><td><code>mesh.listener.start</code></td><td>Idempotently start or attach a caller-named listening post.</td><td>yes</td><td>yes</td><td>yes</td></tr>
-            <tr><td><code>mesh.listener.stop</code></td><td>Idempotently stop or detach a caller-named listening post.</td><td>yes</td><td>yes</td><td>yes</td></tr>
-            <tr><td><code>mesh.task</code></td><td>Run a provider-owned node or route task.</td><td>yes</td><td>yes</td><td>yes</td></tr>
-            <tr><td><code>mesh.open_stream</code></td><td>Open a routed session flow as a normal <code>SessionRef</code> so the daemon can bridge TCP streams or UDP datagrams to a local listener.</td><td>yes</td><td>yes</td><td>yes</td></tr>
-          </tbody>
-        </table>
+  <h2>Mesh model</h2>
+  <ul>
+    <li><strong>Mesh Node</strong> — an addressable participant such as the controller, a relay, a target-side agent, or a managed implant.</li>
+    <li><strong>Mesh Link</strong> — a communication edge between two nodes.</li>
+    <li><strong>Mesh Route</strong> — an ordered path across nodes and links used for a task or stream.</li>
+    <li><strong>Mesh Destination</strong> — a host or service reachable through a node or route but not modeled as a Mesh Node.</li>
+    <li><strong>Mesh Task</strong> — a node, route, or destination operation such as survey, upload, execute, upload_execute, command, load, or stream.</li>
+    <li><strong>Mesh Listener</strong> — a provider-reported listening post or data-plane rendezvous resource, distinct from both the provider control-plane adapter and a daemon-owned Mesh Bridge.</li>
+    <li><strong>Mesh Bridge</strong> — a daemon-owned authenticated loopback TCP or UDP endpoint that forwards one local client or peer to one provider-owned Mesh session flow.</li>
+    <li><strong>Trigger</strong> — a provider-declared condition that can cause Mesh work or state changes.</li>
+    <li><strong>Beacon</strong> — a time-stamped liveness or status signal from one node.</li>
+  </ul>
 
-        <h2>Runtime contract</h2>
-        <p>
-          The daemon runtime treats Mesh as a first-class provider surface. Module
-          inspection asks for <code>mesh.describe</code> as optional discovery and stores
-          the descriptor in module catalog data. The run service and daemon RPC expose
-          describe, topology, beacon, listener, task, and stream calls so front ends do
-          not need to speak module JSON-RPC directly.
-        </p>
-        <p>
-          <code>ListMeshListeners</code>, <code>StartMeshListener</code>, and
-          <code>StopMeshListener</code> are stable HTTP/JSON daemon methods. This is the
-          integration seam for a future web UI, Elixir control plane, or another
-          external client: it can generate a client from the daemon OpenAPI contract,
-          use a caller-selected stable <code>listenerId</code> for idempotent retries,
-          and correlate lifecycle results with <code>ListMeshOperations</code>.
-          Listener IDs are scoped to one provider Mesh, so daemon-wide identity is
-          the pair of <code>moduleId</code> and <code>listenerId</code>. Start
-          configuration is write-only and Hovel never copies it into listener read
-          models or Mesh bookkeeping records. Providers are responsible for keeping
-          configuration and credentials out of provider-authored errors and logs.
-        </p>
-        <p>
-          The current module adapter performs individual provider RPC invocations; it
-          is not a listener host. A provider that starts a long-lived listener must
-          make that resource durable across individual calls, for example as a
-          separate service or another provider-owned runtime. Hovel records and
-          controls the lifecycle contract but does not keep an in-process listener
-          alive merely because its descriptor says <code>embedded</code>.
-        </p>
-        <p>
-          A Mesh routed flow is intentionally represented as a normal session. The SDK and
-          daemon RPC contract provide the session abstraction that the daemon bridge
-          uses to pump bytes or datagrams between a local listener and the routed session. A caller
-          can use <code>OpenMeshBridge</code> to receive a loopback
-          <code>localHost</code>/<code>localPort</code> pair, pass that endpoint to an
-          ordinary tool or module, and let the Mesh provider own how the route reaches
-          node 1, node 2, node 3, or a tree of nodes.
-          A bridge is the lifecycle unit for one routed session flow; callers open
-          another bridge when they need another independent local connection or UDP
-          peer association. For UDP, the provider-returned <code>SessionRef</code>
-          must advertise the <code>datagram</code> capability: every non-empty
-          <code>session/write</code> call and <code>session/read</code> result is one
-          datagram. The daemon broker preserves those boundaries, and the bridge
-          keeps its first local UDP peer so replies cannot be redirected by another
-          local socket. A provider datagram that arrives before that first local
-          packet is retained until the peer is known rather than discarded.
-          Non-socket protocols such as ICMP, GRE, or raw IP remain
-          provider-defined Mesh task/session contracts unless Hovel adds an explicit
-          raw/TUN/TAP-style local adapter with its own policy.
-        </p>
-        <p>
-          Loopback is a local-user trust boundary, not client authentication. Hovel
-          rejects non-loopback bridge binds, but an untrusted process running as the
-          operator could still race the intended client for a new endpoint. Protect
-          the operator account and daemon host accordingly.
-        </p>
-        <p>
-          The daemon also keeps bookkeeping for Mesh listener lifecycle calls, tasks, streams, and bridges. Each record
-          captures the provider module, run, task kind, node, route, destination host
-          and port, protocol, opened session, state, and timestamps. Bridge records also carry
-          the daemon-owned local address; listener records carry the action, stable listener id,
-          and provider-reported state. Raw task and stream requests cannot populate that
-          audit field. Front ends read this through <code>ListMeshOperations</code>.
-        </p>
+  <h2 id="tls-and-credentials">Where TLS and credentials fit</h2>
+  <p>
+    Workspace PKI owns certificate custody and lifecycle; a Mesh provider owns
+    the protocol that consumes a certificate. Hovel does not infer TLS from a
+    listener kind, a port, or a <code>protocol</code> string. Instead, a provider
+    advertises strict credential slots, an operator binds an assignment to the
+    intended consumer, and a credential-aware Mesh request selects that
+    assignment without carrying secret bytes.
+  </p>
+  <figure class="diagram" aria-label="Assignment-bound Mesh credential delivery from workspace PKI to one consuming provider process.">
+    <figcaption>Assignment-bound Mesh credential delivery</figcaption>
+    <ol class="flow-diagram">
+      <li class="flow-step">active PKI assignment</li>
+      <li class="flow-step">non-secret assignment and slot selection</li>
+      <li class="flow-step">validate provider descriptor and consumer ID</li>
+      <li class="flow-step">resolve short-lived projection</li>
+      <li class="flow-step ready"><code>credential.runtime</code></li>
+      <li class="flow-step strong">listener, task, or stream in the same process</li>
+      <li class="flow-step">digest-only execution record and cleanup</li>
+    </ol>
+  </figure>
+  <table>
+    <thead>
+      <tr><th>Surface</th><th>Typical TLS role</th><th>Assignment identity</th><th>Implemented Mesh selection behavior</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Provider control plane</td><td>TLS client or server used by the provider itself.</td><td><code>mesh-provider</code> with the canonical, unversioned provider name, such as <code>lab-relay-mesh</code>.</td><td>The provider binding is allowed for credential-aware listener start, task, stream, and bridge-open calls.</td></tr>
+      <tr><td>Mesh Listener / listening post</td><td>TLS or mTLS rendezvous endpoint.</td><td><code>mesh-listener</code> joins slash-free provider and listener components as <code>lab-relay-mesh/listener-west</code>; slash-bearing components use the opaque digest form below.</td><td>Allowed when the operation names that exact <code>listenerId</code>. The broader <code>listening-post</code> assignment type is not derived by these Mesh calls.</td></tr>
+      <tr><td>Mesh Node</td><td>Node-side client or server identity.</td><td><code>mesh-node</code> uses the same canonical encoding; a slash-free ID remains <code>lab-relay-mesh/relay-west</code>.</td><td>Allowed only when the operation explicitly names that <code>nodeId</code>; route membership alone does not derive node consumers.</td></tr>
+      <tr><td>Implant or stager</td><td>Artifact-embedded identity, bootstrap identity, or a later runtime identity.</td><td>The assignment model includes <code>implant</code> and <code>stager</code> consumer types with operator-selected IDs.</td><td>Those consumer types are extension points for Mesh orchestration today. If the implant is exposed as a Mesh Node, the implemented runtime path can bind its node identity as <code>mesh-node</code>. Build-time stamping is a separate credential-provider workflow.</td></tr>
+      <tr><td>Routed stream</td><td>A provider may establish TLS itself, or it may carry already encrypted application bytes unchanged.</td><td>No stream consumer type is derived. Selections bind to the provider, explicit listener, or explicit node.</td><td><code>OpenMeshStream</code> delivers selected material to the provider process before <code>mesh.open_stream</code>.</td></tr>
+      <tr><td>Local bridge</td><td>Local adapter for a provider-owned session.</td><td>The bridge has no PKI assignment identity.</td><td><code>OpenMeshBridge</code> uses the same credential-aware stream-open path; credentials go to the provider, not to the bridge or local client.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    When either component contains <code>/</code>, Hovel emits
+    <code>mesh-scoped:&lt;sha256&gt;</code>. The lowercase hexadecimal digest is
+    SHA-256 over the canonical UTF-8 provider name, one NUL byte, and the
+    canonical UTF-8 listener or node ID. This bounded form prevents ambiguous
+    component boundaries. Prefer the typed domain constructors and retain the
+    returned assignment consumer ID rather than concatenating components.
+  </p>
+  <blockquote>
+    <p>
+      An installed module ID may include a version, for example
+      <code>lab-relay-mesh@v0.1.0</code>. Assignment consumer IDs never include
+      that <code>@version</code> suffix. Hovel still binds delivery to the exact
+      installed module version and the SHA-256 digest of its current credential
+      descriptor before releasing material.
+    </p>
+  </blockquote>
+  <p>
+    Certificate and private key material use <strong>separate slots</strong>.
+    One active assignment can be selected twice with distinct request IDs and
+    slot names: one slot accepts <code>certificate-der</code> with form
+    <code>public</code>, while the other accepts
+    <code>private-key-pkcs8</code> with form <code>private-bytes</code>. This lets
+    the descriptor forbid private material in the certificate slot and require
+    it in the key slot. The current external Mesh selector also supports
+    <code>public-key-spki</code>/<code>public</code>. It does not currently
+    resolve bundles, chains, trust anchors, CRLs, signer references, protected
+    files, provider encodings, or stamping targets. See the
+    <a href="credential-provider-development.html">credential-provider guide</a>
+    for those separate contracts.
+  </p>
 
-        <h2>Pivoted destination contract</h2>
-        <p>
-          A task or stream can address either a Mesh node itself or a destination
-          reachable from that node. Providers advertise this with
-          <code>MeshTaskSpec.targetScopes</code>: <code>node</code>, <code>route</code>,
-          and <code>destination</code>. Requests then combine <code>nodeId</code> or
-          <code>route</code> with <code>destinationHost</code>,
-          optional <code>destinationPort</code>, and provider-defined
-          <code>protocol</code>.
-        </p>
-        <p>
-          This is the SDK contract for “throw through a tunnel” without making Mesh
-          providers implement exploit execution. Hovel can open a routed session flow
-          to a destination reachable from a node, bind a daemon-owned TCP or UDP
-          loopback bridge with <code>OpenMeshBridge</code>, and run a compatible tool
-          against the local bridge, or it can ask a provider for an explicit
-          <code>upload_execute</code> task when the provider owns that delivery
-          mechanism. Planning, confirmation, dangerous-module checks, and audit
-          records still live above the SDK.
-        </p>
-        <p>
-          Implant loading follows the same rule. A provider that can place and start an
-          implant through its nodes should advertise an <code>upload_execute</code> task
-          for the common "copy bytes, then run them" flow. Providers with a native
-          in-memory or protocol-specific loader can advertise <code>load</code> instead.
-          The request carries the pivot (<code>nodeId</code> or <code>route</code>), the
-          reached service or protocol (<code>destinationHost</code>, optional
-          <code>destinationPort</code>, <code>protocol</code>), and either inline bytes via <code>inputData</code> plus
-          <code>inputEncoding</code> or provider-defined payload/artifact references in
-          <code>config</code>. Mesh records the contract and bookkeeping; payload
-          generation, confirmation, and the actual loader behavior remain provider or
-          higher-layer responsibilities.
-        </p>
+  <h2>SDK contract</h2>
+  <p>
+    Mesh providers are module processes. They use the same framed JSON-RPC
+    runtime, structured log rail, session broker, guardrails, and explicit
+    result records as other modules. Python modules override Mesh hook methods,
+    Go exposes typed optional Mesh interfaces, and Rust exposes Mesh hook
+    methods on the <code>Module</code> trait.
+  </p>
+  <p>
+    Mesh is optional-interface based, not all-or-nothing. A minimal provider may
+    implement only <code>mesh.describe</code> and
+    <code>mesh.open_stream</code> for a single stream-style Mesh. A deep implant
+    or stager provider may also expose topology, routes, beacons, triggers,
+    <code>upload_execute</code>, native <code>load</code>, command, and survey
+    tasks. Structured <code>tasks</code>, <code>listenerTypes</code>, topology,
+    triggers, and credential-delivery metadata describe their corresponding
+    contracts. The top-level <code>capabilities</code> string list is optional,
+    opaque provider vocabulary; Hovel does not infer hook support from those
+    strings. The implementation and structured descriptor must agree, and every
+    unsupported method must fail explicitly.
+  </p>
+  <p>
+    Credential consumption is optional in the same way. A provider that wants
+    assignment-bound material advertises a
+    <code>credentialDelivery</code> descriptor and the
+    <code>runtime</code> capability, then implements
+    <code>credential.describe</code> and <code>credential.runtime</code>. If the
+    same descriptor is published independently and inside
+    <code>mesh.describe</code>, the two canonical descriptors must match.
+  </p>
+  <p>
+    Listening-post support is optional too. Providers advertise supported kinds
+    through <code>listenerTypes</code>, and providers that own listener lifecycle
+    implement list, start, and stop independently of task and stream support. A
+    listener may be deployment-coupled to the provider
+    (<code>embedded</code>) or deployed separately, and its lifecycle may be
+    provider-managed or externally managed. Those labels describe ownership and
+    deployment, not an assumption that the module subprocess stays alive
+    between RPC calls.
+  </p>
+  <table>
+    <thead>
+      <tr><th>Method</th><th>Purpose</th><th>Python</th><th>Go</th><th>Rust</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>mesh.describe</code></td><td>Report static Mesh capabilities, task specs, declared triggers, cheap topology, and optional credential-delivery metadata.</td><td>yes</td><td>yes</td><td>yes</td></tr>
+      <tr><td><code>mesh.topology</code></td><td>Return current nodes, links, and optional routes.</td><td>yes</td><td>yes</td><td>yes</td></tr>
+      <tr><td><code>mesh.beacons</code></td><td>Return recent beacon records for one node or the Mesh.</td><td>yes</td><td>yes</td><td>yes</td></tr>
+      <tr><td><code>mesh.listeners</code></td><td>List provider-reported listening posts without returning their configuration or credentials.</td><td>yes</td><td>yes</td><td>yes</td></tr>
+      <tr><td><code>mesh.listener.start</code></td><td>Idempotently start or attach a caller-named listening post, optionally after same-process runtime delivery.</td><td>yes</td><td>yes</td><td>yes</td></tr>
+      <tr><td><code>mesh.listener.stop</code></td><td>Idempotently stop or detach a caller-named listening post. Stop is not credential-bearing.</td><td>yes</td><td>yes</td><td>yes</td></tr>
+      <tr><td><code>mesh.task</code></td><td>Run a provider-owned node or route task, optionally after same-process runtime delivery.</td><td>yes</td><td>yes</td><td>yes</td></tr>
+      <tr><td><code>mesh.open_stream</code></td><td>Open a routed session flow as a normal <code>SessionRef</code>, optionally after same-process runtime delivery.</td><td>yes</td><td>yes</td><td>yes</td></tr>
+    </tbody>
+  </table>
 
-        <h2>Planning and safety rules</h2>
-        <ul>
-          <li><code>handshake</code>, <code>schema</code>, and <code>mesh.describe</code> must be cheap, deterministic, and side-effect free.</li>
-          <li><code>mesh.topology</code> and <code>mesh.beacons</code> may inspect provider-local state, but must not mutate target-side state.</li>
-          <li><code>mesh.listeners</code> is read-only; listener start and stop are explicit, idempotent lifecycle mutations recorded by the daemon.</li>
-          <li>Target interaction belongs in <code>mesh.task</code> or <code>mesh.open_stream</code> after the operator has a persisted plan and recorded confirmation.</li>
-          <li>Provider-authored triggers and beacons are evidence and routing context; they never bypass Hovel guardrails.</li>
-          <li>Mesh streams become ordinary sessions, so existing session IO, commands, transcript capture, and cleanup paths still apply.</li>
-        </ul>
+  <h2>Runtime contract</h2>
+  <p>
+    The daemon runtime treats Mesh as a first-class provider surface. Module
+    inspection asks for <code>mesh.describe</code> as optional discovery and
+    stores the descriptor in module catalog data. The run service and daemon RPC
+    expose describe, topology, beacon, listener, task, stream, and bridge calls
+    so front ends do not need to speak module JSON-RPC directly.
+  </p>
+  <p>
+    <code>StartMeshListener</code>, <code>RunMeshTask</code>,
+    <code>OpenMeshStream</code>, and <code>OpenMeshBridge</code> accept an optional
+    top-level <code>credentials</code> array. When that array is present, a
+    matching <code>credentialContext</code> is required with actor, operation,
+    and correlation IDs plus <code>approveCredentialUse: true</code>. The caller
+    chooses only assignment IDs, provider-advertised slots, and non-secret
+    projection/form pairs. It never receives the resolved bytes.
+  </p>
+  <p>
+    Hovel inspects the exact installed provider, reconciles its credential and
+    Mesh descriptors, resolves the active assignment generation, starts one
+    provider process, calls <code>credential.runtime</code> once per selection,
+    and invokes the consuming Mesh method in that same process. If a task or
+    stream returns a live session, the session broker adopts that process for
+    the session lifetime. A listener-start process is shut down after the call.
+    A long-lived listener must therefore live in durable provider-owned state or
+    another service, and the provider owns any protected handoff from its
+    short-lived control adapter to that runtime.
+  </p>
+  <p>
+    <code>ListMeshListeners</code>, <code>StartMeshListener</code>, and
+    <code>StopMeshListener</code> are stable HTTP/JSON daemon methods. A caller
+    can use a stable <code>listenerId</code> for idempotent provider lifecycle
+    behavior and correlate results with <code>ListMeshOperations</code>.
+    Listener IDs are scoped to one provider Mesh, so daemon-wide identity is the
+    pair of <code>moduleId</code> and <code>listenerId</code>. Start configuration
+    is write-only and Hovel never copies it into listener read models or Mesh
+    bookkeeping records. Providers must keep configuration and credential
+    material out of errors and logs.
+  </p>
 
-        <h2>Example topology</h2>
+  <h2>Streams, protocols, and bridges</h2>
+  <table>
+    <thead><tr><th>Operation</th><th>Protocol contract</th><th>What Hovel preserves</th></tr></thead>
+    <tbody>
+      <tr><td><code>RunMeshTask</code></td><td><code>protocol</code> is provider-defined task metadata.</td><td>The typed request and bookkeeping fields; no generic socket behavior is implied.</td></tr>
+      <tr><td><code>OpenMeshStream</code></td><td><code>protocol</code> is provider-defined and may name TCP, UDP, ICMP, GRE, raw IP, or another provider contract.</td><td>The returned provider-owned <code>SessionRef</code>. Hovel does not reinterpret an opaque protocol as TCP.</td></tr>
+      <tr><td><code>OpenMeshBridge</code> with <code>localNetwork: tcp</code></td><td>The local adapter is a byte stream. The request's <code>protocol</code> remains provider-defined and is never overwritten.</td><td>Application byte order after the local capability preface is consumed.</td></tr>
+      <tr><td><code>OpenMeshBridge</code> with <code>localNetwork: udp</code></td><td>The local adapter is a single authenticated UDP peer and requires a returned session with the <code>datagram</code> capability. The remote protocol is independent.</td><td>Exactly one datagram per non-empty session write or read, including datagrams received before the local peer authenticates.</td></tr>
+      <tr><td>Opaque or non-socket remote protocol</td><td>Providers may map it onto either supported local association when their session contract defines the semantics.</td><td>No generic raw, ICMP, TUN, or TAP local adapter is implied; otherwise use a provider-defined task or direct session contract.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    A caller can use <code>OpenMeshBridge</code> to receive a loopback
+    <code>localHost</code>/<code>localPort</code> pair, the selected
+    <code>localNetwork</code>, and an ephemeral 256-bit bearer
+    <code>capability</code>. The first TCP bytes must be the capability
+    followed by LF; for UDP, the first complete datagram is the capability.
+    Hovel consumes that preface and never forwards it to the provider. The Go,
+    Python, and Rust SDKs provide helpers that validate the endpoint and perform
+    this handshake before returning a normal connection.
+  </p>
+  <blockquote>
+    <p>
+      <strong>A Mesh Bridge does not encrypt, terminate, originate, or validate
+      TLS.</strong> It does not select certificates for the local client, inject
+      trust anchors, provide SNI or ALPN, or turn UDP into DTLS or QUIC. The
+      bearer capability authenticates one local connection or peer; it is not
+      transport encryption. TLS must be implemented by the local application or
+      by the Mesh provider. If a local TLS client speaks end-to-end through a
+      TCP bridge, the bridge forwards those ciphertext bytes unchanged.
+    </p>
+  </blockquote>
+  <p>
+    Loopback plus the capability is a local process boundary, not protection
+    against a compromised operator account or daemon host. Keep the capability
+    in memory, never log or persist it, and close the bridge when the consumer
+    finishes. Open one bridge for each independent TCP connection or UDP peer
+    association.
+  </p>
+  <p>
+    The daemon keeps bookkeeping for Mesh listener lifecycle calls, tasks,
+    streams, and bridges. Records capture the provider module, run, task kind,
+    node, route, destination, protocol, session, state, and timestamps. Bridge
+    records also carry the daemon-owned local address; listener records carry
+    the action, stable listener ID, and provider-reported state. Credential
+    deliveries have a separate secret-free PKI execution ledger containing
+    identities, digests, sizes, and terminal receipts, never resolved bytes or
+    protected paths.
+  </p>
+  <p>
+    Live topology, beacon, listener, and Mesh operation records are sensitive
+    control-plane data. Their daemon RPC methods require the owner-controlled
+    Unix transport (or a future authenticated proxy with equivalent authority),
+    even though they are reads. The loopback TCP development endpoint is not a
+    local-user authentication mechanism and rejects these methods with
+    <code>permission-denied</code>.
+  </p>
+
+  <h2>Safe certificate rotation</h2>
+  <p>
+    Renewal and rotation create a new immutable certificate generation; they do
+    not silently replace the generation currently assigned to a provider,
+    listener, or node. Assignment changes use revision-fenced
+    <strong>stage</strong> and <strong>activate</strong> transitions:
+  </p>
+  <ol>
+    <li>Renew or rotate to create a new generation. Rotation creates a distinct key; renewal reuses and revalidates the source key.</li>
+    <li>Stage the new generation on each assignment with its current expected revision. Peer-trust purposes also pin the then-active trust generation.</li>
+    <li>Prepare and verify the consumer cutover. Staging alone is not delivery: the current Mesh selector resolves only the assignment's active generation, not its staged generation.</li>
+    <li>Activate with the new expected revision only when the consumer is ready. Activation atomically promotes the staged certificate and pinned trust generation.</li>
+    <li>Restart, reload, or reopen provider-owned resources as their actual lifecycle requires, then inspect Mesh and PKI operation records before retiring old material.</li>
+  </ol>
+  <p>
+    Hovel does not currently enforce a generic consumer acknowledgement during
+    assignment activation, and it does not hot-reload a running listening post
+    or existing stream. Providers must expose or document their own reload and
+    overlap behavior. Follow the complete, recovery-aware sequence in
+    <a href="tls-operations.html">TLS Operations</a>.
+  </p>
+
+  <h2>Pivoted destination contract</h2>
+  <p>
+    A task or stream can address either a Mesh node itself or a destination
+    reachable from that node. Providers advertise this with
+    <code>MeshTaskSpec.targetScopes</code>: <code>node</code>,
+    <code>route</code>, and <code>destination</code>. Requests then combine
+    <code>nodeId</code> or <code>route</code> with
+    <code>destinationHost</code>, optional <code>destinationPort</code>, and a
+    provider-defined <code>protocol</code>.
+  </p>
+  <p>
+    This is the SDK contract for “throw through a tunnel” without making Mesh
+    providers implement exploit execution. Hovel can open a routed session flow
+    to a destination reachable from a node, bind a daemon-owned TCP or UDP
+    loopback bridge with <code>OpenMeshBridge</code>, and run a compatible tool
+    against the authenticated local bridge, or it can ask a provider for an
+    explicit <code>upload_execute</code> task when the provider owns that
+    delivery mechanism. The SDK supports that task contract, but the current
+    direct daemon task route dispatches only <code>survey</code>; execution-capable
+    kinds remain blocked until they are bound to the persisted planning,
+    confirmation, dangerous-module, and audit path above the SDK.
+  </p>
+  <p>
+    Implant loading follows the same rule. A provider that can place and start
+    an implant through its nodes should advertise an
+    <code>upload_execute</code> task for the common “copy bytes, then run them”
+    flow. Providers with a native in-memory or protocol-specific loader can
+    advertise <code>load</code> instead. The request carries the pivot, reached
+    destination, and either inline bytes via <code>inputData</code> plus
+    <code>inputEncoding</code> or provider-defined artifact references in
+    <code>config</code>. Mesh records the contract and bookkeeping; payload
+    generation, credential stamping, confirmation, and loader behavior remain
+    provider or higher-layer responsibilities.
+  </p>
+
+  <h2>Planning and safety rules</h2>
+  <ul>
+    <li><code>handshake</code>, <code>schema</code>, <code>mesh.describe</code>, and <code>credential.describe</code> must be cheap, deterministic, and side-effect free.</li>
+    <li><code>mesh.topology</code> and <code>mesh.beacons</code> may inspect provider-local state, but must not mutate target-side state.</li>
+    <li><code>mesh.listeners</code> is read-only; listener start and stop are explicit, idempotent lifecycle mutations recorded by the daemon.</li>
+    <li>Credential selection requires explicit approval, exact assignment-to-consumer binding, an active or degraded assignment, an active certificate generation, and a slot compatible with its purpose, profile, compatibility target, projection, form, and private-material policy.</li>
+    <li>Target interaction belongs in <code>mesh.task</code> or <code>mesh.open_stream</code> after the operator has a persisted plan and recorded confirmation.</li>
+    <li>Provider-authored triggers and beacons are evidence and routing context; they never bypass Hovel guardrails.</li>
+    <li>Mesh streams become ordinary sessions, so existing session I/O, commands, transcript capture, and cleanup paths still apply.</li>
+  </ul>
+
+  <h2>Example topology</h2>
 <pre data-lang="json"><code>{
   "root": "controller",
   "nodes": [
@@ -205,4 +369,4 @@
     { "id": "route-leaf-1", "nodes": ["controller", "relay-1", "leaf-1"] }
   ]
 }</code></pre>
-      </article>
+</article>

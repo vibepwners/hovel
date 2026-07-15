@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
+	operatordomain "github.com/vibepwners/hovel/internal/domain/operator"
 )
 
 func TestCoordinatorBlocksStartUntilRequiredApproversConfirm(t *testing.T) {

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hovel_sdk.context import AgentContext
+from hovel_sdk.credential_delivery import CredentialDeliveryDescriptor
 from hovel_sdk.result import AgentHint, Artifact, Finding
 from hovel_sdk.session import SessionRef
 
@@ -44,6 +45,8 @@ _MESH_RPC_LISTENER_STOP_METHOD = "mesh.listener.stop"
 _MESH_RPC_TASK_METHOD = "mesh.task"
 _MESH_RPC_OPEN_STREAM_METHOD = "mesh.open_stream"
 _DEFAULT_MESH_RUN_ID = "mesh"
+_MAX_MESH_PORT = 65_535
+_MAX_MESH_INTEGER = (1 << 63) - 1
 
 
 @dataclass(frozen=True)
@@ -121,11 +124,11 @@ class MeshRoute:
         if not isinstance(value, dict):
             return None
         return cls(
-            id=_string_value(value.get("id")),
-            nodes=_string_list(value.get("nodes")),
-            links=_string_list(value.get("links")),
-            cost=_int_value(value.get("cost")),
-            attributes=_dict_value(value.get("attributes")),
+            id=_request_optional_string(value, "id"),
+            nodes=_request_required_string_list(value, "nodes"),
+            links=_request_optional_string_list(value, "links"),
+            cost=_request_optional_int(value, "cost", maximum=_MAX_MESH_INTEGER),
+            attributes=_request_optional_dict(value, "attributes"),
         )
 
     def to_rpc(self) -> dict[str, Any]:
@@ -301,6 +304,7 @@ class MeshDescriptor:
     tasks: list[MeshTaskSpec] = field(default_factory=list)
     listener_types: list[MeshListenerSpec] = field(default_factory=list)
     triggers: list[MeshTrigger] = field(default_factory=list)
+    credential_delivery: CredentialDeliveryDescriptor | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
 
     def to_rpc(self) -> dict[str, Any]:
@@ -317,6 +321,8 @@ class MeshDescriptor:
             out["listenerTypes"] = [listener.to_rpc() for listener in self.listener_types]
         if self.triggers:
             out["triggers"] = [trigger.to_rpc() for trigger in self.triggers]
+        if self.credential_delivery is not None:
+            out["credentialDelivery"] = self.credential_delivery.to_rpc()
         _put_dict(out, "attributes", self.attributes)
         return out
 
@@ -438,20 +444,20 @@ class MeshTaskRequest:
     @classmethod
     def from_rpc(cls, value: dict[str, Any]) -> MeshTaskRequest:
         return cls(
-            run_id=_string_value(value.get("runId")),
-            task_id=_string_value(value.get("taskId")),
-            kind=_string_value(value.get("kind")),
-            node_id=_string_value(value.get("nodeId")),
-            listener_id=_string_value(value.get("listenerId")),
-            target=_string_value(value.get("target")),
-            route=MeshRoute.from_rpc(value.get("route")),
-            destination_host=_string_value(value.get("destinationHost")),
-            destination_port=_int_value(value.get("destinationPort")),
-            protocol=_string_value(value.get("protocol")),
-            config=_dict_value(value.get("config")),
-            args=_string_list(value.get("args")),
-            input_data=_string_value(value.get("inputData")),
-            input_encoding=_string_value(value.get("inputEncoding")),
+            run_id=_request_optional_string(value, "runId"),
+            task_id=_request_optional_string(value, "taskId"),
+            kind=_request_required_string(value, "kind"),
+            node_id=_request_optional_string(value, "nodeId"),
+            listener_id=_request_optional_string(value, "listenerId"),
+            target=_request_optional_string(value, "target"),
+            route=_request_optional_route(value),
+            destination_host=_request_optional_string(value, "destinationHost"),
+            destination_port=_request_optional_int(value, "destinationPort", maximum=_MAX_MESH_PORT),
+            protocol=_request_optional_string(value, "protocol"),
+            config=_request_optional_dict(value, "config"),
+            args=_request_optional_string_list(value, "args"),
+            input_data=_request_optional_string(value, "inputData"),
+            input_encoding=_request_optional_string(value, "inputEncoding"),
             agent=AgentContext.from_rpc(value.get("agentContext")),
         )
 
@@ -547,16 +553,16 @@ class MeshStreamRequest:
     @classmethod
     def from_rpc(cls, value: dict[str, Any]) -> MeshStreamRequest:
         return cls(
-            run_id=_string_value(value.get("runId")),
-            module_id=_string_value(value.get("moduleId")),
-            target=_string_value(value.get("target")),
-            node_id=_string_value(value.get("nodeId")),
-            listener_id=_string_value(value.get("listenerId")),
-            route=MeshRoute.from_rpc(value.get("route")),
-            destination_host=_string_value(value.get("destinationHost")),
-            destination_port=_int_value(value.get("destinationPort")),
-            protocol=_string_value(value.get("protocol")),
-            config=_dict_value(value.get("config")),
+            run_id=_request_optional_string(value, "runId"),
+            module_id=_request_optional_string(value, "moduleId"),
+            target=_request_optional_string(value, "target"),
+            node_id=_request_optional_string(value, "nodeId"),
+            listener_id=_request_optional_string(value, "listenerId"),
+            route=_request_optional_route(value),
+            destination_host=_request_optional_string(value, "destinationHost"),
+            destination_port=_request_optional_int(value, "destinationPort", maximum=_MAX_MESH_PORT),
+            protocol=_request_optional_string(value, "protocol"),
+            config=_request_optional_dict(value, "config"),
             agent=AgentContext.from_rpc(value.get("agentContext")),
         )
 
@@ -636,3 +642,66 @@ def _string_list(value: Any) -> list[str]:
 
 def _int_value(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _request_required_string(value: dict[str, Any], key: str) -> str:
+    item = value.get(key)
+    if not isinstance(item, str):
+        raise TypeError(f"mesh request {key} must be a string")
+    if not item.strip():
+        raise ValueError(f"mesh request {key} must be a non-empty string")
+    return item
+
+
+def _request_optional_string(value: dict[str, Any], key: str) -> str:
+    if key not in value or value[key] is None:
+        return ""
+    item = value[key]
+    if not isinstance(item, str):
+        raise TypeError(f"mesh request {key} must be a string")
+    return item
+
+
+def _request_optional_int(value: dict[str, Any], key: str, *, maximum: int) -> int:
+    if key not in value or value[key] is None:
+        return 0
+    item = value[key]
+    if isinstance(item, bool) or not isinstance(item, int):
+        raise TypeError(f"mesh request {key} must be an integer")
+    if item < 0 or item > maximum:
+        raise ValueError(f"mesh request {key} must be between 0 and {maximum}")
+    return int(item)
+
+
+def _request_optional_dict(value: dict[str, Any], key: str) -> dict[str, Any]:
+    if key not in value or value[key] is None:
+        return {}
+    item = value[key]
+    if not isinstance(item, dict):
+        raise TypeError(f"mesh request {key} must be an object")
+    return dict(item)
+
+
+def _request_optional_string_list(value: dict[str, Any], key: str) -> list[str]:
+    if key not in value or value[key] is None:
+        return []
+    item = value[key]
+    if not isinstance(item, list) or not all(isinstance(entry, str) for entry in item):
+        raise TypeError(f"mesh request {key} must be a string list")
+    return list(item)
+
+
+def _request_required_string_list(value: dict[str, Any], key: str) -> list[str]:
+    result = _request_optional_string_list(value, key)
+    if not result or any(not item.strip() for item in result):
+        raise ValueError(f"mesh request {key} must be a non-empty string list")
+    return result
+
+
+def _request_optional_route(value: dict[str, Any]) -> MeshRoute | None:
+    if "route" not in value or value["route"] is None:
+        return None
+    route = MeshRoute.from_rpc(value["route"])
+    if route is None:
+        raise TypeError("mesh request route must be an object")
+    return route

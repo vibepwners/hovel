@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
+	"github.com/vibepwners/hovel/sdk/go/hovel"
 )
 
 func TestMockSurveyInfo(t *testing.T) {

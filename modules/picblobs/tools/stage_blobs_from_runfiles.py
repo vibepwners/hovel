@@ -12,27 +12,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from elftools.elf.elffile import ELFFile
+from artifact_arch import verify_artifact_arch
 
 log = logging.getLogger("picblobs.stage")
 
 UL_EXEC_TEST_BINARY_NAME = "hello_et_exec"
-
-_ELF_MACHINES = {
-    "x86_64": ("EM_X86_64", None),
-    "i686": ("EM_386", None),
-    "aarch64": ("EM_AARCH64", None),
-    "armv5_arm": ("EM_ARM", None),
-    "armv5_thumb": ("EM_ARM", None),
-    "armv7_thumb": ("EM_ARM", None),
-    "s390x": ("EM_S390", False),
-    "mipsel32": ("EM_MIPS", True),
-    "mipsbe32": ("EM_MIPS", False),
-    "sparcv8": ("EM_SPARC", False),
-    "powerpc": ("EM_PPC", False),
-    "ppc64le": ("EM_PPC64", True),
-    "riscv64": ("EM_RISCV", True),
-}
 
 
 @dataclass(frozen=True)
@@ -143,12 +127,13 @@ def stage_blob(blob: BlobArtifact, workspace: Path, project_root: Path) -> bool:
     src = resolve_runfile(blob.path, workspace)
     dest = blob_dest(project_root, blob)
     tag = f"    {blob.staged_name}.so -> {blob.os_name}/{blob.arch}"
-    if not stage_file(src, dest):
+    if not src.exists():
         log.error("%-50s NOT FOUND: %s", tag, src)
         return False
-    if not verify_elf_arch(dest, blob.arch):
-        log.error("%-50s ARCH MISMATCH (expected %s)", tag, blob.arch)
+    if not verify_artifact_arch(src, blob.arch):
+        log.error("%-50s ARCH MISMATCH (expected %s): %s", tag, blob.arch, src)
         return False
+    stage_file(src, dest)
     log.info("%-50s OK", tag)
     return True
 
@@ -166,7 +151,7 @@ def stage_runners(
         src = resolve_runfile(runner.path, workspace)
         dest = runner_dest(project_root, runner)
         tag = f"    runner -> {runner.runner_type}/{runner.arch}"
-        summary.add(stage_executable(src, dest, tag))
+        summary.add(stage_executable(src, dest, tag, runner.arch))
     return summary
 
 
@@ -183,16 +168,20 @@ def stage_test_binaries(
         src = resolve_runfile(test_binary.path, workspace)
         dest = test_binary_dest(project_root, test_binary)
         tag = test_binary_tag(test_binary)
-        summary.add(stage_executable(src, dest, tag))
+        summary.add(stage_executable(src, dest, tag, test_binary.arch))
     return summary
 
 
-def stage_executable(src: Path, dest: Path, tag: str) -> bool:
-    if stage_file(src, dest, executable=True):
-        log.info("%-50s OK", tag)
-        return True
-    log.error("%-50s NOT FOUND: %s", tag, src)
-    return False
+def stage_executable(src: Path, dest: Path, tag: str, expected_arch: str) -> bool:
+    if not src.exists():
+        log.error("%-50s NOT FOUND: %s", tag, src)
+        return False
+    if not verify_artifact_arch(src, expected_arch):
+        log.error("%-50s ARCH MISMATCH (expected %s): %s", tag, expected_arch, src)
+        return False
+    stage_file(src, dest, executable=True)
+    log.info("%-50s OK", tag)
+    return True
 
 
 def extract_blobs(project_root: Path) -> int:
@@ -256,8 +245,6 @@ def test_binary_dest(project_root: Path, test_binary: TestBinaryArtifact) -> Pat
 def test_binary_tag(test_binary: TestBinaryArtifact) -> str:
     target = f"{test_binary.fixture_type}/{test_binary.os_name}/{test_binary.arch}"
     return f"    {test_binary.name} -> {target}"
-
-    return 0
 
 
 def parse_args() -> argparse.Namespace:
@@ -358,21 +345,6 @@ def stage_file(src: Path, dest: Path, executable: bool = False) -> bool:
     if executable:
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return True
-
-
-def verify_elf_arch(so_path: Path, expected_arch: str) -> bool:
-    expected = _ELF_MACHINES.get(expected_arch)
-    if expected is None:
-        return True
-    expected_machine, expected_little_endian = expected
-    with so_path.open("rb") as f:
-        elf = ELFFile(f)
-        if elf.header.e_machine != expected_machine:
-            return False
-        return (
-            expected_little_endian is None
-            or elf.little_endian == expected_little_endian
-        )
 
 
 if __name__ == "__main__":

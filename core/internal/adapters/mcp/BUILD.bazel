@@ -6,7 +6,7 @@ go_library(
         "logging.go",
         "server.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/mcp",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/mcp",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/commandmode",

@@ -6,7 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	domainmesh "github.com/Vibe-Pwners/hovel/internal/domain/mesh"
+	domainmesh "github.com/vibepwners/hovel/internal/domain/mesh"
+	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
 )
 
 func TestBuiltInsExposeMockModulesByType(t *testing.T) {
@@ -130,12 +131,19 @@ func TestCatalogDeepClonesMeshMetadata(t *testing.T) {
 			"endpoint": map[string]any{"type": "string"},
 		},
 	}
+	credentialDelivery := domainpki.CredentialDeliveryDescriptor{
+		SchemaVersion: domainpki.CredentialDeliverySchemaV1,
+		Capabilities: []domainpki.DeliveryCapability{
+			domainpki.DeliveryCapabilityRuntime,
+		},
+	}
 	catalog := New(Module{
 		ID:      "mesh-module",
 		Type:    TypeExploit,
 		Version: "v1.0.0",
 		Mesh: domainmesh.Descriptor{
-			Attributes: nested,
+			Attributes:         nested,
+			CredentialDelivery: &credentialDelivery,
 			ListenerTypes: []domainmesh.ListenerSpec{{
 				Kind:            "https",
 				Deployments:     []domainmesh.ListenerDeployment{domainmesh.ListenerDeploymentSeparate},
@@ -152,6 +160,7 @@ func TestCatalogDeepClonesMeshMetadata(t *testing.T) {
 
 	nested["policy"].(map[string]any)["allowed"].([]any)[1].(map[string]any)["kind"] = "mutated input"
 	listenerSchema["properties"].(map[string]any)["endpoint"].(map[string]any)["type"] = "integer"
+	credentialDelivery.Capabilities[0] = domainpki.DeliveryCapabilityFiles
 	module, ok := catalog.Find("mesh-module")
 	if !ok {
 		t.Fatal("Find(mesh-module) failed")
@@ -165,6 +174,9 @@ func TestCatalogDeepClonesMeshMetadata(t *testing.T) {
 	if got := endpoint["type"]; got != "string" {
 		t.Fatalf("stored listener schema = %q, want original value", got)
 	}
+	if got := module.Mesh.CredentialDelivery.Capabilities[0]; got != domainpki.DeliveryCapabilityRuntime {
+		t.Fatalf("stored credential delivery capability = %q, want runtime", got)
+	}
 
 	allowed[1].(map[string]any)["kind"] = "mutated result"
 	listener.Deployments[0] = domainmesh.ListenerDeploymentEmbedded
@@ -172,6 +184,7 @@ func TestCatalogDeepClonesMeshMetadata(t *testing.T) {
 	listener.Protocols[0] = "mutated"
 	listener.Capabilities[0] = "mutated"
 	endpoint["type"] = "boolean"
+	module.Mesh.CredentialDelivery.Capabilities[0] = domainpki.DeliveryCapabilityFiles
 	again, _ := catalog.Find("mesh-module")
 	againAllowed := again.Mesh.Attributes["policy"].(map[string]any)["allowed"].([]any)
 	if got := againAllowed[1].(map[string]any)["kind"]; got != "command" {
@@ -193,6 +206,46 @@ func TestCatalogDeepClonesMeshMetadata(t *testing.T) {
 	againEndpoint := againListener.ConfigSchema["properties"].(map[string]any)["endpoint"].(map[string]any)
 	if got := againEndpoint["type"]; got != "string" {
 		t.Fatalf("catalog listener schema was mutated through clone: %q", got)
+	}
+	if got := again.Mesh.CredentialDelivery.Capabilities[0]; got != domainpki.DeliveryCapabilityRuntime {
+		t.Fatalf("catalog credential delivery contract was mutated through clone: %q", got)
+	}
+}
+
+func TestCatalogDeepClonesAndSearchesStandaloneCredentialDelivery(t *testing.T) {
+	descriptor := domainpki.CredentialDeliveryDescriptor{
+		SchemaVersion: domainpki.CredentialDeliverySchemaV1,
+		Capabilities:  []domainpki.DeliveryCapability{domainpki.DeliveryCapabilityRuntime},
+		Slots: []domainpki.CredentialSlot{{
+			Name:         "provider-only-mtls",
+			Purpose:      domainpki.PurposeMTLSServer,
+			EndpointRole: domainpki.CredentialEndpointServer,
+			ConsumerType: domainpki.ConsumerExternal,
+		}},
+	}
+	catalog := New(Module{
+		ID:                 "credential-provider",
+		Type:               TypePayloadProvider,
+		Version:            "v1.0.0",
+		CredentialDelivery: &descriptor,
+	})
+	if got := catalog.Search("provider-only-mtls"); len(got) != 1 || got[0].ID != "credential-provider@v1.0.0" {
+		t.Fatalf("standalone credential search = %#v, want credential-provider", got)
+	}
+
+	descriptor.Capabilities[0] = domainpki.DeliveryCapabilityFiles
+	module, ok := catalog.Find("credential-provider")
+	if !ok || module.CredentialDelivery == nil {
+		t.Fatal("Find(credential-provider) did not return credential delivery")
+	}
+	if got := module.CredentialDelivery.Capabilities[0]; got != domainpki.DeliveryCapabilityRuntime {
+		t.Fatalf("stored standalone credential capability = %q, want runtime", got)
+	}
+
+	module.CredentialDelivery.Capabilities[0] = domainpki.DeliveryCapabilityFiles
+	again, _ := catalog.Find("credential-provider")
+	if got := again.CredentialDelivery.Capabilities[0]; got != domainpki.DeliveryCapabilityRuntime {
+		t.Fatalf("standalone credential contract was mutated through clone: %q", got)
 	}
 }
 

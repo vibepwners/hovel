@@ -1,1 +1,26 @@
 BUILD/*
+mbed-os/*
+
+# The PoC requires Ethernet, LWIP, TCP sockets, RTOS, TRNG, and the target HAL.
+# Exclude unrelated feature families so the legacy Mbed 5 build does not scan
+# and compile them before the linker discards them.
+TESTS/*
+TEST_APPS/*
+UNITTESTS/*
+components/802.15.4_RF/*
+components/cellular/*
+components/testing/*
+components/wifi/*
+features/FEATURE_BLE/*
+features/FEATURE_BOOTLOADER/*
+features/cellular/*
+features/cryptocell/*
+features/frameworks/TARGET_PSA/*
+features/frameworks/greentea-client/*
+features/frameworks/mbed-client-cli/*
+features/frameworks/unity/*
+features/frameworks/utest/*
+features/lorawan/*
+features/netsocket/cellular/*
+features/nfc/*
+features/unsupported/*

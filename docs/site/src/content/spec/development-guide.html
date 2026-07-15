@@ -67,7 +67,7 @@ docs: running task docs:check
 <pre data-lang="bash"><code>task check  # available-slice gate for sparse work
 task ci     # full-checkout gate for every wired slice
 </code></pre>
-        <p>This distinction is deliberate: sparse work should be ergonomic, but a release or merge gate must not silently pretend an absent slice was validated. Missing slices are tolerated only by the sparse-aware aggregate; present slices run their real checks. Host-service documentation rendering is kept outside these remote-compatible aggregates because it intentionally drives local tmux, Chrome, and, for the Wine recording, Docker.</p>
+        <p>This distinction is deliberate: sparse work should be ergonomic, but a release or merge gate must not silently pretend an absent slice was validated. Missing slices are tolerated only by the sparse-aware aggregate; present slices run their real checks. Normal documentation builds consume reviewed GIFs from <code>docs/site/public/assets/demos/</code>; only the explicit <code>docs:demos...</code> refresh tasks cross the host-service boundary to drive tmux, Chrome, and, for the Wine recording, Docker.</p>
 
         <h2>Explicit Slice Tasks</h2>
         <p>When you know what you are working on, call the slice task directly. Direct slice tasks fail if their own inputs are absent or broken.</p>
@@ -82,7 +82,7 @@ task docs:site
 task docs:ci
 task release:modules-package
 </code></pre>
-        <p><code>task docs:check</code> is the remote-compatible docs test gate. <code>task docs:site</code> renders the host-service demos and stages <code>_site/</code>. <code>task docs:ci</code> composes both when a machine has the required host services.</p>
+        <p><code>task docs:check</code> is the remote-compatible docs test and assembly gate. <code>task docs:site</code> builds and stages the same deterministic site from declared inputs, while <code>task docs:ci</code> composes both checks. Run <code>task docs:demos</code>, <code>task docs:demos:wine</code>, or <code>task docs:demos:all</code> separately only when refreshing the checked-in recordings.</p>
         <p>General tasks such as <code>task build</code>, <code>task test</code>, <code>task lint</code>, and <code>task coverage</code> dispatch to the core workspace because those names describe the Hovel binary workspace. <code>task fmt</code> formats the wired source slices. <code>task check</code> is the tolerant aggregate.</p>
 
         <h2>Design Rules</h2>

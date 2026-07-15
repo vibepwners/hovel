@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
-	"github.com/Vibe-Pwners/hovel/internal/infra/daemonruntime"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/domain/workspace"
+	"github.com/vibepwners/hovel/internal/infra/daemonruntime"
 )
 
 type ServeFunc func(context.Context, daemonruntime.Args) error

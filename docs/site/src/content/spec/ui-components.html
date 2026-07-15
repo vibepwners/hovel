@@ -32,9 +32,9 @@
         </div>
 
         <h2>Regenerating</h2>
-        <p>The GIFs are generated through VHS and Bazel so the docs page stays tied to the component renderer.</p>
+        <p>The checked-in GIFs are refreshed through VHS and Bazel so the published page stays tied to the component renderer without making normal docs builds depend on host Chrome or tmux.</p>
 <pre data-lang="bash"><code>task docs:demos
-task docs:stage
+task docs:check
 </code></pre>
         <p>For local terminal inspection without generating GIFs, run:</p>
 <pre data-lang="bash"><code>task ui:demo

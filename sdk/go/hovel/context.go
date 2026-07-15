@@ -1,6 +1,10 @@
 package hovel
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+	"strings"
+)
 
 // Logger emits structured log records back to the daemon as "module/log"
 // notifications. Records appear in the throw transcript alongside the host's own
@@ -38,9 +42,201 @@ func fieldsFromArgs(args []any) map[string]any {
 	fields := make(map[string]any, len(args)/2)
 	for i := 0; i+1 < len(args); i += 2 {
 		key := fmt.Sprint(args[i])
-		fields[key] = args[i+1]
+		fields[key] = sanitizeLogField(args[i+1])
 	}
 	return fields
+}
+
+type logFieldVisit struct {
+	typeOf reflect.Type
+	kind   reflect.Kind
+	ptr    uintptr
+}
+
+type logFieldSanitizer struct {
+	visiting map[logFieldVisit]struct{}
+}
+
+func sanitizeLogField(value any) any {
+	sanitized, _ := (&logFieldSanitizer{
+		visiting: make(map[logFieldVisit]struct{}),
+	}).sanitize(reflect.ValueOf(value))
+	return sanitized
+}
+
+func (s *logFieldSanitizer) sanitize(value reflect.Value) (any, bool) {
+	if !value.IsValid() {
+		return nil, false
+	}
+	if isNilLogFieldValue(value) {
+		return nil, false
+	}
+	if value.CanInterface() {
+		if marker, secret := credentialLogRedaction(value.Interface()); secret {
+			return marker, true
+		}
+	}
+
+	switch value.Kind() {
+	case reflect.Interface:
+		return s.sanitize(value.Elem())
+	case reflect.Pointer:
+		if !s.enter(value) {
+			return "<recursive value redacted>", true
+		}
+		defer s.leave(value)
+		sanitized, changed := s.sanitize(value.Elem())
+		if changed {
+			return sanitized, true
+		}
+	case reflect.Map:
+		return s.sanitizeMap(value)
+	case reflect.Slice, reflect.Array:
+		return s.sanitizeSequence(value)
+	case reflect.Struct:
+		return s.sanitizeStruct(value)
+	}
+	if value.CanInterface() {
+		return value.Interface(), false
+	}
+	return nil, false
+}
+
+func credentialLogRedaction(value any) (string, bool) {
+	switch value.(type) {
+	case CredentialBytes, *CredentialBytes:
+		return redactedCredentialBytes, true
+	case CredentialSecretReference, *CredentialSecretReference,
+		CredentialProtectedPath, *CredentialProtectedPath,
+		CredentialMaterialValue, *CredentialMaterialValue,
+		ResolvedCredentialMaterial, *ResolvedCredentialMaterial,
+		CredentialArtifactContent, *CredentialArtifactContent:
+		return redactedCredentialSecret, true
+	default:
+		return "", false
+	}
+}
+
+func isNilLogFieldValue(value reflect.Value) bool {
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map,
+		reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
+	}
+}
+
+func (s *logFieldSanitizer) sanitizeMap(value reflect.Value) (any, bool) {
+	if !s.enter(value) {
+		return "<recursive value redacted>", true
+	}
+	defer s.leave(value)
+
+	type entry struct {
+		key       string
+		value     any
+		changed   bool
+		keyChange bool
+	}
+	entries := make([]entry, 0, value.Len())
+	changed := false
+	iterator := value.MapRange()
+	for iterator.Next() {
+		keyValue, keyChanged := s.sanitize(iterator.Key())
+		fieldValue, fieldChanged := s.sanitize(iterator.Value())
+		entries = append(entries, entry{
+			key:       fmt.Sprint(keyValue),
+			value:     fieldValue,
+			changed:   fieldChanged,
+			keyChange: keyChanged,
+		})
+		changed = changed || fieldChanged || keyChanged
+	}
+	if !changed && value.CanInterface() {
+		return value.Interface(), false
+	}
+	result := make(map[string]any, len(entries))
+	for _, item := range entries {
+		result[item.key] = item.value
+	}
+	return result, true
+}
+
+func (s *logFieldSanitizer) sanitizeSequence(value reflect.Value) (any, bool) {
+	if value.Kind() == reflect.Slice {
+		if !s.enter(value) {
+			return "<recursive value redacted>", true
+		}
+		defer s.leave(value)
+	}
+	result := make([]any, value.Len())
+	changed := false
+	for i := range value.Len() {
+		var itemChanged bool
+		result[i], itemChanged = s.sanitize(value.Index(i))
+		changed = changed || itemChanged
+	}
+	if !changed && value.CanInterface() {
+		return value.Interface(), false
+	}
+	return result, true
+}
+
+func (s *logFieldSanitizer) sanitizeStruct(value reflect.Value) (any, bool) {
+	typeOf := value.Type()
+	result := make(map[string]any, value.NumField())
+	changed := false
+	for i := range value.NumField() {
+		field := typeOf.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		name, include := logFieldJSONName(field)
+		if !include {
+			continue
+		}
+		fieldValue, fieldChanged := s.sanitize(value.Field(i))
+		result[name] = fieldValue
+		changed = changed || fieldChanged
+	}
+	if !changed && value.CanInterface() {
+		return value.Interface(), false
+	}
+	return result, true
+}
+
+func logFieldJSONName(field reflect.StructField) (string, bool) {
+	tag := field.Tag.Get("json")
+	name, _, _ := strings.Cut(tag, ",")
+	if name == "-" {
+		return "", false
+	}
+	if name == "" {
+		name = field.Name
+	}
+	return name, true
+}
+
+func (s *logFieldSanitizer) enter(value reflect.Value) bool {
+	visit := logFieldVisit{
+		typeOf: value.Type(),
+		kind:   value.Kind(),
+		ptr:    uintptr(value.UnsafePointer()),
+	}
+	if _, exists := s.visiting[visit]; exists {
+		return false
+	}
+	s.visiting[visit] = struct{}{}
+	return true
+}
+
+func (s *logFieldSanitizer) leave(value reflect.Value) {
+	delete(s.visiting, logFieldVisit{
+		typeOf: value.Type(),
+		kind:   value.Kind(),
+		ptr:    uintptr(value.UnsafePointer()),
+	})
 }
 
 // Context carries everything a module needs for one execution: the run and

@@ -6,10 +6,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/clistyle"
-	"github.com/Vibe-Pwners/hovel/internal/adapters/commandview"
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/adapters/clistyle"
+	"github.com/vibepwners/hovel/internal/adapters/commandview"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
 )
 
 func moduleCardDemo() Demo {

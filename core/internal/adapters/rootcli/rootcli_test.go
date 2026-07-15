@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/internal/version"
+	"github.com/vibepwners/hovel/internal/version"
 )
 
 func TestCommandRoleDelegatesToCommandAdapter(t *testing.T) {
@@ -33,12 +33,13 @@ func TestCommandRoleDelegatesToCommandAdapter(t *testing.T) {
 
 func TestDirectCommandDelegatesToCommandAdapter(t *testing.T) {
 	var stdout, stderr bytes.Buffer
+	configPath := writeRootCLIModuleConfig(t)
 
-	code := Run(context.Background(), []string{"module", "available"}, &stdout, &stderr)
+	code := Run(context.Background(), []string{"module", "available", "--config", configPath}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "mock-exploit") {
+	if !strings.Contains(stdout.String(), "root-config-survey@0.1.0") {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 }
@@ -149,6 +150,11 @@ while True:
         }})
     elif method == "step.describe":
         send({"jsonrpc": "2.0", "id": request_id, "result": {"steps": []}})
+    elif method == "mesh.describe":
+        send({"jsonrpc": "2.0", "id": request_id, "error": {
+            "code": -32000,
+            "message": "module is not a mesh provider"
+        }})
     elif method == "shutdown":
         send({"jsonrpc": "2.0", "id": request_id, "result": {"status": "ok"}})
         break

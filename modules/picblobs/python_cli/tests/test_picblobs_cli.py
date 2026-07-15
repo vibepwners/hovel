@@ -6,6 +6,7 @@ Exercises every sub-command in ``picblobs_cli.cli`` plus the
 
 from __future__ import annotations
 
+import os
 import socket
 import stat
 import struct
@@ -47,6 +48,16 @@ def qemu_available() -> bool:
 
     cross_arch = "aarch64" if platform.machine() != "aarch64" else "x86_64"
     return can_run(cross_arch)
+
+
+@pytest.fixture(autouse=True)
+def use_declared_qemu(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Bazel runtime tests independent from host execution support."""
+    if os.environ.get("PICBLOBS_HERMETIC_RUNTIME") != "1":
+        return
+
+    monkeypatch.setattr("picblobs.runner._is_native_arch", lambda _arch: False)
+    monkeypatch.setattr("picblobs.runner._binfmt_handler_enabled", lambda _arch: False)
 
 
 def _require_qemu(flag: bool) -> None:
@@ -493,8 +504,7 @@ class TestBuildCommand:
 
 
 class TestRunCommand:
-    def test_hello_native(self, runner: CliRunner, qemu_available: bool) -> None:
-        _require_qemu(qemu_available)
+    def test_hello_x86_64(self, runner: CliRunner) -> None:
         r = runner.invoke(main, ["run", "hello", "linux:x86_64"])
         assert r.exit_code == 0
         assert "Hello, world!" in r.output
@@ -531,22 +541,17 @@ class TestRunCommand:
         assert r.exit_code != 0
         assert "mutually exclusive" in r.output
 
-    def test_interactive_runs_native(
-        self, runner: CliRunner, qemu_available: bool
-    ) -> None:
+    def test_interactive_runs_x86_64(self, runner: CliRunner) -> None:
         """Interactive mode runs the blob and exits with its code."""
-        _require_qemu(qemu_available)
         r = runner.invoke(main, ["run", "hello", "linux:x86_64", "-i"])
         assert r.exit_code == 0
 
     def test_stdin_piping(
         self,
         runner: CliRunner,
-        qemu_available: bool,
         tmp_path: Path,
     ) -> None:
         """stager_fd reads a length-prefixed payload from stdin."""
-        _require_qemu(qemu_available)
         inner = picblobs.get_blob("test_fd_ok", "linux", "x86_64").code
 
         stdin_file = tmp_path / "stdin.bin"
@@ -602,13 +607,11 @@ class TestRunFromFile:
         assert r.exit_code == 0, r.output
         return out_file
 
-    def test_run_file_native(
+    def test_run_file_x86_64(
         self,
         runner: CliRunner,
-        qemu_available: bool,
         tmp_path: Path,
     ) -> None:
-        _require_qemu(qemu_available)
         blob = self._build_alloc_jump(runner, tmp_path, "x86_64")
         r = runner.invoke(
             main,
@@ -646,14 +649,11 @@ class TestRunFromFile:
     def test_run_file_parity_with_registry(
         self,
         runner: CliRunner,
-        qemu_available: bool,
         tmp_path: Path,
     ) -> None:
         """A blob assembled via `build` and run via `--file` produces the
         same stdout / exit code as the registry-mode path with the
         equivalent config."""
-        _require_qemu(qemu_available)
-
         blob_file = self._build_alloc_jump(runner, tmp_path, "x86_64")
         r_file = runner.invoke(
             main,
@@ -763,12 +763,10 @@ class TestRunFromFile:
     def test_file_mode_stdin_piping(
         self,
         runner: CliRunner,
-        qemu_available: bool,
         tmp_path: Path,
     ) -> None:
         """--stdin still works in file mode: build a stager_fd, feed it
         a length-prefixed inner payload on stdin."""
-        _require_qemu(qemu_available)
         inner = picblobs.get_blob("test_fd_ok", "linux", "x86_64").code
 
         stage = tmp_path / "stage.bin"
@@ -810,14 +808,12 @@ class TestRunFromFile:
 
 
 class TestVerifyCommand:
-    @pytest.mark.timeout(60)
     def test_hello_only(self, runner: CliRunner, qemu_available: bool) -> None:
         _require_qemu(qemu_available)
         r = runner.invoke(main, ["verify", "--type", "hello", "--os", "linux"])
         assert r.exit_code == 0
         assert "passed" in r.output
 
-    @pytest.mark.timeout(60)
     def test_type_and_os_filter(self, runner: CliRunner, qemu_available: bool) -> None:
         _require_qemu(qemu_available)
         r = runner.invoke(main, ["verify", "--type", "hello", "--os", "linux"])

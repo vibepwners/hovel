@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
-	workspacepath "github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/domain/run"
+	workspacepath "github.com/vibepwners/hovel/internal/domain/workspace"
 )
 
 const (

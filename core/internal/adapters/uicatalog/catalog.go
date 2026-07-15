@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/clistyle"
+	"github.com/vibepwners/hovel/internal/adapters/clistyle"
 )
 
 type Options struct {

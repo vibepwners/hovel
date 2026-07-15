@@ -1,9 +1,0 @@
-package(default_visibility = ["//visibility:public"])
-
-filegroup(
-    name = "site_assets",
-    srcs = [
-        "hovel.png",
-        "site.css",
-    ],
-)

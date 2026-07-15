@@ -18,14 +18,14 @@ export const apiReferences: ApiReference[] = [
     description: "Hermetically generated reference for the primary Go SDK package.",
     href: "api/sdk/go/hovel/index.html",
     language: "Go",
-    subtitle: "github.com/Vibe-Pwners/hovel/sdk/go/hovel",
+    subtitle: "github.com/vibepwners/hovel/sdk/go/hovel",
     title: "Go SDK API: hovel",
   },
   {
     description: "Hermetically generated reference for the Go SDK test helpers.",
     href: "api/sdk/go/hoveltest/index.html",
     language: "Go",
-    subtitle: "github.com/Vibe-Pwners/hovel/sdk/go/hoveltest",
+    subtitle: "github.com/vibepwners/hovel/sdk/go/hoveltest",
     title: "Go SDK API: hoveltest",
   },
   {

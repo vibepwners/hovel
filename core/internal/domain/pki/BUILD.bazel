@@ -1,0 +1,47 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pki",
+    srcs = [
+        "assignment.go",
+        "bundle.go",
+        "capability.go",
+        "compatibility.go",
+        "credential_execution.go",
+        "crl.go",
+        "delivery.go",
+        "enums.go",
+        "ids.go",
+        "operation.go",
+        "profile.go",
+        "provider_execution.go",
+        "records.go",
+        "revocation.go",
+        "sequence.go",
+        "stamp.go",
+        "template.go",
+        "trust_set.go",
+        "trust_validation.go",
+    ],
+    importpath = "github.com/vibepwners/hovel/internal/domain/pki",
+    visibility = ["//:__subpackages__"],
+)
+
+go_test(
+    name = "pki_test",
+    srcs = [
+        "assignment_test.go",
+        "credential_execution_test.go",
+        "crl_test.go",
+        "delivery_test.go",
+        "operation_test.go",
+        "pki_test.go",
+        "provider_execution_test.go",
+        "revocation_test.go",
+        "stamp_test.go",
+        "trust_set_test.go",
+        "trust_validation_test.go",
+        "validation_test.go",
+    ],
+    embed = [":pki"],
+)

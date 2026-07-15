@@ -1,24 +1,34 @@
-<!-- hovel-doc: {"title":"Providers, Artifacts, and Structured Logging","group":"Runtime Platform","order":70,"navTitle":"Providers, Artifacts, Logging"} -->
+<!-- hovel-doc: {"title":"Providers, Workspace PKI, Artifacts, and Structured Logging","group":"Runtime Platform","order":70,"navTitle":"Providers, PKI, Artifacts","description":"How Hovel separates provider contracts, encrypted PKI custody, credential delivery, artifacts, sessions, and durable audit evidence."} -->
 <article>
-        <h1>Providers, Artifacts, and Structured Logging</h1>
+        <h1>Providers, Workspace PKI, Artifacts, and Structured Logging</h1>
         <p>Providers let modules and chains ask for typed resources without hard-coding where those resources come from.</p>
         <p>
           In the current implementation, provider behavior is exposed through module RPC:
           Go modules can implement <code>PayloadProvider</code>, Go and Python modules can
-          implement <code>step.*</code> providers, and any module can return explicit
-          installed-payload descriptors. The SDK contexts do not expose a
-          <code>ctx.providers</code> convenience API.
+          implement <code>step.*</code> providers, Go/Python/Rust modules can implement
+          strongly typed optional credential and Mesh contracts, and any module can return
+          explicit installed-payload descriptors. The SDK contexts do not expose a
+          universal <code>ctx.providers</code> convenience API.
         </p>
         <p>The consuming module should not care whether the payload came from a local file, a build step, an artifact cache, another module, a managed service, or an external project.</p>
 
         <h2>Current Provider Scope</h2>
-        <p>The implemented provider path is intentionally narrow:</p>
+        <p>The implemented provider path is intentionally narrow. Artifact provider is a
+          product role here, not a current SDK interface:</p>
         <ol>
-          <li><code>ArtifactProvider</code> records file-like outputs, hashes, metadata, and run associations.</li>
-          <li><code>PayloadProvider</code> resolves tagged bytes, records hashes or artifact refs before execution, validates reconnect descriptors for installed payloads it owns, and should be the eventual live-discovery source for richer payload catalogs. Today, <code>payloads available</code> projects configured payload-provider modules until live discovery is wired through the operator command.</li>
+          <li>Hovel core ingests module file-like outputs as artifacts and owns their hashes, metadata, and run associations; there is no exported <code>ArtifactProvider</code> SDK contract today.</li>
+          <li><code>PayloadProvider</code> resolves tagged bytes and returns typed payload results. Hovel core records hashes or artifact references and validates installed-payload reconnect descriptors before accepting them. The provider may eventually become the live-discovery source for richer payload catalogs. Today, <code>payloads available</code> projects configured payload-provider modules until live discovery is wired through the operator command.</li>
+          <li><code>CredentialProvider</code> is a set of optional Go/Python/Rust module contracts: discovery, runtime material, protected files, provider encoding, and standard or advanced stamping. Each request is bound to an assignment, exact provider descriptor, and non-secret operation scope.</li>
+          <li><code>MeshProvider</code> exposes typed discovery, topology, beacons, listeners, tasks, and streams; credential runtime/file delivery can run immediately before a consuming Mesh listener, task, or stream in the same provider process.</li>
           <li>The structured logging rail reports provider resolution and artifact creation, but is not itself a provider.</li>
         </ol>
-        <p><code>FactProvider</code>, <code>CredentialProvider</code>, <code>ListenerProvider</code>, and <code>SessionProvider</code> remain part of the domain model, but they do not block the current execution loop. Facts can start as module outputs, credentials can start as explicit run inputs or module-produced capabilities, and richer listener/session providers can arrive with the managed-service runtime.</p>
+        <p>
+          <code>FactProvider</code>, a general managed <code>ListenerProvider</code>, and a
+          general <code>SessionProvider</code> remain product roles rather than one mandatory
+          interface. Facts can start as module outputs, Mesh owns its own listener/session
+          surfaces, and richer managed-service providers can arrive without widening every
+          module contract.
+        </p>
 
         <h2>Capability Records</h2>
         <p>
@@ -42,12 +52,14 @@ CleanupHandle</code></pre>
           not produce a live <code>SessionRef</code>, plus a warning evidence record.
         </p>
 
-        <h2>Credentials as Evidence</h2>
+        <h2 id="credential-evidence">Target-created credentials as evidence</h2>
         <p>
-          Created credentials are assessment evidence and remediation material. Hovel
-          stores generated credentials in plaintext and shows them plainly in normal CLI
-          output. The <code>sensitive</code> field marks the material for evidence export
-          and downstream handling; it does not cause operator CLI redaction.
+          Credentials created on a target during an assessment are evidence and remediation
+          material. Hovel stores a <code>CredentialCapability</code> in plaintext and shows
+          it plainly in normal CLI output so an operator can remove the account or recover
+          when automated cleanup fails. The <code>sensitive</code> field marks the material
+          for evidence export and downstream handling; it does not cause operator CLI
+          redaction.
         </p>
 <pre data-lang="credential"><code>CredentialCapability:
   protocol: smb
@@ -62,6 +74,104 @@ CleanupHandle</code></pre>
           should not include Hovel, Squatter, run ids, or tool-identifying markers.
           Evidence stores the mapping needed for remediation.
         </p>
+
+        <h2 id="workspace-pki">Workspace PKI is encrypted custody, not chain evidence</h2>
+        <p>
+          Workspace PKI solves a different problem. The daemon owns authorities, immutable
+          certificate generations, private keys, trust sets, CRLs, assignments, and audit
+          history. Private key material is envelope-encrypted in SQLite; the wrapping master
+          keys live in an owner-only workspace file. Normal list and inspect projections do
+          not contain private bytes. Export and signing require explicit authorization and
+          scoped policy.
+        </p>
+        <table>
+          <thead>
+            <tr><th>Concept</th><th>Owner and purpose</th><th>Normal visibility</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>CredentialCapability</code></td><td>A module-created target account or access secret used as chain state and remediation evidence.</td><td>Plaintext in operator workflow output by design; <code>sensitive</code> guides downstream handling.</td></tr>
+            <tr><td>Workspace PKI generation/bundle</td><td>Daemon-owned certificate, key, chain, trust, and revocation material governed by assignment and export policy.</td><td>Public metadata and certificates are inspectable; private bytes stay in encrypted custody unless explicitly resolved for an authorized operation.</td></tr>
+            <tr><td>Provider delivery</td><td>One short-lived projection of an active assignment delivered to its declared consumer slot.</td><td>Secret bytes, references, and protected paths are transient; durable records keep digests, sizes, provenance, and non-secret receipts.</td></tr>
+          </tbody>
+        </table>
+        <p>
+          Do not convert target-created account evidence into workspace PKI, and do not copy
+          workspace private keys into <code>CredentialCapability</code>. The shared word
+          “credential” does not make their custody or display policies interchangeable.
+        </p>
+
+        <h2 id="credential-delivery">Credential delivery and stamping</h2>
+        <p>
+          A provider advertises only what it consumes through
+          <code>credential.describe</code> and
+          <code>hovel.pki.credential-delivery/v1</code>. Slots constrain purpose, endpoint
+          role, consumer type, bundle/profile/compatibility versions, projections, material
+          forms, maximum encoded size, private-material policy, and stamping remainder
+          policy. Optional execution methods are:
+        </p>
+        <ul>
+          <li><code>credential.runtime</code> — deliver one resolved byte or provider-scoped reference projection directly to the provider process;</li>
+          <li><code>credential.files</code> — deliver bounded owner-protected files valid for the invocation;</li>
+          <li><code>credential.encode</code> — invoke one advertised, versioned provider encoding schema under a hard output limit;</li>
+          <li><code>credential.stamp</code> — apply a persisted plan to an exact artifact or provider-owned deployment using a named or advanced typed target.</li>
+        </ul>
+        <p>
+          Secret-bearing unions fail closed. Resolved material is exactly bytes or a scoped
+          reference; artifact content is exactly inline data or a protected path; stamp
+          output is exactly an artifact or deployment. SDK secret wrappers redact ordinary
+          string/debug formatting. Providers must still avoid putting bytes, paths, write-only
+          config, or deployment receipts in logs and errors.
+        </p>
+
+        <h3>Assignment to consuming operation</h3>
+        <figure class="diagram" aria-label="Credential assignment resolution and same-process consuming operation sequence.">
+          <figcaption>Assignment-bound credential consumption</figcaption>
+          <ol class="flow-diagram">
+            <li class="flow-step">bind assignment to consumer</li>
+            <li class="flow-step">stage and activate generation</li>
+            <li class="flow-step">match provider slot and descriptor digest</li>
+            <li class="flow-step">resolve short-lived projection</li>
+            <li class="flow-step ready">credential.runtime or credential.files</li>
+            <li class="flow-step ready">consume in Mesh listener, task, or stream</li>
+            <li class="flow-step">persist digest-only execution record</li>
+          </ol>
+        </figure>
+        <p>
+          The strongly typed models, assignment validation, non-secret execution ledger,
+          provider dispatch, assignment-to-delivery orchestration, and same-process Mesh
+          sequencing are implemented. Credential-bearing Mesh mutations accept non-secret
+          assignment and slot selectors. The daemon resolves each active assignment,
+          validates its exact provider descriptor and consumer binding, and sends the
+          resulting runtime delivery before
+          <code>mesh.listener.start</code>, <code>mesh.task</code>, or
+          <code>mesh.open_stream</code> in the same process, so ephemeral in-memory material
+          is available to the consuming method. <code>OpenMeshBridge</code> uses the same
+          path before it opens the provider stream. The current external selector supports
+          direct runtime certificate DER, public-key SPKI, and private-key PKCS #8
+          projections. General non-Mesh consuming operations and externally initiated file
+          delivery remain extension points, not implemented behavior.
+        </p>
+        <p>
+          Stamping has the same honesty boundary: descriptor validation, immutable plans,
+          provider execution contracts, result verification models, SQLite persistence, and
+          list/inspect bookkeeping exist, but no production external control path currently
+          initiates the complete plan → resolve → provider → ingest → terminal-transition
+          workflow. See the <a href="module-protocol.html">wire reference</a> and the
+          <a href="credential-provider-development.html">Go, Python, and Rust credential-provider guide</a>.
+        </p>
+
+        <h3>What callers can initiate today</h3>
+        <table>
+          <thead>
+            <tr><th>Surface</th><th>Can initiate now</th><th>Credential-delivery limit</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>CLI and one-shot command mode</td><td>Workspace PKI initialization; authority create/unlock/lock; certificate issue/renew/rotate/revoke; CRL publish; assignment bind/stage/activate/unbind; trust-set create/stage/activate.</td><td>No command initiates provider delivery, encoding, or stamping.</td></tr>
+            <tr><td>Daemon HTTP/JSON RPC</td><td>The PKI lifecycle above, authority rollover phases, bundle export, CRL reconciliation, and credential-bearing Mesh listener, survey-task, stream, and bridge mutations.</td><td>Mesh callers can select active assignments for direct runtime certificate and key projections. Execution-capable Mesh task kinds remain blocked until persisted throw orchestration is wired. Credential stamp and execution endpoints remain list/inspect only; no external method initiates provider encoding or stamping.</td></tr>
+            <tr><td>MCP</td><td>No PKI or credential-delivery tools are registered.</td><td>Neither initiation nor PKI list/inspect is exposed through MCP today.</td></tr>
+            <tr><td>Module stdio RPC</td><td>The daemon can call the five provider methods after selecting a module.</td><td>This is an internal plugin boundary, not an operator, web, or Elixir control API.</td></tr>
+          </tbody>
+        </table>
 
         <h2>Payload Provider</h2>
         <p>Payload query:</p>

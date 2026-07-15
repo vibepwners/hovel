@@ -2,8 +2,13 @@ package daemonrpc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -12,15 +17,65 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
-	operatordomain "github.com/Vibe-Pwners/hovel/internal/domain/operator"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
-	"github.com/Vibe-Pwners/hovel/internal/testmodules/mockexploit"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	apppki "github.com/vibepwners/hovel/internal/app/pki"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	"github.com/vibepwners/hovel/internal/domain/mesh"
+	operatordomain "github.com/vibepwners/hovel/internal/domain/operator"
+	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
+	"github.com/vibepwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/testmodules/mockexploit"
 )
+
+func TestBindMeshCredentialContextRequiresExplicitApprovedScope(t *testing.T) {
+	t.Parallel()
+
+	credentials := domainpki.CredentialSelections{{
+		RequestID:    "credential-request-1",
+		AssignmentID: "assignment-1",
+		SlotName:     "tls-server",
+		Capability:   domainpki.DeliveryCapabilityRuntime,
+		Material: domainpki.CredentialMaterialSelection{
+			Projection: domainpki.CredentialProjectionCertificateDER,
+			Form:       domainpki.CredentialMaterialPublic,
+		},
+	}}
+	if _, err := bindMeshCredentialContext(t.Context(), credentials, nil); err == nil {
+		t.Fatal("bindMeshCredentialContext() accepted selections without authenticated context")
+	}
+	unused := &PKIRequestContext{
+		ActorID: "operator-1", OperationID: "operation-1", CorrelationID: "request-1",
+	}
+	if _, err := bindMeshCredentialContext(t.Context(), nil, unused); err == nil {
+		t.Fatal("bindMeshCredentialContext() accepted an unused credential context")
+	}
+
+	denied, err := bindMeshCredentialContext(t.Context(), credentials, unused)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (apppki.ContextCredentialUseAuthorizer{}).AuthorizeCredentialUse(
+		denied,
+		"assignment-1",
+	); err == nil {
+		t.Fatal("credential use was approved without the narrow approval bit")
+	}
+
+	approvedRequest := *unused
+	approvedRequest.ApproveCredentialUse = true
+	approved, err := bindMeshCredentialContext(t.Context(), credentials, &approvedRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (apppki.ContextCredentialUseAuthorizer{}).AuthorizeCredentialUse(
+		approved,
+		"assignment-1",
+	); err != nil {
+		t.Fatalf("approved credential use: %v", err)
+	}
+}
 
 func TestClientRunsMockExploitThroughDaemonRPC(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
@@ -66,7 +121,7 @@ func TestClientRunsMockExploitThroughDaemonRPC(t *testing.T) {
 	}
 }
 
-func TestClientCanDialDaemonRPCOverTCP(t *testing.T) {
+func TestTCPDaemonRPCIsLoopbackReadOnly(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -89,15 +144,555 @@ func TestClientCanDialDaemonRPCOverTCP(t *testing.T) {
 	}
 	defer closeTestClient(t, client)
 
-	result, err := client.RunMockExploit(context.Background(), RunMockExploitRequest{
+	_, err = client.RunMockExploit(context.Background(), RunMockExploitRequest{
 		ModuleID: "mock-exploit",
 		Target:   "mock://target",
+	})
+	if err == nil || !strings.Contains(err.Error(), "privileged daemon control") {
+		t.Fatalf("RunMockExploit error = %v, want privileged transport rejection", err)
+	}
+	_, err = client.ListMeshOperations(context.Background(), MeshOperationListRequest{})
+	if err == nil || !strings.Contains(err.Error(), "privileged daemon control") {
+		t.Fatalf("ListMeshOperations error = %v, want confidential read rejection", err)
+	}
+}
+
+func TestDaemonRPCTCPRejectsNonLoopbackBind(t *testing.T) {
+	for _, endpoint := range []string{
+		"tcp://0.0.0.0:8080",
+		"http://192.0.2.10:8080",
+		"[::]:8080",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			if _, err := ParseEndpoint(endpoint); err == nil || !strings.Contains(err.Error(), "loopback") {
+				t.Fatalf("ParseEndpoint(%q) error = %v, want loopback rejection", endpoint, err)
+			}
+		})
+	}
+
+	for _, endpoint := range []string{
+		"tcp://127.0.0.1:8080",
+		"http://localhost:8080",
+		"[::1]:8080",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			if _, err := ParseEndpoint(endpoint); err != nil {
+				t.Fatalf("ParseEndpoint(%q) error = %v", endpoint, err)
+			}
+		})
+	}
+}
+
+func TestClientControlsWorkspacePKIThroughDaemonRPC(t *testing.T) {
+	t.Parallel()
+
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	control := &recordingPKIControl{}
+	serveTestDaemon(t, socketPath, services.RunService{}, WithPKIControl(control))
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	status, err := client.PKIStatus(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Initialized {
+		t.Fatalf("initial status = %#v", status)
+	}
+	requestContext := PKIRequestContext{
+		ActorID: "operator-1", OperationID: "operation-1", CorrelationID: "correlation-1",
+	}
+	if _, err := client.InitializePKI(t.Context(), PKIInitializeRequest{Context: requestContext}); err == nil {
+		t.Fatal("InitializePKI() accepted missing confirmation")
+	}
+	status, err = client.InitializePKI(t.Context(), PKIInitializeRequest{Context: requestContext, Confirmed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Initialized || control.initializedBy != "operator-1" {
+		t.Fatalf("initialized status = %#v, actor = %q", status, control.initializedBy)
+	}
+	profiles, err := client.ListPKIProfiles(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles.Profiles) == 0 {
+		t.Fatal("ListPKIProfiles() returned no built-in profiles")
+	}
+	renewed, err := client.RenewPKICertificate(t.Context(), PKIMutationRequest[apppki.RenewCertificateRequest]{
+		Context: requestContext, Request: apppki.RenewCertificateRequest{
+			IdempotencyKey: "rpc:certificate-renew", SourceGenerationID: "generation-rpc-source",
+			GenerationID: "generation-rpc-renewed",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.RunID != "run-1" || result.State != "succeeded" {
-		t.Fatalf("result = %#v", result)
+	if renewed.Kind != apppki.IssuanceKindCertificateRenewal || renewed.Generation.ID != "generation-rpc-renewed" {
+		t.Fatalf("RenewPKICertificate() = %#v", renewed)
+	}
+	rotated, err := client.RotatePKICertificate(t.Context(), PKIMutationRequest[apppki.RotateCertificateRequest]{
+		Context: requestContext, Request: apppki.RotateCertificateRequest{
+			IdempotencyKey: "rpc:certificate-rotate", SourceGenerationID: renewed.Generation.ID,
+			GenerationID: "generation-rpc-rotated", KeyID: "key-rpc-rotated",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.Kind != apppki.IssuanceKindCertificateRotation || rotated.Generation.ID != "generation-rpc-rotated" {
+		t.Fatalf("RotatePKICertificate() = %#v", rotated)
+	}
+	revoked, err := client.RevokePKICertificate(t.Context(), PKIMutationRequest[apppki.RevokeCertificateRequest]{
+		Context: requestContext, Request: apppki.RevokeCertificateRequest{
+			IdempotencyKey: "rpc:certificate-revoke", GenerationID: rotated.Generation.ID,
+			Reason: domainpki.RevocationReasonKeyCompromise,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revoked.Revocation.GenerationID != rotated.Generation.ID ||
+		revoked.Revocation.Reason != domainpki.RevocationReasonKeyCompromise {
+		t.Fatalf("RevokePKICertificate() = %#v", revoked)
+	}
+	if inspected, err := client.InspectPKIRevocation(
+		t.Context(), PKIRevocationRequest{ID: revoked.Revocation.ID},
+	); err != nil || inspected.ID != revoked.Revocation.ID {
+		t.Fatalf("InspectPKIRevocation() = %#v, %v", inspected, err)
+	}
+	if inspected, err := client.InspectPKIGenerationRevocation(
+		t.Context(), PKICertificateRequest{ID: rotated.Generation.ID},
+	); err != nil || inspected.GenerationID != rotated.Generation.ID {
+		t.Fatalf("InspectPKIGenerationRevocation() = %#v, %v", inspected, err)
+	}
+	listedRevocations, err := client.ListPKIRevocations(
+		t.Context(), PKIRevocationListRequest{AuthorityID: "authority-rpc"},
+	)
+	if err != nil || len(listedRevocations.Revocations) != 1 {
+		t.Fatalf("ListPKIRevocations() = %#v, %v", listedRevocations, err)
+	}
+	publishedCRL, err := client.PublishPKICRL(t.Context(), PKIMutationRequest[apppki.PublishCRLRequest]{
+		Context: requestContext, Request: apppki.PublishCRLRequest{
+			IdempotencyKey: "rpc:crl-publish", AuthorityID: "authority-rpc",
+		},
+	})
+	if err != nil || publishedCRL.Generation.ID != "crl-generation-rpc" {
+		t.Fatalf("PublishPKICRL() = %#v, %v", publishedCRL, err)
+	}
+	if publication, err := client.InspectPKICRLPublication(
+		t.Context(), PKICRLPublicationRequest{ID: "crl-publication-rpc"},
+	); err != nil || publication.ID != "crl-publication-rpc" {
+		t.Fatalf("InspectPKICRLPublication() = %#v, %v", publication, err)
+	}
+	if publications, err := client.ListPKICRLPublications(
+		t.Context(), PKICRLListRequest{AuthorityID: "authority-rpc"},
+	); err != nil || len(publications.Publications) != 1 {
+		t.Fatalf("ListPKICRLPublications() = %#v, %v", publications, err)
+	}
+	if inspected, err := client.InspectPKICRL(
+		t.Context(), PKICRLRequest{ID: publishedCRL.Generation.ID},
+	); err != nil || inspected.ID != publishedCRL.Generation.ID {
+		t.Fatalf("InspectPKICRL() = %#v, %v", inspected, err)
+	}
+	listedCRLs, err := client.ListPKICRLs(t.Context(), PKICRLListRequest{AuthorityID: "authority-rpc"})
+	if err != nil || len(listedCRLs.CRLs) != 1 || listedCRLs.CRLs[0].ID != publishedCRL.Generation.ID {
+		t.Fatalf("ListPKICRLs() = %#v, %v", listedCRLs, err)
+	}
+	reconciliationContext := requestContext
+	reconciliationContext.ApproveCRLReconciliation = true
+	reconciledCRL, err := client.ReconcilePKICRL(t.Context(), PKIMutationRequest[apppki.ReconcileCRLPublicationRequest]{
+		Context: reconciliationContext,
+		Request: apppki.ReconcileCRLPublicationRequest{PublicationID: "crl-publication-rpc", StaleAfterSeconds: 60},
+	})
+	if err != nil || reconciledCRL.ID != "crl-publication-rpc" {
+		t.Fatalf("ReconcilePKICRL() = %#v, %v", reconciledCRL, err)
+	}
+	reconciledCRLs, err := client.ReconcilePKICRLs(t.Context(), PKIMutationRequest[apppki.ReconcileCRLPublicationsRequest]{
+		Context: reconciliationContext,
+		Request: apppki.ReconcileCRLPublicationsRequest{StaleAfterSeconds: 60, Limit: 10},
+	})
+	if err != nil || len(reconciledCRLs.Publications) != 1 {
+		t.Fatalf("ReconcilePKICRLs() = %#v, %v", reconciledCRLs, err)
+	}
+	trustSet, err := client.CreatePKITrustSet(t.Context(), PKIMutationRequest[apppki.CreateTrustSetRequest]{
+		Context: requestContext, Request: apppki.CreateTrustSetRequest{
+			IdempotencyKey: "rpc:trust-create", ID: "trust-rpc", Name: "RPC trust",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.StagePKITrustSet(t.Context(), PKIMutationRequest[apppki.StageTrustSetRequest]{
+		Context: requestContext, Request: apppki.StageTrustSetRequest{
+			IdempotencyKey: "rpc:trust-stage", TrustSetID: trustSet.ID, ExpectedRevision: 1,
+			GenerationID: "trust-rpc-generation-1", AnchorGenerationIDs: []domainpki.GenerationID{"generation-rpc-root"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ActivatePKITrustSet(t.Context(), PKIMutationRequest[apppki.ActivateTrustSetRequest]{
+		Context: requestContext, Request: apppki.ActivateTrustSetRequest{
+			IdempotencyKey: "rpc:trust-activate", TrustSetID: trustSet.ID, ExpectedRevision: 2,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListPKITrustSets(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.InspectPKITrustSet(t.Context(), PKITrustSetRequest{ID: trustSet.ID}); err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := client.BindPKIAssignment(t.Context(), PKIMutationRequest[apppki.BindAssignmentRequest]{
+		Context: requestContext, Request: apppki.BindAssignmentRequest{
+			IdempotencyKey: "rpc:assignment-bind", ID: "assignment-rpc",
+			Purpose: domainpki.PurposeMTLSServer, ConsumerType: domainpki.ConsumerMeshListener,
+			ConsumerID: "mesh-provider/listener-rpc", ProfileID: domainpki.ProfileMTLSServer,
+			TrustSetID: trustSet.ID,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.StagePKIAssignment(t.Context(), PKIMutationRequest[apppki.StageAssignmentRequest]{
+		Context: requestContext, Request: apppki.StageAssignmentRequest{
+			IdempotencyKey: "rpc:assignment-stage", AssignmentID: assignment.ID,
+			GenerationID: "generation-rpc-listener", ExpectedRevision: 1,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ActivatePKIAssignment(t.Context(), PKIMutationRequest[apppki.ActivateAssignmentRequest]{
+		Context: requestContext, Request: apppki.ActivateAssignmentRequest{
+			IdempotencyKey: "rpc:assignment-activate", AssignmentID: assignment.ID, ExpectedRevision: 2,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.UnbindPKIAssignment(t.Context(), PKIMutationRequest[apppki.UnbindAssignmentRequest]{
+		Context: requestContext, Request: apppki.UnbindAssignmentRequest{
+			IdempotencyKey: "rpc:assignment-unbind", AssignmentID: assignment.ID, ExpectedRevision: 3,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListPKIAssignments(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.InspectPKIAssignment(t.Context(), PKIAssignmentRequest{ID: assignment.ID}); err != nil {
+		t.Fatal(err)
+	}
+	operations, err := client.ListPKIOperations(t.Context())
+	if err != nil || len(operations.Operations) != 1 || operations.Operations[0].ID != "operation-rpc" {
+		t.Fatalf("ListPKIOperations() = %#v, %v", operations, err)
+	}
+	if inspected, err := client.InspectPKIOperation(
+		t.Context(), PKIOperationRequest{ID: "operation-rpc"},
+	); err != nil || inspected.Operation.ID != "operation-rpc" {
+		t.Fatalf("InspectPKIOperation() = %#v, %v", inspected, err)
+	}
+	credentialExecutions, err := client.ListPKICredentialExecutions(t.Context())
+	if err != nil || len(credentialExecutions.Executions) != 1 ||
+		credentialExecutions.Executions[0].ID != "credential-execution-rpc" {
+		t.Fatalf("ListPKICredentialExecutions() = %#v, %v", credentialExecutions, err)
+	}
+	inspectedExecution, err := client.InspectPKICredentialExecution(
+		t.Context(),
+		PKICredentialExecutionRequest{ID: "credential-execution-rpc"},
+	)
+	if err != nil || inspectedExecution.ID != "credential-execution-rpc" {
+		t.Fatalf("InspectPKICredentialExecution() = %#v, %v", inspectedExecution, err)
+	}
+	rolloverID := domainpki.OperationID("operation-rpc-rollover")
+	if _, err := client.StartPKIAuthorityRollover(
+		t.Context(), PKIMutationRequest[apppki.StartAuthorityRolloverRequest]{
+			Context: requestContext, Request: apppki.StartAuthorityRolloverRequest{
+				IdempotencyKey: "rpc:rollover-start", OperationID: rolloverID,
+				PreviousAuthorityID: "authority-rpc-old", ReplacementAuthorityID: "authority-rpc-new",
+				TrustSetID: "trust-rpc", OverlapTrustGenerationID: "trustgen-rpc-overlap",
+				ConsumerTracking: domainpki.RolloverConsumerTrackingNone,
+			},
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AcknowledgePKIAuthorityRollover(
+		t.Context(), PKIMutationRequest[apppki.AcknowledgeAuthorityRolloverRequest]{
+			Context: requestContext, Request: apppki.AcknowledgeAuthorityRolloverRequest{
+				IdempotencyKey: "rpc:rollover-ack", OperationID: rolloverID,
+				AcknowledgementID: "ack-rpc-rollover", AssignmentID: "assignment-rpc",
+			},
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ActivatePKIAuthorityRollover(
+		t.Context(), PKIMutationRequest[apppki.ActivateAuthorityRolloverRequest]{
+			Context: requestContext, Request: apppki.ActivateAuthorityRolloverRequest{
+				IdempotencyKey: "rpc:rollover-activate", OperationID: rolloverID,
+				ExpectedRevision: 1, ExpectedTrustSetRevision: 3,
+			},
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.BeginPKIAuthorityRolloverFinalTrust(
+		t.Context(), PKIMutationRequest[apppki.BeginAuthorityRolloverFinalTrustRequest]{
+			Context: requestContext, Request: apppki.BeginAuthorityRolloverFinalTrustRequest{
+				IdempotencyKey: "rpc:rollover-final", OperationID: rolloverID,
+				ExpectedRevision: 2, ExpectedTrustSetRevision: 4,
+				FinalTrustGenerationID: "trustgen-rpc-final",
+			},
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CompletePKIAuthorityRollover(
+		t.Context(), PKIMutationRequest[apppki.CompleteAuthorityRolloverRequest]{
+			Context: requestContext, Request: apppki.CompleteAuthorityRolloverRequest{
+				IdempotencyKey: "rpc:rollover-complete", OperationID: rolloverID,
+				ExpectedRevision: 3, ExpectedTrustSetRevision: 5,
+			},
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CancelPKIAuthorityRollover(
+		t.Context(), PKIMutationRequest[apppki.CancelAuthorityRolloverRequest]{
+			Context: requestContext, Request: apppki.CancelAuthorityRolloverRequest{
+				IdempotencyKey: "rpc:rollover-cancel", OperationID: rolloverID, ExpectedRevision: 4,
+			},
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if control.mutationActor != requestContext.ActorID {
+		t.Fatalf("PKI mutation actor = %q, want %q", control.mutationActor, requestContext.ActorID)
+	}
+	expectedMutationKeys := []string{
+		"rpc:certificate-renew",
+		"rpc:certificate-rotate",
+		"rpc:certificate-revoke",
+		"rpc:crl-publish",
+		"crl-publication-rpc",
+		"crl-reconcile-batch",
+		"rpc:trust-create",
+		"rpc:trust-stage",
+		"rpc:trust-activate",
+		"rpc:assignment-bind",
+		"rpc:assignment-stage",
+		"rpc:assignment-activate",
+		"rpc:assignment-unbind",
+		"rpc:rollover-start",
+		"rpc:rollover-ack",
+		"rpc:rollover-activate",
+		"rpc:rollover-final",
+		"rpc:rollover-complete",
+		"rpc:rollover-cancel",
+	}
+	if !reflect.DeepEqual(control.mutationKeys, expectedMutationKeys) {
+		t.Fatalf("PKI mutation keys = %v, want %v", control.mutationKeys, expectedMutationKeys)
+	}
+
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+		client.baseURL+serviceURLPrefix+rpcMethodExportBundle,
+		strings.NewReader(`{"context":{"actorId":"operator-1","operationId":"operation-1","correlationId":"correlation-1"},"generationId":"certgen-test","purpose":"tls-server","includePrivate":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close private export response: %v", err)
+		}
+	}()
+	if response.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("private export status = %d", response.StatusCode)
+	}
+	if got := response.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("private export Cache-Control = %q", got)
+	}
+}
+
+func TestDaemonRPCRejectsUnknownFieldsAndTrailingJSON(t *testing.T) {
+	t.Parallel()
+
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	serveTestDaemon(t, socketPath, services.RunService{}, WithPKIControl(&recordingPKIControl{}))
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	for _, payload := range []string{`{"unknown":true}`, `{} {}`} {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+			client.baseURL+serviceURLPrefix+rpcMethodPKIStatus, strings.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := client.httpClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusBadRequest {
+			t.Errorf("payload %q status = %d, want %d", payload, response.StatusCode, http.StatusBadRequest)
+		}
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close invalid JSON response: %v", err)
+		}
+	}
+}
+
+func TestDaemonRPCRoundTripsTypedPKIErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want error
+	}{
+		{name: "not found", err: apppki.ErrNotFound, want: apppki.ErrNotFound},
+		{
+			name: "revision conflict",
+			err:  apppki.ErrRevisionConflict,
+			want: apppki.ErrRevisionConflict,
+		},
+		{name: "acknowledgement exists", err: apppki.ErrAcknowledgementExists, want: apppki.ErrAcknowledgementExists},
+		{name: "idempotency conflict", err: apppki.ErrIdempotencyConflict, want: apppki.ErrIdempotencyConflict},
+		{name: "mutation exists", err: apppki.ErrMutationExists, want: apppki.ErrMutationExists},
+		{name: "issuance in progress", err: apppki.ErrIssuanceInProgress, want: apppki.ErrIssuanceInProgress},
+		{
+			name: "crl publication in progress",
+			err:  apppki.ErrCRLPublicationInProgress,
+			want: apppki.ErrCRLPublicationInProgress,
+		},
+		{
+			name: "private key export denied",
+			err:  apppki.ErrPrivateKeyExportDenied,
+			want: apppki.ErrPrivateKeyExportDenied,
+		},
+		{
+			name: "authority signing locked",
+			err:  apppki.ErrAuthoritySigningLocked,
+			want: apppki.ErrAuthoritySigningLocked,
+		},
+		{
+			name: "authority signing lease owned",
+			err:  apppki.ErrAuthoritySigningLeaseOwned,
+			want: apppki.ErrAuthoritySigningLeaseOwned,
+		},
+		{
+			name: "rollover precondition",
+			err: apppki.NewRolloverPreconditionError(
+				apppki.RolloverPreconditionAssignmentsNotRotated, "assignment drifted after acknowledgement",
+			),
+			want: apppki.NewRolloverPreconditionError(
+				apppki.RolloverPreconditionAssignmentsNotRotated, "",
+			),
+		},
+		{
+			name: "rollover precondition without detail",
+			err: apppki.NewRolloverPreconditionError(
+				apppki.RolloverPreconditionResourceReserved, "",
+			),
+			want: apppki.NewRolloverPreconditionError(
+				apppki.RolloverPreconditionResourceReserved, "",
+			),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			control := &recordingPKIControl{rolloverErr: test.err}
+			socketPath := shortTempDir(t) + "/hoveld.sock"
+			serveTestDaemon(t, socketPath, services.RunService{}, WithPKIControl(control))
+			client, err := Dial(socketPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeTestClient(t, client)
+
+			_, err = client.ActivatePKIAuthorityRollover(
+				t.Context(),
+				PKIMutationRequest[apppki.ActivateAuthorityRolloverRequest]{
+					Context: PKIRequestContext{
+						ActorID: "operator-typed-error", OperationID: "operation-typed-error",
+						CorrelationID: "correlation-typed-error",
+					},
+					Request: apppki.ActivateAuthorityRolloverRequest{
+						OperationID: "operation-rollover", ExpectedRevision: 1, ExpectedTrustSetRevision: 1,
+					},
+				},
+			)
+			if !errors.Is(err, test.want) {
+				t.Fatalf("ActivatePKIAuthorityRollover() error = %v, want %v", err, test.want)
+			}
+			if strings.HasPrefix(test.name, "rollover precondition") {
+				var typed *apppki.RolloverPreconditionError
+				if !errors.As(err, &typed) {
+					t.Fatalf("typed rollover error = %#v", typed)
+				}
+				wantDetail := ""
+				if test.name == "rollover precondition" {
+					wantDetail = "assignment drifted after acknowledgement"
+				}
+				if typed.Detail != wantDetail {
+					t.Fatalf("typed rollover detail = %q, want %q", typed.Detail, wantDetail)
+				}
+			}
+		})
+	}
+}
+
+func TestDaemonRPCRejectsUnplannedExecutionCapableMeshTask(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 11, 30, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs)
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	_, err = client.RunMeshTask(context.Background(), MeshTaskRunRequest{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.TaskRequest{
+			TaskID: "unplanned-command",
+			Kind:   mesh.TaskCommand,
+			NodeID: "relay-1",
+		},
+	})
+	if !errors.Is(err, errPrivilegedControlUnavailable) ||
+		!strings.Contains(err.Error(), "persisted throw plan") {
+		t.Fatalf("unplanned RunMeshTask error = %v, want permission denial", err)
+	}
+
+	operations, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
+		Kind: MeshOperationKindTask,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations.Operations) != 1 ||
+		operations.Operations[0].State != MeshOperationStateFailed ||
+		!strings.Contains(operations.Operations[0].Error, "persisted throw plan") {
+		t.Fatalf("rejected task bookkeeping = %#v", operations.Operations)
 	}
 }
 
@@ -121,8 +716,8 @@ func TestDaemonRPCTracksMeshTaskAndStreamOperations(t *testing.T) {
 		ModuleID: "mesh-provider@v0.1.0",
 		Request: mesh.TaskRequest{
 			RunID:           "run-mesh-1",
-			TaskID:          "deliver-exploit",
-			Kind:            mesh.TaskUploadExecute,
+			TaskID:          "survey-destination",
+			Kind:            mesh.TaskSurvey,
 			NodeID:          "relay-1",
 			Target:          "dc-1",
 			DestinationHost: "10.10.10.10",
@@ -169,7 +764,7 @@ func TestDaemonRPCTracksMeshTaskAndStreamOperations(t *testing.T) {
 	taskOperation := operations.Operations[0]
 	if taskOperation.Kind != "task" ||
 		taskOperation.State != "succeeded" ||
-		taskOperation.TaskKind != "upload_execute" ||
+		taskOperation.TaskKind != "survey" ||
 		taskOperation.SessionID != "mesh-task-session-1" ||
 		taskOperation.DestinationHost != "10.10.10.10" ||
 		taskOperation.DestinationPort != 445 ||
@@ -339,8 +934,9 @@ func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	defer closeTestClient(t, client)
 
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID:  "mesh-provider@v0.1.0",
-		LocalHost: "127.0.0.1",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalHost:    "127.0.0.1",
+		LocalNetwork: MeshBridgeNetworkTCP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-bridge",
 			NodeID:          "relay-1",
@@ -359,6 +955,12 @@ func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	if bridge.LocalHost != "127.0.0.1" || bridge.LocalPort == 0 || bridge.LocalAddress == "" {
 		t.Fatalf("mesh bridge endpoint = %#v, want local loopback address", bridge)
 	}
+	if bridge.LocalNetwork != MeshBridgeNetworkTCP {
+		t.Fatalf("mesh bridge local network = %q, want tcp", bridge.LocalNetwork)
+	}
+	if bridge.Capability.reveal() == "" {
+		t.Fatal("mesh bridge capability is empty")
+	}
 
 	conn, err := net.DialTimeout("tcp", bridge.LocalAddress, time.Second)
 	if err != nil {
@@ -369,9 +971,11 @@ func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 			t.Fatalf("close bridge connection: %v", err)
 		}
 	}()
-
-	if _, err := conn.Write([]byte("ping")); err != nil {
+	framedPayload := append(meshBridgeCapabilityFrame(bridge.Capability), []byte("ping")...)
+	if n, err := conn.Write(framedPayload); err != nil {
 		t.Fatal(err)
+	} else if n != len(framedPayload) {
+		t.Fatalf("framed TCP bridge write = %d bytes, want %d", n, len(framedPayload))
 	}
 	select {
 	case got := <-sessions.writes:
@@ -420,8 +1024,69 @@ func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	}
 	if len(operations.Operations) != 1 ||
 		operations.Operations[0].ID != bridge.OperationID ||
+		operations.Operations[0].LocalNetwork != MeshBridgeNetworkTCP ||
 		operations.Operations[0].LocalAddress != bridge.LocalAddress {
 		t.Fatalf("closed bridge operations = %#v", operations.Operations)
+	}
+	if strings.Contains(
+		fmt.Sprintf("%#v", operations.Operations),
+		bridge.Capability.reveal(),
+	) {
+		t.Fatal("ephemeral Mesh bridge capability leaked into operation bookkeeping")
+	}
+}
+
+func TestMeshBridgeOpenResponseDisablesCaching(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 13, 10, 0, 0, time.UTC)},
+	)
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(newBridgeSessionBroker()))
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+
+	request, err := http.NewRequestWithContext(
+		t.Context(),
+		http.MethodPost,
+		client.baseURL+serviceURLPrefix+rpcMethodOpenMeshBridge,
+		strings.NewReader(`{"moduleId":"mesh-provider@v0.1.0","localNetwork":"tcp","request":{"runId":"run-no-store","destinationHost":"10.10.10.10","destinationPort":445,"protocol":"tcp"}}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.httpClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close Mesh bridge response: %v", err)
+		}
+	}()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("Mesh bridge open status = %d", response.StatusCode)
+	}
+	if got := response.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Mesh bridge open Cache-Control = %q", got)
+	}
+	var bridge MeshBridgeOpenResponse
+	if err := json.NewDecoder(response.Body).Decode(&bridge); err != nil {
+		t.Fatal(err)
+	}
+	if bridge.Capability.reveal() == "" {
+		t.Fatal("Mesh bridge response capability is empty")
+	}
+	if _, err := client.CloseMeshBridge(t.Context(), MeshBridgeCloseRequest{
+		OperationID: bridge.OperationID,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -443,8 +1108,9 @@ func TestClientOpensUDPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	defer closeTestClient(t, client)
 
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID:  "mesh-provider@v0.1.0",
-		LocalHost: "127.0.0.1",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalHost:    "127.0.0.1",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-bridge",
 			NodeID:          "relay-1",
@@ -463,6 +1129,12 @@ func TestClientOpensUDPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	if bridge.LocalHost != "127.0.0.1" || bridge.LocalPort == 0 || bridge.LocalAddress == "" {
 		t.Fatalf("mesh bridge endpoint = %#v, want local loopback address", bridge)
 	}
+	if bridge.Capability.reveal() == "" {
+		t.Fatal("mesh bridge capability is empty")
+	}
+	if bridge.LocalNetwork != MeshBridgeNetworkUDP {
+		t.Fatalf("mesh bridge local network = %q, want udp", bridge.LocalNetwork)
+	}
 
 	remote, err := net.ResolveUDPAddr("udp", bridge.LocalAddress)
 	if err != nil {
@@ -477,6 +1149,7 @@ func TestClientOpensUDPMeshBridgeAsLocalEndpoint(t *testing.T) {
 			t.Fatalf("close udp bridge connection: %v", err)
 		}
 	}()
+	authenticateUDPMeshBridge(t, conn, bridge.Capability)
 
 	if _, err := conn.Write([]byte("dns?")); err != nil {
 		t.Fatal(err)
@@ -529,6 +1202,7 @@ func TestClientOpensUDPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	}
 	if len(operations.Operations) != 1 ||
 		operations.Operations[0].Protocol != "udp" ||
+		operations.Operations[0].LocalNetwork != MeshBridgeNetworkUDP ||
 		operations.Operations[0].LocalAddress != bridge.LocalAddress {
 		t.Fatalf("udp bridge operations = %#v", operations.Operations)
 	}
@@ -551,7 +1225,8 @@ func TestUDPMeshBridgePreservesProviderDatagramUntilLocalPeerArrives(t *testing.
 	}
 	defer closeTestClient(t, client)
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-early-reply",
 			DestinationHost: "10.10.10.53",
@@ -595,17 +1270,7 @@ func TestUDPMeshBridgePreservesProviderDatagramUntilLocalPeerArrives(t *testing.
 			t.Errorf("close UDP peer: %v", err)
 		}
 	}()
-	if _, err := conn.Write([]byte("claim")); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case got := <-sessions.writes:
-		if string(got) != "claim" {
-			t.Fatalf("session datagram = %q, want claim", got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for local peer claim")
-	}
+	authenticateUDPMeshBridge(t, conn, bridge.Capability)
 	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
@@ -616,6 +1281,17 @@ func TestUDPMeshBridgePreservesProviderDatagramUntilLocalPeerArrives(t *testing.
 	}
 	if got := string(buf[:n]); got != "early" {
 		t.Fatalf("pending provider datagram = %q, want early", got)
+	}
+	if _, err := conn.Write([]byte("claim")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-sessions.writes:
+		if string(got) != "claim" {
+			t.Fatalf("session datagram = %q, want claim", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for authenticated local peer datagram")
 	}
 }
 
@@ -636,7 +1312,8 @@ func TestUDPMeshBridgeClosesWhenProviderSessionEnds(t *testing.T) {
 	}
 	defer closeTestClient(t, client)
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-close",
 			DestinationHost: "10.10.10.53",
@@ -657,10 +1334,18 @@ func TestUDPMeshBridgeClosesWhenProviderSessionEnds(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for provider-closed UDP bridge cleanup")
 	}
+	// The broker reports the provider close from inside CloseSession, before
+	// daemon-side bookkeeping and registry cleanup finish. Joining an in-flight
+	// close is therefore valid; either result establishes a cleanup barrier.
+	if _, err := client.CloseMeshBridge(context.Background(), MeshBridgeCloseRequest{
+		OperationID: bridge.OperationID,
+	}); err != nil && !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("CloseMeshBridge during provider close error = %v", err)
+	}
 	if _, err := client.CloseMeshBridge(context.Background(), MeshBridgeCloseRequest{
 		OperationID: bridge.OperationID,
 	}); err == nil || !strings.Contains(err.Error(), "does not exist") {
-		t.Fatalf("CloseMeshBridge after provider close error = %v, want missing bridge", err)
+		t.Fatalf("CloseMeshBridge after provider close cleanup error = %v, want missing bridge", err)
 	}
 	operations, err := client.ListMeshOperations(context.Background(), MeshOperationListRequest{
 		Kind:  "bridge",
@@ -679,7 +1364,8 @@ func TestUDPMeshBridgeRequiresDatagramSessionCapability(t *testing.T) {
 	manager := NewMeshBridgeManager()
 	sessions := newBridgeSessionBroker()
 	_, err := OpenMeshBridge(context.Background(), MeshBridgeOpenArgs{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-capability",
 			DestinationHost: "10.10.10.53",
@@ -733,7 +1419,8 @@ func TestUDPMeshBridgeKeepsFirstLocalPeer(t *testing.T) {
 	}
 	defer closeTestClient(t, client)
 	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkUDP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-udp-peer",
 			DestinationHost: "10.10.10.53",
@@ -776,6 +1463,7 @@ func TestUDPMeshBridgeKeepsFirstLocalPeer(t *testing.T) {
 		}
 	}()
 
+	authenticateUDPMeshBridge(t, first, bridge.Capability)
 	if _, err := first.Write([]byte("first")); err != nil {
 		t.Fatal(err)
 	}
@@ -816,6 +1504,182 @@ func TestUDPMeshBridgeKeepsFirstLocalPeer(t *testing.T) {
 	}
 }
 
+func TestTCPMeshBridgeRejectsMissingAndWrongCapabilities(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 13, 28, 0, 0, time.UTC)},
+	)
+	sessions := newBridgeSessionBroker()
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(sessions))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkTCP,
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-tcp-auth",
+			DestinationHost: "10.10.10.10",
+			DestinationPort: 445,
+			Protocol:        "provider-stream",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stalling, err := net.DialTimeout(string(MeshBridgeNetworkTCP), bridge.LocalAddress, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := stalling.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close stalling TCP bridge peer: %v", err)
+		}
+	}()
+
+	wrong, err := net.DialTimeout(string(MeshBridgeNetworkTCP), bridge.LocalAddress, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authenticateMeshBridge(t, wrong, meshBridgeCapabilityValue("wrong-capability"))
+	if err := wrong.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wrong.Read(make([]byte, 1)); err == nil {
+		t.Fatal("TCP peer with wrong capability remained connected")
+	}
+	if err := wrong.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatal(err)
+	}
+	assertNoMeshBridgeWrite(t, sessions)
+
+	authorized, err := net.DialTimeout(string(MeshBridgeNetworkTCP), bridge.LocalAddress, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := authorized.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close authorized TCP bridge peer: %v", err)
+		}
+	}()
+	authenticateMeshBridge(t, authorized, bridge.Capability)
+	if _, err := authorized.Write([]byte("authorized")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-sessions.writes:
+		if string(got) != "authorized" {
+			t.Fatalf("authorized TCP session write = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for authorized TCP bridge write")
+	}
+}
+
+func TestUDPMeshBridgeRejectsMissingAndWrongCapabilities(t *testing.T) {
+	socketPath := shortTempDir(t) + "/hoveld.sock"
+	runs := services.NewRunService(
+		fakeMeshRunner{},
+		discardEvents{},
+		&sequenceIDs{values: []string{"run-unused"}},
+		fixedClock{now: time.Date(2026, 7, 9, 13, 29, 0, 0, time.UTC)},
+	)
+	sessions := newBridgeSessionBroker()
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(sessions))
+
+	client, err := Dial(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestClient(t, client)
+	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkUDP,
+		Request: mesh.StreamRequest{
+			RunID:           "run-mesh-udp-auth",
+			DestinationHost: "10.10.10.53",
+			DestinationPort: 53,
+			Protocol:        "provider-datagram",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, closeErr := client.CloseMeshBridge(
+			context.Background(),
+			MeshBridgeCloseRequest{OperationID: bridge.OperationID},
+		)
+		if closeErr != nil && !strings.Contains(closeErr.Error(), "does not exist") {
+			t.Errorf("close UDP bridge: %v", closeErr)
+		}
+	}()
+	remote, err := net.ResolveUDPAddr(string(MeshBridgeNetworkUDP), bridge.LocalAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attacker, err := net.DialUDP(string(MeshBridgeNetworkUDP), nil, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := attacker.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close unauthorized UDP peer: %v", err)
+		}
+	}()
+	if _, err := attacker.Write([]byte("missing-capability")); err != nil {
+		t.Fatal(err)
+	}
+	authenticateUDPMeshBridge(t, attacker, meshBridgeCapabilityValue("wrong-capability"))
+	assertNoMeshBridgeWrite(t, sessions)
+
+	authorized, err := net.DialUDP(string(MeshBridgeNetworkUDP), nil, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := authorized.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close authorized UDP peer: %v", err)
+		}
+	}()
+	authenticateUDPMeshBridge(t, authorized, bridge.Capability)
+	if _, err := authorized.Write([]byte("authorized")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-sessions.writes:
+		if string(got) != "authorized" {
+			t.Fatalf("authorized UDP session write = %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for authorized UDP bridge write")
+	}
+	if _, err := attacker.Write([]byte("hijack")); err != nil {
+		t.Fatal(err)
+	}
+	assertNoMeshBridgeWrite(t, sessions)
+
+	sessions.reads <- run.SessionChunk{SessionID: bridge.SessionID, Data: []byte("reply")}
+	if err := authorized.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, len("reply"))
+	n, err := authorized.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(buf[:n]); got != "reply" {
+		t.Fatalf("authorized UDP reply = %q", got)
+	}
+}
+
 func TestMeshBridgeRejectsNonLoopbackLocalHost(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
 	runs := services.NewRunService(
@@ -848,10 +1712,11 @@ func TestMeshBridgeRejectsNonLoopbackLocalHost(t *testing.T) {
 	}
 }
 
-func TestMeshBridgeRejectsRawProtocolLocalEndpoint(t *testing.T) {
+func TestMeshBridgePreservesProviderDefinedProtocol(t *testing.T) {
 	socketPath := shortTempDir(t) + "/hoveld.sock"
+	streamRequests := make(chan mesh.StreamRequest, 1)
 	runs := services.NewRunService(
-		fakeMeshRunner{},
+		fakeMeshRunner{streamRequests: streamRequests},
 		discardEvents{},
 		&sequenceIDs{values: []string{"run-unused"}},
 		fixedClock{now: time.Date(2026, 7, 9, 13, 45, 0, 0, time.UTC)},
@@ -864,9 +1729,10 @@ func TestMeshBridgeRejectsRawProtocolLocalEndpoint(t *testing.T) {
 	}
 	defer closeTestClient(t, client)
 
-	_, err = client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
-		ModuleID:  "mesh-provider@v0.1.0",
-		LocalHost: "127.0.0.1",
+	bridge, err := client.OpenMeshBridge(context.Background(), MeshBridgeOpenRequest{
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalHost:    "127.0.0.1",
+		LocalNetwork: MeshBridgeNetworkTCP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-bridge",
 			NodeID:          "relay-1",
@@ -874,8 +1740,49 @@ func TestMeshBridgeRejectsRawProtocolLocalEndpoint(t *testing.T) {
 			Protocol:        "icmp",
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "local socket bridges currently support tcp or udp") {
-		t.Fatalf("OpenMeshBridge error = %v, want local socket protocol rejection", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bridge.LocalNetwork != MeshBridgeNetworkTCP {
+		t.Fatalf("mesh bridge local network = %q, want tcp", bridge.LocalNetwork)
+	}
+	select {
+	case request := <-streamRequests:
+		if request.Protocol != "icmp" {
+			t.Fatalf("provider protocol = %q, want icmp", request.Protocol)
+		}
+		if request.Config[meshBridgeConfigLocalNetwork] != MeshBridgeNetworkTCP {
+			t.Fatalf("provider bridge config = %#v, want local tcp network", request.Config)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for provider stream request")
+	}
+	if _, err := client.CloseMeshBridge(t.Context(), MeshBridgeCloseRequest{
+		OperationID: bridge.OperationID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMeshBridgeRejectsUnsupportedLocalNetwork(t *testing.T) {
+	t.Parallel()
+
+	for _, network := range []MeshBridgeNetwork{"raw", "TCP", " tcp"} {
+		t.Run(string(network), func(t *testing.T) {
+			t.Parallel()
+
+			_, err := OpenMeshBridge(t.Context(), MeshBridgeOpenArgs{
+				ModuleID:     "mesh-provider@v0.1.0",
+				LocalNetwork: network,
+				Runs:         fakeMeshRunner{},
+				Sessions:     newBridgeSessionBroker(),
+				Book:         NewMeshBook(),
+				Bridges:      NewMeshBridgeManager(),
+			})
+			if err == nil || !strings.Contains(err.Error(), "local network") {
+				t.Fatalf("OpenMeshBridge error = %v, want local network rejection", err)
+			}
+		})
 	}
 }
 
@@ -888,6 +1795,58 @@ func TestOpenMeshBridgeRejectsMissingStreamOpener(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "mesh stream opener is not configured") {
 		t.Fatalf("OpenMeshBridge error = %v, want missing stream opener", err)
+	}
+}
+
+func TestOpenMeshBridgePassesCredentialSelectionsWithOperationScope(t *testing.T) {
+	t.Parallel()
+
+	opener := &credentialBridgeOpener{}
+	book := NewMeshBook()
+	manager := NewMeshBridgeManager()
+	credentials := domainpki.CredentialSelections{{
+		RequestID: "credential-bridge-1", AssignmentID: "assignment-bridge",
+		SlotName: "tls-client", Capability: domainpki.DeliveryCapabilityRuntime,
+		Material: domainpki.CredentialMaterialSelection{
+			Projection: domainpki.CredentialProjectionCertificateDER,
+			Form:       domainpki.CredentialMaterialPublic,
+		},
+	}}
+	response, err := OpenMeshBridge(t.Context(), MeshBridgeOpenArgs{
+		ModuleID: "mesh-provider@v0.1.0",
+		Request: mesh.StreamRequest{
+			Protocol: "tcp", NodeID: "node-edge", DestinationHost: "10.0.0.1",
+		},
+		Credentials:     credentials,
+		CredentialScope: domainpki.CredentialOperationScope{OperationID: "credential-operation-1"},
+		Runs:            opener,
+		Sessions:        newBridgeSessionBroker(),
+		Book:            book,
+		Bridges:         manager,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.LocalNetwork != MeshBridgeNetworkTCP {
+		t.Fatalf(
+			"default local Mesh bridge network = %q, want tcp",
+			response.LocalNetwork,
+		)
+	}
+	bridge, ok := manager.Find(response.OperationID, "")
+	if !ok {
+		t.Fatal("credential-aware bridge was not tracked")
+	}
+	defer func() {
+		if err := bridge.Close(t.Context()); err != nil {
+			t.Errorf("close credential-aware bridge: %v", err)
+		}
+	}()
+	if !opener.called || len(opener.credentials) != 1 {
+		t.Fatalf("credential opener call = %v, credentials = %#v", opener.called, opener.credentials)
+	}
+	if opener.scope.OperationID != "credential-operation-1" {
+		t.Fatalf("credential scope operation = %q, want stable caller id", opener.scope.OperationID)
 	}
 }
 
@@ -937,12 +1896,13 @@ func TestOpenMeshBridgeDoesNotAssociateRejectedDuplicateSession(t *testing.T) {
 	manager := NewMeshBridgeManager()
 	sessions := newBridgeSessionBroker()
 	args := MeshBridgeOpenArgs{
-		ModuleID: "mesh-provider@v0.1.0",
+		ModuleID:     "mesh-provider@v0.1.0",
+		LocalNetwork: MeshBridgeNetworkTCP,
 		Request: mesh.StreamRequest{
 			RunID:           "run-mesh-duplicate",
 			DestinationHost: "10.10.10.10",
 			DestinationPort: 445,
-			Protocol:        meshBridgeProtocolTCP,
+			Protocol:        "provider-stream",
 		},
 		Runs: services.NewRunService(
 			fakeMeshRunner{},
@@ -984,38 +1944,44 @@ func TestOpenMeshBridgeDoesNotAssociateRejectedDuplicateSession(t *testing.T) {
 func TestMeshBridgeRequestOwnsReservedConfig(t *testing.T) {
 	tests := []struct {
 		name             string
-		protocol         string
+		providerProtocol string
+		localNetwork     MeshBridgeNetwork
 		forgedDatagram   bool
 		expectedDatagram bool
 	}{
 		{
 			name:             "udp owns datagram mode",
-			protocol:         meshBridgeProtocolUDP,
+			providerProtocol: "dns",
+			localNetwork:     MeshBridgeNetworkUDP,
 			forgedDatagram:   false,
 			expectedDatagram: true,
 		},
 		{
 			name:             "tcp clears forged datagram mode",
-			protocol:         meshBridgeProtocolTCP,
+			providerProtocol: "icmp",
+			localNetwork:     MeshBridgeNetworkTCP,
 			forgedDatagram:   true,
 			expectedDatagram: false,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := meshBridgeRequest(mesh.StreamRequest{Config: map[string]any{
-				"provider.option":            "preserved",
-				meshBridgeConfigLocalAddress: "forged",
-				meshBridgeConfigOwner:        "caller",
-				meshBridgeConfigProtocol:     "forged",
-				meshBridgeConfigDatagram:     test.forgedDatagram,
-			}}, "127.0.0.1:1445", test.protocol)
+			request := meshBridgeRequest(mesh.StreamRequest{
+				Protocol: test.providerProtocol,
+				Config: map[string]any{
+					"provider.option":            "preserved",
+					meshBridgeConfigLocalAddress: "forged",
+					meshBridgeConfigOwner:        "caller",
+					meshBridgeConfigLocalNetwork: "forged",
+					meshBridgeConfigDatagram:     test.forgedDatagram,
+				}}, "127.0.0.1:1445", test.localNetwork)
 
 			if request.Config["provider.option"] != "preserved" ||
 				request.Config[meshBridgeConfigLocalAddress] != "127.0.0.1:1445" ||
 				request.Config[meshBridgeConfigOwner] != meshBridgeOwnerDaemon ||
-				request.Config[meshBridgeConfigProtocol] != test.protocol ||
-				request.Config[meshBridgeConfigDatagram] != test.expectedDatagram {
+				request.Config[meshBridgeConfigLocalNetwork] != test.localNetwork ||
+				request.Config[meshBridgeConfigDatagram] != test.expectedDatagram ||
+				request.Protocol != test.providerProtocol {
 				t.Fatalf("mesh bridge config = %#v", request.Config)
 			}
 		})
@@ -1101,7 +2067,7 @@ func TestMeshBridgeWritesEntireSessionChunkToLocalStream(t *testing.T) {
 	}
 }
 
-func TestMeshBridgeCloseReturnsStableErrorAndFailsBookkeeping(t *testing.T) {
+func TestMeshBridgeCloseRetainsProviderSessionForRetry(t *testing.T) {
 	closeFailure := errors.New("provider close failed")
 	book := NewMeshBook()
 	manager := NewMeshBridgeManager()
@@ -1135,15 +2101,24 @@ func TestMeshBridgeCloseReturnsStableErrorAndFailsBookkeeping(t *testing.T) {
 	if err := bridge.Close(context.Background()); !errors.Is(err, closeFailure) {
 		t.Fatalf("first Close error = %v, want provider failure", err)
 	}
-	if err := bridge.Close(context.Background()); !errors.Is(err, closeFailure) {
-		t.Fatalf("second Close error = %v, want stable provider failure", err)
+	if _, ok := manager.Find(response.OperationID, ""); !ok {
+		t.Fatal("failed-close bridge was removed before provider cleanup could be retried")
+	}
+	failed := book.List(MeshOperationListRequest{Kind: "bridge", State: "failed"})
+	if len(failed) != 1 || !strings.Contains(failed[0].Error, closeFailure.Error()) {
+		t.Fatalf("failed-close bridge operations = %#v", failed)
+	}
+
+	sessions.closeErr = nil
+	if err := bridge.Close(context.Background()); err != nil {
+		t.Fatalf("retry Close error = %v, want success", err)
 	}
 	if _, ok := manager.Find(response.OperationID, ""); ok {
-		t.Fatal("failed-close bridge remains tracked")
+		t.Fatal("successfully closed bridge remains tracked")
 	}
-	operations := book.List(MeshOperationListRequest{Kind: "bridge", State: "failed"})
-	if len(operations) != 1 || !strings.Contains(operations[0].Error, closeFailure.Error()) {
-		t.Fatalf("failed-close bridge operations = %#v", operations)
+	closed := book.List(MeshOperationListRequest{Kind: "bridge", State: "closed"})
+	if len(closed) != 1 || closed[0].ID != response.OperationID {
+		t.Fatalf("closed bridge operations = %#v", closed)
 	}
 }
 
@@ -1187,6 +2162,16 @@ func TestMeshBridgeFinishRetainsTransferAndCleanupErrors(t *testing.T) {
 		!strings.Contains(operations[0].Error, closeFailure.Error()) {
 		t.Fatalf("failed bridge operations = %#v, want transfer and cleanup errors", operations)
 	}
+	if _, ok := manager.Find(response.OperationID, ""); !ok {
+		t.Fatal("bridge with failed provider cleanup is not available for retry")
+	}
+	sessions.closeErr = nil
+	if err := bridge.Close(context.Background()); !errors.Is(err, transferFailure) {
+		t.Fatalf("retry Close error = %v, want retained transfer failure", err)
+	}
+	if _, ok := manager.Find(response.OperationID, ""); ok {
+		t.Fatal("bridge remains tracked after provider cleanup succeeds")
+	}
 }
 
 func TestCloseMeshBridgeRequiresExactlyOneSelector(t *testing.T) {
@@ -1215,10 +2200,153 @@ func TestMeshBookListDefensivelyCopiesSessionIDs(t *testing.T) {
 	}
 }
 
+func TestMeshBookBoundsRecentOperationsAndKeepsRingIndexesCurrent(t *testing.T) {
+	book := newMeshBook(2)
+	now := time.Date(2026, 7, 9, 15, 0, 0, 0, time.UTC)
+	first := book.StartTask("provider", mesh.TaskRequest{TaskID: "first"}, now)
+	second := book.StartTask("provider", mesh.TaskRequest{TaskID: "second"}, now.Add(time.Second))
+	third := book.StartTask("provider", mesh.TaskRequest{TaskID: "third"}, now.Add(2*time.Second))
+
+	listed := book.List(MeshOperationListRequest{})
+	if len(listed) != 2 || listed[0].ID != second.ID || listed[1].ID != third.ID {
+		t.Fatalf("bounded Mesh operations = %#v, want second and third in order", listed)
+	}
+	if book.count != 2 || len(book.operations) != 2 || len(book.byID) != 2 {
+		t.Fatalf(
+			"Mesh book bounds = count %d, slots %d, indexes %d; want 2 each",
+			book.count,
+			len(book.operations),
+			len(book.byID),
+		)
+	}
+	book.CompleteTask(first.ID, mesh.TaskResult{Status: "evicted"}, now.Add(3*time.Second))
+	book.CompleteTask(second.ID, mesh.TaskResult{Status: "partial"}, now.Add(4*time.Second))
+	listed = book.List(MeshOperationListRequest{})
+	if listed[0].ProviderStatus != "partial" || listed[0].State != MeshOperationStateFailed {
+		t.Fatalf("retained ring operation = %#v, want provider status and fail-closed daemon state", listed[0])
+	}
+}
+
+func TestMeshBookSeparatesProviderTaskStatusFromDaemonLifecycle(t *testing.T) {
+	now := time.Date(2026, 7, 9, 15, 5, 0, 0, time.UTC)
+	tests := []struct {
+		name          string
+		providerState mesh.TaskStatus
+		daemonState   MeshOperationState
+	}{
+		{name: "unknown provider status fails closed", providerState: "partial", daemonState: MeshOperationStateFailed},
+		{name: "provider failure", providerState: mesh.TaskStatusFailed, daemonState: MeshOperationStateFailed},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			book := NewMeshBook()
+			operation := book.StartTask("provider", mesh.TaskRequest{TaskID: "task"}, now)
+			book.CompleteTask(
+				operation.ID,
+				mesh.TaskResult{Status: test.providerState},
+				now.Add(time.Second),
+			)
+
+			listed := book.List(MeshOperationListRequest{State: test.daemonState})
+			if len(listed) != 1 || listed[0].ProviderStatus != test.providerState {
+				t.Fatalf("provider task status operation = %#v", listed)
+			}
+			filtered := book.List(MeshOperationListRequest{ProviderStatus: test.providerState})
+			if len(filtered) != 1 || filtered[0].State != test.daemonState {
+				t.Fatalf("provider task status filter = %#v", filtered)
+			}
+			if invalid := book.List(MeshOperationListRequest{
+				State: MeshOperationState(test.providerState),
+			}); test.providerState == "partial" && len(invalid) != 0 {
+				t.Fatalf("provider status leaked into daemon lifecycle: %#v", invalid)
+			}
+		})
+	}
+}
+
+func authenticateMeshBridge(t *testing.T, writer io.Writer, capability MeshBridgeCapability) {
+	t.Helper()
+	frame := meshBridgeCapabilityFrame(capability)
+	n, err := writer.Write(frame)
+	if err != nil {
+		t.Fatalf("write Mesh bridge capability: %v", err)
+	}
+	if n != len(frame) {
+		t.Fatalf("write Mesh bridge capability = %d bytes, want %d", n, len(frame))
+	}
+}
+
+func authenticateUDPMeshBridge(t *testing.T, writer io.Writer, capability MeshBridgeCapability) {
+	t.Helper()
+	frame := []byte(capability.reveal())
+	n, err := writer.Write(frame)
+	if err != nil {
+		t.Fatalf("write UDP Mesh bridge capability: %v", err)
+	}
+	if n != len(frame) {
+		t.Fatalf("write UDP Mesh bridge capability = %d bytes, want %d", n, len(frame))
+	}
+}
+
+func assertNoMeshBridgeWrite(t *testing.T, sessions *bridgeSessionBroker) {
+	t.Helper()
+	select {
+	case got := <-sessions.writes:
+		t.Fatalf("unauthorized Mesh bridge write reached session: %q", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestMeshBookFormatsZeroTimeDeterministically(t *testing.T) {
 	zero := time.Time{}
 	if got, want := formatMeshTime(zero), zero.UTC().Format(time.RFC3339Nano); got != want {
 		t.Fatalf("formatMeshTime(zero) = %q, want %q", got, want)
+	}
+}
+
+func TestMeshBridgeCapabilityUsesFullRandomEntropy(t *testing.T) {
+	first, err := newMeshBridgeCapability()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := newMeshBridgeCapability()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(first.reveal())
+	if err != nil {
+		t.Fatalf("decode capability: %v", err)
+	}
+	if len(decoded) != meshBridgeCapabilityBytes {
+		t.Fatalf("capability entropy = %d bytes, want %d", len(decoded), meshBridgeCapabilityBytes)
+	}
+	if first.reveal() == second.reveal() {
+		t.Fatal("independent Mesh bridges received the same capability")
+	}
+}
+
+func TestMeshBridgeCapabilityIsRedactedInDiagnostics(t *testing.T) {
+	t.Parallel()
+
+	const secret = "mesh-bridge-secret"
+	capability := meshBridgeCapabilityValue(secret)
+	for _, format := range []string{
+		"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%c", "%p",
+	} {
+		formatted := fmt.Sprintf(format, capability)
+		if strings.Contains(formatted, secret) {
+			t.Fatalf("format %q exposed Mesh bridge capability: %s", format, formatted)
+		}
+		if format != "%p" && !strings.Contains(formatted, redactedMeshBridgeCapability) {
+			t.Fatalf("format %q omitted redaction marker: %s", format, formatted)
+		}
+	}
+
+	response := MeshBridgeOpenResponse{Capability: capability}
+	formatted := fmt.Sprintf("%#v", response)
+	if strings.Contains(formatted, secret) ||
+		!strings.Contains(formatted, redactedMeshBridgeCapability) {
+		t.Fatalf("response diagnostics did not redact Mesh bridge capability: %s", formatted)
 	}
 }
 
@@ -2148,6 +3276,36 @@ func contextOrMissing(ctx context.Context) error {
 
 type fakeMeshRunner struct {
 	omitDatagramCapability bool
+	streamRequests         chan<- mesh.StreamRequest
+}
+
+type credentialBridgeOpener struct {
+	called      bool
+	credentials domainpki.CredentialSelections
+	scope       domainpki.CredentialOperationScope
+}
+
+func (*credentialBridgeOpener) OpenMeshStream(
+	context.Context,
+	string,
+	mesh.StreamRequest,
+) (run.SessionRef, error) {
+	return run.SessionRef{}, errors.New("credential bridge used the credential-free opener")
+}
+
+func (o *credentialBridgeOpener) OpenMeshStreamWithCredentialSelections(
+	_ context.Context,
+	moduleID string,
+	_ mesh.StreamRequest,
+	credentials domainpki.CredentialSelections,
+	scope domainpki.CredentialOperationScope,
+) (run.SessionRef, error) {
+	o.called = true
+	o.credentials = credentials.Clone()
+	o.scope = scope
+	return run.SessionRef{
+		ID: "mesh-credential-session-1", ModuleID: moduleID, State: "active",
+	}, nil
 }
 
 func (fakeMeshRunner) Run(_ context.Context, req run.Request) (run.Result, error) {
@@ -2271,6 +3429,9 @@ func (r fakeMeshRunner) OpenMeshStream(
 	moduleID string,
 	req mesh.StreamRequest,
 ) (run.SessionRef, error) {
+	if r.streamRequests != nil {
+		r.streamRequests <- req
+	}
 	session := run.SessionRef{
 		ID:        "mesh-session-1",
 		RunID:     req.RunID,
@@ -2281,11 +3442,376 @@ func (r fakeMeshRunner) OpenMeshStream(
 		State:     "active",
 		Transport: "mesh-route",
 	}
-	if req.Protocol == "udp" && !r.omitDatagramCapability {
+	datagramBridge, _ := req.Config[meshBridgeConfigDatagram].(bool)
+	if (datagramBridge || req.Protocol == "udp") && !r.omitDatagramCapability {
 		session.Capabilities = []string{run.SessionCapabilityDatagram}
 	}
 	return session, nil
 }
+
+type recordingPKIControl struct {
+	initialized   bool
+	initializedBy string
+	mutationActor string
+	mutationKeys  []string
+	rolloverErr   error
+}
+
+func (*recordingPKIControl) Close() error { return nil }
+
+func (c *recordingPKIControl) Status(context.Context) apppki.WorkspaceStatus {
+	return apppki.WorkspaceStatus{Initialized: c.initialized}
+}
+
+func (c *recordingPKIControl) Initialize(ctx context.Context) (apppki.WorkspaceStatus, error) {
+	audit, err := (apppki.ContextAuditContextProvider{}).AuditContext(ctx)
+	if err != nil {
+		return apppki.WorkspaceStatus{}, err
+	}
+	c.initialized = true
+	c.initializedBy = audit.ActorID
+	return apppki.WorkspaceStatus{Initialized: true, ActiveKeyVersion: "master-key-v1", MasterKeyVersions: 1}, nil
+}
+
+func (*recordingPKIControl) BackendDescriptors(context.Context) ([]domainpki.BackendDescriptor, error) {
+	return nil, nil
+}
+
+func (*recordingPKIControl) ListAuthorities(context.Context) ([]domainpki.Authority, error) {
+	return nil, nil
+}
+
+func (*recordingPKIControl) InspectAuthority(context.Context, domainpki.AuthorityID) (apppki.AuthorityInspection, error) {
+	return apppki.AuthorityInspection{}, nil
+}
+
+func (*recordingPKIControl) ListCertificateGenerations(context.Context) ([]domainpki.CertificateGeneration, error) {
+	return nil, nil
+}
+
+func (*recordingPKIControl) InspectCertificateGeneration(context.Context, domainpki.GenerationID) (domainpki.CertificateGeneration, error) {
+	return domainpki.CertificateGeneration{}, nil
+}
+
+func (*recordingPKIControl) ListAssignments(context.Context) ([]domainpki.Assignment, error) {
+	return nil, nil
+}
+
+func (*recordingPKIControl) ListCredentialStamps(context.Context) ([]domainpki.CredentialStamp, error) {
+	return nil, nil
+}
+
+func (*recordingPKIControl) InspectCredentialStamp(
+	context.Context,
+	domainpki.StampID,
+) (domainpki.CredentialStamp, error) {
+	return domainpki.CredentialStamp{}, nil
+}
+
+func (*recordingPKIControl) ListCredentialExecutions(
+	context.Context,
+) ([]domainpki.CredentialExecution, error) {
+	execution, err := newRecordingCredentialExecution("credential-execution-rpc")
+	if err != nil {
+		return nil, err
+	}
+	return []domainpki.CredentialExecution{execution}, nil
+}
+
+func (*recordingPKIControl) InspectCredentialExecution(
+	_ context.Context,
+	id domainpki.CredentialExecutionRequestID,
+) (domainpki.CredentialExecution, error) {
+	return newRecordingCredentialExecution(id)
+}
+
+func newRecordingCredentialExecution(
+	id domainpki.CredentialExecutionRequestID,
+) (domainpki.CredentialExecution, error) {
+	data := domainpki.CredentialBytes("credential-execution-rpc-material")
+	digest := sha256.Sum256(data)
+	provider := domainpki.CredentialProviderTarget{
+		ModuleID: "credential-provider-rpc", ProviderID: "credential-provider-rpc",
+		ProviderVersion: "1.0.0", DescriptorSHA256: strings.Repeat("a", sha256.Size*2),
+	}
+	return domainpki.NewEncodingCredentialExecution(domainpki.CredentialEncodingRequest{
+		SchemaVersion: domainpki.CredentialProviderExecutionSchemaV1,
+		Provider:      provider, RequestID: id, ProviderID: provider.ProviderID,
+		ProviderSchema:      "credential-provider-rpc-v1",
+		OutputForm:          domainpki.CredentialMaterialPrivateBytes,
+		MaximumEncodedBytes: 1024,
+		Source: domainpki.ResolvedCredentialMaterial{
+			Projection: domainpki.CredentialProjectionBundle,
+			Form:       domainpki.CredentialMaterialPrivateBytes,
+			Encoding:   "hovel-bundle-json", SHA256: hex.EncodeToString(digest[:]), Data: data,
+		},
+		Scope: domainpki.CredentialOperationScope{RunID: "run-rpc"},
+	}, time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC))
+}
+
+func (*recordingPKIControl) InspectAssignment(context.Context, domainpki.AssignmentID) (apppki.AssignmentInspection, error) {
+	return apppki.AssignmentInspection{}, nil
+}
+
+func (c *recordingPKIControl) BindAssignment(ctx context.Context, request apppki.BindAssignmentRequest) (domainpki.Assignment, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return domainpki.Assignment{}, err
+	}
+	return domainpki.Assignment{ID: request.ID}, nil
+}
+
+func (c *recordingPKIControl) StageAssignment(ctx context.Context, request apppki.StageAssignmentRequest) (apppki.AssignmentInspection, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.AssignmentInspection{}, err
+	}
+	return apppki.AssignmentInspection{Assignment: domainpki.Assignment{ID: request.AssignmentID}}, nil
+}
+
+func (c *recordingPKIControl) ActivateAssignment(ctx context.Context, request apppki.ActivateAssignmentRequest) (apppki.AssignmentInspection, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.AssignmentInspection{}, err
+	}
+	return apppki.AssignmentInspection{Assignment: domainpki.Assignment{ID: request.AssignmentID}}, nil
+}
+
+func (c *recordingPKIControl) UnbindAssignment(ctx context.Context, request apppki.UnbindAssignmentRequest) (domainpki.Assignment, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return domainpki.Assignment{}, err
+	}
+	return domainpki.Assignment{ID: request.AssignmentID}, nil
+}
+
+func (*recordingPKIControl) ListTrustSets(context.Context) ([]domainpki.TrustSet, error) {
+	return nil, nil
+}
+
+func (*recordingPKIControl) InspectTrustSet(context.Context, domainpki.TrustSetID) (apppki.TrustSetInspection, error) {
+	return apppki.TrustSetInspection{}, nil
+}
+
+func (c *recordingPKIControl) CreateTrustSet(ctx context.Context, request apppki.CreateTrustSetRequest) (domainpki.TrustSet, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return domainpki.TrustSet{}, err
+	}
+	return domainpki.TrustSet{ID: request.ID}, nil
+}
+
+func (c *recordingPKIControl) StageTrustSet(ctx context.Context, request apppki.StageTrustSetRequest) (apppki.TrustSetInspection, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.TrustSetInspection{}, err
+	}
+	return apppki.TrustSetInspection{TrustSet: domainpki.TrustSet{ID: request.TrustSetID}}, nil
+}
+
+func (c *recordingPKIControl) ActivateTrustSet(ctx context.Context, request apppki.ActivateTrustSetRequest) (apppki.TrustSetInspection, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.TrustSetInspection{}, err
+	}
+	return apppki.TrustSetInspection{TrustSet: domainpki.TrustSet{ID: request.TrustSetID}}, nil
+}
+
+func (c *recordingPKIControl) recordMutation(ctx context.Context, idempotencyKey string) error {
+	audit, err := (apppki.ContextAuditContextProvider{}).AuditContext(ctx)
+	if err != nil {
+		return err
+	}
+	c.mutationActor = audit.ActorID
+	if idempotencyKey == "" {
+		return errors.New("recording pki control: idempotency key is required")
+	}
+	c.mutationKeys = append(c.mutationKeys, idempotencyKey)
+	return nil
+}
+
+func (*recordingPKIControl) CreateAuthority(context.Context, apppki.CreateAuthorityRequest) (apppki.CreateAuthorityResult, error) {
+	return apppki.CreateAuthorityResult{}, nil
+}
+
+func (*recordingPKIControl) IssueCertificate(context.Context, apppki.IssueCertificateRequest) (domainpki.CertificateGeneration, error) {
+	return domainpki.CertificateGeneration{}, nil
+}
+
+func (c *recordingPKIControl) RenewCertificate(ctx context.Context, request apppki.RenewCertificateRequest) (apppki.CertificateLifecycleResult, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.CertificateLifecycleResult{}, err
+	}
+	return apppki.CertificateLifecycleResult{
+		Kind: apppki.IssuanceKindCertificateRenewal, SourceGenerationID: request.SourceGenerationID,
+		Generation: domainpki.CertificateGeneration{ID: request.GenerationID}, KeyReused: true,
+	}, nil
+}
+
+func (c *recordingPKIControl) RotateCertificate(ctx context.Context, request apppki.RotateCertificateRequest) (apppki.CertificateLifecycleResult, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.CertificateLifecycleResult{}, err
+	}
+	return apppki.CertificateLifecycleResult{
+		Kind: apppki.IssuanceKindCertificateRotation, SourceGenerationID: request.SourceGenerationID,
+		Generation: domainpki.CertificateGeneration{ID: request.GenerationID},
+	}, nil
+}
+
+func (c *recordingPKIControl) RevokeCertificate(ctx context.Context, request apppki.RevokeCertificateRequest) (apppki.CertificateRevocationResult, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.CertificateRevocationResult{}, err
+	}
+	revocation := domainpki.Revocation{
+		ID: "revocation-rpc", CertificateID: "certificate-rpc", GenerationID: request.GenerationID,
+		IssuerAuthorityID: "authority-rpc", IssuerGenerationID: "generation-rpc-root",
+		SerialNumber: "01", Reason: request.Reason, PreviousState: domainpki.CertificateStateActive,
+		EffectiveAt: time.Date(2026, 7, 12, 6, 0, 0, 0, time.UTC),
+		RecordedAt:  time.Date(2026, 7, 12, 6, 0, 0, 0, time.UTC),
+	}
+	return apppki.CertificateRevocationResult{
+		Revocation: revocation,
+		Generation: domainpki.CertificateGeneration{ID: request.GenerationID, State: domainpki.CertificateStateRevoked},
+	}, nil
+}
+
+func (*recordingPKIControl) InspectRevocation(_ context.Context, id domainpki.RevocationID) (domainpki.Revocation, error) {
+	return domainpki.Revocation{ID: id, GenerationID: "generation-rpc-rotated"}, nil
+}
+
+func (*recordingPKIControl) InspectGenerationRevocation(_ context.Context, id domainpki.GenerationID) (domainpki.Revocation, error) {
+	return domainpki.Revocation{ID: "revocation-rpc", GenerationID: id}, nil
+}
+
+func (*recordingPKIControl) ListAuthorityRevocations(_ context.Context, id domainpki.AuthorityID) ([]domainpki.Revocation, error) {
+	return []domainpki.Revocation{{ID: "revocation-rpc", IssuerAuthorityID: id}}, nil
+}
+
+func (c *recordingPKIControl) PublishCRL(ctx context.Context, request apppki.PublishCRLRequest) (apppki.CRLPublicationResult, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.CRLPublicationResult{}, err
+	}
+	return apppki.CRLPublicationResult{
+		Publication: apppki.CRLPublicationIntent{AuthorityID: request.AuthorityID},
+		Generation:  domainpki.CRLGeneration{ID: "crl-generation-rpc", AuthorityID: request.AuthorityID},
+	}, nil
+}
+
+func (*recordingPKIControl) InspectCRLPublication(_ context.Context, id domainpki.CRLPublicationID) (apppki.CRLPublicationIntent, error) {
+	return apppki.CRLPublicationIntent{ID: id, AuthorityID: "authority-rpc"}, nil
+}
+
+func (*recordingPKIControl) ListCRLPublications(_ context.Context, id domainpki.AuthorityID) ([]apppki.CRLPublicationIntent, error) {
+	return []apppki.CRLPublicationIntent{{ID: "crl-publication-rpc", AuthorityID: id}}, nil
+}
+
+func (*recordingPKIControl) InspectCRLGeneration(_ context.Context, id domainpki.CRLGenerationID) (domainpki.CRLGeneration, error) {
+	return domainpki.CRLGeneration{ID: id, AuthorityID: "authority-rpc"}, nil
+}
+
+func (*recordingPKIControl) ListCRLGenerations(_ context.Context, id domainpki.AuthorityID) ([]domainpki.CRLGeneration, error) {
+	return []domainpki.CRLGeneration{{ID: "crl-generation-rpc", AuthorityID: id}}, nil
+}
+
+func (c *recordingPKIControl) ReconcileCRLPublication(ctx context.Context, request apppki.ReconcileCRLPublicationRequest) (apppki.CRLPublicationIntent, error) {
+	if err := c.recordMutation(ctx, string(request.PublicationID)); err != nil {
+		return apppki.CRLPublicationIntent{}, err
+	}
+	return apppki.CRLPublicationIntent{ID: request.PublicationID, Status: apppki.CRLPublicationStatusFailed}, nil
+}
+
+func (c *recordingPKIControl) ReconcileCRLPublications(ctx context.Context, _ apppki.ReconcileCRLPublicationsRequest) ([]apppki.CRLPublicationIntent, error) {
+	if err := c.recordMutation(ctx, "crl-reconcile-batch"); err != nil {
+		return nil, err
+	}
+	return []apppki.CRLPublicationIntent{{ID: "crl-publication-rpc", Status: apppki.CRLPublicationStatusFailed}}, nil
+}
+
+func (*recordingPKIControl) ListOperations(context.Context) ([]domainpki.Operation, error) {
+	return []domainpki.Operation{{ID: "operation-rpc"}}, nil
+}
+
+func (*recordingPKIControl) InspectOperation(
+	_ context.Context,
+	id domainpki.OperationID,
+) (apppki.OperationInspection, error) {
+	return apppki.OperationInspection{Operation: domainpki.Operation{ID: id}}, nil
+}
+
+func (c *recordingPKIControl) StartAuthorityRollover(
+	ctx context.Context,
+	request apppki.StartAuthorityRolloverRequest,
+) (apppki.OperationInspection, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.OperationInspection{}, err
+	}
+	return apppki.OperationInspection{Operation: domainpki.Operation{ID: request.OperationID}}, nil
+}
+
+func (c *recordingPKIControl) AcknowledgeAuthorityRollover(
+	ctx context.Context,
+	request apppki.AcknowledgeAuthorityRolloverRequest,
+) (apppki.OperationInspection, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.OperationInspection{}, err
+	}
+	return apppki.OperationInspection{Operation: domainpki.Operation{ID: request.OperationID}}, nil
+}
+
+func (c *recordingPKIControl) ActivateAuthorityRollover(
+	ctx context.Context,
+	request apppki.ActivateAuthorityRolloverRequest,
+) (apppki.OperationInspection, error) {
+	if c.rolloverErr != nil {
+		return apppki.OperationInspection{}, c.rolloverErr
+	}
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.OperationInspection{}, err
+	}
+	return apppki.OperationInspection{Operation: domainpki.Operation{ID: request.OperationID}}, nil
+}
+
+func (c *recordingPKIControl) BeginAuthorityRolloverFinalTrust(
+	ctx context.Context,
+	request apppki.BeginAuthorityRolloverFinalTrustRequest,
+) (apppki.OperationInspection, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.OperationInspection{}, err
+	}
+	return apppki.OperationInspection{Operation: domainpki.Operation{ID: request.OperationID}}, nil
+}
+
+func (c *recordingPKIControl) CompleteAuthorityRollover(
+	ctx context.Context,
+	request apppki.CompleteAuthorityRolloverRequest,
+) (apppki.OperationInspection, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.OperationInspection{}, err
+	}
+	return apppki.OperationInspection{Operation: domainpki.Operation{ID: request.OperationID}}, nil
+}
+
+func (c *recordingPKIControl) CancelAuthorityRollover(
+	ctx context.Context,
+	request apppki.CancelAuthorityRolloverRequest,
+) (apppki.OperationInspection, error) {
+	if err := c.recordMutation(ctx, request.IdempotencyKey); err != nil {
+		return apppki.OperationInspection{}, err
+	}
+	return apppki.OperationInspection{Operation: domainpki.Operation{ID: request.OperationID}}, nil
+}
+
+func (*recordingPKIControl) UnlockAuthoritySigning(context.Context, domainpki.AuthorityID, time.Duration) (apppki.SigningLease, error) {
+	return apppki.SigningLease{}, nil
+}
+
+func (*recordingPKIControl) LockAuthoritySigning(context.Context, domainpki.AuthorityID) error {
+	return nil
+}
+
+func (*recordingPKIControl) AuthoritySigningLease(context.Context, domainpki.AuthorityID) (apppki.SigningLease, bool, error) {
+	return apppki.SigningLease{}, false, nil
+}
+
+func (*recordingPKIControl) ExportBundle(context.Context, domainpki.GenerationID, domainpki.Purpose, bool) (domainpki.Bundle, error) {
+	return domainpki.Bundle{}, nil
+}
+
+var _ apppki.WorkspaceControl = (*recordingPKIControl)(nil)
+var _ apppki.OperationControl = (*recordingPKIControl)(nil)
 
 type recordingSessionBroker struct{}
 
@@ -2433,6 +3959,9 @@ func (b *bridgeSessionBroker) RunSessionCommand(
 
 func serveTestDaemon(t *testing.T, endpoint string, runs services.RunService, options ...ServerOption) {
 	t.Helper()
+	// Test daemons use an owner-only Unix socket and therefore model the
+	// authenticated local transport used by production composition.
+	options = append([]ServerOption{WithPrivilegedControl(true)}, options...)
 	parsed, err := ParseEndpoint(endpoint)
 	if err != nil {
 		t.Fatal(err)
@@ -2441,6 +3970,7 @@ func serveTestDaemon(t *testing.T, endpoint string, runs services.RunService, op
 	if err != nil {
 		t.Fatal(err)
 	}
+	options = append(options, WithPrivilegedControl(parsed.Network == "unix"))
 	handler, err := NewHandler(runs, options...)
 	if err != nil {
 		t.Fatal(err)

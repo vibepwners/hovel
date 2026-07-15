@@ -14,17 +14,17 @@ from urllib.parse import unquote, urlsplit
 GO_PACKAGES = (
     (
         "Go SDK API: hovel",
-        "github.com/Vibe-Pwners/hovel/sdk/go/hovel",
+        "github.com/vibepwners/hovel/sdk/go/hovel",
         "sdk/go/hovel",
         "go/hovel/index.html",
-        "go/github.com/Vibe-Pwners/hovel/sdk/go/hovel/index.html",
+        "go/github.com/vibepwners/hovel/sdk/go/hovel/index.html",
     ),
     (
         "Go SDK API: hoveltest",
-        "github.com/Vibe-Pwners/hovel/sdk/go/hoveltest",
+        "github.com/vibepwners/hovel/sdk/go/hoveltest",
         "sdk/go/hoveltest",
         "go/hoveltest/index.html",
-        "go/github.com/Vibe-Pwners/hovel/sdk/go/hoveltest/index.html",
+        "go/github.com/vibepwners/hovel/sdk/go/hoveltest/index.html",
     ),
 )
 

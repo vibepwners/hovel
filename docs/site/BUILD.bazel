@@ -2,6 +2,7 @@ load("@aspect_rules_js//js:defs.bzl", "js_run_binary", "js_run_devserver")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@npm//docs/site:astro/package_json.bzl", astro = "bin")
 load("@rules_python//python:defs.bzl", "py_test")
+load("//docs/tools/docs:site_rules.bzl", "publish_file")
 load(":version.bzl", "site_version")
 
 package(default_visibility = ["//visibility:public"])
@@ -24,6 +25,12 @@ site_version(
     source = "//:VERSION",
 )
 
+publish_file(
+    name = "daemon_rpc_openapi",
+    output = "public/spec/reference/daemon-rpc.openapi.json",
+    source = "//docs/site/spec:reference/daemon-rpc.openapi.json",
+)
+
 filegroup(
     name = "site_sources",
     srcs = glob([
@@ -33,6 +40,7 @@ filegroup(
         "astro.config.mjs",
         "package.json",
         "tsconfig.json",
+        ":daemon_rpc_openapi",
         ":version_file",
     ],
 )
@@ -95,14 +103,36 @@ py_test(
     size = "small",
     srcs = ["//docs/tools/docs:daemon_rpc_openapi_test.py"],
     args = [
-        "$(rootpath :public/spec/reference/daemon-rpc.openapi.json)",
+        "$(rootpath :daemon_rpc_openapi)",
         "$(rootpath //core/internal/adapters/daemonrpc:daemonrpc_source)",
         "$(rootpath :src/content/spec/daemon-rpc.html)",
     ],
     data = [
-        "public/spec/reference/daemon-rpc.openapi.json",
         "src/content/spec/daemon-rpc.html",
+        ":daemon_rpc_openapi",
         "//core/internal/adapters/daemonrpc:daemonrpc_source",
     ],
     python_version = "PY3",
+    deps = [
+        "@lint_pypi//jsonschema",
+        "@lint_pypi//pytest",
+    ],
+)
+
+py_test(
+    name = "provider_docs_parity_test",
+    size = "small",
+    srcs = ["//docs/tools/docs:provider_docs_parity_test.py"],
+    data = [
+        "src/content/spec/module-protocol.html",
+        "//:sdk/go/README.md",
+        "//:sdk/rust/README.md",
+        "//docs/tools/docs:python_api/index.rst",
+        "//sdk/go/hovel:protocol_doc_sources",
+        "//sdk/python:README.md",
+        "//sdk/python:sources",
+        "//sdk/rust/hovel:protocol_doc_sources",
+    ],
+    python_version = "PY3",
+    deps = ["@lint_pypi//pytest"],
 )

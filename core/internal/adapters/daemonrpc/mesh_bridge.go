@@ -1,7 +1,12 @@
 package daemonrpc
 
 import (
+	"bufio"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,19 +16,23 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/mesh"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/domain/mesh"
+	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 const (
-	defaultMeshBridgeHost = "127.0.0.1"
-	meshBridgeReadTimeout = 250 * time.Millisecond
-	meshBridgeBufferSize  = 32 * 1024
-	maxNetworkPort        = int(^uint16(0))
+	defaultMeshBridgeHost    = "127.0.0.1"
+	meshBridgeReadTimeout    = 250 * time.Millisecond
+	meshBridgeAuthTimeout    = 2 * time.Second
+	meshBridgeCleanupTimeout = 5 * time.Second
+	meshBridgeBufferSize     = 32 * 1024
 
-	meshBridgeProtocolTCP = "tcp"
-	meshBridgeProtocolUDP = "udp"
+	// MeshBridgeNetworkTCP selects the daemon's loopback TCP adapter.
+	MeshBridgeNetworkTCP MeshBridgeNetwork = "tcp"
+	// MeshBridgeNetworkUDP selects the daemon's loopback UDP adapter.
+	MeshBridgeNetworkUDP MeshBridgeNetwork = "udp"
 
 	// UDP over IPv4 can carry at most 65,507 payload bytes. Using the IPv4
 	// ceiling keeps the bridge behavior stable for either loopback family.
@@ -33,10 +42,93 @@ const (
 
 	meshBridgeConfigLocalAddress = "bridge.localAddress"
 	meshBridgeConfigOwner        = "bridge.owner"
-	meshBridgeConfigProtocol     = "bridge.protocol"
+	meshBridgeConfigLocalNetwork = "bridge.localNetwork"
 	meshBridgeConfigDatagram     = "bridge.datagram"
 	meshBridgeOwnerDaemon        = "daemon"
+	meshBridgeCapabilityBytes    = 32
+	meshBridgeMaxPendingAuth     = 8
+	redactedMeshBridgeCapability = "<mesh bridge capability redacted>"
 )
+
+// MeshBridgeCapability is an ephemeral bearer secret that authorizes one
+// local TCP connection or UDP peer to use a Mesh bridge. The pointer-boxed
+// representation prevents unsupported fmt verbs from embedding the secret in
+// a formatting diagnostic.
+type MeshBridgeCapability struct {
+	value *string
+}
+
+// String redacts the bearer secret in formatted diagnostics.
+func (MeshBridgeCapability) String() string { return redactedMeshBridgeCapability }
+
+// GoString redacts the bearer secret in Go-syntax diagnostics.
+func (MeshBridgeCapability) GoString() string { return redactedMeshBridgeCapability }
+
+// Format redacts the bearer secret for every fmt formatting verb.
+func (MeshBridgeCapability) Format(state fmt.State, _ rune) {
+	if _, err := io.WriteString(state, redactedMeshBridgeCapability); err != nil {
+		return
+	}
+}
+
+func meshBridgeCapabilityValue(value string) MeshBridgeCapability {
+	return MeshBridgeCapability{value: &value}
+}
+
+func parseMeshBridgeCapability(value string) (MeshBridgeCapability, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(decoded) != meshBridgeCapabilityBytes ||
+		base64.RawURLEncoding.EncodeToString(decoded) != value {
+		return MeshBridgeCapability{}, errors.New(
+			"mesh bridge capability must be canonical 256-bit base64url",
+		)
+	}
+	return meshBridgeCapabilityValue(value), nil
+}
+
+func (c MeshBridgeCapability) reveal() string {
+	if c.value == nil {
+		return ""
+	}
+	return *c.value
+}
+
+func (c MeshBridgeCapability) MarshalJSON() ([]byte, error) {
+	if c.value == nil {
+		return nil, errors.New("mesh bridge capability is required")
+	}
+	return json.Marshal(c.reveal())
+}
+
+func (c *MeshBridgeCapability) UnmarshalJSON(data []byte) error {
+	if c == nil {
+		return errors.New("mesh bridge capability destination is nil")
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return fmt.Errorf("decode mesh bridge capability: %w", err)
+	}
+	parsed, err := parseMeshBridgeCapability(value)
+	if err != nil {
+		return err
+	}
+	*c = parsed
+	return nil
+}
+
+// MeshBridgeNetwork selects the daemon-local socket adapter. It is separate
+// from the provider-defined protocol carried by mesh.StreamRequest.
+type MeshBridgeNetwork string
+
+// Validate rejects local adapter types the daemon does not implement.
+func (n MeshBridgeNetwork) Validate() error {
+	switch n {
+	case MeshBridgeNetworkTCP, MeshBridgeNetworkUDP:
+		return nil
+	default:
+		return fmt.Errorf("mesh bridge local network %q is not supported", n)
+	}
+}
 
 // MeshStreamOpener opens a provider-owned Mesh session flow. It is the narrow
 // application-service seam required by the local bridge adapter.
@@ -44,18 +136,31 @@ type MeshStreamOpener interface {
 	OpenMeshStream(context.Context, string, mesh.StreamRequest) (run.SessionRef, error)
 }
 
+type MeshCredentialStreamOpener interface {
+	OpenMeshStreamWithCredentialSelections(
+		context.Context,
+		string,
+		mesh.StreamRequest,
+		domainpki.CredentialSelections,
+		domainpki.CredentialOperationScope,
+	) (run.SessionRef, error)
+}
+
 // MeshBridgeOpenArgs gathers the collaborators needed to create a daemon-owned
 // local listener for a provider-owned Mesh session flow.
 type MeshBridgeOpenArgs struct {
-	ModuleID string
-	Request  mesh.StreamRequest
-	Host     string
-	Port     int
-	Runs     MeshStreamOpener
-	Sessions services.SessionBroker
-	Book     *MeshBook
-	Bridges  *MeshBridgeManager
-	Now      func() time.Time
+	ModuleID        string
+	Request         mesh.StreamRequest
+	Host            string
+	Port            int
+	LocalNetwork    MeshBridgeNetwork
+	Credentials     domainpki.CredentialSelections
+	CredentialScope domainpki.CredentialOperationScope
+	Runs            MeshStreamOpener
+	Sessions        services.SessionBroker
+	Book            *MeshBook
+	Bridges         *MeshBridgeManager
+	Now             func() time.Time
 }
 
 // MeshBridgeManager owns active daemon-local listeners that bridge local
@@ -149,11 +254,12 @@ func (m *MeshBridgeManager) Remove(operationID string) {
 // flow. The bridge is intentionally local-only; exposing it beyond loopback
 // should require a separate, explicit policy decision.
 type MeshBridge struct {
-	operationID string
-	sessionID   string
-	localHost   string
-	localPort   int
-	protocol    string
+	operationID  string
+	sessionID    string
+	localHost    string
+	localPort    int
+	localNetwork MeshBridgeNetwork
+	capability   MeshBridgeCapability
 
 	listener   net.Listener
 	packetConn net.PacketConn
@@ -171,8 +277,10 @@ type MeshBridge struct {
 	peerReady chan struct{}
 	closed    bool
 
-	closeOnce sync.Once
-	closeErr  error
+	closeMu           sync.Mutex
+	endpointCloseOnce sync.Once
+	sessionClosed     bool
+	closeErr          error
 }
 
 // OpenMeshBridge opens a local loopback listener and connects it to a
@@ -202,7 +310,7 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 	if moduleID == "" {
 		return MeshBridgeOpenResponse{}, errors.New("mesh bridge module id is required")
 	}
-	protocol, err := normalizeMeshBridgeProtocol(args.Request.Protocol)
+	localNetwork, err := normalizeMeshBridgeNetwork(args.LocalNetwork)
 	if err != nil {
 		return MeshBridgeOpenResponse{}, err
 	}
@@ -212,24 +320,51 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 	}
 	listenConfig := &net.ListenConfig{}
 	localEndpoint := net.JoinHostPort(host, strconv.Itoa(port))
+	capability, err := newMeshBridgeCapability()
+	if err != nil {
+		return MeshBridgeOpenResponse{}, err
+	}
 	var listener net.Listener
 	var packetConn net.PacketConn
-	switch protocol {
-	case meshBridgeProtocolTCP:
-		listener, err = listenConfig.Listen(ctx, protocol, localEndpoint)
-	case meshBridgeProtocolUDP:
-		packetConn, err = listenConfig.ListenPacket(ctx, protocol, localEndpoint)
+	switch localNetwork {
+	case MeshBridgeNetworkTCP:
+		listener, err = listenConfig.Listen(ctx, string(localNetwork), localEndpoint)
+	case MeshBridgeNetworkUDP:
+		packetConn, err = listenConfig.ListenPacket(ctx, string(localNetwork), localEndpoint)
 	default:
-		err = fmt.Errorf("mesh bridge protocol %q is not supported", protocol)
+		err = fmt.Errorf("mesh bridge local network %q is not supported", localNetwork)
 	}
 	if err != nil {
 		return MeshBridgeOpenResponse{}, fmt.Errorf("listen on local mesh bridge endpoint %s: %w", localEndpoint, err)
 	}
 	localHost, localPort, localAddress := socketEndpoint(meshBridgeLocalAddr(listener, packetConn))
-	request := meshBridgeRequest(args.Request, localAddress, protocol)
+	request := meshBridgeRequest(args.Request, localAddress, localNetwork)
 	request.ModuleID = moduleID
-	operation := args.Book.StartBridge(moduleID, request, localAddress, now())
-	session, err := args.Runs.OpenMeshStream(ctx, moduleID, request)
+	operation := args.Book.StartBridge(moduleID, request, localNetwork, localAddress, now())
+	var session run.SessionRef
+	if len(args.Credentials) == 0 {
+		session, err = args.Runs.OpenMeshStream(ctx, moduleID, request)
+	} else {
+		credentialOpener, ok := args.Runs.(MeshCredentialStreamOpener)
+		if !ok {
+			return MeshBridgeOpenResponse{}, failMeshBridgeOpen(
+				context.WithoutCancel(ctx),
+				args,
+				operation.ID,
+				listener,
+				packetConn,
+				"",
+				errors.New("credential-aware mesh stream opener is not configured"),
+			)
+		}
+		session, err = credentialOpener.OpenMeshStreamWithCredentialSelections(
+			ctx,
+			moduleID,
+			request,
+			args.Credentials,
+			args.CredentialScope,
+		)
+	}
 	if err != nil {
 		return MeshBridgeOpenResponse{}, failMeshBridgeOpen(
 			context.WithoutCancel(ctx),
@@ -253,7 +388,7 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 			errors.New("mesh bridge stream session id is required"),
 		)
 	}
-	if protocol == meshBridgeProtocolUDP && !session.HasCapability(run.SessionCapabilityDatagram) {
+	if localNetwork == MeshBridgeNetworkUDP && !session.HasCapability(run.SessionCapabilityDatagram) {
 		return MeshBridgeOpenResponse{}, failMeshBridgeOpen(
 			context.WithoutCancel(ctx),
 			args,
@@ -265,17 +400,18 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 		)
 	}
 	bridge := newMeshBridge(context.WithoutCancel(ctx), meshBridgeConfig{
-		operationID: operation.ID,
-		sessionID:   session.ID,
-		localHost:   localHost,
-		localPort:   localPort,
-		protocol:    protocol,
-		listener:    listener,
-		packetConn:  packetConn,
-		sessions:    args.Sessions,
-		book:        args.Book,
-		manager:     args.Bridges,
-		now:         now,
+		operationID:  operation.ID,
+		sessionID:    session.ID,
+		localHost:    localHost,
+		localPort:    localPort,
+		localNetwork: localNetwork,
+		capability:   capability,
+		listener:     listener,
+		packetConn:   packetConn,
+		sessions:     args.Sessions,
+		book:         args.Book,
+		manager:      args.Bridges,
+		now:          now,
 	})
 	if err := args.Bridges.Add(bridge); err != nil {
 		// A duplicate session ID may already back another live bridge. Do not
@@ -297,22 +433,25 @@ func OpenMeshBridge(ctx context.Context, args MeshBridgeOpenArgs) (MeshBridgeOpe
 		SessionID:    session.ID,
 		LocalHost:    localHost,
 		LocalPort:    localPort,
+		LocalNetwork: localNetwork,
+		Capability:   capability,
 		LocalAddress: localAddress,
 	}, nil
 }
 
 type meshBridgeConfig struct {
-	operationID string
-	sessionID   string
-	localHost   string
-	localPort   int
-	protocol    string
-	listener    net.Listener
-	packetConn  net.PacketConn
-	sessions    services.SessionBroker
-	book        *MeshBook
-	manager     *MeshBridgeManager
-	now         func() time.Time
+	operationID  string
+	sessionID    string
+	localHost    string
+	localPort    int
+	localNetwork MeshBridgeNetwork
+	capability   MeshBridgeCapability
+	listener     net.Listener
+	packetConn   net.PacketConn
+	sessions     services.SessionBroker
+	book         *MeshBook
+	manager      *MeshBridgeManager
+	now          func() time.Time
 }
 
 func newMeshBridge(parent context.Context, config meshBridgeConfig) *MeshBridge {
@@ -321,20 +460,21 @@ func newMeshBridge(parent context.Context, config meshBridgeConfig) *MeshBridge 
 		config.now = func() time.Time { return time.Now().UTC() }
 	}
 	return &MeshBridge{
-		operationID: config.operationID,
-		sessionID:   config.sessionID,
-		localHost:   config.localHost,
-		localPort:   config.localPort,
-		protocol:    config.protocol,
-		listener:    config.listener,
-		packetConn:  config.packetConn,
-		sessions:    config.sessions,
-		book:        config.book,
-		manager:     config.manager,
-		now:         config.now,
-		ctx:         ctx,
-		cancel:      cancel,
-		peerReady:   make(chan struct{}),
+		operationID:  config.operationID,
+		sessionID:    config.sessionID,
+		localHost:    config.localHost,
+		localPort:    config.localPort,
+		localNetwork: config.localNetwork,
+		capability:   config.capability,
+		listener:     config.listener,
+		packetConn:   config.packetConn,
+		sessions:     config.sessions,
+		book:         config.book,
+		manager:      config.manager,
+		now:          config.now,
+		ctx:          ctx,
+		cancel:       cancel,
+		peerReady:    make(chan struct{}),
 	}
 }
 
@@ -356,8 +496,8 @@ func (b *MeshBridge) SessionID() string {
 
 // Serve transfers data until the local endpoint or provider session closes.
 func (b *MeshBridge) Serve() {
-	switch b.protocol {
-	case meshBridgeProtocolUDP:
+	switch b.localNetwork {
+	case MeshBridgeNetworkUDP:
 		b.serveDatagrams()
 	default:
 		b.serveStream()
@@ -365,21 +505,43 @@ func (b *MeshBridge) Serve() {
 }
 
 func (b *MeshBridge) serveStream() {
-	conn, err := b.listener.Accept()
-	if err != nil {
-		if b.isClosed() {
+	authSlots := make(chan struct{}, meshBridgeMaxPendingAuth)
+	var authWG sync.WaitGroup
+	defer authWG.Wait()
+	for {
+		conn, err := b.listener.Accept()
+		if err != nil {
+			if b.isClosed() || b.currentConn() != nil {
+				return
+			}
+			b.finish(err)
 			return
 		}
-		b.finish(err)
-		return
+		select {
+		case authSlots <- struct{}{}:
+			authWG.Add(1)
+			go func() {
+				defer authWG.Done()
+				defer func() { <-authSlots }()
+				reader, authorized := b.authorizeStream(conn)
+				if !authorized || !b.setConn(conn) {
+					logDaemonRPCError(
+						"close unauthorized mesh bridge connection",
+						conn.Close(),
+					)
+					return
+				}
+				listenerCloseErr := closeMeshBridgeEndpoint(b.listener, nil)
+				copyErr := b.handleConn(conn, reader)
+				b.finish(errors.Join(listenerCloseErr, copyErr))
+			}()
+		default:
+			logDaemonRPCError(
+				"close excess unauthenticated mesh bridge connection",
+				conn.Close(),
+			)
+		}
 	}
-	if !b.setConn(conn) {
-		logDaemonRPCError("close accepted mesh bridge connection after close", conn.Close())
-		return
-	}
-	listenerCloseErr := closeMeshBridgeEndpoint(b.listener, nil)
-	copyErr := b.handleConn(conn)
-	b.finish(errors.Join(listenerCloseErr, copyErr))
 }
 
 func (b *MeshBridge) serveDatagrams() {
@@ -409,9 +571,11 @@ func (b *MeshBridge) Close(ctx context.Context) error {
 
 func (b *MeshBridge) close(ctx context.Context, cause error) error {
 	if ctx == nil {
-		ctx = context.TODO()
+		ctx = context.Background()
 	}
-	b.closeOnce.Do(func() {
+	b.closeMu.Lock()
+	defer b.closeMu.Unlock()
+	b.endpointCloseOnce.Do(func() {
 		b.setClosed()
 		b.cancel()
 		b.closeErr = errors.Join(cause, closeMeshBridgeEndpoint(b.listener, b.packetConn))
@@ -420,19 +584,28 @@ func (b *MeshBridge) close(ctx context.Context, cause error) error {
 				b.closeErr = errors.Join(b.closeErr, err)
 			}
 		}
-		if b.sessionID != "" {
-			if err := b.sessions.CloseSession(ctx, b.sessionID); err != nil {
-				b.closeErr = errors.Join(b.closeErr, err)
-			}
-			if b.closeErr == nil {
-				b.book.CloseSession(b.sessionID, b.now())
-			}
-		}
-		if b.closeErr != nil {
-			b.book.Fail(b.operationID, b.closeErr, b.now())
-		}
-		b.manager.Remove(b.operationID)
 	})
+	if b.sessionClosed || b.sessionID == "" {
+		return b.closeErr
+	}
+	cleanupContext, cancelCleanup := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		meshBridgeCleanupTimeout,
+	)
+	sessionErr := b.sessions.CloseSession(cleanupContext, b.sessionID)
+	cancelCleanup()
+	if sessionErr != nil {
+		attemptErr := errors.Join(b.closeErr, sessionErr)
+		b.book.Fail(b.operationID, attemptErr, b.now())
+		return attemptErr
+	}
+	b.sessionClosed = true
+	if b.closeErr == nil {
+		b.book.CloseSession(b.sessionID, b.now())
+	} else {
+		b.book.Fail(b.operationID, b.closeErr, b.now())
+	}
+	b.manager.Remove(b.operationID)
 	return b.closeErr
 }
 
@@ -443,12 +616,12 @@ func (b *MeshBridge) finish(err error) {
 	logDaemonRPCError("close mesh bridge", b.close(context.WithoutCancel(b.ctx), err))
 }
 
-func (b *MeshBridge) handleConn(conn net.Conn) error {
+func (b *MeshBridge) handleConn(conn net.Conn, local io.Reader) error {
 	ctx, cancel := context.WithCancel(b.ctx)
 	defer cancel()
 	errs := make(chan error, 2)
 	go func() {
-		errs <- b.copyLocalToSession(ctx, conn)
+		errs <- b.copyLocalToSession(ctx, local)
 	}()
 	go func() {
 		errs <- b.copySessionToLocal(ctx, conn)
@@ -471,7 +644,7 @@ func (b *MeshBridge) copyDatagramsToSession(ctx context.Context) error {
 	buf := make([]byte, meshBridgeDatagramBufferSize)
 	for {
 		n, peer, err := b.packetConn.ReadFrom(buf)
-		if n > 0 && b.claimPeer(peer) {
+		if n > 0 && b.authorizeDatagramPeer(peer, buf[:n]) {
 			if n > maxMeshBridgeDatagramSize {
 				return fmt.Errorf(
 					"mesh bridge datagram is %d bytes; maximum is %d",
@@ -528,10 +701,10 @@ func (b *MeshBridge) copySessionToDatagrams(ctx context.Context) error {
 	}
 }
 
-func (b *MeshBridge) copyLocalToSession(ctx context.Context, conn net.Conn) error {
+func (b *MeshBridge) copyLocalToSession(ctx context.Context, local io.Reader) error {
 	buf := make([]byte, meshBridgeBufferSize)
 	for {
-		n, err := conn.Read(buf)
+		n, err := local.Read(buf)
 		if n > 0 {
 			data := append([]byte(nil), buf[:n]...)
 			if writeErr := b.sessions.WriteSession(ctx, b.sessionID, data); writeErr != nil {
@@ -570,7 +743,7 @@ func (b *MeshBridge) copySessionToLocal(ctx context.Context, conn net.Conn) erro
 func (b *MeshBridge) setConn(conn net.Conn) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.closed {
+	if b.closed || b.conn != nil {
 		return false
 	}
 	b.conn = conn
@@ -583,17 +756,57 @@ func (b *MeshBridge) currentConn() net.Conn {
 	return b.conn
 }
 
-func (b *MeshBridge) claimPeer(peer net.Addr) bool {
+func (b *MeshBridge) authorizeDatagramPeer(peer net.Addr, data []byte) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.peer == nil {
+		if !meshBridgeDatagramCapabilityMatches(data, b.capability) {
+			return false
+		}
 		b.peer = cloneMeshBridgeAddr(peer)
 		if b.peerReady != nil {
 			close(b.peerReady)
 		}
-		return true
+		return false
 	}
 	return sameMeshBridgeAddr(b.peer, peer)
+}
+
+func (b *MeshBridge) authorizeStream(conn net.Conn) (*bufio.Reader, bool) {
+	frame := meshBridgeCapabilityFrame(b.capability)
+	reader := bufio.NewReaderSize(conn, len(frame))
+	if err := conn.SetReadDeadline(time.Now().Add(meshBridgeAuthTimeout)); err != nil {
+		return reader, false
+	}
+	candidate, err := reader.ReadSlice('\n')
+	clearErr := conn.SetReadDeadline(time.Time{})
+	if err != nil || clearErr != nil {
+		return reader, false
+	}
+	return reader, meshBridgeStreamCapabilityMatches(candidate, b.capability)
+}
+
+func newMeshBridgeCapability() (MeshBridgeCapability, error) {
+	var entropy [meshBridgeCapabilityBytes]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		return MeshBridgeCapability{}, fmt.Errorf("generate mesh bridge capability: %w", err)
+	}
+	return parseMeshBridgeCapability(base64.RawURLEncoding.EncodeToString(entropy[:]))
+}
+
+func meshBridgeCapabilityFrame(capability MeshBridgeCapability) []byte {
+	value := capability.reveal()
+	frame := make([]byte, 0, len(value)+1)
+	frame = append(frame, value...)
+	return append(frame, '\n')
+}
+
+func meshBridgeStreamCapabilityMatches(candidate []byte, capability MeshBridgeCapability) bool {
+	return subtle.ConstantTimeCompare(candidate, meshBridgeCapabilityFrame(capability)) == 1
+}
+
+func meshBridgeDatagramCapabilityMatches(candidate []byte, capability MeshBridgeCapability) bool {
+	return subtle.ConstantTimeCompare(candidate, []byte(capability.reveal())) == 1
 }
 
 func cloneMeshBridgeAddr(addr net.Addr) net.Addr {
@@ -683,20 +896,17 @@ func (b *MeshBridge) isClosed() bool {
 	return b.closed
 }
 
-func normalizeMeshBridgeProtocol(protocol string) (string, error) {
-	protocol = strings.ToLower(strings.TrimSpace(protocol))
-	if protocol == "" {
-		return meshBridgeProtocolTCP, nil
+func normalizeMeshBridgeNetwork(network MeshBridgeNetwork) (MeshBridgeNetwork, error) {
+	if network == "" {
+		return MeshBridgeNetworkTCP, nil
 	}
-	switch protocol {
-	case meshBridgeProtocolTCP, meshBridgeProtocolUDP:
-		return protocol, nil
-	default:
-		return "", fmt.Errorf(
-			"mesh bridge local endpoint protocol %q is not supported; local socket bridges currently support tcp or udp",
-			protocol,
-		)
+	if strings.TrimSpace(string(network)) != string(network) {
+		return "", fmt.Errorf("mesh bridge local network %q must be canonical", network)
 	}
+	if err := network.Validate(); err != nil {
+		return "", err
+	}
+	return network, nil
 }
 
 func normalizeMeshBridgeListen(host string, port int) (string, int, error) {
@@ -704,8 +914,12 @@ func normalizeMeshBridgeListen(host string, port int) (string, int, error) {
 	if host == "" || strings.EqualFold(host, "localhost") {
 		host = defaultMeshBridgeHost
 	}
-	if port < 0 || port > maxNetworkPort {
-		return "", 0, fmt.Errorf("mesh bridge local port %d is outside 0-%d", port, maxNetworkPort)
+	if port < 0 || port > mesh.MaximumNetworkPort {
+		return "", 0, fmt.Errorf(
+			"mesh bridge local port %d is outside 0-%d",
+			port,
+			mesh.MaximumNetworkPort,
+		)
 	}
 	ip := net.ParseIP(host)
 	if ip == nil {
@@ -769,16 +983,19 @@ func closeMeshBridgeEndpoint(listener net.Listener, packetConn net.PacketConn) e
 	return closeErr
 }
 
-func meshBridgeRequest(request mesh.StreamRequest, localAddress string, protocol string) mesh.StreamRequest {
+func meshBridgeRequest(
+	request mesh.StreamRequest,
+	localAddress string,
+	localNetwork MeshBridgeNetwork,
+) mesh.StreamRequest {
 	config := make(map[string]any, len(request.Config)+meshBridgeConfigFieldCount)
 	for key, value := range request.Config {
 		config[key] = value
 	}
 	config[meshBridgeConfigLocalAddress] = localAddress
 	config[meshBridgeConfigOwner] = meshBridgeOwnerDaemon
-	config[meshBridgeConfigProtocol] = protocol
-	config[meshBridgeConfigDatagram] = protocol == meshBridgeProtocolUDP
-	request.Protocol = protocol
+	config[meshBridgeConfigLocalNetwork] = localNetwork
+	config[meshBridgeConfigDatagram] = localNetwork == MeshBridgeNetworkUDP
 	request.Config = config
 	return request
 }

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 func TestBrokerSessionHistoryIsBounded(t *testing.T) {
@@ -145,25 +145,26 @@ func TestNormalizeSessionRefsRejectsInvalidIDs(t *testing.T) {
 	}
 }
 
-func TestSessionBrokerGrantsOneConcurrentCloseOwner(t *testing.T) {
+func TestSessionBrokerRemovesExpectedSessionOnce(t *testing.T) {
 	broker := NewSessionBroker()
-	broker.sessions["session-1"] = newBrokerSession(
+	expected := newBrokerSession(
 		run.SessionRef{ID: "session-1"},
 		&moduleProcess{},
 		defaultSessionHistoryBytes,
 	)
+	broker.sessions["session-1"] = expected
 
 	const callers = 8
 	start := make(chan struct{})
-	results := make(chan error, callers)
+	results := make(chan bool, callers)
 	var calls sync.WaitGroup
 	for range callers {
 		calls.Add(1)
 		go func() {
 			defer calls.Done()
 			<-start
-			_, _, err := broker.takeSession("session-1")
-			results <- err
+			_, removed := broker.removeSession("session-1", expected)
+			results <- removed
 		}()
 	}
 	close(start)
@@ -171,16 +172,12 @@ func TestSessionBrokerGrantsOneConcurrentCloseOwner(t *testing.T) {
 	close(results)
 
 	owners := 0
-	for err := range results {
-		if err == nil {
+	for removed := range results {
+		if removed {
 			owners++
-			continue
-		}
-		if !strings.Contains(err.Error(), "does not exist") {
-			t.Fatalf("takeSession error = %v", err)
 		}
 	}
 	if owners != 1 {
-		t.Fatalf("concurrent close owners = %d, want 1", owners)
+		t.Fatalf("successful removals = %d, want 1", owners)
 	}
 }

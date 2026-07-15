@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/wire"
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/xfer"
+	"github.com/vibepwners/hovel/payloads/squatter/client/wire"
+	"github.com/vibepwners/hovel/payloads/squatter/client/xfer"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/charmbracelet/lipgloss"
 )

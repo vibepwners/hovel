@@ -6,7 +6,7 @@ go_library(
         "logging.go",
         "rootcli.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/rootcli",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/rootcli",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/adapters/cli",

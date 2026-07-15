@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/app/commands"
 	"gopkg.in/yaml.v3"
 )
 

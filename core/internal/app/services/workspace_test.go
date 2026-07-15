@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	"github.com/vibepwners/hovel/internal/domain/workspace"
 )
 
 func TestInitWorkspaceCreatesModelAndEmitsEvent(t *testing.T) {

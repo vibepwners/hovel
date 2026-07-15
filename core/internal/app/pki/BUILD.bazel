@@ -1,0 +1,70 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pki",
+    srcs = [
+        "assignment.go",
+        "audit.go",
+        "backend.go",
+        "control.go",
+        "credential_execution.go",
+        "credential_resolution.go",
+        "crl_publication.go",
+        "custody.go",
+        "issuance.go",
+        "lease.go",
+        "lifecycle.go",
+        "mutation.go",
+        "operation.go",
+        "reservation.go",
+        "revocation.go",
+        "rollover_error.go",
+        "service.go",
+        "stamp.go",
+    ],
+    importpath = "github.com/vibepwners/hovel/internal/app/pki",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/domain/pki",
+        "//internal/domain/workspace",
+    ],
+)
+
+go_test(
+    name = "pki_test",
+    srcs = [
+        "audit_test.go",
+        "backend_test.go",
+        "control_test.go",
+        "credential_execution_service_test.go",
+        "credential_resolution_test.go",
+        "crl_publication_test.go",
+        "mutation_test.go",
+        "service_test.go",
+        "stamp_service_test.go",
+    ],
+    embed = [":pki"],
+    deps = [
+        "//internal/adapters/pki/memory",
+        "//internal/domain/pki",
+        "//internal/infra/pki",
+    ],
+)
+
+go_test(
+    name = "pki_race_test",
+    srcs = [
+        "credential_execution_service_test.go",
+        "credential_resolution_test.go",
+        "service_test.go",
+        "stamp_service_test.go",
+    ],
+    race = "on",
+    tags = ["manual"],
+    deps = [
+        ":pki",
+        "//internal/adapters/pki/memory",
+        "//internal/domain/pki",
+        "//internal/infra/pki",
+    ],
+)

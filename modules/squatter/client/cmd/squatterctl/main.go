@@ -17,8 +17,8 @@ import (
 	"net"
 	"os"
 
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell"
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe"
+	"github.com/vibepwners/hovel/payloads/squatter/client/shell"
+	"github.com/vibepwners/hovel/payloads/squatter/client/smbpipe"
 )
 
 func main() {

@@ -78,6 +78,11 @@
             <tr><td><code>step.prepare</code></td><td><code>StepPrepareRequest</code></td><td><code>StepPrepareResult</code></td><td>Python, Go</td></tr>
             <tr><td><code>step.execute</code></td><td><code>StepExecuteRequest</code></td><td><code>StepExecuteResult</code></td><td>Python, Go</td></tr>
             <tr><td><code>step.cleanup</code></td><td><code>StepCleanupRequest</code></td><td><code>StepCleanupResult</code></td><td>Python, Go</td></tr>
+            <tr><td><code>credential.describe</code></td><td><code>{}</code></td><td><code>CredentialDeliveryDescriptor</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>credential.runtime</code></td><td><code>CredentialRuntimeRequest</code></td><td><code>CredentialDeliveryReceipt</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>credential.files</code></td><td><code>CredentialFilesRequest</code></td><td><code>CredentialDeliveryReceipt</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>credential.encode</code></td><td><code>CredentialEncodingRequest</code></td><td><code>CredentialEncodingResult</code></td><td>Python, Go, Rust</td></tr>
+            <tr><td><code>credential.stamp</code></td><td><code>CredentialStampExecutionRequest</code></td><td><code>CredentialStampExecutionResult</code></td><td>Python, Go, Rust</td></tr>
             <tr><td><code>list_payloads</code></td><td><code>PayloadQuery</code></td><td><code>PayloadInfo[]</code></td><td>Go</td></tr>
             <tr><td><code>resolve_payload</code></td><td><code>PayloadQuery</code></td><td><code>PayloadInfo</code></td><td>Go</td></tr>
             <tr><td><code>prepare_listener</code></td><td><code>PrepareListenerRequest</code></td><td><code>ListenerRef</code></td><td>Go</td></tr>
@@ -114,6 +119,207 @@
   "targetConfig": [ Requirement, ... ],
   "outputs": {}
 }</code></pre>
+
+        <h3>credential.describe</h3>
+        <p>
+          Reports the optional credential slots and delivery, encoding, or stamping
+          capabilities a module actually implements. This is a catalog metadata call: it
+          must not resolve an assignment, open protected files, export private material,
+          contact a target, or mutate provider state. A module may expose this descriptor
+          without exposing Mesh. When the same descriptor also appears inside
+          <code>MeshDescriptor.credentialDelivery</code>, Hovel requires the standalone and
+          nested canonical descriptors to have the same SHA-256 digest.
+        </p>
+<pre data-lang="result"><code>{
+  "schemaVersion": "hovel.pki.credential-delivery/v1",
+  "deliveryCapabilities": ["runtime", "files", "stamp-standard"],
+  "credentialSlots": [{
+    "name": "control-plane-mtls",
+    "purpose": "mtls-server",
+    "endpointRole": "server",
+    "consumerType": "mesh-listener",
+    "acceptedBundleVersions": ["hovel.pki.bundle/v1"],
+    "acceptedProfiles": ["mtls-server"],
+    "acceptedCompatibilityTargets": ["portable-x509"],
+    "acceptedProjections": ["bundle"],
+    "acceptedMaterialForms": ["private-bytes"],
+    "maximumEncodedBytes": 16384,
+    "remainderPolicy": "preserve",
+    "privateMaterial": "allowed"
+  }],
+  "stampTargetKinds": ["named-slot"]
+}</code></pre>
+        <p>
+          The capability list is not decorative. <code>none</code> is exclusive;
+          <code>runtime</code>, <code>files</code>, <code>stamp-standard</code>, and
+          <code>stamp-advanced</code> authorize only their matching requests. Provider target
+          and encoding extensions are admitted only through advertised, versioned JSON
+          schemas.
+        </p>
+
+        <h3>credential.runtime</h3>
+        <p>
+          Delivers one resolved projection directly to the provider process. The request is
+          bound to an assignment, named slot, exact module/provider/version, and descriptor
+          digest. Material is a closed union: public and private-byte forms carry
+          <code>data</code>; <code>private-reference</code> carries a provider-scoped
+          <code>reference</code>. Exactly one variant is allowed.
+        </p>
+<pre data-lang="request"><code>{
+  "schemaVersion": "hovel.pki.provider-execution/v1",
+  "provider": {
+    "moduleId": "lab-mesh",
+    "providerId": "lab-credential-loader",
+    "providerVersion": "1",
+    "descriptorSha256": "8f...64-hex-characters...2a"
+  },
+  "requestId": "credential-request-01",
+  "assignmentId": "assignment-listener-west",
+  "slotName": "control-plane-mtls",
+  "credential": {
+    "bundleVersion": "hovel.pki.bundle/v1",
+    "purpose": "mtls-server",
+    "consumerType": "mesh-listener",
+    "profileId": "mtls-server",
+    "compatibilityTargetId": "portable-x509"
+  },
+  "material": {
+    "projection": "bundle",
+    "form": "private-bytes",
+    "encoding": "json+der-base64",
+    "sha256": "6d...64-hex-characters...91",
+    "data": "eyJzY2hlbWFWZXJzaW9uIjoiLi4uIn0="
+  },
+  "scope": {
+    "operationId": "mesh-operation-01",
+    "listenerId": "listener-west"
+  }
+}</code></pre>
+<pre data-lang="result"><code>{
+  "requestId": "credential-request-01",
+  "providerReference": "listener-slot:listener-west",
+  "receiptSha256": "91...64-hex-characters...ac"
+}</code></pre>
+        <p>
+          The receipt is deliberately non-secret. It may identify provider-owned state and
+          hash a provider-owned receipt, but it must not echo material, protected paths, or
+          write-only configuration. Hovel records a secret-free execution plan and terminal
+          receipt. For a consuming Mesh listener, task, or stream, Hovel sends this call in
+          the same module process immediately before the consuming call; a standalone RPC
+          process does not preserve in-memory credentials for a later invocation.
+        </p>
+
+        <h3>credential.files</h3>
+        <p>
+          Delivers bounded, owner-protected, invocation-scoped files. Each entry names its
+          projection, material form, byte encoding, media type, digest, and size. Paths are valid only for
+          this invocation unless the provider deliberately copies them into provider-owned
+          storage and reports that action through a non-secret receipt.
+        </p>
+<pre data-lang="request"><code>{
+  "schemaVersion": "hovel.pki.provider-execution/v1",
+  "provider": CredentialProviderTarget,
+  "requestId": "credential-request-02",
+  "assignmentId": "assignment-listener-west",
+  "slotName": "control-plane-mtls",
+  "credential": ResolvedCredentialMetadata,
+  "files": [{
+    "projection": "certificate-der",
+    "form": "public",
+    "encoding": "raw",
+    "mediaType": "application/pkix-cert",
+    "path": "/owner-protected/invocation/certificate.der",
+    "sha256": "a7...64-hex-characters...10",
+    "size": 812
+  }],
+  "scope": CredentialOperationScope
+}</code></pre>
+<pre data-lang="result"><code>{
+  "requestId": "credential-request-02",
+  "providerReference": "listener-files:listener-west"
+}</code></pre>
+
+        <h3>credential.encode</h3>
+        <p>
+          Asks one advertised provider encoding schema to transform a resolved projection.
+          The request supplies a hard byte limit. The result carries the requested bytes,
+          their form, encoding name, and SHA-256; the daemon validates the request id,
+          schema, form, bound, and digest before those bytes can enter another provider
+          call. Encoded bytes remain secret-bearing transient data, not a normal list or
+          inspect response.
+        </p>
+<pre data-lang="request"><code>{
+  "schemaVersion": "hovel.pki.provider-execution/v1",
+  "provider": CredentialProviderTarget,
+  "requestId": "credential-encode-01",
+  "providerId": "picblobs",
+  "providerSchema": "picblobs.nacl-config/v1",
+  "outputForm": "private-bytes",
+  "maximumEncodedBytes": 4096,
+  "source": ResolvedCredentialMaterial,
+  "scope": CredentialOperationScope
+}</code></pre>
+<pre data-lang="result"><code>{
+  "requestId": "credential-encode-01",
+  "form": "private-bytes",
+  "encoding": "picblobs.nacl-config/v1",
+  "sha256": "b5...64-hex-characters...3e",
+  "data": "AAECAwQFBgcICQ=="
+}</code></pre>
+
+        <h3>credential.stamp</h3>
+        <p>
+          Applies one persisted, descriptor-validated stamp plan to the exact input artifact
+          and short-lived resolved material. Standard stamping uses a named slot. Advanced
+          providers may advertise file offsets, virtual addresses, symbols, markers, byte
+          patterns, or versioned provider-defined targets with bounds and preconditions.
+          Offsets, addresses, and byte counts use canonical base-10 strings where the full
+          unsigned 64-bit range must survive JSON clients.
+        </p>
+<pre data-lang="request"><code>{
+  "schemaVersion": "hovel.pki.provider-execution/v1",
+  "provider": CredentialProviderTarget,
+  "stampId": "credential-stamp-01",
+  "request": CredentialStampRequest,
+  "input": {
+    "id": "artifact-01",
+    "sha256": "42...64-hex-characters...9f",
+    "encoding": "raw",
+    "path": "/owner-protected/invocation/payload.bin"
+  },
+  "resolvedMaterial": ResolvedCredentialMaterial,
+  "expectedDigests": [{
+    "projection": "bundle",
+    "reference": "generation:leaf-01",
+    "sha256": "6d...64-hex-characters...91"
+  }],
+  "scope": CredentialOperationScope
+}</code></pre>
+<pre data-lang="result"><code>{
+  "stampId": "credential-stamp-01",
+  "output": {
+    "artifact": {
+      "name": "payload-stamped.bin",
+      "encoding": "raw",
+      "path": "/owner-protected/invocation/payload-stamped.bin"
+    }
+  },
+  "targetResolution": "unchanged",
+  "resolvedTarget": { "kind": "named-slot", "namedSlot": { "name": "control-plane-mtls" } },
+  "bytesWritten": "4096",
+  "materialDigests": [{
+    "projection": "bundle",
+    "reference": "generation:leaf-01",
+    "sha256": "6d...64-hex-characters...91"
+  }]
+}</code></pre>
+        <p>
+          Input and artifact output each carry exactly one of <code>data</code> or
+          <code>path</code>. The stamp output carries exactly one of <code>artifact</code> or
+          <code>deployment</code>. A deployment response contains an opaque reference and a
+          secret-aware receipt; Hovel hashes the receipt and stores only non-secret
+          destination evidence in durable stamp bookkeeping.
+        </p>
 
         <h3>step.describe</h3>
         <p>
@@ -537,8 +743,12 @@
 
         <h3>mesh.task</h3>
         <p>
-          Runs a provider-owned node, route, or destination task after the operator's plan has been
-          reviewed and confirmed. Common task kinds are <code>survey</code>,
+          Runs a provider-owned node, route, or destination task. This is a low-level,
+          execution-capable primitive exposed only through the daemon's privileged local
+          control transport. It does not create, review, or confirm a throw plan. A front
+          end must apply Hovel's normal persisted-plan, confirmation, dangerous-module,
+          and launch-key checks before invoking it when the requested action is a throw.
+          Common task kinds are <code>survey</code>,
           <code>upload</code>, <code>execute</code>, <code>upload_execute</code>,
           <code>command</code>, <code>load</code>, and <code>stream</code>.
           Destination-scoped tasks use <code>nodeId</code> or <code>route</code> as
@@ -962,12 +1172,36 @@
   "encoding": "base64"
 }</code></pre>
 
+        <h3>Credential provider shapes</h3>
+        <table>
+          <thead>
+            <tr><th>Shape</th><th>Invariant</th><th>Durable visibility</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>CredentialProviderTarget</code></td><td>Exact module id, provider id/version, and descriptor SHA-256.</td><td>Persisted provenance.</td></tr>
+            <tr><td><code>ResolvedCredentialMaterial</code></td><td>Exactly one bytes or provider-scoped reference variant, consistent with <code>form</code>.</td><td>Only projection, form, encoding, digest, and size are projected into bookkeeping.</td></tr>
+            <tr><td><code>CredentialFile</code></td><td>Invocation-scoped protected path with byte encoding, media type, digest, and size.</td><td>Path is stripped; metadata remains.</td></tr>
+            <tr><td><code>CredentialDeliveryReceipt</code></td><td>Matching request id plus optional non-secret provider reference and receipt digest.</td><td>Only SHA-256 digests of the provider reference and receipt are persisted; the raw values are not.</td></tr>
+            <tr><td><code>CredentialEncodingResult</code></td><td>Matching request id, bounded bytes, declared form/encoding, and matching digest.</td><td>Only form, encoding, digest, and size are persisted.</td></tr>
+            <tr><td><code>CredentialArtifactInput/Output</code></td><td>Exactly one inline-data or protected-path variant.</td><td>Final artifact/destination metadata after daemon verification and ingestion.</td></tr>
+            <tr><td><code>CredentialStampOutput</code></td><td>Exactly one artifact or deployment variant.</td><td>Resolved target, counts, material digests, and non-secret destination evidence.</td></tr>
+          </tbody>
+        </table>
+        <p>
+          SDK secret wrappers redact ordinary debug/string formatting. That is defense in
+          depth, not authorization to log secrets: provider code must still avoid logging,
+          retaining, returning in errors, or copying private bytes and protected paths.
+          Credential byte fields use canonical padded RFC 4648 base64 on the wire.
+        </p>
+
         <h3>CredentialCapability</h3>
         <p>
-          Created credentials are assessment evidence. They are stored and displayed in
-          plaintext in normal operator CLI output so the operator can remediate manually
-          if automated cleanup fails. The <code>sensitive</code> marker labels the field
-          for evidence exports and downstream handling; it is not a CLI redaction request.
+          Target-created credentials are assessment evidence. They are stored and displayed
+          in plaintext in normal operator CLI output so the operator can remediate manually
+          if automated cleanup fails. This chain capability is not a workspace-PKI bundle,
+          certificate generation, private key, assignment, or provider delivery. The
+          <code>sensitive</code> marker labels the field for evidence exports and downstream
+          handling; it is not a CLI redaction request.
         </p>
 <pre data-lang="object"><code>{
   "id": "cap_credential_6mb8pq",

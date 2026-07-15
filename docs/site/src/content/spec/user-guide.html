@@ -76,10 +76,10 @@ runtime:
         <p>Modules are distributed as <code>.tgz</code> packages. Install from disk, absolute path, HTTPS URL, a local package reference, an index-backed reference, a bulk manifest, or a linked development directory.</p>
 <pre data-lang="shell"><code>hovel module install ./squatter-{{HOVEL_VERSION}}.tgz
 hovel module install /opt/hovel/modules/ms17-010-survey-1.0.0.tgz
-hovel module install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
+hovel module install https://github.com/vibepwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz --sha256 ...
 hovel module install ms17-010-survey
 hovel module install squatter@{{HOVEL_VERSION}}
-hovel module bulk-install https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/module-install-set.yaml
+hovel module bulk-install https://github.com/vibepwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/module-install-set.yaml
 hovel module bulk-install ./lab-modules.yaml
 hovel module install --link /home/me/dev/my-module
 hovel module available
@@ -88,7 +88,7 @@ hovel module installed</code></pre>
 <pre data-lang="yaml"><code>apiVersion: hovel.dev/v1alpha1
 kind: ModuleInstallSet
 modules:
-  - source: https://github.com/Vibe-Pwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
+  - source: https://github.com/vibepwners/hovel/releases/download/{{HOVEL_RELEASE_TAG}}/squatter-{{HOVEL_VERSION}}.tgz
     sha256: ...
   - source: ./ms17-010-survey-1.0.0.tgz
   - source: ./ms17-010-exploit-1.0.0.tgz</code></pre>
@@ -123,7 +123,7 @@ task reset</code></pre>
 
         <h2>Throw A Saved Chain</h2>
         <p>One-shot mode is for scripts, CI, demos, and operators who want to execute a durable configured chain file without entering the prompt. It loads the chain file, creates the same review surface as interactive execution, records a confirmation, runs the modules, persists events, and exits.</p>
-<pre data-lang="shell"><code>task throw -- demo/chains/mock-survey-exploit.chain.yaml --now</code></pre>
+<pre data-lang="shell"><code>task run -- //cmd/hovel -- throw demo/chains/mock-survey-exploit.chain.yaml --now</code></pre>
         <p><code>--now</code> skips the typed <code>yes</code> prompt, but it is still an explicit recorded confirmation bypass. It does not skip planning, validation, guardrails, event recording, artifacts, or throw records.</p>
 
         <div class="demo-series">

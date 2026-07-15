@@ -15,6 +15,8 @@ exports_files([
     "go.work.bazel",
     "scripts/demo-mcp-agent-tmux.sh",
     "scripts/demo-step-setup.sh",
+    "sdk/go/README.md",
+    "sdk/rust/README.md",
 ])
 
 filegroup(
@@ -40,6 +42,7 @@ test_suite(
     tests = [
         "//repo-tools/deps:update_python_locks_test",
         "//repo-tools/tasks:checkout_test",
+        "//tools/bazel/buildifier:buildifier_test",
         "//tools/bazel/policy:repo_policy_test",
     ],
 )
@@ -50,6 +53,7 @@ test_suite(
         "//sdk/go/hovel:hovel_test",
         "//sdk/go/hoveltest:hoveltest_test",
         "//sdk/python:hovel_sdk_test",
+        "//sdk/python:mesh_bridge_test",
         "//sdk/rust/hovel:hovel_test",
     ],
 )
@@ -89,6 +93,7 @@ filegroup(
 test_suite(
     name = "modules_test",
     tests = [
+        "//modules/picblobs/provider:provider_test",
         "//modules/squatter/client/shell:shell_test",
         "//modules/squatter/client/smbpipe:smbpipe_test",
         "//modules/squatter/client/wire:wire_test",
@@ -160,7 +165,9 @@ test_suite(
     tests = [
         "//docs/demo:standard_verification_test",
         "//docs/site:daemon_rpc_openapi_test",
+        "//docs/site:provider_docs_parity_test",
         "//docs/site:site_smoke_test",
+        "//docs/tools/demo:materialize_demo_outputs_test",
         "//docs/tools/demo/mcpagent:mcpagent_test",
         "//docs/tools/docs:pages_workflow_test",
         "//tools/testreport:testreport_test",

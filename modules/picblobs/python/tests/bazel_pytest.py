@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+_BAZEL_PYTEST_OPTIONS = ("-p", "no:cacheprovider")
+
 
 def _parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
@@ -125,7 +127,13 @@ def main() -> int:
     project_root = tests_dir.parents[1]
     _configure_declared_tools(args)
     _prepare_bazel_sidecars(project_root)
-    return pytest.main([*_pytest_targets(tests_dir, args.pytest_target), *pytest_args])
+    return pytest.main(
+        [
+            *_BAZEL_PYTEST_OPTIONS,
+            *_pytest_targets(tests_dir, args.pytest_target),
+            *pytest_args,
+        ]
+    )
 
 
 if __name__ == "__main__":

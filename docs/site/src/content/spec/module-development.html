@@ -17,9 +17,11 @@
           modules so you can compare them side by side.
         </p>
         <p>
-          For node-operation providers, listening posts, routed tasks, and using a Mesh
-          with an otherwise ordinary module, see the
-          <a href="mesh-development.html">Mesh Provider Development Guide</a>.
+          For node-operation providers, listening posts, routed tasks, credential
+          delivery/stamping, and using a Mesh with an otherwise ordinary module, see
+          <a href="mesh-development.html">Developing Mesh Providers</a>. For a
+          decision-first map across every module and provider shape, start at
+          <a href="../modules/development.html">Build a Module or Provider</a>.
         </p>
 
         <h2>Module types</h2>
@@ -44,6 +46,36 @@
           explicit installed-payload descriptor. Hovel core validates it, assigns the
           operator-facing handle, persists it in SQLite, and later passes the provider's
           reconnect descriptor back for <code>payloads connect</code>.
+        </p>
+
+        <h2>Start ordinary; add provider contracts only when needed</h2>
+        <p>
+          A module that surveys or exploits one target, even over TLS and even with
+          explicit target credentials, normally implements only <code>info</code>,
+          <code>schema</code>, and <code>run</code>. Do not advertise Mesh or workspace-PKI
+          delivery merely because a protocol is encrypted or authenticated.
+        </p>
+        <table>
+          <thead>
+            <tr><th>Need</th><th>Contract</th><th>Current boundary</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Normal target operation</td><td>Base module lifecycle</td><td>No credential-provider or Mesh contract</td></tr>
+            <tr><td>Provider-owned nodes, tasks, routed streams, or listening posts</td><td><code>mesh.describe</code> plus only supported optional Mesh methods</td><td>Implemented in Go, Python, and Rust</td></tr>
+            <tr><td>Consume assignment-bound workspace certificates or keys</td><td><code>credential.describe</code> plus the exact runtime/files hook consumed</td><td>Direct runtime selections are currently initiated for Mesh listener, task, stream, and bridge calls</td></tr>
+            <tr><td>Provider-native encoding or artifact/deployment stamping</td><td><code>credential.encode</code> or <code>credential.stamp</code> with matching advertised schemas and targets</td><td>Typed contracts and dispatch exist; the external daemon API currently exposes bookkeeping list/inspect, not production initiation</td></tr>
+            <tr><td>Reuse an existing host-and-port client through a Mesh</td><td><code>OpenMeshBridge</code> plus an authenticated SDK bridge helper</td><td>Local adapters support TCP streams and UDP datagrams; other protocols remain provider-owned tasks or sessions</td></tr>
+          </tbody>
+        </table>
+        <p>
+          Target-created <code>CredentialCapability</code> evidence and daemon-owned
+          workspace PKI are different domains. Read
+          <a href="providers-artifacts.html#credential-evidence">target credential evidence</a>,
+          <a href="providers-artifacts.html#workspace-pki">workspace PKI custody</a>,
+          <a href="tls-pki.html">TLS and Workspace PKI</a>, and the
+          <a href="credential-provider-development.html">credential-provider guide</a>
+          before adding a credential descriptor. Automatic workspace-PKI injection into
+          an ordinary non-Mesh <code>execute</code> call is not implemented.
         </p>
 
         <h2>How a module runs</h2>
@@ -96,7 +128,7 @@
           <a class="tile" href="module-go.html">
             <span class="tile-label">SDK</span>
             <span class="tile-title">Go</span>
-            <span class="tile-desc">A single static binary, standard-library only. Compiled with Bazel and launched by path.</span>
+            <span class="tile-desc">A single static binary with a dependency-light SDK. Compiled with Bazel and launched by path.</span>
           </a>
           <a class="tile" href="module-rust.html">
             <span class="tile-label">SDK</span>
@@ -105,11 +137,13 @@
           </a>
         </div>
         <p>
-          All three SDKs expose the same concepts under language-appropriate names: a
-          module object/trait with <code>info</code>, <code>schema</code>, and <code>run</code>;
-          optional extension hooks such as steps and Mesh; a context for inputs, logging,
-          and sessions; and a result carrying findings and artifacts. Pick the one your
-          tooling and target environment favor.
+          All three SDKs expose the same base concepts under language-appropriate names:
+          a module object/trait with <code>info</code>, <code>schema</code>, and
+          <code>run</code>; a context for inputs, logging, and sessions; and a result
+          carrying findings and artifacts. All three dispatch optional Mesh and
+          credential-delivery hooks. Go and Python dispatch <code>step.*</code>; Rust does
+          not. Pick the narrowest implemented surface your tooling and target environment
+          favor.
         </p>
 
         <h2>Implementing one module in all three SDKs</h2>
@@ -143,7 +177,7 @@
         </p>
         <ul>
           <li><strong>Stdout belongs to the protocol.</strong> Never print progress, banners, debug output, or child-process output to stdout. The daemon reads stdout as framed JSON-RPC. Use the SDK logger for operator-visible logs and stderr only for crash diagnostics.</li>
-          <li><strong>Metadata paths must be boring.</strong> Catalog loading calls <code>handshake</code>, <code>schema</code>, optional <code>step.describe</code>, and optional <code>mesh.describe</code>. Those paths must be fast, deterministic, offline, and side-effect free: no target contact, listener startup, random prepared values, payload generation, credential creation, or filesystem mutation.</li>
+          <li><strong>Metadata paths must be boring.</strong> Catalog loading calls <code>handshake</code>, <code>schema</code>, optional <code>step.describe</code>, optional <code>mesh.describe</code>, and optional <code>credential.describe</code>. Those paths must be fast, deterministic, offline, and side-effect free: no target contact, listener startup, random prepared values, payload generation, credential resolution or creation, protected-file access, or filesystem mutation.</li>
           <li><strong>Configuration is explicit.</strong> Declare every operator-controlled value as a <code>Requirement</code>. Do not read arbitrary environment variables or hidden config files for target behavior unless the value is also surfaced in the schema or returned evidence.</li>
           <li><strong>Use Hovel's log rail.</strong> Logs should be structured fields, not prose blobs. Log target host, stage, protocol, handle, and provider ids as fields so transcripts are searchable.</li>
           <li><strong>Return durable state deliberately.</strong> Facts belong in <code>outputs</code>, human/audit observations in <code>findings</code>, blobs in <code>artifacts</code>, live handles in <code>sessions</code>, and target-side payload inventory only in explicit <code>installedPayloads</code> descriptors.</li>
@@ -157,9 +191,9 @@
           <code>hovel-module.yaml</code> manifest. The manifest describes package identity,
           trusted install scripts, and how Hovel launches the module on the operator's
           host. Runtime schema still comes from <code>handshake</code>, <code>schema</code>,
-          optional <code>step.describe</code>, and optional <code>mesh.describe</code>;
-          the package manifest is install and launch metadata, not the authoritative
-          module behavior schema.
+          optional <code>step.describe</code>, optional <code>mesh.describe</code>, and
+          optional <code>credential.describe</code>; the package manifest is install and
+          launch metadata, not the authoritative module behavior schema.
         </p>
 <pre data-lang="tree"><code>my-module-0.1.0.tgz
   hovel-module.yaml
@@ -292,10 +326,11 @@ hovel module check --warnings-as-errors ./dist/modules/my-module-0.1.0.tgz
 hovel run --workspace .hovel -- module check mock-survey</code></pre>
         <p>
           Installed module references run the non-executing JSON-RPC discovery path:
-          <code>handshake</code>, <code>schema</code>, <code>step.describe</code>, and
+          <code>handshake</code>, <code>schema</code>, <code>step.describe</code>, optional
+          <code>mesh.describe</code> and <code>credential.describe</code>, then
           <code>shutdown</code>. The report then shows the validated runtime protocol,
-          parsed metadata, chain and target config schema counts, and provider step
-          contract count.
+          parsed metadata, chain and target config schema counts, provider step contract
+          count, and any advertised Mesh or credential-delivery contract.
         </p>
 <pre data-lang="text"><code>MODULE CHECK ms17-010-exploit@v1.0.0
 status  ✅ PASS
@@ -303,7 +338,7 @@ module  ms17-010-exploit@v1.0.0
 
 CHECK   NAME                         MESSAGE
 -----   ----                         -------
-✅ PASS rpc discovery                handshake, schema, step.describe, and shutdown completed
+✅ PASS rpc discovery                handshake, schema, optional provider discovery, and shutdown completed
 ✅ PASS runtime                      jsonrpc-stdio
 ✅ PASS metadata                     ms17-010-exploit@v1.0.0 exploit v1.0.0
 ✅ PASS config schema                1 chain requirements, 3 target requirements
@@ -352,6 +387,18 @@ CHECK   NAME                         MESSAGE
               <td>override <code>describe_steps</code>, <code>prepare_step</code>, <code>execute_step</code>, <code>cleanup_step</code></td>
               <td>implement <code>StepProvider</code></td>
               <td>not implemented yet; use Python or Go for provider/chain-step modules</td>
+            </tr>
+            <tr>
+              <td>credential-provider discovery and execution</td>
+              <td><code>describe_credential_delivery</code>, <code>load_runtime_credential</code>, <code>load_credential_files</code>, <code>encode_credential_material</code>, <code>stamp_credential</code></td>
+              <td><code>CredentialDescriber</code> plus only the runtime/files/encoding/stamp interfaces implemented by the module</td>
+              <td><code>Module::describe_credential_delivery</code> plus optional runtime/files/encoding/stamp methods</td>
+            </tr>
+            <tr>
+              <td>authenticated local Mesh bridge client</td>
+              <td><code>MeshBridgeEndpoint</code>, <code>MeshBridgeNetwork</code>, <code>connect_mesh_bridge</code></td>
+              <td><code>NewMeshBridgeEndpoint</code>, <code>DialMeshBridge</code></td>
+              <td><code>MeshBridgeCapability</code>, <code>MeshBridgeEndpoint</code>, <code>connect_mesh_bridge_tcp</code>/<code>connect_mesh_bridge_udp</code></td>
             </tr>
             <tr>
               <td>payload-provider helper types</td>
@@ -409,11 +456,19 @@ hovel module install --link /home/me/dev/my-module</code></pre>
         <h2>Building and running</h2>
         <p>
           As with everything in this repo, go through <a href="https://taskfile.dev/">Task</a>.
-          The module slice is outside the core build workspace. Build or package
-          module artifacts with the module-slice tasks once they are restored;
-          link editable module package roots while iterating.
+          The SDK and module slices are outside the core Bazel workspace, but the root
+          Task dispatcher already wires their integration builds, tests, CI gates, and
+          release packaging. Link editable module package roots while iterating.
         </p>
-<pre data-lang="shell"><code># Install or link module packages for the active workspace
+<pre data-lang="shell"><code># Validate SDKs and example modules from a full source checkout
+task sdk:ci
+task modules:examples:ci
+task modules:ci
+
+# Build release module packages and indexes when you need installable archives
+task release:modules-package
+
+# Install or link module packages for the active workspace
 hovel module install --link "$PWD/path/to/module-package-root"
 
 # Launch the interactive CLI
@@ -421,7 +476,13 @@ task start
 
 # In the CLI, list installed modules for the workspace
 hovel&gt; module installed</code></pre>
-        <p><code>task start</code>, <code>task daemon</code>, and <code>task throw</code> go through Task so local build, packaging, and runtime assumptions stay aligned with CI.</p>
+        <p>
+          <code>task check</code> validates every slice present in a partial checkout;
+          <code>task ci</code> requires a full checkout and runs the wired remote-compatible
+          gate. Use <code>task start</code> or <code>task daemon</code> for the Hovel process,
+          then invoke module operations through the CLI so build and runtime assumptions
+          stay aligned with CI.
+        </p>
 
         <h2>Safety</h2>
         <p>
@@ -440,6 +501,16 @@ hovel&gt; module installed</code></pre>
             <span class="tile-label">Reference</span>
             <span class="tile-title">Wire Protocol</span>
             <span class="tile-desc">Framing, every method and notification, and the data shapes on the wire.</span>
+          </a>
+          <a class="tile" href="credential-provider-development.html">
+            <span class="tile-label">Guide</span>
+            <span class="tile-title">Credential Providers</span>
+            <span class="tile-desc">Typed optional discovery, runtime, protected-file, encoding, and stamping hooks in Go, Python, and Rust.</span>
+          </a>
+          <a class="tile" href="tls-pki.html">
+            <span class="tile-label">PKI</span>
+            <span class="tile-title">TLS and Workspace PKI</span>
+            <span class="tile-desc">Authorities, profiles, assignments, trust, rotation, revocation, and provider delivery.</span>
           </a>
           <a class="tile" href="module-python.html">
             <span class="tile-label">Guide</span>

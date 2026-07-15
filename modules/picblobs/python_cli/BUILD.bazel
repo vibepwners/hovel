@@ -2,14 +2,54 @@
 
 load("@picblobs_pip//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+load("//modules/picblobs/tools:stage_artifacts.bzl", "declare_stage_artifacts")
+
+CLI_TEST_ARTIFACTS = declare_stage_artifacts(
+    blob_specs = [
+        ("alloc_jump", "linux", "aarch64"),
+        ("alloc_jump", "linux", "x86_64"),
+        ("hello", "linux", "aarch64"),
+        ("hello", "linux", "x86_64"),
+        ("hello_windows", "windows", "x86_64"),
+        ("reflective_pe_windows", "windows", "x86_64"),
+        ("stager_fd", "linux", "x86_64"),
+        ("stager_mmap", "linux", "x86_64"),
+        ("stager_pipe", "linux", "x86_64"),
+        ("stager_tcp", "linux", "aarch64"),
+        ("test_fd_ok", "linux", "x86_64"),
+        ("test_pass", "linux", "aarch64"),
+        ("test_pass", "linux", "x86_64"),
+    ],
+    include_runners = True,
+    name_prefix = "cli_test",
+    runner_specs = [
+        ("freebsd", "freebsd", "x86_64"),
+        ("windows", "windows", "x86_64"),
+    ],
+    test_binary_specs = [
+        ("ul_exec", "linux", "x86_64"),
+    ],
+)
 
 package(default_visibility = ["//visibility:public"])
+
+_QEMU_AARCH64_STATIC = "@qemu_user_static//:qemu-aarch64-static"
+
+_QEMU_X86_64_STATIC = "@qemu_user_static//:qemu-x86_64-static"
 
 exports_files(["pyproject.toml"])
 
 filegroup(
     name = "package_files",
     srcs = glob(["**"]),
+)
+
+filegroup(
+    name = "source_package_files",
+    srcs = glob([
+        "picblobs_cli/**/*.py",
+        "tests/**/*.py",
+    ]) + ["pyproject.toml"],
 )
 
 filegroup(
@@ -55,21 +95,33 @@ py_test(
     name = "pytest_suite",
     size = "small",
     srcs = glob(["tests/**/*.py"]),
-    data = [
-        ":package_files",
-        "//modules/picblobs:root_metadata",
-        "//modules/picblobs/python:package_dir",
+    args = CLI_TEST_ARTIFACTS.args + [
+        "--qemu-aarch64=$(rootpath {})".format(_QEMU_AARCH64_STATIC),
+        "--qemu-x86-64=$(rootpath {})".format(_QEMU_X86_64_STATIC),
     ],
+    data = [
+        ":source_package_files",
+        "//modules/picblobs:root_metadata",
+        "//modules/picblobs/python:source_package_files",
+        "//modules/picblobs/tools:python_tools",
+        _QEMU_AARCH64_STATIC,
+        _QEMU_X86_64_STATIC,
+    ] + CLI_TEST_ARTIFACTS.data,
     imports = [
         ".",
         "..",
         "../python",
     ],
-    main = "tests/test_picblobs_cli.py",
+    main = "tests/bazel_pytest.py",
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
     deps = [
         ":picblobs_cli",
         "//modules/picblobs/python:picblobs",
         requirement("click"),
+        requirement("pyelftools"),
         requirement("pytest"),
     ],
 )

@@ -3,8 +3,8 @@
         <h1>Go Modules</h1>
         <p>
           A Go module compiles to a single static binary that the daemon launches by path. The
-          SDK is standard-library only and lives at <code>sdk/go/hovel</code>
-          (<code>github.com/Vibe-Pwners/hovel/sdk/go/hovel</code>); the worked examples are
+          SDK is dependency-light and lives at <code>sdk/go/hovel</code>
+          (<code>github.com/vibepwners/hovel/sdk/go/hovel</code>); the worked examples are
           under <code>modules/examples/go/</code>. The shapes mirror the
           <a href="module-python.html">Python SDK</a> one-to-one.
           Generated references are published for
@@ -33,12 +33,86 @@ func main() { hovel.Serve(MyModule{}) }</code></pre>
           process-level diagnostics that help explain startup or crash failures.
         </p>
 
+        <h2>TLS, workspace PKI, and Mesh bridges</h2>
+        <p>
+          An ordinary Go module can use <code>crypto/tls</code> inside <code>Run</code>
+          without implementing any Hovel credential interface. Add the credential-provider
+          contracts only when the module itself consumes or transforms assignment-bound
+          workspace-PKI material. Hovel does not automatically inject a PKI bundle into a
+          normal non-Mesh <code>Run</code> call.
+        </p>
+        <table>
+          <thead><tr><th>Provider need</th><th>Go surface</th></tr></thead>
+          <tbody>
+            <tr><td>Describe strict slots and capabilities</td><td><code>CredentialDescriber.DescribeCredentialDelivery</code></td></tr>
+            <tr><td>Consume in-memory bytes or a scoped reference</td><td><code>CredentialRuntimeProvider.LoadRuntimeCredential</code></td></tr>
+            <tr><td>Consume invocation-scoped protected files</td><td><code>CredentialFilesProvider.LoadCredentialFiles</code></td></tr>
+            <tr><td>Produce one bounded provider-native encoding</td><td><code>CredentialEncodingProvider.EncodeCredentialMaterial</code></td></tr>
+            <tr><td>Stamp an artifact or provider-owned deployment</td><td><code>CredentialStampProvider.StampCredential</code></td></tr>
+          </tbody>
+        </table>
+<pre data-lang="go"><code>var (
+    _ hovel.CredentialDescriber       = (*TLSProvider)(nil)
+    _ hovel.CredentialRuntimeProvider = (*TLSProvider)(nil)
+)</code></pre>
+        <p>
+          Implement only the interfaces advertised by the descriptor. If a Mesh
+          descriptor also embeds <code>CredentialDelivery</code>, it must match the
+          standalone descriptor exactly. The daemon can currently initiate direct runtime
+          certificate DER, public-key SPKI, and private-key PKCS #8 delivery immediately
+          before a Mesh listener, task, stream, or bridge in the same process. General
+          non-Mesh delivery and external encoding/stamping initiation remain extension
+          points. See <a href="tls-pki.html">TLS and Workspace PKI</a>,
+          <a href="credential-provider-development.html">Credential Provider Development</a>,
+          and the generated <a href="../api/sdk/go/hovel/index.html">Go SDK API</a>.
+        </p>
+
+        <h3 id="mesh-bridge-client">Dial an authenticated Mesh bridge</h3>
+        <p>
+          A consumer that already speaks TCP or UDP needs no Mesh-provider interface.
+          Receive <code>localHost</code>, <code>localPort</code>,
+          <code>localNetwork</code>, and the ephemeral <code>capability</code> from
+          <code>OpenMeshBridge</code>, then let the SDK consume the authentication
+          preface before protocol bytes are sent. Use the returned local network;
+          do not infer it from the provider-defined <code>request.protocol</code>.
+        </p>
+<pre data-lang="go"><code>func dialBridge(
+    ctx context.Context,
+    host string,
+    port int,
+    network hovel.MeshBridgeNetwork,
+    capability string,
+) (net.Conn, error) {
+    endpoint, err := hovel.NewMeshBridgeEndpoint(
+        host,
+        port,
+        network,
+        capability,
+    )
+    if err != nil {
+        return nil, err
+    }
+    return hovel.DialMeshBridge(ctx, endpoint)
+}</code></pre>
+        <p>
+          Convert the response's <code>localNetwork</code> to
+          <code>hovel.MeshBridgeNetwork</code>. The validated endpoint retains it, so
+          callers cannot accidentally dial a UDP bridge as TCP or vice versa;
+          construction rejects values other than <code>MeshBridgeNetworkTCP</code>
+          and <code>MeshBridgeNetworkUDP</code>. Keep the capability in memory and never
+          log, persist, or return it as module evidence.
+          Use a provider-native task or session instead for protocols that cannot preserve
+          TCP stream or UDP datagram semantics. The full decision flow starts at
+          <a href="../modules/development.html">Build a Module or Provider</a>.
+        </p>
+
         <h2>A survey module</h2>
 <pre data-lang="modules/examples/go/mock_survey/main.go"><code>package main
 
 import (
     "fmt"
-    "github.com/Vibe-Pwners/hovel/sdk/go/hovel"
+
+    "github.com/vibepwners/hovel/sdk/go/hovel"
 )
 
 type MockSurvey struct{}
@@ -225,9 +299,10 @@ return hovel.Ok(
         </p>
 <p>
           The Go SDK and in-repo Go examples now live outside the core Bazel
-          workspace. Restore a slice-local SDK/modules check before documenting
-          focused <code>//modules/examples/go:...</code> or <code>//sdk/go:...</code>
-          labels again.
+          workspace. The root Task dispatcher still exposes them through
+          <code>task sdk:test</code>, <code>task sdk:ci</code>,
+          <code>task modules:examples:test</code>, and
+          <code>task modules:examples:ci</code>.
         </p>
 
         <h2>Build, package, and run</h2>
@@ -261,8 +336,10 @@ launch:
 task start
 hovel&gt; module installed   # ... mock-survey-go, mock-exploit-go, mock-exploit-session-go</code></pre>
         <p>
-          Module-slice build and packaging tasks are not wired into the root
-          dispatcher yet. Add new core tests to <code>core/BUILD.bazel</code>;
-          add module tests to the module slice once its local workspace is restored.
+          Run <code>task sdk:ci</code> and <code>task modules:examples:ci</code> before
+          submitting SDK or example changes. <code>task modules:ci</code> covers the
+          complete module slice, and <code>task release:modules-package</code> builds the
+          installable module archives and indexes. Add core test targets to
+          <code>core/BUILD.bazel</code> and module tests to their slice-level suites.
         </p>
       </article>

@@ -1,65 +1,78 @@
 <!-- hovel-doc: {"title":"Formatting and Linting","group":"picblobs","order":160,"navTitle":"Formatting"} -->
 <article>
-<h1 id="formatting-and-linting">Formatting and Linting</h1>
-<pre data-lang="bash"><code>source sourceme                   # installs repo dev deps + git hooks
-lefthook run pre-commit --all-files
-lefthook run pre-push
+  <h1 id="formatting-and-linting">Formatting and Linting</h1>
+  <p>
+    Run quality workflows through Task from the repository root. The underlying
+    formatters, linters, Python runtime, and C toolchain are pinned Bazel inputs;
+    no Picblobs virtual environment or host linter installation is required.
+  </p>
+  <pre data-lang="bash"><code># Apply formatting
+task picblobs:fmt
 
-python tools/fmt.py            # format all C and Python files
-python tools/fmt.py --check    # verify formatting (CI)
-python tools/lint.py           # ruff + lizard
-tools/c_lint_check.sh          # clang-tidy via Bazel
+# Read-only formatting and Python/Bazel lint checks
+task picblobs:fmt-check
+task picblobs:lint-check
+
+# Full Picblobs CI gate
+task picblobs:ci
+
+# Optional C static analysis target
+task --dir modules/picblobs lint:c
 </code></pre>
-<p><code>source sourceme</code> now installs <code>lefthook</code> into <code>python/.venv</code>, activates that
-environment, and installs the repo hooks. The hooks are split by cost:</p>
-<ul>
-<li><code>pre-commit</code>: format staged C/Python files and lint the staged diff</li>
-<li><code>pre-push</code>: run full-repo formatting, Python lint/complexity, and C <code>clang-tidy</code></li>
-</ul>
-<p>The fast local tooling (<code>lefthook</code>, <code>ruff</code>, <code>lizard</code>, <code>clang-format</code>) comes
-from the repo venv. Only <code>clang-tidy</code> still needs to be on your system <code>PATH</code>
-for the Bazel-backed C lint pass.</p>
-<h2 id="formatters-and-linters">Formatters and Linters</h2>
-<table>
-<thead>
-<tr>
-<th>Language</th>
-<th>Tool</th>
-<th>Config</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>C/H files</td>
-<td>clang-format</td>
-<td><code>.clang-format</code></td>
-</tr>
-<tr>
-<td>C/H files</td>
-<td>clang-tidy</td>
-<td><code>.clang-tidy</code> + <code>bazel/lint.bzl</code></td>
-</tr>
-<tr>
-<td>Python</td>
-<td>ruff format / ruff check</td>
-<td><code>ruff.toml</code></td>
-</tr>
-<tr>
-<td>C/Python</td>
-<td>lizard</td>
-<td><code>tools/lint.py</code> + <code>tools/lizard_baseline.txt</code></td>
-</tr>
-</tbody>
-</table>
-<h2 id="complexity">Complexity</h2>
-<pre data-lang="bash"><code>python tools/lint.py
-python tools/lint.py --check
-python tools/lint.py src/payload/hello.c python/tests/test_python_api.py
+  <p>
+    Optional repository hooks can be installed with
+    <code>task hooks:install</code>. They call Task-backed checks rather than
+    exposing the underlying tool commands.
+  </p>
+
+  <h2 id="formatters-and-linters">Formatters and linters</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Language</th>
+        <th>Tool</th>
+        <th>Configuration</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>C/H files</td>
+        <td>clang-format</td>
+        <td><code>modules/picblobs/.clang-format</code></td>
+      </tr>
+      <tr>
+        <td>C/H files</td>
+        <td>clang-tidy</td>
+        <td><code>modules/picblobs/.clang-tidy</code> and Bazel lint aspects</td>
+      </tr>
+      <tr>
+        <td>Python</td>
+        <td>Ruff formatter and linter</td>
+        <td><code>modules/picblobs/ruff.toml</code></td>
+      </tr>
+      <tr>
+        <td>C and Python</td>
+        <td>Lizard complexity checks</td>
+        <td>
+          <code>modules/picblobs/tools/lint.py</code> and
+          <code>modules/picblobs/tools/lizard_baseline.txt</code>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="complexity">Complexity</h2>
+  <pre data-lang="bash"><code># Check the complete declared source set
+task picblobs:lint-check
+
+# Run the lint materializer and forward an explicit source selection
+task picblobs:lint -- src/payload/hello.c python/tests/test_python_api.py
 </code></pre>
-<p><code>tools/lint.py</code> runs <code>lizard</code> across the repository with a maximum cyclomatic
-complexity number (CCN) of <code>10</code>. It excludes build artifacts, virtual
-environments, and generated Bazel output trees in the same way as the other
-repo-quality entrypoints. When you pass explicit files or directories, both
-<code>tools/fmt.py</code> and <code>tools/lint.py</code> limit themselves to those paths, which is
-what <code>lefthook</code> uses for the fast staged-file checks.</p>
-      </article>
+  <p>
+    The Bazel-managed lint target runs Lizard with a maximum cyclomatic
+    complexity number (CCN) of <code>10</code>. Its declared input set excludes
+    build artifacts, virtual environments, and generated output trees. Explicit
+    Picblobs-relative paths forwarded after <code>--</code> narrow the
+    materializer to those sources without bypassing the Task/Bazel toolchain.
+  </p>
+</article>

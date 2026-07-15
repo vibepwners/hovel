@@ -4,20 +4,97 @@
         <p>
           picblobs uses the repository root <code>.bazelrc</code>. The imported
           <code>modules/picblobs/.bazelrc</code> is retained only as deprecated
-          source context.
+          source context. Invoke every build through Task; the Taskfile owns the
+          required Bazel configurations and declared toolchains.
         </p>
 
-        <h2>Bazel Targets</h2>
+        <h2>Module Build</h2>
         <pre><code>task picblobs:bazel-build
-bazel build --config=linux_x86_64 //modules/picblobs/src/payload:hello
-bazel build //modules/picblobs/provider:picblobs-provider</code></pre>
-
-        <h2>Staging</h2>
-        <pre><code>task picblobs:provider-stage
+task picblobs:provider-stage
 task picblobs:stage</code></pre>
         <p>
-          The provider stage copies the Go payload-provider binary into the
-          module package. The blob stage builds platform payloads and extracts
-          release artifacts into the Python package tree.
+          The representative build covers the provider and the supported Linux,
+          Windows, and FreeBSD platform slices. The provider stage copies the Go
+          payload-provider binary into the module package. The blob stage builds
+          platform payloads and extracts release artifacts into the Python
+          package tree.
+        </p>
+
+        <h2 id="mbed-target-build">Pinned Mbed Target Build</h2>
+        <p>
+          First materialize a matched server/client pair, then compile both
+          firmware roles. See the <a href="user-guide.html#mbed-nacl-poc">PoC
+          workflow</a> before using real key material.
+        </p>
+        <pre><code>task picblobs:mbed-blobs -- \
+  --server-ip=192.0.2.10 \
+  --auth-key-file=/secure/path/mbed-poc.key \
+  --port=9999
+
+task picblobs:mbed-compile</code></pre>
+        <p>
+          The build consumes Mbed OS 5.15.9 at commit
+          <code>dfcb61e052d1192d99a07dca6fb4970281afc8e4</code> and the
+          GCC ARM <code>9-2019-q4</code> Linux toolchain from Bazel repositories
+          pinned by SHA-256. It uses Mbed's real legacy build system for
+          <code>NUCLEO_F429ZI</code>/<code>GCC_ARM</code>, not the POSIX API mocks
+          used by the executable integration test.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Declared input</th>
+              <th>Pin</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Cortex-M4 blob compiler</td>
+              <td>Arm GNU 15.2.rel1 archive, SHA-256 <code>597893282ac8c6ab1a4073977f2362990184599643b4c5ee34870a8215783a16</code>.</td>
+            </tr>
+            <tr>
+              <td>Mbed firmware compiler</td>
+              <td>GCC ARM 9-2019-q4 archive, SHA-256 <code>bcd840f839d5bf49279638e9f67890b2ef3a7c9c7a9b25271e83ec4ff41d177a</code>.</td>
+            </tr>
+            <tr>
+              <td>Mbed OS</td>
+              <td>Commit above, source archive SHA-256 <code>9bdcfd5f65542988461c6c33a1ae376e6fd1cb4c1f2786a4f6cd63522b843c14</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Build one role while iterating with either command:
+        </p>
+        <pre><code>task picblobs:mbed-compile -- --role=server
+task picblobs:mbed-compile -- --role=client</code></pre>
+        <p>
+          Outputs are separated under
+          <code>.local/picblobs/mbed/NUCLEO_F429ZI/GCC_ARM/server/</code> and
+          <code>client/</code>. A lock serializes clean builds sharing that root.
+          Success requires a nontrivial <code>.bin</code> and an ELF with a valid
+          header; the builder prints each artifact's size and SHA-256.
+        </p>
+
+        <h2 id="mbed-local-override">Validate a Local Mbed Checkout</h2>
+        <pre><code>task picblobs:mbed-compile -- \
+  --mbed-os=/absolute/path/to/mbed-os</code></pre>
+        <p>
+          The override must expose Mbed's <code>tools/make.py</code> and version
+          header and report exactly 5.15.9. When Git metadata is present, the
+          builder also requires the pinned commit. It resolves detached HEADs,
+          symbolic refs, packed refs, and worktree or submodule
+          <code>gitdir</code>/<code>commondir</code> layouts rather than trusting a
+          version string alone. The compiler remains the declared GCC ARM 9.x
+          toolchain, and build output must remain outside both source trees.
+        </p>
+
+        <h2>Configuration Freshness</h2>
+        <p>
+          Compilation rejects a zero port, zero server IPv4 address, all-zero or
+          mismatched authentication keys, stale blob code, and role headers that
+          do not share the same port and key. Regenerate both headers together
+          with <code>task picblobs:mbed-blobs</code>; do not hand-edit the C
+          arrays. The <a href="reference.html#mbed-reference">reference</a>
+          records the exact layouts and source paths.
         </p>
       </article>

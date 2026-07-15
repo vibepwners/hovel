@@ -3,19 +3,66 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "sqlite",
     srcs = [
+        "database_file_unix.go",
+        "database_file_windows.go",
         "logging.go",
         "migrations.go",
+        "pki_assignment_store.go",
+        "pki_credential_execution_store.go",
+        "pki_crl_store.go",
+        "pki_issuance_store.go",
+        "pki_operation_store.go",
+        "pki_revocation_store.go",
+        "pki_stamp_store.go",
+        "pki_store.go",
         "store.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/adapters/storage/sqlite",
+    importpath = "github.com/vibepwners/hovel/internal/adapters/storage/sqlite",
     visibility = ["//:__subpackages__"],
     deps = [
         "//internal/app/commands",
         "//internal/app/operatorsession",
+        "//internal/app/pki",
         "//internal/domain/event",
+        "//internal/domain/pki",
         "//internal/domain/workspace",
         "@org_modernc_sqlite//:sqlite",
-    ],
+    ] + select({
+        "@rules_go//go/platform:aix": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:android": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:darwin": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:dragonfly": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:freebsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:ios": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:linux": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:netbsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:openbsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:solaris": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:windows": [
+            "@org_golang_x_sys//windows",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 go_test(
@@ -23,6 +70,9 @@ go_test(
     size = "small",
     srcs = [
         "migrations_test.go",
+        "pki_credential_execution_store_test.go",
+        "pki_stamp_store_test.go",
+        "pki_store_test.go",
         "store_cache_test.go",
         "store_test.go",
     ],
@@ -30,6 +80,32 @@ go_test(
     deps = [
         "//internal/app/commands",
         "//internal/app/operatorsession",
+        "//internal/app/pki",
         "//internal/domain/event",
+        "//internal/domain/pki",
+        "//internal/domain/workspace",
+        "//internal/infra/pki",
+    ],
+)
+
+go_test(
+    name = "sqlite_race_test",
+    size = "small",
+    srcs = [
+        "migrations_test.go",
+        "pki_store_test.go",
+        "store_cache_test.go",
+        "store_test.go",
+    ],
+    embed = [":sqlite"],
+    race = "on",
+    tags = ["manual"],
+    deps = [
+        "//internal/app/commands",
+        "//internal/app/operatorsession",
+        "//internal/app/pki",
+        "//internal/domain/event",
+        "//internal/domain/pki",
+        "//internal/infra/pki",
     ],
 )

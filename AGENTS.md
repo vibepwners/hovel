@@ -113,6 +113,10 @@ HTML containing exactly one page-level `h1`:
 - API landing metadata lives in `src/lib/apiReferences.ts`. Astro owns the API
   landing pages and shared Hovel chrome; generated Sphinx, pkgsite, and rustdoc
   interiors keep their native navigation and must not reimplement that chrome.
+- The daemon OpenAPI source lives only at
+  `docs/site/spec/reference/daemon-rpc.openapi.json`. The Bazel
+  `//docs/site:daemon_rpc_openapi` target publishes it into Astro's
+  `public/spec/reference/` path; never check in or edit a second public copy.
 - The home page contains exactly one
   `<div data-hovel-component="demo-carousel"></div>` marker. Its reusable Astro
   component is `src/components/DemoCarousel.astro`, while the ordered demo data

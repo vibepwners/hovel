@@ -9,8 +9,13 @@ Install:
 
 - [Task](https://taskfile.dev/) — the single entry point for every build command
 - [bazelisk](https://github.com/bazelbuild/bazelisk) (honors `core/.bazelversion`)
-- [uv](https://docs.astral.sh/uv/) (Python SDK checks, when working in `sdk/`)
-- [Lefthook](https://lefthook.dev/) (optional git hooks)
+
+Python, Go, Rust, Node, formatting, linting, documentation, and cross-compilation
+tools are declared build inputs; do not install parallel host copies for
+repository workflows. Install [Lefthook](https://lefthook.dev/) only if you want
+the optional Git-hook integration exposed by `task hooks:install`. Host services
+such as Docker, QEMU, Wine, or ffmpeg are needed only by tasks that cross those
+specific system boundaries.
 
 **Drive the build only through Task** (`task <name>`); do not invoke `bazel`,
 `gofmt`, `uv`, or `lefthook` directly. `Taskfile.yml` is the single source of
@@ -54,12 +59,11 @@ task ci
 ```
 
 `task ci` first verifies that the full source tree is checked out. It then runs
-the wired full gate. At this stage of the layout split, the executable gate is
-centered on `core/`: Go formatting, golangci-lint, Gazelle up-to-date checks,
-core build, core CI tests, race tests, fuzz smoke, and core coverage ratchets.
-The SDK, module, and docs slices are deliberately outside the core workspace so
-their own slice-local checks can be added without making sparse `core/`
-checkouts pull unrelated code.
+repository policy and quality checks, the core lint/build/test/race/fuzz/coverage
+gate, all three SDK build/lint/test gates, module and Picblobs build/test gates,
+and the hermetic Astro documentation build and validators. The slices remain
+separate so `task check` can validate a sparse checkout without pulling
+unrelated code, while `task ci` proves the complete integration graph.
 
 If you add, move, or remove Go files or imports, regenerate formatting and
 `BUILD.bazel` metadata:

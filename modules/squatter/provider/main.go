@@ -26,11 +26,11 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/shell"
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/smbpipe"
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/wire"
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/xfer"
-	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
+	"github.com/vibepwners/hovel/payloads/squatter/client/shell"
+	"github.com/vibepwners/hovel/payloads/squatter/client/smbpipe"
+	"github.com/vibepwners/hovel/payloads/squatter/client/wire"
+	"github.com/vibepwners/hovel/payloads/squatter/client/xfer"
+	"github.com/vibepwners/hovel/sdk/go/hovel"
 )
 
 const (

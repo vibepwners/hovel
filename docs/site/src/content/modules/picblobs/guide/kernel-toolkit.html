@@ -6,8 +6,8 @@
 <pre data-lang="bash"><code># Prerequisites
 apt install qemu-system-x86 qemu-utils genisoimage
 
-# Run all kernel tests in hermetic VMs (downloads Ubuntu cloud image on first run)
-bazel test //modules/picblobs/kernel:ubuntu_suite
+# Run all kernel tests through Task (downloads Ubuntu cloud image on first run)
+task bazel:test -- //modules/picblobs/kernel:ubuntu_suite
 
 # Interactive VM shell for exploration
 python3 kernel/vm/vm_harness.py shell --distro ubuntu

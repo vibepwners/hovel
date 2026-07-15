@@ -43,6 +43,7 @@ use_repo(
     "com_github_modelcontextprotocol_go_sdk",
     "com_github_pkg_term",
     "in_gopkg_yaml_v3",
+    "org_golang_x_crypto",
     "org_golang_x_sys",
     "org_golang_x_tools",
     "org_modernc_sqlite",
@@ -171,6 +172,7 @@ use_repo(
     "bootlin_sparcv8",
     "bootlin_x86_64",
     "mbed_arm_none_eabi",
+    "mbed_os_5_15_9",
     "qemu_arm_static",
     "qemu_user_static",
 )
@@ -190,7 +192,7 @@ mingw_toolchain_repo(
     sha256 = "2eb51859f539890133f5d0419b1bd534fb7fb8b522018de838ff1f5c09abf3c2",
     strip_prefix = "mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64",
     target = "i686-w64-mingw32",
-    urls = ["https://github.com/Vibe-Pwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64.tar.xz"],
+    urls = ["https://github.com/vibepwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-dw2-i686-w64-mingw32-linux-x86_64.tar.xz"],
 )
 
 mingw_toolchain_repo(
@@ -199,5 +201,5 @@ mingw_toolchain_repo(
     sha256 = "c660219c7f6bd0597ea7984743bae65f82b37d8ec5e13155eb27cf11a4ee50f5",
     strip_prefix = "mingw-w64-gcc-15.2.0-ucrt-posix-seh-x86_64-w64-mingw32-linux-x86_64",
     target = "x86_64-w64-mingw32",
-    urls = ["https://github.com/Vibe-Pwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-seh-x86_64-w64-mingw32-linux-x86_64.tar.xz"],
+    urls = ["https://github.com/vibepwners/windows-toolchains/releases/download/v0.0.1/mingw-w64-gcc-15.2.0-ucrt-posix-seh-x86_64-w64-mingw32-linux-x86_64.tar.xz"],
 )

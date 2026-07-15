@@ -4,9 +4,24 @@ import asyncio
 import inspect
 import logging
 import sys
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 
 from hovel_sdk.context import AgentContext, Context
+from hovel_sdk.credential_delivery import _CREDENTIAL_RPC_DESCRIBE_METHOD, CredentialDeliveryDescriptor
+from hovel_sdk.credential_provider import (
+    _CREDENTIAL_RPC_ENCODE_METHOD,
+    _CREDENTIAL_RPC_FILES_METHOD,
+    _CREDENTIAL_RPC_PREFIX,
+    _CREDENTIAL_RPC_RUNTIME_METHOD,
+    _CREDENTIAL_RPC_STAMP_METHOD,
+    CredentialDeliveryReceipt,
+    CredentialEncodingRequest,
+    CredentialEncodingResult,
+    CredentialFilesRequest,
+    CredentialRuntimeRequest,
+    CredentialStampExecutionRequest,
+    CredentialStampExecutionResult,
+)
 from hovel_sdk.framing import FrameError, MessageWriter, read_message
 from hovel_sdk.logging import setup_logging
 from hovel_sdk.mesh import (
@@ -107,6 +122,8 @@ class JSONRPCServer:
             result = self._module.module_schema()
         elif method.startswith(_MESH_RPC_PREFIX):
             result = self._loop.run_until_complete(self._dispatch_mesh(method, params))
+        elif method.startswith(_CREDENTIAL_RPC_PREFIX):
+            result = self._loop.run_until_complete(self._dispatch_credential(method, params))
         elif method.startswith("step."):
             result = self._dispatch_step(method, params)
         elif method == "execute":
@@ -167,6 +184,47 @@ class JSONRPCServer:
                 requested_id,
                 await _resolve(self._module.stop_mesh_listener(stop_request)),
             )
+        raise ValueError(f"unknown method {method!r}")
+
+    async def _dispatch_credential(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        if method == _CREDENTIAL_RPC_DESCRIBE_METHOD:
+            descriptor = cast(
+                "CredentialDeliveryDescriptor",
+                await _resolve(self._module.describe_credential_delivery()),
+            )
+            return descriptor.to_rpc()
+        if method == _CREDENTIAL_RPC_RUNTIME_METHOD:
+            runtime_request = CredentialRuntimeRequest.from_rpc(params)
+            receipt = cast(
+                "CredentialDeliveryReceipt",
+                await _resolve(self._module.load_runtime_credential(runtime_request)),
+            )
+            receipt.validate_for(runtime_request.request_id)
+            return receipt.to_rpc()
+        if method == _CREDENTIAL_RPC_FILES_METHOD:
+            files_request = CredentialFilesRequest.from_rpc(params)
+            files_receipt = cast(
+                "CredentialDeliveryReceipt",
+                await _resolve(self._module.load_credential_files(files_request)),
+            )
+            files_receipt.validate_for(files_request.request_id)
+            return files_receipt.to_rpc()
+        if method == _CREDENTIAL_RPC_ENCODE_METHOD:
+            encoding_request = CredentialEncodingRequest.from_rpc(params)
+            encoding_result = cast(
+                "CredentialEncodingResult",
+                await _resolve(self._module.encode_credential_material(encoding_request)),
+            )
+            encoding_result.validate_for(encoding_request)
+            return encoding_result.to_rpc()
+        if method == _CREDENTIAL_RPC_STAMP_METHOD:
+            stamp_request = CredentialStampExecutionRequest.from_rpc(params)
+            stamp_result = cast(
+                "CredentialStampExecutionResult",
+                await _resolve(self._module.stamp_credential(stamp_request)),
+            )
+            stamp_result.validate_for(stamp_request)
+            return stamp_result.to_rpc()
         raise ValueError(f"unknown method {method!r}")
 
     async def _dispatch_session(self, method: str, params: dict[str, Any]) -> dict[str, Any]:

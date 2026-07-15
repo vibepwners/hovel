@@ -6,7 +6,7 @@ go_library(
         "harness.go",
         "main.go",
     ],
-    importpath = "github.com/Vibe-Pwners/hovel/tools/demo/mcpagent",
+    importpath = "github.com/vibepwners/hovel/tools/demo/mcpagent",
     visibility = ["//visibility:private"],
     deps = [
         "@com_github_charmbracelet_lipgloss//:lipgloss",

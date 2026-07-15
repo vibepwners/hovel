@@ -1,0 +1,83 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "pki",
+    srcs = [
+        "bundle_verifier.go",
+        "envelope.go",
+        "master_key_file.go",
+        "master_key_rotation.go",
+        "recovery.go",
+        "secret_file_unix.go",
+        "secret_file_windows.go",
+        "tls_policy.go",
+        "x509_backend.go",
+    ],
+    importpath = "github.com/vibepwners/hovel/internal/infra/pki",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/app/pki",
+        "//internal/domain/pki",
+        "//internal/domain/workspace",
+        "@org_golang_x_crypto//argon2",
+    ] + select({
+        "@rules_go//go/platform:aix": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:android": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:darwin": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:dragonfly": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:freebsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:ios": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:linux": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:netbsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:openbsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:solaris": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@rules_go//go/platform:windows": [
+            "@org_golang_x_sys//windows",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+go_test(
+    name = "pki_test",
+    srcs = [
+        "envelope_test.go",
+        "master_key_file_test.go",
+        "master_key_rotation_test.go",
+        "recovery_test.go",
+        "secret_file_unix_test.go",
+        "secret_file_windows_test.go",
+        "x509_backend_test.go",
+    ],
+    embed = [":pki"],
+    deps = [
+        "//internal/app/pki",
+        "//internal/domain/pki",
+        "//internal/domain/workspace",
+    ] + select({
+        "@rules_go//go/platform:windows": [
+            "@org_golang_x_sys//windows",
+        ],
+        "//conditions:default": [],
+    }),
+)

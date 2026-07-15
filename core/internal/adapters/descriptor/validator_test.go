@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/commands"
-	"github.com/Vibe-Pwners/hovel/internal/domain/module"
-	"github.com/Vibe-Pwners/hovel/internal/domain/service"
+	"github.com/vibepwners/hovel/internal/app/commands"
+	"github.com/vibepwners/hovel/internal/domain/module"
+	"github.com/vibepwners/hovel/internal/domain/service"
 )
 
 // ---------------------------------------------------------------------------

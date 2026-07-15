@@ -49,6 +49,64 @@
           saved chains, and transcripts all agree on what controlled the run.
         </p>
 
+        <h2>TLS, workspace PKI, and Mesh bridges</h2>
+        <p>
+          A normal Python module may use <code>ssl</code> or another TLS library inside
+          <code>run</code> without overriding any credential hook. Override credential
+          methods only when the module is a provider that consumes or transforms
+          assignment-bound workspace-PKI material. Base <code>execute</code> does not
+          receive an automatically resolved PKI bundle.
+        </p>
+        <table>
+          <thead><tr><th>Provider need</th><th><code>HovelModule</code> hook</th></tr></thead>
+          <tbody>
+            <tr><td>Describe strict slots and capabilities</td><td><code>describe_credential_delivery</code></td></tr>
+            <tr><td>Consume in-memory bytes or a scoped reference</td><td><code>load_runtime_credential</code></td></tr>
+            <tr><td>Consume invocation-scoped protected files</td><td><code>load_credential_files</code></td></tr>
+            <tr><td>Produce one bounded provider-native encoding</td><td><code>encode_credential_material</code></td></tr>
+            <tr><td>Stamp an artifact or provider-owned deployment</td><td><code>stamp_credential</code></td></tr>
+          </tbody>
+        </table>
+        <p>
+          Override only advertised operations; inherited methods fail explicitly.
+          <code>CredentialBytes</code>, <code>CredentialSecretReference</code>, and
+          <code>CredentialProtectedPath</code> redact ordinary <code>repr</code>, but
+          explicit access still reveals the secret to provider code. Keep it scoped to
+          the invocation and out of logs, exceptions, results, and durable configuration.
+          Current external initiation delivers direct runtime certificate DER, public-key
+          SPKI, or private-key PKCS #8 selections before Mesh operations; general
+          non-Mesh delivery and external encoding/stamping initiation are not wired.
+          Continue with <a href="tls-pki.html">TLS and Workspace PKI</a>,
+          <a href="credential-provider-development.html">Credential Provider Development</a>,
+          and the generated <a href="../api/sdk/python/index.html">Python SDK API</a>.
+        </p>
+
+        <h3 id="mesh-bridge-client">Connect to an authenticated Mesh bridge</h3>
+        <p>
+          An existing TCP or UDP client needs no Mesh-provider override. Build an endpoint
+          from the transient <code>OpenMeshBridge</code> response and let the SDK send the
+          bearer capability before application data.
+        </p>
+<pre data-lang="python"><code>from hovel_sdk import MeshBridgeEndpoint, MeshBridgeNetwork, connect_mesh_bridge
+
+
+endpoint = MeshBridgeEndpoint.from_rpc(bridge)
+with connect_mesh_bridge(endpoint, timeout=5.0) as connection:
+    if endpoint.local_network is MeshBridgeNetwork.UDP:
+        connection.send(request_bytes)
+    else:
+        connection.sendall(request_bytes)</code></pre>
+        <p>
+          <code>MeshBridgeEndpoint.from_rpc()</code> validates and retains
+          <code>localNetwork</code>, preventing a TCP/UDP mismatch and rejecting an
+          unknown local adapter. The provider-defined
+          <code>request.protocol</code> is independent. Never log or persist the
+          capability. Use a provider-native task or session for protocols that cannot
+          preserve TCP stream or UDP datagram semantics. See
+          <a href="../modules/development.html">Build a Module or Provider</a> for the
+          complete decision table.
+        </p>
+
         <h2>A survey module</h2>
         <p>
           A survey gathers facts and returns them in <code>outputs</code>. Class attributes
@@ -313,8 +371,9 @@ def test_session_over_framed_rpc() -&gt; None:
         </p>
 <p>
           The Python SDK and in-repo Python examples now live outside the core Bazel
-          workspace. Restore a slice-local SDK/modules check before documenting
-          focused <code>//modules/examples/python:...</code> labels again.
+          workspace. Validate them through <code>task sdk:test</code>,
+          <code>task sdk:ci</code>, <code>task modules:examples:test</code>, and
+          <code>task modules:examples:ci</code>; the Task-backed targets remain hermetic.
         </p>
         <p>
           Move to daemon or CLI tests only after pure parsing, schema, failure paths,

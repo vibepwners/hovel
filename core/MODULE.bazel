@@ -39,6 +39,7 @@ use_repo(
     "com_github_modelcontextprotocol_go_sdk",
     "com_github_pkg_term",
     "in_gopkg_yaml_v3",
+    "org_golang_x_crypto",
     "org_golang_x_sys",
     "org_golang_x_tools",
     "org_modernc_sqlite",

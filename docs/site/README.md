@@ -2,8 +2,9 @@
 
 The handwritten documentation is plain HTML under `src/content/`. Astro owns
 first-party HTML, navigation, version rendering, and the report application.
-Bazel owns Node, pnpm, npm packages, generated SDK reference, demos, inputs,
-and outputs. `//docs/tools/docs:site` assembles those declared artifacts into
+Bazel owns Node, pnpm, npm packages, generated SDK reference, inputs, and
+outputs. Demo GIFs are immutable checked-in inputs under
+`public/assets/demos/`. `//docs/tools/docs:site` assembles those artifacts into
 the complete site TreeArtifact; `//docs/tools/docs:stage_site` only materializes
 that tree to root `_site/`.
 
@@ -44,6 +45,12 @@ CSS, images, downloads, and other static files go under `public/`, preserving
 their path below the site root. Astro components are reserved for shared site
 structure; content authors should not need Astro syntax.
 
+The daemon OpenAPI document is the exception to direct `public/` authoring.
+Edit the single canonical source at
+`spec/reference/daemon-rpc.openapi.json`; the Bazel `daemon_rpc_openapi` target
+publishes it as `public/spec/reference/daemon-rpc.openapi.json` for Astro. Never
+restore a second checked-in copy under `public/`.
+
 Search is generated from fragment metadata and body text as
 `search-index.json`, then loaded only when the search dialog opens. The home
 fragment contains one `data-hovel-component="demo-carousel"` marker;
@@ -54,14 +61,29 @@ ordered slide data lives in `src/pages/index.astro`.
 
 | Command | Purpose |
 | --- | --- |
-| `task docs:check` | Build the hermetic Astro artifact and run docs tests. |
-| `task docs:build` | Build declared Astro, SDK, and demo artifacts and materialize `_site/`. |
+| `task docs:check` | Test, assemble, and link-check the complete remote-compatible site. |
+| `task docs:build` | Build the declared site from checked-in assets and materialize `_site/`. |
+| `task docs:demos` | Host-only: regenerate standard/UI demos and refresh checked-in GIFs. |
+| `task docs:demos:wine` | Host-only: regenerate and refresh the Squatter Wine GIF. |
+| `task docs:demos:all` | Host-only: regenerate and refresh every checked-in demo GIF. |
 | `task docs:dev` | Run Astro through Bazel on `http://localhost:4321`. |
 | `task docs:preview` | Serve the assembled `_site/` on `http://localhost:4322`. |
 | `task docs:report` | Run report-producing tests and build `_site/` with their evidence. |
 | `task docs:deps` | Refresh the pnpm and hashed Sphinx locks with Bazel-managed tools. |
 
 Do not run Node, pnpm, Astro, or Bazel directly. Do not edit `_site/`.
+
+## Refresh demo assets
+
+Normal docs builds never invoke VHS, Chrome, tmux, or Docker. They consume the
+checked-in GIFs under `public/assets/demos/`, which makes site assembly and link
+validation eligible for sandboxed and remote execution.
+
+When a tape or the UI changes, run the narrowest `task docs:demos...`
+command above on a host with the required services. The Task-backed materializer
+renders the selected Bazel demo targets, checks their durations, and replaces
+the corresponding checked-in GIFs. Review those binary changes, then run
+`task docs:check`; missing or stale links fail while assembling the site.
 
 Astro always builds `reports/tests/latest/index.html`, its styles, and its
 JavaScript, so navigation is valid in every artifact. Bazel test evidence is
@@ -89,10 +111,12 @@ pins pnpm and Astro exactly, and `pnpm-lock.yaml` supplies integrity hashes for
 the npm graph. Lifecycle scripts are disabled both in pnpm configuration and
 `npm_translate_lock`. The Astro action runs with declared sources, including
 root `VERSION`, and writes only its declared `dist` output directory. The final
-site assembler consumes declared TreeArtifacts and files and rejects output
-collisions. Native SDK reference generation is also a declared Bazel action:
+site assembler consumes declared TreeArtifacts and checked-in public assets,
+rejecting output collisions. Native SDK reference generation is also a declared
+Bazel action:
 Sphinx and its hashed dependency graph come from `rules_python`, the Go
 reference renderer is a Bazel-built binary over the declared SDK sources, and
-rustdoc comes from the registered Rust toolchain. The SDK action inherits no
-host shell environment, opens no network service, and is eligible for sandboxed
-and remote execution. The published site itself does not load CDN resources.
+rustdoc comes from the registered Rust toolchain. The SDK and assembly actions
+inherit no host shell environment, open no network service, and are eligible for
+sandboxed and remote execution. The published site itself does not load CDN
+resources.

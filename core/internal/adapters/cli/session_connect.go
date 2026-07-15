@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/daemonrpc"
-	"github.com/Vibe-Pwners/hovel/internal/domain/run"
 	"github.com/charmbracelet/x/term"
+	"github.com/vibepwners/hovel/internal/adapters/daemonrpc"
+	"github.com/vibepwners/hovel/internal/domain/run"
 )
 
 const sessionDetachByte byte = 0x1d

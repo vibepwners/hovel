@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
-	"github.com/Vibe-Pwners/hovel/sdk/go/hoveltest"
+	"github.com/vibepwners/hovel/sdk/go/hovel"
+	"github.com/vibepwners/hovel/sdk/go/hoveltest"
 )
 
 func TestPayloadProviderContract(t *testing.T) {

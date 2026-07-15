@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/payloads/squatter/client/wire"
+	"github.com/vibepwners/hovel/payloads/squatter/client/wire"
 	prompt "github.com/c-bata/go-prompt"
 )
 

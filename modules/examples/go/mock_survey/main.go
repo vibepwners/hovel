@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
+	"github.com/vibepwners/hovel/sdk/go/hovel"
 )
 
 // MockSurvey reports example facts about a target.

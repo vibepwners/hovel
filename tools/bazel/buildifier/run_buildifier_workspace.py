@@ -12,6 +12,7 @@ NAMES = {"BUILD", "BUILD.bazel", "MODULE.bazel"}
 SUFFIXES = {".bzl"}
 EXCLUDED_PARTS = {
     ".git",
+    ".local",
     ".sl",
     ".task",
     "__pycache__",
@@ -62,20 +63,35 @@ def collect_files(repo: Path, inputs: list[str]) -> list[Path]:
             continue
         if not path.exists():
             raise SystemExit(f"path does not exist: {path}")
-        for candidate in path.rglob("*"):
+        for candidate in repository_files(repo, path):
             if candidate.is_file() and is_buildifier_file(repo, candidate):
                 files.add(candidate)
     return sorted(files)
 
 
+def repository_files(repo: Path, root: Path) -> list[Path]:
+    if excluded(repo, root):
+        return []
+    files: list[Path] = []
+    for directory, names, filenames in os.walk(root):
+        current = Path(directory)
+        names[:] = [name for name in names if not excluded(repo, current / name)]
+        files.extend(current / filename for filename in filenames)
+    return files
+
+
 def is_buildifier_file(repo: Path, path: Path) -> bool:
+    if excluded(repo, path):
+        return False
+    return path.name in NAMES or path.suffix in SUFFIXES
+
+
+def excluded(repo: Path, path: Path) -> bool:
     try:
         rel = path.relative_to(repo)
     except ValueError:
-        return False
-    if any(part in EXCLUDED_PARTS or part.startswith("bazel-") for part in rel.parts):
-        return False
-    return path.name in NAMES or path.suffix in SUFFIXES
+        return True
+    return any(part in EXCLUDED_PARTS or part.startswith("bazel-") for part in rel.parts)
 
 
 def find_repo_root() -> Path:

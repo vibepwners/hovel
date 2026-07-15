@@ -40,19 +40,77 @@ fn main() { hovel::serve(MyModule); }</code></pre>
         <h2>Current SDK boundary</h2>
         <p>
           The Rust SDK currently implements the base module lifecycle, structured logs,
-          artifacts, interactive sessions, and installed-payload result descriptors. It
-          does not yet dispatch the generic <code>step.describe</code>,
-          <code>step.prepare</code>, <code>step.execute</code>, and
-          <code>step.cleanup</code> methods, and it does not provide the full typed
-          payload-provider interface available in Go.
+          artifacts, interactive sessions, installed-payload result descriptors, all
+          optional Mesh methods, all five typed credential-provider methods, and
+          authenticated TCP/UDP Mesh bridge clients. It does not dispatch the generic
+          <code>step.*</code> methods or the full payload-provider RPC surface available
+          in Go.
         </p>
         <p>
           Use Rust today for standalone survey or exploit modules where a compiled,
-          dependency-light binary is valuable, including modules that need to return
-          installed payload descriptors from <code>run</code>. Use Go or Python for
-          payload providers, capability-native chain steps, and provider-owned
-          reconnect/cleanup RPC methods until the Rust SDK grows those dispatch
-          surfaces.
+          dependency-free SDK binary is valuable, including Mesh and credential-aware
+          providers and modules that return installed-payload descriptors from
+          <code>run</code>. Use Go for payload-provider discovery, generation,
+          reconnect, and cleanup RPC. Use Go or Python for capability-native
+          <code>step.*</code> providers.
+        </p>
+
+        <h2>TLS, workspace PKI, and Mesh bridges</h2>
+        <p>
+          A normal Rust module can use its chosen TLS crate inside <code>run</code>
+          without overriding credential methods. Override them only when the module
+          consumes or transforms assignment-bound workspace-PKI material. The base
+          <code>execute</code> path does not automatically receive a resolved PKI bundle.
+        </p>
+        <table>
+          <thead><tr><th>Provider need</th><th><code>Module</code> method</th></tr></thead>
+          <tbody>
+            <tr><td>Describe strict slots and capabilities</td><td><code>describe_credential_delivery</code></td></tr>
+            <tr><td>Consume in-memory bytes or a scoped reference</td><td><code>load_runtime_credential</code></td></tr>
+            <tr><td>Consume invocation-scoped protected files</td><td><code>load_credential_files</code></td></tr>
+            <tr><td>Produce one bounded provider-native encoding</td><td><code>encode_credential_material</code></td></tr>
+            <tr><td>Stamp an artifact or provider-owned deployment</td><td><code>stamp_credential</code></td></tr>
+          </tbody>
+        </table>
+        <p>
+          Override only the methods advertised by <code>CredentialDeliveryDescriptor</code>;
+          every other default returns an explicit unsupported error. Secret wrappers redact
+          <code>Debug</code>, but accessors still expose values to provider code. Keep them
+          scoped to the call and out of logs, errors, outcomes, and durable config. The
+          current external path initiates direct runtime certificate DER, public-key SPKI,
+          and private-key PKCS #8 delivery before Mesh operations. General non-Mesh
+          delivery and external encoding/stamping initiation remain extension points.
+          See <a href="tls-pki.html">TLS and Workspace PKI</a>,
+          <a href="credential-provider-development.html">Credential Provider Development</a>,
+          and the generated <a href="../api/sdk/rust/hovel/index.html">Rust SDK API</a>.
+        </p>
+
+        <h3 id="mesh-bridge-client">Connect to an authenticated Mesh bridge</h3>
+<pre data-lang="rust"><code>use hovel::{
+    connect_mesh_bridge, MeshBridgeConnection, MeshBridgeEndpoint,
+};
+use std::time::Duration;
+
+let endpoint = MeshBridgeEndpoint::from_response(
+    bridge.local_host,
+    u16::try_from(bridge.local_port)?,
+    &amp;bridge.local_network,
+    bridge.capability,
+)?;
+match connect_mesh_bridge(&amp;endpoint, Some(Duration::from_secs(5)))? {
+    MeshBridgeConnection::Tcp(stream) =&gt; use_tcp(stream)?,
+    MeshBridgeConnection::Udp(socket) =&gt; use_udp(socket)?,
+}</code></pre>
+        <p>
+          <code>from_response</code> strictly parses the response's
+          <code>localNetwork</code>, not the provider-defined
+          <code>request.protocol</code>. The generic connector preserves the concrete TCP
+          or UDP socket in an enum; specialized helpers are also available and reject a
+          mismatched endpoint. All helpers validate a canonical numeric loopback address
+          and send the ephemeral bearer capability before application data. Never log or
+          persist it. Use a provider task or session when the protocol cannot preserve TCP
+          stream or UDP datagram semantics. The complete decision map is
+          <a href="../modules/development.html">Build a Module or Provider</a>.
         </p>
 
         <h2>A survey module</h2>
@@ -70,6 +128,7 @@ impl Module for MockSurvey {
             summary: "Collect example target facts.".into(),
             description: String::new(),
             tags: vec!["example".into(), "survey".into(), "rust".into()],
+            discovery_context: Vec::new(),
         }
     }
 
@@ -207,9 +266,9 @@ fn info_is_a_rust_exploit() {
 }</code></pre>
 <p>
           The Rust SDK and in-repo Rust examples now live outside the core Bazel
-          workspace. Restore a slice-local SDK/modules check before documenting
-          focused <code>//modules/examples/rust:...</code> or <code>//sdk/rust:...</code>
-          labels again.
+          workspace. Validate them through <code>task sdk:test</code>,
+          <code>task sdk:ci</code>, <code>task modules:examples:test</code>, and
+          <code>task modules:examples:ci</code>; the Task-backed targets remain hermetic.
         </p>
         <p>
           For real exploit work, keep parsers, packet builders, state machines, and
@@ -220,9 +279,11 @@ fn info_is_a_rust_exploit() {
         <h2>Build, package, and run</h2>
         <p>
           Rust examples are part of the <code>modules/</code> slice after the
-          partial-checkout split. Their previous Bazel build and package tasks
-          should be restored as module-slice tasks instead of being described as
-          part of the core <code>task build</code> or <code>task ci</code> gate.
+          partial-checkout split. Use <code>task modules:examples:ci</code> for the
+          language examples, <code>task modules:ci</code> for the full module slice,
+          and <code>task release:modules-package</code> for installable archives. These
+          remain separate from the core-only <code>task build</code> gate while
+          <code>task ci</code> composes them in a full checkout.
         </p>
 <pre data-lang="modules/examples/rust/mock_survey/BUILD.bazel"><code>rust_binary(
     name = "mock-survey-rust",

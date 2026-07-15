@@ -4,9 +4,9 @@ import (
 	"io"
 	"strings"
 
-	"github.com/Vibe-Pwners/hovel/internal/adapters/clistyle"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/vibepwners/hovel/internal/adapters/clistyle"
 )
 
 type TransferRenderer struct {

@@ -18,14 +18,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/modulecatalog"
-	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorsession"
-	"github.com/Vibe-Pwners/hovel/internal/app/services"
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/domain/event"
-	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+	"github.com/vibepwners/hovel/internal/app/modulecatalog"
+	"github.com/vibepwners/hovel/internal/app/modulepackage"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
+	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	"github.com/vibepwners/hovel/internal/app/services"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/domain/event"
+	"github.com/vibepwners/hovel/internal/domain/workspace"
 )
 
 func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
@@ -105,6 +105,29 @@ func TestHovelRegistryContainsCommandModeSurface(t *testing.T) {
 		{"throw", "list"},
 		{"launch-key", "policy", "inspect"},
 		{"launch-key", "policy", "set"},
+		{"pki", "status"},
+		{"pki", "init"},
+		{"pki", "backend", "list"},
+		{"pki", "profile", "list"},
+		{"pki", "authority", "list"},
+		{"pki", "authority", "inspect"},
+		{"pki", "authority", "create"},
+		{"pki", "authority", "unlock"},
+		{"pki", "authority", "lock"},
+		{"pki", "certificate", "list"},
+		{"pki", "certificate", "inspect"},
+		{"pki", "certificate", "issue"},
+		{"pki", "assignment", "list"},
+		{"pki", "assignment", "inspect"},
+		{"pki", "assignment", "bind"},
+		{"pki", "assignment", "stage"},
+		{"pki", "assignment", "activate"},
+		{"pki", "assignment", "unbind"},
+		{"pki", "trust", "list"},
+		{"pki", "trust", "inspect"},
+		{"pki", "trust", "create"},
+		{"pki", "trust", "stage"},
+		{"pki", "trust", "activate"},
 	} {
 		if _, ok := registry.Find(path...); !ok {
 			t.Fatalf("missing command path %q", strings.Join(path, " "))

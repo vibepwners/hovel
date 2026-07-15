@@ -3,6 +3,6 @@ load("@rules_go//go:def.bzl", "go_library")
 go_library(
     name = "framing",
     srcs = ["framing.go"],
-    importpath = "github.com/Vibe-Pwners/hovel/internal/protocol/framing",
+    importpath = "github.com/vibepwners/hovel/internal/protocol/framing",
     visibility = ["//:__subpackages__"],
 )

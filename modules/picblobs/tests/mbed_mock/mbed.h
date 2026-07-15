@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 /* ---- NSAPI types ---- */
@@ -28,6 +29,8 @@ typedef int nsapi_size_or_error_t;
 #define DEVICE_TRNG 1
 #define NSAPI_SOCKET 7000
 #define NSAPI_REUSEADDR 0
+
+static const int MILLISECONDS_PER_SECOND = 1000;
 
 enum nsapi_version_t {
 	NSAPI_UNSPEC = 0,
@@ -127,10 +130,9 @@ class SocketAddress
 class TCPSocket
 {
 	int _fd;
-	bool _factory_allocated;
 
       public:
-	TCPSocket() : _fd(-1), _factory_allocated(false) {}
+	TCPSocket() : _fd(-1) {}
 	~TCPSocket()
 	{
 		if (_fd >= 0) {
@@ -172,6 +174,18 @@ class TCPSocket
 		return ::listen(_fd, backlog) == 0 ? NSAPI_ERROR_OK : -1;
 	}
 
+	void set_timeout(int timeout_ms)
+	{
+		struct timeval timeout;
+		timeout.tv_sec = timeout_ms / MILLISECONDS_PER_SECOND;
+		timeout.tv_usec = (timeout_ms % MILLISECONDS_PER_SECOND) *
+			MILLISECONDS_PER_SECOND;
+		::setsockopt(_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+			sizeof(timeout));
+		::setsockopt(_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+			sizeof(timeout));
+	}
+
 	nsapi_error_t setsockopt(
 		int level, int option, const void *value, unsigned length)
 	{
@@ -196,7 +210,6 @@ class TCPSocket
 
 		TCPSocket *client = new TCPSocket();
 		client->_fd = accepted_fd;
-		client->_factory_allocated = true;
 		if (error) {
 			*error = NSAPI_ERROR_OK;
 		}
@@ -218,10 +231,6 @@ class TCPSocket
 		if (_fd >= 0) {
 			::close(_fd);
 			_fd = -1;
-		}
-		if (_factory_allocated) {
-			_factory_allocated = false;
-			delete this;
 		}
 		return NSAPI_ERROR_OK;
 	}

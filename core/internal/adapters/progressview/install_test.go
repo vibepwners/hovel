@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/modulepackage"
+	"github.com/vibepwners/hovel/internal/app/modulepackage"
 )
 
 func TestInstallRendererPlainOutput(t *testing.T) {

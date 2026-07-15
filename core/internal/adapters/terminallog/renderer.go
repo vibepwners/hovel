@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Vibe-Pwners/hovel/internal/app/operatorlog"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/vibepwners/hovel/internal/app/operatorlog"
 )
 
 const (

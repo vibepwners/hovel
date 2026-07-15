@@ -3,8 +3,8 @@ package services
 import (
 	"context"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/daemon"
-	"github.com/Vibe-Pwners/hovel/internal/domain/workspace"
+	"github.com/vibepwners/hovel/internal/domain/daemon"
+	"github.com/vibepwners/hovel/internal/domain/workspace"
 )
 
 type DaemonStore interface {

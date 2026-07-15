@@ -160,7 +160,7 @@ def check_page(path: Path) -> str | None:
         if module_route in (("index.html",), ("catalogue.html",)):
             if not parser.has_module_directory:
                 return f"{path} is missing the generated module directory"
-        else:
+        elif len(module_route) > 1:
             if not parser.has_module_document_header:
                 return f"{path} is missing the generated module document header"
             if (
@@ -204,9 +204,17 @@ def main() -> int:
             print(f"site_smoke_test: report route is missing under {path}", file=sys.stderr)
             return 1
         if path.is_dir():
-            for route in ("api/sdk/index.html", "api/sdk/go/index.html"):
+            for route in (
+                "api/sdk/index.html",
+                "api/sdk/go/index.html",
+                "modules/development.html",
+                "spec/credential-provider-development.html",
+                "spec/tls-api.html",
+                "spec/tls-operations.html",
+                "spec/tls-pki.html",
+            ):
                 if not (path / route).is_file():
-                    print(f"site_smoke_test: Astro-owned API route is missing: {route}", file=sys.stderr)
+                    print(f"site_smoke_test: required Astro route is missing: {route}", file=sys.stderr)
                     return 1
         if path.is_dir():
             failure = check_search_index(path)

@@ -22,7 +22,8 @@
     <blockquote>
       <p>
         As a red-team operator, I want one local engine to manage modules,
-        providers, throws, events, artifacts, installed payloads, and sessions.
+        providers, Mesh operations, workspace PKI, throws, events, artifacts,
+        installed payloads, and sessions.
       </p>
       <p>
         As an exploit developer or module author, I want a clear descriptor
@@ -35,18 +36,22 @@
     <p>
       Hovel is a platform for wrapping and operating third-party proofs of concept,
       not a catalog of first-party exploits. The project provides the engine, SDKs,
-      descriptors, providers, guardrails, examples, installed-payload inventory,
-      and operator experience that make third-party modules acceptable to run and inspect.
+      descriptors, providers, strongly typed credential delivery, guardrails,
+      examples, installed-payload inventory, and operator experience that make
+      third-party modules acceptable to run and inspect.
     </p>
     <p>
       The central runtime is a local engine, <code>hoveld</code>, which owns
       operations, chains, throws, module processes, provider-backed payload
-      state, installed payload records, sessions, events, artifacts, and
-      workspace storage. Interactive <code>cli</code> mode, one-shot chain-file
+      state, Mesh listeners and bridges, encrypted PKI custody, installed
+      payload records, sessions, events, artifacts, and workspace storage.
+      Interactive <code>cli</code> mode, one-shot chain-file
       execution, and the MCP agent front end are implemented clients over the
       same application services. <code>hovel tui</code> is an explicit
-      not-implemented role; REST/OpenAPI, general managed-service processes, and
-      richer MCP resources and prompts remain future work.
+      not-implemented role. The daemon publishes a stable OpenAPI-described
+      local HTTP/JSON contract; a remotely authenticated REST deployment,
+      general managed-service processes, and richer MCP resources and prompts
+      remain future work.
     </p>
 
     <h2>Start here</h2>
@@ -95,6 +100,21 @@
         <span class="tile-label">// Build</span>
         <span class="tile-title">Write a module</span>
         <span class="tile-desc">Python, Go, and Rust SDKs over one stdio JSON-RPC protocol.</span>
+      </a>
+      <a class="tile" href="spec/tls-pki.html">
+        <span class="tile-label">// Trust</span>
+        <span class="tile-title">TLS &amp; Workspace PKI</span>
+        <span class="tile-desc">Authorities, profiles, encrypted custody, trust sets, assignments, rotation, revocation, and post-quantum-hybrid TLS policy.</span>
+      </a>
+      <a class="tile" href="spec/tls-operations.html">
+        <span class="tile-label">// Operate</span>
+        <span class="tile-title">TLS Operations</span>
+        <span class="tile-desc">A start-to-finish runbook for issuing, assigning, delivering, rotating, revoking, and auditing certificates.</span>
+      </a>
+      <a class="tile" href="spec/mesh-development.html">
+        <span class="tile-label">// Route</span>
+        <span class="tile-title">Mesh Development</span>
+        <span class="tile-desc">Build the smallest useful provider, add listening posts, route ordinary modules, and consume assignment-bound TLS material.</span>
       </a>
       <a class="tile" href="modules/index.html">
         <span class="tile-label">// Modules</span>

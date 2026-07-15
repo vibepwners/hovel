@@ -20,7 +20,7 @@
 
 /* Initialize the platform vtable with Mbed OS implementations.
  * Must be called after the network interface is connected. */
-void mbed_platform_init(struct pic_platform *plat, NetworkInterface *net);
+bool mbed_platform_init(struct pic_platform *plat, NetworkInterface *net);
 
 /* Run a PIC blob from a memory buffer.
  * Copies blob into RAM and branches to it in Thumb mode. */

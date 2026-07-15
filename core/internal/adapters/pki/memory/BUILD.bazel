@@ -1,0 +1,42 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "memory",
+    srcs = [
+        "credential_execution_store.go",
+        "crl_store.go",
+        "operation_store.go",
+        "stamp_store.go",
+        "store.go",
+    ],
+    importpath = "github.com/vibepwners/hovel/internal/adapters/pki/memory",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/app/pki",
+        "//internal/domain/pki",
+    ],
+)
+
+go_test(
+    name = "memory_test",
+    srcs = ["store_test.go"],
+    embed = [":memory"],
+    deps = [
+        "//internal/app/pki",
+        "//internal/domain/pki",
+        "//internal/infra/pki",
+    ],
+)
+
+go_test(
+    name = "memory_race_test",
+    srcs = ["store_test.go"],
+    embed = [":memory"],
+    race = "on",
+    tags = ["manual"],
+    deps = [
+        "//internal/app/pki",
+        "//internal/domain/pki",
+        "//internal/infra/pki",
+    ],
+)

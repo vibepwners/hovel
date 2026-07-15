@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/Vibe-Pwners/hovel/internal/domain/module"
-	"github.com/Vibe-Pwners/hovel/internal/domain/service"
+	"github.com/vibepwners/hovel/internal/domain/module"
+	"github.com/vibepwners/hovel/internal/domain/service"
 )
 
 // rawDescriptor is the JSON wire format shared by both module and service descriptors.

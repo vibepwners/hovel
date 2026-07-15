@@ -34,9 +34,21 @@
           <li><strong>Python API</strong> for loading, extracting, introspecting, and assembling blobs</li>
           <li><strong>CLI</strong> (<code>picblobs-cli</code>) for inspecting, building, running, and verifying blobs</li>
           <li><strong>Cross-architecture testing</strong> via QEMU user-mode (<code>binfmt_misc</code> or <code>qemu-*-static</code>)</li>
+          <li><strong>Mbed OS proof of concept</strong> with bidirectional authenticated NaCl encryption, hosted Cortex-M4 execution tests, and a pinned NUCLEO-F429ZI firmware compile</li>
           <li><strong>Bazel 9</strong> build system with automatic Bootlin toolchain provisioning</li>
           <li><strong>Kernel toolkit</strong> for red-team lab exercises</li>
         </ul>
+
+        <div class="callout note">
+          <strong>The Mbed channel is not the workspace TLS subsystem.</strong>
+          The picblobs proof of concept uses a deployment-provisioned symmetric
+          key, an authenticated ephemeral X25519 exchange, and NaCl
+          <code>crypto_secretbox</code>. Hovel's workspace PKI separately owns
+          X.509 authorities, TLS profiles, trust sets, assignments, rotation,
+          and provider delivery. Start with
+          <a href="../../spec/tls-pki.html">TLS and Workspace PKI</a> when a
+          module needs Hovel-managed certificates.
+        </div>
 
         <h2>Entry Points</h2>
         <div class="tiles">
@@ -59,6 +71,11 @@
             <span class="tile-label">Ref</span>
             <span class="tile-title">Reference</span>
             <span class="tile-desc">Important files, module manifest, preserved original docs, and source specs.</span>
+          </a>
+          <a class="tile" href="user-guide.html#mbed-nacl-poc">
+            <span class="tile-label">Embedded</span>
+            <span class="tile-title">Mbed Encrypted Pair</span>
+            <span class="tile-desc">Materialize a matched key and endpoint, compile both firmware roles, and understand exactly what CI proves.</span>
           </a>
           <a class="tile" href="guide/index.html">
             <span class="tile-label">Guide</span>

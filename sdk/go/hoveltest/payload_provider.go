@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Vibe-Pwners/hovel/sdk/go/hovel"
+	"github.com/vibepwners/hovel/sdk/go/hovel"
 )
 
 // RPCConn drives a Hovel module through the real Content-Length framed JSON-RPC
