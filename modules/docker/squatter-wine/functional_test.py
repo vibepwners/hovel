@@ -21,7 +21,9 @@ TRANSPORT_SURFACE = frozenset(
 )
 SERVICE_SURFACE = frozenset({"service-console-fallback", "service-scm"})
 MESH_TLS_EVIDENCE = (
-    "E2E mesh=provider topology=real-wine-payload tls=1.3 frames=Squatter echo passed"
+    "E2E workflow=generate-configure-stamp-launch pki=provider-stamped "
+    "mesh=passthrough tls=wolfSSL/1.3 payload=real-wine tamper=fail-closed "
+    "frames=Squatter-echo passed"
 )
 
 MODULE_DESCRIPTIONS = {
@@ -167,7 +169,9 @@ def require_mesh_tls_marker(runner: EvidenceRunner, bits: int, output: str) -> i
     if count != 1:
         runner.write(f"E2E {bits}-bit Mesh/TLS evidence count is {count}, want 1\n")
         raise RuntimeError(f"Squatter {bits}-bit Mesh/TLS evidence is incomplete")
-    runner.write(f"E2E {bits}-bit provider Mesh/TLS coverage validated: 1/1\n")
+    runner.write(
+        f"E2E {bits}-bit stamped payload wolfSSL Mesh/TLS coverage validated: 1/1\n"
+    )
     return 1
 
 
@@ -239,7 +243,7 @@ def render_review_report(
         f"TOTAL DURATION  : {duration:.2f}s",
         "PAYLOADS        : PE32 (x86) and PE32+ (x64)",
         "RUNTIME         : isolated Wine containers",
-        "SECURE PATH     : provider Mesh route + verified TLS 1.3 + Squatter frames",
+        "SECURE PATH     : stamped PKI + Mesh passthrough + payload wolfSSL TLS 1.3",
     ]
     if failure:
         lines.append(f"FAILURE         : {failure}")
@@ -276,7 +280,10 @@ def render_review_report(
                 len(SERVICE_SURFACE),
             ),
             matrix_row(
-                "Provider Mesh/TLS", by_bits, lambda item: len(item.provider_tests), 1
+                "Stamped payload Mesh/TLS",
+                by_bits,
+                lambda item: len(item.provider_tests),
+                1,
             ),
         ]
     )
@@ -385,13 +392,13 @@ def render_abi_review(
     lines.extend(
         [
             "",
-            f"PROVIDER MESH / TLS [{provider_passed}/1]",
+            f"STAMPED PAYLOAD MESH / TLS [{provider_passed}/1]",
             "-" * 78,
             checklist_item(
-                "provider-mesh-tls",
+                "stamped-payload-mesh-tls",
                 bool(evidence.provider_tests)
                 and all(case.status == "PASS" for case in evidence.provider_tests),
-                "surveys the real payload, verifies its route and certificate, negotiates TLS 1.3, and exchanges Squatter OPEN/DATA/CLOSE frames",
+                "generates and configures the PE, stamps its complete PKI bundle, launches it under Wine, passes TLS through Mesh to payload wolfSSL, verifies the certificate and Squatter frames, then proves manifest and stamped-state tampering fail closed",
                 tuple(case.name for case in evidence.provider_tests),
             ),
             "",
@@ -570,7 +577,7 @@ def main() -> int:
                     "-test.run=^TestProviderMeshTLSStreamCarriesRealWinePayload$",
                     "-test.timeout=120s",
                 ],
-                title=f"PE{32 if bits == 32 else '32+'} / {bits}-bit provider Mesh/TLS suite",
+                title=f"PE{32 if bits == 32 else '32+'} / {bits}-bit stamped payload wolfSSL Mesh/TLS suite",
             )
             mesh_tls_cells += require_mesh_tls_marker(runner, bits, provider_output)
             abi_evidence.append(

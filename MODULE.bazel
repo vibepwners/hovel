@@ -179,6 +179,18 @@ use_repo(
 
 local_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:local.bzl", "local_repository")
 
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "wolfssl",
+    build_file = "//third_party/wolfssl:BUILD.wolfssl.bazel",
+    patch_args = ["-p1"],
+    patches = ["//third_party/wolfssl:no_thread_helpers.patch"],
+    sha256 = "2f4ef3d4fd387a9b3191d36a6316d69116c46ff69bb9583b6c82b36d7b8ca114",
+    strip_prefix = "wolfssl-5.9.2-stable",
+    urls = ["https://github.com/wolfSSL/wolfssl/archive/refs/tags/v5.9.2-stable.tar.gz"],
+)
+
 local_repository(
     name = "hovel_core",
     path = "core",

@@ -11,6 +11,7 @@ go_library(
         "lp.go",
         "main.go",
         "mesh.go",
+        "stamp.go",
     ],
     importpath = "github.com/vibepwners/hovel/payloads/squatter/provider",
     visibility = ["//visibility:private"],

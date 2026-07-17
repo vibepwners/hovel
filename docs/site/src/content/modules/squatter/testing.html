@@ -23,7 +23,7 @@ task bazel:test -- //:modules_test</code></pre>
         <p>
           This task collects one LCOV report from the provider, shell, SMB pipe,
           wire, and file-transfer suites, then fails below 90% aggregate line
-          coverage. The current result is 90.61% (5,325 of 5,877 instrumented
+          coverage. The current result is 90.59% (5,340 of 5,895 instrumented
           lines). Windows payload and functional-harness sources are not hidden
           inside that Go percentage; their behavior is proven at the Wine
           boundary below.
@@ -57,15 +57,25 @@ task modules:wine-test-64</code></pre>
 
         <h2>Mesh and PKI Integration</h2>
         <p>
-          The Docker boundary also starts each real Wine PE, surveys it through
-          the provider into a stable Mesh node and route, opens a
-          <code>squatter+tls</code> stream, verifies the provider certificate,
-          negotiates TLS 1.3, and carries Squatter OPEN, DATA, and CLOSE frames
-          to the routed payload. This passes on both ABIs (2 of 2 Mesh/TLS cells).
+          The Docker boundary uses the provider's real generation path to stamp
+          each PE's transport configuration, applies a standard
+          <code>payload-tls-server</code> credential stamp, and launches the
+          resulting artifact under Wine. It surveys that endpoint into a stable
+          Mesh node and route, opens a <code>squatter+tls</code> stream, verifies
+          the stamped certificate against the generated root, negotiates TLS
+          1.3 directly with payload wolfSSL, and carries Squatter OPEN, DATA,
+          and CLOSE frames through Mesh. This passes on both ABIs (2 of 2
+          Mesh/TLS cells). Each ABI also mutates one manifest byte and one
+          stamped-state header byte in separate launches, proving the payload
+          rejects either damaged form instead of starting or falling back to
+          plaintext.
+        </p>
+        <p>
           Additional provider tests cover multiple independent endpoints,
-          conflicting routes, mismatched credential envelopes, corrupt,
-          expired, and oversized bundles, and TLS streams opened without
-          credentials.
+          conflicting routes, mismatched stamp envelopes, corrupt, expired, and
+          oversized bundles, certificate/key consistency, and unstamped raw
+          streams. The static payload checks require wolfSSL entry points and
+          reject Schannel, Secur32, Crypt32, CNG, and CRT imports.
         </p>
 
         <h2>Evidence Report</h2>
@@ -83,9 +93,12 @@ task modules:wine-test-64</code></pre>
 
         <h2>Static and Shape Checks</h2>
         <p>
-          PE inspection verifies the produced payload shape. Source-contract
-          tests protect the expected Windows payload layout. Manual static
-          checks for the C tree live under <code>modules/squatter/windows/src</code>.
+          PE inspection verifies the produced payload shape, transport and PKI
+          stamp markers, no-CRT boundary, and absence of Windows TLS/security
+          runtime dependencies. Source-contract tests protect the expected
+          Windows payload layout, wolfSSL implementation, and fail-closed stamp
+          path. Manual static checks for the C tree live under
+          <code>modules/squatter/windows/src</code>.
         </p>
 <pre data-lang="shell"><code>task bazel:test -- //modules/squatter/windows:squatter_x86_exe_pe_test
 task bazel:test -- //modules/squatter/windows:source_contract_test

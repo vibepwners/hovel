@@ -13,8 +13,11 @@
           <tbody>
             <tr><td><code>modules/squatter/README.md</code></td><td>Short source-level overview.</td></tr>
             <tr><td><code>modules/squatter/provider/</code></td><td>Go payload-provider implementation and step dispatcher.</td></tr>
-            <tr><td><code>modules/squatter/provider/mesh.go</code></td><td>Multi-node destination topology, routed streams, runtime PKI delivery, and provider-terminated TLS.</td></tr>
+            <tr><td><code>modules/squatter/provider/mesh.go</code></td><td>Multi-node destination topology and routed raw or encrypted payload streams.</td></tr>
+            <tr><td><code>modules/squatter/provider/stamp.go</code></td><td>Standard <code>payload-tls-server</code> credential slot and PE stamp encoder.</td></tr>
             <tr><td><code>modules/squatter/windows/src/</code></td><td>Windows payload source, no-CRT runtime, modules, wire protocol, and logging.</td></tr>
+            <tr><td><code>modules/squatter/windows/src/security/</code></td><td>Versioned stamped-PKI region validation and payload-owned wolfSSL TLS sessions.</td></tr>
+            <tr><td><code>third_party/wolfssl/</code></td><td>Pinned static wolfSSL build profile for the legacy-compatible no-CRT payload.</td></tr>
             <tr><td><code>modules/squatter/client/cmd/squatterctl/</code></td><td>Operator-side client shell for direct Squatter sessions.</td></tr>
             <tr><td><code>modules/squatter/client/smbpipe/</code></td><td>SMB named-pipe connector and admin helper code.</td></tr>
             <tr><td><code>modules/squatter/client/wire/</code></td><td>Go framing implementation for the Squatter mux protocol.</td></tr>
@@ -56,6 +59,25 @@ minOS: windows-7
 formats: pe-exe, pe
 transports: smb-named-pipe, tcp-bind, tcp-callback
 tags: payload_provider, squatter, windows, lab, dangerous</code></pre>
+
+        <h2>Payload TLS Credential Slot</h2>
+<pre data-lang="metadata"><code>name: payload-tls-server
+delivery: stamp-standard
+purpose: tls-server
+endpointRole: server
+consumerType: payload
+profile: tls-server
+compatibilityTarget: portable-x509
+projection: bundle
+materialForm: private-bytes
+remainderPolicy: zero-fill</code></pre>
+        <p>
+          The provider validates the complete <code>hovel.pki.bundle/v1</code>
+          and writes a versioned, integrity-bound <code>SQPKI001</code> manifest
+          into the generated PE. The payload loads the certificate chain and
+          PKCS#8 key into statically linked wolfSSL. Mesh does not receive or
+          terminate the TLS identity.
+        </p>
 
         <h2>Command Surface</h2>
 <pre data-lang="commands"><code>wininfo

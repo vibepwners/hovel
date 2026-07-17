@@ -23,6 +23,8 @@
 #include "runtime/channel.h"
 #include "runtime/module.h"
 #include "runtime/session.h"
+#include "security/pki_config.h"
+#include "security/tls.h"
 #include "sqlog/sqlog.h"
 
 enum
@@ -506,8 +508,17 @@ static void WINAPI service_main(DWORD argc, LPWSTR *argv)
                 report_service_status(SERVICE_STOPPED, ERROR_SERVICE_SPECIFIC_ERROR, 0);
                 return;
         }
+        if (!sq_tls_runtime_init(&squatter_pki_config))
+        {
+                SQLOG_ERROR(SQLOG_SUB_MUX, L"stamped wolfSSL configuration failed validation (error %d)",
+                            sq_tls_runtime_error());
+                (void)WSACleanup();
+                report_service_status(SERVICE_STOPPED, ERROR_SERVICE_SPECIFIC_ERROR, 0);
+                return;
+        }
         report_service_status(SERVICE_RUNNING, NO_ERROR, 0);
         rc = run_configured_transport(g_service_context.port, g_service_context.table);
+        sq_tls_runtime_cleanup();
         (void)WSACleanup();
         report_service_status(SERVICE_STOPPED, (rc == 0) ? NO_ERROR : ERROR_SERVICE_SPECIFIC_ERROR, 0);
 }
@@ -621,8 +632,21 @@ int wmain(int argc, wchar_t **argv)
                 SQLOG_ERROR(SQLOG_SUB_MUX, L"WSAStartup failed");
                 return 1;
         }
+        if (!sq_tls_runtime_init(&squatter_pki_config))
+        {
+                SQLOG_ERROR(SQLOG_SUB_MUX, L"stamped wolfSSL configuration failed validation (error %d)",
+                            sq_tls_runtime_error());
+                (void)WSACleanup();
+                sqlog_shutdown();
+                return 1;
+        }
+        if (sq_tls_runtime_enabled())
+        {
+                SQLOG_INFO(SQLOG_SUB_MUX, L"wolfSSL TLS 1.3 enabled from stamped payload PKI");
+        }
         (void)SetConsoleCtrlHandler(on_ctrl, TRUE);
         rc = run_configured_transport(port, &table);
+        sq_tls_runtime_cleanup();
         (void)WSACleanup();
         sqlog_shutdown();
         return rc;

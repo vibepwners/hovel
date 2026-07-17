@@ -36,7 +36,7 @@
           <li>Exploit modules do not receive Squatter protocol details. They produce execution capabilities that Squatter install steps consume.</li>
           <li>Provider compatibility is checked from contracts and metadata where the current planning path exposes them; actual bytes are generated after confirmation.</li>
           <li>The provider is tagged <code>dangerous</code> because Squatter supports file transfer, process execution, DLL loading, task listing, and sessions.</li>
-          <li>The Windows payload transports remain unencrypted. The provider additionally offers an opt-in PKI-backed <code>squatter+tls</code> Mesh stream that terminates TLS in the provider before forwarding raw Squatter frames to a TCP-bind payload.</li>
+          <li>The provider offers an opt-in PKI-backed <code>squatter+tls</code> Mesh stream. Hovel stamps the identity into the generated PE, Mesh carries ciphertext unchanged, and statically linked wolfSSL terminates TLS 1.3 inside the Windows payload.</li>
         </ol>
 
         <h2>Repository Shape</h2>
@@ -47,6 +47,8 @@
     provider/
       main.go
       lp.go
+      mesh.go
+      stamp.go
       generate_main.go
     client/
       cmd/
@@ -68,6 +70,7 @@
         modules/
         nocrt/
         runtime/
+        security/
         sqlog/
         wire/
 </code></pre>
@@ -276,35 +279,48 @@ squatter.agent.max_chunk_size = 65536
           caller from using valid topology metadata to redirect a stream elsewhere.
         </p>
         <p>
-          The TLS protocol is backed by the provider's strict
-          <code>mesh-stream-tls-server</code> credential slot. That slot accepts only a
-          runtime <code>hovel.pki.bundle/v1</code> projection with private-key bytes,
+          Payload TLS is backed by the provider's strict
+          <code>payload-tls-server</code> standard stamp slot. That slot accepts only a
+          <code>hovel.pki.bundle/v1</code> projection with private-key bytes,
           the <code>tls-server</code> purpose and profile, the
-          <code>mesh-provider</code> consumer type, and the
+          <code>payload</code> consumer type, and the
           <code>portable-x509</code> compatibility target. Hovel resolves the selected
-          assignment into one ephemeral JSON bundle containing the leaf, private key,
-          chain, trust anchors, validity, fingerprints, and key-establishment policy.
-          The Go SDK rejects unknown fields and verifies certificate/key consistency,
-          ordered chain termination, EKU, validity, freshness and revocation for any
-          bundled CRLs, and exact named-group policy before constructing the server
-          configuration.
+          assignment into one private bundle containing the leaf, private key, chain,
+          trust anchors, validity, fingerprints, and key-establishment policy. The
+          provider rejects unknown fields and verifies certificate/key consistency,
+          ordered chain termination, EKU, validity, freshness, bundled CRLs, and exact
+          named-group policy before writing a versioned <code>SQPKI001</code> manifest
+          into a configured TCP-bind PE. SHA-256 bindings cover both the canonical
+          bundle and the complete runtime manifest. Callback and named-pipe artifacts
+          are rejected by this stamp slot until their TLS roles have an end-to-end
+          implementation.
         </p>
-        <figure class="diagram" aria-label="PKI-backed Squatter Mesh stream with TLS terminating in the provider before raw TCP bind transport to the payload.">
+        <figure class="diagram" aria-label="PKI-backed Squatter Mesh stream carrying TLS ciphertext through the provider to wolfSSL in the Windows payload.">
           <figcaption>Squatter Mesh TLS Boundary</figcaption>
           <ol class="flow-diagram">
             <li class="flow-step">TLS Mesh client</li>
             <li class="flow-step strong">Hovel Session carrying TLS ciphertext</li>
-            <li class="flow-step warning">Squatter provider terminates TLS</li>
-            <li class="flow-step">raw Squatter frames over TCP bind</li>
-            <li class="flow-step ready">Windows payload</li>
+            <li class="flow-step">provider and Mesh byte pass-through</li>
+            <li class="flow-step warning">payload wolfSSL terminates TLS 1.3</li>
+            <li class="flow-step ready">Squatter frame mux</li>
           </ol>
         </figure>
         <p>
-          This boundary is intentional. It validates Mesh credential delivery and
-          protects the client-to-provider stream without pretending that the current
-          Windows payload implements TLS. Active TLS configuration is process-local;
-          cleanup clears the retained bundle and delivery receipts, while Hovel clears
-          its ephemeral serialized private material after the provider operation.
+          The certificate and PKCS#8 key are payload-owned: they are stamped into the PE
+          rather than retained as provider runtime state or installed in a Windows
+          certificate store. The no-CRT payload validates all lengths, counts, and
+          digests before initializing statically linked wolfSSL. An unstamped payload
+          retains plaintext TCP behavior, while a present but malformed or modified
+          stamp fails startup closed and never falls back to plaintext. Named pipes
+          remain protected at their existing SMB transport boundary.
+        </p>
+        <p>
+          The pinned wolfSSL 5.9.2 profile uses the Windows NT 4.0 API surface and does
+          not depend on Schannel, Secur32, Crypt32, CNG, or the Windows certificate
+          store. This prevents TLS from raising Squatter's legacy API floor, although
+          the complete provider continues to report Windows 7 until older releases are
+          exercised in the automated matrix. Static wolfSSL distribution is subject to
+          wolfSSL's GPLv3 or commercial licensing terms.
         </p>
 
         <h2>Prepared Target Footprint</h2>

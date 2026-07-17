@@ -22,8 +22,6 @@ type placeholderLP struct {
 	bindConns map[string]net.Conn
 	reverse   map[string]*reverseTCPListener
 	callbacks map[string]reverseTCPCallback
-	tlsBundle hovel.CredentialBundle
-	receipts  map[string]runtimeCredentialReceipt
 	meshNodes map[string]meshEndpoint
 }
 
@@ -70,7 +68,6 @@ func newPlaceholderLP() *placeholderLP {
 		bindConns: map[string]net.Conn{},
 		reverse:   map[string]*reverseTCPListener{},
 		callbacks: map[string]reverseTCPCallback{},
-		receipts:  map[string]runtimeCredentialReceipt{},
 		meshNodes: map[string]meshEndpoint{},
 	}
 }
@@ -268,8 +265,6 @@ func (lp *placeholderLP) Cleanup(req hovel.CleanupPayloadRequest) (hovel.Cleanup
 		lp.bindConns = map[string]net.Conn{}
 		lp.reverse = map[string]*reverseTCPListener{}
 		lp.callbacks = map[string]reverseTCPCallback{}
-		lp.tlsBundle.Clear()
-		lp.receipts = map[string]runtimeCredentialReceipt{}
 		lp.meshNodes = map[string]meshEndpoint{}
 		return hovel.CleanupResult{Status: "ok"}, nil
 	}

@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"crypto/tls"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -17,6 +19,201 @@ import (
 	"github.com/vibepwners/hovel/payloads/squatter/client/wire"
 	"github.com/vibepwners/hovel/sdk/go/hovel"
 )
+
+func TestProviderRejectsInvalidPayloadTLSStampContracts(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	bundle, _ := testSquatterTLSBundle(t, now)
+	generated, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
+		PayloadID: "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Target:    "127.0.0.1",
+		Format:    formatPEEXE,
+		Config:    map[string]string{"payload.bind_port": "19100"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := base64.StdEncoding.DecodeString(generated.Primary.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name   string
+		want   string
+		mutate func(*hovel.CredentialStampExecutionRequest)
+	}{
+		{
+			name: "different provider",
+			want: "different provider",
+			mutate: func(request *hovel.CredentialStampExecutionRequest) {
+				request.Provider.ModuleID = "other@v1"
+			},
+		},
+		{
+			name: "advanced stamp capability",
+			want: "does not match the payload TLS slot",
+			mutate: func(request *hovel.CredentialStampExecutionRequest) {
+				request.Request.Capability = hovel.CredentialDeliveryStampAdvanced
+			},
+		},
+		{
+			name: "different named slot",
+			want: "does not match the payload TLS slot",
+			mutate: func(request *hovel.CredentialStampExecutionRequest) {
+				request.Request.SlotName = "other-slot"
+				request.Request.Target.NamedSlot.Name = "other-slot"
+			},
+		},
+		{
+			name: "different consumer",
+			want: "metadata does not match",
+			mutate: func(request *hovel.CredentialStampExecutionRequest) {
+				request.Request.Credential.ConsumerType = hovel.CredentialConsumerMeshProvider
+			},
+		},
+		{
+			name: "declared length mismatch",
+			want: "length does not match",
+			mutate: func(request *hovel.CredentialStampExecutionRequest) {
+				request.Request.EncodedBytes++
+			},
+		},
+		{
+			name: "assignment mismatch",
+			want: "metadata does not match",
+			mutate: func(request *hovel.CredentialStampExecutionRequest) {
+				request.Request.AssignmentID = "other-assignment"
+			},
+		},
+		{
+			name: "malformed bundle",
+			want: "validate stamped TLS bundle",
+			mutate: func(request *hovel.CredentialStampExecutionRequest) {
+				replaceTestStampMaterial(t, request, []byte("{}"))
+			},
+		},
+		{
+			name: "protected path input",
+			want: "requires an in-memory PE artifact",
+			mutate: func(request *hovel.CredentialStampExecutionRequest) {
+				content, contentErr := hovel.NewCredentialArtifactPath("/protected/squatter.exe")
+				if contentErr != nil {
+					t.Fatal(contentErr)
+				}
+				request.Input.Content = content
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request, encoded := newSquatterPayloadTLSStampRequest(t, body, bundle)
+			defer clear(encoded)
+			test.mutate(&request)
+			_, stampErr := newProvider().StampCredential(request)
+			if stampErr == nil || !strings.Contains(stampErr.Error(), test.want) {
+				t.Fatalf("StampCredential error = %v, want substring %q", stampErr, test.want)
+			}
+		})
+	}
+
+	request, encoded := newSquatterPayloadTLSStampRequest(t, []byte("MZ-without-pki-slot"), bundle)
+	defer clear(encoded)
+	if _, err := newProvider().StampCredential(request); err == nil || !strings.Contains(err.Error(), "marker") {
+		t.Fatalf("missing PKI slot error = %v", err)
+	}
+	callback, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
+		PayloadID: "squatter/windows/x86/windows-7/tcp-callback/pe-exe",
+		Target:    "127.0.0.1",
+		Format:    formatPEEXE,
+		Config: map[string]string{
+			"payload.lhost": "127.0.0.1",
+			"payload.lport": "4444",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callbackBody, err := base64.StdEncoding.DecodeString(callback.Primary.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, encoded = newSquatterPayloadTLSStampRequest(t, callbackBody, bundle)
+	defer clear(encoded)
+	if _, err := newProvider().StampCredential(request); err == nil || !strings.Contains(err.Error(), "configured TCP-bind") {
+		t.Fatalf("callback payload TLS stamp error = %v", err)
+	}
+
+	expired, _ := testSquatterTLSBundle(t, now.Add(-48*time.Hour))
+	request, encoded = newSquatterPayloadTLSStampRequest(t, body, expired)
+	defer clear(encoded)
+	if _, err := newProvider().StampCredential(request); err == nil || !strings.Contains(err.Error(), "configure stamped TLS credential") {
+		t.Fatalf("expired PKI bundle error = %v", err)
+	}
+}
+
+func TestPayloadPKIManifestRejectsInvalidLayouts(t *testing.T) {
+	body, err := loadPayloadBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := stampedPayloadBundle(body); err == nil || !strings.Contains(err.Error(), "does not contain") {
+		t.Fatalf("unstamped bundle error = %v", err)
+	}
+
+	offset, err := payloadPKIConfigOffset(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidLength := append([]byte(nil), body...)
+	binary.LittleEndian.PutUint32(invalidLength[offset+payloadPKIFlagsOffset:], payloadPKIFlagPresent)
+	if _, _, err := stampedPayloadBundle(invalidLength); err == nil || !strings.Contains(err.Error(), "length is invalid") {
+		t.Fatalf("zero-length stamped bundle error = %v", err)
+	}
+	invalidState := append([]byte(nil), body...)
+	binary.LittleEndian.PutUint32(invalidState[offset+payloadPKIFlagsOffset:], payloadPKIFlagPresent^1)
+	if _, _, err := stampedPayloadBundle(invalidState); err == nil || !strings.Contains(err.Error(), "state is invalid") {
+		t.Fatalf("invalid stamped bundle state error = %v", err)
+	}
+	if _, err := payloadPKIConfigOffset([]byte(payloadPKIMagic)); err == nil {
+		t.Fatal("truncated PKI marker resolved as a complete slot")
+	}
+
+	bundle, _ := testSquatterTLSBundle(t, time.Now().UTC())
+	bundle.PrivateKey = nil
+	if _, err := encodePayloadPKIManifest([]byte("bundle"), bundle); err == nil {
+		t.Fatal("manifest encoder accepted a bundle without a private key")
+	}
+	bundle, _ = testSquatterTLSBundle(t, time.Now().UTC())
+	oversized := make([]byte, payloadPKIBundleCapacity)
+	if _, err := encodePayloadPKIManifest(oversized, bundle); err == nil || !strings.Contains(err.Error(), "exceeds its PE slot") {
+		t.Fatalf("oversized manifest error = %v", err)
+	}
+}
+
+func replaceTestStampMaterial(
+	t *testing.T,
+	request *hovel.CredentialStampExecutionRequest,
+	data []byte,
+) {
+	t.Helper()
+	digest := sha256.Sum256(data)
+	materialBytes, err := hovel.NewCredentialMaterialBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err := hovel.NewResolvedCredentialMaterial(
+		hovel.CredentialProjectionBundle,
+		hovel.CredentialMaterialPrivateBytes,
+		hovel.CredentialEncodingJSON,
+		hex.EncodeToString(digest[:]),
+		materialBytes,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Material = material
+	request.Request.EncodedBytes = uint64(len(data))
+}
 
 func TestProviderMetadataPreparationAndUnknownSteps(t *testing.T) {
 	p := newProvider()
@@ -293,7 +490,8 @@ func TestListeningPostReconnectOptionsCleanupAndErrors(t *testing.T) {
 
 func TestMeshErrorsAddressConversionAndSessionLifecycle(t *testing.T) {
 	p := newProvider()
-	if descriptor, err := p.DescribeCredentialDelivery(); err != nil || len(descriptor.Slots) != 1 {
+	if descriptor, err := p.DescribeCredentialDelivery(); err != nil || len(descriptor.Slots) != 1 ||
+		descriptor.Slots[0].Name != payloadTLSCredentialSlot {
 		t.Fatalf("credential delivery = %#v, %v", descriptor, err)
 	}
 	if meshLinkState("ready") != "up" || meshLinkState("offline") != "down" {
@@ -321,9 +519,6 @@ func TestMeshErrorsAddressConversionAndSessionLifecycle(t *testing.T) {
 	}
 	if _, err := validateSquatterMeshRoute(hovel.MeshRoute{Nodes: []string{"bad"}}); err == nil {
 		t.Fatal("bad route accepted")
-	}
-	if _, err := p.meshTLSServerConfig(); err == nil {
-		t.Fatal("TLS config succeeded without bundle")
 	}
 	opts, err := meshTCPBindOptions("", 0, "host", map[string]any{"payload.bind_port": float64(9100), "session.connect_ms": 2})
 	if err != nil || opts.Port != 9100 || opts.Timeout != 2*time.Millisecond {
@@ -364,7 +559,7 @@ func TestMeshErrorsAddressConversionAndSessionLifecycle(t *testing.T) {
 	_ = server.Close()
 }
 
-func TestMeshRoutingTLSAndConnectionFailures(t *testing.T) {
+func TestMeshRoutingAndConnectionFailures(t *testing.T) {
 	p := newProvider()
 	if _, err := p.MeshTopology(hovel.MeshTopologyRequest{ListenerID: "listener"}); err == nil {
 		t.Fatal("listener-scoped topology returned nil error")
@@ -393,39 +588,6 @@ func TestMeshRoutingTLSAndConnectionFailures(t *testing.T) {
 		Config: map[string]any{"session.connect_ms": 1},
 	}); err == nil {
 		t.Fatal("unreachable mesh stream returned nil error")
-	}
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	accepted := make(chan net.Conn, 1)
-	go func() {
-		conn, acceptErr := listener.Accept()
-		if acceptErr == nil {
-			accepted <- conn
-		}
-	}()
-	if _, err := p.OpenMeshStream(nil, hovel.MeshStreamRequest{
-		DestinationHost: "127.0.0.1", DestinationPort: listener.Addr().(*net.TCPAddr).Port,
-		Protocol: meshProtocolTLS, Config: map[string]any{"session.connect_ms": 1000},
-	}); err == nil {
-		t.Fatal("TLS stream without runtime credential returned nil error")
-	}
-	select {
-	case conn := <-accepted:
-		_ = conn.Close()
-	case <-time.After(time.Second):
-		t.Fatal("mesh TLS test connection was not accepted")
-	}
-
-	expired, _ := testSquatterTLSBundle(t, time.Now().UTC().Add(-2*time.Hour))
-	p.lp.mu.Lock()
-	p.lp.tlsBundle = expired
-	p.lp.mu.Unlock()
-	if _, err := p.meshTLSServerConfig(); err == nil {
-		t.Fatal("expired runtime TLS bundle returned nil error")
 	}
 
 	writeFailure := newMeshConnSession(&providerFaultConn{writeErr: errors.New("write failed")}, nil)
@@ -467,20 +629,6 @@ func TestMeshRoutingTLSAndConnectionFailures(t *testing.T) {
 	closeFailure := newMeshConnSession(&providerFaultConn{closeErr: errors.New("close failed")}, nil)
 	if err := closeFailure.Close("done"); err == nil {
 		t.Fatal("mesh close failure returned nil error")
-	}
-
-	rawClient, rawServer := net.Pipe()
-	defer rawServer.Close()
-	tlsSession := newTLSMeshGatewaySession(rawClient, &tls.Config{})
-	if err := tlsSession.Write([]byte("hello")); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(time.Second)
-	for !tlsSession.Closed() && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if !tlsSession.Closed() {
-		t.Fatal("invalid TLS handshake did not close the mesh session")
 	}
 }
 

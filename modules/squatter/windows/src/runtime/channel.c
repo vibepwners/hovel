@@ -1,5 +1,7 @@
 #include "runtime/channel.h"
 
+#include "security/tls.h"
+
 typedef enum channel_kind
 {
         CHANNEL_SOCKET = 0,
@@ -11,6 +13,7 @@ struct sq_channel
         channel_kind kind;
         SOCKET sock;
         HANDLE handle;
+        sq_tls_session *tls;
 };
 
 static sq_channel *channel_alloc(void)
@@ -31,6 +34,15 @@ sq_channel *sq_channel_from_socket(SOCKET s)
         {
                 ch->kind = CHANNEL_SOCKET;
                 ch->sock = s;
+                if (sq_tls_runtime_enabled())
+                {
+                        ch->tls = sq_tls_session_accept(s);
+                        if (ch->tls == NULL)
+                        {
+                                (void)HeapFree(GetProcessHeap(), 0, ch);
+                                return NULL;
+                        }
+                }
         }
         return ch;
 }
@@ -123,6 +135,10 @@ int sq_channel_read_some(sq_channel *ch, BYTE *buf, UINT32 cap)
         }
         if (ch->kind == CHANNEL_SOCKET)
         {
+                if (ch->tls != NULL)
+                {
+                        return sq_tls_session_read_some(ch->tls, buf, cap);
+                }
                 return socket_read_some(ch->sock, buf, cap);
         }
         return handle_read_some(ch->handle, buf, cap);
@@ -141,6 +157,10 @@ BOOL sq_channel_write_all(sq_channel *ch, const BYTE *buf, UINT32 len)
                 UINT32 remaining = len - off;
                 if (ch->kind == CHANNEL_SOCKET)
                 {
+                        if (ch->tls != NULL)
+                        {
+                                return sq_tls_session_write_all(ch->tls, buf + off, remaining);
+                        }
                         int n = send(ch->sock, (const char *)(buf + off), (int)remaining, 0);
                         if (n <= 0)
                         {
@@ -173,6 +193,12 @@ void sq_channel_close(sq_channel *ch)
         }
         if (ch->kind == CHANNEL_SOCKET)
         {
+                if (ch->tls != NULL)
+                {
+                        sq_tls_session_close(ch->tls);
+                        ch->sock = INVALID_SOCKET;
+                        return;
+                }
                 if (ch->sock != INVALID_SOCKET)
                 {
                         (void)shutdown(ch->sock, SD_BOTH);
@@ -197,5 +223,9 @@ void sq_channel_free(sq_channel *ch)
                 return;
         }
         sq_channel_close(ch);
+        if (ch->tls != NULL)
+        {
+                sq_tls_session_free(ch->tls);
+        }
         (void)HeapFree(GetProcessHeap(), 0, ch);
 }

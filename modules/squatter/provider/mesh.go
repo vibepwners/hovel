@@ -3,9 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,17 +21,10 @@ import (
 
 const (
 	meshRootNodeID          = "squatter-provider"
-	meshTLSCredentialSlot   = "mesh-stream-tls-server"
 	meshProtocolRaw         = "squatter"
 	meshProtocolTLS         = "squatter+tls"
-	meshMaximumBundleBytes  = 8 << 20
 	meshStreamReadChunkSize = 32 << 10
 )
-
-type runtimeCredentialReceipt struct {
-	requestSHA256 string
-	receipt       hovel.CredentialDeliveryReceipt
-}
 
 type meshEndpoint struct {
 	NodeID   string
@@ -49,22 +40,10 @@ func (Provider) DescribeCredentialDelivery() (hovel.CredentialDeliveryDescriptor
 
 func squatterCredentialDeliveryDescriptor() hovel.CredentialDeliveryDescriptor {
 	return hovel.CredentialDeliveryDescriptor{
-		SchemaVersion: hovel.CredentialDeliverySchemaV1,
-		Slots: []hovel.CredentialSlot{{
-			Name:                         meshTLSCredentialSlot,
-			Purpose:                      hovel.CredentialPurposeTLSServer,
-			EndpointRole:                 hovel.CredentialEndpointServer,
-			ConsumerType:                 hovel.CredentialConsumerMeshProvider,
-			AcceptedBundleVersions:       []string{hovel.CredentialBundleSchemaV1},
-			AcceptedProfiles:             []string{"tls-server"},
-			AcceptedCompatibilityTargets: []string{"portable-x509"},
-			AcceptedProjections:          []hovel.CredentialProjection{hovel.CredentialProjectionBundle},
-			AcceptedMaterialForms:        []hovel.CredentialMaterialForm{hovel.CredentialMaterialPrivateBytes},
-			MaximumEncodedBytes:          meshMaximumBundleBytes,
-			RemainderPolicy:              hovel.CredentialStampRemainderPreserve,
-			PrivateMaterial:              hovel.CredentialPrivateMaterialRequired,
-		}},
-		Capabilities: []hovel.CredentialDeliveryCapability{hovel.CredentialDeliveryRuntime},
+		SchemaVersion:    hovel.CredentialDeliverySchemaV1,
+		Slots:            []hovel.CredentialSlot{payloadTLSCredentialSlotDescriptor()},
+		Capabilities:     []hovel.CredentialDeliveryCapability{hovel.CredentialDeliveryStampStandard},
+		StampTargetKinds: []hovel.CredentialStampTargetKind{hovel.CredentialStampTargetNamedSlot},
 	}
 }
 
@@ -74,7 +53,7 @@ func (p Provider) DescribeMesh(hovel.MeshDescribeRequest) (hovel.MeshDescriptor,
 	return hovel.MeshDescriptor{
 		Name:    payloadName,
 		Version: version,
-		Summary: "Destination-scoped Squatter mesh streams with provider-terminated TLS.",
+		Summary: "Destination-scoped Squatter mesh streams with payload-terminated wolfSSL TLS.",
 		Capabilities: []string{
 			"topology.tree",
 			"topology.multi-node",
@@ -92,7 +71,8 @@ func (p Provider) DescribeMesh(hovel.MeshDescribeRequest) (hovel.MeshDescriptor,
 		}},
 		CredentialDelivery: &credentialDelivery,
 		Attributes: map[string]any{
-			"tlsTermination":  "provider",
+			"tlsTermination":  "payload",
+			"tlsLibrary":      "wolfSSL",
 			"targetTransport": "squatter/tcp-bind",
 			"protocols":       []string{meshProtocolRaw, meshProtocolTLS},
 		},
@@ -148,7 +128,7 @@ func (p Provider) squatterMeshTopology(includeRoutes bool) hovel.MeshTopology {
 			LastSeen:   endpoint.LastSeen.UTC().Format(time.RFC3339Nano),
 			Attributes: map[string]any{"host": endpoint.Host, "port": endpoint.Port},
 			Capabilities: []string{
-				"survey", "stream", "squatter.frames", "tls.provider-terminated",
+				"survey", "stream", "squatter.frames", "tls.payload-terminated", "tls.wolfssl",
 			},
 		})
 		topology.Links = append(topology.Links, hovel.MeshLink{
@@ -206,144 +186,6 @@ func meshLinkState(nodeState string) string {
 		return "up"
 	}
 	return "down"
-}
-
-func (p Provider) LoadRuntimeCredential(
-	req hovel.CredentialRuntimeRequest,
-) (hovel.CredentialDeliveryReceipt, error) {
-	if err := req.Validate(); err != nil {
-		return hovel.CredentialDeliveryReceipt{}, err
-	}
-	if req.Provider.ModuleID != payloadName+"@"+version ||
-		req.Provider.ProviderID != payloadName || req.Provider.ProviderVersion != version {
-		return hovel.CredentialDeliveryReceipt{}, errors.New(
-			"squatter: runtime credential targets a different provider",
-		)
-	}
-	if req.SlotName != meshTLSCredentialSlot ||
-		req.Material.Projection != hovel.CredentialProjectionBundle ||
-		req.Material.Form() != hovel.CredentialMaterialPrivateBytes ||
-		req.Material.Encoding != hovel.CredentialEncodingJSON {
-		return hovel.CredentialDeliveryReceipt{}, errors.New(
-			"squatter: runtime credential does not match the TLS mesh-stream slot",
-		)
-	}
-	if req.Credential.Purpose != hovel.CredentialPurposeTLSServer ||
-		req.Credential.ConsumerType != hovel.CredentialConsumerMeshProvider ||
-		req.Credential.ProfileID != "tls-server" ||
-		req.Credential.CompatibilityTargetID != "portable-x509" {
-		return hovel.CredentialDeliveryReceipt{}, errors.New(
-			"squatter: runtime credential metadata does not match the TLS mesh-stream slot",
-		)
-	}
-	requestSHA256, err := runtimeCredentialRequestSHA256(req)
-	if err != nil {
-		return hovel.CredentialDeliveryReceipt{}, err
-	}
-	lp := p.listeningPost()
-	lp.mu.Lock()
-	if previous, ok := lp.receipts[req.RequestID]; ok {
-		lp.mu.Unlock()
-		if previous.requestSHA256 != requestSHA256 {
-			return hovel.CredentialDeliveryReceipt{}, errors.New(
-				"squatter: runtime credential request id was reused with different input",
-			)
-		}
-		return previous.receipt, nil
-	}
-	lp.mu.Unlock()
-	material, ok := req.Material.Bytes()
-	if !ok {
-		return hovel.CredentialDeliveryReceipt{}, errors.New(
-			"squatter: TLS mesh-stream bundle did not contain private bytes",
-		)
-	}
-	if len(material) > meshMaximumBundleBytes {
-		clear(material)
-		return hovel.CredentialDeliveryReceipt{}, errors.New(
-			"squatter: TLS mesh-stream bundle exceeds the advertised size limit",
-		)
-	}
-	bundle, err := hovel.DecodeCredentialBundleJSON(material)
-	clear(material)
-	if err != nil {
-		return hovel.CredentialDeliveryReceipt{}, fmt.Errorf(
-			"squatter: validate TLS mesh-stream bundle: %w",
-			err,
-		)
-	}
-	if bundle.AssignmentID != req.AssignmentID ||
-		bundle.Purpose != req.Credential.Purpose ||
-		bundle.CompatibilityTargetID != req.Credential.CompatibilityTargetID ||
-		req.Credential.BundleVersion != bundle.SchemaVersion {
-		bundle.Clear()
-		return hovel.CredentialDeliveryReceipt{}, errors.New(
-			"squatter: TLS mesh-stream bundle metadata does not match its delivery envelope",
-		)
-	}
-	if _, err := bundle.TLSServerConfigAt(time.Now().UTC()); err != nil {
-		bundle.Clear()
-		return hovel.CredentialDeliveryReceipt{}, fmt.Errorf(
-			"squatter: configure TLS mesh-stream credential: %w",
-			err,
-		)
-	}
-	receipt := hovel.CredentialDeliveryReceipt{
-		RequestID:         req.RequestID,
-		ProviderReference: "squatter-tls:" + requestSHA256[:32],
-		ReceiptSHA256:     requestSHA256,
-	}
-	lp.mu.Lock()
-	if previous, ok := lp.receipts[req.RequestID]; ok {
-		lp.mu.Unlock()
-		bundle.Clear()
-		if previous.requestSHA256 != requestSHA256 {
-			return hovel.CredentialDeliveryReceipt{}, errors.New(
-				"squatter: runtime credential request id was reused with different input",
-			)
-		}
-		return previous.receipt, nil
-	}
-	lp.tlsBundle.Clear()
-	lp.tlsBundle = bundle
-	lp.receipts[req.RequestID] = runtimeCredentialReceipt{
-		requestSHA256: requestSHA256,
-		receipt:       receipt,
-	}
-	lp.mu.Unlock()
-	return receipt, nil
-}
-
-func runtimeCredentialRequestSHA256(req hovel.CredentialRuntimeRequest) (string, error) {
-	binding := struct {
-		SchemaVersion string                           `json:"schemaVersion"`
-		Provider      hovel.CredentialProviderTarget   `json:"provider"`
-		AssignmentID  string                           `json:"assignmentId"`
-		SlotName      string                           `json:"slotName"`
-		Credential    hovel.ResolvedCredentialMetadata `json:"credential"`
-		Projection    hovel.CredentialProjection       `json:"projection"`
-		Form          hovel.CredentialMaterialForm     `json:"form"`
-		Encoding      string                           `json:"encoding"`
-		MaterialSHA   string                           `json:"materialSha256"`
-		Scope         hovel.CredentialOperationScope   `json:"scope"`
-	}{
-		SchemaVersion: req.SchemaVersion,
-		Provider:      req.Provider,
-		AssignmentID:  req.AssignmentID,
-		SlotName:      req.SlotName,
-		Credential:    req.Credential,
-		Projection:    req.Material.Projection,
-		Form:          req.Material.Form(),
-		Encoding:      req.Material.Encoding,
-		MaterialSHA:   req.Material.SHA256,
-		Scope:         req.Scope,
-	}
-	encoded, err := json.Marshal(binding)
-	if err != nil {
-		return "", fmt.Errorf("squatter: bind runtime credential request: %w", err)
-	}
-	digest := sha256.Sum256(encoded)
-	return hex.EncodeToString(digest[:]), nil
 }
 
 func (p Provider) RunMeshTask(
@@ -440,13 +282,7 @@ func (p Provider) OpenMeshStream(
 	capabilities := []string{"read", "write", "close", "stream.tcp", "squatter.frames"}
 	transport := "squatter/tcp-bind"
 	if protocol == meshProtocolTLS {
-		tlsConfig, configErr := p.meshTLSServerConfig()
-		if configErr != nil {
-			logProviderError("close Squatter mesh destination", raw.Close())
-			return hovel.SessionRef{}, configErr
-		}
-		session = newTLSMeshGatewaySession(raw, tlsConfig)
-		capabilities = append(capabilities, "tls")
+		capabilities = append(capabilities, "tls", "tls.payload-terminated", "tls.wolfssl")
 		transport = "squatter+tls/tcp-bind"
 	}
 	return ctx.OpenSession(
@@ -531,22 +367,6 @@ func (p Provider) rememberMeshEndpoint(opts tcpBindOptions, state string) meshEn
 	lp.meshNodes[endpoint.NodeID] = endpoint
 	lp.mu.Unlock()
 	return endpoint
-}
-
-func (p Provider) meshTLSServerConfig() (*tls.Config, error) {
-	lp := p.listeningPost()
-	lp.mu.Lock()
-	defer lp.mu.Unlock()
-	if lp.tlsBundle.SchemaVersion == "" {
-		return nil, errors.New(
-			"squatter: TLS mesh stream requires a runtime credential bundle",
-		)
-	}
-	config, err := lp.tlsBundle.TLSServerConfigAt(time.Now().UTC())
-	if err != nil {
-		return nil, fmt.Errorf("squatter: configure TLS mesh stream: %w", err)
-	}
-	return config, nil
 }
 
 func meshTCPBindOptions(
@@ -662,38 +482,3 @@ func (s *meshConnSession) Close(string) error {
 }
 
 func (s *meshConnSession) Closed() bool { return s.closed.Load() }
-
-func newTLSMeshGatewaySession(raw net.Conn, config *tls.Config) hovel.Session {
-	external, internal := net.Pipe()
-	session := newMeshConnSession(external, func() {
-		logProviderError("close internal TLS mesh transport", internal.Close())
-		logProviderError("close Squatter TLS mesh destination", raw.Close())
-	})
-	go serveTLSMeshGateway(session, internal, raw, config)
-	return session
-}
-
-func serveTLSMeshGateway(
-	session *meshConnSession,
-	transport net.Conn,
-	raw net.Conn,
-	config *tls.Config,
-) {
-	server := tls.Server(transport, config)
-	if err := server.Handshake(); err != nil {
-		logProviderError("close failed TLS mesh session", session.Close("TLS handshake failed"))
-		return
-	}
-	done := make(chan struct{}, 2)
-	go func() {
-		_, _ = io.Copy(raw, server)
-		done <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(server, raw)
-		done <- struct{}{}
-	}()
-	<-done
-	logProviderError("close completed TLS mesh session", session.Close("TLS mesh stream ended"))
-	<-done
-}

@@ -66,25 +66,11 @@ func TestProviderReportsSquatterPayloads(t *testing.T) {
 	}
 }
 
-func TestProviderMeshTLSStreamCarriesSquatterFrames(t *testing.T) {
+func TestProviderMeshTLSStreamPassesThroughToPayload(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	bundle, root := testSquatterTLSBundle(t, now)
-	encodedBundle, err := json.Marshal(bundle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bundleDigest := sha256.Sum256(encodedBundle)
-	value, err := hovel.NewCredentialMaterialBytes(encodedBundle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	material, err := hovel.NewResolvedCredentialMaterial(
-		hovel.CredentialProjectionBundle,
-		hovel.CredentialMaterialPrivateBytes,
-		hovel.CredentialEncodingJSON,
-		hex.EncodeToString(bundleDigest[:]),
-		value,
-	)
+	defer bundle.Clear()
+	serverConfig, err := bundle.TLSServerConfigAt(now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,24 +80,34 @@ func TestProviderMeshTLSStreamCarriesSquatterFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeTestListener(t, listener)
-	rawResult := make(chan error, 1)
+	payloadResult := make(chan error, 1)
 	go func() {
 		conn, acceptErr := listener.Accept()
 		if acceptErr != nil {
-			rawResult <- acceptErr
+			payloadResult <- acceptErr
 			return
 		}
 		defer conn.Close()
-		kind, streamID, payload, readErr := wire.ReadFrame(bufio.NewReader(conn))
+		secure := tls.Server(conn, serverConfig)
+		if handshakeErr := secure.Handshake(); handshakeErr != nil {
+			payloadResult <- handshakeErr
+			return
+		}
+		kind, streamID, payload, readErr := wire.ReadFrame(bufio.NewReader(secure))
 		if readErr != nil {
-			rawResult <- readErr
+			payloadResult <- readErr
 			return
 		}
 		if kind != wire.KindData || streamID != 7 || string(payload) != "mesh-tls" {
-			rawResult <- fmt.Errorf("raw Squatter frame = kind %d stream %d payload %q", kind, streamID, payload)
+			payloadResult <- fmt.Errorf(
+				"payload TLS Squatter frame = kind %d stream %d payload %q",
+				kind,
+				streamID,
+				payload,
+			)
 			return
 		}
-		rawResult <- wire.WriteFrame(conn, wire.KindData, streamID, []byte("mesh-tls-ok"))
+		payloadResult <- wire.WriteFrame(secure, wire.KindData, streamID, []byte("mesh-tls-ok"))
 	}()
 
 	provider := newProvider()
@@ -121,11 +117,16 @@ func TestProviderMeshTLSStreamCarriesSquatterFrames(t *testing.T) {
 	rpc.Call("mesh.describe", map[string]any{}, &descriptor)
 	if descriptor.CredentialDelivery == nil ||
 		len(descriptor.CredentialDelivery.Slots) != 1 ||
-		descriptor.CredentialDelivery.Slots[0].Name != meshTLSCredentialSlot {
+		descriptor.CredentialDelivery.Slots[0].Name != payloadTLSCredentialSlot ||
+		!slices.Equal(
+			descriptor.CredentialDelivery.Capabilities,
+			[]hovel.CredentialDeliveryCapability{hovel.CredentialDeliveryStampStandard},
+		) {
 		t.Fatalf("mesh descriptor credential delivery = %#v", descriptor.CredentialDelivery)
 	}
 	if !slices.Contains(descriptor.Capabilities, "stream.squatter+tls") ||
-		descriptor.Attributes["tlsTermination"] != "provider" {
+		descriptor.Attributes["tlsTermination"] != "payload" ||
+		descriptor.Attributes["tlsLibrary"] != "wolfSSL" {
 		t.Fatalf("mesh descriptor = %#v", descriptor)
 	}
 	topology, err := provider.MeshTopology(hovel.MeshTopologyRequest{IncludeRoutes: true})
@@ -138,116 +139,6 @@ func TestProviderMeshTLSStreamCarriesSquatterFrames(t *testing.T) {
 	}
 	if _, err := provider.MeshTopology(hovel.MeshTopologyRequest{Root: "unknown"}); err == nil {
 		t.Fatal("MeshTopology() accepted an unknown root")
-	}
-	request := hovel.CredentialRuntimeRequest{
-		SchemaVersion: hovel.CredentialProviderExecutionSchemaV1,
-		Provider: hovel.CredentialProviderTarget{
-			ModuleID:         payloadName + "@" + version,
-			ProviderID:       payloadName,
-			ProviderVersion:  version,
-			DescriptorSHA256: strings.Repeat("0", sha256.Size*2),
-		},
-		RequestID:    "squatter-tls-runtime-1",
-		AssignmentID: bundle.AssignmentID,
-		SlotName:     meshTLSCredentialSlot,
-		Credential: hovel.ResolvedCredentialMetadata{
-			BundleVersion:         hovel.CredentialBundleSchemaV1,
-			Purpose:               hovel.CredentialPurposeTLSServer,
-			ConsumerType:          hovel.CredentialConsumerMeshProvider,
-			ProfileID:             "tls-server",
-			CompatibilityTargetID: "portable-x509",
-		},
-		Material: material,
-		Scope: hovel.CredentialOperationScope{
-			OperationID: "mesh-stream-operation-1",
-			Target:      "127.0.0.1",
-		},
-	}
-	if _, err := provider.LoadRuntimeCredential(hovel.CredentialRuntimeRequest{}); err == nil {
-		t.Fatal("LoadRuntimeCredential() accepted an invalid request envelope")
-	}
-	for name, mutate := range map[string]func(*hovel.CredentialRuntimeRequest){
-		"provider": func(candidate *hovel.CredentialRuntimeRequest) {
-			candidate.Provider.ProviderID = "other-provider"
-		},
-		"slot": func(candidate *hovel.CredentialRuntimeRequest) {
-			candidate.SlotName = "other-slot"
-		},
-		"encoding": func(candidate *hovel.CredentialRuntimeRequest) {
-			candidate.Material.Encoding = hovel.CredentialEncodingRaw
-		},
-		"metadata": func(candidate *hovel.CredentialRuntimeRequest) {
-			candidate.Credential.Purpose = hovel.CredentialPurposeTLSClient
-		},
-		"bundle_envelope": func(candidate *hovel.CredentialRuntimeRequest) {
-			candidate.AssignmentID = "different-assignment"
-		},
-	} {
-		t.Run("runtime_credential_rejects_"+name, func(t *testing.T) {
-			candidate := request
-			candidate.RequestID = "squatter-tls-invalid-" + name
-			mutate(&candidate)
-			if _, err := provider.LoadRuntimeCredential(candidate); err == nil {
-				t.Fatal("invalid runtime credential returned nil error")
-			}
-		})
-	}
-	materialFor := func(t *testing.T, data []byte) hovel.ResolvedCredentialMaterial {
-		t.Helper()
-		digest := sha256.Sum256(data)
-		value, err := hovel.NewCredentialMaterialBytes(data)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resolved, err := hovel.NewResolvedCredentialMaterial(
-			hovel.CredentialProjectionBundle,
-			hovel.CredentialMaterialPrivateBytes,
-			hovel.CredentialEncodingJSON,
-			hex.EncodeToString(digest[:]),
-			value,
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return resolved
-	}
-	corrupt := request
-	corrupt.RequestID = "squatter-tls-corrupt-json"
-	corrupt.Material = materialFor(t, []byte("{"))
-	if _, err := provider.LoadRuntimeCredential(corrupt); err == nil {
-		t.Fatal("LoadRuntimeCredential() accepted corrupt bundle JSON")
-	}
-	oversized := request
-	oversized.RequestID = "squatter-tls-oversized"
-	oversized.Material = materialFor(t, bytes.Repeat([]byte{'x'}, meshMaximumBundleBytes+1))
-	if _, err := provider.LoadRuntimeCredential(oversized); err == nil {
-		t.Fatal("LoadRuntimeCredential() accepted an oversized bundle")
-	}
-	expiredBundle, _ := testSquatterTLSBundle(t, now.Add(-2*time.Hour))
-	expiredJSON, err := json.Marshal(expiredBundle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	expired := request
-	expired.RequestID = "squatter-tls-expired"
-	expired.Material = materialFor(t, expiredJSON)
-	if _, err := provider.LoadRuntimeCredential(expired); err == nil {
-		t.Fatal("LoadRuntimeCredential() accepted an expired TLS certificate")
-	}
-	var receipt hovel.CredentialDeliveryReceipt
-	rpc.Call("credential.runtime", request, &receipt)
-	if receipt.RequestID != request.RequestID || receipt.ProviderReference == "" || receipt.ReceiptSHA256 == "" {
-		t.Fatalf("credential receipt = %#v", receipt)
-	}
-	var replay hovel.CredentialDeliveryReceipt
-	rpc.Call("credential.runtime", request, &replay)
-	if replay != receipt {
-		t.Fatalf("idempotent credential receipt = %#v, want %#v", replay, receipt)
-	}
-	conflict := request
-	conflict.Scope.OperationID = "mesh-stream-operation-conflict"
-	if _, err := provider.LoadRuntimeCredential(conflict); err == nil {
-		t.Fatal("LoadRuntimeCredential() accepted a reused request id with different scope")
 	}
 
 	port := listener.Addr().(*net.TCPAddr).Port
@@ -263,7 +154,12 @@ func TestProviderMeshTLSStreamCarriesSquatterFrames(t *testing.T) {
 		Protocol: meshProtocolTLS,
 		Config:   map[string]any{"session.connect_ms": "1000"},
 	}, &session)
-	if session.Transport != "squatter+tls/tcp-bind" || !slices.Contains(session.Capabilities, "tls") {
+	for _, capability := range []string{"tls", "tls.payload-terminated", "tls.wolfssl"} {
+		if !slices.Contains(session.Capabilities, capability) {
+			t.Fatalf("mesh stream session is missing %q: %#v", capability, session)
+		}
+	}
+	if session.Transport != "squatter+tls/tcp-bind" {
 		t.Fatalf("mesh stream session = %#v", session)
 	}
 
@@ -282,6 +178,9 @@ func TestProviderMeshTLSStreamCarriesSquatterFrames(t *testing.T) {
 	if err := secure.HandshakeContext(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	if secure.ConnectionState().Version != tls.VersionTLS13 {
+		t.Fatalf("negotiated TLS version = %#x", secure.ConnectionState().Version)
+	}
 	if err := wire.WriteFrame(secure, wire.KindData, 7, []byte("mesh-tls")); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +191,7 @@ func TestProviderMeshTLSStreamCarriesSquatterFrames(t *testing.T) {
 	if kind != wire.KindData || streamID != 7 || string(payload) != "mesh-tls-ok" {
 		t.Fatalf("TLS Squatter frame = kind %d stream %d payload %q", kind, streamID, payload)
 	}
-	if err := <-rawResult; err != nil {
+	if err := <-payloadResult; err != nil {
 		t.Fatal(err)
 	}
 }
@@ -301,56 +200,32 @@ func TestProviderMeshTLSStreamCarriesRealWinePayload(t *testing.T) {
 	if os.Getenv("HOVEL_SQUATTER_REAL_E2E") == "" {
 		t.Skip("real Wine payload E2E is run by task modules:wine-docker-test")
 	}
-	port := startRealWineSquatter(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	bundle, root := testSquatterTLSBundle(t, now)
-	encodedBundle, err := json.Marshal(bundle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(encodedBundle)
-	value, err := hovel.NewCredentialMaterialBytes(encodedBundle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	material, err := hovel.NewResolvedCredentialMaterial(
-		hovel.CredentialProjectionBundle,
-		hovel.CredentialMaterialPrivateBytes,
-		hovel.CredentialEncodingJSON,
-		hex.EncodeToString(digest[:]),
-		value,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	defer bundle.Clear()
+	port := reserveRealWinePort(t)
 	provider := newProvider()
-	request := hovel.CredentialRuntimeRequest{
-		SchemaVersion: hovel.CredentialProviderExecutionSchemaV1,
-		Provider: hovel.CredentialProviderTarget{
-			ModuleID:         payloadName + "@" + version,
-			ProviderID:       payloadName,
-			ProviderVersion:  version,
-			DescriptorSHA256: strings.Repeat("0", sha256.Size*2),
+	generated, err := provider.GeneratePayload(hovel.GeneratePayloadRequest{
+		PayloadID: "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Target:    "127.0.0.1",
+		Format:    formatPEEXE,
+		Config: map[string]string{
+			"payload.transport": tcpBind,
+			"payload.bind_port": strconv.Itoa(port),
 		},
-		RequestID:    "squatter-real-wine-tls-runtime",
-		AssignmentID: bundle.AssignmentID,
-		SlotName:     meshTLSCredentialSlot,
-		Credential: hovel.ResolvedCredentialMetadata{
-			BundleVersion:         hovel.CredentialBundleSchemaV1,
-			Purpose:               hovel.CredentialPurposeTLSServer,
-			ConsumerType:          hovel.CredentialConsumerMeshProvider,
-			ProfileID:             "tls-server",
-			CompatibilityTargetID: "portable-x509",
-		},
-		Material: material,
-		Scope: hovel.CredentialOperationScope{
-			OperationID: "real-wine-mesh-stream",
-			Target:      "127.0.0.1",
-		},
-	}
-	if _, err := provider.LoadRuntimeCredential(request); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	source, err := base64.StdEncoding.DecodeString(generated.Primary.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamped := stampSquatterPayloadTLS(t, source, bundle)
+	clear(source)
+	defer clear(stamped)
+	startRealWineSquatter(t, stamped, port)
+
 	survey, err := provider.RunMeshTask(nil, hovel.MeshTaskRequest{
 		TaskID:          "real-wine-survey",
 		Kind:            hovel.MeshTaskSurvey,
@@ -383,6 +258,11 @@ func TestProviderMeshTLSStreamCarriesRealWinePayload(t *testing.T) {
 		Protocol: meshProtocolTLS,
 		Config:   map[string]any{"session.connect_ms": 3000},
 	}, &session)
+	for _, capability := range []string{"tls", "tls.payload-terminated", "tls.wolfssl"} {
+		if !slices.Contains(session.Capabilities, capability) {
+			t.Fatalf("real Wine Mesh session is missing %q: %#v", capability, session)
+		}
+	}
 	bridge := &rpcSessionConn{t: t, rpc: rpc, sessionID: session.ID}
 	defer bridge.Close()
 	roots := x509.NewCertPool()
@@ -391,12 +271,16 @@ func TestProviderMeshTLSStreamCarriesRealWinePayload(t *testing.T) {
 		RootCAs:    roots,
 		ServerName: "squatter.mesh.test",
 		MinVersion: tls.VersionTLS13,
+		MaxVersion: tls.VersionTLS13,
 	})
 	if err := secure.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if err := secure.HandshakeContext(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	if secure.ConnectionState().Version != tls.VersionTLS13 {
+		t.Fatalf("real payload negotiated TLS version = %#x", secure.ConnectionState().Version)
 	}
 	if err := wire.WriteFrame(secure, wire.KindOpen, 91, wire.EncodeOpen("echo", []string{"mesh-tls-wine"})); err != nil {
 		t.Fatal(err)
@@ -423,16 +307,23 @@ func TestProviderMeshTLSStreamCarriesRealWinePayload(t *testing.T) {
 			break
 		}
 	}
-	t.Log("E2E mesh=provider topology=real-wine-payload tls=1.3 frames=Squatter echo passed")
+	tampered := append([]byte(nil), stamped...)
+	pkiOffset, err := payloadPKIConfigOffset(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered[pkiOffset+payloadPKIBundleOffset] ^= 0xff
+	assertRealWineRejectsTamperedPayload(t, tampered)
+	clear(tampered)
+	tamperedHeader := append([]byte(nil), stamped...)
+	tamperedHeader[pkiOffset+payloadPKIFlagsOffset] ^= 0x01
+	assertRealWineRejectsTamperedPayload(t, tamperedHeader)
+	clear(tamperedHeader)
+	t.Log("E2E workflow=generate-configure-stamp-launch pki=provider-stamped mesh=passthrough tls=wolfSSL/1.3 payload=real-wine tamper=fail-closed frames=Squatter-echo passed")
 }
 
-func startRealWineSquatter(t *testing.T) int {
+func reserveRealWinePort(t *testing.T) int {
 	t.Helper()
-	exe := os.Getenv("HOVEL_SQUATTER_EXE")
-	wine := os.Getenv("HOVEL_SQUATTER_WINE")
-	if exe == "" || wine == "" {
-		t.Fatal("HOVEL_SQUATTER_EXE and HOVEL_SQUATTER_WINE are required")
-	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -441,7 +332,20 @@ func startRealWineSquatter(t *testing.T) int {
 	if err := listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(wine, exe, strconv.Itoa(port))
+	return port
+}
+
+func startRealWineSquatter(t *testing.T, body []byte, port int) {
+	t.Helper()
+	wine := os.Getenv("HOVEL_SQUATTER_WINE")
+	if wine == "" {
+		t.Fatal("HOVEL_SQUATTER_WINE is required")
+	}
+	exe := filepath.Join(t.TempDir(), "squatter-stamped.exe")
+	if err := os.WriteFile(exe, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(wine, exe)
 	runtimeDir := t.TempDir()
 	if err := os.Chmod(runtimeDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -465,15 +369,172 @@ func startRealWineSquatter(t *testing.T) int {
 	})
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 250*time.Millisecond)
+		connection, err := net.DialTimeout(
+			"tcp",
+			net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
+			250*time.Millisecond,
+		)
 		if err == nil {
 			_ = connection.Close()
-			return port
+			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("real Wine payload did not listen on port %d", port)
-	return 0
+}
+
+func assertRealWineRejectsTamperedPayload(t *testing.T, body []byte) {
+	t.Helper()
+	wine := os.Getenv("HOVEL_SQUATTER_WINE")
+	exe := filepath.Join(t.TempDir(), "squatter-tampered.exe")
+	if err := os.WriteFile(exe, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtimeDir := t.TempDir()
+	if err := os.Chmod(runtimeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(wine, exe)
+	command.Env = append(os.Environ(),
+		"XDG_RUNTIME_DIR="+runtimeDir,
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+		"WINEDEBUG=-all",
+	)
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("tampered stamped payload started successfully")
+		}
+		if !strings.Contains(output.String(), "stamped wolfSSL configuration failed validation") {
+			t.Fatalf("tampered payload failure did not identify stamped wolfSSL validation:\n%s", output.String())
+		}
+	case <-time.After(15 * time.Second):
+		_ = command.Process.Kill()
+		<-done
+		t.Fatal("tampered stamped payload did not fail closed")
+	}
+}
+
+func newSquatterPayloadTLSStampRequest(
+	t *testing.T,
+	body []byte,
+	bundle hovel.CredentialBundle,
+) (hovel.CredentialStampExecutionRequest, []byte) {
+	t.Helper()
+	encodedBundle, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputDigest := sha256.Sum256(body)
+	bundleDigest := sha256.Sum256(encodedBundle)
+	inputContent, err := hovel.NewCredentialArtifactData(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialBytes, err := hovel.NewCredentialMaterialBytes(encodedBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := hovel.NewResolvedCredentialMaterial(
+		hovel.CredentialProjectionBundle,
+		hovel.CredentialMaterialPrivateBytes,
+		hovel.CredentialEncodingJSON,
+		hex.EncodeToString(bundleDigest[:]),
+		materialBytes,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := hovel.CredentialStampTarget{
+		Kind: hovel.CredentialStampTargetNamedSlot,
+		NamedSlot: &hovel.CredentialNamedSlotTarget{
+			Name: payloadTLSCredentialSlot,
+		},
+	}
+	request := hovel.CredentialStampExecutionRequest{
+		SchemaVersion: hovel.CredentialProviderExecutionSchemaV1,
+		Provider: hovel.CredentialProviderTarget{
+			ModuleID:         payloadName + "@" + version,
+			ProviderID:       payloadName,
+			ProviderVersion:  version,
+			DescriptorSHA256: strings.Repeat("1", sha256.Size*2),
+		},
+		StampID: "squatter-payload-tls-e2e-stamp",
+		Request: hovel.CredentialStampRequest{
+			AssignmentID: bundle.AssignmentID,
+			Capability:   hovel.CredentialDeliveryStampStandard,
+			SlotName:     payloadTLSCredentialSlot,
+			Target:       target,
+			Material: hovel.CredentialStampMaterial{
+				Projection: hovel.CredentialProjectionBundle,
+				Credential: &hovel.CredentialMaterialReference{
+					Projection: hovel.CredentialProjectionBundle,
+					Form:       hovel.CredentialMaterialPrivateBytes,
+					BundleID:   bundle.ID,
+				},
+			},
+			EncodedBytes: uint64(len(encodedBundle)),
+			Credential: hovel.ResolvedCredentialMetadata{
+				BundleVersion:         hovel.CredentialBundleSchemaV1,
+				Purpose:               hovel.CredentialPurposeTLSServer,
+				ConsumerType:          hovel.CredentialConsumerPayload,
+				ProfileID:             "tls-server",
+				CompatibilityTargetID: "portable-x509",
+			},
+		},
+		Input: hovel.CredentialArtifactInput{
+			ID:       "squatter-transport-configured-pe",
+			SHA256:   hex.EncodeToString(inputDigest[:]),
+			Encoding: "binary",
+			Content:  inputContent,
+		},
+		Material: resolved,
+		ExpectedDigests: []hovel.CredentialStampedMaterialDigest{{
+			Projection: hovel.CredentialProjectionBundle,
+			Reference:  bundle.ID,
+			SHA256:     hex.EncodeToString(bundleDigest[:]),
+		}},
+		Scope: hovel.CredentialOperationScope{
+			OperationID: "squatter-payload-stamp-e2e",
+			Target:      "127.0.0.1",
+		},
+	}
+	return request, encodedBundle
+}
+
+func stampSquatterPayloadTLS(
+	t *testing.T,
+	body []byte,
+	bundle hovel.CredentialBundle,
+) []byte {
+	t.Helper()
+	request, encodedBundle := newSquatterPayloadTLSStampRequest(t, body, bundle)
+	defer clear(encodedBundle)
+	result, err := newProvider().StampCredential(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := result.ValidateFor(request); err != nil {
+		t.Fatal(err)
+	}
+	artifact, ok := result.Output.Artifact()
+	if !ok {
+		t.Fatal("payload TLS stamp did not return an artifact")
+	}
+	stamped, ok := artifact.Content.Data()
+	if !ok {
+		t.Fatal("payload TLS stamp artifact did not contain in-memory PE bytes")
+	}
+	return stamped
 }
 
 func readRealWineMeshData(t *testing.T, reader *bufio.Reader, streamID uint64) []byte {
@@ -864,6 +925,137 @@ func TestProviderGeneratesWindowsPEArtifactSet(t *testing.T) {
 	}
 	if got := binary.LittleEndian.Uint16(body[configOffset+payloadConfigPortOffset:]); got != 4444 {
 		t.Fatalf("reverse port = %d", got)
+	}
+}
+
+func TestProviderStampsCompleteTLSBundleIntoWindowsPE(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	bundle, _ := testSquatterTLSBundle(t, now)
+	bundle.AssignmentID = "squatter-payload-assignment"
+	encodedBundle, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
+		PayloadID: "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Target:    "127.0.0.1",
+		Format:    formatPEEXE,
+		Config:    map[string]string{"payload.bind_port": "19100"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := base64.StdEncoding.DecodeString(generated.Primary.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputDigest := sha256.Sum256(body)
+	bundleDigest := sha256.Sum256(encodedBundle)
+	inputContent, err := hovel.NewCredentialArtifactData(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialBytes, err := hovel.NewCredentialMaterialBytes(encodedBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := hovel.NewResolvedCredentialMaterial(
+		hovel.CredentialProjectionBundle,
+		hovel.CredentialMaterialPrivateBytes,
+		hovel.CredentialEncodingJSON,
+		hex.EncodeToString(bundleDigest[:]),
+		materialBytes,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := hovel.CredentialStampTarget{
+		Kind: hovel.CredentialStampTargetNamedSlot,
+		NamedSlot: &hovel.CredentialNamedSlotTarget{
+			Name: payloadTLSCredentialSlot,
+		},
+	}
+	request := hovel.CredentialStampExecutionRequest{
+		SchemaVersion: hovel.CredentialProviderExecutionSchemaV1,
+		Provider: hovel.CredentialProviderTarget{
+			ModuleID:         payloadName + "@" + version,
+			ProviderID:       payloadName,
+			ProviderVersion:  version,
+			DescriptorSHA256: strings.Repeat("1", sha256.Size*2),
+		},
+		StampID: "squatter-payload-tls-stamp",
+		Request: hovel.CredentialStampRequest{
+			AssignmentID: bundle.AssignmentID,
+			Capability:   hovel.CredentialDeliveryStampStandard,
+			SlotName:     payloadTLSCredentialSlot,
+			Target:       target,
+			Material: hovel.CredentialStampMaterial{
+				Projection: hovel.CredentialProjectionBundle,
+				Credential: &hovel.CredentialMaterialReference{
+					Projection: hovel.CredentialProjectionBundle,
+					Form:       hovel.CredentialMaterialPrivateBytes,
+					BundleID:   bundle.ID,
+				},
+			},
+			EncodedBytes: uint64(len(encodedBundle)),
+			Credential: hovel.ResolvedCredentialMetadata{
+				BundleVersion:         hovel.CredentialBundleSchemaV1,
+				Purpose:               hovel.CredentialPurposeTLSServer,
+				ConsumerType:          hovel.CredentialConsumerPayload,
+				ProfileID:             "tls-server",
+				CompatibilityTargetID: "portable-x509",
+			},
+		},
+		Input: hovel.CredentialArtifactInput{
+			ID:       "squatter-transport-configured-pe",
+			SHA256:   hex.EncodeToString(inputDigest[:]),
+			Encoding: "binary",
+			Content:  inputContent,
+		},
+		Material: resolved,
+		ExpectedDigests: []hovel.CredentialStampedMaterialDigest{{
+			Projection: hovel.CredentialProjectionBundle,
+			Reference:  bundle.ID,
+			SHA256:     hex.EncodeToString(bundleDigest[:]),
+		}},
+		Scope: hovel.CredentialOperationScope{
+			OperationID: "squatter-payload-stamp-operation",
+			Target:      "127.0.0.1",
+		},
+	}
+	result, err := newProvider().StampCredential(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := result.ValidateFor(request); err != nil {
+		t.Fatal(err)
+	}
+	artifact, ok := result.Output.Artifact()
+	if !ok || artifact.Name != "squatter-stamped.exe" {
+		t.Fatalf("stamp output = %#v", result.Output)
+	}
+	stamped, ok := artifact.Content.Data()
+	if !ok {
+		t.Fatal("stamp output did not contain in-memory PE bytes")
+	}
+	extracted, digest, err := stampedPayloadBundle(stamped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(extracted)
+	if !bytes.Equal(extracted, encodedBundle) || digest != hex.EncodeToString(bundleDigest[:]) {
+		t.Fatal("stamped payload did not preserve the complete PKI bundle")
+	}
+	if bytes.Equal(stamped, body) {
+		t.Fatal("credential stamping did not change the generated PE")
+	}
+	pkiOffset, err := payloadPKIConfigOffset(stamped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamped[pkiOffset+payloadPKIBundleOffset] ^= 0xff
+	if _, _, err := stampedPayloadBundle(stamped); err == nil {
+		t.Fatal("tampered stamped payload bundle passed integrity validation")
 	}
 }
 
