@@ -10,6 +10,13 @@ select_file(
     suffix = "-i686.exe",
 )
 
+select_file(
+    name = "squatter_x64_exe",
+    srcs = ["//modules/squatter/windows/src:squatter_all"],
+    output_name = "squatter-x64.exe",
+    suffix = "-x86_64.exe",
+)
+
 py_test(
     name = "squatter_x86_exe_pe_test",
     size = "small",

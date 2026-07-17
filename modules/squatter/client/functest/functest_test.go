@@ -30,13 +30,19 @@ var (
 )
 
 func findSquatter() (string, error) {
+	if override := os.Getenv("HOVEL_SQUATTER_EXE"); override != "" {
+		if _, err := os.Stat(override); err != nil {
+			return "", err
+		}
+		return override, nil
+	}
 	rf, err := runfiles.New()
 	if err != nil {
 		return "", err
 	}
-	// //payloads/squatter/windows/src:squatter_all produces
+	// //modules/squatter/windows/src:squatter_all produces
 	// squatter_all-x86_64.exe (a PE32+).
-	return rf.Rlocation("_main/payloads/squatter/windows/src/squatter_all-x86_64.exe")
+	return rf.Rlocation("_main/modules/squatter/windows/src/squatter_all-x86_64.exe")
 }
 
 func wineEnv() []string {
@@ -57,8 +63,8 @@ func wineEnv() []string {
 		"WINEPREFIX="+prefix,
 		"WINEDEBUG=-all",
 		"XDG_RUNTIME_DIR="+xdg,
-		"LANG=en_US.UTF-8",
-		"LC_ALL=en_US.UTF-8",
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
 	)
 }
 

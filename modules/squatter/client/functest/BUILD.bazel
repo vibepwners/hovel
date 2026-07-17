@@ -15,6 +15,7 @@ go_test(
     # Host-only: it spawns wine itself, so it must never be built/run for the
     # Windows platform (e.g. under --config=win64 //...).
     target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//modules/docker/squatter-wine:__pkg__"],
     deps = [
         "//modules/squatter/client/wire",
         "//modules/squatter/client/xfer",

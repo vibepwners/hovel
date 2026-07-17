@@ -3,10 +3,20 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
@@ -53,6 +63,357 @@ func TestProviderReportsSquatterPayloads(t *testing.T) {
 			t.Fatalf("unexpected session owner: %#v", payload.Session)
 		}
 	}
+}
+
+func TestProviderMeshTLSStreamCarriesSquatterFrames(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	bundle, root := testSquatterTLSBundle(t, now)
+	encodedBundle, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleDigest := sha256.Sum256(encodedBundle)
+	value, err := hovel.NewCredentialMaterialBytes(encodedBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err := hovel.NewResolvedCredentialMaterial(
+		hovel.CredentialProjectionBundle,
+		hovel.CredentialMaterialPrivateBytes,
+		hovel.CredentialEncodingJSON,
+		hex.EncodeToString(bundleDigest[:]),
+		value,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestListener(t, listener)
+	rawResult := make(chan error, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			rawResult <- acceptErr
+			return
+		}
+		defer conn.Close()
+		kind, streamID, payload, readErr := wire.ReadFrame(bufio.NewReader(conn))
+		if readErr != nil {
+			rawResult <- readErr
+			return
+		}
+		if kind != wire.KindData || streamID != 7 || string(payload) != "mesh-tls" {
+			rawResult <- fmt.Errorf("raw Squatter frame = kind %d stream %d payload %q", kind, streamID, payload)
+			return
+		}
+		rawResult <- wire.WriteFrame(conn, wire.KindData, streamID, []byte("mesh-tls-ok"))
+	}()
+
+	provider := newProvider()
+	rpc := hoveltest.NewRPCConn(t, provider)
+	defer rpc.Close()
+	var descriptor hovel.MeshDescriptor
+	rpc.Call("mesh.describe", map[string]any{}, &descriptor)
+	if descriptor.CredentialDelivery == nil ||
+		len(descriptor.CredentialDelivery.Slots) != 1 ||
+		descriptor.CredentialDelivery.Slots[0].Name != meshTLSCredentialSlot {
+		t.Fatalf("mesh descriptor credential delivery = %#v", descriptor.CredentialDelivery)
+	}
+	if !slices.Contains(descriptor.Capabilities, "stream.squatter+tls") ||
+		descriptor.Attributes["tlsTermination"] != "provider" {
+		t.Fatalf("mesh descriptor = %#v", descriptor)
+	}
+	topology, err := provider.MeshTopology(hovel.MeshTopologyRequest{IncludeRoutes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if topology.Root != meshRootNodeID || len(topology.Nodes) != 1 ||
+		len(topology.Links) != 0 || len(topology.Routes) != 0 {
+		t.Fatalf("mesh topology = %#v", topology)
+	}
+	if _, err := provider.MeshTopology(hovel.MeshTopologyRequest{Root: "unknown"}); err == nil {
+		t.Fatal("MeshTopology() accepted an unknown root")
+	}
+	request := hovel.CredentialRuntimeRequest{
+		SchemaVersion: hovel.CredentialProviderExecutionSchemaV1,
+		Provider: hovel.CredentialProviderTarget{
+			ModuleID:         payloadName + "@" + version,
+			ProviderID:       payloadName,
+			ProviderVersion:  version,
+			DescriptorSHA256: strings.Repeat("0", sha256.Size*2),
+		},
+		RequestID:    "squatter-tls-runtime-1",
+		AssignmentID: bundle.AssignmentID,
+		SlotName:     meshTLSCredentialSlot,
+		Credential: hovel.ResolvedCredentialMetadata{
+			BundleVersion:         hovel.CredentialBundleSchemaV1,
+			Purpose:               hovel.CredentialPurposeTLSServer,
+			ConsumerType:          hovel.CredentialConsumerMeshProvider,
+			ProfileID:             "tls-server",
+			CompatibilityTargetID: "portable-x509",
+		},
+		Material: material,
+		Scope: hovel.CredentialOperationScope{
+			OperationID: "mesh-stream-operation-1",
+			Target:      "127.0.0.1",
+		},
+	}
+	if _, err := provider.LoadRuntimeCredential(hovel.CredentialRuntimeRequest{}); err == nil {
+		t.Fatal("LoadRuntimeCredential() accepted an invalid request envelope")
+	}
+	for name, mutate := range map[string]func(*hovel.CredentialRuntimeRequest){
+		"provider": func(candidate *hovel.CredentialRuntimeRequest) {
+			candidate.Provider.ProviderID = "other-provider"
+		},
+		"slot": func(candidate *hovel.CredentialRuntimeRequest) {
+			candidate.SlotName = "other-slot"
+		},
+		"encoding": func(candidate *hovel.CredentialRuntimeRequest) {
+			candidate.Material.Encoding = hovel.CredentialEncodingRaw
+		},
+		"metadata": func(candidate *hovel.CredentialRuntimeRequest) {
+			candidate.Credential.Purpose = hovel.CredentialPurposeTLSClient
+		},
+		"bundle_envelope": func(candidate *hovel.CredentialRuntimeRequest) {
+			candidate.AssignmentID = "different-assignment"
+		},
+	} {
+		t.Run("runtime_credential_rejects_"+name, func(t *testing.T) {
+			candidate := request
+			candidate.RequestID = "squatter-tls-invalid-" + name
+			mutate(&candidate)
+			if _, err := provider.LoadRuntimeCredential(candidate); err == nil {
+				t.Fatal("invalid runtime credential returned nil error")
+			}
+		})
+	}
+	materialFor := func(t *testing.T, data []byte) hovel.ResolvedCredentialMaterial {
+		t.Helper()
+		digest := sha256.Sum256(data)
+		value, err := hovel.NewCredentialMaterialBytes(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolved, err := hovel.NewResolvedCredentialMaterial(
+			hovel.CredentialProjectionBundle,
+			hovel.CredentialMaterialPrivateBytes,
+			hovel.CredentialEncodingJSON,
+			hex.EncodeToString(digest[:]),
+			value,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resolved
+	}
+	corrupt := request
+	corrupt.RequestID = "squatter-tls-corrupt-json"
+	corrupt.Material = materialFor(t, []byte("{"))
+	if _, err := provider.LoadRuntimeCredential(corrupt); err == nil {
+		t.Fatal("LoadRuntimeCredential() accepted corrupt bundle JSON")
+	}
+	oversized := request
+	oversized.RequestID = "squatter-tls-oversized"
+	oversized.Material = materialFor(t, bytes.Repeat([]byte{'x'}, meshMaximumBundleBytes+1))
+	if _, err := provider.LoadRuntimeCredential(oversized); err == nil {
+		t.Fatal("LoadRuntimeCredential() accepted an oversized bundle")
+	}
+	expiredBundle, _ := testSquatterTLSBundle(t, now.Add(-2*time.Hour))
+	expiredJSON, err := json.Marshal(expiredBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired := request
+	expired.RequestID = "squatter-tls-expired"
+	expired.Material = materialFor(t, expiredJSON)
+	if _, err := provider.LoadRuntimeCredential(expired); err == nil {
+		t.Fatal("LoadRuntimeCredential() accepted an expired TLS certificate")
+	}
+	var receipt hovel.CredentialDeliveryReceipt
+	rpc.Call("credential.runtime", request, &receipt)
+	if receipt.RequestID != request.RequestID || receipt.ProviderReference == "" || receipt.ReceiptSHA256 == "" {
+		t.Fatalf("credential receipt = %#v", receipt)
+	}
+	var replay hovel.CredentialDeliveryReceipt
+	rpc.Call("credential.runtime", request, &replay)
+	if replay != receipt {
+		t.Fatalf("idempotent credential receipt = %#v, want %#v", replay, receipt)
+	}
+	conflict := request
+	conflict.Scope.OperationID = "mesh-stream-operation-conflict"
+	if _, err := provider.LoadRuntimeCredential(conflict); err == nil {
+		t.Fatal("LoadRuntimeCredential() accepted a reused request id with different scope")
+	}
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	endpoint := provider.rememberMeshEndpoint(tcpBindOptions{
+		Host: "127.0.0.1", Port: port, Timeout: time.Second,
+	}, "ready")
+	route := meshRoute(endpoint)
+	var session hovel.SessionRef
+	rpc.Call("mesh.open_stream", hovel.MeshStreamRequest{
+		RunID:    "mesh-run-1",
+		NodeID:   endpoint.NodeID,
+		Route:    &route,
+		Protocol: meshProtocolTLS,
+		Config:   map[string]any{"session.connect_ms": "1000"},
+	}, &session)
+	if session.Transport != "squatter+tls/tcp-bind" || !slices.Contains(session.Capabilities, "tls") {
+		t.Fatalf("mesh stream session = %#v", session)
+	}
+
+	bridge := &rpcSessionConn{t: t, rpc: rpc, sessionID: session.ID}
+	defer bridge.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	secure := tls.Client(bridge, &tls.Config{
+		RootCAs:    roots,
+		ServerName: "squatter.mesh.test",
+		MinVersion: tls.VersionTLS13,
+	})
+	if err := secure.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := secure.HandshakeContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := wire.WriteFrame(secure, wire.KindData, 7, []byte("mesh-tls")); err != nil {
+		t.Fatal(err)
+	}
+	kind, streamID, payload, err := wire.ReadFrame(bufio.NewReader(secure))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != wire.KindData || streamID != 7 || string(payload) != "mesh-tls-ok" {
+		t.Fatalf("TLS Squatter frame = kind %d stream %d payload %q", kind, streamID, payload)
+	}
+	if err := <-rawResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProviderMeshTracksAndRoutesMultipleSquatterNodes(t *testing.T) {
+	first := startMeshEchoEndpoint(t, "first-ok")
+	second := startMeshEchoEndpoint(t, "second-ok")
+	provider := newProvider()
+
+	survey := func(taskID string, listener net.Listener) hovel.MeshTaskResult {
+		t.Helper()
+		result, err := provider.RunMeshTask(nil, hovel.MeshTaskRequest{
+			TaskID:          taskID,
+			Kind:            hovel.MeshTaskSurvey,
+			NodeID:          meshRootNodeID,
+			DestinationHost: "127.0.0.1",
+			DestinationPort: listener.Addr().(*net.TCPAddr).Port,
+			Config:          map[string]any{"session.connect_ms": 1000},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Status != hovel.MeshTaskStatusSucceeded || result.NodeID == meshRootNodeID ||
+			result.Route == nil || !slices.Equal(result.Route.Nodes, []string{meshRootNodeID, result.NodeID}) {
+			t.Fatalf("survey result = %#v", result)
+		}
+		return result
+	}
+
+	firstSurvey := survey("survey-first", first)
+	secondSurvey := survey("survey-second", second)
+	if firstSurvey.NodeID == secondSurvey.NodeID {
+		t.Fatalf("distinct Squatter destinations shared node id %q", firstSurvey.NodeID)
+	}
+
+	topology, err := provider.MeshTopology(hovel.MeshTopologyRequest{
+		Root: meshRootNodeID, IncludeRoutes: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topology.Nodes) != 3 || len(topology.Links) != 2 || len(topology.Routes) != 2 ||
+		topology.Attributes["nodeCount"] != 3 {
+		t.Fatalf("multi-node topology = %#v", topology)
+	}
+	routes := make(map[string]hovel.MeshRoute, len(topology.Routes))
+	for _, route := range topology.Routes {
+		routes[route.Nodes[len(route.Nodes)-1]] = route
+	}
+	secondRoute, ok := routes[secondSurvey.NodeID]
+	if !ok {
+		t.Fatalf("second node route missing from %#v", topology.Routes)
+	}
+	if _, err := provider.MeshTopology(hovel.MeshTopologyRequest{Root: secondSurvey.NodeID}); err != nil {
+		t.Fatalf("known node topology root rejected: %v", err)
+	}
+
+	rpc := hoveltest.NewRPCConn(t, provider)
+	defer rpc.Close()
+	var session hovel.SessionRef
+	rpc.Call("mesh.open_stream", hovel.MeshStreamRequest{
+		RunID:    "mesh-multi-node-run",
+		NodeID:   secondSurvey.NodeID,
+		Route:    &secondRoute,
+		Protocol: meshProtocolRaw,
+	}, &session)
+	bridge := &rpcSessionConn{t: t, rpc: rpc, sessionID: session.ID}
+	defer bridge.Close()
+	if err := wire.WriteFrame(bridge, wire.KindData, 19, []byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	kind, streamID, payload, err := wire.ReadFrame(bufio.NewReader(bridge))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != wire.KindData || streamID != 19 || string(payload) != "second-ok" {
+		t.Fatalf("routed multi-node frame = kind %d stream %d payload %q", kind, streamID, payload)
+	}
+
+	badRoute := secondRoute
+	badRoute.Links[0] = "wrong-link"
+	if _, _, err := provider.resolveSquatterMeshAddress(
+		secondSurvey.NodeID, "", &badRoute, "", 0, "", nil,
+	); err == nil {
+		t.Fatal("routed stream accepted a route with the wrong link")
+	}
+	if _, _, err := provider.resolveSquatterMeshAddress(
+		secondSurvey.NodeID, "", &secondRoute, "192.0.2.1", 0, "", nil,
+	); err == nil {
+		t.Fatal("routed stream accepted a destination conflicting with its node")
+	}
+}
+
+func startMeshEchoEndpoint(t *testing.T, reply string) net.Listener {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closeTestListener(t, listener) })
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				if deadlineErr := conn.SetDeadline(time.Now().Add(3 * time.Second)); deadlineErr != nil {
+					return
+				}
+				kind, streamID, _, readErr := wire.ReadFrame(bufio.NewReader(conn))
+				if readErr != nil {
+					return
+				}
+				if kind == wire.KindData {
+					_ = wire.WriteFrame(conn, wire.KindData, streamID, []byte(reply))
+				}
+			}()
+		}
+	}()
+	return listener
 }
 
 func TestProviderFiltersTypedPayloadQueries(t *testing.T) {
@@ -1257,6 +1618,223 @@ func readRPCSessionUntil(t *testing.T, conn *hoveltest.RPCConn, sessionID string
 	}
 	t.Fatalf("timed out waiting for %q in %q", needle, out.String())
 	return ""
+}
+
+type rpcSessionConn struct {
+	t             *testing.T
+	rpc           *hoveltest.RPCConn
+	sessionID     string
+	buffer        []byte
+	readDeadline  time.Time
+	writeDeadline time.Time
+	closed        bool
+}
+
+func (c *rpcSessionConn) Read(data []byte) (int, error) {
+	for len(c.buffer) == 0 {
+		if c.closed {
+			return 0, net.ErrClosed
+		}
+		timeout := 100 * time.Millisecond
+		if !c.readDeadline.IsZero() {
+			remaining := time.Until(c.readDeadline)
+			if remaining <= 0 {
+				return 0, os.ErrDeadlineExceeded
+			}
+			if remaining < timeout {
+				timeout = remaining
+			}
+		}
+		var result struct {
+			Data string `json:"data"`
+		}
+		c.rpc.Call("session/read", map[string]any{
+			"sessionId": c.sessionID,
+			"timeoutMs": max(1, int(timeout/time.Millisecond)),
+		}, &result)
+		if result.Data == "" {
+			continue
+		}
+		decoded, err := base64.StdEncoding.DecodeString(result.Data)
+		if err != nil {
+			return 0, err
+		}
+		c.buffer = decoded
+	}
+	read := copy(data, c.buffer)
+	c.buffer = c.buffer[read:]
+	return read, nil
+}
+
+func (c *rpcSessionConn) Write(data []byte) (int, error) {
+	if c.closed {
+		return 0, net.ErrClosed
+	}
+	if !c.writeDeadline.IsZero() && time.Now().After(c.writeDeadline) {
+		return 0, os.ErrDeadlineExceeded
+	}
+	var result struct {
+		Status string `json:"status"`
+	}
+	c.rpc.Call("session/write", map[string]any{
+		"sessionId": c.sessionID,
+		"data":      base64.StdEncoding.EncodeToString(data),
+	}, &result)
+	if result.Status != "ok" {
+		return 0, fmt.Errorf("session write status %q", result.Status)
+	}
+	return len(data), nil
+}
+
+func (c *rpcSessionConn) Close() error {
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	var result struct {
+		Status string `json:"status"`
+	}
+	c.rpc.Call("session/close", map[string]any{
+		"sessionId": c.sessionID,
+		"reason":    "test complete",
+	}, &result)
+	if result.Status != "ok" {
+		return fmt.Errorf("session close status %q", result.Status)
+	}
+	return nil
+}
+
+func (*rpcSessionConn) LocalAddr() net.Addr  { return testNetAddr("mesh-client") }
+func (*rpcSessionConn) RemoteAddr() net.Addr { return testNetAddr("mesh-provider") }
+
+func (c *rpcSessionConn) SetDeadline(deadline time.Time) error {
+	c.readDeadline = deadline
+	c.writeDeadline = deadline
+	return nil
+}
+
+func (c *rpcSessionConn) SetReadDeadline(deadline time.Time) error {
+	c.readDeadline = deadline
+	return nil
+}
+
+func (c *rpcSessionConn) SetWriteDeadline(deadline time.Time) error {
+	c.writeDeadline = deadline
+	return nil
+}
+
+type testNetAddr string
+
+func (testNetAddr) Network() string  { return "hovel-session" }
+func (a testNetAddr) String() string { return string(a) }
+
+func testSquatterTLSBundle(
+	t *testing.T,
+	now time.Time,
+) (hovel.CredentialBundle, *x509.Certificate) {
+	t.Helper()
+	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Squatter mesh test root"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+	rootDER, err := x509.CreateCertificate(
+		rand.Reader,
+		rootTemplate,
+		rootTemplate,
+		&rootKey.PublicKey,
+		rootKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "squatter.mesh.test"},
+		DNSNames:     []string{"squatter.mesh.test"},
+		NotBefore:    now.Add(-time.Minute),
+		NotAfter:     now.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	leafDER, err := x509.CreateCertificate(
+		rand.Reader,
+		leafTemplate,
+		root,
+		&leafKey.PublicKey,
+		rootKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey, err := x509.MarshalPKCS8PrivateKey(leafKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificateDigest := sha256.Sum256(leafDER)
+	publicDigest := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+	return hovel.CredentialBundle{
+		SchemaVersion:           hovel.CredentialBundleSchemaV1,
+		ID:                      "squatter-mesh-bundle",
+		AssignmentID:            "squatter-mesh-assignment",
+		CertificateID:           "squatter-mesh-certificate",
+		CertificateGenerationID: "squatter-mesh-generation",
+		Generation:              1,
+		Purpose:                 hovel.CredentialPurposeTLSServer,
+		CompatibilityTargetID:   "portable-x509",
+		CompatibilityVersion:    "1",
+		KeyEstablishmentPolicy:  hovel.CredentialKeyEstablishmentClassicalCompatible,
+		TLSNamedGroups:          []string{"x25519", "secp256r1"},
+		Certificate: hovel.CredentialBundleBinary{
+			MediaType: hovel.CredentialBundleMediaCertificate,
+			Encoding:  hovel.CredentialBundleEncodingBase64DER,
+			Data:      leafDER,
+		},
+		PublicKey: hovel.CredentialBundleBinary{
+			MediaType: hovel.CredentialBundleMediaPublicKey,
+			Encoding:  hovel.CredentialBundleEncodingBase64DER,
+			Data:      leaf.RawSubjectPublicKeyInfo,
+		},
+		PrivateKey: &hovel.CredentialBundleBinary{
+			MediaType: hovel.CredentialBundleMediaPrivateKey,
+			Encoding:  hovel.CredentialBundleEncodingBase64DER,
+			Data:      privateKey,
+		},
+		TrustAnchors: []hovel.CredentialBundleCertificate{{
+			GenerationID: "squatter-mesh-root-generation",
+			CredentialBundleBinary: hovel.CredentialBundleBinary{
+				MediaType: hovel.CredentialBundleMediaCertificate,
+				Encoding:  hovel.CredentialBundleEncodingBase64DER,
+				Data:      rootDER,
+			},
+		}},
+		Fingerprints: hovel.CredentialBundleFingerprints{
+			CertificateSHA256: hex.EncodeToString(certificateDigest[:]),
+			PublicKeySHA256:   hex.EncodeToString(publicDigest[:]),
+		},
+		NotBefore: leaf.NotBefore,
+		NotAfter:  leaf.NotAfter,
+	}, root
 }
 
 type fakeSMBConnector struct {

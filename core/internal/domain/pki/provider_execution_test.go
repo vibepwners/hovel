@@ -448,7 +448,7 @@ func TestCredentialSelectionValidatesCanonicalFieldsAndRuntimeCapability(t *test
 			name: "unsupported runtime projection",
 			mutate: func(selection *CredentialSelection) {
 				selection.Material = CredentialMaterialSelection{
-					Projection: CredentialProjectionBundle,
+					Projection: CredentialProjectionChainDER,
 					Form:       CredentialMaterialPublic,
 				}
 			},

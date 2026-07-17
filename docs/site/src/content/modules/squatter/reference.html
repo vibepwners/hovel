@@ -13,11 +13,14 @@
           <tbody>
             <tr><td><code>modules/squatter/README.md</code></td><td>Short source-level overview.</td></tr>
             <tr><td><code>modules/squatter/provider/</code></td><td>Go payload-provider implementation and step dispatcher.</td></tr>
+            <tr><td><code>modules/squatter/provider/mesh.go</code></td><td>Multi-node destination topology, routed streams, runtime PKI delivery, and provider-terminated TLS.</td></tr>
             <tr><td><code>modules/squatter/windows/src/</code></td><td>Windows payload source, no-CRT runtime, modules, wire protocol, and logging.</td></tr>
             <tr><td><code>modules/squatter/client/cmd/squatterctl/</code></td><td>Operator-side client shell for direct Squatter sessions.</td></tr>
             <tr><td><code>modules/squatter/client/smbpipe/</code></td><td>SMB named-pipe connector and admin helper code.</td></tr>
             <tr><td><code>modules/squatter/client/wire/</code></td><td>Go framing implementation for the Squatter mux protocol.</td></tr>
             <tr><td><code>modules/squatter/tests/</code></td><td>Wine-backed C/C++ integration tests.</td></tr>
+            <tr><td><code>modules/docker/squatter-wine/</code></td><td>Non-root Docker Wine functional runner for concrete x86 and x64 payloads.</td></tr>
+            <tr><td><code>modules/squatter/tools/coverage_check.py</code></td><td>Aggregate LCOV coverage ratchet used by the module CI gate.</td></tr>
             <tr><td><code>modules/squatter/bazel/</code></td><td>MinGW toolchain and Windows transition helpers.</td></tr>
             <tr><td><code>modules/tools/package_examples.py</code></td><td>Release package manifest source for Squatter and example modules.</td></tr>
             <tr><td><code>docs/site/src/content/spec/squatter-payload-provider.html</code></td><td>Full architecture and provider contract chapter.</td></tr>

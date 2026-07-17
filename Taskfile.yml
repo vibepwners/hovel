@@ -195,6 +195,7 @@ tasks:
     cmds:
       - task core:fmt
       - task sdk:fmt
+      - task modules:fmt
 
   coverage:
     desc: Run core coverage ratchets.
@@ -213,6 +214,12 @@ tasks:
     dir: '{{.REPO_ROOT}}'
     cmds:
       - bazel {{.BAZEL_STARTUP_ARGS}} test {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+
+  bazel:coverage:
+    desc: Collect root integration Bazel coverage for non-core slices.
+    dir: '{{.REPO_ROOT}}'
+    cmds:
+      - bazel {{.BAZEL_STARTUP_ARGS}} coverage {{.BAZEL_ARGS}} {{.CLI_ARGS}}
 
   bazel:run:
     desc: Run root integration Bazel targets for non-core slices.
@@ -540,6 +547,37 @@ tasks:
         vars:
           CLI_ARGS: //:modules_build
 
+  modules:fmt:
+    desc: Format Squatter Go sources with the wired formatter.
+    cmds:
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=write --path ../modules/squatter
+
+  modules:fmt-check:
+    desc: Check Squatter Go source formatting with the wired formatter.
+    cmds:
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=check --path ../modules/squatter
+
+  modules:squatter:coverage:
+    desc: Enforce at least 90 percent aggregate line coverage across Squatter Go production code.
+    cmds:
+      - task: bazel:coverage
+        vars:
+          CLI_ARGS: >-
+            --combined_report=lcov
+            --instrumentation_filter=//modules/squatter/...,-//modules/squatter/windows/...,-//modules/squatter/tests/...
+            //modules/squatter/provider:provider_test
+            //modules/squatter/client/shell:shell_test
+            //modules/squatter/client/smbpipe:smbpipe_test
+            //modules/squatter/client/wire:wire_test
+            //modules/squatter/client/xfer:xfer_test
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/squatter/tools:coverage_check -- --lcov {{.REPO_ROOT}}/bazel-out/_coverage/_coverage_report.dat --minimum 90
+
   picblobs:setup:
     desc: No-op; Picblobs tools are Bazel-managed.
     cmds:
@@ -740,18 +778,40 @@ tasks:
         vars:
           CLI_ARGS: //:modules_test
 
-  modules:wine-test:
-    desc: Run Squatter Windows tests under Wine.
+  modules:wine-test-32:
+    desc: Run Squatter 32-bit Windows unit and integration tests under host Wine.
     cmds:
       - task: bazel:test
         vars:
-          CLI_ARGS: --platforms=//platforms:windows_x86 --extra_toolchains=@mingw_i686//:toolchain --run_under=wine //:modules_wine_test
+          CLI_ARGS: --platforms=//platforms:windows_x86 --extra_toolchains=@mingw_i686//:toolchain --run_under=//tools/wine:wine_run //:modules_wine_test
+
+  modules:wine-test-64:
+    desc: Run Squatter 64-bit Windows unit and integration tests under host Wine.
+    cmds:
+      - task: bazel:test
+        vars:
+          CLI_ARGS: --platforms=//platforms:windows_x64 --extra_toolchains=@mingw_x86_64//:toolchain --run_under=//tools/wine:wine_run //:modules_wine_test
+
+  modules:wine-test:
+    desc: Run Squatter Windows unit and integration tests under host Wine for both ABIs.
+    cmds:
+      - task: modules:wine-test-32
+      - task: modules:wine-test-64
+
+  modules:wine-docker-test:
+    desc: Run the real Squatter payload functional suite in Docker Wine for 32-bit and 64-bit builds.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: //modules/docker/squatter-wine:functional_test
 
   modules:ci:
     desc: Run the modules slice CI gate.
     cmds:
+      - task: modules:fmt-check
       - task: modules:build
       - task: modules:test
+      - task: modules:squatter:coverage
       - task: picblobs:ci
 
   docs:build:

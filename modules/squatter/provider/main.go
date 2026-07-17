@@ -146,9 +146,9 @@ func (Provider) Info() hovel.Info {
 		Name:        payloadName,
 		Version:     version,
 		Type:        hovel.TypePayloadProvider,
-		Summary:     "Build Squatter Windows payload artifacts.",
-		Description: "Core Hovel payload provider for Squatter.",
-		Tags:        []string{"payload_provider", "squatter", "windows", "lab", "dangerous"},
+		Summary:     "Build Squatter payloads and open destination-scoped Mesh streams.",
+		Description: "Core Hovel payload and Mesh provider for Squatter, including PKI-backed TLS streams.",
+		Tags:        []string{"payload_provider", "mesh", "tls", "squatter", "windows", "lab", "dangerous"},
 	}
 }
 

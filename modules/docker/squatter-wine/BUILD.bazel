@@ -1,3 +1,5 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
@@ -5,3 +7,23 @@ exports_files([
     "entrypoint.sh",
     "run.sh",
 ])
+
+py_binary(
+    name = "functional_test",
+    testonly = True,
+    srcs = ["functional_test.py"],
+    args = [
+        "--dockerfile=$(rootpath :Dockerfile)",
+        "--entrypoint=$(rootpath :entrypoint.sh)",
+        "--functest=$(rootpath //modules/squatter/client/functest:functest_test)",
+        "--payload32=$(rootpath //modules/squatter/windows:squatter_x86_exe)",
+        "--payload64=$(rootpath //modules/squatter/windows:squatter_x64_exe)",
+    ],
+    data = [
+        ":Dockerfile",
+        ":entrypoint.sh",
+        "//modules/squatter/client/functest:functest_test",
+        "//modules/squatter/windows:squatter_x64_exe",
+        "//modules/squatter/windows:squatter_x86_exe",
+    ],
+)

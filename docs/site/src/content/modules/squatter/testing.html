@@ -5,7 +5,8 @@
           The standard module gate runs host-side Go tests, provider contract
           tests, package/install checks, PE inspection, and source-contract
           tests. Wine-backed runtime tests are separated because they need a
-          Windows execution environment.
+          Windows execution environment. The module CI gate also enforces one
+          aggregate line-coverage result across Squatter's production Go code.
         </p>
 
         <h2>Primary Checks</h2>
@@ -13,20 +14,54 @@
 task bazel:test -- //:modules_test</code></pre>
         <p>
           This gate covers the provider, shell, SMB pipe client, wire framing,
-          Squatter package checks, workspace module-install checks, PE
+          transfer client, Squatter package checks, workspace module-install checks, PE
           inspection, and source layout contracts.
+        </p>
+
+        <h2>Go Coverage Ratchet</h2>
+<pre data-lang="shell"><code>task modules:squatter:coverage</code></pre>
+        <p>
+          This task collects one LCOV report from the provider, shell, SMB pipe,
+          wire, and file-transfer suites, then fails below 90% aggregate line
+          coverage. The current result is 90.61% (5,325 of 5,877 instrumented
+          lines). Windows payload and functional-harness sources are not hidden
+          inside that Go percentage; their behavior is proven at the Wine
+          boundary below.
         </p>
 
         <h2>Wine Runtime Checks</h2>
 <pre data-lang="shell"><code>task modules:wine-test
-task bazel:test -- --platforms=//platforms:windows_x86 --extra_toolchains=@mingw_i686//:toolchain --run_under=wine //:modules_wine_test</code></pre>
+task modules:wine-test-32
+task modules:wine-test-64</code></pre>
         <p>
           The Wine suite runs C/C++ integration checks for command execution,
           echo, file transfer, frames, framing, nanopb round trips, and the
-          GoogleTest smoke path. The manual functional test launches the real
-          payload under Wine and drives it through the Go client protocol.
+          GoogleTest smoke path for both 32-bit and 64-bit builds.
         </p>
-<pre data-lang="shell"><code>task bazel:test -- //:modules_functest</code></pre>
+
+        <h2>Docker Wine Functional Boundary</h2>
+<pre data-lang="shell"><code>task modules:wine-docker-test</code></pre>
+        <p>
+          The Docker check receives the concrete x86 and x64 PE artifacts from
+          Bazel, creates isolated <code>WINEARCH=win32</code> and
+          <code>WINEARCH=win64</code> prefixes as a non-root user, and runs the
+          real Go black-box functional harness against each payload. The suite
+          validates startup, frame transport, echo, commands, typed status,
+          process execution, and file transfer rather than merely inspecting
+          the PE headers.
+        </p>
+
+        <h2>Mesh and PKI Integration</h2>
+        <p>
+          Provider tests start two independent TCP-bind endpoints, survey them
+          into stable Mesh nodes, select one through its root-to-node route, and
+          exchange a real Squatter wire frame. A separate end-to-end case loads
+          a strict runtime PKI bundle, verifies a TLS 1.3 server certificate,
+          and carries a Squatter frame through the encrypted Hovel session to
+          the routed endpoint. Negative cases cover conflicting routes,
+          mismatched credential envelopes, corrupt, expired, and oversized
+          bundles, and TLS streams opened without credentials.
+        </p>
 
         <h2>Static and Shape Checks</h2>
         <p>

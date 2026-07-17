@@ -97,12 +97,15 @@ test_suite(
         "//modules/squatter/client/shell:shell_test",
         "//modules/squatter/client/smbpipe:smbpipe_test",
         "//modules/squatter/client/wire:wire_test",
+        "//modules/squatter/client/xfer:xfer_test",
         "//modules/squatter/provider:provider_test",
+        "//modules/squatter/tools:coverage_check_test",
         "//modules/squatter/windows:source_contract_test",
         "//modules/squatter/windows:squatter_x86_exe_pe_test",
         "//modules/tools:check_in_repo_modules_test",
         "//modules/tools:package_examples_test",
         "//modules/tools:workspace_module_install_test",
+        "//tools/wine:wine_run_test",
     ],
 )
 

@@ -10,7 +10,9 @@ RUN dpkg --add-architecture i386 \
     && wget -qNP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources \
     && apt-get update \
     && apt-get install -y --install-recommends winehq-stable \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 --shell /bin/bash wine \
+    && install -d -o wine -g wine -m 0755 /wine /work
 
 COPY entrypoint.sh /usr/local/bin/squatter-wine-entrypoint
 
@@ -23,5 +25,7 @@ ENV WINEDEBUG=-all \
 
 WORKDIR /work
 EXPOSE 9100
+
+USER wine
 
 ENTRYPOINT ["/usr/local/bin/squatter-wine-entrypoint"]

@@ -16,6 +16,8 @@ const (
 	CredentialProviderExecutionSchemaV1 = "hovel.pki.provider-execution/v1"
 	// CredentialEncodingRaw identifies bytes stored without another encoding layer.
 	CredentialEncodingRaw = "raw"
+	// CredentialEncodingJSON identifies a serialized JSON credential projection.
+	CredentialEncodingJSON = "json"
 )
 
 const (

@@ -157,11 +157,11 @@ func validateInstallOptions(opts InstallOptions) error {
 }
 
 func dialInstall(ctx context.Context, opts Options) (*pipeConn, error) {
-	conn, err := dialSessionMode(ctx, opts, authExtended)
+	conn, err := openSMBSession(ctx, opts, authExtended)
 	if isStatus(err, statusLogonFailure) {
-		conn, err = dialSessionMode(ctx, opts, authNTLMv1)
+		conn, err = openSMBSession(ctx, opts, authNTLMv1)
 		if isStatus(err, statusLogonFailure) {
-			return dialSessionMode(ctx, opts, authNTLMv2)
+			return openSMBSession(ctx, opts, authNTLMv2)
 		}
 	}
 	return conn, err

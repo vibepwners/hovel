@@ -164,7 +164,7 @@ func dial(ctx context.Context, opts Options) (io.ReadWriteCloser, error) {
 }
 
 func dialMode(ctx context.Context, opts Options, auth authMode) (io.ReadWriteCloser, error) {
-	c, err := dialSessionMode(ctx, opts, auth)
+	c, err := openSMBSession(ctx, opts, auth)
 	if err != nil {
 		return nil, err
 	}
@@ -178,6 +178,8 @@ func dialMode(ctx context.Context, opts Options, auth authMode) (io.ReadWriteClo
 	}
 	return c, nil
 }
+
+var openSMBSession = dialSessionMode
 
 func dialSessionMode(ctx context.Context, opts Options, auth authMode) (*pipeConn, error) {
 	dialer := net.Dialer{Timeout: opts.Timeout}
@@ -237,6 +239,8 @@ type pipeConn struct {
 	sendMu   sync.Mutex
 	writeBuf []byte
 	readBuf  []byte
+
+	exchangeHook func([]byte, time.Duration) (*smbResponse, error)
 }
 
 type exchangeResult struct {
@@ -887,6 +891,9 @@ func (c *pipeConn) exchange(req []byte) (*smbResponse, error) {
 }
 
 func (c *pipeConn) exchangeWithTimeout(req []byte, timeout time.Duration) (*smbResponse, error) {
+	if c.exchangeHook != nil {
+		return c.exchangeHook(req, timeout)
+	}
 	mid, err := requestMID(req)
 	if err != nil {
 		return nil, err

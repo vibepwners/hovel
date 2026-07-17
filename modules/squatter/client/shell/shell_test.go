@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vibepwners/hovel/payloads/squatter/client/wire"
 	prompt "github.com/c-bata/go-prompt"
+	"github.com/vibepwners/hovel/payloads/squatter/client/wire"
 )
 
 func TestClientRunDrivesEchoOverWire(t *testing.T) {
