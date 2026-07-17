@@ -1,0 +1,21 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "coverage_check",
+    srcs = ["coverage_check.py"],
+    python_version = "PY3",
+)
+
+py_test(
+    name = "coverage_check_test",
+    size = "small",
+    srcs = [
+        "coverage_check.py",
+        "coverage_check_test.py",
+    ],
+    imports = ["."],
+    main = "coverage_check_test.py",
+    python_version = "PY3",
+)

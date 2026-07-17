@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -58,16 +60,18 @@ class SourceContractTest(unittest.TestCase):
 
     def test_mux_and_modules_are_wired(self):
         text = (source_root() / "squatter.c").read_text()
-        for module in ["cmd", "echo", "getfile", "putfile"]:
-            with self.subTest(module=module):
-                self.assertIn(f'"{module}"', text)
+        registered = sorted(
+            re.findall(r'\{"([a-z][a-z0-9._]+)",\s*sq_[a-z0-9_]+_module_main\}', text)
+        )
+        declared = json.loads(Path(sys.argv[2]).read_text())
+        self.assertEqual(registered, sorted(declared))
         self.assertIn("sq_channel_from_socket", text)
         self.assertIn("sq_session_create", text)
 
 
 def source_root():
-    if len(sys.argv) != 2:
-        raise AssertionError("expected squatter.c argument")
+    if len(sys.argv) != 3:
+        raise AssertionError("expected squatter.c and module surface arguments")
     return Path(sys.argv[1]).parent
 
 

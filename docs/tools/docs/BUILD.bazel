@@ -110,6 +110,17 @@ py_binary(
 )
 
 py_test(
+    name = "materialize_site_test",
+    srcs = [
+        "materialize_site.py",
+        "materialize_site_test.py",
+    ],
+    imports = ["."],
+    main = "materialize_site_test.py",
+    python_version = "PY3",
+)
+
+py_test(
     name = "pages_workflow_test",
     srcs = ["pages_workflow_test.py"],
     args = [

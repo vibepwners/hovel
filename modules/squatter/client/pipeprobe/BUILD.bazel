@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_binary")
+load("//modules/squatter/bazel:transitions.bzl", "windows_multiplatform")
+
+go_binary(
+    name = "pipeprobe",
+    srcs = ["main_windows.go"],
+    pure = "on",
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//visibility:public"],
+    deps = ["//modules/squatter/client/wire"],
+)
+
+windows_multiplatform(
+    name = "pipeprobe_all",
+    binary = ":pipeprobe",
+    visibility = ["//visibility:public"],
+)

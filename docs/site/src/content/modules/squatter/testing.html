@@ -45,22 +45,40 @@ task modules:wine-test-64</code></pre>
           The Docker check receives the concrete x86 and x64 PE artifacts from
           Bazel, creates isolated <code>WINEARCH=win32</code> and
           <code>WINEARCH=win64</code> prefixes as a non-root user, and runs the
-          real Go black-box functional harness against each payload. The suite
-          validates startup, frame transport, echo, commands, typed status,
-          process execution, and file transfer rather than merely inspecting
-          the PE headers.
+          real Go black-box functional harness against each payload. Its
+          enforced matrix covers all 17 runtime modules on both ABIs (34 of 34
+          module/ABI cells), configured TCP bind, reverse TCP, and SMB named
+          pipe transports on both ABIs (6 of 6 transport/ABI cells), and the
+          console-fallback and real Service Control Manager lifecycles on both
+          ABIs (4 of 4 service/ABI cells). Tests
+          validate structured results and stream close/error lifecycles through
+          the Squatter wire protocol rather than merely inspecting PE headers.
         </p>
 
         <h2>Mesh and PKI Integration</h2>
         <p>
-          Provider tests start two independent TCP-bind endpoints, survey them
-          into stable Mesh nodes, select one through its root-to-node route, and
-          exchange a real Squatter wire frame. A separate end-to-end case loads
-          a strict runtime PKI bundle, verifies a TLS 1.3 server certificate,
-          and carries a Squatter frame through the encrypted Hovel session to
-          the routed endpoint. Negative cases cover conflicting routes,
-          mismatched credential envelopes, corrupt, expired, and oversized
-          bundles, and TLS streams opened without credentials.
+          The Docker boundary also starts each real Wine PE, surveys it through
+          the provider into a stable Mesh node and route, opens a
+          <code>squatter+tls</code> stream, verifies the provider certificate,
+          negotiates TLS 1.3, and carries Squatter OPEN, DATA, and CLOSE frames
+          to the routed payload. This passes on both ABIs (2 of 2 Mesh/TLS cells).
+          Additional provider tests cover multiple independent endpoints,
+          conflicting routes, mismatched credential envelopes, corrupt,
+          expired, and oversized bundles, and TLS streams opened without
+          credentials.
+        </p>
+
+        <h2>Evidence Report</h2>
+        <p>
+          <code>task test:report</code> refreshes line coverage, the full Docker
+          Wine matrix, and the browsable test evidence consumed by the docs
+          site. The report's Coverage tab shows each ratchet and E2E matrix
+          count. Its Jobs tab opens the Squatter Wine E2E job by default and
+          presents a human-oriented coverage matrix, per-ABI feature
+          checklists, and timed test-case tables. Complete Docker, Wine, and Go
+          output remains available in labeled, collapsible raw transcript
+          appendices and through the complete-log link. The Suites tab presents
+          repository rollups separately.
         </p>
 
         <h2>Static and Shape Checks</h2>

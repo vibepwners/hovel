@@ -93,6 +93,7 @@ filegroup(
 test_suite(
     name = "modules_test",
     tests = [
+        "//modules/docker/squatter-wine:functional_test_test",
         "//modules/picblobs/provider:provider_test",
         "//modules/squatter/client/shell:shell_test",
         "//modules/squatter/client/smbpipe:smbpipe_test",
@@ -169,9 +170,11 @@ test_suite(
         "//docs/demo:standard_verification_test",
         "//docs/site:daemon_rpc_openapi_test",
         "//docs/site:provider_docs_parity_test",
+        "//docs/site:report_ui_test",
         "//docs/site:site_smoke_test",
         "//docs/tools/demo:materialize_demo_outputs_test",
         "//docs/tools/demo/mcpagent:mcpagent_test",
+        "//docs/tools/docs:materialize_site_test",
         "//docs/tools/docs:pages_workflow_test",
         "//tools/testreport:testreport_test",
     ],

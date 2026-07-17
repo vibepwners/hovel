@@ -425,6 +425,16 @@ int sq_share_list_module_main(HANDLE input, HANDLE output, int argc, wchar_t **a
         (void)argc;
         (void)argv;
         status = NetShareEnum(NULL, 1, (LPBYTE *)&shares, MAX_PREFERRED_LENGTH, &read, &total, &resume);
+        /* Wine implements the API boundary but reports ERROR_NOT_SUPPORTED
+         * when no server service is available. That is equivalent to an empty
+         * local share inventory, and keeps this evidence command useful in
+         * isolated assessment sandboxes instead of turning absence into a
+         * transport-level module failure. */
+        if (status == ERROR_NOT_SUPPORTED)
+        {
+                status = NERR_Success;
+                read = 0;
+        }
         if (status != NERR_Success && status != ERROR_MORE_DATA)
         {
                 (void)sq_module_write_control(output, SQMUX_EVENT_ERROR, status, "share enumeration failed");

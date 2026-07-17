@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -293,6 +294,205 @@ func TestProviderMeshTLSStreamCarriesSquatterFrames(t *testing.T) {
 	}
 	if err := <-rawResult; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestProviderMeshTLSStreamCarriesRealWinePayload(t *testing.T) {
+	if os.Getenv("HOVEL_SQUATTER_REAL_E2E") == "" {
+		t.Skip("real Wine payload E2E is run by task modules:wine-docker-test")
+	}
+	port := startRealWineSquatter(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	bundle, root := testSquatterTLSBundle(t, now)
+	encodedBundle, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(encodedBundle)
+	value, err := hovel.NewCredentialMaterialBytes(encodedBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	material, err := hovel.NewResolvedCredentialMaterial(
+		hovel.CredentialProjectionBundle,
+		hovel.CredentialMaterialPrivateBytes,
+		hovel.CredentialEncodingJSON,
+		hex.EncodeToString(digest[:]),
+		value,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := newProvider()
+	request := hovel.CredentialRuntimeRequest{
+		SchemaVersion: hovel.CredentialProviderExecutionSchemaV1,
+		Provider: hovel.CredentialProviderTarget{
+			ModuleID:         payloadName + "@" + version,
+			ProviderID:       payloadName,
+			ProviderVersion:  version,
+			DescriptorSHA256: strings.Repeat("0", sha256.Size*2),
+		},
+		RequestID:    "squatter-real-wine-tls-runtime",
+		AssignmentID: bundle.AssignmentID,
+		SlotName:     meshTLSCredentialSlot,
+		Credential: hovel.ResolvedCredentialMetadata{
+			BundleVersion:         hovel.CredentialBundleSchemaV1,
+			Purpose:               hovel.CredentialPurposeTLSServer,
+			ConsumerType:          hovel.CredentialConsumerMeshProvider,
+			ProfileID:             "tls-server",
+			CompatibilityTargetID: "portable-x509",
+		},
+		Material: material,
+		Scope: hovel.CredentialOperationScope{
+			OperationID: "real-wine-mesh-stream",
+			Target:      "127.0.0.1",
+		},
+	}
+	if _, err := provider.LoadRuntimeCredential(request); err != nil {
+		t.Fatal(err)
+	}
+	survey, err := provider.RunMeshTask(nil, hovel.MeshTaskRequest{
+		TaskID:          "real-wine-survey",
+		Kind:            hovel.MeshTaskSurvey,
+		NodeID:          meshRootNodeID,
+		DestinationHost: "127.0.0.1",
+		DestinationPort: port,
+		Config:          map[string]any{"session.connect_ms": 3000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if survey.Status != hovel.MeshTaskStatusSucceeded || survey.Route == nil {
+		t.Fatalf("real payload survey = %#v", survey)
+	}
+	topology, err := provider.MeshTopology(hovel.MeshTopologyRequest{IncludeRoutes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topology.Nodes) != 2 || len(topology.Links) != 1 || len(topology.Routes) != 1 {
+		t.Fatalf("real payload topology = %#v", topology)
+	}
+
+	rpc := hoveltest.NewRPCConn(t, provider)
+	defer rpc.Close()
+	var session hovel.SessionRef
+	rpc.Call("mesh.open_stream", hovel.MeshStreamRequest{
+		RunID:    "real-wine-mesh-run",
+		NodeID:   survey.NodeID,
+		Route:    survey.Route,
+		Protocol: meshProtocolTLS,
+		Config:   map[string]any{"session.connect_ms": 3000},
+	}, &session)
+	bridge := &rpcSessionConn{t: t, rpc: rpc, sessionID: session.ID}
+	defer bridge.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	secure := tls.Client(bridge, &tls.Config{
+		RootCAs:    roots,
+		ServerName: "squatter.mesh.test",
+		MinVersion: tls.VersionTLS13,
+	})
+	if err := secure.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := secure.HandshakeContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := wire.WriteFrame(secure, wire.KindOpen, 91, wire.EncodeOpen("echo", []string{"mesh-tls-wine"})); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(secure)
+	if payload := readRealWineMeshData(t, reader, 91); string(payload) != "argc=2 echo mesh-tls-wine" {
+		t.Fatalf("real payload TLS argv = %q", payload)
+	}
+	if err := wire.WriteFrame(secure, wire.KindData, 91, []byte("mesh-tls-real-payload-ok")); err != nil {
+		t.Fatal(err)
+	}
+	if payload := readRealWineMeshData(t, reader, 91); string(payload) != "mesh-tls-real-payload-ok" {
+		t.Fatalf("real payload TLS echo = %q", payload)
+	}
+	if err := wire.WriteFrame(secure, wire.KindData, 91, []byte("END")); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		kind, streamID, _, err := wire.ReadFrame(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind == wire.KindClose && streamID == 91 {
+			break
+		}
+	}
+	t.Log("E2E mesh=provider topology=real-wine-payload tls=1.3 frames=Squatter echo passed")
+}
+
+func startRealWineSquatter(t *testing.T) int {
+	t.Helper()
+	exe := os.Getenv("HOVEL_SQUATTER_EXE")
+	wine := os.Getenv("HOVEL_SQUATTER_WINE")
+	if exe == "" || wine == "" {
+		t.Fatal("HOVEL_SQUATTER_EXE and HOVEL_SQUATTER_WINE are required")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(wine, exe, strconv.Itoa(port))
+	runtimeDir := t.TempDir()
+	if err := os.Chmod(runtimeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command.Env = append(os.Environ(),
+		"XDG_RUNTIME_DIR="+runtimeDir,
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+		"WINEDEBUG=-all",
+	)
+	command.Stdout = os.Stderr
+	command.Stderr = os.Stderr
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if command.Process != nil {
+			_ = command.Process.Kill()
+			_, _ = command.Process.Wait()
+		}
+	})
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 250*time.Millisecond)
+		if err == nil {
+			_ = connection.Close()
+			return port
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("real Wine payload did not listen on port %d", port)
+	return 0
+}
+
+func readRealWineMeshData(t *testing.T, reader *bufio.Reader, streamID uint64) []byte {
+	t.Helper()
+	for {
+		kind, gotStreamID, payload, err := wire.ReadFrame(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotStreamID != streamID {
+			t.Fatalf("real Wine mesh stream id = %d, want %d", gotStreamID, streamID)
+		}
+		if kind == wire.KindControl {
+			continue
+		}
+		if kind != wire.KindData {
+			t.Fatalf("real Wine mesh frame kind = %d, want DATA", kind)
+		}
+		return payload
 	}
 }
 
