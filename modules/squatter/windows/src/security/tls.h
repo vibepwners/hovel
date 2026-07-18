@@ -20,8 +20,10 @@ extern "C"
         BOOL sq_tls_runtime_enabled(void);
         int sq_tls_runtime_error(void);
 
-        /* Perform a blocking TLS 1.3 server handshake over an owned socket. */
-        sq_tls_session *sq_tls_session_accept(SOCKET socket);
+        /* Create a TLS session over an owned socket. The blocking handshake is
+         * deferred until the session worker performs its first I/O, so the TCP
+         * listener remains available to accept other clients. */
+        sq_tls_session *sq_tls_session_create(SOCKET socket);
         int sq_tls_session_read_some(sq_tls_session *session, BYTE *buffer, UINT32 capacity);
         BOOL sq_tls_session_write_all(sq_tls_session *session, const BYTE *buffer, UINT32 length);
         void sq_tls_session_close(sq_tls_session *session);

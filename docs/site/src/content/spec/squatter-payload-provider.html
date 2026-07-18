@@ -290,7 +290,12 @@ squatter.agent.max_chunk_size = 65536
           provider rejects unknown fields and verifies certificate/key consistency,
           ordered chain termination, EKU, validity, freshness, bundled CRLs, and exact
           named-group policy before writing a versioned <code>SQPKI001</code> manifest
-          into a configured TCP-bind PE. SHA-256 bindings cover both the canonical
+          into a configured TCP-bind PE.
+          The current payload requires the complete ordered portable classical set:
+          <code>x25519</code>, <code>secp256r1</code>, <code>secp384r1</code>, and
+          <code>secp521r1</code>. Subsets, reordered preferences, and other policies are
+          rejected rather than silently diverging from the compiled wolfSSL profile.
+          SHA-256 bindings cover both the canonical
           bundle and the complete runtime manifest. Callback and named-pipe artifacts
           are rejected by this stamp slot until their TLS roles have an end-to-end
           implementation.
@@ -312,7 +317,9 @@ squatter.agent.max_chunk_size = 65536
           digests before initializing statically linked wolfSSL. An unstamped payload
           retains plaintext TCP behavior, while a present but malformed or modified
           stamp fails startup closed and never falls back to plaintext. Named pipes
-          remain protected at their existing SMB transport boundary.
+          remain protected at their existing SMB transport boundary. TCP accepts create
+          a session immediately, while its TLS handshake runs on the session reader
+          thread with bounded socket I/O, so a silent peer cannot monopolize the listener.
         </p>
         <p>
           The pinned wolfSSL 5.9.2 profile uses the Windows NT 4.0 API surface and does

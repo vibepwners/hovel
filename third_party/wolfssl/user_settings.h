@@ -67,8 +67,11 @@ struct tm *gmtime_r(const time_t *timer, struct tm *result);
  * pulling a CRT formatter into the payload. */
 #define XSNPRINTF(...) (-1)
 
-/* Keep only the curve used by Hovel's portable TLS server profile. */
+/* Match Hovel's ordered portable-x509 classical named-group policy. */
 #define ECC_USER_CURVES
+#define HAVE_CURVE25519
 #define HAVE_ECC256
+#define HAVE_ECC384
+#define HAVE_ECC521
 
 #endif /* HOVEL_SQUATTER_WOLFSSL_USER_SETTINGS_H */

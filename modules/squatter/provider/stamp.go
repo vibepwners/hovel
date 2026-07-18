@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -109,6 +110,9 @@ func (Provider) StampCredential(
 			"squatter: stamped TLS bundle metadata does not match its plan",
 		)
 	}
+	if err := validatePayloadTLSNamedGroups(bundle); err != nil {
+		return hovel.CredentialStampExecutionResult{}, err
+	}
 	if _, err := bundle.TLSServerConfigAt(time.Now().UTC()); err != nil {
 		return hovel.CredentialStampExecutionResult{}, fmt.Errorf(
 			"squatter: configure stamped TLS credential: %w",
@@ -179,6 +183,18 @@ func (Provider) StampCredential(
 		BytesWritten:     hovel.CredentialCanonicalUint64(strconv.FormatUint(req.Request.EncodedBytes, 10)),
 		MaterialDigests:  append([]hovel.CredentialStampedMaterialDigest(nil), req.ExpectedDigests...),
 	}, nil
+}
+
+func validatePayloadTLSNamedGroups(bundle hovel.CredentialBundle) error {
+	expected := []string{"x25519", "secp256r1", "secp384r1", "secp521r1"}
+	if bundle.KeyEstablishmentPolicy != hovel.CredentialKeyEstablishmentClassicalCompatible ||
+		!slices.Equal(bundle.TLSNamedGroups, expected) {
+		return fmt.Errorf(
+			"squatter: payload TLS stamp requires named groups %q in preference order",
+			expected,
+		)
+	}
+	return nil
 }
 
 func encodePayloadPKIManifest(material []byte, bundle hovel.CredentialBundle) ([]byte, error) {

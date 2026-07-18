@@ -36,7 +36,7 @@ sq_channel *sq_channel_from_socket(SOCKET s)
                 ch->sock = s;
                 if (sq_tls_runtime_enabled())
                 {
-                        ch->tls = sq_tls_session_accept(s);
+                        ch->tls = sq_tls_session_create(s);
                         if (ch->tls == NULL)
                         {
                                 (void)HeapFree(GetProcessHeap(), 0, ch);

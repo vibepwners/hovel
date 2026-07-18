@@ -225,6 +225,15 @@ func TestProviderMeshTLSStreamCarriesRealWinePayload(t *testing.T) {
 	clear(source)
 	defer clear(stamped)
 	startRealWineSquatter(t, stamped, port)
+	silentClient, err := net.DialTimeout(
+		"tcp",
+		net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
+		time.Second,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer silentClient.Close()
 
 	survey, err := provider.RunMeshTask(nil, hovel.MeshTaskRequest{
 		TaskID:          "real-wine-survey",
@@ -268,10 +277,11 @@ func TestProviderMeshTLSStreamCarriesRealWinePayload(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
 	secure := tls.Client(bridge, &tls.Config{
-		RootCAs:    roots,
-		ServerName: "squatter.mesh.test",
-		MinVersion: tls.VersionTLS13,
-		MaxVersion: tls.VersionTLS13,
+		RootCAs:          roots,
+		ServerName:       "squatter.mesh.test",
+		MinVersion:       tls.VersionTLS13,
+		MaxVersion:       tls.VersionTLS13,
+		CurvePreferences: []tls.CurveID{tls.X25519},
 	})
 	if err := secure.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		t.Fatal(err)
@@ -2196,7 +2206,7 @@ func testSquatterTLSBundle(
 		CompatibilityTargetID:   "portable-x509",
 		CompatibilityVersion:    "1",
 		KeyEstablishmentPolicy:  hovel.CredentialKeyEstablishmentClassicalCompatible,
-		TLSNamedGroups:          []string{"x25519", "secp256r1"},
+		TLSNamedGroups:          []string{"x25519", "secp256r1", "secp384r1", "secp521r1"},
 		Certificate: hovel.CredentialBundleBinary{
 			MediaType: hovel.CredentialBundleMediaCertificate,
 			Encoding:  hovel.CredentialBundleEncodingBase64DER,

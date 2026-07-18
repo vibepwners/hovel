@@ -25,7 +25,9 @@ advertises one `payload-tls-server` stamp slot, validates a complete
 `hovel.pki.bundle/v1`, and writes a versioned, integrity-bound certificate,
 PKCS#8 private key, chain, trust, and revocation manifest into the generated
 PE. The Windows payload loads that material directly into statically linked
-wolfSSL and terminates TLS 1.3 itself. Mesh only routes the encrypted bytes.
+wolfSSL and terminates TLS 1.3 itself. The stamp requires the complete ordered
+portable classical named-group policy (X25519, P-256, P-384, and P-521), and
+the payload configures that same group set. Mesh only routes the encrypted bytes.
 The stamp operation rejects callback and named-pipe artifacts; the validated
 TLS server role currently belongs to configured TCP-bind payloads.
 
@@ -41,8 +43,9 @@ The integration contract is exercised through Task:
   route, and carry a real Squatter frame through it. The Docker TLS variant
   generates and configures the PE, stamps its PKI bundle, launches it under
   Wine, completes a verified TLS 1.3 handshake with payload wolfSSL, carries
-  OPEN/DATA/CLOSE frames, and proves mutations to both the manifest and stamped
-  state header fail closed on startup.
+  OPEN/DATA/CLOSE frames, proves a silent TCP client cannot block a later TLS
+  session, and proves mutations to both the manifest and stamped state header
+  fail closed on startup.
 
 The payload pins wolfSSL 5.9.2 and builds a deliberately small, no-CRT TLS 1.3
 profile. The wolfSSL portion is compiled against the Windows NT 4.0 API surface

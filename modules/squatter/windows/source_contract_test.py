@@ -75,7 +75,11 @@ class SourceContractTest(unittest.TestCase):
         self.assertIn("wolfSSL_CTX_use_PrivateKey_buffer", tls)
         self.assertIn("validate_stamp_digests", tls)
         self.assertIn("validate_manifest_layout", tls)
-        self.assertIn("sq_tls_session_accept", channel)
+        self.assertIn("sq_tls_session_create", channel)
+        self.assertIn("SO_RCVTIMEO", tls)
+        self.assertIn("SQ_TLS_HANDSHAKE_TIMEOUT_MS", tls)
+        self.assertIn("WOLFSSL_ECC_X25519", tls)
+        self.assertIn("WOLFSSL_ECC_SECP521R1", tls)
         self.assertIn("stamped wolfSSL configuration failed validation", entry)
 
         combined = "\n".join(path.read_text().lower() for path in root.rglob("*.[ch]"))

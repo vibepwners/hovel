@@ -149,6 +149,14 @@ func TestProviderRejectsInvalidPayloadTLSStampContracts(t *testing.T) {
 	if _, err := newProvider().StampCredential(request); err == nil || !strings.Contains(err.Error(), "configure stamped TLS credential") {
 		t.Fatalf("expired PKI bundle error = %v", err)
 	}
+
+	unsupportedGroups := bundle
+	unsupportedGroups.TLSNamedGroups = []string{"x25519"}
+	request, encoded = newSquatterPayloadTLSStampRequest(t, body, unsupportedGroups)
+	defer clear(encoded)
+	if _, err := newProvider().StampCredential(request); err == nil || !strings.Contains(err.Error(), "requires named groups") {
+		t.Fatalf("unsupported payload TLS named groups error = %v", err)
+	}
 }
 
 func TestPayloadPKIManifestRejectsInvalidLayouts(t *testing.T) {

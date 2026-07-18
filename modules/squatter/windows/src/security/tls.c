@@ -20,13 +20,16 @@ enum
         SQ_TLS_ERROR_CONTEXT = 4,
         SQ_TLS_ERROR_CERTIFICATE = 5,
         SQ_TLS_ERROR_PRIVATE_KEY = 6,
-        SQ_TLS_ERROR_HANDSHAKE = 7
+        SQ_TLS_ERROR_HANDSHAKE = 7,
+        SQ_TLS_ERROR_NAMED_GROUP = 8,
+        SQ_TLS_HANDSHAKE_TIMEOUT_MS = 10000
 };
 
 struct sq_tls_session
 {
         WOLFSSL *ssl;
         SOCKET socket;
+        BOOL handshake_complete;
 };
 
 static WOLFSSL_CTX *g_tls_context;
@@ -289,6 +292,24 @@ static int socket_send(WOLFSSL *ssl, char *buffer, int size, void *context)
         return WOLFSSL_CBIO_ERR_GENERAL;
 }
 
+static BOOL configure_named_groups(WOLFSSL_CTX *context)
+{
+        return wolfSSL_CTX_UseSupportedCurve(context, WOLFSSL_ECC_X25519) == WOLFSSL_SUCCESS &&
+               wolfSSL_CTX_UseSupportedCurve(context, WOLFSSL_ECC_SECP256R1) == WOLFSSL_SUCCESS &&
+               wolfSSL_CTX_UseSupportedCurve(context, WOLFSSL_ECC_SECP384R1) == WOLFSSL_SUCCESS &&
+               wolfSSL_CTX_UseSupportedCurve(context, WOLFSSL_ECC_SECP521R1) == WOLFSSL_SUCCESS;
+}
+
+static BOOL set_socket_timeouts(SOCKET socket, DWORD milliseconds)
+{
+        int receive_result = setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&milliseconds,
+                                        (int)sizeof milliseconds);
+        int send_result = setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char *)&milliseconds,
+                                     (int)sizeof milliseconds);
+
+        return receive_result == 0 && send_result == 0;
+}
+
 BOOL sq_tls_runtime_init(const sq_hovel_pki_config *config)
 {
         WOLFSSL_METHOD *method = NULL;
@@ -325,6 +346,11 @@ BOOL sq_tls_runtime_init(const sq_hovel_pki_config *config)
                 g_tls_error = SQ_TLS_ERROR_CONTEXT;
                 (void)wolfSSL_Cleanup();
                 return FALSE;
+        }
+        if (!configure_named_groups(g_tls_context))
+        {
+                g_tls_error = SQ_TLS_ERROR_NAMED_GROUP;
+                goto fail;
         }
 
         wolfSSL_CTX_SetIORecv(g_tls_context, socket_receive);
@@ -379,11 +405,9 @@ BOOL sq_tls_runtime_enabled(void) { return g_tls_enabled; }
 
 int sq_tls_runtime_error(void) { return g_tls_error; }
 
-sq_tls_session *sq_tls_session_accept(SOCKET socket)
+sq_tls_session *sq_tls_session_create(SOCKET socket)
 {
         sq_tls_session *session = NULL;
-        int result = 0;
-        int error = 0;
 
         if (!g_tls_enabled || g_tls_context == NULL || socket == INVALID_SOCKET)
         {
@@ -403,12 +427,33 @@ sq_tls_session *sq_tls_session_accept(SOCKET socket)
         }
         wolfSSL_SetIOReadCtx(session->ssl, &session->socket);
         wolfSSL_SetIOWriteCtx(session->ssl, &session->socket);
+        return session;
+}
+
+static BOOL ensure_handshake(sq_tls_session *session)
+{
+        DWORD no_timeout = 0u;
+        int result = 0;
+        int error = 0;
+        BOOL success = FALSE;
+
+        if (session->handshake_complete)
+        {
+                return TRUE;
+        }
+        if (!set_socket_timeouts(session->socket, SQ_TLS_HANDSHAKE_TIMEOUT_MS))
+        {
+                g_tls_error = SQ_TLS_ERROR_HANDSHAKE;
+                (void)set_socket_timeouts(session->socket, no_timeout);
+                return FALSE;
+        }
         for (;;)
         {
                 result = wolfSSL_accept(session->ssl);
                 if (result == WOLFSSL_SUCCESS)
                 {
-                        return session;
+                        success = TRUE;
+                        break;
                 }
                 error = wolfSSL_get_error(session->ssl, result);
                 if (error != WOLFSSL_ERROR_WANT_READ && error != WOLFSSL_ERROR_WANT_WRITE)
@@ -416,11 +461,17 @@ sq_tls_session *sq_tls_session_accept(SOCKET socket)
                         break;
                 }
         }
-        g_tls_error = SQ_TLS_ERROR_HANDSHAKE;
-        wolfSSL_free(session->ssl);
-        secure_zero(session, sizeof *session);
-        (void)HeapFree(GetProcessHeap(), 0, session);
-        return NULL;
+        if (!set_socket_timeouts(session->socket, no_timeout))
+        {
+                success = FALSE;
+        }
+        if (!success)
+        {
+                g_tls_error = SQ_TLS_ERROR_HANDSHAKE;
+                return FALSE;
+        }
+        session->handshake_complete = TRUE;
+        return TRUE;
 }
 
 int sq_tls_session_read_some(sq_tls_session *session, BYTE *buffer, UINT32 capacity)
@@ -429,6 +480,10 @@ int sq_tls_session_read_some(sq_tls_session *session, BYTE *buffer, UINT32 capac
         int error = 0;
 
         if (session == NULL || buffer == NULL || capacity == 0u)
+        {
+                return -1;
+        }
+        if (!ensure_handshake(session))
         {
                 return -1;
         }
@@ -453,6 +508,10 @@ BOOL sq_tls_session_write_all(sq_tls_session *session, const BYTE *buffer, UINT3
         UINT32 offset = 0u;
 
         if (session == NULL || (buffer == NULL && length != 0u))
+        {
+                return FALSE;
+        }
+        if (!ensure_handshake(session))
         {
                 return FALSE;
         }
