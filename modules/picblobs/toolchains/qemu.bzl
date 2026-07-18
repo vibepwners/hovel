@@ -11,10 +11,10 @@ picblobs supports at runtime.
 # the complete legacy interpreter set below. Newer Debian releases use a
 # transitional package that omits several architectures Picblobs supports.
 _QEMU_USER_STATIC_URLS = [
-    "https://deb.debian.org/debian/pool/main/q/qemu/qemu-user-static_7.2+dfsg-7+deb12u18+b2_amd64.deb",
+    "https://deb.debian.org/debian/pool/main/q/qemu/qemu-user-static_7.2+dfsg-7+deb12u18+b3_amd64.deb",
 ]
 
-_QEMU_USER_STATIC_SHA256 = "325eaa448a481f7b4e581eb9541fd50014b3d2a65c3e7aff33b99b47361bb6dc"
+_QEMU_USER_STATIC_SHA256 = "c3e3ba2bd87f8c5b9a5da5ef21b5a3b82d7c63b89dd448d9ddaa4eabc5b6e402"
 
 _QEMU_USER_STATIC_BINARIES = [
     "qemu-aarch64-static",

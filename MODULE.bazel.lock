@@ -386,7 +386,7 @@
     },
     "//modules/picblobs/toolchains:repositories.bzl%picblobs_toolchains": {
       "general": {
-        "bzlTransitiveDigest": "FGkjvOPThS6Whf0p4H3zFxxi602pWy2WuaSezpoZ6ko=",
+        "bzlTransitiveDigest": "GI1LzAuyI48JpwdB/jYlcKyo0X+843BeUIexJn4Vp54=",
         "usagesDigest": "lcP6J1gUaMnUVALwJ4KtVyDJV5MUHCJJ3bJ+Yht+jkM=",
         "recordedInputs": [
           "REPO_MAPPING:,bazel_tools bazel_tools"
