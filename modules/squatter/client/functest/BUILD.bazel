@@ -7,7 +7,11 @@ load("@rules_go//go:def.bzl", "go_test")
 go_test(
     name = "functest_test",
     srcs = ["functest_test.go"],
-    data = ["//modules/squatter/windows/src:squatter_all"],  # provides squatter_all-x86_64.exe in runfiles
+    data = [
+        "//modules/squatter/client/pipeprobe:pipeprobe_all",
+        "//modules/squatter/windows:module_surface.json",
+        "//modules/squatter/windows/src:squatter_all",  # provides squatter_all-x86_64.exe in runfiles
+    ],
     tags = [
         "local",
         "requires-network",
@@ -15,6 +19,7 @@ go_test(
     # Host-only: it spawns wine itself, so it must never be built/run for the
     # Windows platform (e.g. under --config=win64 //...).
     target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//modules/docker/squatter-wine:__pkg__"],
     deps = [
         "//modules/squatter/client/wire",
         "//modules/squatter/client/xfer",

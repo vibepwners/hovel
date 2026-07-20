@@ -1,0 +1,17 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["restricted"])
+
+cc_library(
+    name = "squatter_config",
+    hdrs = ["user_settings.h"],
+    strip_include_prefix = ".",
+)
+
+exports_files([
+    "BUILD.wolfssl.bazel",
+    "no_thread_helpers.patch",
+    "user_settings.h",
+])

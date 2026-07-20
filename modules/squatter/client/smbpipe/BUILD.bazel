@@ -19,6 +19,7 @@ go_test(
     name = "smbpipe_test",
     srcs = [
         "smbadmin_test.go",
+        "smbpipe_coverage_test.go",
         "smbpipe_test.go",
     ],
     embed = [":smbpipe"],

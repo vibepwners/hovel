@@ -1,0 +1,19 @@
+[
+  "acl.stat",
+  "cmd",
+  "drive.list",
+  "echo",
+  "eventlog.query",
+  "file.stat",
+  "getfile",
+  "payload.cleanup",
+  "payload.status",
+  "process.kill",
+  "process.list",
+  "process.run",
+  "process.run_as_user",
+  "putfile",
+  "registry.query",
+  "share.list",
+  "wininfo"
+]

@@ -93,6 +93,132 @@ func TestServiceResolvesAndClearsRuntimeCredentialSelections(t *testing.T) {
 	}
 }
 
+func TestServiceResolvesSquatterRuntimeCredentialBundle(t *testing.T) {
+	t.Parallel()
+
+	store := pkimemory.NewStore()
+	service := newTestService(t, store)
+	assignment := bindActiveMeshProviderCredentialAssignment(t, service, "squatter")
+	descriptor := squatterRuntimeCredentialDescriptor(t)
+	digest, err := descriptor.DigestSHA256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := domainpki.CredentialProviderTarget{
+		ModuleID:         "squatter@v0.1.0",
+		ProviderID:       "squatter",
+		ProviderVersion:  "v0.1.0",
+		DescriptorSHA256: digest,
+	}
+	consumer, err := domainpki.NewMeshProviderConsumer("squatter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliveries, cleanup, err := service.ResolveCredentialOperation(
+		t.Context(),
+		provider,
+		descriptor,
+		domainpki.CredentialSelections{{
+			RequestID:    "squatter-tls-runtime",
+			AssignmentID: assignment.ID,
+			SlotName:     "mesh-stream-tls-server",
+			Capability:   domainpki.DeliveryCapabilityRuntime,
+			Material: domainpki.CredentialMaterialSelection{
+				Projection: domainpki.CredentialProjectionBundle,
+				Form:       domainpki.CredentialMaterialPrivateBytes,
+			},
+		}},
+		domainpki.CredentialOperationScope{
+			OperationID: "mesh-stream-operation",
+			Target:      "127.0.0.1",
+		},
+		[]domainpki.CredentialConsumerBinding{consumer},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deliveries) != 1 || deliveries[0].Runtime == nil {
+		cleanup()
+		t.Fatalf("runtime bundle deliveries = %#v", deliveries)
+	}
+	material := deliveries[0].Runtime.Material
+	if material.Encoding != domainpki.EncodingJSON {
+		cleanup()
+		t.Fatalf("runtime bundle encoding = %q", material.Encoding)
+	}
+	bundle, err := domainpki.DecodeBundleJSON(material.Data)
+	if err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	defer bundle.Clear()
+	if bundle.AssignmentID != assignment.ID || bundle.PrivateKey == nil ||
+		len(bundle.Certificate.Data) == 0 || len(bundle.TrustAnchors) == 0 {
+		cleanup()
+		t.Fatalf("runtime bundle = %#v", bundle.Public())
+	}
+	materialData := material.Data
+	cleanup()
+	if !bytes.Equal(materialData, make([]byte, len(materialData))) {
+		t.Fatal("runtime bundle cleanup did not clear serialized private material")
+	}
+}
+
+func bindActiveMeshProviderCredentialAssignment(
+	t *testing.T,
+	service apppki.Service,
+	providerName string,
+) domainpki.Assignment {
+	t.Helper()
+	authority, err := service.CreateAuthority(t.Context(), apppki.CreateAuthorityRequest{
+		IdempotencyKey: "test:mesh-provider-runtime-authority-" + providerName,
+		Name:           "mesh provider runtime authority " + providerName,
+		Role:           domainpki.AuthorityRoleRoot,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlockTestAuthority(t, service, authority.Authority.ID)
+	generation, err := service.IssueCertificate(t.Context(), apppki.IssueCertificateRequest{
+		IdempotencyKey:    "test:mesh-provider-runtime-certificate-" + providerName,
+		IssuerAuthorityID: authority.Authority.ID,
+		Name:              providerName + ".mesh.test",
+		ProfileID:         domainpki.ProfileTLSServer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment, err := service.BindAssignment(t.Context(), apppki.BindAssignmentRequest{
+		IdempotencyKey: "test:mesh-provider-runtime-assignment-" + providerName,
+		ID:             domainpki.AssignmentID("assignment-mesh-provider-runtime-" + providerName),
+		Purpose:        domainpki.PurposeTLSServer,
+		ConsumerType:   domainpki.ConsumerMeshProvider,
+		ConsumerID:     domainpki.ConsumerID(providerName),
+		ProfileID:      domainpki.ProfileTLSServer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := service.StageAssignment(t.Context(), apppki.StageAssignmentRequest{
+		IdempotencyKey:   "test:mesh-provider-runtime-stage-" + providerName,
+		AssignmentID:     assignment.ID,
+		GenerationID:     generation.ID,
+		ExpectedRevision: assignment.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := service.ActivateAssignment(t.Context(), apppki.ActivateAssignmentRequest{
+		IdempotencyKey:   "test:mesh-provider-runtime-activate-" + providerName,
+		AssignmentID:     assignment.ID,
+		ExpectedRevision: staged.Assignment.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return active.Assignment
+}
+
 func TestCredentialOperationLeaseDeduplicatesAssignmentSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -443,7 +569,7 @@ func TestServiceRejectsUnimplementedRuntimeCredentialProjection(t *testing.T) {
 	descriptor := runtimeCredentialDescriptor(t)
 	descriptor.Slots[0].AcceptedProjections = append(
 		descriptor.Slots[0].AcceptedProjections,
-		domainpki.CredentialProjectionBundle,
+		domainpki.CredentialProjectionChainDER,
 	)
 	provider := runtimeCredentialProvider(t, descriptor)
 	consumer, err := domainpki.NewMeshListenerConsumer("mesh-provider", "listener-edge")
@@ -455,12 +581,12 @@ func TestServiceRejectsUnimplementedRuntimeCredentialProjection(t *testing.T) {
 		provider,
 		descriptor,
 		domainpki.CredentialSelections{{
-			RequestID:    "runtime-bundle",
+			RequestID:    "runtime-chain",
 			AssignmentID: assignment.ID,
 			SlotName:     "certificate",
 			Capability:   domainpki.DeliveryCapabilityRuntime,
 			Material: domainpki.CredentialMaterialSelection{
-				Projection: domainpki.CredentialProjectionBundle,
+				Projection: domainpki.CredentialProjectionChainDER,
 				Form:       domainpki.CredentialMaterialPublic,
 			},
 		}},
@@ -694,11 +820,48 @@ func runtimeCredentialDescriptor(t *testing.T) domainpki.CredentialDeliveryDescr
 		domainpki.CredentialMaterialPrivateBytes,
 	}
 	privateKey.PrivateMaterial = domainpki.PrivateMaterialRequired
+	bundle := common.Clone()
+	bundle.Name = "tls-bundle"
+	bundle.AcceptedProjections = []domainpki.CredentialProjection{
+		domainpki.CredentialProjectionBundle,
+	}
+	bundle.AcceptedMaterialForms = []domainpki.CredentialMaterialForm{
+		domainpki.CredentialMaterialPrivateBytes,
+	}
+	bundle.PrivateMaterial = domainpki.PrivateMaterialRequired
 	descriptor, err := domainpki.NewCredentialDeliveryDescriptor(
 		domainpki.CredentialDeliveryDescriptorArgs{
 			SchemaVersion: domainpki.CredentialDeliverySchemaV1,
-			Slots:         []domainpki.CredentialSlot{certificate, privateKey},
+			Slots:         []domainpki.CredentialSlot{certificate, privateKey, bundle},
 			Capabilities:  []domainpki.DeliveryCapability{domainpki.DeliveryCapabilityRuntime},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return descriptor
+}
+
+func squatterRuntimeCredentialDescriptor(t *testing.T) domainpki.CredentialDeliveryDescriptor {
+	t.Helper()
+	descriptor, err := domainpki.NewCredentialDeliveryDescriptor(
+		domainpki.CredentialDeliveryDescriptorArgs{
+			SchemaVersion: domainpki.CredentialDeliverySchemaV1,
+			Slots: []domainpki.CredentialSlot{{
+				Name:                         "mesh-stream-tls-server",
+				Purpose:                      domainpki.PurposeTLSServer,
+				EndpointRole:                 domainpki.CredentialEndpointServer,
+				ConsumerType:                 domainpki.ConsumerMeshProvider,
+				AcceptedBundleVersions:       []string{domainpki.BundleSchemaV1},
+				AcceptedProfiles:             []domainpki.ProfileID{domainpki.ProfileTLSServer},
+				AcceptedCompatibilityTargets: []domainpki.CompatibilityTargetID{domainpki.CompatibilityPortableX509},
+				AcceptedProjections:          []domainpki.CredentialProjection{domainpki.CredentialProjectionBundle},
+				AcceptedMaterialForms:        []domainpki.CredentialMaterialForm{domainpki.CredentialMaterialPrivateBytes},
+				MaximumEncodedBytes:          8 << 20,
+				RemainderPolicy:              domainpki.StampRemainderPreserve,
+				PrivateMaterial:              domainpki.PrivateMaterialRequired,
+			}},
+			Capabilities: []domainpki.DeliveryCapability{domainpki.DeliveryCapabilityRuntime},
 		},
 	)
 	if err != nil {

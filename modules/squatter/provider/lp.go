@@ -22,6 +22,7 @@ type placeholderLP struct {
 	bindConns map[string]net.Conn
 	reverse   map[string]*reverseTCPListener
 	callbacks map[string]reverseTCPCallback
+	meshNodes map[string]meshEndpoint
 }
 
 type smbConnector interface {
@@ -67,6 +68,7 @@ func newPlaceholderLP() *placeholderLP {
 		bindConns: map[string]net.Conn{},
 		reverse:   map[string]*reverseTCPListener{},
 		callbacks: map[string]reverseTCPCallback{},
+		meshNodes: map[string]meshEndpoint{},
 	}
 }
 
@@ -263,6 +265,7 @@ func (lp *placeholderLP) Cleanup(req hovel.CleanupPayloadRequest) (hovel.Cleanup
 		lp.bindConns = map[string]net.Conn{}
 		lp.reverse = map[string]*reverseTCPListener{}
 		lp.callbacks = map[string]reverseTCPCallback{}
+		lp.meshNodes = map[string]meshEndpoint{}
 		return hovel.CleanupResult{Status: "ok"}, nil
 	}
 	if listener, ok := lp.reverse[req.Target]; ok {

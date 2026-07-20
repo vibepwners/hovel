@@ -3,8 +3,12 @@
 void *memset(void *dst, int value, size_t n);
 void *memcpy(void *dst, const void *src, size_t n);
 void *memmove(void *dst, const void *src, size_t n);
+int memcmp(const void *a, const void *b, size_t n);
 size_t strlen(const char *s);
+int strcmp(const char *a, const char *b);
 int strncmp(const char *a, const char *b, size_t n);
+char *strncpy(char *dst, const char *src, size_t n);
+char *strstr(const char *haystack, const char *needle);
 size_t wcslen(const wchar_t *s);
 void __main(void);
 void abort(void);
@@ -54,6 +58,23 @@ void *memmove(void *dst, const void *src, size_t n)
         return dst;
 }
 
+int memcmp(const void *a, const void *b, size_t n)
+{
+        const unsigned char *left = (const unsigned char *)a;
+        const unsigned char *right = (const unsigned char *)b;
+
+        while (n-- != 0u)
+        {
+                if (*left != *right)
+                {
+                        return (int)*left - (int)*right;
+                }
+                left++;
+                right++;
+        }
+        return 0;
+}
+
 size_t strlen(const char *s)
 {
         const char *p = s;
@@ -62,6 +83,16 @@ size_t strlen(const char *s)
                 p++;
         }
         return (size_t)(p - s);
+}
+
+int strcmp(const char *a, const char *b)
+{
+        while (*a != '\0' && *a == *b)
+        {
+                a++;
+                b++;
+        }
+        return (int)(unsigned char)*a - (int)(unsigned char)*b;
 }
 
 int strncmp(const char *a, const char *b, size_t n)
@@ -76,6 +107,47 @@ int strncmp(const char *a, const char *b, size_t n)
                 }
         }
         return 0;
+}
+
+char *strncpy(char *dst, const char *src, size_t n)
+{
+        char *result = dst;
+
+        while (n != 0u && *src != '\0')
+        {
+                *dst++ = *src++;
+                n--;
+        }
+        while (n-- != 0u)
+        {
+                *dst++ = '\0';
+        }
+        return result;
+}
+
+char *strstr(const char *haystack, const char *needle)
+{
+        union {
+                const char *source;
+                char *result;
+        } match;
+        size_t needle_length = strlen(needle);
+
+        if (needle_length == 0u)
+        {
+                match.source = haystack;
+                return match.result;
+        }
+        while (*haystack != '\0')
+        {
+                if (strncmp(haystack, needle, needle_length) == 0)
+                {
+                        match.source = haystack;
+                        return match.result;
+                }
+                haystack++;
+        }
+        return NULL;
 }
 
 size_t wcslen(const wchar_t *s)

@@ -10,6 +10,27 @@ select_file(
     suffix = "-i686.exe",
 )
 
+select_file(
+    name = "squatter_x64_exe",
+    srcs = ["//modules/squatter/windows/src:squatter_all"],
+    output_name = "squatter-x64.exe",
+    suffix = "-x86_64.exe",
+)
+
+select_file(
+    name = "pipeprobe_x86_exe",
+    srcs = ["//modules/squatter/client/pipeprobe:pipeprobe_all"],
+    output_name = "pipeprobe.exe",
+    suffix = "-i686.exe",
+)
+
+select_file(
+    name = "pipeprobe_x64_exe",
+    srcs = ["//modules/squatter/client/pipeprobe:pipeprobe_all"],
+    output_name = "pipeprobe-x64.exe",
+    suffix = "-x86_64.exe",
+)
+
 py_test(
     name = "squatter_x86_exe_pe_test",
     size = "small",
@@ -24,8 +45,12 @@ py_test(
     name = "source_contract_test",
     size = "small",
     srcs = ["source_contract_test.py"],
-    args = ["$(location //modules/squatter/windows/src:squatter.c)"],
+    args = [
+        "$(location //modules/squatter/windows/src:squatter.c)",
+        "$(location :module_surface.json)",
+    ],
     data = [
+        ":module_surface.json",
         "//modules/squatter/windows/src:source_files",
         "//modules/squatter/windows/src:squatter.c",
     ],

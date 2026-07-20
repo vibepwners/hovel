@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -339,7 +340,12 @@ func (s Service) resolveCredentialSelection(
 		ProfileID:             generation.ProfileID,
 		CompatibilityTargetID: generation.CompatibilityTargetID,
 	}
-	material, err := s.resolveCredentialSelectionMaterial(ctx, generation, selection.Material)
+	material, err := s.resolveCredentialSelectionMaterial(
+		ctx,
+		assignment.ID,
+		generation,
+		selection.Material,
+	)
 	if err != nil {
 		return domainpki.CredentialOperationDelivery{}, err
 	}
@@ -446,10 +452,12 @@ func sameCredentialGenerationSnapshot(
 
 func (s Service) resolveCredentialSelectionMaterial(
 	ctx context.Context,
+	assignmentID domainpki.AssignmentID,
 	generation domainpki.CertificateGeneration,
 	selection domainpki.CredentialMaterialSelection,
 ) (domainpki.ResolvedCredentialMaterial, error) {
 	var data []byte
+	encoding := domainpki.EncodingBase64DER
 	switch selection.Projection {
 	case domainpki.CredentialProjectionCertificateDER:
 		data = append([]byte(nil), generation.CertificateDER...)
@@ -469,8 +477,31 @@ func (s Service) resolveCredentialSelectionMaterial(
 			)
 		}
 		data = append([]byte(nil), key.PrivateKeyPKCS8...)
-	case domainpki.CredentialProjectionBundle,
-		domainpki.CredentialProjectionChainDER,
+	case domainpki.CredentialProjectionBundle:
+		if selection.Form == domainpki.CredentialMaterialPrivateReference {
+			return domainpki.ResolvedCredentialMaterial{}, errors.New(
+				"pki: runtime bundle delivery does not support an outer private reference",
+			)
+		}
+		bundle, err := s.resolveRuntimeCredentialBundle(
+			ctx,
+			assignmentID,
+			generation,
+			selection.Form == domainpki.CredentialMaterialPrivateBytes,
+		)
+		if err != nil {
+			return domainpki.ResolvedCredentialMaterial{}, err
+		}
+		data, err = json.Marshal(bundle)
+		bundle.Clear()
+		if err != nil {
+			return domainpki.ResolvedCredentialMaterial{}, fmt.Errorf(
+				"pki: encode runtime credential bundle: %w",
+				err,
+			)
+		}
+		encoding = domainpki.EncodingJSON
+	case domainpki.CredentialProjectionChainDER,
 		domainpki.CredentialProjectionTrustDER,
 		domainpki.CredentialProjectionCRLDER,
 		domainpki.CredentialProjectionSignerReference,
@@ -495,7 +526,7 @@ func (s Service) resolveCredentialSelectionMaterial(
 	material := domainpki.ResolvedCredentialMaterial{
 		Projection: selection.Projection,
 		Form:       selection.Form,
-		Encoding:   domainpki.EncodingBase64DER,
+		Encoding:   encoding,
 		SHA256:     hex.EncodeToString(digest[:]),
 		Data:       domainpki.CredentialBytes(data),
 	}
@@ -504,4 +535,98 @@ func (s Service) resolveCredentialSelectionMaterial(
 		return domainpki.ResolvedCredentialMaterial{}, err
 	}
 	return material, nil
+}
+
+func (s Service) resolveRuntimeCredentialBundle(
+	ctx context.Context,
+	assignmentID domainpki.AssignmentID,
+	generation domainpki.CertificateGeneration,
+	includePrivate bool,
+) (result domainpki.Bundle, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			result.Clear()
+		}
+	}()
+	certificate, err := domainpki.NewBinary(
+		domainpki.MediaTypeCertificate,
+		generation.CertificateDER,
+	)
+	if err != nil {
+		return domainpki.Bundle{}, err
+	}
+	publicKey, err := domainpki.NewBinary(
+		domainpki.MediaTypePublicKey,
+		generation.PublicKeySPKI,
+	)
+	if err != nil {
+		return domainpki.Bundle{}, err
+	}
+	var privateKey *domainpki.Binary
+	if includePrivate {
+		validated, accessErr := s.accessKey(ctx, generation, credentialRuntimeAccessPurpose)
+		if accessErr != nil {
+			return domainpki.Bundle{}, accessErr
+		}
+		defer validated.Clear()
+		key := validated.Material()
+		defer key.Clear()
+		if key.ExternalHandle != nil {
+			return domainpki.Bundle{}, errors.New(
+				"pki: runtime private bundle delivery is unavailable for externally held keys",
+			)
+		}
+		binary, binaryErr := domainpki.NewBinary(
+			domainpki.MediaTypePrivateKey,
+			key.PrivateKeyPKCS8,
+		)
+		if binaryErr != nil {
+			return domainpki.Bundle{}, binaryErr
+		}
+		privateKey = &binary
+	}
+	chain, trust, err := s.bundleChain(ctx, generation)
+	if err != nil {
+		return domainpki.Bundle{}, err
+	}
+	publicDigest := sha256.Sum256(generation.PublicKeySPKI)
+	bundleIDDigest := sha256.Sum256([]byte(
+		"hovel.pki.runtime-bundle/v1\x00" + string(assignmentID) + "\x00" + string(generation.ID),
+	))
+	bundleID := domainpki.BundleID("runtime-bundle-" + hex.EncodeToString(bundleIDDigest[:]))
+	result, err = domainpki.NewBundle(domainpki.BundleArgs{
+		SchemaVersion:           domainpki.BundleSchemaV1,
+		ID:                      bundleID,
+		AssignmentID:            assignmentID,
+		CertificateID:           generation.CertificateID,
+		CertificateGenerationID: generation.ID,
+		Generation:              generation.Generation,
+		Purpose:                 generation.Purpose,
+		CompatibilityTargetID:   generation.CompatibilityTargetID,
+		CompatibilityVersion:    generation.CompatibilityVersion,
+		KeyEstablishmentPolicy:  generation.KeyEstablishment,
+		TLSNamedGroups:          generation.TLSNamedGroups,
+		Certificate:             certificate,
+		PublicKey:               publicKey,
+		PrivateKey:              privateKey,
+		Chain:                   chain,
+		TrustAnchors:            trust,
+		Fingerprints: domainpki.Fingerprints{
+			CertificateSHA256: generation.FingerprintSHA256,
+			PublicKeySHA256:   hex.EncodeToString(publicDigest[:]),
+		},
+		NotBefore: generation.Template.NotBefore,
+		NotAfter:  generation.Template.NotAfter,
+	})
+	if err != nil {
+		return domainpki.Bundle{}, err
+	}
+	validator, err := s.validators.ResolveValidator(ctx, generation.BackendID)
+	if err != nil {
+		return result, err
+	}
+	if err := validator.ValidateBundle(ctx, result, s.clock.Now().UTC()); err != nil {
+		return result, fmt.Errorf("pki: verify runtime credential bundle: %w", err)
+	}
+	return result, nil
 }

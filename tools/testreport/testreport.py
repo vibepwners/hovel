@@ -44,6 +44,51 @@ class TestTarget:
 
 
 @dataclass
+class CoverageMetric:
+    name: str
+    scope: str
+    covered: int
+    total: int
+    percentage: float
+    minimum: float
+    status: str
+    raw_source_path: str = ""
+    source_path: str = ""
+
+
+@dataclass
+class TestJob:
+    name: str
+    category: str
+    description: str
+    status: str
+    duration: float
+    raw_log_path: str = ""
+    log_path: str = ""
+
+
+@dataclass
+class LintIgnoreStatement:
+    path: str
+    line: int
+    text: str
+
+
+@dataclass
+class LintTool:
+    id: str
+    name: str
+    kind: str
+    scope: str
+    status: str
+    duration: float
+    commands: list[str]
+    ignore_statements: list[LintIgnoreStatement]
+    raw_log_path: str = ""
+    log_path: str = ""
+
+
+@dataclass
 class TestReport:
     title: str
     generated_at: str
@@ -52,6 +97,9 @@ class TestReport:
     commit: str
     ref: str
     totals: dict[str, Any]
+    linters: list[LintTool]
+    coverage: list[CoverageMetric]
+    jobs: list[TestJob]
     targets: list[TestTarget]
 
 
@@ -66,6 +114,10 @@ def build_report(
     commit: str,
     ref: str,
     cache_roots: list[Path] | None = None,
+    coverage_json_files: list[Path] | None = None,
+    coverage_lcov_files: list[tuple[str, Path, float]] | None = None,
+    job_summary_files: list[Path] | None = None,
+    lint_report_files: list[Path] | None = None,
 ) -> TestReport:
     targets: dict[str, TestTarget] = {}
     for bep in bep_files:
@@ -79,6 +131,9 @@ def build_report(
     recover_bytestream_outputs(targets.values(), cache_roots or [])
     ordered = sorted(targets.values(), key=lambda target: (STATUS_ORDER.get(target.status, 99), target.suite, target.label))
     totals = summarize(ordered)
+    coverage = ingest_coverage(coverage_json_files or [], coverage_lcov_files or [], repo)
+    jobs = ingest_jobs(job_summary_files or [], repo, coverage)
+    linters = ingest_linters(lint_report_files or [])
     return TestReport(
         title=title,
         generated_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -87,8 +142,176 @@ def build_report(
         commit=commit,
         ref=ref,
         totals=totals,
+        linters=linters,
+        coverage=coverage,
+        jobs=jobs,
         targets=ordered,
     )
+
+
+def ingest_linters(files: list[Path]) -> list[LintTool]:
+    tools: dict[str, LintTool] = {}
+    for path in files:
+        if not path.is_file():
+            continue
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or raw.get("schema_version") != "hovel.lint-report/v1":
+            raise ValueError(f"unsupported linter report schema: {path}")
+        items = raw.get("tools")
+        if not isinstance(items, list):
+            raise ValueError(f"linter report tools must be a list: {path}")
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError(f"linter report tool must be an object: {path}")
+            tool_id = required_string(item, "id", path)
+            ignores = item.get("ignore_statements")
+            commands = item.get("commands")
+            if not isinstance(ignores, list) or not isinstance(commands, list) or not all(
+                isinstance(command, str) and command for command in commands
+            ):
+                raise ValueError(f"invalid linter evidence for {tool_id}: {path}")
+            statements: list[LintIgnoreStatement] = []
+            for ignore in ignores:
+                if not isinstance(ignore, dict):
+                    raise ValueError(f"invalid ignore statement for {tool_id}: {path}")
+                statements.append(
+                    LintIgnoreStatement(
+                        path=required_string(ignore, "path", path),
+                        line=int(ignore.get("line", 0)),
+                        text=required_string(ignore, "text", path),
+                    )
+                )
+            if any(statement.line < 1 for statement in statements):
+                raise ValueError(f"invalid ignore statement line for {tool_id}: {path}")
+            status = normalize_status(required_string(item, "status", path))
+            if status not in {"PASSED", "FAILED"}:
+                raise ValueError(f"invalid linter status for {tool_id}: {status}")
+            tools[tool_id] = LintTool(
+                id=tool_id,
+                name=required_string(item, "name", path),
+                kind=required_string(item, "kind", path),
+                scope=required_string(item, "scope", path),
+                status=status,
+                duration=float(item.get("duration", 0.0)),
+                commands=commands,
+                ignore_statements=statements,
+                raw_log_path=required_string(item, "raw_log_path", path),
+            )
+    return sorted(tools.values(), key=lambda tool: (STATUS_ORDER.get(tool.status, 99), tool.name.lower()))
+
+
+def required_string(item: dict[str, Any], key: str, source: Path) -> str:
+    value = item.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"linter report {key} must be a non-empty string: {source}")
+    return value
+
+
+def ingest_coverage(
+    json_files: list[Path], lcov_files: list[tuple[str, Path, float]], repo: Path
+) -> list[CoverageMetric]:
+    metrics: list[CoverageMetric] = []
+    for path in json_files:
+        if not path.is_file():
+            continue
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            continue
+        scope = "Core" if "core" in path.parts else "Repository"
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            metrics.append(
+                new_coverage_metric(
+                    name=str(item.get("name", "coverage")),
+                    scope=scope,
+                    covered=int(item.get("covered", 0)),
+                    total=int(item.get("total", 0)),
+                    minimum=float(item.get("minimum", 0.0)),
+                    source=path,
+                    repo=repo,
+                )
+            )
+    for name, path, minimum in lcov_files:
+        if not path.is_file():
+            continue
+        covered, total = lcov_totals(path.read_text(encoding="utf-8"))
+        metrics.append(
+            new_coverage_metric(
+                name=name,
+                scope="Modules",
+                covered=covered,
+                total=total,
+                minimum=minimum,
+                source=path,
+                repo=repo,
+            )
+        )
+    return sorted(metrics, key=lambda metric: (metric.scope, metric.name))
+
+
+def ingest_jobs(files: list[Path], repo: Path, coverage: list[CoverageMetric]) -> list[TestJob]:
+    jobs: list[TestJob] = []
+    for path in files:
+        if not path.is_file():
+            continue
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            continue
+        jobs.append(
+            TestJob(
+                name=str(raw.get("name", path.stem)),
+                category=str(raw.get("category", "test")),
+                description=str(raw.get("description", "")),
+                status=normalize_status(str(raw.get("status", "UNKNOWN"))),
+                duration=float(raw.get("duration", 0.0)),
+                raw_log_path=str(raw.get("raw_log_path", "")),
+            )
+        )
+        for item in raw.get("coverage", []):
+            if not isinstance(item, dict):
+                continue
+            coverage.append(
+                new_coverage_metric(
+                    name=str(item.get("name", "feature matrix")),
+                    scope="E2E",
+                    covered=int(item.get("covered", 0)),
+                    total=int(item.get("total", 0)),
+                    minimum=float(item.get("minimum", 0.0)),
+                    source=path,
+                    repo=repo,
+                )
+            )
+    coverage.sort(key=lambda metric: (metric.scope, metric.name))
+    return sorted(jobs, key=lambda job: (STATUS_ORDER.get(job.status, 99), job.category, job.name))
+
+
+def new_coverage_metric(
+    *, name: str, scope: str, covered: int, total: int, minimum: float, source: Path, repo: Path
+) -> CoverageMetric:
+    percentage = round((100.0 * covered / total) if total else 0.0, 2)
+    return CoverageMetric(
+        name=name,
+        scope=scope,
+        covered=covered,
+        total=total,
+        percentage=percentage,
+        minimum=minimum,
+        status="PASSED" if total > 0 and percentage >= minimum else "FAILED",
+        raw_source_path=display_path(repo, source),
+    )
+
+
+def lcov_totals(report: str) -> tuple[int, int]:
+    covered = total = 0
+    for line in report.splitlines():
+        if line.startswith("LH:"):
+            covered += int(line[3:])
+        elif line.startswith("LF:"):
+            total += int(line[3:])
+    if total == 0 or covered > total:
+        raise ValueError(f"invalid LCOV totals: {covered}/{total}")
+    return covered, total
 
 
 def ingest_bep(repo: Path, bep: Path, targets: dict[str, TestTarget]) -> None:
@@ -216,6 +439,9 @@ def render_report(report: TestReport, *, repo: Path, output: Path) -> None:
     (output / "data").mkdir(parents=True)
     (output / "logs").mkdir()
     (output / "xml").mkdir()
+    (output / "jobs").mkdir()
+    (output / "coverage").mkdir()
+    (output / "linters").mkdir()
 
     materialize_artifacts(report, repo, output)
     (output / "data/report.json").write_text(json.dumps(report_to_json(report), indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -236,6 +462,35 @@ def materialize_artifacts(report: TestReport, repo: Path, output: Path) -> None:
                 dest = output / "xml" / f"{slug}.xml"
                 shutil.copy2(src, dest)
                 target.xml_path = display_path(output, dest)
+    for job in report.jobs:
+        if job.raw_log_path:
+            src = source_path(repo, job.raw_log_path)
+            if src.is_file():
+                dest = output / "jobs" / f"{slugify(job.name)}.log"
+                shutil.copy2(src, dest)
+                job.log_path = display_path(output, dest)
+    for tool in report.linters:
+        if tool.raw_log_path:
+            src = source_path(repo, tool.raw_log_path)
+            if src.is_file():
+                dest = output / "linters" / f"{slugify(tool.id)}.log"
+                shutil.copy2(src, dest)
+                tool.log_path = display_path(output, dest)
+    used_sources: dict[str, str] = {}
+    for metric in report.coverage:
+        if not metric.raw_source_path:
+            continue
+        if metric.raw_source_path in used_sources:
+            metric.source_path = used_sources[metric.raw_source_path]
+            continue
+        src = source_path(repo, metric.raw_source_path)
+        if not src.is_file():
+            continue
+        suffix = src.suffix or ".dat"
+        dest = output / "coverage" / f"{slugify(metric.scope + '-' + metric.name)}{suffix}"
+        shutil.copy2(src, dest)
+        metric.source_path = display_path(output, dest)
+        used_sources[metric.raw_source_path] = metric.source_path
 
 
 def source_path(repo: Path, raw: str) -> Path:

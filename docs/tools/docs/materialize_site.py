@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
 from pathlib import Path
+
+
+REPORT_DIRECTORIES = ("data", "logs", "xml", "artifacts", "jobs", "coverage", "linters")
 
 
 def main() -> int:
@@ -24,14 +28,7 @@ def main() -> int:
     report_state = "status page"
     if args.report_dir is not None:
         report = resolve_workspace_path(workspace, args.report_dir)
-        data = report / "data/report.json"
-        if not data.is_file():
-            raise SystemExit(f"missing generated report evidence: {data}; run `task test:report`")
-        report_destination = destination / "reports/tests/latest"
-        for name in ("data", "logs", "xml", "artifacts"):
-            child = report / name
-            if child.is_dir():
-                copy_tree(child, report_destination / name)
+        copy_report(report, destination / "reports/tests/latest")
         report_state = "generated evidence"
 
     version = published_version(destination / "index.html")
@@ -68,6 +65,30 @@ def copy_tree(source: Path, destination: Path) -> None:
             target = destination / path.relative_to(source)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)
+
+
+def copy_report(source: Path, destination: Path) -> None:
+    data = source / "data/report.json"
+    if not data.is_file():
+        raise SystemExit(f"missing generated report evidence: {data}; run `task test:report`")
+    for name in REPORT_DIRECTORIES:
+        child = source / name
+        if child.is_dir():
+            copy_tree(child, destination / name)
+    validate_report_references(destination)
+
+
+def validate_report_references(report: Path) -> None:
+    data = json.loads((report / "data/report.json").read_text(encoding="utf-8"))
+    references = [
+        *(target.get(key, "") for target in data.get("targets", []) for key in ("log_path", "xml_path")),
+        *(job.get("log_path", "") for job in data.get("jobs", [])),
+        *(metric.get("source_path", "") for metric in data.get("coverage", [])),
+        *(tool.get("log_path", "") for tool in data.get("linters", [])),
+    ]
+    missing = [reference for reference in references if reference and not (report / reference).is_file()]
+    if missing:
+        raise SystemExit(f"generated report references missing evidence: {', '.join(sorted(missing))}")
 
 
 def published_version(index: Path) -> str:

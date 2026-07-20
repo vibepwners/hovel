@@ -39,7 +39,8 @@ and every front end calls the same application use cases.
 | Daemon API and imperative CLI | Typed custody, backend/profile discovery, authority and certificate inventory, issuance/lifecycle, assignments, trust sets, revocation, phase-aware CRL publication/recovery, authority rollover, operation bookkeeping, explicit bundle export, and credential-stamp list/inspect are implemented through the daemon client. OpenAPI and command contract tests cover the registered surface. Protected CLI export and delivery execution methods remain. |
 | Assignments, trust sets, revocation, CRLs, rollover, and credential stamps | Implemented with immutable generations, optimistic revisions, idempotent mutations, assignment degradation, fresh issuer-bound CRLs, durable publication phases, renewable leases, signed checkpoints, phase-aware authority rollover, typed acknowledgements, exact validated stamp plans, atomic supersession, and externally inspectable daemon bookkeeping. |
 | Mesh credential-delivery discovery | Implemented as an optional, independently versioned descriptor with strict slots, material forms, projections, standard and advanced target kinds, and provider schemas in core plus the Go, Python, and Rust module SDKs. |
-| Provider execution, control SDKs, C/embedded adapters, workflows, and demos | Not yet implemented; the later slices below remain authoritative. |
+| Provider execution and Go bundle consumption | Runtime and protected-file provider execution are wired through Mesh operations. Runtime bundle projection now carries the complete validated bundle instead of dropping chain, trust, or key-establishment policy. The Go module SDK has a strict bundle decoder and native TLS configuration helper, and Squatter is the first PKI-backed Mesh stream consumer. |
+| Control SDKs, non-Go bundle consumers, C/embedded adapters, workflows, and demos | Not yet implemented; the later slices below remain authoritative. |
 
 ## Goal
 
@@ -90,9 +91,10 @@ reimplementing CA workflows.
   front-end contract. Credential-stamp inventory is externally readable, but
   delivery execution is not yet an operator-facing use case.
 - Go, Python, and Rust module SDKs expose strongly typed Mesh
-  credential-delivery discovery over stdio JSON-RPC. They do not yet expose
-  the secret-bearing provider execution methods, a public daemon control
-  client, or a C SDK.
+  credential-delivery discovery and secret-bearing provider execution over
+  stdio JSON-RPC. The Go SDK additionally decodes and verifies portable
+  bundles and derives native TLS server configuration. Equivalent Python,
+  Rust, and C bundle-consumer helpers and a public daemon control client remain.
 - The existing Huh form is a CLI adapter over shared configuration behavior,
   which remains the pattern for a PKI wizard rather than a second lifecycle
   implementation.
@@ -103,6 +105,11 @@ reimplementing CA workflows.
   by typed references; neither replaces the other.
 - Mesh listeners and node operations expose stable daemon-visible IDs suitable
   for assignment subjects and future delivery correlation.
+- Squatter advertises a destination-scoped Mesh provider and a strict
+  `mesh-stream-tls-server` runtime bundle slot. Its TLS stream is validated end
+  to end with a real TLS 1.3 handshake carrying Squatter wire frames; TLS
+  terminates in the provider and the target-side TCP-bind payload transport
+  remains unchanged and unencrypted.
 - The Picblobs Mbed OS proof of concept compile-checks the real Mbed API
   integration and exercises bidirectional authenticated encryption through the
   hosted platform adapter. Physical-board Ethernet, TRNG, and executable-SRAM

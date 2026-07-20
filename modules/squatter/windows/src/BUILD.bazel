@@ -101,7 +101,41 @@ cc_library(
         ":control_codec",
         ":frame",
         ":framing",
+        ":tls",
         ":win",
+    ],
+)
+
+# ===========================================================================
+# security -- stamped PKI material and target-side TLS transport
+# ===========================================================================
+cc_library(
+    name = "pki_config",
+    srcs = ["security/pki_config.c"],
+    hdrs = ["security/pki_config.h"],
+    copts = SQ_COPTS,
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [":win"],
+)
+
+cc_library(
+    name = "tls",
+    srcs = ["security/tls.c"],
+    hdrs = ["security/tls.h"],
+    copts = SQ_COPTS + [
+        "-fno-asynchronous-unwind-tables",
+        "-fno-builtin",
+        "-fno-stack-protector",
+        "-fno-unwind-tables",
+        "-Wno-redundant-decls",
+    ],
+    includes = ["."],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        ":pki_config",
+        ":win",
+        "@wolfssl",
     ],
 )
 
@@ -257,8 +291,10 @@ cc_binary(
     deps = [
         ":modules",
         ":nocrt",
+        ":pki_config",
         ":runtime",
         ":sqlog",
+        ":tls",
         ":win",
     ],
 )
@@ -286,8 +322,10 @@ cc_binary(
     deps = [
         ":modules",
         ":nocrt",
+        ":pki_config",
         ":runtime",
         ":sqlog_windowed",
+        ":tls",
         ":win",
     ],
 )
@@ -307,11 +345,15 @@ squatter_clang_tidy(
     name = "clang_tidy",
     srcs = _SQUATTER_C_SRCS,
     hdrs = _SQUATTER_HDRS,
+    wolfssl_config = "//third_party/wolfssl:user_settings.h",
+    wolfssl_headers = "@wolfssl//:headers",
+    wolfssl_marker = "@wolfssl//:wolfssl/error-ssl.h",
 )
 
 squatter_format_check(
     name = "format_check",
     srcs = _SQUATTER_FORMAT_SRCS,
+    clang_format_config = "//:.clang-format",
     tags = ["manual"],
 )
 

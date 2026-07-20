@@ -72,6 +72,7 @@ go_test(
     name = "shell_test",
     srcs = [
         "prompt_pty_posix_test.go",
+        "shell_coverage_test.go",
         "shell_test.go",
     ],
     embed = [":shell"],

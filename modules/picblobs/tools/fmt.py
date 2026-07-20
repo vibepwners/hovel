@@ -116,6 +116,12 @@ def _parse_args() -> argparse.Namespace:
         help="Check formatting without modifying (exit 1 if unformatted)",
     )
     parser.add_argument(
+        "--tool",
+        choices=("all", "clang-format", "ruff", "buildifier"),
+        default="all",
+        help="Run one formatter instead of the complete formatting set.",
+    )
+    parser.add_argument(
         "paths",
         nargs="*",
         help="Optional files or directories to format. Defaults to repo source roots.",
@@ -203,6 +209,24 @@ def _resolve_tool(name: str) -> str | None:
     return shutil.which(name)
 
 
+def _run_selected_formatters(
+    tool: str,
+    c_files: list[Path],
+    py_files: list[Path],
+    bazel_files: list[Path],
+    *,
+    check: bool,
+) -> bool:
+    ok = True
+    if tool in {"all", "clang-format"}:
+        ok = _format_c_files(c_files, check=check) and ok
+    if tool in {"all", "ruff"}:
+        ok = _format_python_files(py_files, check=check) and ok
+    if tool in {"all", "buildifier"}:
+        ok = _format_bazel_files(bazel_files, check=check) and ok
+    return ok
+
+
 def main() -> int:
     args = _parse_args()
 
@@ -214,9 +238,13 @@ def main() -> int:
         log.info("No matching files.")
         return 0
 
-    ok = _format_c_files(c_files, check=args.check)
-    ok = _format_python_files(py_files, check=args.check) and ok
-    ok = _format_bazel_files(bazel_files, check=args.check) and ok
+    ok = _run_selected_formatters(
+        args.tool,
+        c_files,
+        py_files,
+        bazel_files,
+        check=args.check,
+    )
 
     if ok:
         log.info("ok")

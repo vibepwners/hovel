@@ -21,6 +21,7 @@
           <li><strong>Payload provider</strong> -- <code>modules/squatter/provider</code> implements Hovel's <code>payload_provider</code> contract.</li>
           <li><strong>Windows agent</strong> -- <code>modules/squatter/windows/src</code> builds a no-CRT PE payload for Windows x86.</li>
           <li><strong>Transports</strong> -- SMB named pipe, TCP bind, and TCP callback, with <code>reverse-tcp</code> accepted as a compatibility alias.</li>
+          <li><strong>Payload TLS</strong> -- provider-stamped X.509 identity and a statically linked, no-CRT wolfSSL TLS 1.3 server for configured TCP-bind payloads; Mesh carries ciphertext through to the payload.</li>
           <li><strong>Typed actions</strong> -- host facts, file transfer, registry and event-log queries, drive/share/ACL reads, process control, command execution, status, and cleanup.</li>
           <li><strong>Client tooling</strong> -- <code>squatterctl</code>, SMB admin helpers, wire framing, shell, and transfer libraries.</li>
           <li><strong>Durable inventory</strong> -- install steps return provider-owned reconnect and cleanup descriptors for Hovel installed-payload records.</li>

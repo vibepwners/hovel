@@ -192,6 +192,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --install-recommends wine32 wine64
       - run: task modules:wine-test
+      - run: task modules:wine-docker-test
       - run: task docs:demos:wine
       - if: always()
         env:

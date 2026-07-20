@@ -15,6 +15,7 @@ import (
 const (
 	BundleSchemaV1    = "hovel.pki.bundle/v1"
 	EncodingBase64DER = "base64-der"
+	EncodingJSON      = "json"
 
 	MediaTypeCertificate = "application/pkix-cert"
 	MediaTypePublicKey   = "application/pkix-keyinfo"

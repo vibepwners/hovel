@@ -3,7 +3,7 @@ load("@rules_cc//cc:defs.bzl", "cc_test")
 # gazelle:ignore
 
 # Tests are Windows .exe (MinGW gcc appends .exe to the link output, so Bazel
-# must expect it) and run under wine via //tools:wine_run (see //.bazelrc).
+# must expect it) and run under Wine via //tools/wine:wine_run.
 
 _WINDOWS_TEST_LINKOPTS = [
     "-lws2_32",

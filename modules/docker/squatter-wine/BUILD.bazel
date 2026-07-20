@@ -1,3 +1,5 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
@@ -5,3 +7,43 @@ exports_files([
     "entrypoint.sh",
     "run.sh",
 ])
+
+py_binary(
+    name = "functional_test",
+    testonly = True,
+    srcs = ["functional_test.py"],
+    args = [
+        "--dockerfile=$(rootpath :Dockerfile)",
+        "--entrypoint=$(rootpath :entrypoint.sh)",
+        "--functest=$(rootpath //modules/squatter/client/functest:functest_test)",
+        "--provider-functest=$(rootpath //modules/squatter/provider:provider_test)",
+        "--payload32=$(rootpath //modules/squatter/windows:squatter_x86_exe)",
+        "--payload64=$(rootpath //modules/squatter/windows:squatter_x64_exe)",
+        "--pipeprobe32=$(rootpath //modules/squatter/windows:pipeprobe_x86_exe)",
+        "--pipeprobe64=$(rootpath //modules/squatter/windows:pipeprobe_x64_exe)",
+        "--module-surface=$(rootpath //modules/squatter/windows:module_surface.json)",
+    ],
+    data = [
+        ":Dockerfile",
+        ":entrypoint.sh",
+        "//modules/squatter/client/functest:functest_test",
+        "//modules/squatter/provider:provider_test",
+        "//modules/squatter/windows:module_surface.json",
+        "//modules/squatter/windows:pipeprobe_x64_exe",
+        "//modules/squatter/windows:pipeprobe_x86_exe",
+        "//modules/squatter/windows:squatter_x64_exe",
+        "//modules/squatter/windows:squatter_x86_exe",
+    ],
+)
+
+py_test(
+    name = "functional_test_test",
+    size = "small",
+    srcs = [
+        "functional_test.py",
+        "functional_test_test.py",
+    ],
+    imports = ["."],
+    main = "functional_test_test.py",
+    python_version = "PY3",
+)

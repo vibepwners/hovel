@@ -200,7 +200,7 @@
   "moduleExtensions": {
     "//toolchains:repositories.bzl%picblobs_toolchains": {
       "general": {
-        "bzlTransitiveDigest": "FGkjvOPThS6Whf0p4H3zFxxi602pWy2WuaSezpoZ6ko=",
+        "bzlTransitiveDigest": "GI1LzAuyI48JpwdB/jYlcKyo0X+843BeUIexJn4Vp54=",
         "usagesDigest": "XpTiWNn0kNX2FOSrTL4uWCtXFDcAh4PpAPQI9pQPGPg=",
         "recordedInputs": [
           "REPO_MAPPING:,bazel_tools bazel_tools"

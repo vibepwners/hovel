@@ -12,10 +12,14 @@ def main() -> int:
     parser.add_argument("--stamp", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--mingw-marker", type=Path, required=True)
+    parser.add_argument("--wolfssl-marker", type=Path, required=True)
+    parser.add_argument("--wolfssl-config", type=Path, required=True)
     parser.add_argument("--project-include", required=True)
     args = parser.parse_args()
 
     mingw_include = args.mingw_marker.resolve().parent
+    wolfssl_include = args.wolfssl_marker.resolve().parent.parent
+    wolfssl_config_include = args.wolfssl_config.resolve().parent
     subprocess.run(
         [
             str(args.clang_tidy),
@@ -31,10 +35,15 @@ def main() -> int:
             "-DUNICODE",
             "-D_UNICODE",
             "-DDECLSPEC_IMPORT=",
+            "-DWOLFSSL_USER_SETTINGS",
             "-target",
             "i686-w64-windows-gnu",
             "-isystem",
             str(mingw_include),
+            "-isystem",
+            str(wolfssl_include),
+            "-I",
+            str(wolfssl_config_include),
             f"-I{args.project_include}",
         ],
         check=True,

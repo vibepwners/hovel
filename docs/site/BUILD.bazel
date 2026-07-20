@@ -90,6 +90,21 @@ js_run_devserver(
 )
 
 py_test(
+    name = "report_ui_test",
+    size = "small",
+    srcs = ["report_ui_test.py"],
+    args = [
+        "$(rootpath :public/assets/report.js)",
+        "$(rootpath :public/assets/report.css)",
+    ],
+    data = [
+        "public/assets/report.css",
+        "public/assets/report.js",
+    ],
+    python_version = "PY3",
+)
+
+py_test(
     name = "site_smoke_test",
     size = "small",
     srcs = ["//core/tools/tests:site_smoke_test.py"],

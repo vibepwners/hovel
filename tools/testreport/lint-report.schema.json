@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hovel.dev/schemas/lint-report-v1.json",
+  "title": "Hovel linter and static-analysis report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "tools"],
+  "properties": {
+    "schema_version": {"const": "hovel.lint-report/v1"},
+    "generated_at": {"type": "string"},
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "scope",
+          "status",
+          "duration",
+          "commands",
+          "ignore_statements",
+          "raw_log_path"
+        ],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+          "name": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["formatter", "linter", "static-analysis"]},
+          "scope": {"type": "string", "minLength": 1},
+          "status": {"enum": ["PASSED", "FAILED"]},
+          "duration": {"type": "number", "minimum": 0},
+          "commands": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "ignore_statements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "line", "text"],
+              "properties": {
+                "path": {"type": "string", "minLength": 1},
+                "line": {"type": "integer", "minimum": 1},
+                "text": {"type": "string", "minLength": 1}
+              }
+            }
+          },
+          "raw_log_path": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

@@ -553,9 +553,9 @@ func (s CredentialSelection) Validate() error {
 	}
 	switch s.Material.Projection {
 	case CredentialProjectionCertificateDER, CredentialProjectionPublicKeySPKI,
-		CredentialProjectionPrivateKeyPKCS8:
+		CredentialProjectionPrivateKeyPKCS8, CredentialProjectionBundle:
 		return nil
-	case CredentialProjectionBundle, CredentialProjectionChainDER,
+	case CredentialProjectionChainDER,
 		CredentialProjectionTrustDER, CredentialProjectionCRLDER,
 		CredentialProjectionSignerReference, CredentialProjectionProviderEncoding,
 		CredentialProjectionLiteralReference:

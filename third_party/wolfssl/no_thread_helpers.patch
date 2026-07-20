@@ -1,0 +1,13 @@
+diff --git a/wolfcrypt/src/wc_port.c b/wolfcrypt/src/wc_port.c
+index 6bb72862f..d07527612 100644
+--- a/wolfcrypt/src/wc_port.c
++++ b/wolfcrypt/src/wc_port.c
+@@ -4662,7 +4662,7 @@ void nucleus_free(void* ptr, void* heap, int type)
+ #endif
+ 
+ 
+-#ifndef SINGLE_THREADED
++#if !defined(SINGLE_THREADED) && !defined(WOLFSSL_NO_THREAD_HELPERS)
+ 
+ /* Environment-specific multi-thread implementation check  */
+ #if defined(__WATCOMC__)

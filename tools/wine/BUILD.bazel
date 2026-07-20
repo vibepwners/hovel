@@ -1,0 +1,21 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "wine_run",
+    srcs = ["wine_run.py"],
+    main = "wine_run.py",
+    python_version = "PY3",
+)
+
+py_test(
+    name = "wine_run_test",
+    size = "small",
+    srcs = [
+        "wine_run.py",
+        "wine_run_test.py",
+    ],
+    main = "wine_run_test.py",
+    python_version = "PY3",
+)

@@ -10,6 +10,8 @@ go_library(
     srcs = [
         "lp.go",
         "main.go",
+        "mesh.go",
+        "stamp.go",
     ],
     importpath = "github.com/vibepwners/hovel/payloads/squatter/provider",
     visibility = ["//visibility:private"],
@@ -40,7 +42,10 @@ go_binary(
 
 go_test(
     name = "provider_test",
-    srcs = ["main_test.go"],
+    srcs = [
+        "main_test.go",
+        "provider_coverage_test.go",
+    ],
     data = ["//modules/squatter/windows:squatter_x86_exe"],
     embed = [":provider_lib"],
     deps = [

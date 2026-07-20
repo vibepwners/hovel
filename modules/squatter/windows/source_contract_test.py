@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -14,6 +16,10 @@ REQUIRED_FILES = [
     "runtime/channel.c",
     "runtime/module.c",
     "runtime/session.c",
+    "security/pki_config.c",
+    "security/pki_config.h",
+    "security/tls.c",
+    "security/tls.h",
     "sqlog/sqlog.c",
     "wire/control.proto",
     "wire/control_codec.c",
@@ -56,18 +62,44 @@ class SourceContractTest(unittest.TestCase):
         self.assertIn("sq_channel_from_handle", text)
         self.assertIn("sq_session_create", text)
 
+    def test_payload_tls_is_wolfssl_backed_and_fail_closed(self):
+        root = source_root()
+        pki = (root / "security/pki_config.c").read_text()
+        tls = (root / "security/tls.c").read_text()
+        channel = (root / "runtime/channel.c").read_text()
+        entry = (root / "squatter.c").read_text()
+
+        self.assertIn("'S', 'Q', 'P', 'K', 'I', '0', '0', '1'", pki)
+        self.assertIn("wolfTLSv1_3_server_method", tls)
+        self.assertIn("wolfSSL_CTX_use_certificate_chain_buffer_format", tls)
+        self.assertIn("wolfSSL_CTX_use_PrivateKey_buffer", tls)
+        self.assertIn("validate_stamp_digests", tls)
+        self.assertIn("validate_manifest_layout", tls)
+        self.assertIn("sq_tls_session_create", channel)
+        self.assertIn("SO_RCVTIMEO", tls)
+        self.assertIn("SQ_TLS_HANDSHAKE_TIMEOUT_MS", tls)
+        self.assertIn("WOLFSSL_ECC_X25519", tls)
+        self.assertIn("WOLFSSL_ECC_SECP521R1", tls)
+        self.assertIn("stamped wolfSSL configuration failed validation", entry)
+
+        combined = "\n".join(path.read_text().lower() for path in root.rglob("*.[ch]"))
+        for forbidden in ("schannel", "acquirecredentialshandle", "secur32.dll"):
+            self.assertNotIn(forbidden, combined)
+
     def test_mux_and_modules_are_wired(self):
         text = (source_root() / "squatter.c").read_text()
-        for module in ["cmd", "echo", "getfile", "putfile"]:
-            with self.subTest(module=module):
-                self.assertIn(f'"{module}"', text)
+        registered = sorted(
+            re.findall(r'\{"([a-z][a-z0-9._]+)",\s*sq_[a-z0-9_]+_module_main\}', text)
+        )
+        declared = json.loads(Path(sys.argv[2]).read_text())
+        self.assertEqual(registered, sorted(declared))
         self.assertIn("sq_channel_from_socket", text)
         self.assertIn("sq_session_create", text)
 
 
 def source_root():
-    if len(sys.argv) != 2:
-        raise AssertionError("expected squatter.c argument")
+    if len(sys.argv) != 3:
+        raise AssertionError("expected squatter.c and module surface arguments")
     return Path(sys.argv[1]).parent
 
 

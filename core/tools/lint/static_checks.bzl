@@ -20,7 +20,7 @@ def _squatter_format_check_impl(ctx):
     ctx.actions.run(
         executable = ctx.executable._runner,
         arguments = [args],
-        inputs = ctx.files.srcs + [ctx.file._clang_format_config],
+        inputs = ctx.files.srcs + [ctx.file.clang_format_config],
         outputs = [out],
         tools = _tool_files(ctx, ["_runner"]),
         mnemonic = "SquatterFormatCheck",
@@ -32,9 +32,9 @@ squatter_format_check = rule(
     implementation = _squatter_format_check_impl,
     attrs = {
         "srcs": attr.label_list(allow_files = [".c", ".h"], mandatory = True),
-        "_clang_format_config": attr.label(
-            default = "//:.clang-format",
+        "clang_format_config": attr.label(
             allow_single_file = True,
+            mandatory = True,
         ),
         "_runner": attr.label(
             default = "//tools/lint:run_squatter_format_check",

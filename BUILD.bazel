@@ -8,6 +8,7 @@ nogo(
 )
 
 exports_files([
+    ".clang-format",
     ".github/workflows/ci.yml",
     ".github/workflows/pages.yml",
     "LICENSE",
@@ -93,16 +94,20 @@ filegroup(
 test_suite(
     name = "modules_test",
     tests = [
+        "//modules/docker/squatter-wine:functional_test_test",
         "//modules/picblobs/provider:provider_test",
         "//modules/squatter/client/shell:shell_test",
         "//modules/squatter/client/smbpipe:smbpipe_test",
         "//modules/squatter/client/wire:wire_test",
+        "//modules/squatter/client/xfer:xfer_test",
         "//modules/squatter/provider:provider_test",
+        "//modules/squatter/tools:coverage_check_test",
         "//modules/squatter/windows:source_contract_test",
         "//modules/squatter/windows:squatter_x86_exe_pe_test",
         "//modules/tools:check_in_repo_modules_test",
         "//modules/tools:package_examples_test",
         "//modules/tools:workspace_module_install_test",
+        "//tools/wine:wine_run_test",
     ],
 )
 
@@ -166,10 +171,13 @@ test_suite(
         "//docs/demo:standard_verification_test",
         "//docs/site:daemon_rpc_openapi_test",
         "//docs/site:provider_docs_parity_test",
+        "//docs/site:report_ui_test",
         "//docs/site:site_smoke_test",
         "//docs/tools/demo:materialize_demo_outputs_test",
         "//docs/tools/demo/mcpagent:mcpagent_test",
+        "//docs/tools/docs:materialize_site_test",
         "//docs/tools/docs:pages_workflow_test",
+        "//tools/testreport:lintreport_test",
         "//tools/testreport:testreport_test",
     ],
 )

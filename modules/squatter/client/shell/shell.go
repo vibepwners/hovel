@@ -16,10 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vibepwners/hovel/payloads/squatter/client/wire"
-	"github.com/vibepwners/hovel/payloads/squatter/client/xfer"
 	prompt "github.com/c-bata/go-prompt"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/vibepwners/hovel/payloads/squatter/client/wire"
+	"github.com/vibepwners/hovel/payloads/squatter/client/xfer"
 )
 
 type Client struct {

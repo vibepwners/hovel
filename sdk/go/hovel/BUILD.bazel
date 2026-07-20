@@ -9,6 +9,7 @@ filegroup(
 filegroup(
     name = "protocol_doc_sources",
     srcs = [
+        "credential_bundle.go",
         "credential_delivery.go",
         "credential_provider.go",
         "mesh.go",
@@ -22,6 +23,7 @@ go_library(
     srcs = [
         "agent.go",
         "context.go",
+        "credential_bundle.go",
         "credential_delivery.go",
         "credential_provider.go",
         "framing.go",
@@ -55,6 +57,7 @@ go_test(
     name = "hovel_test",
     size = "small",
     srcs = [
+        "credential_bundle_test.go",
         "mesh_bridge_test.go",
         "sdk_test.go",
     ],

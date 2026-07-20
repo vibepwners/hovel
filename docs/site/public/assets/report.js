@@ -3,8 +3,11 @@
     report: null,
     filtered: [],
     selected: null,
-    tab: "log",
+    detailTab: "log",
+    view: "overview",
   };
+
+  const reportViews = ["overview", "linters", "coverage", "suites", "jobs", "targets"];
 
   const app = document.getElementById("report-app");
 
@@ -37,48 +40,339 @@
 
   function render() {
     const report = state.report;
+    const coverageCount = (report.coverage || []).length;
+    const linterCount = (report.linters || []).length;
+    const suiteCount = Object.keys(report.totals.suites || {}).length;
+    const jobCount = (report.jobs || []).length;
     app.innerHTML = `
-      <section class="summary-grid">
-        ${metric("Targets", report.totals.targets)}
-        ${metric("Cases", report.totals.cases)}
-        ${metric("Failed", report.totals.statuses.FAILED || 0)}
-        ${metric("Passed", report.totals.statuses.PASSED || 0)}
-        ${metric("Suites", Object.keys(report.totals.suites).length)}
-        ${metric("Duration", `${Number(report.totals.duration || 0).toFixed(2)}s`)}
+      <nav class="report-view-tabs" role="tablist" aria-label="Test report sections">
+        ${viewTab("overview", "Overview")}
+        ${viewTab("linters", "Linters", linterCount)}
+        ${viewTab("coverage", "Coverage", coverageCount)}
+        ${viewTab("suites", "Suites", suiteCount)}
+        ${viewTab("jobs", "Jobs", jobCount)}
+        ${viewTab("targets", "Targets", report.totals.targets)}
+      </nav>
+      <section class="report-panel" id="report-panel-linters" role="tabpanel" aria-labelledby="report-tab-linters" data-report-panel="linters">
+        ${renderLinters(report)}
       </section>
-      ${renderSuiteBreakdown(report)}
-      <section class="report-controls">
-        <div class="control">
-          <label for="query">Search</label>
-          <input id="query" type="search" placeholder="//sdk/rust or log text">
+      <section class="report-panel overview-panel" id="report-panel-overview" role="tabpanel" aria-labelledby="report-tab-overview" data-report-panel="overview">
+        <div class="panel-intro">
+          <div>
+            <span class="panel-kicker">Latest evidence</span>
+            <h2>Run at a glance</h2>
+            <p>Repository-wide results from the attached report-producing workflow.</p>
+          </div>
+          ${runHealth(report)}
         </div>
-        <div class="control">
-          <label for="status">Status</label>
-          <select id="status">${options(["all"].concat(Object.keys(report.totals.statuses)))}</select>
-        </div>
-        <div class="control">
-          <label for="suite">Suite</label>
-          <select id="suite">${options(["all"].concat(Object.keys(report.totals.suites)))}</select>
-        </div>
-        <div class="control">
-          <label for="language">Language</label>
-          <select id="language">${options(["all"].concat(Object.keys(report.totals.languages)))}</select>
-        </div>
+        <section class="summary-grid" aria-label="Test summary">
+          ${metric("Targets", report.totals.targets)}
+          ${metric("Cases", report.totals.cases)}
+          ${metric("Failed", report.totals.statuses.FAILED || 0)}
+          ${metric("Passed", report.totals.statuses.PASSED || 0)}
+          ${metric("Suites", suiteCount)}
+          ${metric("Duration", `${Number(report.totals.duration || 0).toFixed(2)}s`)}
+        </section>
       </section>
-      <section class="report-grid">
-        <div class="target-list" id="target-list"></div>
-        <article class="target-detail" id="target-detail"></article>
+      <section class="report-panel" id="report-panel-coverage" role="tabpanel" aria-labelledby="report-tab-coverage" data-report-panel="coverage" hidden>
+        ${renderCoverage(report)}
+      </section>
+      <section class="report-panel" id="report-panel-suites" role="tabpanel" aria-labelledby="report-tab-suites" data-report-panel="suites" hidden>
+        ${renderSuiteBreakdown(report)}
+      </section>
+      <section class="report-panel" id="report-panel-jobs" role="tabpanel" aria-labelledby="report-tab-jobs" data-report-panel="jobs" hidden>
+        ${renderJobs(report)}
+      </section>
+      <section class="report-panel targets-panel" id="report-panel-targets" role="tabpanel" aria-labelledby="report-tab-targets" data-report-panel="targets" hidden>
+        <div class="section-heading target-section-heading">
+          <div>
+            <span class="panel-kicker">Bazel evidence</span>
+            <h2>Test targets</h2>
+            <p>Filter targets, then inspect their complete log, cases, XML, and outputs.</p>
+          </div>
+          <span class="result-count">${Number(report.totals.targets || 0)} targets</span>
+        </div>
+        <section class="target-workspace">
+          <section class="report-controls">
+            <div class="control">
+              <label for="query">Search</label>
+              <input id="query" type="search" placeholder="//sdk/rust or log text">
+            </div>
+            <div class="control">
+              <label for="status">Status</label>
+              <select id="status">${options(["all"].concat(Object.keys(report.totals.statuses)))}</select>
+            </div>
+            <div class="control">
+              <label for="suite">Suite</label>
+              <select id="suite">${options(["all"].concat(Object.keys(report.totals.suites)))}</select>
+            </div>
+            <div class="control">
+              <label for="language">Language</label>
+              <select id="language">${options(["all"].concat(Object.keys(report.totals.languages)))}</select>
+            </div>
+          </section>
+          <section class="report-grid">
+            <div class="target-list" id="target-list"></div>
+            <article class="target-detail" id="target-detail"></article>
+          </section>
+        </section>
       </section>
     `;
+    bindViewTabs();
     ["query", "status", "suite", "language"].forEach((id) => {
       document.getElementById(id).addEventListener("input", applyFilters);
     });
     renderTargets();
     renderDetail();
+    hydrateLinterLogs();
+    hydrateJobLogs();
+    activateView(state.view);
+  }
+
+  function viewTab(id, label, count) {
+    const badge = count === undefined ? "" : `<span class="report-tab-count">${escapeHtml(String(count))}</span>`;
+    return `<button class="report-view-tab" id="report-tab-${id}" type="button" role="tab" aria-controls="report-panel-${id}" aria-selected="${state.view === id}" data-report-view="${id}"><span>${escapeHtml(label)}</span>${badge}</button>`;
+  }
+
+  function bindViewTabs() {
+    const tabs = Array.from(document.querySelectorAll("[data-report-view]"));
+    tabs.forEach((button, index) => {
+      button.addEventListener("click", () => {
+        activateView(button.getAttribute("data-report-view"));
+        updateHash({ view: state.view });
+      });
+      button.addEventListener("keydown", (event) => {
+        let next = index;
+        if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+        else if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = tabs.length - 1;
+        else return;
+        event.preventDefault();
+        tabs[next].focus();
+        tabs[next].click();
+      });
+    });
+  }
+
+  function activateView(view) {
+    state.view = reportViews.includes(view) ? view : "overview";
+    document.querySelectorAll("[data-report-view]").forEach((button) => {
+      const selected = button.getAttribute("data-report-view") === state.view;
+      button.setAttribute("aria-selected", String(selected));
+      button.setAttribute("tabindex", selected ? "0" : "-1");
+    });
+    document.querySelectorAll("[data-report-panel]").forEach((panel) => {
+      panel.hidden = panel.getAttribute("data-report-panel") !== state.view;
+    });
+  }
+
+  function runHealth(report) {
+    const statuses = report.totals.statuses || {};
+    const failing = Number(statuses.FAILED || 0) + Number(statuses.ERROR || 0) + Number(statuses.TIMEOUT || 0);
+    const flaky = Number(statuses.FLAKY || 0);
+    const status = failing ? "FAILED" : flaky ? "FLAKY" : "PASSED";
+    const label = failing ? `${failing} failing targets` : flaky ? `${flaky} flaky targets` : "All reported targets are healthy";
+    return `<div class="run-health run-health-${status.toLowerCase()}">${statusBadge(status)}<span>${label}</span></div>`;
   }
 
   function metric(label, value) {
     return `<div class="metric"><span class="metric-label">${escapeHtml(label)}</span><span class="metric-value">${escapeHtml(String(value))}</span></div>`;
+  }
+
+  function renderLinters(report) {
+    const linters = report.linters || [];
+    if (!linters.length) {
+      return `<p class="empty-state">No linter evidence was attached to this report. Run <code>task lint:report</code> to create it.</p>`;
+    }
+    const passed = linters.filter((tool) => tool.status === "PASSED").length;
+    const failed = linters.filter((tool) => tool.status === "FAILED").length;
+    const ignoreCount = linters.reduce((total, tool) => total + (tool.ignore_statements || []).length, 0);
+    return `
+      <section class="linter-section">
+        <div class="section-heading">
+          <div>
+            <span class="panel-kicker">Source quality evidence</span>
+            <h2>Linters and static analysis</h2>
+            <p>Every wired tool, its detected source-level ignore statements, and complete Task-backed output.</p>
+          </div>
+          <span class="result-count">${linters.length} tools</span>
+        </div>
+        <section class="linter-summary" aria-label="Linter summary">
+          ${metric("Tools", linters.length)}
+          ${metric("Passed", passed)}
+          ${metric("Failed", failed)}
+          ${metric("Source ignores", ignoreCount)}
+        </section>
+        <div class="linter-list">
+          ${linters.map((tool, index) => renderLinter(tool, index === 0)).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderLinter(tool, open) {
+    const ignores = tool.ignore_statements || [];
+    const commands = tool.commands || [];
+    return `
+      <details class="linter-card" ${open ? "open" : ""}>
+        <summary>
+          <span class="linter-identity">${statusBadge(tool.status)} <strong>${escapeHtml(tool.name)}</strong><span class="linter-kind">${escapeHtml(tool.kind)}</span></span>
+          <span class="linter-scope">${escapeHtml(tool.scope)}</span>
+          <span class="linter-ignore-count"><strong>${ignores.length}</strong> source ${ignores.length === 1 ? "ignore" : "ignores"}</span>
+          <span class="linter-duration">${Number(tool.duration || 0).toFixed(2)}s</span>
+        </summary>
+        <div class="linter-body">
+          <div class="linter-commands">
+            <h3>Task-backed invocation</h3>
+            ${commands.map((command) => `<code>${escapeHtml(command)}</code>`).join("")}
+          </div>
+          ${renderLinterIgnores(ignores)}
+          <div class="linter-log-heading">
+            <h3>Tool log</h3>
+            ${tool.log_path ? `<a href="${escapeHtml(tool.log_path)}" target="_blank" rel="noopener">open complete log</a>` : ""}
+          </div>
+          ${tool.log_path
+            ? `<div class="linter-log" data-linter-log="${escapeHtml(tool.log_path)}"><p class="empty-state">Loading ${escapeHtml(tool.log_path)}...</p></div>`
+            : `<p class="empty-state">No tool log was captured.</p>`}
+        </div>
+      </details>
+    `;
+  }
+
+  function renderLinterIgnores(ignores) {
+    if (!ignores.length) {
+      return `<div class="linter-ignore-empty"><h3>Source-level ignores</h3><p>None detected.</p></div>`;
+    }
+    return `
+      <details class="linter-ignores">
+        <summary><span>Source-level ignores</span><span>${ignores.length} detected</span></summary>
+        <ol>
+          ${ignores.map((ignore) => `<li><code>${escapeHtml(ignore.path)}:${Number(ignore.line)}</code><span>${escapeHtml(ignore.text)}</span></li>`).join("")}
+        </ol>
+      </details>
+    `;
+  }
+
+  function hydrateLinterLogs() {
+    document.querySelectorAll("[data-linter-log]").forEach((container) => {
+      const path = container.getAttribute("data-linter-log");
+      fetch(path)
+        .then((response) => response.ok ? response.text() : Promise.reject(new Error(response.statusText)))
+        .then((contents) => {
+          container.innerHTML = `<pre class="log-frame linter-log-frame">${escapeHtml(contents)}</pre>`;
+        })
+        .catch((error) => {
+          container.innerHTML = `<p class="empty-state">Could not load ${escapeHtml(path)}: ${escapeHtml(String(error))}</p>`;
+        });
+    });
+  }
+
+  function renderCoverage(report) {
+    const coverage = report.coverage || [];
+    if (!coverage.length) {
+      return `<p class="empty-state">No coverage evidence was attached to this report.</p>`;
+    }
+    return `
+      <section class="coverage-section">
+        <div class="section-heading">
+          <div>
+            <span class="panel-kicker">Quality thresholds</span>
+            <h2>Test coverage</h2>
+            <p>Ratchet-backed line metrics and the real-payload Squatter feature matrix.</p>
+          </div>
+          <span class="result-count">${coverage.length} metrics</span>
+        </div>
+        <div class="coverage-grid">
+          ${coverage.map((item) => {
+            const percentage = Math.max(0, Math.min(100, Number(item.percentage || 0)));
+            const source = item.source_path
+              ? `<a href="${escapeHtml(item.source_path)}">source evidence</a>`
+              : `<span>source unavailable</span>`;
+            return `
+              <article class="coverage-card">
+                <div class="coverage-heading">
+                  <span class="coverage-scope">${escapeHtml(item.scope)}</span>
+                  ${statusBadge(item.status)}
+                </div>
+                <h3>${escapeHtml(item.name)}</h3>
+                <strong>${percentage.toFixed(2)}%</strong>
+                <div class="coverage-track" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percentage}">
+                  <span style="width: ${percentage}%"></span>
+                </div>
+                <p>${Number(item.covered || 0)} / ${Number(item.total || 0)} covered · minimum ${Number(item.minimum || 0).toFixed(2)}% · ${source}</p>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderJobs(report) {
+    const jobs = report.jobs || [];
+    if (!jobs.length) {
+      return "";
+    }
+    return `
+      <section class="jobs-section">
+        <div class="section-heading">
+          <div>
+            <span class="panel-kicker">Workflow evidence</span>
+            <h2>Execution jobs</h2>
+            <p>End-to-end workflow evidence with complete console logs for review.</p>
+          </div>
+          <span class="result-count">${jobs.length} ${jobs.length === 1 ? "job" : "jobs"}</span>
+        </div>
+        <div class="job-list">
+          ${jobs.map((job) => `
+            <details class="job-card" ${job.category === "e2e" ? "open" : ""}>
+              <summary>
+                <span>${statusBadge(job.status)} <strong>${escapeHtml(job.name)}</strong></span>
+                <span class="job-meta">${escapeHtml(job.category)} · ${Number(job.duration || 0).toFixed(2)}s</span>
+              </summary>
+              ${job.description ? `<p>${escapeHtml(job.description)}</p>` : ""}
+              ${job.log_path
+                ? `<div class="job-log-heading"><span>Reviewer-oriented evidence</span><a href="${escapeHtml(job.log_path)}" target="_blank" rel="noopener">open complete log</a></div><div class="job-log" data-job-log="${escapeHtml(job.log_path)}"><p class="empty-state">Loading ${escapeHtml(job.log_path)}...</p></div>`
+                : `<p class="empty-state">No complete log was captured for this job.</p>`}
+            </details>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function hydrateJobLogs() {
+    document.querySelectorAll("[data-job-log]").forEach((container) => {
+      const path = container.getAttribute("data-job-log");
+      fetch(path)
+        .then((response) => response.ok ? response.text() : Promise.reject(new Error(response.statusText)))
+        .then((contents) => {
+          renderJobLog(container, contents);
+        })
+        .catch((error) => {
+          container.innerHTML = `<p class="empty-state">Could not load ${escapeHtml(path)}: ${escapeHtml(String(error))}</p>`;
+        });
+    });
+  }
+
+  function renderJobLog(container, contents) {
+    const marker = "\nRAW TRANSCRIPT APPENDICES\n";
+    const boundary = contents.indexOf(marker);
+    if (boundary < 0) {
+      container.innerHTML = `<pre class="log-frame job-review-summary">${escapeHtml(contents)}</pre>`;
+      return;
+    }
+    const summary = contents.slice(0, boundary).trimEnd();
+    const transcripts = contents.slice(boundary + 1).trimEnd();
+    const transcriptLines = transcripts ? transcripts.split("\n").length : 0;
+    container.innerHTML = `
+      <pre class="log-frame job-review-summary">${escapeHtml(summary)}</pre>
+      <details class="job-raw-transcripts">
+        <summary><span>Raw transcript appendices</span><span>${transcriptLines} lines · expand for command-level output</span></summary>
+        <pre class="log-frame job-raw-log">${escapeHtml(transcripts)}</pre>
+      </details>
+    `;
   }
 
   function renderSuiteBreakdown(report) {
@@ -103,7 +397,12 @@
     return `
       <section class="suite-breakdown">
         <div class="section-heading">
-          <h2>Suites</h2>
+          <div>
+            <span class="panel-kicker">Repository slices</span>
+            <h2>Suites</h2>
+            <p>Bazel target and case totals grouped by repository slice.</p>
+          </div>
+          <span class="result-count">${Object.keys(breakdown).length} suites</span>
         </div>
         <table>
           <thead><tr><th>Suite</th><th>Targets</th><th>Cases</th><th>Failing</th><th>Passed</th><th>Duration</th></tr></thead>
@@ -166,7 +465,8 @@
       button.addEventListener("click", () => {
         const label = button.getAttribute("data-label");
         state.selected = state.report.targets.find((target) => target.label === label);
-        window.location.hash = `target=${encodeURIComponent(label)}`;
+        activateView("targets");
+        updateHash({ view: "targets", target: label });
         renderTargets();
         renderDetail();
       });
@@ -187,34 +487,34 @@
       </div>
       <p class="detail-meta">${escapeHtml(target.suite)} · ${escapeHtml(target.language)} · attempt ${target.attempts} · run ${target.run} · shard ${target.shard}</p>
       <p><code>task test -- ${escapeHtml(target.label)}</code></p>
-      <div class="tabs">
-        ${tab("log", "Log")}
-        ${tab("cases", `Cases (${target.cases.length})`)}
-        ${tab("xml", "XML")}
-        ${tab("outputs", `Outputs (${target.outputs.length})`)}
+      <div class="tabs" role="tablist" aria-label="Target evidence">
+        ${detailTab("log", "Log")}
+        ${detailTab("cases", `Cases (${target.cases.length})`)}
+        ${detailTab("xml", "XML")}
+        ${detailTab("outputs", `Outputs (${target.outputs.length})`)}
       </div>
-      <div id="tab-body"></div>
+      <div id="tab-body" role="tabpanel"></div>
     `;
     detail.querySelectorAll(".tab").forEach((button) => {
       button.addEventListener("click", () => {
-        state.tab = button.getAttribute("data-tab");
+        state.detailTab = button.getAttribute("data-tab");
         renderDetail();
       });
     });
     renderTabBody(target);
   }
 
-  function tab(id, label) {
-    return `<button class="tab" data-tab="${id}" aria-selected="${state.tab === id}">${escapeHtml(label)}</button>`;
+  function detailTab(id, label) {
+    return `<button class="tab" type="button" role="tab" data-tab="${id}" aria-selected="${state.detailTab === id}">${escapeHtml(label)}</button>`;
   }
 
   function renderTabBody(target) {
     const body = document.getElementById("tab-body");
-    if (state.tab === "cases") {
+    if (state.detailTab === "cases") {
       body.innerHTML = renderCases(target);
-    } else if (state.tab === "xml") {
+    } else if (state.detailTab === "xml") {
       renderTextFile(body, target.xml_path, "No XML file was captured for this target.");
-    } else if (state.tab === "outputs") {
+    } else if (state.detailTab === "outputs") {
       body.innerHTML = target.outputs.length
         ? `<ul>${target.outputs.map((item) => `<li><code>${escapeHtml(item)}</code></li>`).join("")}</ul>`
         : `<p class="empty-state">No undeclared outputs were captured.</p>`;
@@ -252,15 +552,31 @@
   }
 
   function selectFromHash() {
-    const match = window.location.hash.match(/target=([^&]+)/);
-    if (!match || !state.report) return;
-    const label = decodeURIComponent(match[1]);
-    const target = state.report.targets.find((item) => item.label === label);
+    if (!state.report) return;
+    const parameters = hashParameters();
+    const label = parameters.get("target");
+    const target = label ? state.report.targets.find((item) => item.label === label) : null;
     if (target) {
       state.selected = target;
       renderTargets();
       renderDetail();
     }
+    const requestedView = parameters.get("view");
+    activateView(reportViews.includes(requestedView) ? requestedView : target ? "targets" : "overview");
+  }
+
+  function hashParameters() {
+    return new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  }
+
+  function updateHash(values) {
+    const parameters = hashParameters();
+    Object.entries(values).forEach(([key, value]) => {
+      if (value) parameters.set(key, value);
+      else parameters.delete(key);
+    });
+    const hash = parameters.toString();
+    window.history.replaceState(null, "", hash ? `#${hash}` : window.location.pathname + window.location.search);
   }
 
   function statusBadge(status) {

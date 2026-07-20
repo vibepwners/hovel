@@ -30,6 +30,28 @@ task bazel:build -- //modules/squatter/client/cmd/squatterctl:squatterctl</code>
           package selects the i686 PE as <code>squatter.exe</code>.
         </p>
 
+        <h2>Payload TLS and wolfSSL</h2>
+        <p>
+          TCP-bind payload TLS is implemented by a pinned wolfSSL 5.9.2 static
+          dependency, not Schannel, Secur32, Crypt32, CNG, or the Windows
+          certificate store. The repository profile enables TLS 1.3 and the
+          algorithms required by Hovel's portable X.509 bundles while supplying
+          Squatter's no-CRT heap, time, entropy, and socket boundaries.
+        </p>
+        <p>
+          The wolfSSL portion is compiled against the Windows NT 4.0 API
+          surface for both i686 and x86_64. That keeps TLS from raising the
+          payload's Windows API floor. The complete payload still advertises
+          Windows 7 as its tested provider floor until older Windows releases
+          join the automated compatibility matrix.
+        </p>
+        <p>
+          wolfSSL is dual-licensed under GPLv3 or a commercial license. The
+          static dependency is marked restricted in the build graph;
+          distributors must satisfy GPLv3 or obtain an appropriate commercial
+          wolfSSL license.
+        </p>
+
         <h2>Package Artifacts</h2>
         <p>
           Module release packaging first stages native launchers and the payload

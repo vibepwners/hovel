@@ -146,9 +146,9 @@ func (Provider) Info() hovel.Info {
 		Name:        payloadName,
 		Version:     version,
 		Type:        hovel.TypePayloadProvider,
-		Summary:     "Build Squatter Windows payload artifacts.",
-		Description: "Core Hovel payload provider for Squatter.",
-		Tags:        []string{"payload_provider", "squatter", "windows", "lab", "dangerous"},
+		Summary:     "Build Squatter payloads and open destination-scoped Mesh streams.",
+		Description: "Core Hovel payload and Mesh provider for Squatter, including PKI-backed TLS streams.",
+		Tags:        []string{"payload_provider", "mesh", "tls", "squatter", "windows", "lab", "dangerous"},
 	}
 }
 
@@ -1406,6 +1406,13 @@ func normalizeNamedPipe(pipe string) string {
 }
 
 func loadPayloadBinary() ([]byte, error) {
+	if override := strings.TrimSpace(os.Getenv("HOVEL_SQUATTER_EXE")); override != "" {
+		body, err := os.ReadFile(override)
+		if err != nil {
+			return nil, fmt.Errorf("read HOVEL_SQUATTER_EXE payload override: %w", err)
+		}
+		return body, nil
+	}
 	exe := ""
 	if path, err := os.Executable(); err == nil {
 		exe = path

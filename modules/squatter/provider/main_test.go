@@ -3,12 +3,23 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -53,6 +64,627 @@ func TestProviderReportsSquatterPayloads(t *testing.T) {
 			t.Fatalf("unexpected session owner: %#v", payload.Session)
 		}
 	}
+}
+
+func TestProviderMeshTLSStreamPassesThroughToPayload(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	bundle, root := testSquatterTLSBundle(t, now)
+	defer bundle.Clear()
+	serverConfig, err := bundle.TLSServerConfigAt(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestListener(t, listener)
+	payloadResult := make(chan error, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			payloadResult <- acceptErr
+			return
+		}
+		defer conn.Close()
+		secure := tls.Server(conn, serverConfig)
+		if handshakeErr := secure.Handshake(); handshakeErr != nil {
+			payloadResult <- handshakeErr
+			return
+		}
+		kind, streamID, payload, readErr := wire.ReadFrame(bufio.NewReader(secure))
+		if readErr != nil {
+			payloadResult <- readErr
+			return
+		}
+		if kind != wire.KindData || streamID != 7 || string(payload) != "mesh-tls" {
+			payloadResult <- fmt.Errorf(
+				"payload TLS Squatter frame = kind %d stream %d payload %q",
+				kind,
+				streamID,
+				payload,
+			)
+			return
+		}
+		payloadResult <- wire.WriteFrame(secure, wire.KindData, streamID, []byte("mesh-tls-ok"))
+	}()
+
+	provider := newProvider()
+	rpc := hoveltest.NewRPCConn(t, provider)
+	defer rpc.Close()
+	var descriptor hovel.MeshDescriptor
+	rpc.Call("mesh.describe", map[string]any{}, &descriptor)
+	if descriptor.CredentialDelivery == nil ||
+		len(descriptor.CredentialDelivery.Slots) != 1 ||
+		descriptor.CredentialDelivery.Slots[0].Name != payloadTLSCredentialSlot ||
+		!slices.Equal(
+			descriptor.CredentialDelivery.Capabilities,
+			[]hovel.CredentialDeliveryCapability{hovel.CredentialDeliveryStampStandard},
+		) {
+		t.Fatalf("mesh descriptor credential delivery = %#v", descriptor.CredentialDelivery)
+	}
+	if !slices.Contains(descriptor.Capabilities, "stream.squatter+tls") ||
+		descriptor.Attributes["tlsTermination"] != "payload" ||
+		descriptor.Attributes["tlsLibrary"] != "wolfSSL" {
+		t.Fatalf("mesh descriptor = %#v", descriptor)
+	}
+	topology, err := provider.MeshTopology(hovel.MeshTopologyRequest{IncludeRoutes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if topology.Root != meshRootNodeID || len(topology.Nodes) != 1 ||
+		len(topology.Links) != 0 || len(topology.Routes) != 0 {
+		t.Fatalf("mesh topology = %#v", topology)
+	}
+	if _, err := provider.MeshTopology(hovel.MeshTopologyRequest{Root: "unknown"}); err == nil {
+		t.Fatal("MeshTopology() accepted an unknown root")
+	}
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	endpoint := provider.rememberMeshEndpoint(tcpBindOptions{
+		Host: "127.0.0.1", Port: port, Timeout: time.Second,
+	}, "ready")
+	route := meshRoute(endpoint)
+	var session hovel.SessionRef
+	rpc.Call("mesh.open_stream", hovel.MeshStreamRequest{
+		RunID:    "mesh-run-1",
+		NodeID:   endpoint.NodeID,
+		Route:    &route,
+		Protocol: meshProtocolTLS,
+		Config:   map[string]any{"session.connect_ms": "1000"},
+	}, &session)
+	for _, capability := range []string{"tls", "tls.payload-terminated", "tls.wolfssl"} {
+		if !slices.Contains(session.Capabilities, capability) {
+			t.Fatalf("mesh stream session is missing %q: %#v", capability, session)
+		}
+	}
+	if session.Transport != "squatter+tls/tcp-bind" {
+		t.Fatalf("mesh stream session = %#v", session)
+	}
+
+	bridge := &rpcSessionConn{t: t, rpc: rpc, sessionID: session.ID}
+	defer bridge.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	secure := tls.Client(bridge, &tls.Config{
+		RootCAs:    roots,
+		ServerName: "squatter.mesh.test",
+		MinVersion: tls.VersionTLS13,
+	})
+	if err := secure.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := secure.HandshakeContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if secure.ConnectionState().Version != tls.VersionTLS13 {
+		t.Fatalf("negotiated TLS version = %#x", secure.ConnectionState().Version)
+	}
+	if err := wire.WriteFrame(secure, wire.KindData, 7, []byte("mesh-tls")); err != nil {
+		t.Fatal(err)
+	}
+	kind, streamID, payload, err := wire.ReadFrame(bufio.NewReader(secure))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != wire.KindData || streamID != 7 || string(payload) != "mesh-tls-ok" {
+		t.Fatalf("TLS Squatter frame = kind %d stream %d payload %q", kind, streamID, payload)
+	}
+	if err := <-payloadResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProviderMeshTLSStreamCarriesRealWinePayload(t *testing.T) {
+	if os.Getenv("HOVEL_SQUATTER_REAL_E2E") == "" {
+		t.Skip("real Wine payload E2E is run by task modules:wine-docker-test")
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	bundle, root := testSquatterTLSBundle(t, now)
+	defer bundle.Clear()
+	port := reserveRealWinePort(t)
+	provider := newProvider()
+	generated, err := provider.GeneratePayload(hovel.GeneratePayloadRequest{
+		PayloadID: "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Target:    "127.0.0.1",
+		Format:    formatPEEXE,
+		Config: map[string]string{
+			"payload.transport": tcpBind,
+			"payload.bind_port": strconv.Itoa(port),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := base64.StdEncoding.DecodeString(generated.Primary.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamped := stampSquatterPayloadTLS(t, source, bundle)
+	clear(source)
+	defer clear(stamped)
+	startRealWineSquatter(t, stamped, port)
+	silentClient, err := net.DialTimeout(
+		"tcp",
+		net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
+		time.Second,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer silentClient.Close()
+
+	survey, err := provider.RunMeshTask(nil, hovel.MeshTaskRequest{
+		TaskID:          "real-wine-survey",
+		Kind:            hovel.MeshTaskSurvey,
+		NodeID:          meshRootNodeID,
+		DestinationHost: "127.0.0.1",
+		DestinationPort: port,
+		Config:          map[string]any{"session.connect_ms": 3000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if survey.Status != hovel.MeshTaskStatusSucceeded || survey.Route == nil {
+		t.Fatalf("real payload survey = %#v", survey)
+	}
+	topology, err := provider.MeshTopology(hovel.MeshTopologyRequest{IncludeRoutes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topology.Nodes) != 2 || len(topology.Links) != 1 || len(topology.Routes) != 1 {
+		t.Fatalf("real payload topology = %#v", topology)
+	}
+
+	rpc := hoveltest.NewRPCConn(t, provider)
+	defer rpc.Close()
+	var session hovel.SessionRef
+	rpc.Call("mesh.open_stream", hovel.MeshStreamRequest{
+		RunID:    "real-wine-mesh-run",
+		NodeID:   survey.NodeID,
+		Route:    survey.Route,
+		Protocol: meshProtocolTLS,
+		Config:   map[string]any{"session.connect_ms": 3000},
+	}, &session)
+	for _, capability := range []string{"tls", "tls.payload-terminated", "tls.wolfssl"} {
+		if !slices.Contains(session.Capabilities, capability) {
+			t.Fatalf("real Wine Mesh session is missing %q: %#v", capability, session)
+		}
+	}
+	bridge := &rpcSessionConn{t: t, rpc: rpc, sessionID: session.ID}
+	defer bridge.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	secure := tls.Client(bridge, &tls.Config{
+		RootCAs:          roots,
+		ServerName:       "squatter.mesh.test",
+		MinVersion:       tls.VersionTLS13,
+		MaxVersion:       tls.VersionTLS13,
+		CurvePreferences: []tls.CurveID{tls.X25519},
+	})
+	if err := secure.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := secure.HandshakeContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if secure.ConnectionState().Version != tls.VersionTLS13 {
+		t.Fatalf("real payload negotiated TLS version = %#x", secure.ConnectionState().Version)
+	}
+	if err := wire.WriteFrame(secure, wire.KindOpen, 91, wire.EncodeOpen("echo", []string{"mesh-tls-wine"})); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(secure)
+	if payload := readRealWineMeshData(t, reader, 91); string(payload) != "argc=2 echo mesh-tls-wine" {
+		t.Fatalf("real payload TLS argv = %q", payload)
+	}
+	if err := wire.WriteFrame(secure, wire.KindData, 91, []byte("mesh-tls-real-payload-ok")); err != nil {
+		t.Fatal(err)
+	}
+	if payload := readRealWineMeshData(t, reader, 91); string(payload) != "mesh-tls-real-payload-ok" {
+		t.Fatalf("real payload TLS echo = %q", payload)
+	}
+	if err := wire.WriteFrame(secure, wire.KindData, 91, []byte("END")); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		kind, streamID, _, err := wire.ReadFrame(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if kind == wire.KindClose && streamID == 91 {
+			break
+		}
+	}
+	tampered := append([]byte(nil), stamped...)
+	pkiOffset, err := payloadPKIConfigOffset(tampered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered[pkiOffset+payloadPKIBundleOffset] ^= 0xff
+	assertRealWineRejectsTamperedPayload(t, tampered)
+	clear(tampered)
+	tamperedHeader := append([]byte(nil), stamped...)
+	tamperedHeader[pkiOffset+payloadPKIFlagsOffset] ^= 0x01
+	assertRealWineRejectsTamperedPayload(t, tamperedHeader)
+	clear(tamperedHeader)
+	t.Log("E2E workflow=generate-configure-stamp-launch pki=provider-stamped mesh=passthrough tls=wolfSSL/1.3 payload=real-wine tamper=fail-closed frames=Squatter-echo passed")
+}
+
+func reserveRealWinePort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return port
+}
+
+func startRealWineSquatter(t *testing.T, body []byte, port int) {
+	t.Helper()
+	wine := os.Getenv("HOVEL_SQUATTER_WINE")
+	if wine == "" {
+		t.Fatal("HOVEL_SQUATTER_WINE is required")
+	}
+	exe := filepath.Join(t.TempDir(), "squatter-stamped.exe")
+	if err := os.WriteFile(exe, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(wine, exe)
+	runtimeDir := t.TempDir()
+	if err := os.Chmod(runtimeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command.Env = append(os.Environ(),
+		"XDG_RUNTIME_DIR="+runtimeDir,
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+		"WINEDEBUG=-all",
+	)
+	command.Stdout = os.Stderr
+	command.Stderr = os.Stderr
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if command.Process != nil {
+			_ = command.Process.Kill()
+			_, _ = command.Process.Wait()
+		}
+	})
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		connection, err := net.DialTimeout(
+			"tcp",
+			net.JoinHostPort("127.0.0.1", strconv.Itoa(port)),
+			250*time.Millisecond,
+		)
+		if err == nil {
+			_ = connection.Close()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("real Wine payload did not listen on port %d", port)
+}
+
+func assertRealWineRejectsTamperedPayload(t *testing.T, body []byte) {
+	t.Helper()
+	wine := os.Getenv("HOVEL_SQUATTER_WINE")
+	exe := filepath.Join(t.TempDir(), "squatter-tampered.exe")
+	if err := os.WriteFile(exe, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtimeDir := t.TempDir()
+	if err := os.Chmod(runtimeDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(wine, exe)
+	command.Env = append(os.Environ(),
+		"XDG_RUNTIME_DIR="+runtimeDir,
+		"LANG=C.UTF-8",
+		"LC_ALL=C.UTF-8",
+		"WINEDEBUG=-all",
+	)
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("tampered stamped payload started successfully")
+		}
+		if !strings.Contains(output.String(), "stamped wolfSSL configuration failed validation") {
+			t.Fatalf("tampered payload failure did not identify stamped wolfSSL validation:\n%s", output.String())
+		}
+	case <-time.After(15 * time.Second):
+		_ = command.Process.Kill()
+		<-done
+		t.Fatal("tampered stamped payload did not fail closed")
+	}
+}
+
+func newSquatterPayloadTLSStampRequest(
+	t *testing.T,
+	body []byte,
+	bundle hovel.CredentialBundle,
+) (hovel.CredentialStampExecutionRequest, []byte) {
+	t.Helper()
+	encodedBundle, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputDigest := sha256.Sum256(body)
+	bundleDigest := sha256.Sum256(encodedBundle)
+	inputContent, err := hovel.NewCredentialArtifactData(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialBytes, err := hovel.NewCredentialMaterialBytes(encodedBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := hovel.NewResolvedCredentialMaterial(
+		hovel.CredentialProjectionBundle,
+		hovel.CredentialMaterialPrivateBytes,
+		hovel.CredentialEncodingJSON,
+		hex.EncodeToString(bundleDigest[:]),
+		materialBytes,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := hovel.CredentialStampTarget{
+		Kind: hovel.CredentialStampTargetNamedSlot,
+		NamedSlot: &hovel.CredentialNamedSlotTarget{
+			Name: payloadTLSCredentialSlot,
+		},
+	}
+	request := hovel.CredentialStampExecutionRequest{
+		SchemaVersion: hovel.CredentialProviderExecutionSchemaV1,
+		Provider: hovel.CredentialProviderTarget{
+			ModuleID:         payloadName + "@" + version,
+			ProviderID:       payloadName,
+			ProviderVersion:  version,
+			DescriptorSHA256: strings.Repeat("1", sha256.Size*2),
+		},
+		StampID: "squatter-payload-tls-e2e-stamp",
+		Request: hovel.CredentialStampRequest{
+			AssignmentID: bundle.AssignmentID,
+			Capability:   hovel.CredentialDeliveryStampStandard,
+			SlotName:     payloadTLSCredentialSlot,
+			Target:       target,
+			Material: hovel.CredentialStampMaterial{
+				Projection: hovel.CredentialProjectionBundle,
+				Credential: &hovel.CredentialMaterialReference{
+					Projection: hovel.CredentialProjectionBundle,
+					Form:       hovel.CredentialMaterialPrivateBytes,
+					BundleID:   bundle.ID,
+				},
+			},
+			EncodedBytes: uint64(len(encodedBundle)),
+			Credential: hovel.ResolvedCredentialMetadata{
+				BundleVersion:         hovel.CredentialBundleSchemaV1,
+				Purpose:               hovel.CredentialPurposeTLSServer,
+				ConsumerType:          hovel.CredentialConsumerPayload,
+				ProfileID:             "tls-server",
+				CompatibilityTargetID: "portable-x509",
+			},
+		},
+		Input: hovel.CredentialArtifactInput{
+			ID:       "squatter-transport-configured-pe",
+			SHA256:   hex.EncodeToString(inputDigest[:]),
+			Encoding: "binary",
+			Content:  inputContent,
+		},
+		Material: resolved,
+		ExpectedDigests: []hovel.CredentialStampedMaterialDigest{{
+			Projection: hovel.CredentialProjectionBundle,
+			Reference:  bundle.ID,
+			SHA256:     hex.EncodeToString(bundleDigest[:]),
+		}},
+		Scope: hovel.CredentialOperationScope{
+			OperationID: "squatter-payload-stamp-e2e",
+			Target:      "127.0.0.1",
+		},
+	}
+	return request, encodedBundle
+}
+
+func stampSquatterPayloadTLS(
+	t *testing.T,
+	body []byte,
+	bundle hovel.CredentialBundle,
+) []byte {
+	t.Helper()
+	request, encodedBundle := newSquatterPayloadTLSStampRequest(t, body, bundle)
+	defer clear(encodedBundle)
+	result, err := newProvider().StampCredential(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := result.ValidateFor(request); err != nil {
+		t.Fatal(err)
+	}
+	artifact, ok := result.Output.Artifact()
+	if !ok {
+		t.Fatal("payload TLS stamp did not return an artifact")
+	}
+	stamped, ok := artifact.Content.Data()
+	if !ok {
+		t.Fatal("payload TLS stamp artifact did not contain in-memory PE bytes")
+	}
+	return stamped
+}
+
+func readRealWineMeshData(t *testing.T, reader *bufio.Reader, streamID uint64) []byte {
+	t.Helper()
+	for {
+		kind, gotStreamID, payload, err := wire.ReadFrame(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotStreamID != streamID {
+			t.Fatalf("real Wine mesh stream id = %d, want %d", gotStreamID, streamID)
+		}
+		if kind == wire.KindControl {
+			continue
+		}
+		if kind != wire.KindData {
+			t.Fatalf("real Wine mesh frame kind = %d, want DATA", kind)
+		}
+		return payload
+	}
+}
+
+func TestProviderMeshTracksAndRoutesMultipleSquatterNodes(t *testing.T) {
+	first := startMeshEchoEndpoint(t, "first-ok")
+	second := startMeshEchoEndpoint(t, "second-ok")
+	provider := newProvider()
+
+	survey := func(taskID string, listener net.Listener) hovel.MeshTaskResult {
+		t.Helper()
+		result, err := provider.RunMeshTask(nil, hovel.MeshTaskRequest{
+			TaskID:          taskID,
+			Kind:            hovel.MeshTaskSurvey,
+			NodeID:          meshRootNodeID,
+			DestinationHost: "127.0.0.1",
+			DestinationPort: listener.Addr().(*net.TCPAddr).Port,
+			Config:          map[string]any{"session.connect_ms": 1000},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Status != hovel.MeshTaskStatusSucceeded || result.NodeID == meshRootNodeID ||
+			result.Route == nil || !slices.Equal(result.Route.Nodes, []string{meshRootNodeID, result.NodeID}) {
+			t.Fatalf("survey result = %#v", result)
+		}
+		return result
+	}
+
+	firstSurvey := survey("survey-first", first)
+	secondSurvey := survey("survey-second", second)
+	if firstSurvey.NodeID == secondSurvey.NodeID {
+		t.Fatalf("distinct Squatter destinations shared node id %q", firstSurvey.NodeID)
+	}
+
+	topology, err := provider.MeshTopology(hovel.MeshTopologyRequest{
+		Root: meshRootNodeID, IncludeRoutes: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topology.Nodes) != 3 || len(topology.Links) != 2 || len(topology.Routes) != 2 ||
+		topology.Attributes["nodeCount"] != 3 {
+		t.Fatalf("multi-node topology = %#v", topology)
+	}
+	routes := make(map[string]hovel.MeshRoute, len(topology.Routes))
+	for _, route := range topology.Routes {
+		routes[route.Nodes[len(route.Nodes)-1]] = route
+	}
+	secondRoute, ok := routes[secondSurvey.NodeID]
+	if !ok {
+		t.Fatalf("second node route missing from %#v", topology.Routes)
+	}
+	if _, err := provider.MeshTopology(hovel.MeshTopologyRequest{Root: secondSurvey.NodeID}); err != nil {
+		t.Fatalf("known node topology root rejected: %v", err)
+	}
+
+	rpc := hoveltest.NewRPCConn(t, provider)
+	defer rpc.Close()
+	var session hovel.SessionRef
+	rpc.Call("mesh.open_stream", hovel.MeshStreamRequest{
+		RunID:    "mesh-multi-node-run",
+		NodeID:   secondSurvey.NodeID,
+		Route:    &secondRoute,
+		Protocol: meshProtocolRaw,
+	}, &session)
+	bridge := &rpcSessionConn{t: t, rpc: rpc, sessionID: session.ID}
+	defer bridge.Close()
+	if err := wire.WriteFrame(bridge, wire.KindData, 19, []byte("second")); err != nil {
+		t.Fatal(err)
+	}
+	kind, streamID, payload, err := wire.ReadFrame(bufio.NewReader(bridge))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind != wire.KindData || streamID != 19 || string(payload) != "second-ok" {
+		t.Fatalf("routed multi-node frame = kind %d stream %d payload %q", kind, streamID, payload)
+	}
+
+	badRoute := secondRoute
+	badRoute.Links[0] = "wrong-link"
+	if _, _, err := provider.resolveSquatterMeshAddress(
+		secondSurvey.NodeID, "", &badRoute, "", 0, "", nil,
+	); err == nil {
+		t.Fatal("routed stream accepted a route with the wrong link")
+	}
+	if _, _, err := provider.resolveSquatterMeshAddress(
+		secondSurvey.NodeID, "", &secondRoute, "192.0.2.1", 0, "", nil,
+	); err == nil {
+		t.Fatal("routed stream accepted a destination conflicting with its node")
+	}
+}
+
+func startMeshEchoEndpoint(t *testing.T, reply string) net.Listener {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closeTestListener(t, listener) })
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				if deadlineErr := conn.SetDeadline(time.Now().Add(3 * time.Second)); deadlineErr != nil {
+					return
+				}
+				kind, streamID, _, readErr := wire.ReadFrame(bufio.NewReader(conn))
+				if readErr != nil {
+					return
+				}
+				if kind == wire.KindData {
+					_ = wire.WriteFrame(conn, wire.KindData, streamID, []byte(reply))
+				}
+			}()
+		}
+	}()
+	return listener
 }
 
 func TestProviderFiltersTypedPayloadQueries(t *testing.T) {
@@ -303,6 +935,137 @@ func TestProviderGeneratesWindowsPEArtifactSet(t *testing.T) {
 	}
 	if got := binary.LittleEndian.Uint16(body[configOffset+payloadConfigPortOffset:]); got != 4444 {
 		t.Fatalf("reverse port = %d", got)
+	}
+}
+
+func TestProviderStampsCompleteTLSBundleIntoWindowsPE(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	bundle, _ := testSquatterTLSBundle(t, now)
+	bundle.AssignmentID = "squatter-payload-assignment"
+	encodedBundle, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := newProvider().GeneratePayload(hovel.GeneratePayloadRequest{
+		PayloadID: "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
+		Target:    "127.0.0.1",
+		Format:    formatPEEXE,
+		Config:    map[string]string{"payload.bind_port": "19100"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := base64.StdEncoding.DecodeString(generated.Primary.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputDigest := sha256.Sum256(body)
+	bundleDigest := sha256.Sum256(encodedBundle)
+	inputContent, err := hovel.NewCredentialArtifactData(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialBytes, err := hovel.NewCredentialMaterialBytes(encodedBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := hovel.NewResolvedCredentialMaterial(
+		hovel.CredentialProjectionBundle,
+		hovel.CredentialMaterialPrivateBytes,
+		hovel.CredentialEncodingJSON,
+		hex.EncodeToString(bundleDigest[:]),
+		materialBytes,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := hovel.CredentialStampTarget{
+		Kind: hovel.CredentialStampTargetNamedSlot,
+		NamedSlot: &hovel.CredentialNamedSlotTarget{
+			Name: payloadTLSCredentialSlot,
+		},
+	}
+	request := hovel.CredentialStampExecutionRequest{
+		SchemaVersion: hovel.CredentialProviderExecutionSchemaV1,
+		Provider: hovel.CredentialProviderTarget{
+			ModuleID:         payloadName + "@" + version,
+			ProviderID:       payloadName,
+			ProviderVersion:  version,
+			DescriptorSHA256: strings.Repeat("1", sha256.Size*2),
+		},
+		StampID: "squatter-payload-tls-stamp",
+		Request: hovel.CredentialStampRequest{
+			AssignmentID: bundle.AssignmentID,
+			Capability:   hovel.CredentialDeliveryStampStandard,
+			SlotName:     payloadTLSCredentialSlot,
+			Target:       target,
+			Material: hovel.CredentialStampMaterial{
+				Projection: hovel.CredentialProjectionBundle,
+				Credential: &hovel.CredentialMaterialReference{
+					Projection: hovel.CredentialProjectionBundle,
+					Form:       hovel.CredentialMaterialPrivateBytes,
+					BundleID:   bundle.ID,
+				},
+			},
+			EncodedBytes: uint64(len(encodedBundle)),
+			Credential: hovel.ResolvedCredentialMetadata{
+				BundleVersion:         hovel.CredentialBundleSchemaV1,
+				Purpose:               hovel.CredentialPurposeTLSServer,
+				ConsumerType:          hovel.CredentialConsumerPayload,
+				ProfileID:             "tls-server",
+				CompatibilityTargetID: "portable-x509",
+			},
+		},
+		Input: hovel.CredentialArtifactInput{
+			ID:       "squatter-transport-configured-pe",
+			SHA256:   hex.EncodeToString(inputDigest[:]),
+			Encoding: "binary",
+			Content:  inputContent,
+		},
+		Material: resolved,
+		ExpectedDigests: []hovel.CredentialStampedMaterialDigest{{
+			Projection: hovel.CredentialProjectionBundle,
+			Reference:  bundle.ID,
+			SHA256:     hex.EncodeToString(bundleDigest[:]),
+		}},
+		Scope: hovel.CredentialOperationScope{
+			OperationID: "squatter-payload-stamp-operation",
+			Target:      "127.0.0.1",
+		},
+	}
+	result, err := newProvider().StampCredential(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := result.ValidateFor(request); err != nil {
+		t.Fatal(err)
+	}
+	artifact, ok := result.Output.Artifact()
+	if !ok || artifact.Name != "squatter-stamped.exe" {
+		t.Fatalf("stamp output = %#v", result.Output)
+	}
+	stamped, ok := artifact.Content.Data()
+	if !ok {
+		t.Fatal("stamp output did not contain in-memory PE bytes")
+	}
+	extracted, digest, err := stampedPayloadBundle(stamped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(extracted)
+	if !bytes.Equal(extracted, encodedBundle) || digest != hex.EncodeToString(bundleDigest[:]) {
+		t.Fatal("stamped payload did not preserve the complete PKI bundle")
+	}
+	if bytes.Equal(stamped, body) {
+		t.Fatal("credential stamping did not change the generated PE")
+	}
+	pkiOffset, err := payloadPKIConfigOffset(stamped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamped[pkiOffset+payloadPKIBundleOffset] ^= 0xff
+	if _, _, err := stampedPayloadBundle(stamped); err == nil {
+		t.Fatal("tampered stamped payload bundle passed integrity validation")
 	}
 }
 
@@ -1257,6 +2020,223 @@ func readRPCSessionUntil(t *testing.T, conn *hoveltest.RPCConn, sessionID string
 	}
 	t.Fatalf("timed out waiting for %q in %q", needle, out.String())
 	return ""
+}
+
+type rpcSessionConn struct {
+	t             *testing.T
+	rpc           *hoveltest.RPCConn
+	sessionID     string
+	buffer        []byte
+	readDeadline  time.Time
+	writeDeadline time.Time
+	closed        bool
+}
+
+func (c *rpcSessionConn) Read(data []byte) (int, error) {
+	for len(c.buffer) == 0 {
+		if c.closed {
+			return 0, net.ErrClosed
+		}
+		timeout := 100 * time.Millisecond
+		if !c.readDeadline.IsZero() {
+			remaining := time.Until(c.readDeadline)
+			if remaining <= 0 {
+				return 0, os.ErrDeadlineExceeded
+			}
+			if remaining < timeout {
+				timeout = remaining
+			}
+		}
+		var result struct {
+			Data string `json:"data"`
+		}
+		c.rpc.Call("session/read", map[string]any{
+			"sessionId": c.sessionID,
+			"timeoutMs": max(1, int(timeout/time.Millisecond)),
+		}, &result)
+		if result.Data == "" {
+			continue
+		}
+		decoded, err := base64.StdEncoding.DecodeString(result.Data)
+		if err != nil {
+			return 0, err
+		}
+		c.buffer = decoded
+	}
+	read := copy(data, c.buffer)
+	c.buffer = c.buffer[read:]
+	return read, nil
+}
+
+func (c *rpcSessionConn) Write(data []byte) (int, error) {
+	if c.closed {
+		return 0, net.ErrClosed
+	}
+	if !c.writeDeadline.IsZero() && time.Now().After(c.writeDeadline) {
+		return 0, os.ErrDeadlineExceeded
+	}
+	var result struct {
+		Status string `json:"status"`
+	}
+	c.rpc.Call("session/write", map[string]any{
+		"sessionId": c.sessionID,
+		"data":      base64.StdEncoding.EncodeToString(data),
+	}, &result)
+	if result.Status != "ok" {
+		return 0, fmt.Errorf("session write status %q", result.Status)
+	}
+	return len(data), nil
+}
+
+func (c *rpcSessionConn) Close() error {
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	var result struct {
+		Status string `json:"status"`
+	}
+	c.rpc.Call("session/close", map[string]any{
+		"sessionId": c.sessionID,
+		"reason":    "test complete",
+	}, &result)
+	if result.Status != "ok" {
+		return fmt.Errorf("session close status %q", result.Status)
+	}
+	return nil
+}
+
+func (*rpcSessionConn) LocalAddr() net.Addr  { return testNetAddr("mesh-client") }
+func (*rpcSessionConn) RemoteAddr() net.Addr { return testNetAddr("mesh-provider") }
+
+func (c *rpcSessionConn) SetDeadline(deadline time.Time) error {
+	c.readDeadline = deadline
+	c.writeDeadline = deadline
+	return nil
+}
+
+func (c *rpcSessionConn) SetReadDeadline(deadline time.Time) error {
+	c.readDeadline = deadline
+	return nil
+}
+
+func (c *rpcSessionConn) SetWriteDeadline(deadline time.Time) error {
+	c.writeDeadline = deadline
+	return nil
+}
+
+type testNetAddr string
+
+func (testNetAddr) Network() string  { return "hovel-session" }
+func (a testNetAddr) String() string { return string(a) }
+
+func testSquatterTLSBundle(
+	t *testing.T,
+	now time.Time,
+) (hovel.CredentialBundle, *x509.Certificate) {
+	t.Helper()
+	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Squatter mesh test root"},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(24 * time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+	rootDER, err := x509.CreateCertificate(
+		rand.Reader,
+		rootTemplate,
+		rootTemplate,
+		&rootKey.PublicKey,
+		rootKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "squatter.mesh.test"},
+		DNSNames:     []string{"squatter.mesh.test"},
+		NotBefore:    now.Add(-time.Minute),
+		NotAfter:     now.Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	leafDER, err := x509.CreateCertificate(
+		rand.Reader,
+		leafTemplate,
+		root,
+		&leafKey.PublicKey,
+		rootKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(leafDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateKey, err := x509.MarshalPKCS8PrivateKey(leafKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificateDigest := sha256.Sum256(leafDER)
+	publicDigest := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+	return hovel.CredentialBundle{
+		SchemaVersion:           hovel.CredentialBundleSchemaV1,
+		ID:                      "squatter-mesh-bundle",
+		AssignmentID:            "squatter-mesh-assignment",
+		CertificateID:           "squatter-mesh-certificate",
+		CertificateGenerationID: "squatter-mesh-generation",
+		Generation:              1,
+		Purpose:                 hovel.CredentialPurposeTLSServer,
+		CompatibilityTargetID:   "portable-x509",
+		CompatibilityVersion:    "1",
+		KeyEstablishmentPolicy:  hovel.CredentialKeyEstablishmentClassicalCompatible,
+		TLSNamedGroups:          []string{"x25519", "secp256r1", "secp384r1", "secp521r1"},
+		Certificate: hovel.CredentialBundleBinary{
+			MediaType: hovel.CredentialBundleMediaCertificate,
+			Encoding:  hovel.CredentialBundleEncodingBase64DER,
+			Data:      leafDER,
+		},
+		PublicKey: hovel.CredentialBundleBinary{
+			MediaType: hovel.CredentialBundleMediaPublicKey,
+			Encoding:  hovel.CredentialBundleEncodingBase64DER,
+			Data:      leaf.RawSubjectPublicKeyInfo,
+		},
+		PrivateKey: &hovel.CredentialBundleBinary{
+			MediaType: hovel.CredentialBundleMediaPrivateKey,
+			Encoding:  hovel.CredentialBundleEncodingBase64DER,
+			Data:      privateKey,
+		},
+		TrustAnchors: []hovel.CredentialBundleCertificate{{
+			GenerationID: "squatter-mesh-root-generation",
+			CredentialBundleBinary: hovel.CredentialBundleBinary{
+				MediaType: hovel.CredentialBundleMediaCertificate,
+				Encoding:  hovel.CredentialBundleEncodingBase64DER,
+				Data:      rootDER,
+			},
+		}},
+		Fingerprints: hovel.CredentialBundleFingerprints{
+			CertificateSHA256: hex.EncodeToString(certificateDigest[:]),
+			PublicKeySHA256:   hex.EncodeToString(publicDigest[:]),
+		},
+		NotBefore: leaf.NotBefore,
+		NotAfter:  leaf.NotAfter,
+	}, root
 }
 
 type fakeSMBConnector struct {

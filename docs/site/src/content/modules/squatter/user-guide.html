@@ -53,6 +53,42 @@ smb.port = 445</code></pre>
           payload connects back.
         </p>
 
+        <h2>Stamp a Payload TLS Identity</h2>
+        <p>
+          Squatter advertises the named credential slot
+          <code>payload-tls-server</code>. It accepts a private
+          <code>hovel.pki.bundle/v1</code> for the <code>tls-server</code>
+          profile, <code>payload</code> consumer type, and
+          <code>portable-x509</code> compatibility target. Hovel resolves the
+          selected assignment and sends the complete bundle to the provider's
+          standard credential-stamp operation after payload generation and
+          transport configuration.
+        </p>
+        <p>
+          The provider validates the bundle, certificate validity and purpose,
+          private-key match, chain, fingerprints, and revocation material. It
+          then writes a versioned <code>SQPKI001</code> manifest into the PE's
+          fixed credential region. The manifest contains the leaf DER,
+          PKCS#8 private key, ordered chain, trust anchors, CRLs, and SHA-256
+          integrity bindings. No sidecar certificate file or Windows
+          certificate-store installation is required.
+        </p>
+        <p>
+          A stamped payload enables wolfSSL TLS 1.3 on its configured TCP-bind
+          socket. The provider rejects stamp requests for callback or named-pipe
+          artifacts because those transports do not currently implement the
+          matching TLS client/server role. An unstamped payload preserves the
+          existing plaintext behavior. A present but malformed or modified
+          stamp is a startup error and never falls back to plaintext.
+          Named-pipe sessions remain on their existing SMB transport boundary.
+        </p>
+        <p>
+          Open the routed payload with the <code>squatter+tls</code> Mesh
+          protocol. Mesh validates the selected node and route, then passes the
+          TLS byte stream through unchanged; the certificate and private key
+          stay in the payload and wolfSSL performs the handshake there.
+        </p>
+
         <h2>Operate Payload Records</h2>
         <p>
           Successful install steps return durable installed-payload records. Use

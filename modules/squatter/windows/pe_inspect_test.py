@@ -44,6 +44,8 @@ class PETest(unittest.TestCase):
 
         config_marker = data.find(b"SQCFG001")
         self.assertNotEqual(config_marker, -1)
+        pki_marker = data.find(b"SQPKI001")
+        self.assertNotEqual(pki_marker, -1)
         self.assertIn(b"squatter", data)
 
         import_rva = u32(data, optional + 96 + 8)
@@ -57,6 +59,10 @@ class PETest(unittest.TestCase):
             b"ucrtbase",
             b"msvcrt",
             b"GetTickCount64",
+            b"secur32.dll",
+            b"crypt32.dll",
+            b"bcrypt.dll",
+            b"ncrypt.dll",
         ]
         for needle in forbidden_runtime_imports:
             self.assertNotIn(needle, data)
