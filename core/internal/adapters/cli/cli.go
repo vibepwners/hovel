@@ -974,9 +974,7 @@ func contextualCommandAlias(fields []string, activeChain string) (string, bool) 
 	case "logs":
 		return joinCommand(append([]string{"chain", "logs"}, fields[1:]...)...), true
 	case "rename":
-		if len(fields) == 2 {
-			return joinCommand("chain", "rename", activeChain, fields[1]), true
-		}
+		return joinCommand(append([]string{"chain", "rename", activeChain}, fields[1:]...)...), true
 	case "validate":
 		return joinCommand(append([]string{"chain", "validate"}, fields[1:]...)...), true
 	}

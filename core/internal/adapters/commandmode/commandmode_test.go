@@ -257,6 +257,13 @@ func TestRegisteredRequiredPositionalsRejectMissingInput(t *testing.T) {
 						if !strings.Contains(stderr.String(), want) {
 							t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
 						}
+						usagePath := strings.Join(path, " ")
+						if surface.name == "one-shot" {
+							usagePath = "hovel command " + usagePath
+						}
+						if !strings.Contains(stderr.String(), "usage: "+usagePath) {
+							t.Fatalf("stderr missing command-local usage %q:\n%s", usagePath, stderr.String())
+						}
 						if strings.Contains(stderr.String(), "unknown command") {
 							t.Fatalf("registered command was mislabeled as unknown:\n%s", stderr.String())
 						}
@@ -381,31 +388,53 @@ func TestRegisteredGroupsReportSubcommandErrorsWithLocalHelp(t *testing.T) {
 	}
 	for name, group := range groups {
 		group := group
-		t.Run(name+"/missing", func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			if code := app.Run(context.Background(), group, &stdout, &stderr); code != 2 {
-				t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
-			}
-			if !strings.Contains(stderr.String(), "subcommand is required") || strings.Contains(stderr.String(), "unknown command") {
-				t.Fatalf("stderr did not contain local missing-subcommand error:\n%s", stderr.String())
-			}
-			if !strings.Contains(stderr.String(), "hovel command "+name) {
-				t.Fatalf("stderr missing group usage for %q:\n%s", name, stderr.String())
-			}
-		})
-		t.Run(name+"/unknown", func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			args := append(append([]string(nil), group...), "not-a-command")
-			if code := app.Run(context.Background(), args, &stdout, &stderr); code != 2 {
-				t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
-			}
-			if !strings.Contains(stderr.String(), "unknown subcommand") || strings.Contains(stderr.String(), "unknown command") {
-				t.Fatalf("stderr did not contain local unknown-subcommand error:\n%s", stderr.String())
-			}
-			if !strings.Contains(stderr.String(), "hovel command "+name) {
-				t.Fatalf("stderr missing group usage for %q:\n%s", name, stderr.String())
-			}
-		})
+		for _, surface := range []struct {
+			name        string
+			usagePrefix string
+			run         func([]string, *bytes.Buffer, *bytes.Buffer) int
+		}{
+			{
+				name:        "one-shot",
+				usagePrefix: "hovel command ",
+				run: func(args []string, stdout, stderr *bytes.Buffer) int {
+					return app.Run(context.Background(), args, stdout, stderr)
+				},
+			},
+			{
+				name: "interactive",
+				run: func(args []string, stdout, stderr *bytes.Buffer) int {
+					return app.ExecuteLine(context.Background(), strings.Join(args, " "), stdout, stderr)
+				},
+			},
+		} {
+			t.Run(name+"/missing/"+surface.name, func(t *testing.T) {
+				var stdout, stderr bytes.Buffer
+				if code := surface.run(group, &stdout, &stderr); code != 2 {
+					t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
+				}
+				if !strings.Contains(stderr.String(), "subcommand is required") || strings.Contains(stderr.String(), "unknown command") {
+					t.Fatalf("stderr did not contain local missing-subcommand error:\n%s", stderr.String())
+				}
+				wantUsage := "usage: " + surface.usagePrefix + name
+				if !strings.Contains(stderr.String(), wantUsage) {
+					t.Fatalf("stderr missing group usage %q:\n%s", wantUsage, stderr.String())
+				}
+			})
+			t.Run(name+"/unknown/"+surface.name, func(t *testing.T) {
+				var stdout, stderr bytes.Buffer
+				args := append(append([]string(nil), group...), "not-a-command")
+				if code := surface.run(args, &stdout, &stderr); code != 2 {
+					t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
+				}
+				if !strings.Contains(stderr.String(), "unknown subcommand") || strings.Contains(stderr.String(), "unknown command") {
+					t.Fatalf("stderr did not contain local unknown-subcommand error:\n%s", stderr.String())
+				}
+				wantUsage := "usage: " + surface.usagePrefix + name
+				if !strings.Contains(stderr.String(), wantUsage) {
+					t.Fatalf("stderr missing group usage %q:\n%s", wantUsage, stderr.String())
+				}
+			})
+		}
 	}
 }
 

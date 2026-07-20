@@ -356,6 +356,59 @@ func TestEveryActiveChainAliasHasAContextualRewrite(t *testing.T) {
 	}
 }
 
+func TestEveryActiveChainAliasKeepsMalformedInputOnItsCanonicalCommand(t *testing.T) {
+	app := newTestApp()
+	enterTestOperation(t, app)
+	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain create exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	tests := map[string]struct {
+		line      string
+		wantUsage string
+		wantError string
+	}{
+		"add":      {line: "add", wantUsage: "usage: chain add", wantError: "module is required"},
+		"config":   {line: "config", wantUsage: "usage: chain config", wantError: "subcommand is required"},
+		"inspect":  {line: "inspect unexpected", wantUsage: "usage: chain inspect", wantError: "unknown arguments"},
+		"logs":     {line: "logs unexpected", wantUsage: "usage: chain logs", wantError: "unknown arguments"},
+		"rename":   {line: "rename", wantUsage: "usage: chain rename", wantError: "name is required"},
+		"validate": {line: "validate unexpected", wantUsage: "usage: chain validate", wantError: "unknown arguments"},
+	}
+	for _, alias := range activeChainAliases {
+		test, ok := tests[alias.text]
+		if !ok {
+			t.Errorf("active-chain alias %q has no malformed-input UX contract", alias.text)
+			continue
+		}
+		t.Run(alias.text, func(t *testing.T) {
+			stdout.Reset()
+			stderr.Reset()
+			if code := app.ExecuteLine(context.Background(), test.line, &stdout, &stderr); code != 2 {
+				t.Fatalf("ExecuteLine(%q) code = %d, want 2; stdout = %s; stderr = %s", test.line, code, stdout.String(), stderr.String())
+			}
+			output := stderr.String()
+			if !strings.Contains(output, test.wantUsage) {
+				t.Fatalf("ExecuteLine(%q) missing local usage %q:\n%s", test.line, test.wantUsage, output)
+			}
+			if !strings.Contains(output, test.wantError) {
+				t.Fatalf("ExecuteLine(%q) missing diagnosis %q:\n%s", test.line, test.wantError, output)
+			}
+			if strings.Contains(output, "unknown command") {
+				t.Fatalf("ExecuteLine(%q) mislabeled an advertised alias as unknown:\n%s", test.line, output)
+			}
+			if strings.Contains(output, "hovel command") {
+				t.Fatalf("ExecuteLine(%q) leaked the one-shot prefix:\n%s", test.line, output)
+			}
+		})
+		delete(tests, alias.text)
+	}
+	for alias := range tests {
+		t.Errorf("malformed-input UX contract for %q has no active-chain alias", alias)
+	}
+}
+
 func TestRegisteredCompletionArgumentsHaveExplicitPolicies(t *testing.T) {
 	positionalPolicies := stringSet(
 		"artifact", "assignment", "authority", "capability", "chain", "command", "consumer", "crl", "data", "file", "generation", "key", "local", "manifest", "mode", "module", "name", "operation", "payload", "query", "remote", "revocation", "session", "source", "target", "throw", "trust-set", "value",

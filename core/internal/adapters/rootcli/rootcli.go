@@ -113,6 +113,9 @@ func isDirectSessionConnectCommand(args []string) bool {
 }
 
 func runDirectSessionConnect(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if ok, code := commandmode.NewApp().Validate(args, stderr); !ok {
+		return code
+	}
 	parsed, err := cli.ParseSessionConnectCommand(args)
 	if err != nil {
 		writeRootLine(stderr, err)
