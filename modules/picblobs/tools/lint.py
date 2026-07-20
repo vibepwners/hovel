@@ -259,6 +259,12 @@ def _parse_args() -> argparse.Namespace:
         help="Accepted for CI symmetry; lint checks are always non-mutating",
     )
     parser.add_argument(
+        "--tool",
+        choices=("all", "ruff", "buildifier", "lizard"),
+        default="all",
+        help="Run one linter instead of the complete lint set.",
+    )
+    parser.add_argument(
         "paths",
         nargs="*",
         help="Optional files or directories to lint. Defaults to repo source roots.",
@@ -302,6 +308,36 @@ def _arg_or_default(paths: list[Path], have_explicit: bool) -> list[Path] | None
     return paths if have_explicit else None
 
 
+def _run_requested_checks(
+    tool: str,
+    ruff_paths: list[Path],
+    lizard_paths: list[Path],
+    buildifier_paths: list[Path],
+    *,
+    have_explicit: bool,
+) -> int:
+    def run_lizard() -> int:
+        if have_explicit and not lizard_paths:
+            log.info("ok")
+            return 0
+        return _run_lizard_check(lizard_paths, check_stale=not have_explicit)
+
+    checks = {
+        "ruff": lambda: _run_ruff_check(paths=ruff_paths),
+        "buildifier": lambda: _run_buildifier_check(
+            paths=_arg_or_default(buildifier_paths, have_explicit),
+        ),
+        "lizard": run_lizard,
+    }
+    if tool != "all":
+        return checks[tool]()
+    for name, check in checks.items():
+        if check() != 0:
+            log.error("%s issues found.", name.capitalize())
+            return 1
+    return 0
+
+
 def main() -> int:
     args = _parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
@@ -313,26 +349,12 @@ def main() -> int:
         log.info("No matching files.")
         return 0
 
-    if _run_ruff_check(paths=ruff_paths) != 0:
-        log.error("Ruff issues found.")
-        return 1
-
-    if (
-        _run_buildifier_check(
-            paths=_arg_or_default(buildifier_paths, have_explicit),
-        )
-        != 0
-    ):
-        log.error("Buildifier issues found.")
-        return 1
-
-    if have_explicit and not lizard_paths:
-        log.info("ok")
-        return 0
-
-    return _run_lizard_check(
+    return _run_requested_checks(
+        args.tool,
+        ruff_paths,
         lizard_paths,
-        check_stale=not have_explicit,
+        buildifier_paths,
+        have_explicit=have_explicit,
     )
 
 

@@ -7,7 +7,7 @@
     view: "overview",
   };
 
-  const reportViews = ["overview", "coverage", "suites", "jobs", "targets"];
+  const reportViews = ["overview", "linters", "coverage", "suites", "jobs", "targets"];
 
   const app = document.getElementById("report-app");
 
@@ -41,16 +41,21 @@
   function render() {
     const report = state.report;
     const coverageCount = (report.coverage || []).length;
+    const linterCount = (report.linters || []).length;
     const suiteCount = Object.keys(report.totals.suites || {}).length;
     const jobCount = (report.jobs || []).length;
     app.innerHTML = `
       <nav class="report-view-tabs" role="tablist" aria-label="Test report sections">
         ${viewTab("overview", "Overview")}
+        ${viewTab("linters", "Linters", linterCount)}
         ${viewTab("coverage", "Coverage", coverageCount)}
         ${viewTab("suites", "Suites", suiteCount)}
         ${viewTab("jobs", "Jobs", jobCount)}
         ${viewTab("targets", "Targets", report.totals.targets)}
       </nav>
+      <section class="report-panel" id="report-panel-linters" role="tabpanel" aria-labelledby="report-tab-linters" data-report-panel="linters">
+        ${renderLinters(report)}
+      </section>
       <section class="report-panel overview-panel" id="report-panel-overview" role="tabpanel" aria-labelledby="report-tab-overview" data-report-panel="overview">
         <div class="panel-intro">
           <div>
@@ -119,6 +124,7 @@
     });
     renderTargets();
     renderDetail();
+    hydrateLinterLogs();
     hydrateJobLogs();
     activateView(state.view);
   }
@@ -172,6 +178,94 @@
 
   function metric(label, value) {
     return `<div class="metric"><span class="metric-label">${escapeHtml(label)}</span><span class="metric-value">${escapeHtml(String(value))}</span></div>`;
+  }
+
+  function renderLinters(report) {
+    const linters = report.linters || [];
+    if (!linters.length) {
+      return `<p class="empty-state">No linter evidence was attached to this report. Run <code>task lint:report</code> to create it.</p>`;
+    }
+    const passed = linters.filter((tool) => tool.status === "PASSED").length;
+    const failed = linters.filter((tool) => tool.status === "FAILED").length;
+    const ignoreCount = linters.reduce((total, tool) => total + (tool.ignore_statements || []).length, 0);
+    return `
+      <section class="linter-section">
+        <div class="section-heading">
+          <div>
+            <span class="panel-kicker">Source quality evidence</span>
+            <h2>Linters and static analysis</h2>
+            <p>Every wired tool, its detected source-level ignore statements, and complete Task-backed output.</p>
+          </div>
+          <span class="result-count">${linters.length} tools</span>
+        </div>
+        <section class="linter-summary" aria-label="Linter summary">
+          ${metric("Tools", linters.length)}
+          ${metric("Passed", passed)}
+          ${metric("Failed", failed)}
+          ${metric("Source ignores", ignoreCount)}
+        </section>
+        <div class="linter-list">
+          ${linters.map((tool, index) => renderLinter(tool, index === 0)).join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderLinter(tool, open) {
+    const ignores = tool.ignore_statements || [];
+    const commands = tool.commands || [];
+    return `
+      <details class="linter-card" ${open ? "open" : ""}>
+        <summary>
+          <span class="linter-identity">${statusBadge(tool.status)} <strong>${escapeHtml(tool.name)}</strong><span class="linter-kind">${escapeHtml(tool.kind)}</span></span>
+          <span class="linter-scope">${escapeHtml(tool.scope)}</span>
+          <span class="linter-ignore-count"><strong>${ignores.length}</strong> source ${ignores.length === 1 ? "ignore" : "ignores"}</span>
+          <span class="linter-duration">${Number(tool.duration || 0).toFixed(2)}s</span>
+        </summary>
+        <div class="linter-body">
+          <div class="linter-commands">
+            <h3>Task-backed invocation</h3>
+            ${commands.map((command) => `<code>${escapeHtml(command)}</code>`).join("")}
+          </div>
+          ${renderLinterIgnores(ignores)}
+          <div class="linter-log-heading">
+            <h3>Tool log</h3>
+            ${tool.log_path ? `<a href="${escapeHtml(tool.log_path)}" target="_blank" rel="noopener">open complete log</a>` : ""}
+          </div>
+          ${tool.log_path
+            ? `<div class="linter-log" data-linter-log="${escapeHtml(tool.log_path)}"><p class="empty-state">Loading ${escapeHtml(tool.log_path)}...</p></div>`
+            : `<p class="empty-state">No tool log was captured.</p>`}
+        </div>
+      </details>
+    `;
+  }
+
+  function renderLinterIgnores(ignores) {
+    if (!ignores.length) {
+      return `<div class="linter-ignore-empty"><h3>Source-level ignores</h3><p>None detected.</p></div>`;
+    }
+    return `
+      <details class="linter-ignores">
+        <summary><span>Source-level ignores</span><span>${ignores.length} detected</span></summary>
+        <ol>
+          ${ignores.map((ignore) => `<li><code>${escapeHtml(ignore.path)}:${Number(ignore.line)}</code><span>${escapeHtml(ignore.text)}</span></li>`).join("")}
+        </ol>
+      </details>
+    `;
+  }
+
+  function hydrateLinterLogs() {
+    document.querySelectorAll("[data-linter-log]").forEach((container) => {
+      const path = container.getAttribute("data-linter-log");
+      fetch(path)
+        .then((response) => response.ok ? response.text() : Promise.reject(new Error(response.statusText)))
+        .then((contents) => {
+          container.innerHTML = `<pre class="log-frame linter-log-frame">${escapeHtml(contents)}</pre>`;
+        })
+        .catch((error) => {
+          container.innerHTML = `<p class="empty-state">Could not load ${escapeHtml(path)}: ${escapeHtml(String(error))}</p>`;
+        });
+    });
   }
 
   function renderCoverage(report) {

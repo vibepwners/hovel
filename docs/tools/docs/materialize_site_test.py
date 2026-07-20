@@ -19,6 +19,7 @@ class MaterializeSiteTest(unittest.TestCase):
                 "xml/unit.xml": "<testsuite />\n",
                 "jobs/e2e.log": "complete e2e log\n",
                 "coverage/squatter.lcov": "LH:1\nLF:1\n",
+                "linters/ruff.log": "All checks passed!\n",
             }
             for relative, contents in referenced.items():
                 path = source / relative
@@ -28,6 +29,7 @@ class MaterializeSiteTest(unittest.TestCase):
                 "targets": [{"log_path": "logs/unit.log", "xml_path": "xml/unit.xml"}],
                 "jobs": [{"log_path": "jobs/e2e.log"}],
                 "coverage": [{"source_path": "coverage/squatter.lcov"}],
+                "linters": [{"log_path": "linters/ruff.log"}],
             }
             report = source / "data/report.json"
             report.parent.mkdir(parents=True)

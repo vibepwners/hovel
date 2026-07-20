@@ -9,6 +9,65 @@ import testreport
 
 
 class TestReportTest(unittest.TestCase):
+    def test_ingests_linter_contract_and_materializes_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            lint_log = repo / ".test-report/linters/logs/ruff.log"
+            lint_log.parent.mkdir(parents=True)
+            lint_log.write_text("All checks passed!\n", encoding="utf-8")
+            lint_report = lint_log.parent.parent / "report.json"
+            lint_report.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "hovel.lint-report/v1",
+                        "generated_at": "2026-07-20T00:00:00Z",
+                        "tools": [
+                            {
+                                "id": "ruff",
+                                "name": "Ruff",
+                                "kind": "linter",
+                                "scope": "Python",
+                                "status": "PASSED",
+                                "duration": 0.25,
+                                "commands": ["task sdk:lint"],
+                                "ignore_statements": [
+                                    {"path": "sdk/example.py", "line": 7, "text": "value = 1  # noqa: S101"}
+                                ],
+                                "raw_log_path": ".test-report/linters/logs/ruff.log",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = testreport.build_report(
+                repo=repo,
+                title="Example",
+                bep_files=[],
+                testlog_roots=[],
+                cache_roots=[],
+                workflow="CI",
+                job="report",
+                commit="abc",
+                ref="main",
+                lint_report_files=[lint_report],
+            )
+            out = repo / "evidence"
+            testreport.render_report(report, repo=repo, output=out)
+            data = json.loads((out / "data/report.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(data["linters"][0]["id"], "ruff")
+            self.assertEqual(len(data["linters"][0]["ignore_statements"]), 1)
+            self.assertEqual((out / data["linters"][0]["log_path"]).read_text(), "All checks passed!\n")
+
+    def test_rejects_unknown_linter_contract_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lint.json"
+            path.write_text(json.dumps({"schema_version": "unknown/v1", "tools": []}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unsupported linter report schema"):
+                testreport.ingest_linters([path])
+
     def test_ingests_coverage_and_e2e_job_logs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

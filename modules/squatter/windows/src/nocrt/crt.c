@@ -127,8 +127,7 @@ char *strncpy(char *dst, const char *src, size_t n)
 
 char *strstr(const char *haystack, const char *needle)
 {
-        union
-        {
+        union {
                 const char *source;
                 char *result;
         } match;

@@ -122,6 +122,17 @@ py_binary(
 )
 
 py_binary(
+    name = "format_check_run",
+    srcs = ["quality_check.py"],
+    args = [
+        "--mode=fmt",
+    ] + QUALITY_TOOL_ARGS,
+    data = QUALITY_TOOL_DATA,
+    main = "quality_check.py",
+    python_version = "PY3",
+)
+
+py_binary(
     name = "generate_write",
     srcs = ["quality_check.py"],
     args = [

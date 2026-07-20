@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 
 
-REPORT_DIRECTORIES = ("data", "logs", "xml", "artifacts", "jobs", "coverage")
+REPORT_DIRECTORIES = ("data", "logs", "xml", "artifacts", "jobs", "coverage", "linters")
 
 
 def main() -> int:
@@ -84,6 +84,7 @@ def validate_report_references(report: Path) -> None:
         *(target.get(key, "") for target in data.get("targets", []) for key in ("log_path", "xml_path")),
         *(job.get("log_path", "") for job in data.get("jobs", [])),
         *(metric.get("source_path", "") for metric in data.get("coverage", [])),
+        *(tool.get("log_path", "") for tool in data.get("linters", [])),
     ]
     missing = [reference for reference in references if reference and not (report / reference).is_file()]
     if missing:

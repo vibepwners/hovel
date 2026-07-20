@@ -12,6 +12,7 @@ def main() -> int:
     parser.add_argument("--ruff", required=True, type=Path)
     parser.add_argument("--mypy", required=True, type=Path)
     parser.add_argument("--pydoclint", required=True, type=Path)
+    parser.add_argument("--only", choices=("all", "ruff", "mypy", "pydoclint"), default="all")
     args = parser.parse_args()
 
     root = runfiles_root()
@@ -28,33 +29,37 @@ def main() -> int:
     mypy = resolve_tool(root, args.mypy)
     pydoclint = resolve_tool(root, args.pydoclint)
 
-    subprocess.run([ruff, "check", str(package), str(examples)], check=True, cwd=root, env=env)
-    type_stubs = root / "core/tools/lint/stubs"
-    for source_root, import_roots in mypy_invocations(root):
+    if args.only in {"all", "ruff"}:
+        subprocess.run([ruff, "check", str(package), str(examples)], check=True, cwd=root, env=env)
+    if args.only in {"all", "mypy"}:
+        type_stubs = root / "core/tools/lint/stubs"
+        for source_root, import_roots in mypy_invocations(root):
+            subprocess.run(
+                [
+                    mypy,
+                    "--strict",
+                    "--explicit-package-bases",
+                    "--config-file",
+                    str(project / "pyproject.toml"),
+                    str(source_root),
+                ],
+                check=True,
+                cwd=root,
+                env=env | {"MYPYPATH": os.pathsep.join(str(item) for item in (*import_roots, type_stubs))},
+            )
+    if args.only in {"all", "pydoclint"}:
         subprocess.run(
             [
-                mypy,
-                "--strict",
-                "--explicit-package-bases",
-                "--config-file",
+                pydoclint,
+                "--config",
                 str(project / "pyproject.toml"),
-                str(source_root),
+                str(package),
+                str(examples),
             ],
             check=True,
             cwd=root,
-            env=env | {"MYPYPATH": os.pathsep.join(str(item) for item in (*import_roots, type_stubs))},
+            env=env,
         )
-    commands = [
-        [
-            pydoclint,
-            "--config",
-            str(project / "pyproject.toml"),
-            str(package),
-            str(examples),
-        ],
-    ]
-    for command in commands:
-        subprocess.run(command, check=True, cwd=root, env=env)
     return 0
 
 

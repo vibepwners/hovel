@@ -13,6 +13,36 @@ py_binary(
     python_version = "PY3",
 )
 
+py_binary(
+    name = "run_lint_report",
+    srcs = [
+        "lintreport.py",
+        "run_lint_report.py",
+    ],
+    data = [
+        "lint-report.schema.json",
+        "lint_tools.json",
+    ],
+    imports = ["."],
+    main = "run_lint_report.py",
+    python_version = "PY3",
+)
+
+py_test(
+    name = "lintreport_test",
+    size = "small",
+    srcs = [
+        "lintreport.py",
+        "lintreport_test.py",
+    ],
+    data = [
+        "lint-report.schema.json",
+        "lint_tools.json",
+    ],
+    imports = ["."],
+    python_version = "PY3",
+)
+
 py_test(
     name = "testreport_test",
     size = "small",

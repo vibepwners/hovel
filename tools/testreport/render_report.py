@@ -30,6 +30,12 @@ def main() -> int:
     parser.add_argument("--coverage-json", action="append", default=[], help="Coverage result JSON to ingest.")
     parser.add_argument("--squatter-lcov", default="", help="Squatter aggregate LCOV report to ingest.")
     parser.add_argument("--job-summary", action="append", default=[], help="Structured test job summary to ingest.")
+    parser.add_argument(
+        "--lint-report",
+        action="append",
+        default=[],
+        help="hovel.lint-report/v1 JSON evidence to ingest.",
+    )
     parser.add_argument("--workflow", default=os.environ.get("GITHUB_WORKFLOW", "local"))
     parser.add_argument("--job", default=os.environ.get("GITHUB_JOB", "local"))
     parser.add_argument("--commit", default=os.environ.get("GITHUB_SHA", ""))
@@ -43,6 +49,7 @@ def main() -> int:
     scan_roots = [resolve(repo, item) for item in args.scan_testlogs]
     coverage_json_files = [resolve(repo, item) for item in args.coverage_json]
     job_summary_files = [resolve(repo, item) for item in args.job_summary]
+    lint_report_files = [resolve(repo, item) for item in args.lint_report]
     if not scan_roots:
         scan_roots = [repo / "bazel-testlogs", repo / "core/bazel-testlogs"]
     if not cache_roots:
@@ -62,6 +69,7 @@ def main() -> int:
         coverage_json_files=coverage_json_files,
         coverage_lcov_files=[("Squatter Go", resolve(repo, args.squatter_lcov), 90.0)] if args.squatter_lcov else [],
         job_summary_files=job_summary_files,
+        lint_report_files=lint_report_files,
     )
     testreport.render_report(report, repo=repo, output=resolve(repo, args.output))
     return 0

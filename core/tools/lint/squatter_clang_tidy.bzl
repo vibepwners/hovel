@@ -26,11 +26,18 @@ def _clang_tidy_check_impl(ctx):
     args.add("--stamp", out)
     args.add("--source", ctx.file.src)
     args.add("--mingw-marker", ctx.file._mingw_include_marker)
+    args.add("--wolfssl-marker", ctx.file.wolfssl_marker)
+    args.add("--wolfssl-config", ctx.file.wolfssl_config)
     args.add("--project-include", ctx.attr.project_include)
     ctx.actions.run(
         executable = ctx.executable._runner,
         arguments = [args],
-        inputs = [ctx.file.src, ctx.file._mingw_include_marker] + ctx.files.hdrs + ctx.files._mingw_toolchain,
+        inputs = [
+            ctx.file.src,
+            ctx.file._mingw_include_marker,
+            ctx.file.wolfssl_config,
+            ctx.file.wolfssl_marker,
+        ] + ctx.files.hdrs + ctx.files.wolfssl_headers + ctx.files._mingw_toolchain,
         outputs = [out],
         tools = _tool_files(ctx),
         mnemonic = "SquatterClangTidy",
@@ -44,6 +51,9 @@ _clang_tidy_check = rule(
         "hdrs": attr.label_list(allow_files = [".h"]),
         "project_include": attr.string(mandatory = True),
         "src": attr.label(allow_single_file = [".c"], mandatory = True),
+        "wolfssl_config": attr.label(allow_single_file = [".h"], mandatory = True),
+        "wolfssl_headers": attr.label(mandatory = True),
+        "wolfssl_marker": attr.label(allow_single_file = [".h"], mandatory = True),
         "_mingw_include_marker": attr.label(
             default = _MINGW_INCLUDE_MARKER,
             allow_single_file = True,
@@ -68,13 +78,16 @@ _clang_tidy_check = rule(
     },
 )
 
-def squatter_clang_tidy(name, srcs, hdrs):
+def squatter_clang_tidy(name, srcs, hdrs, wolfssl_config, wolfssl_headers, wolfssl_marker):
     """Creates one cacheable clang-tidy action per C source file.
 
     Args:
       name: Name of the aggregate filegroup target.
       srcs: C source files to check.
       hdrs: Header files made available to each clang-tidy action.
+      wolfssl_config: Hovel's wolfSSL user-settings header.
+      wolfssl_headers: Complete wolfSSL public header filegroup.
+      wolfssl_marker: Public header used to derive wolfSSL's include root.
     """
 
     checks = []
@@ -87,6 +100,9 @@ def squatter_clang_tidy(name, srcs, hdrs):
             src = src,
             hdrs = hdrs,
             project_include = package_include,
+            wolfssl_config = wolfssl_config,
+            wolfssl_headers = wolfssl_headers,
+            wolfssl_marker = wolfssl_marker,
             tags = ["manual"],
         )
         checks.append(":" + check)

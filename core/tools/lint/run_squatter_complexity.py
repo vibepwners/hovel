@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import os
 import sys
 from pathlib import Path
@@ -35,7 +37,13 @@ def main() -> int:
     parser.add_argument("sources", nargs="+", type=Path)
     args = parser.parse_args()
 
-    lizard.main(["lizard", "-w", "-C", "10", *map(str, args.sources)])
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        lizard.main(["lizard", "-w", "-C", "10", *map(str, args.sources)])
+    warnings = output.getvalue()
+    if warnings:
+        sys.stdout.write(warnings)
+        return 1
     args.stamp.parent.mkdir(parents=True, exist_ok=True)
     args.stamp.write_text("ok\n")
     return 0

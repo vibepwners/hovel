@@ -24,6 +24,7 @@ def main() -> int:
     parser.add_argument("--lizard", required=True)
     parser.add_argument("--buildifier-linux-amd64", required=True)
     parser.add_argument("--buildifier-linux-arm64", required=True)
+    parser.add_argument("--tool", default="all")
     parser.add_argument("--write", action="store_true")
     parser.add_argument("paths", nargs="*")
     args = parser.parse_args()
@@ -43,6 +44,7 @@ def main() -> int:
             "PICBLOBS_LIZARD": str(resolve_runfile(args.lizard)),
             "PICBLOBS_REQUIRE_LINT_TOOLS": "1",
             "PICBLOBS_RUFF": str(resolve_runfile(args.ruff)),
+            "HOVEL_REPO_ROOT": str(root),
             "PYTHONPATH": pythonpath(root / "tools", env.get("PYTHONPATH")),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
@@ -50,6 +52,8 @@ def main() -> int:
 
     script, check_args, write_args = TOOLS[args.mode]
     script_args = list(write_args if args.write else check_args)
+    if args.tool != "all":
+        script_args.append(f"--tool={args.tool}")
     script_args.extend(args.paths)
     return subprocess.run(
         [sys.executable, str(root / "tools" / script), *script_args],
@@ -71,8 +75,12 @@ def find_picblobs_root(mode: str) -> Path:
 
 
 def candidate_roots() -> list[Path]:
-    roots: list[Path] = [Path.cwd()]
-    for name in ("RUNFILES_DIR", "TEST_SRCDIR", "BUILD_WORKSPACE_DIRECTORY"):
+    roots: list[Path] = []
+    workspace = os.environ.get("BUILD_WORKSPACE_DIRECTORY")
+    if workspace:
+        roots.append(Path(workspace))
+    roots.append(Path.cwd())
+    for name in ("RUNFILES_DIR", "TEST_SRCDIR"):
         value = os.environ.get(name)
         if value:
             roots.append(Path(value))

@@ -231,7 +231,7 @@ tasks:
     desc: Run a root integration Bazel query.
     dir: '{{.REPO_ROOT}}'
     cmds:
-      - bazel {{.BAZEL_STARTUP_ARGS}} query {{.BAZEL_ARGS}} {{.CLI_ARGS}}
+      - bazel {{.BAZEL_STARTUP_ARGS}} query {{.CLI_ARGS}}
 
   bazel:cquery:
     desc: Run a root integration Bazel configured query.
@@ -279,6 +279,16 @@ tasks:
             --coverage-json=core/coverage/go.results.json
             --squatter-lcov=bazel-out/_coverage/_coverage_report.dat
             --job-summary=.test-report/jobs/squatter-wine-e2e.json
+            --lint-report=.test-report/linters/report.json
+
+  lint:report:
+    desc: Run every wired linter/static analyzer and emit normalized report evidence.
+    cmds:
+      - task: bazel:run
+        vars:
+          CLI_ARGS: >-
+            //tools/testreport:run_lint_report --
+            --output=.test-report/linters
 
   graph:deps:
     desc: Render a bounded dependency graph to graph.dot; usage task graph:deps -- //path/to:target.
@@ -359,6 +369,7 @@ tasks:
       - |
         mkdir -p .test-report/bep
         status=0
+        task lint:report || status=$?
         task core:test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=../.test-report/bep/core.json //:test //:race_test //:fuzz_smoke_test || status=$?
         task bazel:test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=.test-report/bep/root.json //:sdk_test //:modules_test //:module_examples_test //:docs_test || status=$?
         task picblobs:bazel-test -- --test_strategy=standalone --nocache_test_results --remote_download_outputs=all --build_event_json_file=.test-report/bep/picblobs.json || status=$?
@@ -559,6 +570,13 @@ tasks:
       - task: run
         vars:
           CLI_ARGS: //tools/lint:gofmt_workspace -- --mode=write --path ../modules/squatter
+
+  modules:squatter:c:fmt:
+    desc: Format Squatter C sources with the wired Bazel-managed clang-format.
+    cmds:
+      - task: run
+        vars:
+          CLI_ARGS: //tools/lint:format_squatter_c
 
   modules:fmt-check:
     desc: Check Squatter Go source formatting with the wired formatter.

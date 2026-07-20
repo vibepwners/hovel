@@ -345,11 +345,15 @@ squatter_clang_tidy(
     name = "clang_tidy",
     srcs = _SQUATTER_C_SRCS,
     hdrs = _SQUATTER_HDRS,
+    wolfssl_config = "//third_party/wolfssl:user_settings.h",
+    wolfssl_headers = "@wolfssl//:headers",
+    wolfssl_marker = "@wolfssl//:wolfssl/error-ssl.h",
 )
 
 squatter_format_check(
     name = "format_check",
     srcs = _SQUATTER_FORMAT_SRCS,
+    clang_format_config = "//:.clang-format",
     tags = ["manual"],
 )
 

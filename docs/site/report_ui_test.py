@@ -13,12 +13,23 @@ sys.argv[1:] = []
 class ReportUITest(unittest.TestCase):
     def test_top_level_tabs_have_matching_accessible_panels(self) -> None:
         self.assertIn('role="tablist" aria-label="Test report sections"', REPORT_JS)
-        for view in ("overview", "coverage", "suites", "jobs", "targets"):
+        for view in ("linters", "overview", "coverage", "suites", "jobs", "targets"):
             self.assertIn(f'viewTab("{view}"', REPORT_JS)
             self.assertIn(f'id="report-panel-{view}" role="tabpanel"', REPORT_JS)
             self.assertIn(f'data-report-panel="{view}"', REPORT_JS)
         self.assertIn('event.key === "ArrowRight"', REPORT_JS)
         self.assertIn('event.key === "ArrowLeft"', REPORT_JS)
+
+    def test_linters_follow_the_default_overview_with_logs_and_ignore_counts(self) -> None:
+        linters_tab = REPORT_JS.index('viewTab("linters"')
+        overview_tab = REPORT_JS.index('viewTab("overview"')
+        coverage_tab = REPORT_JS.index('viewTab("coverage"')
+        self.assertLess(overview_tab, linters_tab)
+        self.assertLess(linters_tab, coverage_tab)
+        self.assertIn('view: "overview"', REPORT_JS)
+        self.assertIn("<h2>Linters and static analysis</h2>", REPORT_JS)
+        self.assertIn('data-linter-log=', REPORT_JS)
+        self.assertIn("Source-level ignores", REPORT_JS)
 
     def test_jobs_have_a_dedicated_view_after_suites(self) -> None:
         suites_panel = REPORT_JS.index('data-report-panel="suites"')

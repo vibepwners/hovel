@@ -8,6 +8,7 @@ nogo(
 )
 
 exports_files([
+    ".clang-format",
     ".github/workflows/ci.yml",
     ".github/workflows/pages.yml",
     "LICENSE",
@@ -176,6 +177,7 @@ test_suite(
         "//docs/tools/demo/mcpagent:mcpagent_test",
         "//docs/tools/docs:materialize_site_test",
         "//docs/tools/docs:pages_workflow_test",
+        "//tools/testreport:lintreport_test",
         "//tools/testreport:testreport_test",
     ],
 )

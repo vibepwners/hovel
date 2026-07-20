@@ -164,8 +164,8 @@ static BOOL skip_manifest_members(const BYTE **cursor, const BYTE *end, DWORD co
 
 static BOOL validate_manifest_layout(const sq_hovel_pki_config *config)
 {
-        const BYTE *cursor = config->payload + config->bundle_length + config->certificate_length +
-                             config->private_key_length;
+        const BYTE *cursor =
+            config->payload + config->bundle_length + config->certificate_length + config->private_key_length;
         const BYTE *end = config->payload + config->payload_length;
 
         if (cursor > end || !skip_manifest_members(&cursor, end, config->chain_count) ||
@@ -179,8 +179,8 @@ static BOOL validate_manifest_layout(const sq_hovel_pki_config *config)
 
 static BYTE *build_server_chain(const sq_hovel_pki_config *config, DWORD *chain_length)
 {
-        const BYTE *cursor = config->payload + config->bundle_length + config->certificate_length +
-                             config->private_key_length;
+        const BYTE *cursor =
+            config->payload + config->bundle_length + config->certificate_length + config->private_key_length;
         const BYTE *end = config->payload + config->payload_length;
         DWORD total = config->certificate_length;
         DWORD member_length = 0u;
@@ -302,14 +302,15 @@ static BOOL configure_named_groups(WOLFSSL_CTX *context)
 
 static BOOL set_socket_timeouts(SOCKET socket, DWORD milliseconds)
 {
-        int receive_result = setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&milliseconds,
-                                        (int)sizeof milliseconds);
-        int send_result = setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char *)&milliseconds,
-                                     (int)sizeof milliseconds);
+        int receive_result =
+            setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&milliseconds, (int)sizeof milliseconds);
+        int send_result =
+            setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char *)&milliseconds, (int)sizeof milliseconds);
 
         return receive_result == 0 && send_result == 0;
 }
 
+/* #lizard forgive -- fail-closed TLS initialization is one linear resource transaction. */
 BOOL sq_tls_runtime_init(const sq_hovel_pki_config *config)
 {
         WOLFSSL_METHOD *method = NULL;
@@ -324,7 +325,8 @@ BOOL sq_tls_runtime_init(const sq_hovel_pki_config *config)
         {
                 return TRUE;
         }
-        if (!sq_pki_config_present(config) || !validate_stamp_digests(config) || !validate_manifest_layout(config))
+        if (config == NULL || !sq_pki_config_present(config) || !validate_stamp_digests(config) ||
+            !validate_manifest_layout(config))
         {
                 g_tls_error = SQ_TLS_ERROR_STAMP;
                 return FALSE;
@@ -356,8 +358,8 @@ BOOL sq_tls_runtime_init(const sq_hovel_pki_config *config)
         wolfSSL_CTX_SetIORecv(g_tls_context, socket_receive);
         wolfSSL_CTX_SetIOSend(g_tls_context, socket_send);
         chain = build_server_chain(config, &chain_length);
-        if (chain == NULL || wolfSSL_CTX_use_certificate_chain_buffer_format(
-                                 g_tls_context, chain, (long)chain_length, WOLFSSL_FILETYPE_ASN1) != WOLFSSL_SUCCESS)
+        if (chain == NULL || wolfSSL_CTX_use_certificate_chain_buffer_format(g_tls_context, chain, (long)chain_length,
+                                                                             WOLFSSL_FILETYPE_ASN1) != WOLFSSL_SUCCESS)
         {
                 g_tls_error = SQ_TLS_ERROR_CERTIFICATE;
                 goto fail;
@@ -401,9 +403,15 @@ void sq_tls_runtime_cleanup(void)
         g_tls_enabled = FALSE;
 }
 
-BOOL sq_tls_runtime_enabled(void) { return g_tls_enabled; }
+BOOL sq_tls_runtime_enabled(void)
+{
+        return g_tls_enabled;
+}
 
-int sq_tls_runtime_error(void) { return g_tls_error; }
+int sq_tls_runtime_error(void)
+{
+        return g_tls_error;
+}
 
 sq_tls_session *sq_tls_session_create(SOCKET socket)
 {
