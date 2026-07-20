@@ -25,6 +25,15 @@ go_library(
     ],
 )
 
+# keep: syntax contracts run in the core CI gate without daemon or host-process fixtures.
+go_test(
+    name = "rootcli_contract_test",
+    size = "small",
+    srcs = ["rootcli_contract_test.go"],
+    embed = [":rootcli"],
+    tags = ["unit"],
+)
+
 # keep: fast root command/help checks stay separate from daemon E2E coverage.
 go_test(
     name = "rootcli_test",

@@ -25,6 +25,7 @@ import (
 	"github.com/vibepwners/hovel/internal/app/modulepackage"
 	"github.com/vibepwners/hovel/internal/app/operatorlog"
 	"github.com/vibepwners/hovel/internal/app/operatorsession"
+	domainpki "github.com/vibepwners/hovel/internal/domain/pki"
 	"github.com/vibepwners/hovel/internal/domain/run"
 	"github.com/vibepwners/hovel/internal/domain/workspace"
 	"github.com/vibepwners/hovel/internal/infra/daemonmanager"
@@ -37,17 +38,18 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 type App struct {
-	commands      commandmode.App
-	manager       daemonmanager.Manager
-	theme         Theme
-	session       commands.OperatorSession
-	modules       modulecatalog.Catalog
-	daemonClient  *daemonrpc.Client
-	wizard        *interactiveConfigWizard
-	moduleCount   int
-	workspacePath string
-	surface       *promptSurface
-	workspaceIDs  map[string]bool
+	commands        commandmode.App
+	manager         daemonmanager.Manager
+	theme           Theme
+	session         commands.OperatorSession
+	modules         modulecatalog.Catalog
+	moduleInventory []commands.ModuleInventoryRecord
+	daemonClient    *daemonrpc.Client
+	wizard          *interactiveConfigWizard
+	moduleCount     int
+	workspacePath   string
+	surface         *promptSurface
+	workspaceIDs    map[string]bool
 }
 
 func NewApp() App {
@@ -164,7 +166,21 @@ func (a *App) refreshWorkspaceModules(ctx context.Context) error {
 		a.wizard.modules = a.modules
 	}
 	a.moduleCount = len(a.modules.List())
+	a.refreshModuleInventory(ctx)
 	return nil
+}
+
+func (a *App) refreshModuleInventory(ctx context.Context) {
+	records, err := commands.ListAvailableModuleRecords(ctx, commands.Runtime{Modules: a.modules}, commands.ModuleInventoryOptions{
+		Workspace: workspace.ResolvePath(a.workspacePath),
+	})
+	if err != nil {
+		// Completion is supplemental; a stale or malformed cache must not make
+		// the interactive shell unavailable. The explicit inventory command
+		// continues to surface the underlying error.
+		return
+	}
+	a.moduleInventory = records
 }
 
 func installedWorkspaceModules(ctx context.Context, workspacePath string) ([]modulecatalog.Module, error) {
@@ -363,10 +379,18 @@ func (a *App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wr
 		return code
 	}
 	if isSessionConnectCommand(trimmed) {
+		fields, err := commandmode.SplitCommandLine(trimmed)
+		if err != nil {
+			writeCLILine(stderr, err)
+			return 2
+		}
+		if ok, code := a.commands.ValidateInteractive(fields, stderr); !ok {
+			return code
+		}
 		sessionID, options, err := parseSessionConnect(trimmed)
 		if err != nil {
 			writeCLILine(stderr, err)
-			return 1
+			return 2
 		}
 		return a.executeSessionConnect(ctx, sessionID, options, stdout, stderr)
 	}
@@ -434,6 +458,8 @@ func moduleCatalogMutationCommand(line string) bool {
 		return false
 	}
 	switch fields[0] {
+	case "chain", "chains":
+		return fields[1] == "add"
 	case "module", "modules":
 	default:
 		return false
@@ -549,6 +575,9 @@ func (a App) Suggestions(line string) []prompt.Suggest {
 	}
 
 	if !endsWithSpace && len(fields) == 1 {
+		if rewritten, ok := a.contextualSuggestionLine(line + " "); ok {
+			return qualifySuggestions(fields[0]+" ", a.Suggestions(rewritten))
+		}
 		return a.rootSuggestions(fields[0])
 	}
 
@@ -561,11 +590,6 @@ func (a App) Suggestions(line string) []prompt.Suggest {
 		path = fields[:len(fields)-1]
 	}
 	if children := registry.Children(path...); len(children) > 0 {
-		if !endsWithSpace && strings.HasPrefix(fields[len(fields)-1], "-") {
-			if definition, commandWordCount, ok := matchDefinition(registry, fields); ok && commandWordCount == len(path) {
-				return optionSuggestions(definition, fields[len(fields)-1])
-			}
-		}
 		children = a.contextualChildren(path, children)
 		prefix := ""
 		if !endsWithSpace {
@@ -575,7 +599,11 @@ func (a App) Suggestions(line string) []prompt.Suggest {
 		if a.inChainContext() && (strings.Join(path, " ") == "chain config" || strings.Join(path, " ") == "chains config") {
 			suggestions = appendSuggestion(suggestions, "interactive", "Interactively configure the active chain.", prefix)
 		}
-		return suggestions
+		if definition, ok := registry.Find(path...); ok {
+			leafSuggestions := a.definitionSuggestions(definition, len(path), fields, endsWithSpace)
+			return dedupeSuggestions(append(suggestions, leafSuggestions...))
+		}
+		return dedupeSuggestions(suggestions)
 	}
 
 	definition, commandWordCount, ok := matchDefinition(registry, fields)
@@ -589,20 +617,175 @@ func (a App) Suggestions(line string) []prompt.Suggest {
 	if chainContextRequired(pathString) && !a.inChainContext() {
 		return nil
 	}
-	if suggestions, ok := a.positionalSuggestions(definition, commandWordCount, fields, endsWithSpace); ok {
+	return a.definitionSuggestions(definition, commandWordCount, fields, endsWithSpace)
+}
+
+type completionCursor struct {
+	positionals    []string
+	positional     int
+	prefix         string
+	option         *commands.Option
+	optionValue    bool
+	optionName     bool
+	attachedPrefix string
+	usedOptions    map[string]bool
+}
+
+func (a App) definitionSuggestions(definition commands.Definition, commandWordCount int, fields []string, endsWithSpace bool) []prompt.Suggest {
+	cursor := completionCursorFor(definition, commandWordCount, fields, endsWithSpace)
+	if cursor.optionValue && cursor.option != nil {
+		suggestions := a.optionValueSuggestions(definition, *cursor.option, cursor.prefix)
+		if cursor.attachedPrefix != "" {
+			for index := range suggestions {
+				suggestions[index].Text = cursor.attachedPrefix + suggestions[index].Text
+			}
+		}
 		return suggestions
 	}
-	optionPrefix := ""
-	if !endsWithSpace {
-		last := fields[len(fields)-1]
-		if strings.HasPrefix(last, "-") {
-			optionPrefix = last
+	if cursor.optionName {
+		return optionSuggestions(definition, cursor.prefix, cursor.usedOptions)
+	}
+	if cursor.positional < len(definition.Positionals) {
+		suggestions := a.positionalSuggestions(definition, cursor.positional, cursor.positionals, cursor.prefix)
+		if len(suggestions) > 0 {
+			if cursor.prefix == "" {
+				suggestions = append(suggestions, optionSuggestions(definition, "", cursor.usedOptions)...)
+			}
+			return dedupeSuggestions(suggestions)
 		}
 	}
-	if len(fields) >= commandWordCount {
-		return optionSuggestions(definition, optionPrefix)
+	return optionSuggestions(definition, cursor.prefix, cursor.usedOptions)
+}
+
+func completionCursorFor(definition commands.Definition, commandWordCount int, fields []string, endsWithSpace bool) completionCursor {
+	cursor := completionCursor{usedOptions: map[string]bool{}}
+	args := append([]string(nil), fields[commandWordCount:]...)
+	current := ""
+	if !endsWithSpace && len(args) > 0 {
+		current = args[len(args)-1]
+		args = args[:len(args)-1]
 	}
-	return nil
+	optionsEnabled := true
+	var pending *commands.Option
+	for _, arg := range args {
+		if pending != nil {
+			pending = nil
+			continue
+		}
+		if optionsEnabled && arg == "--" {
+			optionsEnabled = false
+			continue
+		}
+		if optionsEnabled {
+			if option, _, attached, ok := completionOption(definition, arg); ok {
+				cursor.usedOptions[option.Name] = true
+				if option.Kind != commands.OptionBool && !attached {
+					copy := option
+					pending = &copy
+				}
+				continue
+			}
+			if options, valueOption, hasValueOption, _, attached, ok := completionShortOptionCluster(definition, arg); ok {
+				for _, option := range options {
+					cursor.usedOptions[option.Name] = true
+				}
+				if hasValueOption && !attached {
+					copy := valueOption
+					pending = &copy
+				}
+				continue
+			}
+		}
+		cursor.positionals = append(cursor.positionals, arg)
+	}
+	if pending != nil {
+		cursor.option = pending
+		cursor.optionValue = true
+		cursor.prefix = current
+		return cursor
+	}
+	if optionsEnabled && current != "" {
+		if option, value, attached, ok := completionOption(definition, current); ok && attached && option.Kind != commands.OptionBool {
+			cursor.option = &option
+			cursor.optionValue = true
+			cursor.prefix = value
+			cursor.attachedPrefix = current[:len(current)-len(value)]
+			cursor.usedOptions[option.Name] = true
+			return cursor
+		}
+		if options, option, hasValueOption, value, attached, ok := completionShortOptionCluster(definition, current); ok && hasValueOption && attached {
+			for _, used := range options {
+				cursor.usedOptions[used.Name] = true
+			}
+			cursor.option = &option
+			cursor.optionValue = true
+			cursor.prefix = value
+			cursor.attachedPrefix = current[:len(current)-len(value)]
+			return cursor
+		}
+		if strings.HasPrefix(current, "-") {
+			cursor.optionName = true
+			cursor.prefix = current
+			return cursor
+		}
+	}
+	cursor.positional = len(cursor.positionals)
+	cursor.prefix = current
+	return cursor
+}
+
+func completionOption(definition commands.Definition, token string) (commands.Option, string, bool, bool) {
+	name := token
+	value := ""
+	attached := false
+	if before, after, ok := strings.Cut(token, "="); ok {
+		name, value, attached = before, after, true
+	}
+	for _, option := range definition.Options {
+		if name == "--"+option.Name || option.Short != "" && name == "-"+option.Short {
+			return option, value, attached, true
+		}
+	}
+	return commands.Option{}, "", false, false
+}
+
+func completionShortOptionCluster(definition commands.Definition, token string) ([]commands.Option, commands.Option, bool, string, bool, bool) {
+	name := token
+	value := ""
+	attached := false
+	if before, after, ok := strings.Cut(token, "="); ok {
+		name, value, attached = before, after, true
+	}
+	if !strings.HasPrefix(name, "-") || strings.HasPrefix(name, "--") || len(name) <= 2 {
+		return nil, commands.Option{}, false, "", false, false
+	}
+	shorts := []rune(strings.TrimPrefix(name, "-"))
+	options := make([]commands.Option, 0, len(shorts))
+	for index, short := range shorts {
+		var matched commands.Option
+		found := false
+		for _, option := range definition.Options {
+			if option.Short == string(short) {
+				matched, found = option, true
+				break
+			}
+		}
+		if !found {
+			return nil, commands.Option{}, false, "", false, false
+		}
+		options = append(options, matched)
+		if matched.Kind == commands.OptionBool {
+			continue
+		}
+		if index != len(shorts)-1 {
+			return nil, commands.Option{}, false, "", false, false
+		}
+		return options, matched, true, value, attached, true
+	}
+	if attached {
+		return nil, commands.Option{}, false, "", false, false
+	}
+	return options, commands.Option{}, false, "", false, true
 }
 
 func (a App) rootSuggestions(prefix string) []prompt.Suggest {
@@ -622,24 +805,9 @@ func (a App) contextualRootDefinitions() []commands.Definition {
 		return firstSegments
 	}
 	if a.inOperationContext() {
-		return filterDefinitions(firstSegments, map[string]bool{
-			"chain":    true,
-			"control":  true,
-			"module":   true,
-			"op":       true,
-			"payload":  true,
-			"payloads": true,
-			"session":  true,
-		})
+		return excludeDefinitions(firstSegments, map[string]bool{"throw": true})
 	}
-	return filterDefinitions(firstSegments, map[string]bool{
-		"control":  true,
-		"module":   true,
-		"op":       true,
-		"payload":  true,
-		"payloads": true,
-		"session":  true,
-	})
+	return excludeDefinitions(firstSegments, map[string]bool{"chain": true, "target": true, "throw": true})
 }
 
 func (a App) contextualChildren(path []string, children []commands.Definition) []commands.Definition {
@@ -755,6 +923,17 @@ func filterDefinitions(definitions []commands.Definition, allowed map[string]boo
 	return filtered
 }
 
+func excludeDefinitions(definitions []commands.Definition, excluded map[string]bool) []commands.Definition {
+	filtered := make([]commands.Definition, 0, len(definitions))
+	for _, definition := range definitions {
+		if len(definition.Path) == 0 || excluded[definition.Path[len(definition.Path)-1]] {
+			continue
+		}
+		filtered = append(filtered, definition)
+	}
+	return filtered
+}
+
 func (a App) contextualSuggestionLine(line string) (string, bool) {
 	if !a.inChainContext() {
 		return "", false
@@ -833,79 +1012,116 @@ func (a App) activeChain() string {
 	return a.session.Snapshot().ActiveChain
 }
 
-func (a App) positionalSuggestions(definition commands.Definition, commandWordCount int, fields []string, endsWithSpace bool) ([]prompt.Suggest, bool) {
-	provided := len(fields) - commandWordCount
-	prefix := ""
-	if !endsWithSpace && len(fields) > 0 {
-		prefix = fields[len(fields)-1]
-	}
-
+func (a App) positionalSuggestions(definition commands.Definition, index int, provided []string, prefix string) []prompt.Suggest {
 	switch definition.PathString() {
 	case "op use", "operation use":
-		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.operationSuggestions), true
+		return a.suggestionsForIndex(index, 0, prefix, a.operationSuggestions)
 	case "chain use", "chains use", "chain delete", "chains delete":
-		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.chainSuggestions), true
+		return a.suggestionsForIndex(index, 0, prefix, a.chainSuggestions)
 	case "chain rename", "chains rename":
-		if provided == 0 || provided == 1 && !endsWithSpace {
-			return a.chainSuggestions(prefix), true
+		if index == 0 {
+			return a.chainSuggestions(prefix)
 		}
-		return nil, true
-	case "chain add", "chains add", "module inspect", "modules inspect", "module check", "modules check":
-		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.moduleSuggestions), true
+		return nil
+	case "chain add", "chains add":
+		return a.suggestionsForIndex(index, 0, prefix, a.availableModuleSuggestions)
+	case "module available", "modules available", "module search", "modules search":
+		return a.suggestionsForIndex(index, 0, prefix, a.availableModuleSuggestions)
+	case "module install", "modules install":
+		if index != 0 {
+			return nil
+		}
+		return dedupeSuggestions(append(a.installableModuleSuggestions(prefix), fileSuggestions(prefix)...))
+	case "module inspect", "modules inspect":
+		return a.suggestionsForIndex(index, 0, prefix, a.moduleSuggestions)
+	case "module check", "modules check":
+		if index != 0 {
+			return nil
+		}
+		return dedupeSuggestions(append(a.moduleSuggestions(prefix), fileSuggestions(prefix)...))
 	case "chain config set", "chains config set", "chain config unset", "chains config unset":
-		if provided == 0 || provided == 1 && !endsWithSpace {
-			return a.chainConfigKeySuggestions(prefix), true
+		if index == 0 {
+			return a.chainConfigKeySuggestions(prefix)
 		}
-		return nil, true
+		return nil
 	case "target config list", "targets config list", "target config set", "targets config set", "target config unset", "targets config unset":
-		if provided == 0 || provided == 1 && !endsWithSpace {
-			return a.targetSuggestions(prefix), true
+		if index == 0 {
+			return a.targetSuggestions(prefix)
 		}
-		if provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace {
-			return a.targetConfigKeySuggestions(prefix), true
+		if index == 1 {
+			return a.targetConfigKeySuggestions(prefix)
 		}
-		return nil, true
+		return nil
 	case "target set inspect", "targets set inspect", "target group inspect", "targets group inspect", "target set add", "targets set add", "target group add", "targets group add", "target set remove", "targets set remove", "target group remove", "targets group remove":
-		if provided == 0 || provided == 1 && !endsWithSpace {
-			return a.targetSetSuggestions(prefix), true
+		if index == 0 {
+			return a.targetSetSuggestions(prefix)
 		}
 		if strings.Contains(definition.PathString(), " add") || strings.Contains(definition.PathString(), " remove") {
-			if provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace {
-				return a.targetSuggestions(prefix), true
+			if index == 1 {
+				return a.targetSuggestions(prefix)
 			}
 		}
-		return nil, true
+		return nil
 	case "session connect", "sessions connect", "session tail", "sessions tail", "session read", "sessions read", "session send", "sessions send", "session write", "sessions write", "session close", "sessions close",
 		"session commands", "sessions commands", "session capabilities", "sessions capabilities":
-		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.sessionSuggestions), true
+		return a.suggestionsForIndex(index, 0, prefix, a.sessionSuggestions)
 	case "session call", "sessions call", "session command", "sessions command":
-		if provided == 0 || provided == 1 && !endsWithSpace {
-			return a.sessionSuggestions(prefix), true
+		if index == 0 {
+			return a.sessionSuggestions(prefix)
 		}
-		if len(fields) > commandWordCount && (provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace) {
-			return a.sessionCapabilitySuggestions(fields[commandWordCount], prefix), true
+		if index == 1 && len(provided) > 0 {
+			return a.sessionCapabilitySuggestions(provided[0], prefix)
 		}
-		return nil, true
+		return nil
 	case "payloads inspect", "payload inspect", "payloads connect", "payload connect", "payloads cleanup", "payload cleanup",
 		"payloads mark-removed", "payload mark-removed", "payloads refresh", "payload refresh", "payloads commands", "payload commands",
 		"payloads capabilities", "payload capabilities", "payloads getfile", "payload getfile", "payloads putfile", "payload putfile",
 		"payloads cmd", "payload cmd":
-		return a.singlePositionalSuggestions(provided, prefix, endsWithSpace, a.payloadSuggestions), true
+		return a.suggestionsForIndex(index, 0, prefix, a.payloadSuggestions)
 	case "payloads call", "payload call", "payloads command", "payload command":
-		if provided == 0 || provided == 1 && !endsWithSpace {
-			return a.payloadSuggestions(prefix), true
+		if index == 0 {
+			return a.payloadSuggestions(prefix)
 		}
-		if len(fields) > commandWordCount && (provided == 1 && endsWithSpace || provided == 2 && !endsWithSpace) {
-			return a.payloadCapabilitySuggestions(fields[commandWordCount], prefix), true
+		if index == 1 && len(provided) > 0 {
+			return a.payloadCapabilitySuggestions(provided[0], prefix)
 		}
-		return nil, true
+		return nil
+	}
+
+	if index >= len(definition.Positionals) {
+		return nil
+	}
+	switch definition.Positionals[index].Name {
+	case "file", "manifest", "source", "local":
+		return fileSuggestions(prefix)
+	case "module":
+		return a.moduleSuggestions(prefix)
+	case "target":
+		if strings.HasSuffix(definition.PathString(), "target add") || strings.HasSuffix(definition.PathString(), "targets add") || strings.Contains(definition.PathString(), "register-squatter") {
+			return nil
+		}
+		return a.targetSuggestions(prefix)
+	case "payload":
+		return a.payloadSuggestions(prefix)
+	case "session":
+		return a.sessionSuggestions(prefix)
+	case "artifact":
+		return a.artifactSuggestions(prefix)
+	case "throw":
+		return a.throwSuggestions(prefix)
+	case "authority", "generation", "revocation", "crl", "assignment", "trust-set":
+		return a.pkiObjectSuggestions(definition.Positionals[index].Name, prefix)
+	case "mode":
+		return staticSuggestions(prefix, "anyone", "quorum", "all_connected")
+	case "query":
+		return a.availableModuleSuggestions(prefix)
 	default:
-		return nil, false
+		return nil
 	}
 }
 
-func (a App) singlePositionalSuggestions(provided int, prefix string, endsWithSpace bool, suggest func(string) []prompt.Suggest) []prompt.Suggest {
-	if provided == 0 || provided == 1 && !endsWithSpace {
+func (a App) suggestionsForIndex(index, want int, prefix string, suggest func(string) []prompt.Suggest) []prompt.Suggest {
+	if index == want {
 		return suggest(prefix)
 	}
 	return nil
@@ -1254,6 +1470,292 @@ func (a App) moduleSuggestions(prefix string) []prompt.Suggest {
 			Description: fmt.Sprintf("%s %s", module.Type, module.Summary),
 		})
 	}
+	return suggestions
+}
+
+func (a App) availableModuleSuggestions(prefix string) []prompt.Suggest {
+	suggestions := a.moduleSuggestions(prefix)
+	for _, record := range a.moduleInventory {
+		if prefix != "" && !strings.Contains(strings.ToLower(record.ID+" "+record.Name+" "+record.Summary), strings.ToLower(prefix)) {
+			continue
+		}
+		description := strings.TrimSpace(strings.Join([]string{string(record.Type), record.Summary}, " "))
+		if _, addable := a.modules.Find(record.ID); !addable {
+			description = strings.TrimSpace(description + " [available from " + inventorySource(record.SourceKind, "local inventory") + "]")
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: record.ID, Description: description})
+	}
+	return dedupeSuggestions(suggestions)
+}
+
+func (a App) installableModuleSuggestions(prefix string) []prompt.Suggest {
+	var suggestions []prompt.Suggest
+	for _, record := range a.moduleInventory {
+		if record.Installed || record.SourceKind == "catalog" {
+			continue
+		}
+		if prefix != "" && !strings.Contains(strings.ToLower(record.ID+" "+record.Name+" "+record.Summary), strings.ToLower(prefix)) {
+			continue
+		}
+		description := strings.TrimSpace(strings.Join([]string{string(record.Type), record.Summary}, " "))
+		description = strings.TrimSpace(description + " [install from " + inventorySource(record.SourceKind, "local inventory") + "]")
+		suggestions = append(suggestions, prompt.Suggest{Text: record.ID, Description: description})
+	}
+	return dedupeSuggestions(suggestions)
+}
+
+func inventorySource(source, fallback string) string {
+	if source = strings.TrimSpace(source); source != "" {
+		return source
+	}
+	return fallback
+}
+
+func (a App) artifactSuggestions(prefix string) []prompt.Suggest {
+	records, err := filesystem.NewWorkspaceStore().ListArtifacts(context.Background(), workspace.ResolvePath(a.workspacePath))
+	if err != nil {
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(records))
+	for _, record := range records {
+		description := strings.TrimSpace(strings.Join([]string{record.Kind, record.Name, record.Target}, " "))
+		suggestions = append(suggestions, prompt.Suggest{Text: record.ID, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) throwSuggestions(prefix string) []prompt.Suggest {
+	records, err := filesystem.NewWorkspaceStore().ListThrowPlans(context.Background(), workspace.ResolvePath(a.workspacePath))
+	if err != nil {
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(records))
+	for _, record := range records {
+		description := fmt.Sprintf("%s %d target(s)", record.Chain, len(record.Targets))
+		suggestions = append(suggestions, prompt.Suggest{Text: record.ID, Description: description})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) pkiObjectSuggestions(kind, prefix string) []prompt.Suggest {
+	if a.daemonClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	var suggestions []prompt.Suggest
+	switch kind {
+	case "authority":
+		response, err := a.daemonClient.ListPKIAuthorities(ctx)
+		if err != nil {
+			return nil
+		}
+		for _, authority := range response.Authorities {
+			suggestions = append(suggestions, prompt.Suggest{Text: string(authority.ID), Description: strings.TrimSpace(authority.Name + " " + string(authority.Role) + " " + string(authority.State))})
+		}
+	case "generation":
+		response, err := a.daemonClient.ListPKICertificates(ctx)
+		if err != nil {
+			return nil
+		}
+		for _, generation := range response.Certificates {
+			description := strings.TrimSpace(strings.Join([]string{string(generation.ProfileID), string(generation.State), string(generation.Purpose)}, " "))
+			suggestions = append(suggestions, prompt.Suggest{Text: string(generation.ID), Description: description})
+		}
+	case "assignment":
+		response, err := a.daemonClient.ListPKIAssignments(ctx)
+		if err != nil {
+			return nil
+		}
+		for _, assignment := range response.Assignments {
+			description := strings.TrimSpace(strings.Join([]string{string(assignment.ConsumerType), string(assignment.ConsumerID), string(assignment.State)}, " "))
+			suggestions = append(suggestions, prompt.Suggest{Text: string(assignment.ID), Description: description})
+		}
+	case "trust-set":
+		response, err := a.daemonClient.ListPKITrustSets(ctx)
+		if err != nil {
+			return nil
+		}
+		for _, trustSet := range response.TrustSets {
+			suggestions = append(suggestions, prompt.Suggest{Text: string(trustSet.ID), Description: strings.TrimSpace(trustSet.Name + " " + string(trustSet.State))})
+		}
+	case "revocation", "crl":
+		authorities, err := a.daemonClient.ListPKIAuthorities(ctx)
+		if err != nil {
+			return nil
+		}
+		for _, authority := range authorities.Authorities {
+			if kind == "revocation" {
+				response, listErr := a.daemonClient.ListPKIRevocations(ctx, daemonrpc.PKIRevocationListRequest{AuthorityID: authority.ID})
+				if listErr != nil {
+					continue
+				}
+				for _, revocation := range response.Revocations {
+					suggestions = append(suggestions, prompt.Suggest{Text: string(revocation.ID), Description: string(revocation.Reason)})
+				}
+				continue
+			}
+			response, listErr := a.daemonClient.ListPKICRLs(ctx, daemonrpc.PKICRLListRequest{AuthorityID: authority.ID})
+			if listErr != nil {
+				continue
+			}
+			for _, crl := range response.CRLs {
+				suggestions = append(suggestions, prompt.Suggest{Text: string(crl.ID), Description: fmt.Sprintf("%s #%d", crl.AuthorityID, crl.Number)})
+			}
+		}
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) optionValueSuggestions(definition commands.Definition, option commands.Option, prefix string) []prompt.Suggest {
+	switch option.Name {
+	case "workspace", "config", "index", "link", "input-file", "module-config":
+		return fileSuggestions(prefix)
+	case "operation":
+		return a.operationSuggestions(prefix)
+	case "chain":
+		return dedupeSuggestions(append(a.chainSuggestions(prefix), a.moduleSuggestions(prefix)...))
+	case "target":
+		return a.targetSuggestions(prefix)
+	case "target-set", "target-group":
+		return a.targetSetSuggestions(prefix)
+	case "type":
+		return staticSuggestions(prefix, string(modulecatalog.TypeSurvey), string(modulecatalog.TypeExploit), string(modulecatalog.TypePayloadProvider))
+	case "state":
+		return staticSuggestions(prefix, commands.PayloadStateInstalled, commands.PayloadStateConnected, commands.PayloadStateUnreachable, commands.PayloadStateRemoved)
+	case "input-encoding":
+		return staticSuggestions(prefix, "utf-8", "base64")
+	case "end":
+		return staticSuggestions(prefix, `\n`, `\r`, `\0`)
+	case "role":
+		return staticSuggestions(prefix, string(domainpki.AuthorityRoleRoot), string(domainpki.AuthorityRoleSubordinate))
+	case "parent", "issuer":
+		return a.pkiObjectSuggestions("authority", prefix)
+	case "profile":
+		return a.pkiProfileSuggestions(prefix)
+	case "backend":
+		return a.pkiBackendSuggestions(prefix)
+	case "reason":
+		if strings.HasPrefix(definition.PathString(), "pki certificate revoke") {
+			return staticSuggestions(prefix, "unspecified", "key-compromise", "ca-compromise", "affiliation-changed", "superseded", "cessation-of-operation", "certificate-hold", "privilege-withdrawn", "aa-compromise")
+		}
+	case "consumer-type":
+		return staticSuggestions(prefix, "mesh-provider", "mesh-listener", "listening-post", "mesh-node", "implant", "stager", "payload", "c2-service", "service", "external")
+	case "purpose":
+		return staticSuggestions(prefix, "tls-server", "tls-client", "mtls-server", "mtls-client", "dual-role-mtls", "code-signing", "custom")
+	case "trust-set":
+		return a.pkiObjectSuggestions("trust-set", prefix)
+	case "anchors", "intermediates":
+		return a.commaSeparatedSuggestions("generation", prefix)
+	case "crls":
+		return a.commaSeparatedSuggestions("crl", prefix)
+	case "issuer-generation":
+		return a.pkiObjectSuggestions("generation", prefix)
+	case "signature-algorithm":
+		return staticSuggestions(prefix, "auto", "ecdsa-sha256", "ecdsa-sha384", "ecdsa-sha512", "sha256-rsa", "sha384-rsa", "sha512-rsa", "sha256-rsa-pss", "sha384-rsa-pss", "sha512-rsa-pss", "ed25519", "ml-dsa-44", "ml-dsa-65", "ml-dsa-87")
+	}
+	return nil
+}
+
+func (a App) pkiProfileSuggestions(prefix string) []prompt.Suggest {
+	if a.daemonClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	response, err := a.daemonClient.ListPKIProfiles(ctx)
+	if err != nil {
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(response.Profiles))
+	for _, profile := range response.Profiles {
+		suggestions = append(suggestions, prompt.Suggest{Text: string(profile.ID), Description: profile.Name})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) pkiBackendSuggestions(prefix string) []prompt.Suggest {
+	if a.daemonClient == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	response, err := a.daemonClient.ListPKIBackends(ctx)
+	if err != nil {
+		return nil
+	}
+	suggestions := make([]prompt.Suggest, 0, len(response.Backends))
+	for _, backend := range response.Backends {
+		suggestions = append(suggestions, prompt.Suggest{Text: string(backend.ID), Description: backend.Version})
+	}
+	return filterSuggestions(dedupeSuggestions(suggestions), prefix)
+}
+
+func (a App) commaSeparatedSuggestions(kind, prefix string) []prompt.Suggest {
+	head := ""
+	tail := prefix
+	if index := strings.LastIndex(prefix, ","); index >= 0 {
+		head, tail = prefix[:index+1], prefix[index+1:]
+	}
+	suggestions := a.pkiObjectSuggestions(kind, tail)
+	for index := range suggestions {
+		suggestions[index].Text = head + suggestions[index].Text
+	}
+	return suggestions
+}
+
+func staticSuggestions(prefix string, values ...string) []prompt.Suggest {
+	suggestions := make([]prompt.Suggest, 0, len(values))
+	for _, value := range values {
+		suggestions = append(suggestions, prompt.Suggest{Text: value})
+	}
+	return filterSuggestions(suggestions, prefix)
+}
+
+func fileSuggestions(prefix string) []prompt.Suggest {
+	search := os.ExpandEnv(prefix)
+	if strings.HasPrefix(search, "~"+string(os.PathSeparator)) {
+		if home, err := os.UserHomeDir(); err == nil {
+			search = filepath.Join(home, strings.TrimPrefix(search, "~"+string(os.PathSeparator)))
+		}
+	}
+	if search == "" {
+		search = "."
+	}
+	directory := filepath.Dir(search)
+	base := filepath.Base(search)
+	if strings.HasSuffix(search, string(os.PathSeparator)) {
+		directory = strings.TrimSuffix(search, string(os.PathSeparator))
+		if directory == "" {
+			directory = string(os.PathSeparator)
+		}
+		base = ""
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil
+	}
+	displayDirectory := filepath.Dir(prefix)
+	if prefix == "" || displayDirectory == "." && !strings.HasPrefix(prefix, ".") {
+		displayDirectory = ""
+	}
+	var suggestions []prompt.Suggest
+	for _, entry := range entries {
+		if base != "." && !strings.HasPrefix(entry.Name(), base) {
+			continue
+		}
+		text := entry.Name()
+		if displayDirectory != "" {
+			text = filepath.Join(displayDirectory, text)
+		}
+		description := "file"
+		if entry.IsDir() {
+			text += string(os.PathSeparator)
+			description = "directory"
+		}
+		suggestions = append(suggestions, prompt.Suggest{Text: text, Description: description})
+	}
+	sort.Slice(suggestions, func(i, j int) bool { return suggestions[i].Text < suggestions[j].Text })
 	return suggestions
 }
 
@@ -1717,6 +2219,15 @@ func appendSuggestion(suggestions []prompt.Suggest, text, description, prefix st
 	return append(suggestions, prompt.Suggest{Text: text, Description: description})
 }
 
+func qualifySuggestions(prefix string, suggestions []prompt.Suggest) []prompt.Suggest {
+	qualified := make([]prompt.Suggest, len(suggestions))
+	for index, suggestion := range suggestions {
+		qualified[index] = suggestion
+		qualified[index].Text = prefix + suggestion.Text
+	}
+	return qualified
+}
+
 type commandAlias struct {
 	text        string
 	description string
@@ -1731,9 +2242,12 @@ var activeChainAliases = []commandAlias{
 	{text: "validate", description: "Validate active chain configuration."},
 }
 
-func optionSuggestions(definition commands.Definition, prefix string) []prompt.Suggest {
+func optionSuggestions(definition commands.Definition, prefix string, used map[string]bool) []prompt.Suggest {
 	var suggestions []prompt.Suggest
 	for _, option := range definition.Options {
+		if used[option.Name] && option.Kind != commands.OptionStringList {
+			continue
+		}
 		names := []string{"--" + option.Name}
 		if option.Short != "" {
 			names = append(names, "-"+option.Short)

@@ -202,6 +202,7 @@ type publishedFeedbackSession interface {
 }
 
 type Runtime struct {
+	WorkspacePath      string
 	Workspaces         WorkspaceInitializer
 	Daemons            DaemonStatusProvider
 	PendingThrows      PendingThrowCoordinator
@@ -602,6 +603,39 @@ type ModuleInventoryRecord struct {
 	Linked      bool                     `json:"linked,omitempty"`
 	Installed   bool                     `json:"installed"`
 	InstalledAt string                   `json:"installedAt,omitempty"`
+}
+
+// ModuleInventoryOptions selects the same local module inventory exposed by
+// `module available`. Front ends use this to keep discovery and completion in
+// sync without executing a presentation-oriented command handler.
+type ModuleInventoryOptions struct {
+	Workspace string
+	Config    string
+	Index     string
+	Query     string
+	Type      modulecatalog.ModuleType
+	Global    bool
+}
+
+// ListAvailableModuleRecords returns locally discoverable module packages.
+// Availability does not imply installation: callers should preserve that
+// distinction when presenting records that are not in the active module DB.
+func ListAvailableModuleRecords(ctx context.Context, runtime Runtime, options ModuleInventoryOptions) ([]ModuleInventoryRecord, error) {
+	invocation := Invocation{
+		Positionals: map[string]string{"query": options.Query},
+		Options: map[string]string{
+			"workspace": options.Workspace,
+			"config":    options.Config,
+			"index":     options.Index,
+			"type":      string(options.Type),
+		},
+		Flags: map[string]bool{"global": options.Global},
+	}
+	records, err := availableModuleRecordsForInvocation(ctx, runtime, invocation)
+	if err != nil {
+		return nil, err
+	}
+	return filterModuleInventoryRecords(records, options.Query, options.Type), nil
 }
 
 type ChainFile struct {
@@ -1748,18 +1782,28 @@ func chainAddHandler(runtime Runtime) Handler {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
+		if runtime.Session == nil {
+			return Result{}, operatorSessionRequiredError("chain add")
+		}
+		if strings.TrimSpace(runtime.Session.Snapshot().ActiveChain) == "" {
+			return Result{}, activeChainRequiredError()
+		}
+		invocation = invocationWithRuntimeWorkspace(runtime, invocation)
 		db, err := moduleDBForInvocation(ctx, runtime, invocation)
 		if err != nil {
 			return Result{}, err
 		}
 		moduleID := invocation.Positional("module")
 		if isSquatterBindAlias(moduleID) {
-			if runtime.Session == nil {
-				return Result{}, operatorSessionRequiredError("chain add")
-			}
 			module, ok := findSquatterProviderModule(db)
 			if !ok {
-				return Result{}, fmt.Errorf("module squatter@v0.1.0 does not exist")
+				module, err = installAvailableChainModule(ctx, runtime, invocation, "squatter@v0.1.0")
+				if err != nil {
+					return Result{}, err
+				}
+				if !isSquatterProviderModule(module) {
+					return Result{}, fmt.Errorf("installed module %s is not a squatter provider", module.ID)
+				}
 			}
 			moduleID = module.ID
 			step, err := runtime.Session.AddModule(moduleID)
@@ -1776,10 +1820,10 @@ func chainAddHandler(runtime Runtime) Handler {
 		}
 		module, ok := db.Find(moduleID)
 		if !ok {
-			return Result{}, fmt.Errorf("module %s does not exist", moduleID)
-		}
-		if runtime.Session == nil {
-			return Result{}, operatorSessionRequiredError("chain add")
+			module, err = installAvailableChainModule(ctx, runtime, invocation, moduleID)
+			if err != nil {
+				return Result{}, err
+			}
 		}
 		step, err := runtime.Session.AddModule(module.ID)
 		if err != nil {
@@ -1798,6 +1842,36 @@ func chainAddHandler(runtime Runtime) Handler {
 		}
 		return Result{Human: fmt.Sprintf("Module added: %s as %s", module.ID, step.ID)}, nil
 	}
+}
+
+func installAvailableChainModule(ctx context.Context, runtime Runtime, invocation Invocation, reference string) (modulecatalog.Module, error) {
+	workspacePath := workspaceFromInvocation(invocation)
+	source, linkPath, sha, err := resolveInstallReference(workspacePath, reference, "", invocation)
+	if err != nil {
+		return modulecatalog.Module{}, fmt.Errorf("module %s does not exist in the active runtime and could not be installed automatically: %w", reference, err)
+	}
+	result, _, err := installModuleSource(ctx, runtime, workspacePath, source, linkPath, sha, invocation)
+	if err != nil {
+		return modulecatalog.Module{}, fmt.Errorf("prepare module %s for the active chain: %w", reference, err)
+	}
+	pkg, err := modulepackage.LoadDir(result.Source)
+	if err != nil {
+		return modulecatalog.Module{}, fmt.Errorf("load automatically installed module %s: %w", reference, err)
+	}
+	module, err := moduleFromPackage(ctx, runtime, pkg)
+	if err != nil {
+		return modulecatalog.Module{}, fmt.Errorf("inspect automatically installed module %s: %w", reference, err)
+	}
+	return module, nil
+}
+
+func invocationWithRuntimeWorkspace(runtime Runtime, invocation Invocation) Invocation {
+	if invocation.Flag("global") || strings.TrimSpace(invocation.Option("workspace")) != "" || strings.TrimSpace(runtime.WorkspacePath) == "" {
+		return invocation
+	}
+	invocation.Options = cloneStringMap(invocation.Options)
+	invocation.Options["workspace"] = runtime.WorkspacePath
+	return invocation
 }
 
 const (

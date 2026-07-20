@@ -43,6 +43,38 @@ type App struct {
 	logs     terminallog.Renderer
 }
 
+type usageSurface struct {
+	rootName         string
+	commandPrefix    string
+	rootDescription  string
+	groupDescription string
+}
+
+var (
+	shellUsageSurface = usageSurface{
+		rootName:         "hovel command",
+		commandPrefix:    "hovel command",
+		rootDescription:  "Run one Hovel command from the shell.",
+		groupDescription: "Run a grouped Hovel command.",
+	}
+	interactiveUsageSurface = usageSurface{
+		rootName:         "command",
+		rootDescription:  "Run one command in the Hovel CLI.",
+		groupDescription: "Run a grouped command in the Hovel CLI.",
+	}
+)
+
+func (s usageSurface) commandName(path []string) string {
+	name := strings.Join(path, " ")
+	if name == "" {
+		return s.rootName
+	}
+	if s.commandPrefix == "" {
+		return name
+	}
+	return s.commandPrefix + " " + name
+}
+
 func NewApp() App {
 	return NewAppWithRuntime(defaultRuntime(nil))
 }
@@ -88,6 +120,7 @@ func defaultRuntimeWithCatalogAndWorkspace(session commands.OperatorSession, cat
 	}
 	stepRunner := pythonrpc.StepRuntimeRunner{Runner: runner}
 	return commands.Runtime{
+		WorkspacePath: workspacePath,
 		Workspaces: services.NewWorkspaceService(
 			store,
 			discardEvents{},
@@ -127,13 +160,60 @@ func (a App) Registry() commands.Registry {
 }
 
 func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	return a.run(ctx, args, stdout, stderr, false)
+	return a.run(ctx, args, stdout, stderr, false, shellUsageSurface)
 }
 
-func (a App) run(ctx context.Context, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
+// Validate checks command structure and arguments without executing the command handler.
+// Daemon-owning front ends use it before acquiring runtime resources.
+func (a App) Validate(args []string, stderr io.Writer) (bool, int) {
+	return a.validate(args, stderr, shellUsageSurface)
+}
+
+// ValidateInteractive checks command structure while keeping usage local to
+// the interactive shell, where operators enter commands without a binary or
+// role prefix.
+func (a App) ValidateInteractive(args []string, stderr io.Writer) (bool, int) {
+	return a.validate(args, stderr, interactiveUsageSurface)
+}
+
+func (a App) validate(args []string, stderr io.Writer, surface usageSurface) (bool, int) {
+	args = normalizeLeadingConfig(args)
+	if len(args) == 0 {
+		writeCommandText(stderr, a.rootParser(surface).Usage("command is required"))
+		return false, 2
+	}
+	if topLevelHelpRequested(args) {
+		return true, 0
+	}
+	definition, commandArgs, ok := a.matchDefinition(args)
+	if !ok {
+		if group, rest, groupOK := a.matchGroup(args); groupOK {
+			if helpRequested(rest) {
+				return true, 0
+			}
+			message := "subcommand is required"
+			if len(rest) > 0 {
+				message = fmt.Sprintf("unknown subcommand %q for %q", strings.Join(rest, " "), strings.Join(group, " "))
+			}
+			writeCommandText(stderr, a.groupParser(group, surface).Usage(message))
+			return false, 2
+		}
+		writeCommandText(stderr, a.rootParser(surface).Usage(fmt.Sprintf("unknown command %q", strings.Join(commandPath(args), " "))))
+		return false, 2
+	}
+	if commandHelpRequested(definition, commandArgs) {
+		return true, 0
+	}
+	parserName := surface.commandName(definition.Path)
+	parser, bindings := commandParser(definition, parserName)
+	_, ok, code := parseDefinition(definition, parser, parserName, bindings, commandArgs, stderr)
+	return ok, code
+}
+
+func (a App) run(ctx context.Context, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool, surface usageSurface) int {
 	args = normalizeLeadingConfig(args)
 	if len(args) == 0 || topLevelHelpRequested(args) {
-		parser := a.rootParser()
+		parser := a.rootParser(surface)
 		if topLevelHelpRequested(args) {
 			writeCommandText(stdout, parser.Usage(nil))
 			return 0
@@ -144,14 +224,22 @@ func (a App) run(ctx context.Context, args []string, stdout, stderr io.Writer, e
 
 	definition, commandArgs, ok := a.matchDefinition(args)
 	if !ok {
-		if group, rest, groupOK := a.matchGroup(args); groupOK && helpRequested(rest) {
-			writeCommandText(stdout, a.groupParser(group).Usage(nil))
-			return 0
+		if group, rest, groupOK := a.matchGroup(args); groupOK {
+			if helpRequested(rest) {
+				writeCommandText(stdout, a.groupParser(group, surface).Usage(nil))
+				return 0
+			}
+			message := "subcommand is required"
+			if len(rest) > 0 {
+				message = fmt.Sprintf("unknown subcommand %q for %q", strings.Join(rest, " "), strings.Join(group, " "))
+			}
+			writeCommandText(stderr, a.groupParser(group, surface).Usage(message))
+			return 2
 		}
-		writeCommandText(stderr, a.rootParser().Usage(fmt.Sprintf("unknown command %q", strings.Join(commandPath(args), " "))))
+		writeCommandText(stderr, a.rootParser(surface).Usage(fmt.Sprintf("unknown command %q", strings.Join(commandPath(args), " "))))
 		return 2
 	}
-	return a.runDefinition(ctx, definition, commandArgs, stdout, stderr, echoConfirmationAnswer)
+	return a.runDefinition(ctx, definition, commandArgs, stdout, stderr, echoConfirmationAnswer, surface)
 }
 
 func normalizeLeadingConfig(args []string) []string {
@@ -174,7 +262,7 @@ func normalizeLeadingConfig(args []string) []string {
 }
 
 func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Writer) int {
-	fields, err := splitCommandLine(line)
+	fields, err := SplitCommandLine(line)
 	if err != nil {
 		writeCommandLine(stderr, err)
 		return 2
@@ -182,10 +270,12 @@ func (a App) ExecuteLine(ctx context.Context, line string, stdout, stderr io.Wri
 	if len(fields) == 0 {
 		return 0
 	}
-	return a.run(ctx, fields, stdout, stderr, true)
+	return a.run(ctx, fields, stdout, stderr, true, interactiveUsageSurface)
 }
 
-func splitCommandLine(line string) ([]string, error) {
+// SplitCommandLine tokenizes one interactive command using the same quoting
+// rules as ExecuteLine.
+func SplitCommandLine(line string) ([]string, error) {
 	var fields []string
 	var current strings.Builder
 	var quote rune
@@ -232,14 +322,15 @@ func splitCommandLine(line string) ([]string, error) {
 	return fields, nil
 }
 
-func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool) int {
-	parser, bindings := commandParser(definition)
+func (a App) runDefinition(ctx context.Context, definition commands.Definition, args []string, stdout, stderr io.Writer, echoConfirmationAnswer bool, surface usageSurface) int {
+	parserName := surface.commandName(definition.Path)
+	parser, bindings := commandParser(definition, parserName)
 	if commandHelpRequested(definition, args) {
-		writeCommandText(stdout, usage(definition, parser, nil))
+		writeCommandText(stdout, usage(definition, parser, parserName, nil))
 		return 0
 	}
 
-	parsed, ok, code := parseDefinition(definition, parser, bindings, args, stderr)
+	parsed, ok, code := parseDefinition(definition, parser, parserName, bindings, args, stderr)
 	if !ok {
 		return code
 	}
@@ -306,7 +397,7 @@ func (a App) runDefinition(ctx context.Context, definition commands.Definition, 
 
 func installProgressCommand(definition commands.Definition) bool {
 	switch definition.PathString() {
-	case "module install", "modules install", "module bulk-install", "modules bulk-install":
+	case "chain add", "chains add", "module install", "modules install", "module bulk-install", "modules bulk-install":
 		return true
 	default:
 		return false
@@ -454,17 +545,16 @@ func (a App) matchGroup(args []string) ([]string, []string, bool) {
 	return nil, nil, false
 }
 
-func (a App) rootParser() *argparse.Parser {
-	parser := argparse.NewParser("hovel command", "Run one Hovel command from the shell.")
+func (a App) rootParser(surface usageSurface) *argparse.Parser {
+	parser := argparse.NewParser(surface.rootName, surface.rootDescription)
 	for _, definition := range a.registry.FirstSegments() {
 		parser.NewCommand(definition.Path[0], definition.Summary)
 	}
 	return parser
 }
 
-func (a App) groupParser(prefix []string) *argparse.Parser {
-	name := "hovel command " + strings.Join(prefix, " ")
-	parser := argparse.NewParser(name, "Run a grouped Hovel command.")
+func (a App) groupParser(prefix []string, surface usageSurface) *argparse.Parser {
+	parser := argparse.NewParser(surface.commandName(prefix), surface.groupDescription)
 	for _, definition := range a.registry.Children(prefix...) {
 		parser.NewCommand(definition.Path[len(definition.Path)-1], definition.Summary)
 	}
@@ -478,8 +568,8 @@ type commandParserBindings struct {
 	flags       map[string]*bool
 }
 
-func commandParser(definition commands.Definition) (*argparse.Parser, commandParserBindings) {
-	parser := argparse.NewParser("hovel command "+definition.PathString(), definition.Summary)
+func commandParser(definition commands.Definition, parserName string) (*argparse.Parser, commandParserBindings) {
+	parser := argparse.NewParser(parserName, definition.Summary)
 	bindings := commandParserBindings{
 		positionals: make(map[string]*string, len(definition.Positionals)),
 		options:     make(map[string]*string),
@@ -509,15 +599,27 @@ func commandParser(definition commands.Definition) (*argparse.Parser, commandPar
 	return parser, bindings
 }
 
-func parseDefinition(definition commands.Definition, parser *argparse.Parser, bindings commandParserBindings, args []string, stderr io.Writer) (commands.Invocation, bool, int) {
+func parseDefinition(definition commands.Definition, parser *argparse.Parser, parserName string, bindings commandParserBindings, args []string, stderr io.Writer) (commands.Invocation, bool, int) {
 	parser.ExitOnHelp(false)
 	parseArgs, passthrough := splitPassthrough(definition, args)
-	if definition.Passthrough.Required && len(passthrough) == 0 {
-		writeCommandText(stderr, usage(definition, parser, definition.Passthrough.Name+" after -- is required"))
+	if err := validateDefinitionOptions(definition, parseArgs); err != nil {
+		writeCommandText(stderr, usage(definition, parser, parserName, err))
 		return commands.Invocation{}, false, 2
 	}
-	if err := parser.Parse(append([]string{"hovel"}, parseArgs...)); err != nil {
-		writeCommandText(stderr, usage(definition, parser, err))
+	parserArgs, escapedPositionals := escapeEndOfOptions(parseArgs)
+	if err := parser.Parse(append([]string{"hovel"}, parserArgs...)); err != nil {
+		writeCommandText(stderr, usage(definition, parser, parserName, err))
+		return commands.Invocation{}, false, 2
+	}
+	for _, positional := range definition.Positionals {
+		value := unescapeEndOfOptions(*bindings.positionals[positional.Name], escapedPositionals)
+		if positional.Required && strings.TrimSpace(value) == "" {
+			writeCommandText(stderr, usage(definition, parser, parserName, positional.Name+" is required"))
+			return commands.Invocation{}, false, 2
+		}
+	}
+	if definition.Passthrough.Required && len(passthrough) == 0 {
+		writeCommandText(stderr, usage(definition, parser, parserName, definition.Passthrough.Name+" after -- is required"))
 		return commands.Invocation{}, false, 2
 	}
 
@@ -529,7 +631,8 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, bi
 		Passthrough: append([]string(nil), passthrough...),
 	}
 	for _, positional := range definition.Positionals {
-		invocation.Positionals[positional.Name] = strings.TrimSpace(*bindings.positionals[positional.Name])
+		value := unescapeEndOfOptions(*bindings.positionals[positional.Name], escapedPositionals)
+		invocation.Positionals[positional.Name] = strings.TrimSpace(value)
 	}
 	for _, option := range definition.Options {
 		switch option.Kind {
@@ -542,6 +645,122 @@ func parseDefinition(definition commands.Definition, parser *argparse.Parser, bi
 		}
 	}
 	return invocation, true, 0
+}
+
+const escapedPositionalPrefix = "\x1ehovel-positional-"
+
+func escapeEndOfOptions(args []string) ([]string, map[string]string) {
+	delimiter := slices.Index(args, "--")
+	if delimiter < 0 {
+		return args, nil
+	}
+	escaped := make(map[string]string, len(args)-delimiter-1)
+	result := append([]string(nil), args[:delimiter]...)
+	for index, arg := range args[delimiter+1:] {
+		if strings.HasPrefix(arg, "-") {
+			placeholder := fmt.Sprintf("%s%d", escapedPositionalPrefix, index)
+			escaped[placeholder] = arg
+			arg = placeholder
+		}
+		result = append(result, arg)
+	}
+	return result, escaped
+}
+
+func unescapeEndOfOptions(value string, escaped map[string]string) string {
+	if original, ok := escaped[value]; ok {
+		return original
+	}
+	return value
+}
+
+func validateDefinitionOptions(definition commands.Definition, args []string) error {
+	for index := 0; index < len(args); index++ {
+		token := args[index]
+		if token == "--" {
+			return nil
+		}
+		if !strings.HasPrefix(token, "-") || token == "-" {
+			continue
+		}
+		name := token
+		_, attachedValue, attached := strings.Cut(token, "=")
+		if attached {
+			name = token[:len(token)-len(attachedValue)-1]
+		}
+		if strings.HasPrefix(name, "--") {
+			matched, ok := definitionOptionByLongName(definition, name)
+			if !ok {
+				return fmt.Errorf("unknown option %q", name)
+			}
+			if matched.Kind == commands.OptionBool {
+				if attached {
+					return fmt.Errorf("option %q does not take a value", name)
+				}
+				continue
+			}
+			if attached {
+				continue
+			}
+			if index+1 >= len(args) {
+				return fmt.Errorf("option %q requires a value", name)
+			}
+			index++
+			continue
+		}
+		consumesNext, err := validateShortOptionCluster(definition, name, attached)
+		if err != nil {
+			return err
+		}
+		if consumesNext {
+			if index+1 >= len(args) {
+				return fmt.Errorf("option %q requires a value", name)
+			}
+			index++
+		}
+	}
+	return nil
+}
+
+func definitionOptionByLongName(definition commands.Definition, name string) (commands.Option, bool) {
+	for _, option := range definition.Options {
+		if name == "--"+option.Name {
+			return option, true
+		}
+	}
+	return commands.Option{}, false
+}
+
+func validateShortOptionCluster(definition commands.Definition, name string, attached bool) (bool, error) {
+	cluster := strings.TrimPrefix(name, "-")
+	if cluster == "" || strings.HasPrefix(cluster, "-") {
+		return false, fmt.Errorf("unknown option %q", name)
+	}
+	shorts := []rune(cluster)
+	for index, short := range shorts {
+		var matched commands.Option
+		found := false
+		for _, option := range definition.Options {
+			if option.Short == string(short) {
+				matched, found = option, true
+				break
+			}
+		}
+		if !found {
+			return false, fmt.Errorf("unknown option %q in %q", "-"+string(short), name)
+		}
+		if matched.Kind == commands.OptionBool {
+			continue
+		}
+		if index != len(shorts)-1 {
+			return false, fmt.Errorf("option %q must be last in %q because it takes a value", "-"+string(short), name)
+		}
+		return !attached, nil
+	}
+	if attached {
+		return false, fmt.Errorf("option %q does not take a value", name)
+	}
+	return false, nil
 }
 
 func commandHelpRequested(definition commands.Definition, args []string) bool {
@@ -561,18 +780,28 @@ func splitPassthrough(definition commands.Definition, args []string) ([]string, 
 	return args, nil
 }
 
-func usage(definition commands.Definition, parser *argparse.Parser, msg any) string {
+func usage(definition commands.Definition, parser *argparse.Parser, parserName string, msg any) string {
 	out := parser.Usage(msg)
-	parserName := "hovel command " + definition.PathString()
 	generatedUsage := regexp.MustCompile(`\[_positionalArg_[\s\S]*?_\d+\s+"<value>"\]`)
 	for i, positional := range definition.Positionals {
-		out = replaceFirst(out, generatedUsage, "<"+positional.Name+">")
+		placeholder := "<" + positional.Name + ">"
+		if !positional.Required {
+			placeholder = "[" + placeholder + "]"
+		}
+		out = replaceFirst(out, generatedUsage, placeholder)
 		generated := fmt.Sprintf("_positionalArg_%s_%d", parserName, i+1)
-		out = strings.ReplaceAll(out, fmt.Sprintf(`[%s "<value>"]`, generated), "<"+positional.Name+">")
+		out = strings.ReplaceAll(out, fmt.Sprintf(`[%s "<value>"]`, generated), placeholder)
 		out = strings.ReplaceAll(out, "--"+generated, positional.Name)
 		out = strings.ReplaceAll(out, generated, positional.Name)
 		wrapped := regexp.MustCompile(`\[` + regexp.QuoteMeta(positional.Name) + `\s+"<value>"\]`)
-		out = wrapped.ReplaceAllString(out, "<"+positional.Name+">")
+		out = wrapped.ReplaceAllString(out, placeholder)
+	}
+	if definition.Passthrough.Name != "" {
+		requirement := "optional"
+		if definition.Passthrough.Required {
+			requirement = "required"
+		}
+		out = strings.TrimRight(out, "\n") + fmt.Sprintf("\n\nPassthrough:\n\n  -- <%s>...  %s (%s)\n", definition.Passthrough.Name, definition.Passthrough.Help, requirement)
 	}
 	return out
 }

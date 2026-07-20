@@ -71,6 +71,7 @@ _CI_TESTS = [
     "//internal/adapters/daemonrpc:daemonrpc_test",
     "//internal/adapters/descriptor:descriptor_test",
     "//internal/adapters/progressview:progressview_test",
+    "//internal/adapters/rootcli:rootcli_contract_test",
     "//internal/adapters/storage/filesystem:filesystem_test",
     "//internal/adapters/storage/sqlite:sqlite_test",
     "//internal/adapters/terminallog:terminallog_test",

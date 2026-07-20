@@ -138,6 +138,9 @@ func runDirectSessionConnect(ctx context.Context, args []string, stdout, stderr 
 }
 
 func runOneShotThrow(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if ok, code := commandmode.NewApp().Validate(args, stderr); !ok {
+		return code
+	}
 	session, err := daemonlocal.NewManager().Ensure(ctx, throwWorkspaceArg(args[1:]))
 	if err != nil {
 		writeRootLine(stderr, err)
@@ -250,6 +253,11 @@ func runDaemonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	if !ok {
 		return code
 	}
+	commandArgs := injectWorkspaceForDaemonCommand(normalizeRunCommand(parsed.Command), parsed.Workspace)
+	commandArgs = injectConfigForDaemonCommand(commandArgs, parsed.Config)
+	if valid, validationCode := commandmode.NewApp().Validate(commandArgs, stderr); !valid {
+		return validationCode
+	}
 	session, err := daemonlocal.NewManager().EnsureWithConfig(ctx, parsed.Workspace, "", parsed.Config)
 	if err != nil {
 		writeRootLine(stderr, err)
@@ -277,8 +285,6 @@ func runDaemonCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 			return 1
 		}
 	}
-	commandArgs := injectWorkspaceForDaemonCommand(normalizeRunCommand(parsed.Command), parsed.Workspace)
-	commandArgs = injectConfigForDaemonCommand(commandArgs, parsed.Config)
 	catalog, err := (pythonrpc.Runner{WorkspacePath: parsed.Workspace, HovelConfig: parsed.Config}).Catalog(ctx)
 	if err != nil {
 		writeRootFormat(stderr, "hovel: failed to load module catalog: %v\n", err)

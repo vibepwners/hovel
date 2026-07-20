@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,54 @@ func TestStringListOptionsAreForwardedToCommand(t *testing.T) {
 	}
 }
 
+func TestStrictOptionValidationPreservesCombinedShortFlags(t *testing.T) {
+	registry := commands.MustRegistry(commands.Definition{
+		Path:        []string{"collect"},
+		Summary:     "Collect a value.",
+		Positionals: []commands.Positional{{Name: "value", Required: true}},
+		Options: []commands.Option{
+			{Name: "force", Short: "f", Kind: commands.OptionBool},
+			{Name: "dry-run", Short: "d", Kind: commands.OptionBool},
+			{Name: "workspace", Short: "w", Kind: commands.OptionString},
+		},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: fmt.Sprintf("%t:%t:%s:%s", invocation.Flag("force"), invocation.Flag("dry-run"), invocation.Option("workspace"), invocation.Positional("value"))}, nil
+		},
+	})
+	var stdout, stderr bytes.Buffer
+
+	code := NewAppWithRegistry(registry).Run(context.Background(), []string{"collect", "-fdw", "lab", "item"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "true:true:lab:item" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestEndOfOptionsAllowsDashPrefixedPositional(t *testing.T) {
+	registry := commands.MustRegistry(commands.Definition{
+		Path:        []string{"send"},
+		Summary:     "Send data.",
+		Positionals: []commands.Positional{{Name: "data", Required: true}},
+		Options:     []commands.Option{{Name: "json", Short: "j", Kind: commands.OptionBool}},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: invocation.Positional("data")}, nil
+		},
+	})
+	var stdout, stderr bytes.Buffer
+
+	code := NewAppWithRegistry(registry).Run(context.Background(), []string{"send", "--", "--json"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "--json" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestPassthroughArgumentsAreForwardedAfterDelimiter(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	registry := commands.MustRegistry(commands.Definition{
@@ -134,6 +183,229 @@ func TestPassthroughArgumentsAreRequiredWhenDeclared(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "command after -- is required") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRequiredPositionalsAreRejectedBeforeHandlerExecution(t *testing.T) {
+	var handlerCalls int
+	registry := commands.MustRegistry(commands.Definition{
+		Path:    []string{"inspect"},
+		Summary: "Inspect a record.",
+		Positionals: []commands.Positional{
+			{Name: "record", Required: true},
+		},
+		Handler: func(_ context.Context, _ commands.Invocation) (commands.Result, error) {
+			handlerCalls++
+			return commands.Result{}, nil
+		},
+	})
+	var stdout, stderr bytes.Buffer
+
+	code := NewAppWithRegistry(registry).Run(context.Background(), []string{"inspect"}, &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if handlerCalls != 0 {
+		t.Fatalf("handler calls = %d, want 0", handlerCalls)
+	}
+	if !strings.Contains(stderr.String(), "record is required") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRegisteredRequiredPositionalsRejectMissingInput(t *testing.T) {
+	registry := inertRegistry(NewApp().Registry())
+	app := NewAppWithRegistry(registry)
+	for _, definition := range registry.Definitions() {
+		paths := append([][]string{definition.Path}, definition.Aliases...)
+		for _, path := range paths {
+			for index, positional := range definition.Positionals {
+				if !positional.Required {
+					continue
+				}
+				path := append([]string(nil), path...)
+				index := index
+				for _, surface := range []struct {
+					name string
+					run  func([]string, *bytes.Buffer, *bytes.Buffer) int
+				}{
+					{
+						name: "one-shot",
+						run: func(args []string, stdout, stderr *bytes.Buffer) int {
+							return app.Run(context.Background(), args, stdout, stderr)
+						},
+					},
+					{
+						name: "interactive",
+						run: func(args []string, stdout, stderr *bytes.Buffer) int {
+							return app.ExecuteLine(context.Background(), strings.Join(args, " "), stdout, stderr)
+						},
+					},
+				} {
+					t.Run(strings.Join(path, "/")+"/"+positional.Name+"/"+surface.name, func(t *testing.T) {
+						args := append([]string(nil), path...)
+						for previous := 0; previous < index; previous++ {
+							args = append(args, "test-value")
+						}
+						var stdout, stderr bytes.Buffer
+						code := surface.run(args, &stdout, &stderr)
+						if code != 2 {
+							t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
+						}
+						want := positional.Name + " is required"
+						if !strings.Contains(stderr.String(), want) {
+							t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+						}
+						if strings.Contains(stderr.String(), "unknown command") {
+							t.Fatalf("registered command was mislabeled as unknown:\n%s", stderr.String())
+						}
+						if surface.name == "interactive" && strings.Contains(stderr.String(), "hovel command") {
+							t.Fatalf("interactive error leaked one-shot prefix:\n%s", stderr.String())
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestRegisteredRequiredPassthroughRejectsMissingInputOnEverySurface(t *testing.T) {
+	registry := inertRegistry(NewApp().Registry())
+	app := NewAppWithRegistry(registry)
+	for _, definition := range registry.Definitions() {
+		if !definition.Passthrough.Required {
+			continue
+		}
+		for _, path := range commandDefinitionPaths(definition) {
+			resolved, ok := registry.Find(path...)
+			if !ok {
+				t.Fatalf("registry did not resolve %q", strings.Join(path, " "))
+			}
+			args := append([]string(nil), path...)
+			for _, positional := range resolved.Positionals {
+				if positional.Required {
+					args = append(args, "test-value")
+				}
+			}
+			for _, surface := range []struct {
+				name string
+				run  func(*bytes.Buffer, *bytes.Buffer) int
+			}{
+				{
+					name: "one-shot",
+					run: func(stdout, stderr *bytes.Buffer) int {
+						return app.Run(context.Background(), args, stdout, stderr)
+					},
+				},
+				{
+					name: "interactive",
+					run: func(stdout, stderr *bytes.Buffer) int {
+						return app.ExecuteLine(context.Background(), strings.Join(args, " "), stdout, stderr)
+					},
+				},
+			} {
+				t.Run(strings.Join(path, "/")+"/"+surface.name, func(t *testing.T) {
+					var stdout, stderr bytes.Buffer
+					if code := surface.run(&stdout, &stderr); code != 2 {
+						t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
+					}
+					want := resolved.Passthrough.Name + " after -- is required"
+					if !strings.Contains(stderr.String(), want) {
+						t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+					}
+					if surface.name == "interactive" && strings.Contains(stderr.String(), "hovel command") {
+						t.Fatalf("interactive error leaked one-shot prefix:\n%s", stderr.String())
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestEveryRegisteredCommandRejectsUnknownOptionsAndExtraPositionals(t *testing.T) {
+	registry := inertRegistry(NewApp().Registry())
+	for _, definition := range registry.Definitions() {
+		paths := append([][]string{definition.Path}, definition.Aliases...)
+		for _, path := range paths {
+			path := append([]string(nil), path...)
+			t.Run(strings.Join(path, "/")+"/unknown-option", func(t *testing.T) {
+				args := append(append([]string(nil), path...), "--definitely-not-an-option")
+				var stdout, stderr bytes.Buffer
+				if code := NewAppWithRegistry(registry).Run(context.Background(), args, &stdout, &stderr); code != 2 {
+					t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
+				}
+			})
+			if definition.Passthrough.Name != "" {
+				continue
+			}
+			t.Run(strings.Join(path, "/")+"/extra-positional", func(t *testing.T) {
+				args := append([]string(nil), path...)
+				for range definition.Positionals {
+					args = append(args, "test-value")
+				}
+				args = append(args, "unexpected-extra-value")
+				var stdout, stderr bytes.Buffer
+				if code := NewAppWithRegistry(registry).Run(context.Background(), args, &stdout, &stderr); code != 2 {
+					t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
+				}
+			})
+		}
+	}
+}
+
+func inertRegistry(source commands.Registry) commands.Registry {
+	definitions := source.Definitions()
+	for index := range definitions {
+		definitions[index].Handler = func(_ context.Context, _ commands.Invocation) (commands.Result, error) {
+			return commands.Result{}, nil
+		}
+	}
+	return commands.MustRegistry(definitions...)
+}
+
+func TestRegisteredGroupsReportSubcommandErrorsWithLocalHelp(t *testing.T) {
+	app := NewApp()
+	registry := app.Registry()
+	groups := map[string][]string{}
+	for _, definition := range registry.Definitions() {
+		for _, path := range append([][]string{definition.Path}, definition.Aliases...) {
+			for length := 1; length < len(path); length++ {
+				prefix := append([]string(nil), path[:length]...)
+				if _, leaf := registry.Find(prefix...); leaf {
+					continue
+				}
+				groups[strings.Join(prefix, " ")] = prefix
+			}
+		}
+	}
+	for name, group := range groups {
+		group := group
+		t.Run(name+"/missing", func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := app.Run(context.Background(), group, &stdout, &stderr); code != 2 {
+				t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "subcommand is required") || strings.Contains(stderr.String(), "unknown command") {
+				t.Fatalf("stderr did not contain local missing-subcommand error:\n%s", stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "hovel command "+name) {
+				t.Fatalf("stderr missing group usage for %q:\n%s", name, stderr.String())
+			}
+		})
+		t.Run(name+"/unknown", func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			args := append(append([]string(nil), group...), "not-a-command")
+			if code := app.Run(context.Background(), args, &stdout, &stderr); code != 2 {
+				t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "unknown subcommand") || strings.Contains(stderr.String(), "unknown command") {
+				t.Fatalf("stderr did not contain local unknown-subcommand error:\n%s", stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "hovel command "+name) {
+				t.Fatalf("stderr missing group usage for %q:\n%s", name, stderr.String())
+			}
+		})
 	}
 }
 
@@ -318,30 +590,194 @@ func TestCapabilityChainExecutorRunsStepsThroughChainRuntime(t *testing.T) {
 	}
 }
 
-func TestEveryRegisteredCommandHasUsableHelp(t *testing.T) {
-	registry := NewApp().Registry()
-	for _, definition := range registry.Definitions() {
-		t.Run(definition.PathString(), func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			args := append(append([]string{}, definition.Path...), "--help")
-			code := Run(context.Background(), args, &stdout, &stderr)
-			if code != 0 {
-				t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+func TestEveryRegisteredCommandAndAliasHasUsableHelpOnEverySurface(t *testing.T) {
+	app := NewApp()
+	registry := app.Registry()
+	for _, canonical := range registry.Definitions() {
+		for _, path := range commandDefinitionPaths(canonical) {
+			definition, ok := registry.Find(path...)
+			if !ok {
+				t.Fatalf("registry did not resolve %q", strings.Join(path, " "))
 			}
-			output := stdout.String()
-			if !strings.Contains(output, definition.PathString()) {
-				t.Fatalf("help output missing command path %q:\n%s", definition.PathString(), output)
+			for _, surface := range []struct {
+				name        string
+				displayName string
+				run         func(*bytes.Buffer, *bytes.Buffer) int
+			}{
+				{
+					name:        "one-shot",
+					displayName: "hovel command " + strings.Join(path, " "),
+					run: func(stdout, stderr *bytes.Buffer) int {
+						args := append(append([]string(nil), path...), "--help")
+						return app.Run(context.Background(), args, stdout, stderr)
+					},
+				},
+				{
+					name:        "interactive",
+					displayName: strings.Join(path, " "),
+					run: func(stdout, stderr *bytes.Buffer) int {
+						return app.ExecuteLine(context.Background(), strings.Join(path, " ")+" --help", stdout, stderr)
+					},
+				},
+			} {
+				t.Run(strings.Join(path, "/")+"/"+surface.name, func(t *testing.T) {
+					var stdout, stderr bytes.Buffer
+					if code := surface.run(&stdout, &stderr); code != 0 {
+						t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+					}
+					output := stdout.String()
+					if !strings.Contains(output, "usage: "+surface.displayName) {
+						t.Fatalf("help output missing local usage %q:\n%s", surface.displayName, output)
+					}
+					if !strings.Contains(strings.Join(strings.Fields(output), " "), strings.Join(strings.Fields(definition.Summary), " ")) {
+						t.Fatalf("help output missing summary %q:\n%s", definition.Summary, output)
+					}
+					if surface.name == "interactive" && strings.Contains(output, "hovel command") {
+						t.Fatalf("interactive help leaked one-shot prefix:\n%s", output)
+					}
+					if strings.Contains(output, "_positionalArg") {
+						t.Fatalf("help output leaked generated positional name:\n%s", output)
+					}
+					for _, option := range definition.Options {
+						if !strings.Contains(output, "--"+option.Name) {
+							t.Fatalf("help output missing option --%s:\n%s", option.Name, output)
+						}
+						if option.Short != "" && !strings.Contains(output, "-"+option.Short) {
+							t.Fatalf("help output missing short option -%s:\n%s", option.Short, output)
+						}
+					}
+					for _, positional := range definition.Positionals {
+						placeholder := "<" + positional.Name + ">"
+						if !positional.Required {
+							placeholder = "[" + placeholder + "]"
+						}
+						if !strings.Contains(output, placeholder) {
+							t.Fatalf("help output missing positional %s:\n%s", placeholder, output)
+						}
+					}
+					if definition.Passthrough.Name != "" && !strings.Contains(output, "-- <"+definition.Passthrough.Name+">...") {
+						t.Fatalf("help output missing passthrough %s:\n%s", definition.Passthrough.Name, output)
+					}
+				})
 			}
-			if strings.Contains(output, "_positionalArg") {
-				t.Fatalf("help output leaked generated positional name:\n%s", output)
-			}
-			for _, option := range definition.Options {
-				if !strings.Contains(output, "--"+option.Name) {
-					t.Fatalf("help output missing option --%s:\n%s", option.Name, output)
-				}
-			}
-		})
+		}
 	}
+}
+
+func TestEveryRegisteredCommandAndAliasRoutesMinimalValidInputOnEverySurface(t *testing.T) {
+	source := NewApp().Registry()
+	definitions := source.Definitions()
+	calls := make(map[string]int, len(definitions))
+	for index := range definitions {
+		if definitions[index].Handler == nil {
+			t.Fatalf("registered command %q has no handler", definitions[index].PathString())
+		}
+		canonical := definitions[index].PathString()
+		definitions[index].Handler = func(_ context.Context, _ commands.Invocation) (commands.Result, error) {
+			calls[canonical]++
+			return commands.Result{Human: "routed " + canonical}, nil
+		}
+	}
+	app := NewAppWithRegistry(commands.MustRegistry(definitions...))
+	for _, canonical := range source.Definitions() {
+		for _, path := range commandDefinitionPaths(canonical) {
+			definition, ok := app.Registry().Find(path...)
+			if !ok {
+				t.Fatalf("registry did not resolve %q", strings.Join(path, " "))
+			}
+			args := minimalValidCommandArgs(definition)
+			for _, surface := range []struct {
+				name string
+				run  func(*bytes.Buffer, *bytes.Buffer) int
+			}{
+				{
+					name: "one-shot",
+					run: func(stdout, stderr *bytes.Buffer) int {
+						return app.Run(context.Background(), args, stdout, stderr)
+					},
+				},
+				{
+					name: "interactive",
+					run: func(stdout, stderr *bytes.Buffer) int {
+						return app.ExecuteLine(context.Background(), strings.Join(args, " "), stdout, stderr)
+					},
+				},
+			} {
+				t.Run(strings.Join(path, "/")+"/"+surface.name, func(t *testing.T) {
+					before := calls[canonical.PathString()]
+					var stdout, stderr bytes.Buffer
+					if code := surface.run(&stdout, &stderr); code != 0 {
+						t.Fatalf("exit code = %d, stdout = %s, stderr = %s", code, stdout.String(), stderr.String())
+					}
+					if calls[canonical.PathString()] != before+1 {
+						t.Fatalf("handler calls = %d, want %d", calls[canonical.PathString()], before+1)
+					}
+					if !strings.Contains(stdout.String(), "routed "+canonical.PathString()) {
+						t.Fatalf("stdout did not contain routed command identity: %s", stdout.String())
+					}
+					if stderr.Len() != 0 {
+						t.Fatalf("stderr = %s, want empty", stderr.String())
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestEveryRegisteredCommandAndAliasKeepsInteractiveErrorsLocal(t *testing.T) {
+	app := NewAppWithRegistry(inertRegistry(NewApp().Registry()))
+	for _, definition := range app.Registry().Definitions() {
+		for _, path := range commandDefinitionPaths(definition) {
+			t.Run(strings.Join(path, "/"), func(t *testing.T) {
+				line := strings.Join(path, " ") + " --definitely-not-an-option"
+				var stdout, stderr bytes.Buffer
+				if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 2 {
+					t.Fatalf("exit code = %d, want 2; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
+				}
+				output := stderr.String()
+				if !strings.Contains(output, "usage: "+strings.Join(path, " ")) {
+					t.Fatalf("error omitted command-local usage:\n%s", output)
+				}
+				if !strings.Contains(output, "unknown option") {
+					t.Fatalf("error omitted unknown-option diagnosis:\n%s", output)
+				}
+				if strings.Contains(output, "unknown command") {
+					t.Fatalf("valid command was mislabeled as unknown:\n%s", output)
+				}
+				if strings.Contains(output, "hovel command") {
+					t.Fatalf("interactive error leaked one-shot prefix:\n%s", output)
+				}
+			})
+		}
+	}
+}
+
+func commandDefinitionPaths(definition commands.Definition) [][]string {
+	paths := make([][]string, 0, 1+len(definition.Aliases))
+	paths = append(paths, definition.Path)
+	return append(paths, definition.Aliases...)
+}
+
+func minimalValidCommandArgs(definition commands.Definition) []string {
+	args := append([]string(nil), definition.Path...)
+	for _, positional := range definition.Positionals {
+		if positional.Required {
+			args = append(args, "test-value")
+		}
+	}
+	for _, option := range definition.Options {
+		if !option.Required {
+			continue
+		}
+		args = append(args, "--"+option.Name)
+		if option.Kind != commands.OptionBool {
+			args = append(args, "test-value")
+		}
+	}
+	if definition.Passthrough.Required {
+		args = append(args, "--", "test-value")
+	}
+	return args
 }
 
 func TestThrowRequiresTargetBeforeDaemonLookup(t *testing.T) {
@@ -724,6 +1160,29 @@ func testConfirmationPrompt() commands.ConfirmationPrompt {
 			{Label: "targets", Value: strings.Join(plan.Targets, ", ")},
 			{Label: "plan hash", Value: plan.PlanHash, Muted: true},
 		},
+	}
+}
+
+func TestInstallProgressIncludesAutomaticChainInstall(t *testing.T) {
+	for _, path := range [][]string{
+		{"chain", "add"},
+		{"chains", "add"},
+		{"module", "install"},
+	} {
+		if !installProgressCommand(commands.Definition{Path: path}) {
+			t.Errorf("installProgressCommand(%q) = false, want progress", strings.Join(path, " "))
+		}
+	}
+	if installProgressCommand(commands.Definition{Path: []string{"chain", "validate"}}) {
+		t.Fatal("chain validate should not render install progress")
+	}
+}
+
+func TestDefaultRuntimeRetainsWorkspaceForAutomaticModuleInstall(t *testing.T) {
+	workspace := t.TempDir()
+	runtime := defaultRuntimeWithCatalogAndWorkspace(nil, modulecatalog.New(), workspace)
+	if runtime.WorkspacePath != workspace {
+		t.Fatalf("runtime workspace = %q, want %q", runtime.WorkspacePath, workspace)
 	}
 }
 

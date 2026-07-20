@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/vibepwners/hovel/internal/app/modulepackage"
 	"github.com/vibepwners/hovel/internal/app/operatorlog"
@@ -314,9 +315,16 @@ func validateDefinition(definition Definition) error {
 		return fmt.Errorf("command %q summary is required", definition.PathString())
 	}
 	seen := map[string]struct{}{}
+	optionalPositionalSeen := false
 	for _, positional := range definition.Positionals {
 		if strings.TrimSpace(positional.Name) == "" {
 			return fmt.Errorf("command %q has unnamed positional", definition.PathString())
+		}
+		if positional.Required && optionalPositionalSeen {
+			return fmt.Errorf("command %q has required positional %q after an optional positional", definition.PathString(), positional.Name)
+		}
+		if !positional.Required {
+			optionalPositionalSeen = true
 		}
 		if _, ok := seen[positional.Name]; ok {
 			return fmt.Errorf("command %q duplicates argument %q", definition.PathString(), positional.Name)
@@ -332,12 +340,27 @@ func validateDefinition(definition Definition) error {
 		}
 		seen[definition.Passthrough.Name] = struct{}{}
 	}
+	seenShort := map[string]struct{}{}
 	for _, option := range definition.Options {
 		if strings.TrimSpace(option.Name) == "" {
 			return fmt.Errorf("command %q has unnamed option", definition.PathString())
 		}
-		if option.Kind == "" {
-			return fmt.Errorf("command %q option %q has no kind", definition.PathString(), option.Name)
+		if strings.TrimSpace(option.Name) != option.Name || strings.ContainsAny(option.Name, " =\t\r\n") || strings.HasPrefix(option.Name, "-") {
+			return fmt.Errorf("command %q has invalid option name %q", definition.PathString(), option.Name)
+		}
+		if option.Short != "" {
+			if utf8.RuneCountInString(option.Short) != 1 || strings.ContainsAny(option.Short, " -=\t\r\n") {
+				return fmt.Errorf("command %q has invalid short option %q", definition.PathString(), option.Short)
+			}
+			if _, ok := seenShort[option.Short]; ok {
+				return fmt.Errorf("command %q duplicates short option %q", definition.PathString(), option.Short)
+			}
+			seenShort[option.Short] = struct{}{}
+		}
+		switch option.Kind {
+		case OptionString, OptionStringList, OptionBool:
+		default:
+			return fmt.Errorf("command %q option %q has invalid kind %q", definition.PathString(), option.Name, option.Kind)
 		}
 		if _, ok := seen[option.Name]; ok {
 			return fmt.Errorf("command %q duplicates argument %q", definition.PathString(), option.Name)

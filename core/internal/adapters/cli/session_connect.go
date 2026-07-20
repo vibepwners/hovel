@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/vibepwners/hovel/internal/adapters/commandmode"
 	"github.com/vibepwners/hovel/internal/adapters/daemonrpc"
 	"github.com/vibepwners/hovel/internal/domain/run"
 )
@@ -310,7 +311,11 @@ func sessionConnectHelpRequested(fields []string) bool {
 }
 
 func parseSessionConnect(line string) (string, SessionConnectOptions, error) {
-	parsed, err := ParseSessionConnectCommand(strings.Fields(line))
+	fields, err := commandmode.SplitCommandLine(line)
+	if err != nil {
+		return "", SessionConnectOptions{}, err
+	}
+	parsed, err := ParseSessionConnectCommand(fields)
 	if err != nil {
 		return "", SessionConnectOptions{}, err
 	}
@@ -376,11 +381,13 @@ func ParseSessionConnectCommand(fields []string) (ParsedSessionConnect, error) {
 		case field == "--no-history":
 			parsed.Options.NoHistory = true
 		case strings.HasPrefix(field, "-"):
-			continue
+			return ParsedSessionConnect{}, fmt.Errorf("unknown session connect option %q", field)
 		default:
 			if parsed.SessionID == "" {
 				parsed.SessionID = field
+				continue
 			}
+			return ParsedSessionConnect{}, fmt.Errorf("session connect accepts exactly one session; unexpected argument %q", field)
 		}
 	}
 	if parsed.SessionID == "" {
