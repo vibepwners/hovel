@@ -155,6 +155,11 @@ while True:
             "code": -32000,
             "message": "module is not a mesh provider"
         }})
+    elif method == "credential.describe":
+        send({"jsonrpc": "2.0", "id": request_id, "error": {
+            "code": -32000,
+            "message": "module is not a credential provider"
+        }})
     elif method == "shutdown":
         send({"jsonrpc": "2.0", "id": request_id, "result": {"status": "ok"}})
         break

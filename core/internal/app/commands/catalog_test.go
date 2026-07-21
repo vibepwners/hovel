@@ -3459,6 +3459,20 @@ func TestModuleAvailableIncludesCachedDownloadsAndInstalledDoesNot(t *testing.T)
 	if !strings.Contains(availableResult.Human, "cached-survey@0.1.0") || !strings.Contains(availableResult.Human, "cache") {
 		t.Fatalf("module available = %q", availableResult.Human)
 	}
+	availableRecords, err := ListAvailableModuleRecords(context.Background(), Runtime{Modules: modulecatalog.New()}, ModuleInventoryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cachedRecord ModuleInventoryRecord
+	for _, record := range availableRecords {
+		if record.ID == "cached-survey@0.1.0" {
+			cachedRecord = record
+			break
+		}
+	}
+	if cachedRecord.ID == "" || cachedRecord.SourceKind != "cache" {
+		t.Fatalf("available records = %#v, want cached-survey from cache", availableRecords)
+	}
 	installedResult, err := installedDefinition.Execute(context.Background(), Invocation{})
 	if err != nil {
 		t.Fatal(err)
@@ -3629,7 +3643,7 @@ modules:
 	}
 }
 
-func TestChainAddDoesNotUseCacheOnlyAvailableModule(t *testing.T) {
+func TestChainAddAutomaticallyInstallsCacheOnlyAvailableModule(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cacheHome := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cacheHome)
@@ -3655,14 +3669,64 @@ func TestChainAddDoesNotUseCacheOnlyAvailableModule(t *testing.T) {
 	if err := session.UseChain("lab"); err != nil {
 		t.Fatal(err)
 	}
-	registry := HovelRegistry(Runtime{Session: session, Modules: modulecatalog.New()})
+	workspace := t.TempDir()
+	registry := HovelRegistry(Runtime{WorkspacePath: workspace, Session: session, Modules: modulecatalog.New()})
+	addDefinition, _ := registry.Find("chain", "add")
+
+	result, err := addDefinition.Execute(context.Background(), Invocation{
+		Positionals: map[string]string{"module": "cache-only@0.1.0"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Human != "Module added: cache-only@0.1.0 as step-1" {
+		t.Fatalf("chain add result = %q", result.Human)
+	}
+	state := session.Snapshot()
+	if len(state.Steps) != 1 || state.Steps[0].ModuleID != "cache-only@0.1.0" {
+		t.Fatalf("steps = %#v, want automatically installed cache-only module", state.Steps)
+	}
+	lock, err := modulepackage.LoadLock(filepath.Join(workspace, "module-lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lock.Modules) != 1 || lock.Modules[0].Name != "cache-only" || lock.Modules[0].Version != "0.1.0" {
+		t.Fatalf("lock = %#v, want cache-only@0.1.0", lock.Modules)
+	}
+}
+
+func TestChainAddDoesNotInstallBeforeActiveChainPreflight(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cacheHome := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cacheHome)
+	cacheDir, err := modulepackage.DownloadCacheDir("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archive := writeCommandModuleArchive(t, cacheDir, "cache-only")
+	sum, err := modulepackage.FileSHA256(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(archive, filepath.Join(cacheDir, sum+".tgz")); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	session := operatorsession.New()
+	registry := HovelRegistry(Runtime{WorkspacePath: workspace, Session: session, Modules: modulecatalog.New()})
 	addDefinition, _ := registry.Find("chain", "add")
 
 	_, err = addDefinition.Execute(context.Background(), Invocation{
-		Positionals: map[string]string{"module": "cache-only"},
+		Positionals: map[string]string{"module": "cache-only@0.1.0"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "module cache-only does not exist") {
-		t.Fatalf("chain add error = %v, want cache-only module to be unavailable for execution", err)
+	if err == nil || !strings.Contains(err.Error(), "active chain is required") {
+		t.Fatalf("chain add error = %v, want active-chain preflight", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "module-lock.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("module lock stat error = %v, want no install side effect", err)
 	}
 }
 

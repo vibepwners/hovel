@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/vibepwners/hovel/internal/adapters/commandmode"
 	"github.com/vibepwners/hovel/internal/adapters/daemonrpc"
 	"github.com/vibepwners/hovel/internal/domain/run"
 )
@@ -297,11 +298,16 @@ func isSessionConnectCommand(line string) bool {
 	if fields[1] != "connect" {
 		return false
 	}
-	return !sessionConnectHelpRequested(fields[2:])
+	return !SessionConnectHelpRequested(fields[2:])
 }
 
-func sessionConnectHelpRequested(fields []string) bool {
+// SessionConnectHelpRequested reports help only before the end-of-options
+// delimiter. Help-shaped session IDs after -- remain positional data.
+func SessionConnectHelpRequested(fields []string) bool {
 	for _, field := range fields {
+		if field == "--" {
+			return false
+		}
 		if field == "-h" || field == "--help" {
 			return true
 		}
@@ -310,7 +316,11 @@ func sessionConnectHelpRequested(fields []string) bool {
 }
 
 func parseSessionConnect(line string) (string, SessionConnectOptions, error) {
-	parsed, err := ParseSessionConnectCommand(strings.Fields(line))
+	fields, err := commandmode.SplitCommandLine(line)
+	if err != nil {
+		return "", SessionConnectOptions{}, err
+	}
+	parsed, err := ParseSessionConnectCommand(fields)
 	if err != nil {
 		return "", SessionConnectOptions{}, err
 	}
@@ -322,9 +332,19 @@ func ParseSessionConnectCommand(fields []string) (ParsedSessionConnect, error) {
 	if len(fields) < 2 {
 		return ParsedSessionConnect{}, errors.New("session is required")
 	}
+	positionalOnly := false
 	for i := 2; i < len(fields); i++ {
 		field := fields[i]
+		if positionalOnly {
+			if parsed.SessionID == "" {
+				parsed.SessionID = field
+				continue
+			}
+			return ParsedSessionConnect{}, fmt.Errorf("session connect accepts exactly one session; unexpected argument %q", field)
+		}
 		switch {
+		case field == "--":
+			positionalOnly = true
 		case field == "-w" || field == "--workspace":
 			value, ok := nextSessionConnectValue(fields, &i)
 			if !ok {
@@ -375,12 +395,24 @@ func ParseSessionConnectCommand(fields []string) (ParsedSessionConnect, error) {
 			parsed.Options.HistoryLimitChosen = true
 		case field == "--no-history":
 			parsed.Options.NoHistory = true
-		case strings.HasPrefix(field, "-"):
+		case field == "--config":
+			if _, ok := nextSessionConnectValue(fields, &i); !ok {
+				return ParsedSessionConnect{}, errors.New("--config requires a value")
+			}
+		case strings.HasPrefix(field, "--config="),
+			field == "--no-color",
+			field == "--verbose",
+			field == "-v",
+			field == "--debug":
 			continue
+		case strings.HasPrefix(field, "-"):
+			return ParsedSessionConnect{}, fmt.Errorf("unknown session connect option %q", field)
 		default:
 			if parsed.SessionID == "" {
 				parsed.SessionID = field
+				continue
 			}
+			return ParsedSessionConnect{}, fmt.Errorf("session connect accepts exactly one session; unexpected argument %q", field)
 		}
 	}
 	if parsed.SessionID == "" {

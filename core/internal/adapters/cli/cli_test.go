@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,11 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 	if !containsSuggestion(root, "payloads") {
 		t.Fatalf("root suggestions = %#v, want payloads before operation context", root)
 	}
+	for _, want := range []string{"artifact", "confirm", "control", "launch-key", "pki", "review", "session"} {
+		if !containsSuggestion(root, want) {
+			t.Fatalf("root suggestions = %#v, missing context-independent CLI surface %s", root, want)
+		}
+	}
 
 	controlChildren := app.Suggestions("control ")
 	if len(controlChildren) != 2 || controlChildren[0].Text != "daemon" || controlChildren[1].Text != "init" {
@@ -63,6 +69,9 @@ func TestSuggestionsComeFromCommandRegistry(t *testing.T) {
 	}
 	if root = app.Suggestions("pay"); !containsSuggestion(root, "payloads") {
 		t.Fatalf("root suggestions = %#v, want payloads after operation", root)
+	}
+	if root = app.Suggestions("tar"); !containsSuggestion(root, "target") {
+		t.Fatalf("root suggestions = %#v, want target after operation", root)
 	}
 
 	chainChildren := app.Suggestions("chain ")
@@ -178,6 +187,128 @@ func TestParseSessionConnectTracksExplicitHistoryLimit(t *testing.T) {
 	}
 }
 
+func TestParseSessionConnectAcceptsEveryAdvertisedOption(t *testing.T) {
+	definition, ok := newTestApp().commands.Registry().Find("session", "connect")
+	if !ok {
+		t.Fatal("session connect definition not found")
+	}
+	type optionSpelling struct {
+		argument string
+		attached bool
+	}
+	for _, option := range definition.Options {
+		value := "value"
+		switch option.Name {
+		case "history-lines", "history-bytes":
+			value = "12"
+		case "workspace", "config":
+			value = "/tmp/hovel"
+		}
+		spellings := []optionSpelling{{argument: "--" + option.Name}}
+		if option.Kind != commands.OptionBool {
+			spellings = append(spellings, optionSpelling{argument: "--" + option.Name + "=" + value, attached: true})
+		}
+		if option.Short != "" {
+			spellings = append(spellings, optionSpelling{argument: "-" + option.Short})
+		}
+		for _, spelling := range spellings {
+			t.Run(spelling.argument, func(t *testing.T) {
+				fields := []string{"session", "connect", "session-1", spelling.argument}
+				if option.Kind != commands.OptionBool && !spelling.attached {
+					fields = append(fields, value)
+				}
+				parsed, err := ParseSessionConnectCommand(fields)
+				if err != nil {
+					t.Fatalf("ParseSessionConnectCommand(%q): %v", fields, err)
+				}
+				if parsed.SessionID != "session-1" {
+					t.Fatalf("session ID = %q, want session-1", parsed.SessionID)
+				}
+			})
+		}
+	}
+}
+
+func TestParseSessionConnectHonorsEndOfOptions(t *testing.T) {
+	for _, sessionID := range []string{"-session-id", "-h", "--help"} {
+		t.Run(sessionID, func(t *testing.T) {
+			parsed, err := ParseSessionConnectCommand([]string{"session", "connect", "--", sessionID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.SessionID != sessionID {
+				t.Fatalf("session ID = %q, want %q", parsed.SessionID, sessionID)
+			}
+		})
+	}
+}
+
+func TestParseSessionConnectRejectsUnknownOptionsAndExtraPositionals(t *testing.T) {
+	for _, fields := range [][]string{
+		{"session", "connect", "session-1", "--bogus"},
+		{"session", "connect", "session-1", "session-2"},
+	} {
+		if _, err := ParseSessionConnectCommand(fields); err == nil {
+			t.Fatalf("ParseSessionConnectCommand(%q) succeeded, want error", fields)
+		}
+	}
+}
+
+func TestParseSessionConnectLineUsesShellQuoting(t *testing.T) {
+	sessionID, options, err := parseSessionConnect(`session connect "session one" --workspace "workspace with spaces" --history-lines 12`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "session one" || options.HistoryLines != 12 {
+		t.Fatalf("session = %q, options = %#v", sessionID, options)
+	}
+	parsed, err := ParseSessionConnectCommand([]string{"session", "connect", "session one", "--workspace", "workspace with spaces"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Workspace != "workspace with spaces" {
+		t.Fatalf("workspace = %q", parsed.Workspace)
+	}
+}
+
+func TestInteractiveSessionConnectUsesRegistryValidation(t *testing.T) {
+	app := newTestApp()
+	for _, line := range []string{"session connect", "session connect session-1 --not-an-option", "session connect session-1 extra"} {
+		var stdout, stderr bytes.Buffer
+		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 2 {
+			t.Errorf("ExecuteLine(%q) code = %d, want 2; stdout = %s; stderr = %s", line, code, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "usage: session connect") {
+			t.Errorf("ExecuteLine(%q) did not render command usage: %s", line, stderr.String())
+		}
+		if strings.Contains(stderr.String(), "hovel command") {
+			t.Errorf("ExecuteLine(%q) leaked the one-shot command prefix: %s", line, stderr.String())
+		}
+	}
+}
+
+func TestInteractiveSessionConnectAcceptsCommonOptionsAndHelpShapedIDs(t *testing.T) {
+	app := newTestApp()
+	for _, line := range []string{
+		`session connect session-1 --config "/tmp/config with spaces" --no-color -v --debug`,
+		"session connect -- -session-id",
+		"sessions connect -- --help",
+	} {
+		t.Run(line, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 1 {
+				t.Fatalf("ExecuteLine(%q) code = %d, want 1; stdout = %s; stderr = %s", line, code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "session connect needs an interactive daemon session") {
+				t.Fatalf("ExecuteLine(%q) did not reach the session connector: %s", line, stderr.String())
+			}
+			if strings.Contains(stderr.String(), "usage:") || strings.Contains(stderr.String(), "unknown") {
+				t.Fatalf("ExecuteLine(%q) rejected valid syntax: %s", line, stderr.String())
+			}
+		})
+	}
+}
+
 func TestWriteSessionInputPreservesRawPTYBytes(t *testing.T) {
 	writer := &fakeSessionInputWriter{}
 	events := make(chan sessionConnectEvent, 1)
@@ -221,6 +352,286 @@ func TestOptionSuggestionsComeFromCommandRegistry(t *testing.T) {
 	for _, want := range []string{"--workspace", "--chain", "--target", "--target-set", "--target-group", "--json"} {
 		if !contains(names, want) {
 			t.Fatalf("suggestions = %#v, missing %s", names, want)
+		}
+	}
+}
+
+func TestEveryRegisteredOptionIsReachableThroughCompletion(t *testing.T) {
+	app := newTestApp()
+	registry := app.commands.Registry()
+	for _, canonical := range registry.Definitions() {
+		paths := append([][]string{canonical.Path}, canonical.Aliases...)
+		for _, path := range paths {
+			definition, ok := registry.Find(path...)
+			if !ok {
+				t.Fatalf("registry did not resolve %q", strings.Join(path, " "))
+			}
+			t.Run(strings.Join(path, "/"), func(t *testing.T) {
+				longFields := append(append([]string(nil), path...), "--")
+				longSuggestions := app.definitionSuggestions(definition, len(path), longFields, false)
+				shortFields := append(append([]string(nil), path...), "-")
+				shortSuggestions := app.definitionSuggestions(definition, len(path), shortFields, false)
+				for _, option := range definition.Options {
+					if !containsSuggestion(longSuggestions, "--"+option.Name) {
+						t.Errorf("suggestions for %q omitted --%s: %#v", strings.Join(path, " "), option.Name, longSuggestions)
+					}
+					if option.Short != "" && !containsSuggestion(shortSuggestions, "-"+option.Short) {
+						t.Errorf("suggestions for %q omitted -%s: %#v", strings.Join(path, " "), option.Short, shortSuggestions)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestEveryCanonicalCommandIsReachableThroughInteractiveCompletion(t *testing.T) {
+	app := newTestApp()
+	enterTestOperation(t, app)
+	if err := app.session.UseChain("lab"); err != nil {
+		t.Fatal(err)
+	}
+	for _, definition := range app.commands.Registry().Definitions() {
+		for depth, want := range definition.Path {
+			line := strings.Join(definition.Path[:depth], " ")
+			if line != "" {
+				line += " "
+			}
+			t.Run(definition.PathString()+"/segment-"+strconv.Itoa(depth), func(t *testing.T) {
+				if suggestions := app.Suggestions(line); !containsSuggestion(suggestions, want) {
+					t.Fatalf("Suggestions(%q) = %#v, missing canonical segment %q", line, suggestions, want)
+				}
+			})
+		}
+	}
+}
+
+func TestEveryActiveChainAliasHasAContextualRewrite(t *testing.T) {
+	tests := map[string]struct {
+		fields []string
+		want   string
+	}{
+		"add":      {fields: []string{"add", "module@1.0.0"}, want: "chain add module@1.0.0"},
+		"config":   {fields: []string{"config", "list"}, want: "chain config list"},
+		"inspect":  {fields: []string{"inspect"}, want: "chain inspect"},
+		"logs":     {fields: []string{"logs"}, want: "chain logs"},
+		"rename":   {fields: []string{"rename", "new-name"}, want: "chain rename current-chain new-name"},
+		"validate": {fields: []string{"validate"}, want: "chain validate"},
+	}
+	for _, alias := range activeChainAliases {
+		test, ok := tests[alias.text]
+		if !ok {
+			t.Errorf("active-chain alias %q has no UX contract", alias.text)
+			continue
+		}
+		got, ok := contextualCommandAlias(test.fields, "current-chain")
+		if !ok || got != test.want {
+			t.Errorf("contextualCommandAlias(%q) = %q, %t; want %q, true", test.fields, got, ok, test.want)
+		}
+		delete(tests, alias.text)
+	}
+	for alias := range tests {
+		t.Errorf("UX contract for %q has no active-chain alias", alias)
+	}
+}
+
+func TestEveryActiveChainAliasKeepsMalformedInputOnItsCanonicalCommand(t *testing.T) {
+	app := newTestApp()
+	enterTestOperation(t, app)
+	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain create exit code = %d, stderr = %s", code, stderr.String())
+	}
+
+	tests := map[string]struct {
+		line      string
+		wantUsage string
+		wantError string
+	}{
+		"add":      {line: "add", wantUsage: "usage: chain add", wantError: "module is required"},
+		"config":   {line: "config", wantUsage: "usage: chain config", wantError: "subcommand is required"},
+		"inspect":  {line: "inspect unexpected", wantUsage: "usage: chain inspect", wantError: "unknown arguments"},
+		"logs":     {line: "logs unexpected", wantUsage: "usage: chain logs", wantError: "unknown arguments"},
+		"rename":   {line: "rename", wantUsage: "usage: chain rename", wantError: "name is required"},
+		"validate": {line: "validate unexpected", wantUsage: "usage: chain validate", wantError: "unknown arguments"},
+	}
+	for _, alias := range activeChainAliases {
+		test, ok := tests[alias.text]
+		if !ok {
+			t.Errorf("active-chain alias %q has no malformed-input UX contract", alias.text)
+			continue
+		}
+		t.Run(alias.text, func(t *testing.T) {
+			stdout.Reset()
+			stderr.Reset()
+			if code := app.ExecuteLine(context.Background(), test.line, &stdout, &stderr); code != 2 {
+				t.Fatalf("ExecuteLine(%q) code = %d, want 2; stdout = %s; stderr = %s", test.line, code, stdout.String(), stderr.String())
+			}
+			output := stderr.String()
+			if !strings.Contains(output, test.wantUsage) {
+				t.Fatalf("ExecuteLine(%q) missing local usage %q:\n%s", test.line, test.wantUsage, output)
+			}
+			if !strings.Contains(output, test.wantError) {
+				t.Fatalf("ExecuteLine(%q) missing diagnosis %q:\n%s", test.line, test.wantError, output)
+			}
+			if strings.Contains(output, "unknown command") {
+				t.Fatalf("ExecuteLine(%q) mislabeled an advertised alias as unknown:\n%s", test.line, output)
+			}
+			if strings.Contains(output, "hovel command") {
+				t.Fatalf("ExecuteLine(%q) leaked the one-shot prefix:\n%s", test.line, output)
+			}
+		})
+		delete(tests, alias.text)
+	}
+	for alias := range tests {
+		t.Errorf("malformed-input UX contract for %q has no active-chain alias", alias)
+	}
+}
+
+func TestRegisteredCompletionArgumentsHaveExplicitPolicies(t *testing.T) {
+	positionalPolicies := stringSet(
+		"artifact", "assignment", "authority", "capability", "chain", "command", "consumer", "crl", "data", "file", "generation", "key", "local", "manifest", "mode", "module", "name", "operation", "payload", "query", "remote", "revocation", "session", "source", "target", "throw", "trust-set", "value",
+	)
+	optionValuePolicies := stringSet(
+		"anchors", "arg", "backend", "bytes", "chain", "config", "consumer-type", "crls", "duration", "effective-at", "end", "generation-id", "heartbeat-timeout", "history-bytes", "history-lines", "host", "id", "idempotency-key", "index", "input-data", "input-encoding", "input-file", "intermediates", "issuer", "issuer-generation", "key-id", "lines", "link", "name", "operation", "parent", "port", "profile", "purpose", "quorum", "reason", "revision", "role", "rotation-policy", "set", "sha256", "signature-algorithm", "state", "summary", "tag", "target", "target-group", "target-set", "trust-set", "type", "valid-for", "version", "workspace",
+	)
+	for _, definition := range newTestApp().commands.Registry().Definitions() {
+		for _, positional := range definition.Positionals {
+			if !positionalPolicies[positional.Name] {
+				t.Errorf("command %q positional %q has no explicit completion policy", definition.PathString(), positional.Name)
+			}
+		}
+		for _, option := range definition.Options {
+			if option.Kind != commands.OptionBool && !optionValuePolicies[option.Name] {
+				t.Errorf("command %q option --%s has no explicit value-completion policy", definition.PathString(), option.Name)
+			}
+		}
+	}
+}
+
+func stringSet(values ...string) map[string]bool {
+	set := make(map[string]bool, len(values))
+	for _, value := range values {
+		set[value] = true
+	}
+	return set
+}
+
+func TestCompletionCursorDoesNotCountOptionsAsPositionals(t *testing.T) {
+	definition := commands.Definition{
+		Path: []string{"demo"},
+		Positionals: []commands.Positional{
+			{Name: "first", Required: true},
+			{Name: "second", Required: true},
+		},
+		Options: []commands.Option{
+			{Name: "workspace", Short: "w", Kind: commands.OptionString},
+			{Name: "tag", Kind: commands.OptionStringList},
+			{Name: "json", Short: "j", Kind: commands.OptionBool},
+		},
+	}
+	tests := []struct {
+		name           string
+		line           string
+		endsWithSpace  bool
+		positional     int
+		prefix         string
+		optionValue    string
+		optionName     bool
+		positionals    []string
+		attachedPrefix string
+	}{
+		{name: "options before and between positionals", line: "demo --workspace lab first --json sec", positional: 1, prefix: "sec", positionals: []string{"first"}},
+		{name: "combined short options", line: "demo -jw lab fir", positional: 0, prefix: "fir"},
+		{name: "option value after positional", line: "demo first --workspace ", endsWithSpace: true, positional: 0, optionValue: "workspace", positionals: []string{"first"}},
+		{name: "attached option value", line: "demo --workspace=la", positional: 0, prefix: "la", optionValue: "workspace", attachedPrefix: "--workspace="},
+		{name: "attached combined short option value", line: "demo -jw=la", positional: 0, prefix: "la", optionValue: "workspace", attachedPrefix: "-jw="},
+		{name: "option name", line: "demo first --j", positional: 0, prefix: "--j", optionName: true, positionals: []string{"first"}},
+		{name: "delimiter disables options", line: "demo -- --json", positional: 0, prefix: "--json"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cursor := completionCursorFor(definition, 1, strings.Fields(test.line), test.endsWithSpace)
+			if cursor.positional != test.positional || cursor.prefix != test.prefix || cursor.optionName != test.optionName || cursor.attachedPrefix != test.attachedPrefix || !reflect.DeepEqual(cursor.positionals, test.positionals) {
+				t.Fatalf("cursor = %#v", cursor)
+			}
+			gotOption := ""
+			if cursor.option != nil {
+				gotOption = cursor.option.Name
+			}
+			if cursor.optionValue != (test.optionValue != "") || gotOption != test.optionValue {
+				t.Fatalf("option cursor = %#v, want option %q", cursor, test.optionValue)
+			}
+		})
+	}
+}
+
+func TestCompletionContinuesPositionalsAroundOptions(t *testing.T) {
+	app := newTestApp()
+	var stdout, stderr bytes.Buffer
+	for _, line := range []string{
+		"op use engagement",
+		"chain create lab",
+		"chain add mock-exploit",
+		"target add mock://router-01",
+		"target set create routers",
+	} {
+		if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q exit code = %d, stderr = %s", line, code, stderr.String())
+		}
+	}
+
+	tests := []struct {
+		line string
+		want string
+	}{
+		{line: "chain add --config lab.yaml surv", want: "mock-survey@v0.0.0-example"},
+		{line: "target config set --debug mock://router-01 target.p", want: "target.port"},
+		{line: "target set add --config=lab.yaml routers mock", want: "mock://router-01"},
+		{line: "throw --chain ", want: "lab"},
+		{line: "throw --target mock", want: "mock://router-01"},
+		{line: "throw --target-set ", want: "routers"},
+		{line: "module installed --type ", want: "survey"},
+		{line: "module installed --type=sur", want: "--type=survey"},
+		{line: "pki authority create root --role ", want: "subordinate"},
+		{line: "launch-key policy set ", want: "quorum"},
+	}
+	for _, test := range tests {
+		if suggestions := app.Suggestions(test.line); !containsSuggestion(suggestions, test.want) {
+			t.Errorf("Suggestions(%q) = %#v, missing %q", test.line, suggestions, test.want)
+		}
+	}
+}
+
+func TestFileCompletionCoversFilePositionalsAndOptions(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("HOME", root)
+	t.Setenv("HOVEL_COMPLETION_ROOT", root)
+	if err := os.WriteFile("demo.chain.yaml", []byte("demo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir("configs", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	app := newTestApp()
+	enterTestOperation(t, app)
+	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain create exit code = %d, stderr = %s", code, stderr.String())
+	}
+	for _, test := range []struct {
+		line string
+		want string
+	}{
+		{line: "chain load demo", want: "demo.chain.yaml"},
+		{line: "module bulk-install demo", want: "demo.chain.yaml"},
+		{line: "module install --link con", want: "configs/"},
+		{line: "module install --link ~/con", want: "~/configs/"},
+		{line: "module install --link $HOVEL_COMPLETION_ROOT/con", want: "$HOVEL_COMPLETION_ROOT/configs/"},
+		{line: "throw demo", want: "demo.chain.yaml"},
+	} {
+		if suggestions := app.Suggestions(test.line); !containsSuggestion(suggestions, test.want) {
+			t.Errorf("Suggestions(%q) = %#v, missing %q", test.line, suggestions, test.want)
 		}
 	}
 }
@@ -296,6 +707,62 @@ func TestChainAddSuggestsModulesMatchingInput(t *testing.T) {
 	suggestions = app.Suggestions("add surv")
 	if len(suggestions) != 1 || suggestions[0].Text != "mock-survey@v0.0.0-example" {
 		t.Fatalf("filtered alias suggestions = %#v, want mock-survey@v0.0.0-example", suggestions)
+	}
+
+	suggestions = app.Suggestions("add")
+	if !containsSuggestion(suggestions, "add mock-survey@v0.0.0-example") {
+		t.Fatalf("exact alias suggestions = %#v, want qualified module command", suggestions)
+	}
+}
+
+func TestChainAddCompletionSurfacesModulesReadyForAutomaticInstall(t *testing.T) {
+	app := newTestApp()
+	enterTestOperation(t, app)
+	var stdout, stderr bytes.Buffer
+	if code := app.ExecuteLine(context.Background(), "chain create lab", &stdout, &stderr); code != 0 {
+		t.Fatalf("chain create exit code = %d, stderr = %s", code, stderr.String())
+	}
+	app.moduleInventory = []commands.ModuleInventoryRecord{{
+		ID:         "cached-survey@0.1.0",
+		Name:       "cached-survey",
+		Type:       modulecatalog.TypeSurvey,
+		Summary:    "Cached survey module",
+		SourceKind: "cache",
+	}}
+
+	for _, line := range []string{"chain add ", "add "} {
+		suggestions := app.Suggestions(line)
+		if !containsSuggestion(suggestions, "cached-survey@0.1.0") {
+			t.Fatalf("%q suggestions = %#v, want cached module", line, suggestions)
+		}
+		if !containsSuggestionDescription(suggestions, "available from cache") {
+			t.Fatalf("%q suggestions = %#v, want cache availability", line, suggestions)
+		}
+		if containsSuggestionDescription(suggestions, "install first") {
+			t.Fatalf("%q suggestions = %#v, should not require a separate install step", line, suggestions)
+		}
+	}
+
+	if suggestions := app.Suggestions("add"); !containsSuggestion(suggestions, "add cached-survey@0.1.0") {
+		t.Fatalf("exact add suggestions = %#v, want qualified cached module", suggestions)
+	}
+	if suggestions := app.Suggestions("module install "); !containsSuggestion(suggestions, "cached-survey@0.1.0") {
+		t.Fatalf("module install suggestions = %#v, want cached module", suggestions)
+	}
+}
+
+func TestChainAddRefreshesCatalogAfterAutomaticInstall(t *testing.T) {
+	for _, line := range []string{
+		"chain add cached-survey@0.1.0",
+		"chains add cached-survey@0.1.0",
+		"module install cached-survey@0.1.0",
+	} {
+		if !moduleCatalogMutationCommand(line) {
+			t.Errorf("moduleCatalogMutationCommand(%q) = false, want refresh", line)
+		}
+	}
+	if moduleCatalogMutationCommand("chain validate") {
+		t.Fatal("chain validate should not refresh the module catalog")
 	}
 }
 
@@ -379,6 +846,12 @@ func TestSessionCommandSuggestionsUseDaemonState(t *testing.T) {
 	}
 	if suggestions := app.Suggestions("session call latest process."); !containsSuggestion(suggestions, "process.list") {
 		t.Fatalf("latest session capability suggestions = %#v, missing process.list", suggestions)
+	}
+	if suggestions := app.Suggestions("pki authority create root --profile "); !containsSuggestion(suggestions, "root-modern") {
+		t.Fatalf("PKI profile suggestions = %#v, missing root-modern", suggestions)
+	}
+	if suggestions := app.Suggestions("pki authority create root --backend "); !containsSuggestion(suggestions, "builtin-x509") {
+		t.Fatalf("PKI backend suggestions = %#v, missing builtin-x509", suggestions)
 	}
 }
 

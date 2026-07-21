@@ -15,6 +15,33 @@ func TestRegistryRejectsDuplicatePaths(t *testing.T) {
 	}
 }
 
+func TestRegistryRejectsRequiredPositionalAfterOptionalPositional(t *testing.T) {
+	_, err := NewRegistry(Definition{
+		Path:    []string{"inspect"},
+		Summary: "Inspect a record.",
+		Positionals: []Positional{
+			{Name: "scope"},
+			{Name: "record", Required: true},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected positional ordering error")
+	}
+}
+
+func TestRegistryRejectsAmbiguousOptionMetadata(t *testing.T) {
+	for _, definition := range []Definition{
+		{Path: []string{"inspect"}, Summary: "Inspect.", Options: []Option{{Name: "bad option", Kind: OptionString}}},
+		{Path: []string{"inspect"}, Summary: "Inspect.", Options: []Option{{Name: "first", Short: "x", Kind: OptionBool}, {Name: "second", Short: "x", Kind: OptionBool}}},
+		{Path: []string{"inspect"}, Summary: "Inspect.", Options: []Option{{Name: "value", Short: "xy", Kind: OptionString}}},
+		{Path: []string{"inspect"}, Summary: "Inspect.", Options: []Option{{Name: "value", Kind: OptionKind("mystery")}}},
+	} {
+		if _, err := NewRegistry(definition); err == nil {
+			t.Fatalf("NewRegistry(%#v) succeeded, want error", definition.Options)
+		}
+	}
+}
+
 func TestRegistryFindsDefinitionsByPath(t *testing.T) {
 	registry := MustRegistry(
 		Definition{Path: []string{"init"}, Summary: "Initialize a workspace"},

@@ -239,7 +239,7 @@
     "//tools/bzlmod:external_tools.bzl%external_tools": {
       "general": {
         "bzlTransitiveDigest": "qiBz/dbPZriUboGaTVmhLSjLWhI53Vos3CtBA4Suc8w=",
-        "usagesDigest": "OKpHvKZkj9Ccq38xbctSXr3Dsi0M1xjlCH+4sDeDG2c=",
+        "usagesDigest": "CD29IucQEd9JHObr8xZdj8UxT4a8PWjt1k+J5dx3QLA=",
         "recordedInputs": [
           "REPO_MAPPING:,bazel_tools bazel_tools"
         ],

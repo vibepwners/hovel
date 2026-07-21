@@ -28,6 +28,7 @@ go_library(
         "//internal/app/modulepackage",
         "//internal/app/operatorlog",
         "//internal/app/operatorsession",
+        "//internal/domain/pki",
         "//internal/domain/run",
         "//internal/domain/workspace",
         "//internal/infra/daemonmanager",
