@@ -187,6 +187,62 @@ func TestParseSessionConnectTracksExplicitHistoryLimit(t *testing.T) {
 	}
 }
 
+func TestParseSessionConnectAcceptsEveryAdvertisedOption(t *testing.T) {
+	definition, ok := newTestApp().commands.Registry().Find("session", "connect")
+	if !ok {
+		t.Fatal("session connect definition not found")
+	}
+	type optionSpelling struct {
+		argument string
+		attached bool
+	}
+	for _, option := range definition.Options {
+		value := "value"
+		switch option.Name {
+		case "history-lines", "history-bytes":
+			value = "12"
+		case "workspace", "config":
+			value = "/tmp/hovel"
+		}
+		spellings := []optionSpelling{{argument: "--" + option.Name}}
+		if option.Kind != commands.OptionBool {
+			spellings = append(spellings, optionSpelling{argument: "--" + option.Name + "=" + value, attached: true})
+		}
+		if option.Short != "" {
+			spellings = append(spellings, optionSpelling{argument: "-" + option.Short})
+		}
+		for _, spelling := range spellings {
+			t.Run(spelling.argument, func(t *testing.T) {
+				fields := []string{"session", "connect", "session-1", spelling.argument}
+				if option.Kind != commands.OptionBool && !spelling.attached {
+					fields = append(fields, value)
+				}
+				parsed, err := ParseSessionConnectCommand(fields)
+				if err != nil {
+					t.Fatalf("ParseSessionConnectCommand(%q): %v", fields, err)
+				}
+				if parsed.SessionID != "session-1" {
+					t.Fatalf("session ID = %q, want session-1", parsed.SessionID)
+				}
+			})
+		}
+	}
+}
+
+func TestParseSessionConnectHonorsEndOfOptions(t *testing.T) {
+	for _, sessionID := range []string{"-session-id", "-h", "--help"} {
+		t.Run(sessionID, func(t *testing.T) {
+			parsed, err := ParseSessionConnectCommand([]string{"session", "connect", "--", sessionID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parsed.SessionID != sessionID {
+				t.Fatalf("session ID = %q, want %q", parsed.SessionID, sessionID)
+			}
+		})
+	}
+}
+
 func TestParseSessionConnectRejectsUnknownOptionsAndExtraPositionals(t *testing.T) {
 	for _, fields := range [][]string{
 		{"session", "connect", "session-1", "--bogus"},
@@ -228,6 +284,28 @@ func TestInteractiveSessionConnectUsesRegistryValidation(t *testing.T) {
 		if strings.Contains(stderr.String(), "hovel command") {
 			t.Errorf("ExecuteLine(%q) leaked the one-shot command prefix: %s", line, stderr.String())
 		}
+	}
+}
+
+func TestInteractiveSessionConnectAcceptsCommonOptionsAndHelpShapedIDs(t *testing.T) {
+	app := newTestApp()
+	for _, line := range []string{
+		`session connect session-1 --config "/tmp/config with spaces" --no-color -v --debug`,
+		"session connect -- -session-id",
+		"sessions connect -- --help",
+	} {
+		t.Run(line, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := app.ExecuteLine(context.Background(), line, &stdout, &stderr); code != 1 {
+				t.Fatalf("ExecuteLine(%q) code = %d, want 1; stdout = %s; stderr = %s", line, code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "session connect needs an interactive daemon session") {
+				t.Fatalf("ExecuteLine(%q) did not reach the session connector: %s", line, stderr.String())
+			}
+			if strings.Contains(stderr.String(), "usage:") || strings.Contains(stderr.String(), "unknown") {
+				t.Fatalf("ExecuteLine(%q) rejected valid syntax: %s", line, stderr.String())
+			}
+		})
 	}
 }
 

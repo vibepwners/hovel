@@ -765,6 +765,9 @@ func validateShortOptionCluster(definition commands.Definition, name string, att
 
 func commandHelpRequested(definition commands.Definition, args []string) bool {
 	parseArgs, _ := splitPassthrough(definition, args)
+	if delimiter := slices.Index(parseArgs, "--"); delimiter >= 0 {
+		parseArgs = parseArgs[:delimiter]
+	}
 	return helpRequested(parseArgs)
 }
 

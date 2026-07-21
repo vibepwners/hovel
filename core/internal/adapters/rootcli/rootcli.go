@@ -109,7 +109,7 @@ func isDirectSessionConnectCommand(args []string) bool {
 	if args[1] != "connect" {
 		return false
 	}
-	return !helpRequested(args[2:])
+	return !cli.SessionConnectHelpRequested(args[2:])
 }
 
 func runDirectSessionConnect(ctx context.Context, args []string, stdout, stderr io.Writer) int {

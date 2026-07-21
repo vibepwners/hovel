@@ -131,15 +131,56 @@ func TestEndOfOptionsAllowsDashPrefixedPositional(t *testing.T) {
 			return commands.Result{Human: invocation.Positional("data")}, nil
 		},
 	})
+	app := NewAppWithRegistry(registry)
+	for _, surface := range []struct {
+		name string
+		run  func(string, *bytes.Buffer, *bytes.Buffer) int
+	}{
+		{
+			name: "one-shot",
+			run: func(value string, stdout, stderr *bytes.Buffer) int {
+				return app.Run(context.Background(), []string{"send", "--", value}, stdout, stderr)
+			},
+		},
+		{
+			name: "interactive",
+			run: func(value string, stdout, stderr *bytes.Buffer) int {
+				return app.ExecuteLine(context.Background(), "send -- "+value, stdout, stderr)
+			},
+		},
+	} {
+		for _, value := range []string{"--json", "-h", "--help"} {
+			t.Run(surface.name+"/"+value, func(t *testing.T) {
+				var stdout, stderr bytes.Buffer
+				if code := surface.run(value, &stdout, &stderr); code != 0 {
+					t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+				}
+				if got := strings.TrimSpace(stdout.String()); got != value {
+					t.Fatalf("stdout = %q, want literal positional %q", got, value)
+				}
+			})
+		}
+	}
+}
+
+func TestHelpBeforeEndOfOptionsStillShowsCommandHelp(t *testing.T) {
+	registry := commands.MustRegistry(commands.Definition{
+		Path:        []string{"send"},
+		Summary:     "Send data.",
+		Positionals: []commands.Positional{{Name: "data", Required: true}},
+		Handler: func(_ context.Context, invocation commands.Invocation) (commands.Result, error) {
+			return commands.Result{Human: invocation.Positional("data")}, nil
+		},
+	})
 	var stdout, stderr bytes.Buffer
 
-	code := NewAppWithRegistry(registry).Run(context.Background(), []string{"send", "--", "--json"}, &stdout, &stderr)
+	code := NewAppWithRegistry(registry).Run(context.Background(), []string{"send", "--help", "--", "value"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
 	}
-	if got := strings.TrimSpace(stdout.String()); got != "--json" {
-		t.Fatalf("stdout = %q", got)
+	if !strings.Contains(stdout.String(), "usage: hovel command send") {
+		t.Fatalf("stdout did not contain command help:\n%s", stdout.String())
 	}
 }
 

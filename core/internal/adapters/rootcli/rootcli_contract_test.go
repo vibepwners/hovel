@@ -79,23 +79,56 @@ func TestDaemonOwningRoutesValidateBeforeWorkspaceStartup(t *testing.T) {
 }
 
 func TestDirectSessionConnectValidArgumentsReachDaemonLookup(t *testing.T) {
-	workspacePath := t.TempDir()
-	var stdout, stderr bytes.Buffer
+	for _, test := range []struct {
+		name string
+		args func(string) []string
+	}{
+		{
+			name: "command options",
+			args: func(workspacePath string) []string {
+				return []string{"session", "connect", "--workspace", workspacePath, "--history-lines", "12", "session-1"}
+			},
+		},
+		{
+			name: "common options",
+			args: func(workspacePath string) []string {
+				return []string{"session", "connect", "session-1", "--workspace", workspacePath, "--config", "/tmp/config.json", "--no-color", "--verbose", "--debug"}
+			},
+		},
+		{
+			name: "alias and short common option",
+			args: func(workspacePath string) []string {
+				return []string{"sessions", "connect", "-w", workspacePath, "-v", "session-1"}
+			},
+		},
+		{
+			name: "dash-prefixed session",
+			args: func(workspacePath string) []string {
+				return []string{"session", "connect", "--workspace", workspacePath, "--", "-session-id"}
+			},
+		},
+		{
+			name: "help-shaped session",
+			args: func(workspacePath string) []string {
+				return []string{"session", "connect", "--workspace", workspacePath, "--", "--help"}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workspacePath := t.TempDir()
+			var stdout, stderr bytes.Buffer
 
-	code := Run(context.Background(), []string{
-		"session", "connect",
-		"--workspace", workspacePath,
-		"--history-lines", "12",
-		"session-1",
-	}, &stdout, &stderr)
+			code := Run(context.Background(), test.args(workspacePath), &stdout, &stderr)
 
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "daemon is not running") {
-		t.Fatalf("valid session connect did not reach daemon lookup: %s", stderr.String())
-	}
-	if strings.Contains(stderr.String(), "usage:") || strings.Contains(stderr.String(), "unknown command") {
-		t.Fatalf("valid session connect was rejected as malformed: %s", stderr.String())
+			if code != 1 {
+				t.Fatalf("exit code = %d, want 1; stdout = %s; stderr = %s", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "daemon is not running") {
+				t.Fatalf("valid session connect did not reach daemon lookup: %s", stderr.String())
+			}
+			if strings.Contains(stderr.String(), "usage:") || strings.Contains(stderr.String(), "unknown command") || strings.Contains(stderr.String(), "unknown session connect option") {
+				t.Fatalf("valid session connect was rejected as malformed: %s", stderr.String())
+			}
+		})
 	}
 }
