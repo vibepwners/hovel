@@ -13,3 +13,15 @@ go_test(
     srcs = ["operator_test.go"],
     embed = [":operator"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "operator.go",
+        "operator_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

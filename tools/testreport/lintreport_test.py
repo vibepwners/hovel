@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,105 +9,42 @@ import lintreport
 
 
 class LintReportTest(unittest.TestCase):
-    def test_runs_every_command_and_emits_standard_evidence(self) -> None:
+    def test_materialization_keeps_failure_logs_and_source_ignores(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            (repo / "pkg").mkdir()
-            (repo / "pkg/example.py").write_text(
-                'example = "# type: ignore[string-literal]"\n'
-                "value = object()  # type: ignore[arg-type]\n",
-                encoding="utf-8",
-            )
-            manifest = repo / "tools.json"
-            manifest.write_text(
-                json.dumps(
-                    {
-                        "schema_version": lintreport.MANIFEST_VERSION,
-                        "tools": [
-                            {
-                                "id": "example",
-                                "name": "Example analyzer",
-                                "kind": "static-analysis",
-                                "scope": "Example Python",
-                                "commands": [[sys.executable, "-c", "print('analysis clean')"]],
-                                "ignore": {"pattern": r"#\s*type:\s*ignore\b", "extensions": [".py"]},
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            output = repo / ".test-report/linters"
+            (repo / "example.py").write_text("value = object()  # type: ignore[arg-type]\n")
+            manifest = repo / "manifest.json"
+            manifest.write_text(json.dumps({"schema_version": lintreport.MANIFEST_VERSION, "tools": [{
+                "id": "example", "name": "Example", "scope": "Python", "kind": "linter",
+                "commands": [["aspect", "test", "//tools/lint:example_test"]],
+                "ignore": {"pattern": r"#\s*type:\s*ignore\b", "extensions": [".py"]},
+            }]}))
+            result = repo / "result"
+            result.mkdir()
+            (result / "result.json").write_text(json.dumps({
+                "schema_version": "hovel.lint-action/v1", "id": "example", "status": "FAILED",
+                "exit_code": 3, "duration": 1.25,
+            }))
+            (result / "diagnostics.log").write_text("\x1b[31mbad input\x1b[0m\n")
+            output = repo / "report"
+            self.assertEqual(lintreport.materialize_results(repo, manifest, output, [result]), 1)
+            report = json.loads((output / "report.json").read_text())["tools"][0]
+            self.assertEqual(report["status"], "FAILED")
+            self.assertEqual(report["duration"], 1.25)
+            self.assertEqual(len(report["ignore_statements"]), 1)
+            self.assertIn("bad input", (output / "logs/example.log").read_text())
+            self.assertNotIn("\x1b", (output / "logs/example.log").read_text())
 
-            self.assertEqual(lintreport.run_manifest(repo, manifest, output), 0)
-
-            report = json.loads((output / "report.json").read_text(encoding="utf-8"))
-            self.assertEqual(report["schema_version"], lintreport.SCHEMA_VERSION)
-            self.assertEqual(report["tools"][0]["status"], "PASSED")
-            self.assertEqual(report["tools"][0]["ignore_statements"][0]["path"], "pkg/example.py")
-            self.assertEqual(len(report["tools"][0]["ignore_statements"]), 1)
-            self.assertEqual(report["tools"][0]["ignore_statements"][0]["line"], 2)
-            self.assertIn("analysis clean", (repo / report["tools"][0]["raw_log_path"]).read_text())
-
-    def test_logs_are_plain_text(self) -> None:
+    def test_missing_native_evidence_never_becomes_a_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            manifest = repo / "tools.json"
-            manifest.write_text(
-                json.dumps(
-                    {
-                        "schema_version": lintreport.MANIFEST_VERSION,
-                        "tools": [
-                            {
-                                "id": "color-output",
-                                "name": "Color output",
-                                "kind": "linter",
-                                "scope": "Example",
-                                "commands": [
-                                    [sys.executable, "-c", "print('\\N{ESC}[32mclean\\N{ESC}[0m')"]
-                                ],
-                                "ignore": {"pattern": "", "extensions": [".py"]},
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            output = repo / "lint"
-
-            self.assertEqual(lintreport.run_manifest(repo, manifest, output), 0)
-            log = (output / "logs/color-output.log").read_text(encoding="utf-8")
-            self.assertIn("clean", log)
-            self.assertNotIn("\N{ESC}", log)
-
-    def test_failure_is_reported_without_dropping_evidence(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            manifest = repo / "tools.json"
-            manifest.write_text(
-                json.dumps(
-                    {
-                        "schema_version": lintreport.MANIFEST_VERSION,
-                        "tools": [
-                            {
-                                "id": "failing",
-                                "name": "Failing linter",
-                                "kind": "linter",
-                                "scope": "Example",
-                                "commands": [[sys.executable, "-c", "raise SystemExit(3)"]],
-                                "ignore": {"pattern": "", "extensions": [".py"]},
-                            }
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            output = repo / "lint"
-
-            self.assertEqual(lintreport.run_manifest(repo, manifest, output), 1)
-            report = json.loads((output / "report.json").read_text(encoding="utf-8"))
-            self.assertEqual(report["tools"][0]["status"], "FAILED")
-            self.assertIn("[exit code: 3]", (repo / report["tools"][0]["raw_log_path"]).read_text())
+            manifest = repo / "manifest.json"
+            manifest.write_text(json.dumps({"schema_version": lintreport.MANIFEST_VERSION, "tools": [{
+                "id": "nilness", "name": "Nilness", "scope": "Go", "kind": "static-analysis",
+                "commands": [["aspect", "build", "@hovel_core//:build"]],
+            }]}))
+            self.assertEqual(lintreport.materialize_results(repo, manifest, repo / "report", []), 1)
+            self.assertEqual(lintreport.materialize_results(repo, manifest, repo / "report", [], verified_native={"nilness"}), 0)
 
     def test_checked_in_manifest_covers_unique_tools(self) -> None:
         manifest = json.loads((Path(__file__).with_name("lint_tools.json")).read_text(encoding="utf-8"))

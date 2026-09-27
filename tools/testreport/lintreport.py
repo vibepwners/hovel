@@ -6,15 +6,28 @@ import os
 import re
 import shlex
 import shutil
-import subprocess
 import time
 import tokenize
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
 
 SCHEMA_VERSION = "hovel.lint-report/v1"
 MANIFEST_VERSION = "hovel.lint-tools/v1"
+COMPONENTS = {
+    "gofmt": ["gofmt-core", "gofmt-modules"],
+    "ruff": ["ruff-sdk", "ruff-picblobs"],
+    "mypy": ["mypy-sdk"],
+    "pydoclint": ["pydoclint-sdk"],
+    "clang-format": ["clang-format-squatter", "clang-format-picblobs"],
+    "clang-tidy": ["clang-tidy-squatter", "clang-tidy-picblobs"],
+    "cppcheck": ["cppcheck-squatter", "cppcheck-picblobs"],
+    "lizard": ["lizard-squatter", "lizard-picblobs"],
+}
+NATIVE_COMPONENTS = {
+    "nilness", "clang-format-squatter", "clang-tidy-squatter", "clang-tidy-picblobs",
+    "cppcheck-squatter", "cppcheck-picblobs", "lizard-squatter",
+}
 EXCLUDED_PARTS = {
     ".git",
     ".mypy_cache",
@@ -34,31 +47,57 @@ EXCLUDED_PARTS = {
 ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 
 
-def run_manifest(repo: Path, manifest_path: Path, output: Path, *, selected: set[str] | None = None) -> int:
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+def materialize_results(repo: Path, manifest_path: Path, output: Path, directories: list[Path], *,
+                        verified_native: set[str] | None = None, selected: set[str] | None = None) -> int:
+    manifest = json.loads(manifest_path.read_text())
     validate_manifest(manifest)
+    native = verified_native or set()
+    if native - NATIVE_COMPONENTS:
+        raise ValueError("unknown native lint verification")
+    records = {}
+    for directory in directories:
+        record = json.loads((directory / "result.json").read_text())
+        if record.get("schema_version") != "hovel.lint-action/v1" or record.get("status") not in {"PASSED", "FAILED"}:
+            raise ValueError("invalid lint action result")
+        if record["id"] in records:
+            raise ValueError("duplicate lint action result")
+        records[record["id"]] = (record, (directory / "diagnostics.log").read_text())
     if output.exists():
         shutil.rmtree(output)
     logs = output / "logs"
     logs.mkdir(parents=True)
-
-    results: list[dict[str, Any]] = []
-    overall = 0
+    results = []
     for tool in manifest["tools"]:
         if selected and tool["id"] not in selected:
             continue
-        result = run_tool(repo, tool, logs)
-        results.append(result)
-        if result["status"] != "PASSED":
-            overall = 1
-
-    report = {
-        "schema_version": SCHEMA_VERSION,
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        passed = True
+        duration = 0.0
+        messages = ["Consumed declared lint results. Durations are from their producing actions, not this CI invocation.\n"]
+        for component in COMPONENTS.get(tool["id"], [tool["id"]]):
+            if component in records:
+                record, diagnostic = records[component]
+                passed &= record["status"] == "PASSED"
+                duration += record.get("duration", 0.0)
+                messages.append(f"{component}: {record['status']} (exit {record['exit_code']})\n{diagnostic}\n")
+            elif component in native:
+                messages.append(f"{component}: PASSED by the preceding Aspect native check; timing and diagnostics are in its build events.\n")
+            else:
+                passed = False
+                messages.append(f"{component}: MISSING evidence; run aspect hovel-report.\n")
+        log = logs / (tool["id"] + ".log")
+        log.write_text(ANSI_ESCAPE.sub("", "".join(messages)).replace("\r", ""))
+        results.append({
+            "id": tool["id"], "name": tool["name"], "kind": tool["kind"], "scope": tool["scope"],
+            "status": "PASSED" if passed else "FAILED", "duration": round(duration, 3),
+            "commands": [shlex.join(command) for command in tool["commands"]],
+            "ignore_statements": find_ignore_statements(repo, tool.get("ignore", {})),
+            "raw_log_path": relative_or_absolute(repo, log),
+        })
+    (output / "report.json").write_text(json.dumps({
+        "schema_version": SCHEMA_VERSION, "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "tools": results,
-    }
-    (output / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return overall
+    }, indent=2, sort_keys=True) + "\n")
+    return int(any(result["status"] != "PASSED" for result in results))
 
 
 def validate_manifest(manifest: Any) -> None:
@@ -94,68 +133,6 @@ def validate_manifest(manifest: Any) -> None:
             or not all(isinstance(path, str) for path in command_cwds)
         ):
             raise ValueError(f"invalid command_cwds for {tool_id}")
-
-
-def run_tool(repo: Path, tool: dict[str, Any], logs: Path) -> dict[str, Any]:
-    started = time.monotonic()
-    log_path = logs / f"{tool['id']}.log"
-    exit_codes: list[int] = []
-    commands = tool["commands"]
-    command_cwds = tool.get("command_cwds", [tool.get("cwd", ".")] * len(commands))
-    with log_path.open("w", encoding="utf-8") as log:
-        for command, relative_cwd in zip(commands, command_cwds, strict=True):
-            command_cwd = (repo / relative_cwd).resolve()
-            if repo not in command_cwd.parents and command_cwd != repo:
-                raise ValueError(f"lint tool cwd escapes repository: {tool['id']}")
-            display = shlex.join(command)
-            write_line(log, f"$ {display}")
-            exit_code = stream_command(command_cwd, command, log)
-            exit_codes.append(exit_code)
-            write_line(log, f"[exit code: {exit_code}]\n")
-    duration = round(time.monotonic() - started, 3)
-    ignores = find_ignore_statements(repo, tool.get("ignore", {}))
-    relative_log = relative_or_absolute(repo, log_path)
-    status = "PASSED" if all(code == 0 for code in exit_codes) else "FAILED"
-    print(f"{status:6} {tool['name']} ({duration:.2f}s, {len(ignores)} source ignores)", flush=True)
-    return {
-        "id": tool["id"],
-        "name": tool["name"],
-        "kind": tool["kind"],
-        "scope": tool["scope"],
-        "status": status,
-        "duration": duration,
-        "commands": [shlex.join(command) for command in commands],
-        "ignore_statements": ignores,
-        "raw_log_path": relative_log,
-    }
-
-
-def stream_command(repo: Path, command: list[str], log: TextIO) -> int:
-    try:
-        process = subprocess.Popen(
-            command,
-            cwd=repo,
-            env=os.environ.copy() | {"PYTHONDONTWRITEBYTECODE": "1"},
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            errors="replace",
-        )
-    except OSError as error:
-        write_line(log, f"unable to start command: {error}")
-        return 127
-    assert process.stdout is not None
-    for line in process.stdout:
-        print(line, end="", flush=True)
-        log.write(ANSI_ESCAPE.sub("", line).replace("\r", ""))
-        log.flush()
-    return process.wait()
-
-
-def write_line(log: TextIO, line: str) -> None:
-    print(line, flush=True)
-    log.write(line + "\n")
-    log.flush()
 
 
 def find_ignore_statements(repo: Path, config: Any) -> list[dict[str, Any]]:

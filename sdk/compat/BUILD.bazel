@@ -79,3 +79,24 @@ py_binary(
     srcs = ["fixtures/v0_3_2/legacy_module.py"],
     main = "fixtures/v0_3_2/legacy_module.py",
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "README.md",
+        "fixtures/v0_3_2/legacy_module.py",
+        "legacy_runtime_compatibility_test.py",
+        "probes/go_contract_probe.go",
+        "probes/python_contract_probe.py",
+        "probes/rust_contract_probe.rs",
+        "protocol_conformance_test.py",
+        "protocol_contract_v1.json",
+        "public_api_baseline.json",
+        "public_api_baseline_test.py",
+        "public_api_contract_digests.json",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

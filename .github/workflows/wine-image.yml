@@ -1,0 +1,39 @@
+name: Wine environment
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      image:
+        description: Validated image digest
+        value: ${{ jobs.publish.outputs.image }}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-hovel
+        with:
+          cache-family: wine-image
+          buildbuddy-api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+      - id: image
+        name: Build, validate, and publish locked environment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: aspect hovel-ci image-publish
+      - uses: ./.github/actions/finish-hovel
+        if: always()
+        with:
+          job-status: ${{ job.status }}

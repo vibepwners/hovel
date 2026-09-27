@@ -1,0 +1,1 @@
+ghcr.io/vibepwners/hovel-ci-wine@sha256:58077243b21fc84b3bc4ee56224c58892bbe040355e5c638f7d3ae8d369791d2

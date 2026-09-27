@@ -55,3 +55,21 @@ go_test(
         "//sdk/go/hoveltest",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "generate_main.go",
+        "lp.go",
+        "main.go",
+        "main_test.go",
+        "mesh.go",
+        "provider_coverage_test.go",
+        "provider_main.go",
+        "stamp.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

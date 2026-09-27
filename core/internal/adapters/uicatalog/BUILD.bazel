@@ -29,3 +29,19 @@ go_test(
     srcs = ["catalog_test.go"],
     embed = [":uicatalog"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "catalog.go",
+        "catalog_test.go",
+        "command_views.go",
+        "logging.go",
+        "logging_helpers.go",
+        "progress.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

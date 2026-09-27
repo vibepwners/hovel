@@ -80,3 +80,35 @@ py_test(
         "@lint_pypi//pytest",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "README.md",
+        "build_dist.py",
+        "hovel_sdk/__init__.py",
+        "hovel_sdk/config.py",
+        "hovel_sdk/context.py",
+        "hovel_sdk/coverage_test.py",
+        "hovel_sdk/credential_delivery.py",
+        "hovel_sdk/credential_provider.py",
+        "hovel_sdk/framing.py",
+        "hovel_sdk/logging.py",
+        "hovel_sdk/mesh.py",
+        "hovel_sdk/mesh_bridge.py",
+        "hovel_sdk/mesh_bridge_test.py",
+        "hovel_sdk/module.py",
+        "hovel_sdk/payload.py",
+        "hovel_sdk/result.py",
+        "hovel_sdk/sdk_test.py",
+        "hovel_sdk/server.py",
+        "hovel_sdk/session.py",
+        "hovel_sdk/testing.py",
+        "pyproject.toml",
+        "uv.lock",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

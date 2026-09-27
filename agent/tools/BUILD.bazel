@@ -28,3 +28,15 @@ py_test(
     ],
     python_version = "PY3",
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "package_agent.py",
+        "package_agent_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

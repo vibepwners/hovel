@@ -46,7 +46,17 @@ shell_script="$tmpdir/shell-pane.sh"
 shell_done="$tmpdir/shell.done"
 session="hovel-mcp-demo-$$"
 
+capture_panes() {
+  if [[ -n "${HOVEL_DEMO_DIAGNOSTICS:-}" ]]; then
+    mkdir -p "$HOVEL_DEMO_DIAGNOSTICS"
+    while IFS= read -r pane; do
+      tmux capture-pane -p -S - -t "$pane" >"$HOVEL_DEMO_DIAGNOSTICS/${pane#%}.log" 2>/dev/null || true
+    done < <(tmux list-panes -s -t "$session" -F '#{pane_id}' 2>/dev/null || true)
+  fi
+}
+
 cleanup() {
+  capture_panes
   tmux has-session -t "$session" >/dev/null 2>&1 && tmux kill-session -t "$session" >/dev/null 2>&1 || true
   rm -rf "$tmpdir"
 }
@@ -274,6 +284,7 @@ wait_for_pane_text() {
       sleep 0.2
     done
     sleep 2.0
+    capture_panes
     tmux kill-session -t "$session" >/dev/null 2>&1 || true
     exit 0
   fi

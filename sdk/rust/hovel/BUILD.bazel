@@ -45,3 +45,30 @@ rust_test(
         "-Zcoverage-options=branch",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "src/base64.rs",
+        "src/chain_kv.rs",
+        "src/context.rs",
+        "src/credential_delivery.rs",
+        "src/credential_provider.rs",
+        "src/framing.rs",
+        "src/json.rs",
+        "src/lib.rs",
+        "src/mesh.rs",
+        "src/mesh_bridge.rs",
+        "src/module.rs",
+        "src/payload.rs",
+        "src/result.rs",
+        "src/server.rs",
+        "src/session.rs",
+        "src/sha256.rs",
+        "src/tests.rs",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

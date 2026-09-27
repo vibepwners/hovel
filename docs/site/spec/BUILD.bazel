@@ -1,3 +1,14 @@
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["reference/daemon-rpc.openapi.json"])
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "reference/daemon-rpc.openapi.json",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

@@ -4,3 +4,15 @@ filegroup(
     name = "assets",
     srcs = glob(["*"]),
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "report.css",
+        "report.js",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

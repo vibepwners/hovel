@@ -66,3 +66,17 @@ filegroup(
     srcs = ["daemonrpc.go"],
     visibility = ["//docs/site:__pkg__"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "daemonrpc.go",
+        "daemonrpc_test.go",
+        "mesh_book.go",
+        "mesh_bridge.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

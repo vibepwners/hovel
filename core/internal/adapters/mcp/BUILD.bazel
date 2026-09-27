@@ -59,3 +59,17 @@ go_test(
         "@com_github_modelcontextprotocol_go_sdk//mcp",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "contract_test.go",
+        "logging.go",
+        "server.go",
+        "server_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

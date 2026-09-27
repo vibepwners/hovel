@@ -19,3 +19,15 @@ py_test(
     main = "coverage_check_test.py",
     python_version = "PY3",
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "coverage_check.py",
+        "coverage_check_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

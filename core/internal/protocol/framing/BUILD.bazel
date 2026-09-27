@@ -6,3 +6,14 @@ go_library(
     importpath = "github.com/vibepwners/hovel/internal/protocol/framing",
     visibility = ["//:__subpackages__"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "framing.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

@@ -1,0 +1,31 @@
+"""Independent release rebuilds, orchestrated exclusively through Aspect."""
+
+load(".aspect/helpers.axl", "run_steps")
+
+def _impl(ctx: TaskContext) -> int:
+    root = ctx.std.env.aspect_root_dir()
+    mode = ctx.args.mode[0]
+    if mode == "prepare":
+        # Runner environment setup must precede the first Bazel invocation.
+        return ctx.std.process.command("python3").args([root + "/repo-tools/tasks/reproducibility.py", "prepare"]).current_dir(root).spawn().wait().code or 0
+    if mode == "build":
+        if not ctx.std.env.var("HOVEL_REPRO_SETUP"):
+            fail("Run aspect hovel-repro prepare in the GitHub runner setup step first")
+        steps = [(["hovel-release", family], root) for family in ["hovel", "sdk", "modules", "agent", "picblobs-cli"]]
+        steps.extend([
+            (["run", "//docs/tools/docs:stage_site"], root),
+            (["run", "//repo-tools/tasks:reproducibility", "--", "manifest"], root),
+        ])
+        return run_steps(ctx, steps)
+    if mode not in ["verify", "compare"]:
+        fail("Expected prepare, build, verify, or compare")
+    return run_steps(ctx, [(["run", "//repo-tools/tasks:reproducibility", "--", mode] + ctx.args.repro_args, root)])
+
+hovel_repro = task(
+    args = {
+        "mode": args.positional(minimum = 1, maximum = 1, description = "prepare, build, verify, or compare"),
+        "repro_args": args.trailing_var_args(description = "Manifest comparison arguments."),
+    },
+    summary = "Build and compare independent release artifacts with cache reads disabled.",
+    implementation = _impl,
+)

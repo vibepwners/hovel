@@ -70,3 +70,21 @@ py_binary(
         "@llvm_mingw_ucrt_linux_x86_64//:llvm_profdata_bin",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "go_branch.bzl",
+        "go_branch_instrument.go",
+        "go_branch_instrument_main.go",
+        "go_branch_instrument_test.go",
+        "go_branch_inventory.go",
+        "go_branch_inventory_test.go",
+        "python_sdk_coverage.py",
+        "rust_sdk_coverage.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

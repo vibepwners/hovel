@@ -24,3 +24,18 @@ go_test(
     ],
     embed = [":smbpipe"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "smbadmin.go",
+        "smbadmin_test.go",
+        "smbpipe.go",
+        "smbpipe_coverage_test.go",
+        "smbpipe_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

@@ -111,3 +111,33 @@ go_test(
         "//internal/infra/pki",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "database_file_unix.go",
+        "database_file_windows.go",
+        "logging.go",
+        "migrations.go",
+        "migrations_test.go",
+        "pki_assignment_store.go",
+        "pki_credential_execution_store.go",
+        "pki_credential_execution_store_test.go",
+        "pki_crl_store.go",
+        "pki_issuance_store.go",
+        "pki_operation_store.go",
+        "pki_revocation_store.go",
+        "pki_stamp_store.go",
+        "pki_stamp_store_test.go",
+        "pki_store.go",
+        "pki_store_test.go",
+        "store.go",
+        "store_cache_test.go",
+        "store_lock_linux_test.go",
+        "store_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

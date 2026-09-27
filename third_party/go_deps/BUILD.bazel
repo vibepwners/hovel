@@ -2,3 +2,16 @@ exports_files([
     "go.mod",
     "go.sum",
 ])
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "deps.go",
+        "go.mod",
+        "go.sum",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

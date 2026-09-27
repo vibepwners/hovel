@@ -34,6 +34,7 @@ py_binary(
         "//modules/squatter/windows:squatter_x64_exe",
         "//modules/squatter/windows:squatter_x86_exe",
     ],
+    deps = ["//tools/wine:environment"],
 )
 
 py_test(
@@ -46,4 +47,20 @@ py_test(
     imports = ["."],
     main = "functional_test_test.py",
     python_version = "PY3",
+    deps = ["//tools/wine:environment"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "Dockerfile",
+        "entrypoint.sh",
+        "functional_test.py",
+        "functional_test_test.py",
+        "run.sh",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

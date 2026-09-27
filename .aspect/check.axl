@@ -4,22 +4,19 @@ def _impl(ctx: TaskContext) -> int:
     root = ctx.std.env.aspect_root_dir()
     scopes = {
         "repo": [
-            (["run", "//tools/bazel/buildifier:buildifier", "--", "--mode=check"], root),
-            (["run", "//tools/bazel/policy:repo_policy"], root),
+            (["run", "//repo-tools/tasks:lint_sources", "--", "--check"], root),
+            (["test", "//tools/lint:buildifier_test", "//tools/lint:policy_test"], root),
             (["test", "//:repo_quality_test"], root),
         ],
         "core": [
-            (["run", "//tools/lint:gofmt_workspace", "--", "--mode=check"], root + "/core"),
-            (["run", "//tools/lint:golangci_lint_workspace"], root + "/core"),
-            (["run", "//:gazelle", "--", "-mode=diff"], root + "/core"),
+            (["test", "//tools/lint:core_gofmt_test", "//tools/lint:core_golangci_test", "//tools/lint:core_gazelle_test"], root),
             (["build", "//:build"], root + "/core"),
             (["test", "//:ci_test", "//:race_test", "//:fuzz_smoke_test"], root + "/core"),
             (["test", "--bazel-flag=--collect_code_coverage", "--bazel-flag=--combined_report=lcov", "--bazel-flag=--remote_download_outputs=all", "//internal/domain/...", "//internal/app/..."], root + "/core"),
             (["run", "//tools/tests:check_coverage", "--", "--analyze-go-report"], root + "/core"),
         ],
         "sdk": [
-            (["run", "//tools/lint:python_check"], root + "/core"),
-            (["run", "//tools/lint:format_rust_workspace", "--", "--mode=check"], root + "/core"),
+            (["test", "//tools/lint:ruff_test", "//tools/lint:mypy_test", "//tools/lint:pydoclint_test", "//tools/lint:rustfmt_test"], root),
             (["build", "//:sdk_build"], root),
             (["test", "//:sdk_test"], root),
         ],
@@ -28,7 +25,7 @@ def _impl(ctx: TaskContext) -> int:
             (["test", "//:module_examples_test"], root),
         ],
         "modules": [
-            (["run", "//tools/lint:gofmt_workspace", "--", "--mode=check", "--path", "../modules/squatter"], root + "/core"),
+            (["test", "//tools/lint:gofmt_modules_test", "//tools/lint:picblobs_ruff_test", "//tools/lint:picblobs_clang_format_test", "//tools/lint:picblobs_lizard_test"], root),
             (["build", "//:modules_build"], root),
             (["test", "//:modules_test"], root),
             (["test", "--bazel-flag=--config=picblobs_ci", "//modules/picblobs:bazel_test_suite"], root),

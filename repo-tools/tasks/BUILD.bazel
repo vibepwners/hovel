@@ -2,6 +2,44 @@ load("@lint_pypi//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
 
 py_binary(
+    name = "reproducibility",
+    srcs = [
+        "ci_audit.py",
+        "ci_summary.py",
+        "reproducibility.py",
+    ],
+    imports = ["."],
+    main = "reproducibility.py",
+)
+
+py_test(
+    name = "reproducibility_test",
+    srcs = [
+        "ci_audit.py",
+        "ci_summary.py",
+        "reproducibility.py",
+        "reproducibility_test.py",
+    ],
+    imports = ["."],
+    main = "reproducibility_test.py",
+)
+
+py_binary(
+    name = "lint_sources",
+    srcs = ["lint_sources.py"],
+)
+
+py_test(
+    name = "lint_sources_test",
+    srcs = [
+        "lint_sources.py",
+        "lint_sources_test.py",
+    ],
+    imports = ["."],
+    main = "lint_sources_test.py",
+)
+
+py_binary(
     name = "ci_audit",
     srcs = ["ci_audit.py"],
 )
@@ -26,6 +64,9 @@ py_test(
     args = [
         "$(rootpath //:.github/actions/setup-hovel/action.yml)",
         "$(rootpath //:.github/actions/finish-hovel/action.yml)",
+        "$(rootpath //:.github/actions/verify-reproducible-artifacts/action.yml)",
+        "$(rootpath //:.github/workflows/repro-build.yml)",
+        "$(rootpath //:.github/workflows/reproducibility.yml)",
         "$(rootpath //:.github/workflows/ci.yml)",
         "$(rootpath //:.github/workflows/pages.yml)",
         "$(rootpath //:.github/workflows/release.yml)",
@@ -33,9 +74,12 @@ py_test(
     data = [
         "//:.github/actions/finish-hovel/action.yml",
         "//:.github/actions/setup-hovel/action.yml",
+        "//:.github/actions/verify-reproducible-artifacts/action.yml",
         "//:.github/workflows/ci.yml",
         "//:.github/workflows/pages.yml",
         "//:.github/workflows/release.yml",
+        "//:.github/workflows/repro-build.yml",
+        "//:.github/workflows/reproducibility.yml",
     ],
     python_version = "PY3",
 )
@@ -63,12 +107,18 @@ py_test(
         "$(rootpath //:.github/workflows/ci.yml)",
         "$(rootpath //:.github/workflows/pages.yml)",
         "$(rootpath //:.github/workflows/release.yml)",
+        "$(rootpath //:.github/workflows/wine-image.yml)",
+        "$(rootpath //:.github/workflows/repro-build.yml)",
+        "$(rootpath //:.github/workflows/reproducibility.yml)",
     ],
     data = [
         ":actionlint",
         "//:.github/workflows/ci.yml",
         "//:.github/workflows/pages.yml",
         "//:.github/workflows/release.yml",
+        "//:.github/workflows/repro-build.yml",
+        "//:.github/workflows/reproducibility.yml",
+        "//:.github/workflows/wine-image.yml",
     ],
     target_compatible_with = ["@platforms//os:linux"],
 )
@@ -80,3 +130,26 @@ alias(
         "//conditions:default": "@actionlint_linux_amd64//:actionlint",
     }),
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "actionlint_test.py",
+        "checkout.py",
+        "checkout_test.py",
+        "ci_audit.py",
+        "ci_integration_test.py",
+        "ci_summary.py",
+        "ci_timing.py",
+        "configure_bazel_cache.py",
+        "github_workflows_test.py",
+        "lint_sources.py",
+        "lint_sources_test.py",
+        "reproducibility.py",
+        "reproducibility_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

@@ -13,3 +13,27 @@ filegroup(
         ":skills",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        ".claude-plugin/plugin.json",
+        ".mcp.json",
+        "BUILD.bazel",
+        "skills/hovel-artifacts/SKILL.md",
+        "skills/hovel-chain-building/SKILL.md",
+        "skills/hovel-discovery/SKILL.md",
+        "skills/hovel-payloads/SKILL.md",
+        "skills/hovel-sessions/SKILL.md",
+        "skills/hovel-throw/SKILL.md",
+        "skills/hovel-troubleshooting/SKILL.md",
+        "skills/hovel/SKILL.md",
+        "skills/hovel/references/capability-map.md",
+        "skills/hovel/references/error-recovery.md",
+        "skills/hovel/references/safety-model.md",
+        "skills/hovel/references/workflow.md",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

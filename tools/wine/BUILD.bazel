@@ -1,12 +1,43 @@
-load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "environment",
+    srcs = ["environment.py"],
+    data = ["image.txt"],
+)
+
+py_binary(
+    name = "image_tool",
+    srcs = ["image_tool.py"],
+    data = [
+        "image.Dockerfile",
+        "packages.lock.json",
+        "//modules/docker/squatter-wine:entrypoint.sh",
+    ],
+    deps = [":environment"],
+)
+
+py_test(
+    name = "image_tool_test",
+    srcs = [
+        "image_tool.py",
+        "image_tool_test.py",
+    ],
+    args = ["$(rootpath :packages.lock.json)"],
+    data = ["packages.lock.json"],
+    imports = ["."],
+    main = "image_tool_test.py",
+    deps = [":environment"],
+)
 
 py_binary(
     name = "wine_run",
     srcs = ["wine_run.py"],
     main = "wine_run.py",
     python_version = "PY3",
+    deps = [":environment"],
 )
 
 py_test(
@@ -18,4 +49,23 @@ py_test(
     ],
     main = "wine_run_test.py",
     python_version = "PY3",
+    deps = [":environment"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "environment.py",
+        "image.Dockerfile",
+        "image.txt",
+        "image_tool.py",
+        "image_tool_test.py",
+        "packages.lock.json",
+        "wine_run.py",
+        "wine_run_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

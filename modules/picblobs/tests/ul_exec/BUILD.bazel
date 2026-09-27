@@ -20,3 +20,14 @@ pic_cc_binary(
         "-Wl,-e,_start",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "hello_et_exec.S",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

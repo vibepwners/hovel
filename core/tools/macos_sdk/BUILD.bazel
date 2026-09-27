@@ -4,3 +4,16 @@ filegroup(
     name = "sdk_files",
     srcs = glob(["MacOSX.sdk/**"]),
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "MacOSX.sdk/usr/lib/libSystem.tbd",
+        "MacOSX.sdk/usr/lib/libc.tbd",
+        "MacOSX.sdk/usr/lib/libm.tbd",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

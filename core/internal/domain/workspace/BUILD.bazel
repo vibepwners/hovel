@@ -13,3 +13,15 @@ go_test(
     srcs = ["workspace_test.go"],
     embed = [":workspace"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "workspace.go",
+        "workspace_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

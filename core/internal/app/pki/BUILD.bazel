@@ -68,3 +68,40 @@ go_test(
         "//internal/infra/pki",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "assignment.go",
+        "audit.go",
+        "audit_test.go",
+        "backend.go",
+        "backend_test.go",
+        "control.go",
+        "control_test.go",
+        "credential_execution.go",
+        "credential_execution_service_test.go",
+        "credential_resolution.go",
+        "credential_resolution_test.go",
+        "crl_publication.go",
+        "crl_publication_test.go",
+        "custody.go",
+        "issuance.go",
+        "lease.go",
+        "lifecycle.go",
+        "mutation.go",
+        "mutation_test.go",
+        "operation.go",
+        "reservation.go",
+        "revocation.go",
+        "rollover_error.go",
+        "service.go",
+        "service_test.go",
+        "stamp.go",
+        "stamp_service_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

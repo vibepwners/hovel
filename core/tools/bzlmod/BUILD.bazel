@@ -1,1 +1,12 @@
 package(default_visibility = ["//visibility:public"])
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "external_tools.bzl",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

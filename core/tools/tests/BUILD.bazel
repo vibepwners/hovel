@@ -16,3 +16,17 @@ exports_files([
     "event_type_fuzz_smoke_test.py",
     "site_smoke_test.py",
 ])
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "check_coverage.py",
+        "event_type_fuzz_smoke_test.py",
+        "python_runtime.bzl",
+        "site_smoke_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

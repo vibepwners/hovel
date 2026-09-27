@@ -163,3 +163,30 @@ py_test(
     main = "pages_workflow_test.py",
     python_version = "PY3",
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "assemble_site.py",
+        "check_site_links.py",
+        "daemon_rpc_openapi_test.py",
+        "generate_sdk_api_docs.py",
+        "go_api_docs.go",
+        "materialize_site.py",
+        "materialize_site_test.py",
+        "pages_workflow_test.py",
+        "provider_docs_parity_test.py",
+        "python_api/conf.py",
+        "python_api/index.rst",
+        "requirements_lock.txt",
+        "serve_site.py",
+        "site_revision.py",
+        "site_revision_test.py",
+        "site_rules.bzl",
+        "sphinx_build.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

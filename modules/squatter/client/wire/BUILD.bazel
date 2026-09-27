@@ -12,3 +12,15 @@ go_test(
     srcs = ["wire_test.go"],
     embed = [":wire"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "wire.go",
+        "wire_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

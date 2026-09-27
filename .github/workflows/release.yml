@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     outputs:
+      source-sha: ${{ steps.release.outputs.source_sha }}
       hovel-version: ${{ steps.release.outputs.hovel_version }}
       picblobs-version: ${{ steps.release.outputs.picblobs_version }}
       picblobs-changed: ${{ steps.release.outputs.picblobs_changed }}
@@ -54,19 +55,28 @@ jobs:
         with:
           job-status: ${{ job.status }}
 
-  build-hovel:
+  reproducibility:
     needs: verify
+    uses: ./.github/workflows/reproducibility.yml
+    with:
+      ref: ${{ needs.verify.outputs.source-sha }}
+    secrets: inherit
+
+  build-hovel:
+    needs: [verify, reproducibility]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: {ref: "${{ env.RELEASE_TAG || github.ref }}", persist-credentials: false}
+        with: {ref: "${{ needs.verify.outputs.source-sha }}", persist-credentials: false}
       - uses: ./.github/actions/setup-hovel
         with:
           cache-family: release-${{ github.job }}
           buildbuddy-api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
       - run: aspect hovel-release hovel
       - run: aspect run //repo-tools/release:release_tool -- smoke --package=hovel --dist=core/dist
+      - uses: ./.github/actions/verify-reproducible-artifacts
+        with: {families: hovel}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with: {name: hovel-dist, path: "core/dist/*", if-no-files-found: error, retention-days: 14}
       - uses: ./.github/actions/finish-hovel
@@ -75,18 +85,20 @@ jobs:
           job-status: ${{ job.status }}
 
   build-sdk:
-    needs: verify
+    needs: [verify, reproducibility]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: {ref: "${{ env.RELEASE_TAG || github.ref }}", persist-credentials: false}
+        with: {ref: "${{ needs.verify.outputs.source-sha }}", persist-credentials: false}
       - uses: ./.github/actions/setup-hovel
         with:
           cache-family: release-${{ github.job }}
           buildbuddy-api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
       - run: aspect hovel-release sdk
       - run: aspect run //repo-tools/release:release_tool -- smoke --package=hovel-sdk --dist=dist
+      - uses: ./.github/actions/verify-reproducible-artifacts
+        with: {families: sdk}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with: {name: hovel-sdk-dist, path: "dist/*", if-no-files-found: error, retention-days: 14}
       - uses: ./.github/actions/finish-hovel
@@ -95,12 +107,12 @@ jobs:
           job-status: ${{ job.status }}
 
   build-picblobs:
-    needs: verify
+    needs: [verify, reproducibility]
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: {ref: "${{ env.RELEASE_TAG || github.ref }}", persist-credentials: false}
+        with: {ref: "${{ needs.verify.outputs.source-sha }}", persist-credentials: false}
       - uses: ./.github/actions/setup-hovel
         with:
           cache-family: release-${{ github.job }}
@@ -108,6 +120,8 @@ jobs:
       - run: aspect hovel-release picblobs-cli -- --expected-version=${{ needs.verify.outputs.picblobs-version }}
       - run: aspect run //repo-tools/release:release_tool -- smoke --package=picblobs --dist=modules/picblobs/dist/picblobs
       - run: aspect run //repo-tools/release:release_tool -- smoke --package=picblobs-cli --dist=modules/picblobs/dist/picblobs-cli --dependency-dist=modules/picblobs/dist/picblobs
+      - uses: ./.github/actions/verify-reproducible-artifacts
+        with: {families: "picblobs,picblobs-cli"}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with: {name: picblobs-dist, path: "modules/picblobs/dist/", if-no-files-found: error, retention-days: 14}
       - uses: ./.github/actions/finish-hovel
@@ -116,17 +130,19 @@ jobs:
           job-status: ${{ job.status }}
 
   build-modules:
-    needs: verify
+    needs: [verify, reproducibility]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: {ref: "${{ env.RELEASE_TAG || github.ref }}", persist-credentials: false}
+        with: {ref: "${{ needs.verify.outputs.source-sha }}", persist-credentials: false}
       - uses: ./.github/actions/setup-hovel
         with:
           cache-family: release-${{ github.job }}
           buildbuddy-api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
       - run: aspect hovel-release modules
+      - uses: ./.github/actions/verify-reproducible-artifacts
+        with: {families: modules}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with: {name: module-packages, path: "dist/modules/", if-no-files-found: error, retention-days: 14}
       - uses: ./.github/actions/finish-hovel
@@ -135,17 +151,19 @@ jobs:
           job-status: ${{ job.status }}
 
   build-agent:
-    needs: verify
+    needs: [verify, reproducibility]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: {ref: "${{ env.RELEASE_TAG || github.ref }}", persist-credentials: false}
+        with: {ref: "${{ needs.verify.outputs.source-sha }}", persist-credentials: false}
       - uses: ./.github/actions/setup-hovel
         with:
           cache-family: release-${{ github.job }}
           buildbuddy-api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
       - run: aspect hovel-release agent
+      - uses: ./.github/actions/verify-reproducible-artifacts
+        with: {families: agent}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with: {name: agent-packages, path: "dist/agent/", if-no-files-found: error, retention-days: 14}
       - uses: ./.github/actions/finish-hovel
@@ -162,7 +180,7 @@ jobs:
     permissions: {contents: read, id-token: write}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: {ref: "${{ env.RELEASE_TAG }}", persist-credentials: false}
+        with: {ref: "${{ needs.verify.outputs.source-sha }}", persist-credentials: false}
       - uses: ./.github/actions/setup-hovel
         with:
           cache-family: release-${{ github.job }}
@@ -186,7 +204,7 @@ jobs:
     permissions: {contents: read, id-token: write}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: {ref: "${{ env.RELEASE_TAG }}", persist-credentials: false}
+        with: {ref: "${{ needs.verify.outputs.source-sha }}", persist-credentials: false}
       - uses: ./.github/actions/setup-hovel
         with:
           cache-family: release-${{ github.job }}
@@ -210,7 +228,7 @@ jobs:
     permissions: {contents: read, id-token: write}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: {ref: "${{ env.RELEASE_TAG }}", persist-credentials: false}
+        with: {ref: "${{ needs.verify.outputs.source-sha }}", persist-credentials: false}
       - uses: ./.github/actions/setup-hovel
         with:
           cache-family: release-${{ github.job }}
@@ -236,7 +254,7 @@ jobs:
     permissions: {contents: read, id-token: write}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: {ref: "${{ env.RELEASE_TAG }}", persist-credentials: false}
+        with: {ref: "${{ needs.verify.outputs.source-sha }}", persist-credentials: false}
       - uses: ./.github/actions/setup-hovel
         with:
           cache-family: release-${{ github.job }}
@@ -255,13 +273,13 @@ jobs:
 
   github-release:
     if: github.event_name == 'push' || inputs.publish
-    needs: [publish-hovel, publish-sdk, publish-picblobs-cli, build-modules, build-agent]
+    needs: [verify, publish-hovel, publish-sdk, publish-picblobs-cli, build-modules, build-agent]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions: {contents: write}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with: {ref: "${{ env.RELEASE_TAG }}", persist-credentials: false}
+        with: {ref: "${{ needs.verify.outputs.source-sha }}", persist-credentials: false}
       - uses: ./.github/actions/setup-hovel
         with:
           cache-family: release-${{ github.job }}

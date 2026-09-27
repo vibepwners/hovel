@@ -75,7 +75,11 @@ cppcheck_test(
     name = "runner_cppcheck",
     size = "small",
     srcs = ["runner.c"],
-    include_dirs = ["src/include"],
+    hdrs = [":quality_sources"],
+    include_dirs = [
+        "src/include",
+        "tests/runners/linux",
+    ],
 )
 
 # Hosted-mode runner — passes pic_platform vtable to blobs instead of
@@ -112,3 +116,25 @@ genrule(
     executable = True,
     toolchains = ["@rules_cc//cc:current_cc_toolchain"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "runner.c",
+        "runner_hosted.c",
+        "start/aarch64.h",
+        "start/arm.h",
+        "start/i386.h",
+        "start/mips.h",
+        "start/powerpc.h",
+        "start/powerpc64.h",
+        "start/riscv.h",
+        "start/s390x.h",
+        "start/sparc.h",
+        "start/x86_64.h",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

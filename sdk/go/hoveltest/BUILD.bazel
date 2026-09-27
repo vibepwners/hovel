@@ -51,3 +51,16 @@ go_test(
     embed = [":hoveltest_branch_instrumented"],
     deps = ["//sdk/go/hovel:hovel_branch_instrumented"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "payload_provider.go",
+        "payload_provider_coverage_test.go",
+        "payload_provider_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

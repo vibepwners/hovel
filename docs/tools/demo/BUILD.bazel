@@ -14,6 +14,7 @@ py_binary(
     name = "render_vhs_demo",
     srcs = ["render_vhs_demo.py"],
     python_version = "PY3",
+    deps = ["//tools/wine:environment"],
 )
 
 py_test(
@@ -121,3 +122,20 @@ py_binary(
     python_version = "PY3",
     tags = ["manual"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "check_gif_duration.py",
+        "materialize_demo_outputs.py",
+        "materialize_demo_outputs_test.py",
+        "render_vhs_demo.py",
+        "verify_standard_demos.py",
+        "vhs_timing_test.py",
+        "vhs_version.txt",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

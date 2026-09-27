@@ -2,6 +2,7 @@
 """Run the Squatter black-box functional suite for both Windows ABIs in Wine."""
 
 from __future__ import annotations
+from tools.wine.environment import image_ref
 
 import argparse
 import json
@@ -475,7 +476,7 @@ def main() -> int:
         "--image",
         default=os.environ.get(
             "HOVEL_SQUATTER_WINE_TEST_IMAGE",
-            "hovel/squatter-wine-functional:local",
+            image_ref(),
         ),
     )
     args = parser.parse_args()
@@ -525,23 +526,7 @@ def main() -> int:
     runner = EvidenceRunner()
     abi_evidence: list[ABIEvidence] = []
     try:
-        with tempfile.TemporaryDirectory(prefix="hovel-squatter-wine-") as directory:
-            context = pathlib.Path(directory)
-            shutil.copy2(args.dockerfile, context / "Dockerfile")
-            shutil.copy2(args.entrypoint, context / "entrypoint.sh")
-            runner.run(
-                [
-                    "docker",
-                    "build",
-                    "--pull=false",
-                    "--tag",
-                    args.image,
-                    "--file",
-                    str(context / "Dockerfile"),
-                    str(context),
-                ],
-                title="Build pinned Squatter Wine image",
-            )
+        runner.run(["docker", "image", "inspect", args.image], title="Inspect pinned Squatter Wine image")
         for bits, wine_arch, payload, pipeprobe in (
             (32, "win32", args.payload32, args.pipeprobe32),
             (64, "win64", args.payload64, args.pipeprobe64),

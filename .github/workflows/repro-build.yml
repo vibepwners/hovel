@@ -1,0 +1,49 @@
+name: Independent rebuild
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      replica:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Rebuild ${{ inputs.replica }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      HOVEL_REPRO_REPLICA: ${{ inputs.replica }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-hovel
+        with:
+          cache-family: reproducibility
+          buildbuddy-api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+      - name: Require a fresh output root and disable action reuse
+        run: aspect hovel-repro prepare
+      - name: Build all release families and deterministic docs
+        run: aspect hovel-repro build
+      - name: Confirm actual BuildBuddy execution
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: aspect hovel-repro verify
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: repro-${{ inputs.replica }}
+          path: dist/reproducibility/manifest.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: ./.github/actions/finish-hovel
+        if: always()
+        with:
+          job-status: ${{ job.status }}

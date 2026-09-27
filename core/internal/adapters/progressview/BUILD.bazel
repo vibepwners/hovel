@@ -27,3 +27,17 @@ go_test(
     embed = [":progressview"],
     deps = ["//internal/app/modulepackage"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "install.go",
+        "install_test.go",
+        "transfer.go",
+        "transfer_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

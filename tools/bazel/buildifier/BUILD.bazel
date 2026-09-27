@@ -34,3 +34,15 @@ py_test(
     python_version = "PY3",
     deps = [requirement("pytest")],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "run_buildifier_workspace.py",
+        "run_buildifier_workspace_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

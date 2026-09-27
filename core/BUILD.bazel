@@ -145,3 +145,27 @@ test_suite(
     tags = ["manual"],
     tests = ["//internal/domain/event:event_type_fuzz_smoke_test"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        ".bazelignore",
+        ".bazelrc",
+        ".bazelversion",
+        ".golangci.yml",
+        "BUILD.bazel",
+        "LICENSE",
+        "MODULE.bazel",
+        "MODULE.bazel.lock",
+        "OWNERS",
+        "VERSION",
+        "go.mod",
+        "go.sum",
+        "internal/OWNERS",
+        "tools/ci/job_summary.py",
+        "tools/ci/job_summary_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

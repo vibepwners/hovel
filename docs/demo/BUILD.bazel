@@ -109,3 +109,38 @@ py_test(
     python_version = "PY3",
     tags = ["e2e"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "chains/mock-survey-exploit.chain.yaml",
+        "demo_defs.bzl",
+        "tapes-docker/mcp-agent-02-squatter-wine.tape",
+        "tapes/mcp-agent-01-throw.tape",
+        "tapes/mock-survey-exploit-01-inspect.tape",
+        "tapes/mock-survey-exploit-02-throw.tape",
+        "tapes/mock-survey-exploit-03-session-io.tape",
+        "tapes/mock-survey-exploit-04-session-connect.tape",
+        "tapes/mock-survey-exploit-cli-02-session-io.tape",
+        "tapes/mock-survey-exploit-cli-03-session-connect.tape",
+        "tapes/mock-survey-exploit-cli-commands-01-create.tape",
+        "tapes/mock-survey-exploit-cli-commands-02-config-before.tape",
+        "tapes/mock-survey-exploit-cli-commands-03-config-apply.tape",
+        "tapes/mock-survey-exploit-cli-commands-04-save.tape",
+        "tapes/mock-survey-exploit-commands-01-create.tape",
+        "tapes/mock-survey-exploit-commands-02-config-before.tape",
+        "tapes/mock-survey-exploit-commands-03-config-apply.tape",
+        "tapes/mock-survey-exploit-commands-04-save.tape",
+        "tapes/module-package-install-01-link.tape",
+        "tapes/ui-command-table.tape",
+        "tapes/ui-download-progress.tape",
+        "tapes/ui-logs.tape",
+        "tapes/ui-module-card.tape",
+        "tapes/ui-status-panel.tape",
+        "tapes/ui-upload-progress.tape",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

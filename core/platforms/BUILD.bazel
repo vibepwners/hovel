@@ -87,3 +87,13 @@ platform(
         "@platforms//os:windows",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

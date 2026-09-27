@@ -98,3 +98,22 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "cmd_integration_test.cc",
+        "echo_integration_test.cc",
+        "file_xfer_test.cc",
+        "frame_test.cc",
+        "framing_test.cc",
+        "gtest_smoke.cc",
+        "mux_peer.h",
+        "nanopb_roundtrip.cc",
+        "test.proto",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

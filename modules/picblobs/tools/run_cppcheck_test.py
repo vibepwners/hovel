@@ -29,6 +29,10 @@ def main() -> int:
         "--inline-suppr",
         "--language=c",
         "--std=c11",
+        # Cppcheck does not parse GNU fixed-register variable annotations.
+        # Strip that annotation while retaining the C expression/data flow.
+        "-D__asm__(x)=",
+        "--force",
     ]
     command.extend(
         arg
@@ -47,7 +51,7 @@ def resolve_path(value: str) -> Path:
         candidate = root / value
         if candidate.exists():
             return candidate
-    return path
+    raise FileNotFoundError("missing declared cppcheck input: " + value)
 
 
 def candidate_roots() -> list[Path]:

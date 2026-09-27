@@ -42,7 +42,9 @@ def main() -> None:
 def main() -> int:
     args = parse_args()
     root = Path(os.environ.get("BUILD_WORKSPACE_DIRECTORY", Path(__file__).resolve().parents[2])).resolve()
-    version = release_version(root)
+    if args.version_file:
+        root = Path.cwd()
+    version = args.version_file.read_text().strip().removeprefix("v") if args.version_file else release_version(root)
     platform_tag = args.platform_tag or os.environ.get("HOVEL_WHEEL_PLATFORM_TAG") or default_platform_tag()
     binary_name = args.binary_name or ("hovel.exe" if os.name == "nt" else "hovel")
     binary = release_binary(root, args.binary)
@@ -51,7 +53,7 @@ def main() -> int:
         return 2
 
     dist = args.out_dir if args.out_dir.is_absolute() else root / args.out_dir
-    dist.mkdir(exist_ok=True)
+    dist.mkdir(parents=True, exist_ok=True)
     wheel = dist / f"{NORMALIZED}-{version}-py3-none-{platform_tag}.whl"
     dist_info = f"{NORMALIZED}-{version}.dist-info"
     records: list[tuple[str, bytes, int]] = []
@@ -114,6 +116,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, default=Path("dist"), help="Distribution output directory.")
     parser.add_argument("--platform-tag", help="Wheel platform tag, such as macosx_11_0_arm64.")
     parser.add_argument("--binary-name", help="Name to store under hovel/bin/ inside the wheel.")
+    parser.add_argument("--version-file", type=Path, help="Declared version input for a wheel build action.")
     return parser.parse_args()
 
 

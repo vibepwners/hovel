@@ -57,3 +57,18 @@ py_test(
     main = "source_contract_test.py",
     python_version = "PY3",
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "LICENSE",
+        "module_surface.json",
+        "pe_inspect_test.py",
+        "select_file.bzl",
+        "source_contract_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

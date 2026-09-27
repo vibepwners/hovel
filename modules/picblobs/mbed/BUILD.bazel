@@ -205,3 +205,32 @@ filegroup(
         "README.md",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        ".mbed",
+        ".mbedignore",
+        "BUILD.bazel",
+        "README.md",
+        "compile_mbed_os.py",
+        "compile_mbed_os_test.py",
+        "config_layout.py",
+        "main.cpp",
+        "materialize_blobs.py",
+        "materialize_blobs_test.py",
+        "mbed-os.lib",
+        "mbed_app.json",
+        "picblobs/net.h",
+        "picblobs/platform.h",
+        "picblobs/types.h",
+        "platform_mbed.cpp",
+        "platform_mbed.h",
+        "requirements.in",
+        "requirements.txt",
+        "target_compile_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

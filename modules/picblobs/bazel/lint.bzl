@@ -133,7 +133,7 @@ clang_tidy_aspect = aspect(
 # cppcheck test macro
 # ============================================================
 
-def cppcheck_test(name, srcs, include_dirs = ["src/include"], size = None, tags = None, **kwargs):
+def cppcheck_test(name, srcs, hdrs = [], include_dirs = ["src/include"], size = None, tags = None, **kwargs):
     """Runs cppcheck as a Bazel py_test with declared sources."""
 
     py_test(
@@ -142,10 +142,12 @@ def cppcheck_test(name, srcs, include_dirs = ["src/include"], size = None, tags 
         srcs = ["//modules/picblobs/tools:run_cppcheck_test.py"],
         main = "run_cppcheck_test.py",
         args = (
-            ["--include-dir=" + include_dir for include_dir in include_dirs] +
+            ["--include-dir=modules/picblobs/" + include_dir for include_dir in include_dirs] +
             ["$(rootpath {})".format(src) for src in srcs]
         ),
-        data = srcs,
+        data = srcs + hdrs + [
+            "//modules/picblobs/src/include/picblobs:quality_sources",
+        ],
         python_version = "PY3",
         tags = tags,
         deps = [requirement("cppcheck")],

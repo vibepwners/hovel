@@ -27,3 +27,16 @@ go_test(
         "//internal/domain/service",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "chain.go",
+        "validator.go",
+        "validator_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

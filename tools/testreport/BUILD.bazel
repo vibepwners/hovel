@@ -1,4 +1,5 @@
 load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("//tools/lint:results.bzl", "LINT_RESULTS")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -21,7 +22,8 @@ py_binary(
         "lintreport.py",
         "run_lint_report.py",
     ],
-    data = [
+    args = ["--result-dir=$(rootpath " + target + ")" for target in LINT_RESULTS],
+    data = LINT_RESULTS + [
         "lint-report.schema.json",
         "lint_tools.json",
     ],
@@ -55,3 +57,23 @@ py_test(
     imports = ["."],
     python_version = "PY3",
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "README.md",
+        "lint-report.schema.json",
+        "lint_tools.json",
+        "lintreport.py",
+        "lintreport_test.py",
+        "operator-parity.schema.json",
+        "render_report.py",
+        "run_lint_report.py",
+        "testreport.py",
+        "testreport_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

@@ -12,8 +12,17 @@ SQUATTER_TRANSPORTS = 0x00000007
 
 
 class PETest(unittest.TestCase):
+    def test_payload_timestamps_are_reproducible(self):
+        for architecture in ("i686", "x86_64"):
+            with self.subTest(architecture=architecture):
+                with open(payload_path(architecture), "rb") as handle:
+                    data = handle.read()
+                pe_offset = u32(data, 0x3C)
+                self.assertEqual(data[pe_offset : pe_offset + 4], b"PE\0\0")
+                self.assertEqual(u32(data, pe_offset + 8), 0, "PE linker timestamp must be zero")
+
     def test_payload_is_i386_console_pe_with_hovel_markers(self):
-        with open(i686_payload_path(), "rb") as handle:
+        with open(payload_path("i686"), "rb") as handle:
             data = handle.read()
 
         self.assertGreaterEqual(len(data), 0x40)
@@ -68,13 +77,13 @@ class PETest(unittest.TestCase):
             self.assertNotIn(needle, data)
 
 
-def i686_payload_path():
+def payload_path(architecture):
     candidates = []
     for arg in sys.argv[1:]:
         candidates.extend(part for part in arg.split() if part)
-    matches = [path for path in candidates if path.endswith("-i686.exe")]
+    matches = [path for path in candidates if path.endswith(f"-{architecture}.exe")]
     if len(matches) != 1:
-        raise AssertionError(f"expected one i686 payload, got {matches!r} from {candidates!r}")
+        raise AssertionError(f"expected one {architecture} payload, got {matches!r} from {candidates!r}")
     return matches[0]
 
 

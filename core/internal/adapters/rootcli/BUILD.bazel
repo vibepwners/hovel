@@ -77,3 +77,19 @@ go_test(
         "//internal/testsupport",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "logging.go",
+        "rootcli.go",
+        "rootcli_contract_test.go",
+        "rootcli_e2e_test.go",
+        "rootcli_test.go",
+        "rootcli_test_helpers_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

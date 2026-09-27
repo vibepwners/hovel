@@ -1,0 +1,17 @@
+name: Verify release artifact reproducibility
+description: Require the files about to be published to match the independent rebuild.
+inputs:
+  families:
+    description: Comma-separated release artifact families.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: repro-b
+        path: ${{ runner.temp }}/repro-baseline
+    - shell: bash
+      env:
+        REPRO_FAMILIES: ${{ inputs.families }}
+      run: aspect run //repo-tools/tasks:reproducibility -- verify-family --first="${RUNNER_TEMP}/repro-baseline/manifest.json" --families="${REPRO_FAMILIES}"

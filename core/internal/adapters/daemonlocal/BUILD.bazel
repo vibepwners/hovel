@@ -41,3 +41,18 @@ go_test(
         "//internal/infra/pki",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "client_test.go",
+        "daemonlocal.go",
+        "logging.go",
+        "pki_control.go",
+        "pki_control_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

@@ -42,3 +42,16 @@ go_test(
         "//internal/moduleruntime/pythonrpc",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "runtime.go",
+        "runtime_lock_posix_test.go",
+        "runtime_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

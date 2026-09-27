@@ -1,0 +1,190 @@
+load("@hovel_core//tools/lint:lint_action.bzl", "checked_lint")
+load(":sources.bzl", "LINT_SOURCE_GROUPS")
+
+package(default_visibility = ["//visibility:public"])
+
+checked_lint(
+    name = "core_gofmt",
+    srcs = ["@hovel_core//tools/lint:source_files"],
+    arguments = [
+        "--gofmt=@EXECROOT@/$(execpath @go_sdk//:bin/gofmt)",
+        "--mode=check",
+    ],
+    cwd = "core",
+    data = ["@go_sdk//:bin/gofmt"],
+    lint_id = "gofmt-core",
+    suffixes = [".go"],
+    tool = "@hovel_core//tools/lint:gofmt_workspace",
+)
+
+checked_lint(
+    name = "core_golangci",
+    srcs = ["@hovel_core//tools/lint:source_files"],
+    arguments = [
+        "--go=@EXECROOT@/$(execpath @go_sdk//:bin/go)",
+        "--golangci-lint=@EXECROOT@/$(execpath @golangci_lint_linux_amd64//:golangci_lint_bin)",
+    ],
+    cwd = "core",
+    data = [
+        "@go_sdk//:bin/go",
+        "@go_sdk//:files",
+        "@golangci_lint_linux_amd64//:golangci_lint_bin",
+    ],
+    go = "$(execpath @go_sdk//:bin/go)",
+    lint_id = "golangci-lint",
+    module_cache = ["@lint_go_modules//:downloads"],
+    suffixes = [
+        ".go",
+        ".mod",
+        ".sum",
+        ".yml",
+    ],
+    tool = "@hovel_core//tools/lint:golangci_lint_workspace",
+)
+
+checked_lint(
+    name = "core_gazelle",
+    srcs = ["@hovel_core//tools/lint:source_files"],
+    arguments = ["-mode=diff"],
+    cwd = "core",
+    data = [
+        "@go_sdk//:bin/go",
+        "@go_sdk//:files",
+    ],
+    go = "$(execpath @go_sdk//:bin/go)",
+    lint_id = "gazelle",
+    module_cache = ["@lint_go_modules//:downloads"],
+    tool = "@hovel_core//:gazelle",
+)
+
+filegroup(
+    name = "source_files",
+    srcs = LINT_SOURCE_GROUPS + ["@hovel_core//tools/lint:source_files"],
+)
+
+checked_lint(
+    name = "gofmt_modules",
+    srcs = [":source_files"],
+    arguments = [
+        "--gofmt=@EXECROOT@/$(execpath @go_sdk//:bin/gofmt)",
+        "--mode=check",
+    ],
+    cwd = "modules/squatter",
+    data = ["@go_sdk//:bin/gofmt"],
+    lint_id = "gofmt-modules",
+    prefixes = ["modules/squatter/"],
+    suffixes = [".go"],
+    tool = "@hovel_core//tools/lint:gofmt_workspace",
+)
+
+checked_lint(
+    name = "buildifier",
+    srcs = [":source_files"],
+    arguments = [
+        "--buildifier-linux-amd64=@EXECROOT@/$(execpath @buildifier_linux_amd64//file)",
+        "--buildifier-linux-arm64=@EXECROOT@/$(execpath @buildifier_linux_arm64//file)",
+        "--mode=check",
+    ],
+    data = [
+        "@buildifier_linux_amd64//file",
+        "@buildifier_linux_arm64//file",
+    ],
+    lint_id = "buildifier",
+    tool = "//tools/bazel/buildifier",
+)
+
+checked_lint(
+    name = "policy",
+    srcs = [":source_files"],
+    lint_id = "repository-policy",
+    tool = "//tools/bazel/policy:repo_policy",
+)
+
+[
+    checked_lint(
+        name = tool,
+        srcs = [":source_files"],
+        arguments = ["--" + name + "=@EXECROOT@/$(execpath @hovel_core//tools/lint:" + name + ")" for name in [
+            "ruff",
+            "mypy",
+            "pydoclint",
+        ]] + ["--only=" + tool],
+        lint_id = tool + "-sdk",
+        prefixes = [
+            "sdk/python/",
+            "modules/examples/python/",
+            "core/tools/lint/stubs/",
+        ],
+        tool = "@hovel_core//tools/lint:python_check",
+        tools = ["@hovel_core//tools/lint:" + name for name in [
+            "ruff",
+            "mypy",
+            "pydoclint",
+        ]],
+    )
+    for tool in [
+        "ruff",
+        "mypy",
+        "pydoclint",
+    ]
+]
+
+checked_lint(
+    name = "rustfmt",
+    srcs = [":source_files"],
+    arguments = [
+        "--rustfmt=@EXECROOT@/$(execpath @rules_rust//tools/upstream_wrapper:rustfmt)",
+        "--mode=check",
+    ],
+    lint_id = "rustfmt",
+    prefixes = ["sdk/rust/"],
+    tool = "@hovel_core//tools/lint:format_rust_workspace",
+    tools = ["@rules_rust//tools/upstream_wrapper:rustfmt"],
+)
+
+[
+    checked_lint(
+        name = "picblobs_" + tool.replace("-", "_"),
+        srcs = [":source_files"],
+        arguments = [
+            "--mode=" + ("fmt" if tool == "clang-format" else "lint"),
+            "--tool=" + tool,
+            "--clang-format=@EXECROOT@/$(execpath @hovel_core//tools/lint:clang_format)",
+            "--ruff=@EXECROOT@/$(execpath @hovel_core//tools/lint:ruff)",
+            "--lizard=@EXECROOT@/$(execpath //modules/picblobs/tools:lizard)",
+            "--buildifier-linux-amd64=@EXECROOT@/$(execpath @buildifier_linux_amd64//file)",
+            "--buildifier-linux-arm64=@EXECROOT@/$(execpath @buildifier_linux_arm64//file)",
+        ],
+        data = [
+            "@buildifier_linux_amd64//file",
+            "@buildifier_linux_arm64//file",
+        ],
+        lint_id = tool + "-picblobs",
+        prefixes = ["modules/picblobs/"],
+        tool = "//modules/picblobs/tools:lint_run",
+        tools = [
+            "//modules/picblobs/tools:lizard",
+            "@hovel_core//tools/lint:clang_format",
+            "@hovel_core//tools/lint:ruff",
+        ],
+    )
+    for tool in [
+        "ruff",
+        "clang-format",
+        "lizard",
+    ]
+]
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "OWNERS",
+        "lint_result_test.py",
+        "results.bzl",
+        "sources.bzl",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

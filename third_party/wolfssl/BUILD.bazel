@@ -15,3 +15,16 @@ exports_files([
     "no_thread_helpers.patch",
     "user_settings.h",
 ])
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "BUILD.wolfssl.bazel",
+        "no_thread_helpers.patch",
+        "user_settings.h",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

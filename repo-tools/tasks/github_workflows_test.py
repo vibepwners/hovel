@@ -25,7 +25,10 @@ def test_release_is_tag_driven_and_ordered() -> None:
     assert "release:" not in workflow.split("permissions:", 1)[0]
     assert "aspect hovel-check" in workflow
     assert "needs: [verify, build-picblobs, publish-picblobs]" in workflow
-    assert "needs: [publish-hovel, publish-sdk, publish-picblobs-cli, build-modules, build-agent]" in workflow
+    assert "needs: [verify, publish-hovel, publish-sdk, publish-picblobs-cli, build-modules, build-agent]" in workflow
+    assert workflow.count("needs: [verify, reproducibility]") == 5
+    assert workflow.count("uses: ./.github/actions/verify-reproducible-artifacts") == 5
+    assert "ref: ${{ needs.verify.outputs.source-sha }}" in workflow
     assert workflow.index("publish-picblobs:") < workflow.index("publish-picblobs-cli:")
     assert workflow.index("publish-picblobs-cli:") < workflow.index("github-release:")
 
@@ -40,6 +43,18 @@ def test_release_keeps_publisher_identities_and_minimal_permissions() -> None:
     assert workflow.count("skip-existing: true") == 4
     assert workflow.count("attestations: true") == 4
     assert workflow.count("needs.verify.outputs.picblobs-changed == 'true'") == 4
+
+
+def test_reproducibility_is_serial_on_separate_runners_and_not_a_pr_gate() -> None:
+    workflow = FILES["reproducibility.yml"]
+    assert "schedule:" in workflow and "workflow_dispatch:" in workflow and "workflow_call:" in workflow
+    assert "pull_request:" not in workflow
+    assert "needs: first" in workflow
+    assert workflow.count("uses: ./.github/workflows/repro-build.yml") == 2
+    rebuild = FILES["repro-build.yml"]
+    assert "aspect hovel-repro prepare" in rebuild
+    assert "aspect hovel-repro build" in rebuild
+    assert "aspect hovel-repro verify" in rebuild
 
 
 def test_release_builds_and_smokes_only_through_aspect() -> None:
@@ -73,6 +88,17 @@ def test_ci_has_complete_scopes_and_bounded_jobs() -> None:
     assert "pull_request_target" not in workflow
     assert "merge_group:" in workflow
     assert workflow.count("timeout-minutes:") == workflow.count("runs-on:")
+
+
+def test_private_wine_auth_is_limited_to_image_preparation() -> None:
+    workflow = FILES["ci.yml"]
+    wine = workflow.split("  squatter-wine:\n", 1)[1]
+    assert workflow.count("packages: read") == 1
+    assert "packages: read" in wine
+    prepare, runtime = wine.split("      - name: Verify Wine integration and materialize demo", 1)
+    assert "GITHUB_TOKEN: ${{ github.token }}" in prepare
+    assert "aspect hovel-ci image-prepare" in prepare
+    assert "GITHUB_TOKEN" not in runtime
 
 
 def test_every_build_job_configures_and_cleans_up_buildbuddy() -> None:

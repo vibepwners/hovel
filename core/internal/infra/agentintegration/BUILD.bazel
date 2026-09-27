@@ -16,3 +16,15 @@ go_test(
     tags = ["unit"],
     deps = ["//internal/app/agentintegration"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "installer.go",
+        "installer_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

@@ -126,3 +126,21 @@ py_test(
         requirement("pytest"),
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "README.md",
+        "picblobs_cli/__init__.py",
+        "picblobs_cli/__main__.py",
+        "picblobs_cli/cli.py",
+        "pyproject.toml",
+        "tests/__init__.py",
+        "tests/bazel_pytest.py",
+        "tests/test_picblobs_cli.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

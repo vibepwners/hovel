@@ -167,13 +167,15 @@ hovel_demo_start_squatter_wine() {
 
   HOVEL_SQUATTER_CONTAINER_ID="$("$repo_root/tools/docker/squatter-wine/run.sh")"
   export HOVEL_SQUATTER_CONTAINER_ID
+  docker logs --follow "$HOVEL_SQUATTER_CONTAINER_ID" >"$HOVEL_WORKSPACE/wine.log" 2>&1 &
 
   local attempts=0
   until hovel_demo_squatter_listening "$HOVEL_SQUATTER_CONTAINER_ID" 9100; do
     attempts=$((attempts + 1))
-    if [[ "$attempts" -ge 120 ]]; then
-      echo "timed out waiting for Squatter Wine container on $HOVEL_DEMO_SQUATTER_HOST:$HOVEL_DEMO_SQUATTER_PORT" >&2
+    if [[ "$(docker inspect --format '{{.State.Running}}' "$HOVEL_SQUATTER_CONTAINER_ID" 2>/dev/null)" != "true" ]] || [[ "$attempts" -ge 120 ]]; then
+      echo "Squatter Wine container failed to become ready on $HOVEL_DEMO_SQUATTER_HOST:$HOVEL_DEMO_SQUATTER_PORT" >&2
       docker logs "$HOVEL_SQUATTER_CONTAINER_ID" >&2 || true
+      docker rm -f "$HOVEL_SQUATTER_CONTAINER_ID" >/dev/null 2>&1 || true
       return 1
     fi
     sleep 0.5

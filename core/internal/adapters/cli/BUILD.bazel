@@ -137,3 +137,29 @@ go_test(
         "@com_github_c_bata_go_prompt//:go-prompt",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "cli.go",
+        "cli_e2e_test.go",
+        "cli_test.go",
+        "cli_test_helpers_test.go",
+        "interactive_config.go",
+        "interactive_config_huh.go",
+        "logging.go",
+        "prompt_writer.go",
+        "prompt_writer_test.go",
+        "session_connect.go",
+        "session_connect_test.go",
+        "session_persistence.go",
+        "terminal_state.go",
+        "terminal_state_posix.go",
+        "terminal_state_test.go",
+        "terminal_state_unsupported.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

@@ -11,6 +11,20 @@ from tools.wine import wine_run
 
 
 class WineRunTest(unittest.TestCase):
+    def test_container_uses_pinned_image_and_isolated_writable_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / "output/execroot/_main/bazel-out/test.exe"
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+            environment = wine_run._wine_environment({"TEST_TMPDIR": str(root / "tmp"), "XML_OUTPUT_FILE": str(root / "logs/test.xml")})
+            command = wine_run.container_command(executable, ["--gtest_filter=Echo.*"], environment)
+            self.assertIn("--network=none", command)
+            self.assertIn(str(root / "output") + ":" + str(root / "output") + ":ro", command)
+            self.assertTrue(any(arg.startswith("ghcr.io/vibepwners/hovel-ci-wine@sha256:") for arg in command))
+            self.assertIn("XML_OUTPUT_FILE=" + str(root / "logs/test.xml"), command)
+            self.assertEqual(command[-1], "--gtest_filter=Echo.*")
+
     def test_environment_is_isolated_and_quiet(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             environment = wine_run._wine_environment(

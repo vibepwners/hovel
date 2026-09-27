@@ -513,3 +513,26 @@ test_suite(
         ":verify_pic_thumb",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "defs.bzl",
+        "mbed_app_build_test.py",
+        "mbed_mock/EthernetInterface.h",
+        "mbed_mock/SocketAddress.h",
+        "mbed_mock/TCPSocket.h",
+        "mbed_mock/blobs/nacl_client_blob.h",
+        "mbed_mock/blobs/nacl_server_blob.h",
+        "mbed_mock/hal/trng_api.h",
+        "mbed_mock/mbed.h",
+        "nacl_e2e_test.py",
+        "test_mbed_runner.cpp",
+        "verify_pic.sh",
+        "verify_pic_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

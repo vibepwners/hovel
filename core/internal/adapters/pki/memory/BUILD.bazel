@@ -40,3 +40,19 @@ go_test(
         "//internal/infra/pki",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "credential_execution_store.go",
+        "crl_store.go",
+        "operation_store.go",
+        "stamp_store.go",
+        "store.go",
+        "store_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

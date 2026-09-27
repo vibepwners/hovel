@@ -21,3 +21,16 @@ stage_llvm_mingw_libs(
     compiler_rt = ["@llvm_mingw_ucrt_linux_x86_64//:compiler_rt_windows"],
     target_libs = ["@llvm_mingw_ucrt_linux_x86_64//:x86_64_libs"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "flags.bzl",
+        "stage_llvm_mingw_libs.bzl",
+        "stage_llvm_mingw_libs.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

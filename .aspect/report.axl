@@ -4,7 +4,12 @@ def _impl(ctx: TaskContext) -> int:
     root = ctx.std.env.aspect_root_dir()
     core = root + "/core"
     return run_steps(ctx, [
-        (["run", "//tools/testreport:run_lint_report", "--", "--output=.test-report/linters"], root),
+        # Native checks already have declared actions. AXL owns their invocations;
+        # the report materializer consumes results and never starts another build.
+        (["build", "@hovel_core//:build", "//modules/squatter/windows/src:format_check", "//modules/squatter/windows/src:clang_tidy", "//modules/squatter/windows/src:cppcheck", "//modules/squatter/windows/src:complexity"], root),
+        (["build", "--bazel-flag=--config=picblobs_lint", "//modules/picblobs/src/...", "//modules/picblobs/tests/..."], root),
+        (["test", "//modules/picblobs/tests/runners/freebsd:runner_cppcheck", "//modules/picblobs/tests/runners/linux:runner_cppcheck", "//modules/picblobs/tests/runners/windows:runner_cppcheck"], root),
+        (["run", "//tools/testreport:run_lint_report", "--", "--output=.test-report/linters"] + ["--verified-native=" + component for component in ["nilness", "clang-format-squatter", "clang-tidy-squatter", "cppcheck-squatter", "lizard-squatter", "clang-tidy-picblobs", "cppcheck-picblobs"]], root),
         (["run", "//tools/coverage:python_sdk_coverage", "--", "--no-enforce"], root),
         (["test", "--bazel-flag=--remote_download_outputs=all", "--bazel-flag=--nocache_test_results", "//:sdk_test", "//:module_examples_test", "//:modules_test", "//:docs_test"], root),
         (["run", "//tools/coverage:go_branch_inventory", "--", "--hits-root=bazel-testlogs", "--no-enforce"], root),

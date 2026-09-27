@@ -138,3 +138,25 @@ go_test(
         "//internal/testsupport",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "chain_file_store.go",
+        "chain_file_store_test.go",
+        "commandmode.go",
+        "commandmode_e2e_test.go",
+        "commandmode_test.go",
+        "commandmode_test_helpers_test.go",
+        "logging.go",
+        "module_check.go",
+        "module_install_progress.go",
+        "module_install_progress_test.go",
+        "terminal_echo_posix.go",
+        "terminal_echo_unsupported.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

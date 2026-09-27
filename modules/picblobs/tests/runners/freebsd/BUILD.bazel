@@ -63,5 +63,26 @@ cppcheck_test(
     name = "runner_cppcheck",
     size = "small",
     srcs = ["runner.c"],
-    include_dirs = ["src/include"],
+    hdrs = [":quality_sources"],
+    include_dirs = [
+        "src/include",
+        "tests/runners/freebsd",
+    ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "runner.c",
+        "start/aarch64.h",
+        "start/arm.h",
+        "start/i386.h",
+        "start/mips.h",
+        "start/s390x.h",
+        "start/x86_64.h",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

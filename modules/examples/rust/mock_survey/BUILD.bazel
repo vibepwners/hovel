@@ -19,3 +19,14 @@ rust_test(
     crate = ":mock-survey-rust",
     edition = "2021",
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "src/main.rs",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

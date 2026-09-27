@@ -176,3 +176,42 @@ test_suite(
         ":kmod_build_alpine",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "build.sh",
+        "ebpf/kernel_loader.py",
+        "ebpf/kernel_mem.py",
+        "ebpf/kernel_prog.py",
+        "ebpf/loader.py",
+        "kmod/Makefile",
+        "kmod/build_examples.py",
+        "kmod/examples/Makefile",
+        "kmod/examples/b64_kernel.h",
+        "kmod/examples/blob_ctx.h",
+        "kmod/examples/hello_ring0.S",
+        "kmod/examples/kshell.c",
+        "kmod/examples/kshell_nacl.c",
+        "kmod/examples/nop_sled.S",
+        "kmod/examples/pic_hook.c",
+        "kmod/examples/tweetnacl_kernel.h",
+        "kmod/examples/who_am_i.S",
+        "kmod/load_kmod.py",
+        "kmod/pic_kblob.c",
+        "kmod/pic_kmod.c",
+        "kmod/portable_kmod.py",
+        "lab.md",
+        "lp/listener.py",
+        "run_vm_test.sh",
+        "vm/.gitignore",
+        "vm/kshell_nacl_test_listener.py",
+        "vm/kshell_test_listener.py",
+        "vm/patch_vermagic.py",
+        "vm/vm_harness.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

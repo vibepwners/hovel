@@ -6,6 +6,15 @@ on:
   pull_request:
   merge_group:
   workflow_dispatch:
+    inputs:
+      publish-wine-image:
+        description: Publish the locked Wine image using the trusted manual workflow
+        type: boolean
+        default: false
+      reproducibility:
+        description: Run independent release rebuilds instead of the normal CI gate
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,7 +28,22 @@ defaults:
     shell: bash
 
 jobs:
+  reproducibility:
+    if: github.event_name == 'workflow_dispatch' && inputs.reproducibility
+    uses: ./.github/workflows/reproducibility.yml
+    with:
+      ref: ${{ github.sha }}
+    secrets: inherit
+  wine-image:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish-wine-image
+    uses: ./.github/workflows/wine-image.yml
+    permissions:
+      contents: read
+      packages: write
+    secrets: inherit
+
   check:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.publish-wine-image && !inputs.reproducibility)
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -93,6 +117,7 @@ jobs:
           job-status: ${{ job.status }}
 
   docs:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.publish-wine-image && !inputs.reproducibility)
     name: Docs, test report, and Pages artifact
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -119,9 +144,13 @@ jobs:
           job-status: ${{ job.status }}
 
   squatter-wine:
+    if: github.event_name != 'workflow_dispatch' || (!inputs.publish-wine-image && !inputs.reproducibility)
     name: Squatter Wine tests and demo
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -130,11 +159,10 @@ jobs:
         with:
           cache-family: wine
           buildbuddy-api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
-      - name: Install demo host tools
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y --install-recommends wine32 wine64
+      - name: Pull private Wine runtime
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: aspect hovel-ci image-prepare
       - name: Verify Wine integration and materialize demo
         run: aspect hovel-ci wine
       - uses: ./.github/actions/finish-hovel

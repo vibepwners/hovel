@@ -9,3 +9,15 @@ filegroup(
         "//modules/squatter/windows/src:squatter_all",
     ],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "C_STYLE_GUIDE.md",
+        "README.md",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

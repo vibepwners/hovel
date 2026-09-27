@@ -6,3 +6,34 @@ filegroup(
     name = "site_files",
     srcs = glob(["**"]),
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "assets/site.css",
+        "guide/adding-architecture.html",
+        "guide/adding-syscall.html",
+        "guide/building.html",
+        "guide/code-generation.html",
+        "guide/formatting.html",
+        "guide/getting-started.html",
+        "guide/how-it-works.html",
+        "guide/index.html",
+        "guide/introduction.html",
+        "guide/kernel-toolkit.html",
+        "guide/picblobs-cli.html",
+        "guide/platform-support.html",
+        "guide/project-structure.html",
+        "guide/running.html",
+        "guide/specification.html",
+        "guide/test-runners.html",
+        "guide/testing.html",
+        "guide/writing-blobs.html",
+        "index.html",
+        "module.yaml",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

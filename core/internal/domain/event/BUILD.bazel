@@ -24,3 +24,15 @@ py_test(
     python_version = "PY3",
     tags = ["manual"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "event.go",
+        "event_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

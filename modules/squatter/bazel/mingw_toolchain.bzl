@@ -51,6 +51,15 @@ def _config_impl(ctx):
 
     features = [
         feature(
+            name = "deterministic_pe",
+            enabled = True,
+            flag_sets = [flag_set(
+                actions = _LINK_ACTIONS,
+                # GNU ld otherwise embeds the current time in PE headers.
+                flag_groups = [flag_group(flags = ["-Wl,--no-insert-timestamp"])],
+            )],
+        ),
+        feature(
             name = "path_normalization",
             enabled = True,
             flag_sets = [
@@ -129,10 +138,49 @@ def mingw_cc_toolchain(name, target, cpu, static_runtime = True, builtin_include
       static_runtime: Whether to link the GCC/C++ runtime statically.
       builtin_include_dirs: Built-in include directories reported by the toolchain.
     """
-    native.filegroup(
-        name = "%s_all" % name,
-        srcs = native.glob(["**"], allow_empty = False),
-    )
+
+    # Each action stages only the tools it executes. In particular, ar/strip do
+    # not need the ~1 GiB GCC frontend and LTO binaries or the target sysroot.
+    groups = {
+        "compiler": [
+            "bin/%s-gcc*" % target,
+            "bin/%s-g++" % target,
+            "bin/%s-cpp" % target,
+            "bin/%s-as" % target,
+            "%s/bin/as" % target,
+            "libexec/gcc/%s/*/cc1" % target,
+            "libexec/gcc/%s/*/cc1plus" % target,
+            "libexec/gcc/%s/*/g++-mapper-server" % target,
+            "lib/gcc/%s/*/include/**" % target,
+            "lib/gcc/%s/*/include-fixed/**" % target,
+            "lib/gcc/%s/*/specs" % target,
+            "%s/include/**" % target,
+        ],
+        "linker": [
+            "bin/%s-gcc*" % target,
+            "bin/%s-ld*" % target,
+            "bin/%s-as" % target,
+            "%s/bin/as" % target,
+            "%s/bin/ld*" % target,
+            "libexec/gcc/%s/*/collect2" % target,
+            "libexec/gcc/%s/*/lto*" % target,
+            "libexec/gcc/%s/*/liblto_plugin.so" % target,
+            "lib/gcc/%s/*/*.a" % target,
+            "lib/gcc/%s/*/*.o" % target,
+            "lib/gcc/%s/*/specs" % target,
+            "%s/lib/**" % target,
+        ],
+        "ar": ["bin/%s-ar" % target, "lib/bfd-plugins/**"],
+        "strip": ["bin/%s-strip" % target],
+        "objcopy": ["bin/%s-objcopy" % target],
+        "dwp": ["bin/%s-dwp" % target],
+    }
+    for kind, patterns in groups.items():
+        native.filegroup(
+            name = name + "_" + kind,
+            srcs = native.glob(patterns + ["lib/*.so*", "lib64/*.so*"], allow_empty = True),
+        )
+    native.filegroup(name = name + "_all", srcs = [":" + name + "_" + kind for kind in groups])
 
     mingw_cc_toolchain_config(
         name = "%s_config" % name,
@@ -146,12 +194,12 @@ def mingw_cc_toolchain(name, target, cpu, static_runtime = True, builtin_include
         name = "%s_cc" % name,
         toolchain_config = ":%s_config" % name,
         all_files = ":%s_all" % name,
-        ar_files = ":%s_all" % name,  # <-- the fix: the archiver must be staged
-        compiler_files = ":%s_all" % name,
-        linker_files = ":%s_all" % name,
-        dwp_files = ":%s_all" % name,
-        objcopy_files = ":%s_all" % name,
-        strip_files = ":%s_all" % name,
+        ar_files = ":%s_ar" % name,
+        compiler_files = ":%s_compiler" % name,
+        linker_files = ":%s_linker" % name,
+        dwp_files = ":%s_dwp" % name,
+        objcopy_files = ":%s_objcopy" % name,
+        strip_files = ":%s_strip" % name,
         supports_param_files = 1,
     )
 

@@ -207,6 +207,15 @@ local_repository(
     path = "core",
 )
 
+go_modules = use_repo_rule("@hovel_core//tools/lint:go_modules.bzl", "go_modules")
+
+go_modules(
+    name = "lint_go_modules",
+    go = "@go_sdk//:bin/go",
+    go_mod = "@hovel_core//:go.mod",
+    go_sum = "@hovel_core//:go.sum",
+)
+
 mingw_toolchain_repo = use_repo_rule("//modules/squatter/bazel:mingw.bzl", "mingw_toolchain_repo")
 
 mingw_toolchain_repo(

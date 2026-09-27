@@ -81,3 +81,29 @@ go_test(
         "//conditions:default": [],
     }),
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "bundle_verifier.go",
+        "envelope.go",
+        "envelope_test.go",
+        "master_key_file.go",
+        "master_key_file_test.go",
+        "master_key_rotation.go",
+        "master_key_rotation_test.go",
+        "recovery.go",
+        "recovery_test.go",
+        "secret_file_unix.go",
+        "secret_file_unix_test.go",
+        "secret_file_windows.go",
+        "secret_file_windows_test.go",
+        "tls_policy.go",
+        "x509_backend.go",
+        "x509_backend_test.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

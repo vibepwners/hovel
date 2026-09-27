@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from tools.wine.environment import image_ref
 
 import argparse
 import json
@@ -60,10 +61,13 @@ def main() -> int:
         if capture_ffmpeg_root:
             write_ffmpeg_capture_wrapper(chrome_wrapper.parent / "ffmpeg", ffmpeg, Path(capture_ffmpeg_root))
         env = os.environ | {
-            "TMPDIR": str(repo / "demo/tmp/vhs-tmp"),
+            # Chromium appends a Unix socket path here; keep its parent short.
+            "TMPDIR": str(work),
+            "TMUX_TMPDIR": str(work),
             "HOME": str(repo / "demo/tmp/home"),
             "XDG_CACHE_HOME": str(repo / "demo/tmp/cache"),
             "HOVEL_REPO_ROOT": str(repo),
+            "HOVEL_DEMO_DIAGNOSTICS": str(repo / "demo/tmp/panes"),
             "HOVEL_DEMO_HOVEL_BIN": str(repo / "demo/tmp/hovel"),
             "HOVEL_DEMO_AGENT_BIN": str(repo / "demo/tmp/hovel-mock-agent"),
             "HOVEL_DEMO_UI_BIN": str(repo / "demo/tmp/hovel-ui-catalog"),
@@ -119,10 +123,10 @@ def print_demo_diagnostics(repo: Path) -> None:
         rel = log.relative_to(repo)
         sys.stderr.write(f"\n--- {rel} ---\n")
         lines = log.read_text(errors="replace").splitlines()
-        for line in lines[:120]:
-            sys.stderr.write(line + "\n")
         if len(lines) > 120:
-            sys.stderr.write(f"... omitted {len(lines) - 120} line(s) ...\n")
+            sys.stderr.write(f"... omitted first {len(lines) - 120} line(s) ...\n")
+        for line in lines[-120:]:
+            sys.stderr.write(line + "\n")
 
 
 def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:
@@ -177,11 +181,8 @@ def build_synthetic_repo(repo: Path, args: argparse.Namespace) -> None:
             repo / "modules/examples/hovel-modules.json",
             [{"id": "squatter", "runtime": "jsonrpc-stdio", "command": ["bin/squatter-provider"]}],
         )
-        image = os.environ.get("HOVEL_SQUATTER_WINE_IMAGE", "hovel/squatter-wine:latest")
-        subprocess.run(
-            ["docker", "build", "-t", image, "-f", str(repo / "tools/docker/squatter-wine/Dockerfile"), str(repo / "tools/docker/squatter-wine")],
-            check=True,
-        )
+        image = os.environ.get("HOVEL_SQUATTER_WINE_IMAGE", image_ref())
+        os.environ["HOVEL_SQUATTER_WINE_IMAGE"] = image
         os.environ["HOVEL_SQUATTER_WINE_BUILD"] = "0"
 
 

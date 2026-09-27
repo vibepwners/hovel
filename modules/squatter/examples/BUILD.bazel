@@ -67,3 +67,16 @@ cc_binary(
     target_compatible_with = ["@platforms//os:windows"],
     deps = ["//modules/squatter/windows/src:sqlog_windowed"],  # built with the matching SQLOG_WINDOW=1
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "hello.c",
+        "iocp_echo_server.c",
+        "logdemo.c",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

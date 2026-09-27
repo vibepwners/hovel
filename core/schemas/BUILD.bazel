@@ -52,3 +52,26 @@ py_test(
     ],
     python_version = "PY3",
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "fixtures/chain_configured.json",
+        "fixtures/chain_template.json",
+        "fixtures/event_throw_started.json",
+        "fixtures/module_artifacts.json",
+        "fixtures/throw_plan.json",
+        "hovel.chain.schema.json",
+        "hovel.event.schema.json",
+        "hovel.module.schema.json",
+        "hovel.payload.schema.json",
+        "hovel.service.schema.json",
+        "hovel.throw-plan.schema.json",
+        "payload_schema_test.py",
+        "schema_smoke_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

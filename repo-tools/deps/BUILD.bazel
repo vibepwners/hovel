@@ -30,3 +30,15 @@ py_test(
     main = "update_python_locks_test.py",
     deps = [requirement("pytest")],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "update_python_locks.py",
+        "update_python_locks_test.py",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

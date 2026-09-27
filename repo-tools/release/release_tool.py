@@ -109,6 +109,8 @@ def validate(root: Path, tag: str, publish: bool, require_main: bool) -> None:
             output.write(f"hovel_version={hovel}\n")
             output.write(f"picblobs_version={pic}\n")
             output.write(f"picblobs_changed={str(picblobs_changed).lower()}\n")
+            source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            output.write(f"source_sha={source_sha}\n")
 
 
 def artifact_files(root: Path) -> list[Path]:

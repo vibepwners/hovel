@@ -10,6 +10,8 @@ def _impl(ctx: TaskContext) -> int:
         (["run", "//tools/lint:gofmt_workspace", "--", "--mode=write", "--path", "../sdk/go/hovel"], root + "/core"),
         (["run", "//tools/lint:format_rust_workspace", "--", "--mode=write"], root + "/core"),
         (["run", "//tools/lint:gofmt_workspace", "--", "--mode=write", "--path", "../modules/squatter"], root + "/core"),
+        (["run", "//repo-tools/tasks:lint_sources"], root),
+        (["run", "//tools/bazel/buildifier:buildifier", "--", "--mode=fix"], root),
     ])
 
 hovel_format = task(

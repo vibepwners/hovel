@@ -28,3 +28,16 @@ go_test(
     embed = [":mcpagent_lib"],
     deps = ["@com_github_modelcontextprotocol_go_sdk//mcp"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "harness.go",
+        "harness_test.go",
+        "main.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

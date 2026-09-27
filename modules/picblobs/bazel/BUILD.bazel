@@ -10,3 +10,18 @@ filegroup(
     name = "quality_sources",
     srcs = glob(["*.bzl"]) + ["BUILD.bazel"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "blob.bzl",
+        "cc_binary.bzl",
+        "lint.bzl",
+        "platforms.bzl",
+        "transition.bzl",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources

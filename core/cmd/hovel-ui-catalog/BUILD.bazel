@@ -13,3 +13,14 @@ go_binary(
     embed = [":hovel_ui_catalog_lib"],
     visibility = ["//visibility:public"],
 )
+
+# BEGIN generated lint sources
+filegroup(
+    name = "hovel_lint_sources",
+    srcs = [
+        "BUILD.bazel",
+        "main.go",
+    ],
+    visibility = ["//tools/lint:__pkg__"],
+)
+# END generated lint sources
