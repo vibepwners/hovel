@@ -124,6 +124,28 @@ as an essential backwards-compatibility contract:
   session formation must preserve auditability and current provider behavior as
   those contracts move toward versioned 1.0 surfaces.
 
+## Integration decisions
+
+Use [Integration Decisions](docs/site/src/content/spec/integration-decisions.html)
+when changing storage ownership, retained-session control, frontend refresh, or
+integration contracts. In particular:
+
+- Keep security handles alive with the resource they protect; preserve identity
+  checks and test cross-process lock behavior when changing descriptor cleanup.
+- Bound diagnostic history independently of live event delivery and session
+  control. Preserve credential suppression, byte limits, and callback errors.
+- Fetch authoritative state before replacing derived UI state; retain the last
+  usable state on fetch failure and reuse existing refresh triggers.
+- Restore terminal presentation and modes after attachment output stops; keep
+  cleanup out of remote input, redirected output, and enclosing frontends.
+- Trace existing public session dispatch before adding APIs or payload records.
+  Session command results are not automatically confirmed throws or persisted
+  output artifacts.
+- Distinguish accepted-workflow defects from deferred features. Record exact
+  revisions and gate scopes; an observation test asserting a defect is not a fix.
+- Separate upstream integration, official release availability, and downstream
+  adoption. Do not remove downstream workarounds based on a source merge alone.
+
 ## Docs authoring
 
 Agents are expected to edit docs as literal HTML fragments under

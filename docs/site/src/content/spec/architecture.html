@@ -276,7 +276,8 @@ hovel throw &lt;chain-file&gt; --now
           <li>Service logs and throw events remain centralized and can be correlated back to the owning operation and chain.</li>
         </ol>
 
-        <h2>Workspace Database</h2>
+        <h2 id="workspace-database">Workspace Database</h2>
+        <p>The cached SQL pool owns the independently opened database, WAL, and shared-memory security handles for its entire lifetime. Closing another descriptor for the same inode can release the process's SQLite advisory locks. Drain store operations before closing the store; close the SQL pool before its security handles, and serialize close/reopen under the cache mutex. Failed initialization still releases its handles. Preserve ownership, permissions, no-follow, and file-identity checks when changing this lifecycle. The Linux cross-process WAL-lock regression verifies lock preservation; it does not attribute every historical daemon crash. See <a href="integration-decisions.html#acceptance">integration acceptance</a>.</p>
         <p>Every workspace owns metadata at <code>&lt;workspace&gt;/workspace.json</code> and a SQLite database at <code>&lt;workspace&gt;/workspace.db</code>. The database is the durable state store for operator session state, operations, chains, targets, steps, config, throw plans, confirmation records, throw records, installed payload records, installed payload state-change history, events, artifact metadata, and final throw state. Current workspace initialization creates file directories for artifacts, logs, modules, throws, and services; provider-specific payload, listener, or session directories can be added when a provider needs file-shaped state.</p>
         <p>
           Installed payload records are global workspace inventory with chain, target,

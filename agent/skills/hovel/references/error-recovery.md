@@ -13,3 +13,11 @@ When a Hovel action fails:
 
 Do not retry destructive calls blindly. Do not replace typed calls with
 `hovel_command_run` merely because a typed call returned a policy error.
+
+A failed catalog fetch does not establish that installed modules disappeared.
+Preserve the last usable context, surface the error, and retry discovery only when
+appropriate. A closed session is not permission to recreate its owner or rerun the
+operation. Keep received command output distinct from acknowledged persisted
+artifacts; missing uncollected output after owner failure is not evidence of
+successful collection. Report the exact runtime revision and validation scope
+when deciding whether an upstream fix applies to the installed integration.

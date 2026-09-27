@@ -978,7 +978,8 @@ func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 		fixedClock{now: time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC)},
 	)
 	sessions := newBridgeSessionBroker()
-	serveTestDaemon(t, socketPath, runs, WithModuleSessions(sessions))
+	manager := NewMeshBridgeManager()
+	serveTestDaemon(t, socketPath, runs, WithModuleSessions(sessions), WithMeshBridgeManager(manager))
 
 	client, err := Dial(socketPath)
 	if err != nil {
@@ -1013,6 +1014,11 @@ func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 	}
 	if bridge.Capability.reveal() == "" {
 		t.Fatal("mesh bridge capability is empty")
+	}
+
+	ownedBridge, ok := manager.Find(bridge.OperationID, "")
+	if !ok {
+		t.Fatal("opened mesh bridge is missing from the manager")
 	}
 
 	conn, err := net.DialTimeout("tcp", bridge.LocalAddress, time.Second)
@@ -1061,6 +1067,14 @@ func TestClientOpensTCPMeshBridgeAsLocalEndpoint(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for natural mesh bridge session close")
+	}
+	// The mock reports session closure before natural close removes the bridge.
+	// Wait for the entire close critical section before checking registry cleanup.
+	ownedBridge.closeMu.Lock()
+	sessionClosed := ownedBridge.sessionClosed
+	ownedBridge.closeMu.Unlock()
+	if !sessionClosed {
+		t.Fatal("natural mesh bridge close did not finish closing the session")
 	}
 	if _, err := client.CloseMeshBridge(context.Background(), MeshBridgeCloseRequest{
 		OperationID: bridge.OperationID,

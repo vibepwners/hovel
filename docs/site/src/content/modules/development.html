@@ -42,6 +42,11 @@
         <td>Name-based orchestration or requiring unsupported optional operations</td>
       </tr>
       <tr>
+        <td>Typed operations on an ordinary retained session</td>
+        <td>The Go session's optional <code>PayloadCommandProvider</code>, routed through the existing <a href="../spec/daemon-rpc.html#retained-session-commands">session-command dispatch</a></td>
+        <td>An installed-payload record solely to expose commands, a replacement owner process, or an assumption of automatic result persistence</td>
+      </tr>
+      <tr>
         <td>Provider-owned nodes, routes, beacons, tasks, streams, or listening posts</td>
         <td><code>mesh.describe</code> plus only the optional Mesh operations actually supported</td>
         <td>No-op topology, task, listener, or stream methods added only to mimic a full provider</td>

@@ -1,0 +1,125 @@
+<!-- hovel-doc: {"title":"Integration Decisions","group":"Engineering","order":170,"navTitle":"Integration Decisions","description":"Retained-session and storage contracts, Burrow integration acceptance, deferred features, and release adoption boundaries."} -->
+<article>
+  <h1>Integration Decisions</h1>
+  <p>
+    This decision record incorporates the <a href="https://github.com/Bochner/burrow/issues/111">Burrow integration handoff</a>.
+    The five upstream changes were integrated in Hovel PRs #65–#69, followed by the
+    build and report changes in #61. The reviewed combined source is
+    <a href="https://github.com/vibepwners/hovel/commit/33eb385d0334c4a3cbb9cd867a976ea055a53437"><code>33eb385</code></a>.
+    Source integration, an official release containing that source, and downstream
+    adoption are separate milestones. These changes were merged after the v0.4.3 release;
+    installing v0.4.3 does not supply the four bug fixes.
+  </p>
+
+  <h2 id="acceptance">Issue acceptance matrix</h2>
+  <p>
+    The matrix distinguishes implemented fixes, supported-contract clarification,
+    and deliberate deferral. Each original Burrow issue retains its downstream obligations.
+    A closed deferred request is not an implemented feature.
+  </p>
+  <table>
+    <thead><tr><th>Issue and disposition</th><th>Implemented contract and evidence</th><th>Remaining boundary</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><a href="https://github.com/Bochner/burrow/issues/86">#86: SQLite WAL locks</a><br>Fixed upstream in <a href="https://github.com/vibepwners/hovel/pull/65">#65</a>.</td>
+        <td>The cached SQL pool owns the independent database/WAL/shared-memory security handles. Callers drain operations before close; the store closes the pool before its handles and serializes close/reopen. Initialization failure still cleans up. <code>TestWALLifetimeLock</code> probes the shared-memory lock from another process in the SQLite normal and race suites. See <a href="architecture.html#workspace-database">Workspace Database</a>.</td>
+        <td>The probe establishes lock preservation, not the cause of every historical daemon crash. Burrow still needs fixed-release adoption and concurrent-reader/write evidence.</td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/Bochner/burrow/issues/30">#30: retained-session logs</a><br>Fixed upstream in <a href="https://github.com/vibepwners/hovel/pull/66">#66</a>.</td>
+        <td>The newest 256 diagnostic entries remain ordered and bounded while live callback delivery continues. The resource-limit regression sends thousands of logs before and after <code>Run</code> returns, checks correlation and timestamps, and proves the retained owner still serves read/write/acknowledged close and closes its listener. Callback failure, byte limits, and credential suppression remain covered. See <a href="module-protocol.html#module-log">module/log</a>.</td>
+        <td>History eviction is not lossless in-memory retention or recovery from a failed event sink. Keep Burrow's diagnostic budget until its adopted runtime is verified.</td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/Bochner/burrow/issues/75">#75: attached-shell catalogs</a><br>Fixed upstream in <a href="https://github.com/vibepwners/hovel/pull/67">#67</a>.</td>
+        <td>The shell fetches the daemon catalog before replacing derived commands, counts, and wizard state. <code>TestE2EAttachedModuleRefreshesLiveCatalog</code> covers install/removal, fresh attachment, canceled refresh preserving an active wizard, and interactive refresh after another shell installs a module. See <a href="front-ends.html#attached-catalogs">Attached catalog refresh</a>.</td>
+        <td>Existing refresh triggers remain the boundary; there is no polling, per-keystroke RPC, or new refresh command. This regression is in the explicit manual CLI E2E target.</td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/Bochner/burrow/issues/29">#29: native terminal presentation</a><br>Restoration fixed upstream in <a href="https://github.com/vibepwners/hovel/pull/68">#68</a>.</td>
+        <td><code>TestSessionConnectRestoresPresentation</code> uses a Linux controlling PTY to cover detach, read failure, ordinary output, redirected output, and embedded-output isolation; it also checks termios, unchanged remote input, and session retention. See <a href="operator-workflows.html#session-control-plane">Session Control Plane</a>.</td>
+        <td>Native geometry, resize, controller fencing, and independent observers are separate deferred features. Burrow's provider-owned shared-shell commands do not imply native Hovel APIs.</td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/Bochner/burrow/issues/34">#34: ordinary session commands</a><br>Existing contract clarified in <a href="https://github.com/vibepwners/hovel/pull/69">#69</a>.</td>
+        <td>An ordinary retained Go session may implement <code>PayloadCommandProvider</code> without an installed-payload record. <code>TestRetainedNonPayloadSessionCommandsStayWithOwnerAndEndOnClose</code> verifies two concurrent correlated requests use the same owner and calls fail after close; the SDK round-trip test covers dispatch. See <a href="daemon-rpc.html#retained-session-commands">Retained-session commands</a>.</td>
+        <td>This was documentation and regression coverage, not a new runtime API. A command does not itself create a confirmed throw, generic durable completion event, or persisted output artifact.</td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/Bochner/burrow/issues/28">#28: daemon compatibility negotiation</a><br>Deferred, not planned.</td>
+        <td>Burrow's accepted baseline uses pinned local daemon instances with verified reuse. New running-build/protocol fields and client acceptance policy are not implemented by these changes.</td>
+        <td>Revisit when arbitrary existing local/remote daemon attachment is explicitly required, or the accepted workflow cannot be supported safely. The maintainer must define compatibility policy; metadata is not authentication or attestation.</td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/Bochner/burrow/issues/39">#39: automatic retained-result persistence</a><br>Deferred, not planned.</td>
+        <td>Burrow's accepted lifecycle is prepare → confirmed launch → inspect/cancel → explicit collect → close, including possible loss of uncollected output on daemon/module failure.</td>
+        <td>Revisit when unattended durable completion is an explicit unmet requirement. Define acknowledgment, failure/retry/restart behavior, and original-operation correlation using the existing evidence store before adding a lifecycle capability.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="decision-matrix">Decision matrix for maintainers and agents</h2>
+  <table>
+    <thead><tr><th>Situation</th><th>Decision</th><th>Evidence to preserve</th></tr></thead>
+    <tbody>
+      <tr><td>Changing security-handle cleanup</td><td>Tie handle lifetime to the protected resource; preserve ownership, permissions, no-follow, and file-identity checks.</td><td>Cross-process lock behavior, failed initialization, and close/reopen ordering.</td></tr>
+      <tr><td>Bounding diagnostics from a retained owner</td><td>Separate diagnostic-history eviction from live event delivery and resource control.</td><td>Bounded history, continued control, exact ordered callbacks, and real storage errors.</td></tr>
+      <tr><td>Refreshing derived UI state</td><td>Fetch authoritative state before replacing usable cached state. Reuse existing refresh triggers.</td><td>Install/remove visibility, another client's changes, and failure preserving active state.</td></tr>
+      <tr><td>Leaving a terminal attachment</td><td>Restore presentation and terminal modes in the shared exit lifecycle, after output stops.</td><td>Detach and error exits, terminal stdout only, embedded isolation, unchanged remote input, and session retention.</td></tr>
+      <tr><td>Needing a retained-session operation</td><td>Trace existing public dispatch and advertised capabilities before adding interfaces or installed-payload records.</td><td>Owner identity, request correlation, post-close rejection, and actual authorization/audit boundaries.</td></tr>
+      <tr><td>A proposed integration requirement</td><td>Distinguish a defect in the accepted workflow from expansion of its public contract.</td><td>The accepted lifecycle, explicit deferrals, and conditions that justify reopening them.</td></tr>
+      <tr><td>Reporting validation</td><td>Name the exact revision, affected regression, and gate scope. Separate baseline failures from current results.</td><td>A test asserting a known defect is observation evidence, not proof of a fix.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="build-integration">Build and report integration</h2>
+  <p>
+    <a href="https://github.com/vibepwners/hovel/pull/61">PR #61</a> integrated declared lint actions shared by CI and reports,
+    narrower MinGW inputs, aggregate deterministic wheel materialization, a pinned
+    Wine runtime, and independent release rebuild verification. Each runner's
+    cppcheck action now declares its own platform headers; FreeBSD and Windows
+    must not silently analyze Linux copies. Temporary syntax errors in each platform's
+    start header invalidated a prior passing result and failed at that header;
+    restoring the files restored passing results. No probe changes were committed.
+    See the <a href="development-guide.html#declared-lint">Development Guide</a> for source-list maintenance and report semantics.
+  </p>
+
+  <h2 id="validation">Validation record and limits</h2>
+  <p>
+    The original submissions used baseline <code>b4190bb</code> (v0.4.3) and reported
+    two SDK Mesh bridge timeouts that also reproduced on that baseline. Some manual
+    CLI/broker targets additionally lacked external fixtures. Those historical results
+    remain in the PRs; the integration did not weaken tests, timeouts, or CI policy.
+  </p>
+  <p>
+    During integration on 2026-09-27, each cumulative candidate passed the full
+    <code>aspect hovel-check</code>, and all eight normal hosted PR jobs passed before
+    merge. Focused SQLite normal/race, log-control, catalog-refresh, PTY, broker-command,
+    and SDK round-trip tests also passed with test-result caching disabled. The final
+    combined <code>aspect hovel-report</code> passed with all 14 linter entries green.
+    These results supersede the earlier full-gate limitation for the tested integration
+    environment; they do not claim that every historical manual-fixture problem is fixed.
+  </p>
+  <p>
+    The integration also observed a Mesh bridge race-test failure: its mock session-close
+    notification can arrive before the bridge removes its registry entries. The hosted
+    retry passed. The post-integration review reproduced the failure four times in 100
+    race-test iterations and corrected the test to wait for the natural-close critical
+    section before asserting registry removal. This changes test synchronization only
+    and is distinct from the terminal-restoration fix. Current generated evidence is
+    available in the <a href="../reports/tests/latest/">test report</a>.
+  </p>
+
+  <h2 id="adoption">Downstream adoption remains separate</h2>
+  <ul>
+    <li>Adopt an official release containing the fixes through a separate Burrow runtime-pin/provenance change. A Hovel merge does not update the runtime Burrow ships.</li>
+    <li>For #86, verify concurrent public artifact reads and daemon writes, daemon survival, and post-shutdown integrity. Pass local and hosted gates before restoring SSH follow and all three <code>hovel-followup</code> diagnostics to required status.</li>
+    <li>For #30, retain Burrow's 200-diagnostic-message budget and suppression warning until the official fixed runtime is pinned and verified.</li>
+    <li>Recheck catalog, terminal, and session-command behavior against that adopted runtime before claiming Burrow compatibility.</li>
+  </ul>
+  <p>
+    Incorporating this handoff does not authorize deferred feature implementation or
+    close Burrow's adoption tickets. Link the accepted documentation change back to
+    #111 through the maintainer's normal handoff process.
+  </p>
+</article>
