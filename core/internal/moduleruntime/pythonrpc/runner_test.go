@@ -61,7 +61,6 @@ func TestRunnerExecutesPythonMockModule(t *testing.T) {
 		Events:     events,
 		IDs:        &sequenceIDs{values: []string{"event-1", "event-2", "event-3"}},
 		Clock:      fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
-		Timeout:    10 * time.Second,
 	}.Run(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +156,6 @@ while True:
 		Events:     &eventRecorder{},
 		IDs:        &sequenceIDs{values: []string{"event-1"}},
 		Clock:      fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
-		Timeout:    10 * time.Second,
 	}.Run(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +213,7 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
         break
 `)
-	runner := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}
+	runner := Runner{ConfigPath: configPath}
 
 	ordinary, err := run.NewRequest(run.RequestArgs{ID: "run-ordinary", ModuleID: "broken", Target: "mock://target"})
 	if err != nil {
@@ -417,7 +415,7 @@ modules:
 		t.Fatal(err)
 	}
 
-	result, err := Runner{WorkspacePath: workspace, ConfigPath: configPath, Timeout: 2 * time.Second}.Run(context.Background(), request)
+	result, err := Runner{WorkspacePath: workspace, ConfigPath: configPath}.Run(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +576,7 @@ modules:
 		t.Fatal(err)
 	}
 
-	result, err := Runner{WorkspacePath: workspace, ConfigPath: legacyConfigPath, Timeout: 2 * time.Second}.Run(context.Background(), request)
+	result, err := Runner{WorkspacePath: workspace, ConfigPath: legacyConfigPath}.Run(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -769,7 +767,7 @@ func TestResultFromRPCRejectsMalformedCollections(t *testing.T) {
 }
 
 func TestRunnerInspectsPythonModuleDeclaredSchema(t *testing.T) {
-	module, err := Runner{ConfigPath: exampleModuleConfig, Timeout: 10 * time.Second}.Inspect(context.Background(), "mock-exploit")
+	module, err := Runner{ConfigPath: exampleModuleConfig}.Inspect(context.Background(), "mock-exploit")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -799,7 +797,7 @@ func TestRunnerInspectEntryUsesHandshakeIdentityWithoutConfiguredID(t *testing.T
             "summary": "from handshake"
         }`)
 
-	module, err := Runner{Timeout: 2 * time.Second}.InspectEntry(context.Background(), ModuleEntry{
+	module, err := Runner{}.InspectEntry(context.Background(), ModuleEntry{
 		Runtime: "jsonrpc-stdio",
 		Command: []string{python, script},
 	})
@@ -827,7 +825,7 @@ func TestRunnerRequiresHandshakeIdentity(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			script := writeCommandModuleScript(t, tc.handshake)
-			_, err := Runner{Timeout: 2 * time.Second}.InspectEntry(context.Background(), ModuleEntry{
+			_, err := Runner{}.InspectEntry(context.Background(), ModuleEntry{
 				ID:      "configured-fallback@v9",
 				Runtime: "jsonrpc-stdio",
 				Command: []string{python, script},
@@ -908,7 +906,7 @@ while True:
         break
 `, tc.handshakeExtra, tc.schemaPayload))
 
-			_, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+			_, err := Runner{ConfigPath: configPath}.Inspect(context.Background(), "broken")
 			if err == nil || !strings.Contains(err.Error(), tc.wantFragment) {
 				t.Fatalf("error = %v, want %q", err, tc.wantFragment)
 			}
@@ -957,7 +955,7 @@ while True:
         break
 `)
 
-	module, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+	module, err := Runner{ConfigPath: configPath}.Inspect(context.Background(), "broken")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1014,7 +1012,7 @@ while True:
         break
 `)
 
-	module, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+	module, err := Runner{ConfigPath: configPath}.Inspect(context.Background(), "broken")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1199,7 +1197,7 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "error": {"code": -32000, "message": "unknown method " + str(method)}})
 `)
 
-	runner := Runner{ConfigPath: configPath, Timeout: 2 * time.Second, Sessions: NewSessionBroker()}
+	runner := Runner{ConfigPath: configPath, Sessions: NewSessionBroker()}
 	module, err := runner.Inspect(context.Background(), "broken")
 	if err != nil {
 		t.Fatal(err)
@@ -1408,7 +1406,7 @@ while True:
         break
 `)
 
-	_, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+	_, err := Runner{ConfigPath: configPath}.Inspect(context.Background(), "broken")
 	if err == nil || !strings.Contains(err.Error(), "step contract invalid: squatter.connect_smb: requirement 1 type is required") {
 		t.Fatalf("error = %v", err)
 	}
@@ -1461,7 +1459,7 @@ while True:
         break
 `, tc.stepPayload))
 
-			_, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.Inspect(context.Background(), "broken")
+			_, err := Runner{ConfigPath: configPath}.Inspect(context.Background(), "broken")
 			if err == nil || !strings.Contains(err.Error(), tc.wantFragment) {
 				t.Fatalf("error = %v, want %q", err, tc.wantFragment)
 			}
@@ -1515,7 +1513,7 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
         break
 `)
-	runner := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}
+	runner := Runner{ConfigPath: configPath}
 
 	prepared, err := runner.PrepareStep(context.Background(), StepCallRequest{
 		ModuleID: "broken",
@@ -1584,7 +1582,7 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
         break
 `)
-	payloads, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.ListPayloads(context.Background(), "broken", run.PayloadQuery{})
+	payloads, err := Runner{ConfigPath: configPath}.ListPayloads(context.Background(), "broken", run.PayloadQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1638,7 +1636,7 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
         break
 `)
-	payload, err := Runner{ConfigPath: configPath, Timeout: 2 * time.Second}.GeneratePayload(context.Background(), "broken", run.GeneratePayloadRequest{
+	payload, err := Runner{ConfigPath: configPath}.GeneratePayload(context.Background(), "broken", run.GeneratePayloadRequest{
 		Target:    "192.0.2.10",
 		PayloadID: "squatter/windows/x86/windows-7/tcp-bind/pe-exe",
 		Format:    "pe-exe",
@@ -1731,7 +1729,7 @@ while True:
 			},
 		}},
 	})
-	runtime := chainruntime.New(catalog, StepRuntimeRunner{Runner: Runner{ConfigPath: configPath, Timeout: 2 * time.Second}})
+	runtime := chainruntime.New(catalog, StepRuntimeRunner{Runner: Runner{ConfigPath: configPath}})
 
 	result, err := runtime.Execute(context.Background(), chainruntime.Request{
 		RunID: "run-1",
@@ -1776,7 +1774,7 @@ while True:
         send({"jsonrpc": "2.0", "id": rid, "result": {"status": "ok"}})
         break
 `)
-	runner := StepRuntimeRunner{Runner: Runner{ConfigPath: configPath, Timeout: 2 * time.Second}}
+	runner := StepRuntimeRunner{Runner: Runner{ConfigPath: configPath}}
 
 	_, err := runner.PrepareStep(context.Background(), chainruntime.StepPrepareRequest{
 		ModuleID: "broken",
@@ -1890,7 +1888,6 @@ while True:
 	stepProcesses := NewStepProcessBroker()
 	runtime := chainruntime.New(catalog, StepRuntimeRunner{Runner: Runner{
 		ConfigPath:    configPath,
-		Timeout:       2 * time.Second,
 		Sessions:      sessions,
 		StepProcesses: stepProcesses,
 	}})
@@ -1962,7 +1959,7 @@ func TestRunnerLaunchesEveryBuiltInMockModule(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := Runner{ConfigPath: exampleModuleConfig, Timeout: 10 * time.Second}.Run(context.Background(), request)
+			result, err := Runner{ConfigPath: exampleModuleConfig}.Run(context.Background(), request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1985,7 +1982,6 @@ func TestRunnerKeepsPythonSessionModuleAliveBehindBroker(t *testing.T) {
 	broker := NewSessionBroker()
 	result, err := Runner{
 		ConfigPath: exampleModuleConfig,
-		Timeout:    10 * time.Second,
 		Sessions:   broker,
 	}.Run(context.Background(), request)
 	if err != nil {
@@ -2040,7 +2036,7 @@ func TestRunnerExecutesCanonicalModuleReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := Runner{ConfigPath: exampleModuleConfig, Timeout: 10 * time.Second}.Run(context.Background(), request)
+	result, err := Runner{ConfigPath: exampleModuleConfig}.Run(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2059,7 +2055,7 @@ func TestRunnerMapsFailedPythonResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := Runner{ConfigPath: exampleModuleConfig, Timeout: 10 * time.Second}.Run(context.Background(), request)
+	result, err := Runner{ConfigPath: exampleModuleConfig}.Run(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2087,7 +2083,6 @@ func TestRunnerCapturesModuleLogs(t *testing.T) {
 		Events:     events,
 		IDs:        &sequenceIDs{values: []string{"event-1", "event-2", "event-3"}},
 		Clock:      fixedClock{now: time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)},
-		Timeout:    10 * time.Second,
 	}.Run(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -2142,7 +2137,7 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 			want: "module metadata invalid: chainConfig item 1 key is required",
 		},
 		{
-			name:    "timeout",
+			name:    "caller deadline",
 			body:    `import time; time.sleep(2)`,
 			inspect: true,
 			timeout: 50 * time.Millisecond,
@@ -2156,16 +2151,18 @@ func TestRunnerReportsPythonProtocolFailures(t *testing.T) {
 			if timeout == 0 {
 				timeout = 2 * time.Second
 			}
-			runner := Runner{ConfigPath: configPath, Timeout: timeout}
+			runner := Runner{ConfigPath: configPath}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
+			defer cancel()
 			var err error
 			if tc.inspect {
-				_, err = runner.Inspect(context.Background(), "broken")
+				_, err = runner.Inspect(ctx, "broken")
 			} else {
 				request, requestErr := run.NewRequest(run.RequestArgs{ID: "run-1", ModuleID: "broken", Target: "mock://target"})
 				if requestErr != nil {
 					t.Fatal(requestErr)
 				}
-				_, err = runner.Run(context.Background(), request)
+				_, err = runner.Run(ctx, request)
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want containing %q", err, tc.want)

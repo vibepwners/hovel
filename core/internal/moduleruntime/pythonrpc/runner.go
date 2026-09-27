@@ -36,7 +36,6 @@ import (
 )
 
 const (
-	defaultTimeout             = 60 * time.Second
 	moduleShutdownTimeout      = 5 * time.Second
 	stderrSettleTimeout        = 50 * time.Millisecond
 	maxFrameBytes              = framing.DefaultMaxBytes
@@ -133,7 +132,6 @@ type Runner struct {
 	Events               services.EventSink
 	IDs                  services.IDGenerator
 	Clock                services.Clock
-	Timeout              time.Duration
 	Sessions             *SessionBroker
 	StepProcesses        *StepProcessBroker
 	CredentialExecutions CredentialExecutionRecorder
@@ -241,11 +239,7 @@ func (r Runner) InspectEntry(ctx context.Context, entry ModuleEntry) (modulecata
 }
 
 func (r Runner) inspect(ctx context.Context, start func(context.Context) (*moduleProcess, error)) (modulecatalog.Module, error) {
-	timeout := r.Timeout
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	process, err := start(ctx)
 	if err != nil {
@@ -998,11 +992,7 @@ func (r Runner) StampCredential(
 }
 
 func (r Runner) callPayloadCommand(ctx context.Context, moduleID, method string, params any) (map[string]any, error) {
-	timeout := r.Timeout
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	process, err := r.start(ctx, moduleID)
@@ -1070,11 +1060,7 @@ func (r Runner) callProvider(
 	moduleID string,
 	call providerCall,
 ) (json.RawMessage, error) {
-	timeout := r.Timeout
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	process, err := r.start(ctx, moduleID)
@@ -1143,11 +1129,7 @@ func (r Runner) startCredentialOperation(
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	timeout := r.Timeout
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
-	operationCtx, cancel := context.WithTimeout(ctx, timeout)
+	operationCtx, cancel := context.WithCancel(ctx)
 	process, err := r.start(context.Background(), moduleID)
 	if err != nil {
 		cancel()
@@ -1679,11 +1661,7 @@ func (r Runner) callMeshStream(
 }
 
 func (r Runner) callPayloadProvider(ctx context.Context, moduleID, method string, params any) (json.RawMessage, error) {
-	timeout := r.Timeout
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	process, err := r.start(ctx, moduleID)
@@ -1712,11 +1690,7 @@ func decodeRPCMap(value map[string]any, out any) error {
 }
 
 func (r Runner) callStep(ctx context.Context, request StepCallRequest, method, summary, prefix string) (map[string]any, error) {
-	timeout := r.Timeout
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	var process *moduleProcess
@@ -1782,11 +1756,7 @@ func formatStepContractIssue(issue modulecatalog.StepContractIssue) string {
 }
 
 func (r Runner) Run(ctx context.Context, request run.Request) (run.Result, error) {
-	timeout := r.Timeout
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	entry, ok, err := r.moduleEntry(request.ModuleID)

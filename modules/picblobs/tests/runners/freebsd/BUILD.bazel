@@ -63,7 +63,11 @@ cppcheck_test(
     name = "runner_cppcheck",
     size = "small",
     srcs = ["runner.c"],
-    include_dirs = ["src/include"],
+    hdrs = [":quality_sources"],
+    include_dirs = [
+        "src/include",
+        "tests/runners/freebsd",
+    ],
 )
 
 # BEGIN generated lint sources

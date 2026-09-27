@@ -75,7 +75,11 @@ cppcheck_test(
     name = "runner_cppcheck",
     size = "small",
     srcs = ["runner.c"],
-    include_dirs = ["src/include"],
+    hdrs = [":quality_sources"],
+    include_dirs = [
+        "src/include",
+        "tests/runners/linux",
+    ],
 )
 
 # Hosted-mode runner — passes pic_platform vtable to blobs instead of

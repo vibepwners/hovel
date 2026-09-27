@@ -53,13 +53,7 @@ func (r StepRuntimeRunner) FinishRun(ctx context.Context, runID string) error {
 	if r.Runner.StepProcesses == nil {
 		return nil
 	}
-	timeout := r.Runner.Timeout
-	if timeout == 0 {
-		timeout = defaultTimeout
-	}
-	finishCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	return r.Runner.StepProcesses.FinishRun(finishCtx, runID)
+	return r.Runner.StepProcesses.FinishRun(ctx, runID)
 }
 
 func stepPrepareResultFromRPC(result map[string]any) (chainruntime.StepPrepareResult, error) {

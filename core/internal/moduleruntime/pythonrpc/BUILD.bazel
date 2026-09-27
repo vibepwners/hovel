@@ -118,6 +118,7 @@ filegroup(
     srcs = [
         "BUILD.bazel",
         "credential_provider_test.go",
+        "execution_lifetime_test.go",
         "process_lifecycle_test.go",
         "resource_limits_test.go",
         "runner.go",
@@ -129,3 +130,15 @@ filegroup(
     visibility = ["//tools/lint:__pkg__"],
 )
 # END generated lint sources
+
+# keep: crosses the former 60-second global module execution deadline.
+go_test(
+    name = "execution_lifetime_test",
+    size = "medium",
+    srcs = ["execution_lifetime_test.go"],
+    embed = [":pythonrpc"],
+    deps = [
+        "//internal/domain/run",
+        "//internal/protocol/framing",
+    ],
+)

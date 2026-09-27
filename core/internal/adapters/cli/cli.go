@@ -233,7 +233,7 @@ func installedWorkspaceModules(ctx context.Context, workspacePath string) ([]mod
 		return nil, err
 	}
 	modules := make([]modulecatalog.Module, 0, len(lock.Modules))
-	runner := pythonrpc.Runner{WorkspacePath: workspacePath, Timeout: 10 * time.Second}
+	runner := pythonrpc.Runner{WorkspacePath: workspacePath}
 	for _, record := range lock.Modules {
 		pkg, err := modulepackage.LoadDir(record.Source)
 		if err != nil {
@@ -243,13 +243,15 @@ func installedWorkspaceModules(ctx context.Context, workspacePath string) ([]mod
 		if err != nil {
 			return nil, fmt.Errorf("load installed module %s@%s launcher: %w", record.Name, record.Version, err)
 		}
-		module, err := runner.InspectEntry(ctx, pythonrpc.ModuleEntry{
+		inspectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		module, err := runner.InspectEntry(inspectCtx, pythonrpc.ModuleEntry{
 			ID:         modulecatalog.CanonicalID(record.Name, record.Version),
 			Runtime:    launch.Runtime,
 			ProjectDir: launch.ProjectDir,
 			Module:     launch.Module,
 			Command:    append([]string(nil), launch.Command...),
 		})
+		cancel()
 		if err != nil {
 			return nil, fmt.Errorf("inspect installed module %s@%s: %w", record.Name, record.Version, err)
 		}

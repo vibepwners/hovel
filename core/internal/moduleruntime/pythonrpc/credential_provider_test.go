@@ -151,7 +151,7 @@ func TestRunnerRecordsSecretFreeCredentialExecutionLifecycle(t *testing.T) {
 	request.Material.Data = domainpki.CredentialBytes("runtime-ledger-secret")
 	request.Material.SHA256 = credentialProviderTestSHA256(request.Material.Data)
 	runner := Runner{
-		ConfigPath: credentialProviderConfig(t), Timeout: 2 * time.Second,
+		ConfigPath: credentialProviderConfig(t),
 		Clock: credentialRecorderClock{
 			now: time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC),
 		},
@@ -190,7 +190,7 @@ func TestRunnerRecordsSanitizedCredentialExecutionFailure(t *testing.T) {
 	request := credentialProviderRuntimeRequest()
 	request.Provider = credentialProviderExactTestTarget(t)
 	_, err := (Runner{
-		ConfigPath: credentialProviderConfig(t), Timeout: 2 * time.Second,
+		ConfigPath: credentialProviderConfig(t),
 		Clock: credentialRecorderClock{
 			now: time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC),
 		},
@@ -266,7 +266,7 @@ func TestRunnerReplaysCompletedCredentialDeliveryWithoutProviderInvocation(t *te
 	t.Setenv(credentialProviderInvocationLogEnv, invocationLog)
 	recorder := &recordingCredentialExecutionRecorder{}
 	runner := Runner{
-		ConfigPath: credentialProviderConfig(t), Timeout: 2 * time.Second,
+		ConfigPath: credentialProviderConfig(t),
 		Clock: credentialRecorderClock{
 			now: time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC),
 		},
@@ -305,7 +305,7 @@ func TestRunnerInvokesCredentialProviderAtMostOnceAcrossConcurrentRetries(t *tes
 	t.Setenv(credentialProviderInvocationLogEnv, invocationLog)
 	recorder := &recordingCredentialExecutionRecorder{}
 	runner := Runner{
-		ConfigPath: credentialProviderConfig(t), Timeout: 2 * time.Second,
+		ConfigPath: credentialProviderConfig(t),
 		Clock: credentialRecorderClock{
 			now: time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC),
 		},
@@ -467,7 +467,6 @@ func TestRunnerRevalidatesCredentialResolutionAfterLiveProviderDiscovery(t *test
 
 	_, err := (Runner{
 		ConfigPath:           credentialProviderConfig(t),
-		Timeout:              2 * time.Second,
 		Clock:                credentialProviderTestClock(),
 		CredentialExecutions: &recordingCredentialExecutionRecorder{},
 	}).RunMeshTaskWithCredentials(
@@ -557,7 +556,6 @@ func TestRunnerAbortsCredentialOperationWhenResolutionRevalidationFails(t *testi
 
 	_, err := (Runner{
 		ConfigPath:           credentialProviderConfig(t),
-		Timeout:              2 * time.Second,
 		Clock:                credentialProviderTestClock(),
 		CredentialExecutions: recorder,
 	}).RunMeshTaskWithCredentials(
@@ -601,7 +599,6 @@ func TestRunnerAbortsBeforeSecondDeliveryWhenResolutionRevalidationFails(t *test
 
 	execution, err := (Runner{
 		ConfigPath:           credentialProviderConfig(t),
-		Timeout:              2 * time.Second,
 		Clock:                credentialProviderTestClock(),
 		CredentialExecutions: recorder,
 	}).RunMeshTaskWithCredentials(
@@ -662,7 +659,6 @@ func TestRunnerAbortsCredentialOperationWhenSecondDeliveryBorrowFails(t *testing
 
 	execution, err := (Runner{
 		ConfigPath:           credentialProviderConfig(t),
-		Timeout:              2 * time.Second,
 		Clock:                credentialProviderTestClock(),
 		CredentialExecutions: recorder,
 	}).RunMeshTaskWithCredentials(
@@ -875,7 +871,6 @@ func TestRunnerRejectsCredentialOperationProviderDriftBeforeInvocation(t *testin
 			recorder := &recordingCredentialExecutionRecorder{}
 			_, err := (Runner{
 				ConfigPath: credentialProviderConfigForModule(t, test.moduleID),
-				Timeout:    2 * time.Second,
 				Clock: credentialRecorderClock{
 					now: time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC),
 				},
@@ -911,7 +906,7 @@ func TestRunnerSkipsCredentialDiscoveryWithoutOperationDeliveries(t *testing.T) 
 	t.Setenv(credentialProviderHandshakeModeEnv, "missing")
 	t.Setenv(credentialProviderDescriptorModeEnv, "malformed")
 	execution, err := (Runner{
-		ConfigPath: credentialProviderConfig(t), Timeout: 2 * time.Second,
+		ConfigPath: credentialProviderConfig(t),
 	}).RunMeshTask(
 		t.Context(), credentialProviderExactModuleID,
 		mesh.TaskRequest{TaskID: "task-without-credentials", Kind: mesh.TaskSurvey},
@@ -930,7 +925,6 @@ func TestRunnerSequencesCredentialsInMeshOperationProcess(t *testing.T) {
 	recorder := &recordingCredentialExecutionRecorder{}
 	execution, err := (Runner{
 		ConfigPath: credentialProviderConfig(t),
-		Timeout:    2 * time.Second,
 		Clock: credentialRecorderClock{
 			now: time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC),
 		},
@@ -1161,7 +1155,6 @@ func TestRunnerDiscoversStandaloneCredentialProvider(t *testing.T) {
 	t.Setenv(credentialProviderChildEnv, "1")
 	module, err := (Runner{
 		ConfigPath: credentialProviderConfig(t),
-		Timeout:    2 * time.Second,
 	}).Inspect(t.Context(), "credential-provider")
 	if err != nil {
 		t.Fatal(err)
@@ -1317,7 +1310,6 @@ func TestRunnerRequiresCredentialExecutionRecorderBeforeProviderLaunch(t *testin
 	target := credentialProviderExactTestTarget(t)
 	runner := Runner{
 		ConfigPath: filepath.Join(t.TempDir(), "missing-module-config.json"),
-		Timeout:    2 * time.Second,
 	}
 
 	tests := []struct {
@@ -1438,7 +1430,6 @@ func TestRunnerReconcilesExactStandaloneCredentialProviderTarget(t *testing.T) {
 			recorder := &recordingCredentialExecutionRecorder{}
 			_, err := (Runner{
 				ConfigPath:           credentialProviderConfigForModule(t, test.moduleID),
-				Timeout:              2 * time.Second,
 				Clock:                credentialProviderTestClock(),
 				CredentialExecutions: recorder,
 			}).LoadRuntimeCredential(t.Context(), test.moduleID, request)
@@ -1837,7 +1828,6 @@ func credentialProviderRecordedRunner(t *testing.T) Runner {
 	t.Helper()
 	return Runner{
 		ConfigPath:           credentialProviderConfig(t),
-		Timeout:              2 * time.Second,
 		Clock:                credentialProviderTestClock(),
 		CredentialExecutions: &recordingCredentialExecutionRecorder{},
 	}

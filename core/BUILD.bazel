@@ -83,6 +83,7 @@ _CI_TESTS = [
     "//internal/infra/agentintegration:agentintegration_test",
     "//internal/infra/pki:pki_test",
     "//internal/moduleruntime/pythonrpc:credential_provider_test",
+    "//internal/moduleruntime/pythonrpc:execution_lifetime_test",
     "//internal/moduleruntime/pythonrpc:process_lifecycle_test",
     "//internal/moduleruntime/pythonrpc:resource_limits_test",
     "//internal/moduleruntime/pythonrpc:session_history_test",

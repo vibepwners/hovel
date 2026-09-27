@@ -66,9 +66,10 @@ func checkModuleReference(ctx context.Context, request commands.ModuleCheckReque
 	runner := pythonrpc.Runner{
 		WorkspacePath: strings.TrimSpace(request.Workspace),
 		HovelConfig:   strings.TrimSpace(request.Config),
-		Timeout:       10 * time.Second,
 	}
-	module, err := runner.Inspect(ctx, report.Subject)
+	inspectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	module, err := runner.Inspect(inspectCtx, report.Subject)
 	if err != nil {
 		addModuleCheck(&report, commands.ModuleCheckFail, "rpc discovery", err.Error())
 		return report
@@ -114,7 +115,9 @@ func checkModulePackageDir(ctx context.Context, root string, report commands.Mod
 		return report, nil
 	}
 	addModuleCheck(&report, commands.ModuleCheckPass, "launch command", "selected launcher is runnable")
-	module, err := (pythonrpc.Runner{Timeout: 10 * time.Second}).InspectEntry(ctx, rpcEntry)
+	inspectCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	module, err := (pythonrpc.Runner{}).InspectEntry(inspectCtx, rpcEntry)
 	if err != nil {
 		addModuleCheck(&report, commands.ModuleCheckFail, "rpc discovery", err.Error())
 		return report, nil
