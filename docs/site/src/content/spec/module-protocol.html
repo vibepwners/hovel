@@ -868,6 +868,15 @@
 
         <h3>module/log</h3>
         <p>A structured log record. Appears in the throw transcript alongside the daemon's own logs.</p>
+        <p>
+          The runtime keeps the newest 256 log notifications in memory for diagnostic
+          history and the initial run result, in arrival order. Older entries are
+          evicted when this history fills; live delivery to the event store continues
+          for every accepted log, including after execution returns a retained session.
+          Overflow does not close the session control channel. Credential-bearing
+          diagnostics remain suppressed, notification size limits still apply, and
+          event-store errors still fail the RPC reader.
+        </p>
 <pre data-lang="params"><code>{
   "level": "info",                   // debug | info | warning | error
   "message": "connecting to target",
