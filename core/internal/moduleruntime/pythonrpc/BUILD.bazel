@@ -135,6 +135,7 @@ filegroup(
         "resource_limits_test.go",
         "runner.go",
         "runner_test.go",
+        "session_commands_test.go",
         "session_history.go",
         "session_history_test.go",
         "step_runtime.go",

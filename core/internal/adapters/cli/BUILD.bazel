@@ -153,6 +153,7 @@ filegroup(
         "prompt_writer.go",
         "prompt_writer_test.go",
         "session_connect.go",
+        "session_connect_test.go",
         "session_persistence.go",
         "terminal_state.go",
         "terminal_state_posix.go",
