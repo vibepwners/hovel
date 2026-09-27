@@ -14,9 +14,11 @@ type PayloadProvider interface {
 	ReadPayloadChunk(ReadPayloadChunkRequest) (PayloadChunk, error)
 }
 
-// PayloadCommandProvider is an optional extension for provider-owned commands
-// against an installed payload. Hovel brokers the call; the provider owns the
-// transport and payload wire protocol.
+// PayloadCommandProvider is an optional extension for provider-owned commands.
+// A module may implement it for installed payload operations, or a retained
+// Session may implement it for commands on that session without an installed
+// payload record. Hovel routes session commands to the existing session owner;
+// the provider owns the transport and command behavior.
 type PayloadCommandProvider interface {
 	ListPayloadCommands(PayloadCommandListRequest) ([]PayloadCommand, error)
 	RunPayloadCommand(PayloadCommandRequest) (PayloadCommandResult, error)

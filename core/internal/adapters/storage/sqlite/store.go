@@ -46,15 +46,21 @@ func (s Store) Ensure(ctx context.Context) error {
 func (s Store) Close() error {
 	path := s.Path()
 	connMu.Lock()
+	defer connMu.Unlock()
 	db, ok := connCache[path]
 	if ok {
 		delete(connCache, path)
 	}
-	connMu.Unlock()
 	if !ok {
 		return nil
 	}
-	return db.Close()
+	// Keep reopen serialized until every old descriptor is closed: closing any
+	// descriptor for an inode releases this process's POSIX locks on that inode.
+	err := db.sql.Close()
+	for _, file := range db.anchors {
+		err = errors.Join(err, file.Close())
+	}
+	return err
 }
 
 func (s Store) SaveOperatorSession(ctx context.Context, state operatorsession.PersistedState) error {
@@ -205,7 +211,7 @@ func (s Store) ListEvents(ctx context.Context, filter event.Filter) ([]event.Eve
 	return ListEvents(ctx, db, filter)
 }
 
-// connCache holds one long-lived *sql.DB per database file. Opening a fresh
+// connCache holds one long-lived database handle per database file. Opening a fresh
 // connection pool and re-running migrations on every operation is both slow and
 // needlessly destructive; the daemon owns a single workspace for its lifetime,
 // so the handle is opened, configured, and migrated exactly once per path.
@@ -216,8 +222,13 @@ func (s Store) ListEvents(ctx context.Context, filter event.Filter) ([]event.Eve
 // call retries with a fresh context.
 var (
 	connMu    sync.Mutex
-	connCache = map[string]*sql.DB{}
+	connCache = map[string]*anchoredDatabase{}
 )
+
+type anchoredDatabase struct {
+	sql     *sql.DB
+	anchors []*os.File
+}
 
 // open returns the shared *sql.DB for this workspace. Callers must NOT close the
 // returned handle; it is owned by the cache and reused across operations.
@@ -233,17 +244,17 @@ func (s Store) open(ctx context.Context) (*sql.DB, error) {
 	connMu.Lock()
 	defer connMu.Unlock()
 	if db, ok := connCache[path]; ok {
-		return db, nil
+		return db.sql, nil
 	}
 	db, err := openDatabase(ctx, s.workspacePath, path)
 	if err != nil {
 		return nil, err
 	}
 	connCache[path] = db
-	return db, nil
+	return db.sql, nil
 }
 
-func openDatabase(ctx context.Context, workspacePath, dbPath string) (*sql.DB, error) {
+func openDatabase(ctx context.Context, workspacePath, dbPath string) (*anchoredDatabase, error) {
 	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
 		return nil, err
 	}
@@ -254,14 +265,21 @@ func openDatabase(ctx context.Context, workspacePath, dbPath string) (*sql.DB, e
 	if err != nil {
 		return nil, err
 	}
-	defer func() { logSQLiteError("close anchored sqlite database file", anchoredFile.Close()) }()
+	keepAnchors := false
+	defer func() {
+		if !keepAnchors {
+			logSQLiteError("close anchored sqlite database file", anchoredFile.Close())
+		}
+	}()
 	anchoredSidecars, err := prepareSQLiteSidecars(dbPath)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
-		for _, sidecar := range anchoredSidecars {
-			logSQLiteError("close anchored sqlite sidecar", sidecar.Close())
+		if !keepAnchors {
+			for _, sidecar := range anchoredSidecars {
+				logSQLiteError("close anchored sqlite sidecar", sidecar.Close())
+			}
 		}
 	}()
 	db, err := sql.Open("sqlite", dbPath)
@@ -305,7 +323,11 @@ func openDatabase(ctx context.Context, workspacePath, dbPath string) (*sql.DB, e
 		closeErr := db.Close()
 		return nil, errors.Join(err, closeErr)
 	}
-	return db, nil
+	// SQLite already holds WAL locks. Closing an independently opened anchor
+	// now would silently drop them, allowing another process to truncate live
+	// shared memory. Retain anchors until the SQL pool has closed.
+	keepAnchors = true
+	return &anchoredDatabase{sql: db, anchors: append(anchoredSidecars, anchoredFile)}, nil
 }
 
 var sqliteSidecarSuffixes = [...]string{"-wal", "-shm"}

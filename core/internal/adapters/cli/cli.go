@@ -110,13 +110,6 @@ func (a App) Run(ctx context.Context, args []string, stdout, stderr io.Writer) i
 
 	defer func() { logCLIError("close daemon rpc client", daemonClient.Close()) }()
 	if strings.TrimSpace(a.clientOptions.Endpoint) != "" {
-		if daemonModules, err := daemonClient.GetModuleCatalog(ctx); err == nil {
-			a.modules = daemonModules
-			a.moduleCount = len(daemonModules.List())
-		} else {
-			writeCLILine(stderr, err)
-			return 1
-		}
 		a = a.withAttachedDaemonSession(ctx, daemonClient, session.Status())
 	} else {
 		a = a.withDaemonSession(ctx, daemonClient)
@@ -180,6 +173,11 @@ func (a App) withAttachedDaemonSession(ctx context.Context, client *daemonrpc.Cl
 func (a *App) refreshWorkspaceModules(ctx context.Context) error {
 	workspacePath := workspace.ResolvePath(a.workspacePath)
 	if a.attachedDaemon {
+		modules, err := a.daemonClient.GetModuleCatalog(ctx)
+		if err != nil {
+			return err
+		}
+		a.modules = modules
 		a.commands = commandmode.NewAppWithAttachedDaemon(a.session, a.modules, workspacePath, a.daemonStatus, a.daemonClient)
 		if a.wizard == nil {
 			a.wizard = newInteractiveConfigWizard(a.session, a.modules)
@@ -1800,7 +1798,7 @@ func fileSuggestions(prefix string) []prompt.Suggest {
 	return suggestions
 }
 
-func (a App) ConfigureInteractive(ctx context.Context, stdout, stderr io.Writer) int {
+func (a *App) ConfigureInteractive(ctx context.Context, stdout, stderr io.Writer) int {
 	if err := a.refreshWorkspaceModules(ctx); err != nil {
 		writeCLILine(stderr, err)
 		return 1

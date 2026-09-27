@@ -2926,10 +2926,12 @@ func (c *rpcClient) handleNotification(message rpcMessage) error {
 			return nil
 		}
 		if len(c.logs) >= maxBufferedModuleLogs {
-			c.mu.Unlock()
-			return fmt.Errorf("module log notification count exceeds maximum %d", maxBufferedModuleLogs)
+			// Keep the newest diagnostic history without limiting live log delivery.
+			copy(c.logs, c.logs[1:])
+			c.logs[len(c.logs)-1] = message.Log
+		} else {
+			c.logs = append(c.logs, message.Log)
 		}
-		c.logs = append(c.logs, message.Log)
 		onLog := c.onLog
 		c.mu.Unlock()
 		if onLog != nil && !c.credentialBearing.Load() {

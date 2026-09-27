@@ -50,12 +50,24 @@ func RunSessionConnect(ctx context.Context, client *daemonrpc.Client, sessionID 
 		writeCLILine(stderr, err)
 		return 1
 	}
-	defer cleanup()
 	output := stdout
 	if rawOutput {
 		output = crlfWriter{writer: stdout}
 	}
-	if err := ConnectSession(ctx, client, sessionID, input, output, options); err != nil {
+	err = func() error {
+		defer cleanup()
+		// Restore the attachment's output terminal before printing an error or
+		// returning to the prompt. Embedded frontends own their enclosing TTY;
+		// never write presentation cleanup through /dev/tty or a redirected writer.
+		if terminal, ok := stdout.(*os.File); ok && term.IsTerminal(terminal.Fd()) {
+			defer func() {
+				_, restoreErr := io.WriteString(terminal, "\x1b[?1049l\x1b[?25h\x1b[0m")
+				logCLIError("restore session terminal presentation", restoreErr)
+			}()
+		}
+		return ConnectSession(ctx, client, sessionID, input, output, options)
+	}()
+	if err != nil {
 		writeCLILine(stderr, err)
 		return 1
 	}

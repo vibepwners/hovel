@@ -87,6 +87,7 @@ _CI_TESTS = [
     "//internal/moduleruntime/pythonrpc:process_lifecycle_test",
     "//internal/moduleruntime/pythonrpc:resource_limits_test",
     "//internal/moduleruntime/pythonrpc:session_history_test",
+    "//internal/moduleruntime/pythonrpc:session_commands_test",
     "//internal/testmodules/mockexploit:mockexploit_test",
     "//schemas:schema_smoke_test",
     "//tools/release:upver_test",
