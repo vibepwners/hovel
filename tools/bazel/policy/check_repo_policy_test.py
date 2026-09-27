@@ -109,3 +109,21 @@ def test_hermeticity_rejects_host_docs_from_docs_check(tmp_path: Path) -> None:
     assert violations[0].path == check_file
     assert violations[0].line == 1
     assert "host-service target" in violations[0].message
+
+
+def test_action_environment_does_not_satisfy_repository_configuration(tmp_path: Path) -> None:
+    write_hermetic_cc_config(tmp_path)
+    (tmp_path / ".bazelrc").write_text(
+        "build --action_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1\n", encoding="utf-8"
+    )
+
+    violations = check_repo_policy.check_hermetic_cc_toolchain(tmp_path)
+
+    assert len(violations) == 1
+    assert "auto-detection" in violations[0].message
+
+
+if __name__ == "__main__":
+    import pytest
+
+    raise SystemExit(pytest.main([__file__, "-p", "no:cacheprovider"]))

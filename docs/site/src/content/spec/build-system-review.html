@@ -1,0 +1,103 @@
+<!-- hovel-doc: {"title":"Bazel Build Review","group":"Engineering","order":180,"navTitle":"Bazel Build Review","description":"September 2026 build correctness review: verified foundations, fixed guardrail gaps, and measurable follow-up work."} -->
+<article>
+  <h1>Bazel Build Review</h1>
+  <p>
+    Reviewed on 27 September 2026 against main revision
+    <code>a2bfde0</code>, using the supplied mature-Bazel review strategy.
+    This is a source-level review with targeted execution and the gate results
+    below, not a certification of every action or remote-cache entry.
+    The scope is the current root/core build architecture and verification
+    contract; public module and SDK behavior remains unchanged.
+  </p>
+
+  <h2>Existing foundations</h2>
+  <table>
+    <thead><tr><th>Area</th><th>Repository evidence</th><th>Assessment</th></tr></thead>
+    <tbody>
+      <tr><td>Version and dependency ownership</td><td>Root and core <code>.bazelversion</code>, <code>MODULE.bazel</code>, and committed locks; <code>.aspect/version.axl</code></td><td>Bazel 9.1.1 and Aspect 2026.33.3 are pinned. Both active workspaces use Bzlmod. No tracked WORKSPACE file needs migration.</td></tr>
+      <tr><td>Declared toolchains</td><td>Root and core module manifests</td><td>Go, Python, Rust, Zig C/C++, and the docs Node toolchain are declared. This is stronger than host PATH provisioning; it does not prove every custom action's inputs are complete.</td></tr>
+      <tr><td>Lint and architecture</td><td><code>tools/lint/BUILD.bazel</code>, <code>core/tools/lint/lint_action.bzl</code>, <code>tools/bazel/policy/check_repo_policy.py</code></td><td>Declared lint snapshots and result tests already cover Buildifier, language tools, ownership, layering, and core internal visibility. Buildifier already enables lint warnings.</td></tr>
+      <tr><td>Full validation</td><td><code>.aspect/check.axl</code>, <code>.github/workflows/ci.yml</code></td><td>The supported full-tree contract is <code>aspect hovel-check</code>. Unqualified recursive root targets are not a substitute: core is a separate workspace and AXL owns dispatch.</td></tr>
+      <tr><td>Remote execution</td><td>Both active <code>.bazelrc</code> files, <code>configure_bazel_cache.py</code></td><td>BuildBuddy uses TLS, a digest-pinned Ubuntu image, network-off workers, and credential files outside source control. Developer BuildBuddy configuration disables local-result uploads; credential-free CI runs locally. Cache-only rollout advice is already behind this repository's deployment stage.</td></tr>
+      <tr><td>Reproducibility</td><td><code>.aspect/repro.axl</code>, <code>reproducibility.yml</code>, <code>repo-tools/tasks/reproducibility.py</code></td><td>Independent sequential runners, fresh output roots, disabled cache reads, execution evidence, and artifact hash comparison already exist. This review did not rerun the release matrix.</td></tr>
+      <tr><td>Observability</td><td><code>.aspect/config.axl</code>, <code>ci_summary.py</code>, <code>ci_audit.py</code></td><td>BEP capture, invocation links, task timing, and remote timing/cache counters exist. The audit explicitly distinguishes request counters from unique actions.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Findings fixed in this review</h2>
+  <ol>
+    <li>
+      <strong>P1: six Python test targets did not execute their assertions.</strong>
+      <code>//tools/bazel/buildifier:buildifier_test</code> and
+      <code>//tools/bazel/policy:repo_policy_test</code> named pytest-function modules
+      as their executable main files but never called pytest. Importing pytest as
+      a dependency does not start collection. The same defect affected
+      <code>//repo-tools/tasks:checkout_test</code>,
+      <code>//sdk/python:coverage_test</code>,
+      <code>//modules/tools:package_examples_test</code>, and
+      <code>//modules/picblobs/tools:build_dist_test</code>.
+      The pytest modules now invoke pytest and propagate its exit status;
+      the dependency-free packager test uses unittest. Existing suites already
+      include these targets.
+    </li>
+    <li>
+      <strong>P2: Buildifier discovery omitted repository configuration.</strong>
+      The wrapper selected BUILD, MODULE, and .bzl files but skipped the checked-in
+      <code>REPO.bazel</code>. It now includes REPO, VENDOR, and legacy WORKSPACE
+      names as well, with regression coverage for explicit paths and directory
+      discovery. Recognizing legacy filenames for linting does not reintroduce
+      WORKSPACE dependency management. AXL remains a separate language surface.
+    </li>
+    <li>
+      <strong>P2: C/C++ auto-detection policy required an action environment flag.</strong>
+      The active rc files and policy check used <code>--action_env</code> for
+      <code>BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN</code>. The rules_cc repository rule
+      reads <code>repository_ctx.os.environ</code>; its documented control is
+      <code>--repo_env</code>. Both workspaces and the active Picblobs base
+      configuration now express that repository-level intent. A regression test
+      rejects the old action-only policy configuration. Existing compiler
+      registrations and the Zig cache boundary remain unchanged.
+    </li>
+  </ol>
+
+  <h2>Remaining work, ordered by acceptance evidence</h2>
+  <table>
+    <thead><tr><th>Priority</th><th>Observed gap</th><th>Next change and acceptance criterion</th></tr></thead>
+    <tbody>
+      <tr><td>Next</td><td>The policy scans literal no-remote/no-sandbox and default-shell-env strings, but does not cover local or requires-network tags. It is a textual guardrail, not an evaluated graph audit.</td><td>Add an Aspect-owned inventory of evaluated execution requirements, with target-specific rationale and ownership. Preserve documented VHS, Wine, and manual QEMU boundaries; a newly introduced unowned exemption should fail the policy gate.</td></tr>
+      <tr><td>Next</td><td>Network-off BuildBuddy execution does not establish a strict local Linux sandbox baseline. The general CI configuration does not explicitly require linux-sandbox.</td><td>Add a credential-free strict sandbox lane through AXL, initially for repository and representative core/docs actions, then expand. Require actual uncached execution and record unsupported host boundaries rather than silently falling back.</td></tr>
+      <tr><td>Next</td><td>Buildifier and repository policy receive the complete lint source snapshot. An unrelated content/source edit can invalidate both actions.</td><td>Narrow inputs at analysis time while retaining every configuration, BUILD file, ownership file, and Go import needed by each check. Measure null and leaf-edit action counts before and after; do not merely filter files after the action starts.</td></tr>
+      <tr><td>Next</td><td>Performance data exists, but there is no checked-in clean/null/leaf/core-edit benchmark corpus or graph budget.</td><td>Add an AXL benchmark workflow using isolated checkouts, BEP graph counters, profiles, and execution logs. Establish baselines before thresholds; report action reuse separately from CAS request success.</td></tr>
+      <tr><td>Follow-up</td><td>CI cache/backend selection is credential-driven; client flags do not demonstrate server-side permission boundaries.</td><td>Document and verify BuildBuddy credential scopes for same-repository PRs, fork PRs, trusted main, and releases. The acceptance evidence is service authorization plus workflow tests, not an assumption that disabling local uploads prevents all remote writes.</td></tr>
+      <tr><td>Follow-up</td><td>The Picblobs custom linker still uses run_shell around a declared compiler and linker inputs.</td><td>Move shell branching into a declared tool or a suitable linking rule, preserving the existing architecture-specific link behavior and cross-platform artifact checks. Shell use alone is not evidence of an undeclared compiler.</td></tr>
+      <tr><td>Follow-up</td><td>No tracked BUILD declaration found by this review uses flaky or shard_count; this does not measure actual flake rate or runtime skew.</td><td>Use recorded durations to choose repeated-test experiments and any sharding work. Add sharding only after proving that the runner partitions tests correctly; keep retries visible.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Validation</h2>
+  <ul>
+    <li><code>aspect hovel-check</code>: passed on 27 September 2026 in
+      5m 22s using the existing local BuildBuddy selection. This includes repo,
+      core, SDKs, module examples, modules, docs, and agent validation.</li>
+    <li>All six repaired test targets passed: 48 pytest cases and one unittest
+      case actually executed, including the two new regression cases.</li>
+    <li>Expanding Buildifier discovery first failed on the missing
+      <code>REPO.bazel</code> module docstring. Adding the docstring made the
+      enforcing lint test pass, demonstrating that the file is now checked.</li>
+    <li>The final review-text and runner cleanup changes are covered by a
+      subsequent <code>aspect hovel-check repo</code> and
+      <code>aspect hovel-check docs</code> run, recorded with the pull request.</li>
+  </ul>
+  <p>Remote cache hits are allowed in this ordinary verification gate. No new
+    independent release reproduction, strict local sandbox run, benchmark
+    baseline, or server-side credential audit is claimed by this review.</p>
+
+  <h2>Primary references</h2>
+  <p>
+    <a href="https://blog.bazel.build/2026/01/20/bazel-9.html">Bazel 9 and removal of WORKSPACE</a>,
+    <a href="https://github.com/bazelbuild/rules_cc">rules_cc repository toolchain configuration</a>, and
+    <a href="https://github.com/bazel-contrib/buildtools/blob/main/buildifier/README.md">Buildifier file types and linting</a>
+    were checked against the supplied report. Keep existing validated pins;
+    upgrading toolchains or changing remote infrastructure is separate work.
+  </p>
+</article>

@@ -8,7 +8,15 @@ import os
 import subprocess
 from pathlib import Path
 
-NAMES = {"BUILD", "BUILD.bazel", "MODULE.bazel"}
+NAMES = {
+    "BUILD",
+    "BUILD.bazel",
+    "MODULE.bazel",
+    "REPO.bazel",
+    "VENDOR.bazel",
+    "WORKSPACE",
+    "WORKSPACE.bazel",
+}
 SUFFIXES = {".bzl"}
 EXCLUDED_PARTS = {
     ".git",

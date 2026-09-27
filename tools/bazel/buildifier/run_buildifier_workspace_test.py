@@ -35,3 +35,21 @@ def test_repository_walk_prunes_local_tool_cache(tmp_path: Path) -> None:
     cached.write_text("", encoding="utf-8")
 
     assert repository_files(tmp_path, tmp_path) == [source]
+
+
+def test_collect_files_includes_repository_and_vendor_configuration(tmp_path: Path) -> None:
+    names = [
+        "BUILD", "BUILD.bazel", "MODULE.bazel", "REPO.bazel",
+        "VENDOR.bazel", "WORKSPACE", "WORKSPACE.bazel", "rules.bzl",
+    ]
+    for name in names + ["MODULE.bazel.lock", "README.md"]:
+        (tmp_path / name).write_text("", encoding="utf-8")
+
+    assert collect_files(tmp_path, []) == sorted(tmp_path / name for name in names)
+    assert collect_files(tmp_path, ["REPO.bazel"]) == [tmp_path / "REPO.bazel"]
+
+
+if __name__ == "__main__":
+    import pytest
+
+    raise SystemExit(pytest.main([__file__, "-p", "no:cacheprovider"]))

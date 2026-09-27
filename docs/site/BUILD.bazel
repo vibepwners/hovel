@@ -233,6 +233,7 @@ filegroup(
         "src/content/modules/squatter/user-guide.html",
         "src/content/spec/agent-integrations.html",
         "src/content/spec/architecture.html",
+        "src/content/spec/build-system-review.html",
         "src/content/spec/chain-kv.html",
         "src/content/spec/chains-runs.html",
         "src/content/spec/configuration-distribution.html",

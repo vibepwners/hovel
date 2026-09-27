@@ -25,3 +25,7 @@ def test_long_summary_is_not_folded() -> None:
         pytest.fail("Summary was not serialized on one physical line")
     if "\n " in metadata_text:
         pytest.fail("distribution metadata contains a folded header")
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-p", "no:cacheprovider"]))

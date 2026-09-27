@@ -55,3 +55,10 @@ def test_squatter_package_includes_provider_and_payload() -> None:
             assert provider in manifest_body
         assert "bin/squatter.exe" in names
         assert payload_body == b"MZfake-squatter"
+
+
+if __name__ == "__main__":
+    import unittest
+
+    suite = unittest.TestSuite([unittest.FunctionTestCase(test_squatter_package_includes_provider_and_payload)])
+    raise SystemExit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())
