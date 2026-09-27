@@ -493,6 +493,113 @@ spec:
 	}
 }
 
+func TestE2EAttachedModuleRefreshesLiveCatalog(t *testing.T) {
+	ctx := context.Background()
+	configPath := filepath.Join(t.TempDir(), "modules.json")
+	if err := os.WriteFile(configPath, []byte(`{"modules": []}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture := testsupport.StartDaemon(t, daemonruntime.Args{ModuleConfig: configPath})
+	client, err := daemonrpc.Dial(fixture.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeDaemonRPCClient(t, client)
+	modules, err := client.GetModuleCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(modules.List()) != 0 {
+		t.Fatalf("initial catalog = %#v, want empty", modules.List())
+	}
+	app := newAppWithSessionAndModules(operatorsession.New(), modules)
+	app.workspacePath = fixture.WorkspacePath
+	app = app.withAttachedDaemonSession(ctx, client, daemon.Status{State: daemon.StateRunning})
+	run := func(line string) string {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		if code := app.ExecuteLine(ctx, line, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q exit code = %d, stderr = %s, stdout = %s", line, code, stderr.String(), stdout.String())
+		}
+		return stdout.String()
+	}
+	moduleRoot := writeRPCModulePackage(t, "attached-survey", "survey", `{
+  "chainConfig": [{"key": "refresh.value", "type": "string", "required": true}],
+  "targetConfig": [], "outputs": {}
+}`, `{"version": "contracts-v1", "steps": []}`)
+	run("op use test-op")
+	run("chain use attached-refresh")
+	run("module install --link " + quoteCommandArg(moduleRoot) + " --no-scripts")
+	if app.moduleCount != 1 {
+		t.Fatalf("module count after install = %d, want 1", app.moduleCount)
+	}
+	run("chain add attached-survey@0.1.0")
+	if suggestions := app.Suggestions("chain config set refresh."); !containsSuggestion(suggestions, "refresh.value") {
+		t.Fatalf("chain config suggestions = %#v, want installed module requirement", suggestions)
+	}
+	if output := run("chain config list"); !strings.Contains(output, "refresh.value") {
+		t.Fatalf("chain config missing installed module requirement:\n%s", output)
+	}
+	if output := run("chain config interactive"); !strings.Contains(output, "refresh.value") {
+		t.Fatalf("interactive configuration missing installed module requirement:\n%s", output)
+	}
+
+	failedCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	var stdout, stderr bytes.Buffer
+	if code := app.ConfigureInteractive(failedCtx, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "context canceled") {
+		t.Fatalf("failed refresh exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if suggestions := app.Suggestions(""); !containsSuggestion(suggestions, "cancel") || !containsSuggestion(suggestions, "1") {
+		t.Fatalf("failed refresh lost active configuration: %#v", suggestions)
+	}
+	run("cancel")
+	if app.moduleCount != 1 || !containsSuggestion(app.Suggestions("chain config set refresh."), "refresh.value") {
+		t.Fatal("failed refresh lost the previous module catalog")
+	}
+	if output := run("chain config list"); !strings.Contains(output, "refresh.value") {
+		t.Fatalf("failed refresh lost command configuration:\n%s", output)
+	}
+
+	fresh := newAppWithSessionAndModules(operatorsession.New(), modulecatalog.New())
+	fresh.workspacePath = fixture.WorkspacePath
+	fresh = fresh.withAttachedDaemonSession(ctx, client, daemon.Status{State: daemon.StateRunning})
+	if err := fresh.refreshWorkspaceModules(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.moduleCount != 1 || !containsSuggestion(fresh.Suggestions("module inspect attached"), "attached-survey@0.1.0") {
+		t.Fatal("fresh attached shell did not load the daemon catalog")
+	}
+
+	run("module uninstall attached-survey@0.1.0")
+	if app.moduleCount != 0 || containsSuggestion(app.Suggestions("module inspect attached"), "attached-survey@0.1.0") {
+		t.Fatal("removed module remains available in the attached shell")
+	}
+	if suggestions := app.Suggestions("chain config set refresh."); containsSuggestion(suggestions, "refresh.value") {
+		t.Fatalf("removed module configuration remains available: %#v", suggestions)
+	}
+	if output := run("chain config list"); strings.Contains(output, "refresh.value") {
+		t.Fatalf("command retained removed module configuration:\n%s", output)
+	}
+	if output := run("chain config interactive"); strings.Contains(output, "refresh.value") {
+		t.Fatalf("wizard retained removed module configuration:\n%s", output)
+	}
+	run("cancel")
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := fresh.ExecuteLine(ctx, "module install --link "+quoteCommandArg(moduleRoot)+" --no-scripts", &stdout, &stderr); code != 0 {
+		t.Fatalf("second shell install exit code = %d, stderr = %s", code, stderr.String())
+	}
+	if output := run("chain config interactive"); !strings.Contains(output, "refresh.value") {
+		t.Fatalf("wizard did not refresh after another shell installed the module:\n%s", output)
+	}
+	run("cancel")
+	if app.moduleCount != 1 || !containsSuggestion(app.Suggestions("chain config set refresh."), "refresh.value") {
+		t.Fatal("interactive configuration did not refresh the shell's module catalog")
+	}
+}
+
 func TestE2ESessionConnectHandlesRawTerminalCarriageReturn(t *testing.T) {
 	fixture := testsupport.StartDaemon(t, daemonruntimeArgs())
 	workspacePath := fixture.WorkspacePath
