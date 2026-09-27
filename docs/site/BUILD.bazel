@@ -242,6 +242,7 @@ filegroup(
         "src/content/spec/domain-model.html",
         "src/content/spec/front-ends.html",
         "src/content/spec/index.html",
+        "src/content/spec/integration-decisions.html",
         "src/content/spec/introduction.html",
         "src/content/spec/mcp-agent.html",
         "src/content/spec/mesh.html",

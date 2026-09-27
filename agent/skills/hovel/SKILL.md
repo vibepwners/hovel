@@ -48,4 +48,6 @@ Load the specialized Hovel skill matching the task:
 Do not conflate a target with an installed payload, a payload with a session,
 an artifact with a payload, a chain with a throw, or a valid plan with approval.
 Read `references/workflow.md` and `references/safety-model.md` when the task
-crosses more than one lifecycle boundary.
+crosses more than one lifecycle boundary. Read `references/capability-map.md`
+when choosing between retained-session operations and new execution or artifact
+collection, and `references/error-recovery.md` when discovery or a session fails.

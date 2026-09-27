@@ -78,6 +78,9 @@ hovel tui ...              # not implemented yet
           <li>go-prompt completion generated from the central command registry.</li>
           <li>Managed daemon lifecycle: attach to an existing daemon if one is running; otherwise start a background daemon owned by the <code>cli</code> session and shut it down on exit.</li>
         </ol>
+        <h3 id="attached-catalogs">Attached catalog refresh</h3>
+        <p>An attached shell obtains the authoritative catalog from the daemon at startup, after successful catalog-mutating commands, and when starting interactive configuration. It fetches before replacing its cached modules, command state, count, and wizard data. A fetch failure is surfaced while preserving the previous usable catalog and active wizard. Interactive configuration updates the owning shell, so a refresh after another shell changes the catalog persists.</p>
+        <p>Changes made by another client become visible at the next existing refresh trigger. This does not add polling, watchers, per-keystroke RPCs, a new refresh command, or a daemon restart requirement. See <a href="integration-decisions.html#decision-matrix">the integration decision matrix</a>.</p>
         <p>Recommended top-level shape:</p>
 <pre data-lang="shell"><code>hovel
   cli

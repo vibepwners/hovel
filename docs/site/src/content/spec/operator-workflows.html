@@ -353,7 +353,7 @@ artifact inspect &lt;artifact-id&gt; [--workspace &lt;path&gt;] [--json]
           <li>Session labels/tags and optional notes.</li>
         </ol>
 
-        <h3>Session Control Plane</h3>
+        <h3 id="session-control-plane">Session Control Plane</h3>
         <p>Implemented operator commands:</p>
 <pre data-lang="commands"><code>session list
 session connect &lt;session-id&gt; [--history-lines &lt;n&gt;|--history-bytes &lt;n&gt;|--no-history]
@@ -370,6 +370,12 @@ session call &lt;session-id&gt; &lt;capability&gt; [--arg &lt;value&gt; ...] [--
           session from either <code>hovel cli</code> or a direct
           <code>hovel session connect</code> command. It prints recent history by
           default, supports byte or line history limits, and detaches on Ctrl-].
+          Detach ends the attachment without closing the retained session. After session
+          output stops, the native attachment restores the normal screen, visible cursor,
+          default text attributes, and terminal modes; on failure this happens before the
+          error is displayed. Presentation cleanup is written only to terminal stdout,
+          never to remote input or redirected output. An embedded output PTY remains
+          separate from its enclosing controlling terminal.
           <code>session tail</code> prints recent transcript output without attaching.
           <code>session read --tail</code> streams until close or interruption.
           <code>session send</code> appends a newline by default; use
@@ -392,7 +398,9 @@ session call &lt;session-id&gt; &lt;capability&gt; [--arg &lt;value&gt; ...] [--
           </figure>
         </div>
         <p><code>session inspect</code>, <code>session use</code>, <code>session background</code>, <code>session rename</code>, and session tagging are future control-plane goals rather than current registry commands.</p>
-        <p>Control-plane requirements:</p>
+        <p>Ordinary retained sessions can expose typed commands without an installed-payload record. Calls use the existing session owner and fail after explicit close. Session commands are distinct from module-level payload operations and do not themselves create confirmed throws, generic durable completion events, or persisted output artifacts. Use the confirmed throw/artifact path when that evidence is required. See <a href="daemon-rpc.html#retained-session-commands">the authorization and audit boundary</a>.</p>
+        <p>The following control-plane requirements are design goals, not guarantees added by terminal restoration. Native geometry, resize, controller fencing, and independent-observer APIs remain separately scoped; providers can advertise their own supported session commands. See <a href="integration-decisions.html#acceptance">the deferred part of Burrow #29</a>.</p>
+        <p>Control-plane design goals:</p>
         <ol>
           <li>Session attach/detach is explicit and logged.</li>
           <li>Concurrent attach policy is configurable (single-writer + multi-reader by default).</li>

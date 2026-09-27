@@ -79,6 +79,7 @@
     Aspect owns the workflow through <code>hovel-repro prepare</code>,
     <code>build</code>, <code>verify</code>, and <code>compare</code>.
   </p>
+  <h3 id="declared-lint">Declared lint inputs and evidence</h3>
   <p>
     Formatting and source lint checks run as declared Bazel actions shared by
     <code>aspect hovel-check</code> and <code>aspect hovel-report</code>. They read
@@ -87,6 +88,15 @@
     rejects stale declarations. Check actions use isolated writable snapshots,
     pinned tools, and checksum-locked Go module archives with network module
     lookup disabled. Formatting commands still edit the working tree.
+  </p>
+  <p>
+    Header inputs must match the platform being analyzed. Each Picblobs runner's
+    cppcheck target declares its own header filegroup and include directory; a Linux
+    header with the same name cannot stand in for a FreeBSD or Windows header.
+    When changing declared inputs, verify that a change in the actual consumed file
+    invalidates a cached check and that restoring it restores the passing result.
+    The <a href="integration-decisions.html">Integration Decisions</a> record links
+    this evidence to the storage, session, UI, and agent contracts reviewed alongside it.
   </p>
   <p>
     The lint report materializes cached diagnostics and source-ignore annotations.

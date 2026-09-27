@@ -15,3 +15,15 @@ Use typed discovery tools to obtain current details from the running Hovel:
 
 This map is strategic, not a schema reference. Read the MCP tool descriptions and
 input schemas exposed by the connected Hovel version before calling a tool.
+
+## Integration choices
+
+| Need | Decision |
+| --- | --- |
+| Operate an existing retained connection | Inspect its session capabilities, then call the advertised typed operation on the same owner; an installed payload is not required. |
+| Refresh stale catalog knowledge | Read authoritative catalog state before replacing working assumptions; report fetch errors and preserve the last usable context. |
+| Keep a session available after viewing it | Detach; explicit close ends the retained owner and subsequent calls must fail. |
+| Produce durable execution evidence | Use the supported confirmed throw/artifact path and inspect the persisted result; session command output alone is not that evidence. |
+| Request resize or controller behavior | Discover provider-owned commands; do not assume a native geometry or controller API. |
+| Attach to an arbitrary existing daemon | Follow the integrator's supported attachment policy; build/version metadata is not authentication or an implemented compatibility negotiation contract. |
+| Adopt a source fix | Verify the official runtime actually contains it and validate the downstream workflow before removing workarounds. |
