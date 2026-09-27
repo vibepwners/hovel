@@ -54,6 +54,18 @@ go_test(
     deps = ["//internal/domain/run"],
 )
 
+# keep: retained non-payload session command contract runs in the normal core suite.
+go_test(
+    name = "session_commands_test",
+    size = "small",
+    srcs = ["session_commands_test.go"],
+    embed = [":pythonrpc"],
+    deps = [
+        "//internal/domain/run",
+        "//internal/protocol/framing",
+    ],
+)
+
 go_test(
     name = "process_lifecycle_test",
     size = "small",

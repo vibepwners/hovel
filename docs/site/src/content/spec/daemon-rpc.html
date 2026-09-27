@@ -228,8 +228,8 @@ Content-Type: application/json
             <tr><td>Sessions</td><td><code>TailSession</code></td><td>Return recent session output bounded by bytes or lines, optionally consuming it.</td></tr>
             <tr><td>Sessions</td><td><code>WriteSession</code></td><td>Write base64-encoded bytes to an interactive session.</td></tr>
             <tr><td>Sessions</td><td><code>CloseSession</code></td><td>Close an interactive session.</td></tr>
-            <tr><td>Sessions</td><td><code>ListSessionCommands</code></td><td>List provider-owned commands available through an installed payload session.</td></tr>
-            <tr><td>Sessions</td><td><code>RunSessionCommand</code></td><td>Run one provider-owned command through an installed payload session.</td></tr>
+            <tr><td>Sessions</td><td><code>ListSessionCommands</code></td><td>List commands exposed by the selected retained session.</td></tr>
+            <tr><td>Sessions</td><td><code>RunSessionCommand</code></td><td>Route one command to the selected retained session's existing owner.</td></tr>
             <tr><td>Operator session</td><td><code>CreateOperation</code></td><td>Create an operation in daemon-owned workspace state.</td></tr>
             <tr><td>Operator session</td><td><code>UseOperation</code></td><td>Select or create an operation for the daemon session path.</td></tr>
             <tr><td>Operator session</td><td><code>CreateChain</code></td><td>Create a chain under an operation.</td></tr>
@@ -334,6 +334,9 @@ Content-Type: application/json
             <tr><td>Payload providers</td><td><code>RunPayloadCommand</code></td><td>Run one provider-owned payload command through daemon-owned provider services.</td></tr>
           </tbody>
         </table>
+
+        <p><code>ListSessionCommands</code> and <code>RunSessionCommand</code> select a live session by ID. A session implementing the Go SDK's <code>PayloadCommandProvider</code> can expose these commands even when it has no installed payload record; Hovel forwards them to that retained owner and does not create a replacement session after close. The separate module-level <code>ListPayloadCommands</code> and <code>RunPayloadCommand</code> routes address a payload provider, optionally with installed payload context. Their names, request and result shapes, and errors are unchanged.</p>
+        <p><code>RunSessionCommand</code> is a privileged daemon route subject to the listener access policy above; <code>ListSessionCommands</code> uses the read route. Neither session command itself creates a throw plan or confirmation, and Hovel does not publish a generic durable command-completion audit event for it. A caller needing reviewed execution must use the existing confirmed throw path; session owners may publish their own operation evidence.</p>
 
         <h2>Compatibility Checks</h2>
         <p>The docs test suite verifies that every method registered by the unary, privileged-unary, or privileged-no-store helpers in <code>daemonrpc.go</code> has an OpenAPI path, a JSON request body, a JSON success response, the shared <code>413</code> response, a <code>403</code> response exactly when the route is privileged, and a mention in this page. That test is a drift guard; it does not replace behavior tests for authorization, launch-key semantics, persistence, session I/O, PKI custody, or module execution.</p>
