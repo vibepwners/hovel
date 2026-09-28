@@ -131,6 +131,10 @@ The repository is organized for Sapling sparse profiles:
 | `agent/` | Canonical Hovel Agent Skills and deterministic host-package tooling. |
 | `repo-tools/` | Repository-level helpers that must remain available in sparse checkouts. |
 
+## Cool projects using hovel
+
+- [Burrow](https://github.com/Bochner/burrow) — [Documentation](https://bochner.github.io/burrow/index.html).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). During sparse work, use `aspect hovel-check` to
