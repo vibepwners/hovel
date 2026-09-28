@@ -1,1 +1,3 @@
+"""Exclude materialized JavaScript dependencies from package discovery."""
+
 ignore_directories(["**/node_modules"])

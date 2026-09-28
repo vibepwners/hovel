@@ -54,3 +54,7 @@ def test_aspect_executable_uses_declared_binary(
         monkeypatch.setenv("ASPECT_EXE", configured)
 
     assert checkout.aspect_executable() == expected
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-p", "no:cacheprovider"]))

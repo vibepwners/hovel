@@ -36,7 +36,7 @@ HERMETIC_CC_TOOLCHAINS = (
     '"@zig_sdk//toolchain:linux_amd64_gnu.2.28"',
     '"@zig_sdk//toolchain:linux_arm64_gnu.2.28"',
 )
-LOCAL_CC_DETECTION_DISABLED = "build --action_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1"
+LOCAL_CC_DETECTION_DISABLED = "build --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1"
 
 
 @dataclass(frozen=True)

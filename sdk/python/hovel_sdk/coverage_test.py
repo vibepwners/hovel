@@ -1307,3 +1307,7 @@ def test_credential_delivery_remaining_boundary_edges() -> None:  # noqa: PLR091
     with pytest.raises(TypeError, match="consumer type"):
         invalid_metadata.validate()
     assert delivery._required_int({"unbounded": 1}, "unbounded") == 1  # noqa: SLF001
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-p", "no:cacheprovider"]))
